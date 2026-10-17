@@ -1,4 +1,5 @@
-//! Recognise a Lightroom Classic catalog where a LightCraft library was asked for (issue #891).
+//! Recognise a Lightroom Classic catalog where a LightCraft library was asked for (issue #891),
+//! or a Lightroom (cloud) one: `Lightroom Library.lrlibrary/<catalog id>/Managed Catalog.mcat`.
 //!
 //! A Lightroom catalog folder holds `Name.lrcat` (SQLite) next to `Name Previews.lrdata`,
 //! `Name Smart Previews.lrdata`, `Name Helper.lrdata`, `Name.lrcat-data`, the `-wal` / `-shm` /
@@ -13,7 +14,9 @@
 //!   `*.lrcat-journal`, `*.lrcat.lock`);
 //! - a folder named `*.lrdata` or `*.lrcat-data` (Lightroom's previews and data);
 //! - a folder holding a `*.lrcat` at its top level (the catalog folder itself), or `Backups/`
-//!   next to one.
+//!   next to one;
+//! - a `*.mcat` file or its `-wal` / `-shm`, a folder holding `Managed Catalog.mcat`, and a
+//!   `*.lrlibrary` folder (the catalog changed last in it: one per account signed in).
 //!
 //! The folder scan is bounded ([`SCAN_LIMIT`] entries, top level only) and every I/O error just
 //! means "not found": this never fails and never panics.
@@ -79,9 +82,32 @@ pub fn find_lrcat(dir: &Path) -> Option<PathBuf> {
     found
 }
 
+/// A Lightroom (cloud) catalog's file name in its folder.
+const MCAT: &str = "Managed Catalog.mcat";
+
+/// `dir`'s `Managed Catalog.mcat`, when it has one.
+fn mcat_in(dir: &Path) -> Option<PathBuf> {
+    let path = dir.join(MCAT);
+    path.is_file().then_some(path)
+}
+
+/// The catalog changed last in a `*.lrlibrary` folder (`<catalog id>/Managed Catalog.mcat`).
+fn newest_mcat(lrlibrary: &Path) -> Option<PathBuf> {
+    let changed = |mcat: &PathBuf| {
+        [mcat.clone(), PathBuf::from(format!("{}-wal", mcat.display()))].iter().filter_map(|p| std::fs::metadata(p).ok()?.modified().ok()).max()
+    };
+    std::fs::read_dir(lrlibrary).ok()?.take(SCAN_LIMIT).flatten().filter_map(|e| mcat_in(&e.path())).max_by_key(changed)
+}
+
+/// The Lightroom catalog at the top level of `dir`: the first `*.lrcat`, else a
+/// `Managed Catalog.mcat`.
+pub fn find_catalog(dir: &Path) -> Option<PathBuf> {
+    find_lrcat(dir).or_else(|| mcat_in(dir))
+}
+
 /// `candidate` if it is a file, else the first catalog in `dir`.
 fn catalog_or_scan(candidate: Option<PathBuf>, dir: Option<&Path>) -> Option<PathBuf> {
-    candidate.filter(|c| c.is_file()).or_else(|| dir.and_then(find_lrcat))
+    candidate.filter(|c| c.is_file()).or_else(|| dir.and_then(find_catalog))
 }
 
 /// Whether `path`, given as a library folder, is a Lightroom Classic catalog or part of one (see
@@ -95,8 +121,18 @@ pub fn lightroom_catalog_at(path: &Path) -> Option<LightroomPlace> {
     let name = path.file_name().and_then(|n| n.to_str());
     let lower = lower_name(path).unwrap_or_default();
     // the catalog file itself (a folder named `*.lrcat` is looked into below)
-    if lower.ends_with(".lrcat") && !is_dir {
+    if (lower.ends_with(".lrcat") || lower.ends_with(".mcat")) && !is_dir {
         return Some(LightroomPlace { catalog: path.is_file().then(|| path.to_path_buf()) });
+    }
+    // a Lightroom (cloud) catalog's open files: `Managed Catalog.mcat-wal` → `Managed Catalog.mcat`
+    for c in ["-wal", "-shm"] {
+        if lower.ends_with(&format!(".mcat{c}")) && !is_dir {
+            let candidate = name.and_then(|n| strip_suffix_nocase(n, c)).and_then(|n| parent.map(|p| p.join(n)));
+            return Some(LightroomPlace { catalog: catalog_or_scan(candidate, parent) });
+        }
+    }
+    if lower.ends_with(".lrlibrary") && is_dir {
+        return Some(LightroomPlace { catalog: newest_mcat(path) });
     }
     // an open catalog's companion files: `Name.lrcat-wal` → `Name.lrcat`
     for c in COMPANIONS {
@@ -124,7 +160,7 @@ pub fn lightroom_catalog_at(path: &Path) -> Option<LightroomPlace> {
     }
     if is_dir {
         // the catalog folder
-        if let Some(catalog) = find_lrcat(path) {
+        if let Some(catalog) = find_catalog(path) {
             return Some(LightroomPlace { catalog: Some(catalog) });
         }
         // `Backups/` next to a catalog

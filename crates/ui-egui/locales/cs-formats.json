@@ -341,5 +341,10 @@
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
   "Delete the group “{name}” and its {n} presets?": "Odstranit skupinu „{name}“ a její přednastavení ({n})?",
   "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Skryto: „{name}“. Volba „Zobrazit skrytá přednastavení“ v nabídce panelu je vrátí zpět.",
-  "{n} photos might be sensitive. Nothing is hidden until you choose.": "Fotografie, které mohou být citlivé: {n}. Nic se neskryje, dokud se nerozhodnete."
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Alba z Lightroom byla importována: vytvořených alb: {albums}, složek: {folders}, fotografií vložených do alb: {added}",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Katalog Lightroom byl prozkoumán: alb: {albums}, složek: {folders}, fotografií v albech: {photos}",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "Fotografií, které odpovídají více fotografiím zde, a proto byly vynechány: {ambiguous}.",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "Fotografií z alb v této knihovně: {matched}; nejsou v ní, a proto byly vynechány: {unmatched}.",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "Fotografie, které mohou být citlivé: {n}. Nic se neskryje, dokud se nerozhodnete.",
+  "{updated} albums that were already here got photos.": "Alb, která tu už byla a přibyly do nich fotografie: {updated}."
 }

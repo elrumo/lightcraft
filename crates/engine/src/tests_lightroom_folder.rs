@@ -182,3 +182,30 @@ fn odd_folders_never_fail_the_check() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A Lightroom (cloud) library: the `.lrlibrary` names its most recently changed catalog (one per
+/// account signed in), and so do a folder holding `Managed Catalog.mcat` (a copy on a phone), the
+/// `.mcat` and its `-wal`. Open Library refuses them all, as it does a Classic catalog.
+#[test]
+fn lightroom_cloud_library_names_its_newest_catalog() {
+    let root = temp_dir("cloud");
+    let library = root.join("Lightroom").join("Lightroom Library.lrlibrary");
+    let (old, new) = (library.join("f19d"), library.join("bff0"));
+    for dir in [&old, &new, &library.join("previews")] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::fs::write(old.join("Managed Catalog.mcat"), b"old").unwrap();
+    std::fs::write(new.join("Managed Catalog.mcat"), b"new").unwrap();
+    std::fs::write(new.join("Managed Catalog.mcat-wal"), b"").unwrap();
+    let year_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(365 * 86_400);
+    std::fs::File::options().write(true).open(old.join("Managed Catalog.mcat")).unwrap().set_modified(year_ago).unwrap();
+    let newest = new.join("Managed Catalog.mcat");
+    let place = |p: &Path| lightroom_catalog_at(p).and_then(|p| p.catalog);
+    assert_eq!(place(&library), Some(newest.clone()));
+    assert_eq!(place(&new), Some(newest.clone()));
+    assert_eq!(place(&newest), Some(newest.clone()));
+    assert_eq!(place(&new.join("Managed Catalog.mcat-wal")), Some(newest.clone()));
+    assert_eq!(crate::lightroom_folder::find_catalog(&new), Some(newest.clone()));
+    refused(&root, &library, &newest);
+    let _ = std::fs::remove_dir_all(root);
+}

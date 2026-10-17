@@ -193,6 +193,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("file.importFolderFromFiles", "Import Folder from Files…", None, "File"),
     ("file.addFolder", "Import from Folder…", None, "File"),
     ("file.importLightroom", "Import Lightroom Catalog…", None, "File"),
+    ("file.importLightroomAlbums", "Import Lightroom Albums…", None, "File"),
     ("file.addFromDevice", "Import from Device", None, ""),
     ("file.cameras", "Connected Cameras and Cards", None, ""),
     ("file.findMissing", "Find Missing Photos…", None, "File"),
