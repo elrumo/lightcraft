@@ -5981,8 +5981,6 @@ dependencies = [
 [[package]]
 name = "rten-simd"
 version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b19a0032dfcb70dd20960c1c51a37674b237586cbc1ce586f45b46605d108e82"
 
 [[package]]
 name = "rten-tensor"
