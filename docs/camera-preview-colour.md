@@ -288,7 +288,7 @@ A raw starts from the first of these that is available (`camera_preview::startin
 2. for a Canon CR3 of a model with spectral matrices, those matrices and the neutral look (previous section);
 3. a camera profile for its model (bundled or local), with tone and chroma fitted to the file's JPEG;
 4. the file-local fit to its own JPEG described above;
-5. the model's spectral matrices, with LightCraft's default tone curve and no JPEG fit;
+5. the model's spectral matrices, with LightCraft's default tone curve and no JPEG fit (a Canon CR3 with no embedded JPEG takes the median Canon camera tone instead, below);
 6. the neutral fallback.
 
 When the file's JPEG is black and white, step 3 fits the tone curve alone with the profile's colour; without a profile, or when that fit fails, 5 and 6 take the tone curve fitted to it (see the black-and-white JPEG paragraph above).
@@ -388,3 +388,9 @@ unedited render) the starting look moved from 11.25 to 8.30. Lightroom frames th
 differently from the crop the file records (`CropLeft`/`CropTop` 36, 34); the file's own crop is kept.
 
 Reviewer follow-up: calibration discovers CR2 and CR3 case-insensitively. Per-file pools merge in discovery order so worker scheduling cannot change the fitted model. Malformed inputs remain errors without profile output. CLI regression fixtures are synthetic.
+
+## Canon CR3 without an embedded JPEG (HDR-PQ shots)
+
+A Canon HDR-PQ shot (the R5 Mark II and R8 samples on raw.pixls.us) keeps only an HEVC preview in its CRAW sample entry: a 4:2:2, 10-bit Rec.2020 / PQ picture (`colr` `nclx` 9/16/9, full range) that LightCraft's HEIF decoder cannot read (heic-rs 0.1.1 fails on Canon's 4:2:2 slices). With no JPEG there is no look to fit, so the raw took the spectral matrices (the R8 through its R6 Mark II row) and LightCraft's default tone curve, which renders a Canon raw about 13 L\* (about 1.2 EV at the median) darker than the camera's own look: on the R5 Mark II normal samples 7883/7884, forcing that path gave mean L\* 33.4 and 32.5 against 47.6 and 46.2 in the camera JPEG.
+
+Such a file now starts from the median camera tone and chroma curve of the 50 JPEG-fitted looks of Canon RF-mount CR3s in the corpus (`CANON_TONE_KNOTS` in `camera_preview.rs`; the PQ files and the two held-out R5 Mark II files 7883/7884 are not in it). On the held-out pair, spectral matrices with this tone give mean L\* 47.6 and 46.4 against 47.6 and 46.2 in the JPEG. Across the other spectral-matrix Canon bodies the mean absolute difference from the JPEG-fitted render is about 2 L\* (up to 7). It applies only to a CR3 without an embedded JPEG, without matrices of its own and whose model has a spectral row; every other file renders as before. It is an average Canon look, not a measurement of the PQ picture.

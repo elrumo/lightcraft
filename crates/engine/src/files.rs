@@ -506,6 +506,7 @@ fn load_bytes_now(
             },
             || dng_mattes(&bytes, &info),
         );
+        let previewless_tone = crate::camera_preview::previewless_tone(&raw, &bytes, scale.own_matrix, &t, &camera_look);
         drop(bytes);
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
@@ -581,7 +582,8 @@ fn load_bytes_now(
                 let tags = lightcraft_raw::ColorData { profile: Default::default(), ..raw.color.clone() };
                 Arc::new(lightcraft_pipeline::CameraColor { tags, developed_for: xy })
             });
-        let camera_tone = camera_look.as_ref().map(|p| p.tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
+        let camera_tone =
+            camera_look.as_ref().map(|p| p.tone).or(previewless_tone).or_else(|| raw.color.profile.tone_curve.as_ref().and_then(dng_tone_curve));
         let local_tone = local_tone(&raw);
         let (temp, tint) = scale.as_shot(xy);
         return Ok((
