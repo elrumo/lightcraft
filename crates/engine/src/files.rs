@@ -495,8 +495,13 @@ fn load_bytes_now(
         // the camera's measured matrices (`Photo::relative_wb` decides the same from the catalog's camera)
         let scale = WbScaleOf::new(raw.format, &raw.color, raw.wb_multipliers, &raw.metadata);
         // the source's segmentation mattes (DNG semantic masks), read while the starting colour is fitted
-        let ((xy, t, camera_look), mattes) = rayon::join(
-            || crate::camera_preview::starting_colour(&mut raw, &bytes, lens_geometry.as_ref(), lens.as_ref()),
+        let ((xy, t, camera_look, lens), mattes) = rayon::join(
+            || {
+                let (xy, t, look) = crate::camera_preview::starting_colour(&mut raw, &bytes, lens_geometry.as_ref(), lens.as_ref());
+                // a raw without lens data of its own: the vignetting its camera corrected in its JPEG
+                let lens = lens.or_else(|| crate::camera_preview::jpeg_vignetting(&raw, &bytes, &t));
+                (xy, t, look, lens)
+            },
             || dng_mattes(&bytes, &info),
         );
         drop(bytes);

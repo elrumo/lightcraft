@@ -446,7 +446,9 @@ impl Photo {
         }
     }
     /// The built-in defaults for this photo, before any user default preset: raws start from
-    /// their as-shot white balance; embedded lens corrections on when the file has them. They
+    /// their as-shot white balance; lens corrections on when the file has them, and for a CR3, whose
+    /// camera's vignetting correction is measured from its JPEG once it is decoded (the engine's
+    /// `camera_preview::jpeg_vignetting`; no import probe sees it). They
     /// carry the photo's own rendering process ([`lightcraft_develop::ProcessVersion`]): which
     /// process a photo renders with is not an edit, so comparisons with its defaults (edited?
     /// still as imported?) don't change when a newer process exists. A new photo has the latest.
@@ -460,7 +462,7 @@ impl Photo {
         if self.develops_raw() && !relative {
             d.wb.scale = lightcraft_develop::WbScale::Kelvin;
         }
-        if self.embedded_lens.is_some() {
+        if self.embedded_lens.is_some() || (self.develops_raw() && self.format.eq_ignore_ascii_case("CR3")) {
             d.optics.lens_profile = true;
         }
         d.process = self.develop.process;
@@ -519,7 +521,16 @@ impl Photo {
         if self.develop.wb.mode == WbMode::AsShot && defaults.wb.mode == WbMode::AsShot {
             defaults.wb = self.develop.wb;
         }
-        *self.develop != defaults && !self.develop.is_unedited()
+        !self.develop_is(defaults) && !self.develop.is_unedited()
+    }
+    /// Whether the photo's develop settings are `defaults`, the lens corrections switch aside when the file has no
+    /// lens data: without any the switch corrects nothing, so a CR3 imported before CR3s started with it on (their
+    /// correction is measured when decoded) still has its import settings and look.
+    pub fn develop_is(&self, mut defaults: DevelopSettings) -> bool {
+        if self.embedded_lens.is_none() {
+            defaults.optics.lens_profile = self.develop.optics.lens_profile;
+        }
+        *self.develop == defaults
     }
     /// Capture time if known, else import time (sort key).
     pub fn date(&self) -> &str {
@@ -607,6 +618,33 @@ mod edited_tests {
         d.light.exposure = 1.0;
         p.develop = Arc::new(d);
         assert!(p.is_edited(), "an edit still is one");
+    }
+
+    /// Lens corrections start on for a raw whose file has lens data, and for every CR3: its camera's vignetting
+    /// correction is measured from its JPEG only when it is decoded. A CR3 imported with them off (before CR3s started
+    /// with them on) is still unedited while it has no lens data; once it has, the switch is an edit.
+    #[test]
+    fn cr3s_start_with_lens_corrections_on() {
+        let raw = |name: &str, format: &str| {
+            let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, name, format, 10, 10, "2026-10-01T00:00:00");
+            p.kind = MediaKind::Raw;
+            p
+        };
+        assert!(raw("a.cr3", "cr3").camera_defaults().optics.lens_profile);
+        assert!(!raw("a.cr2", "CR2").camera_defaults().optics.lens_profile);
+        assert!(!raw("a.arw", "ARW").camera_defaults().optics.lens_profile);
+        let mut with_lens = raw("a.arw", "ARW");
+        with_lens.embedded_lens = Some(Default::default());
+        assert!(with_lens.camera_defaults().optics.lens_profile);
+        let mut jpeg = raw("a.jpg", "CR3");
+        jpeg.kind = MediaKind::Image;
+        assert!(!jpeg.camera_defaults().optics.lens_profile, "only a raw that develops");
+        let mut old = raw("a.cr3", "CR3");
+        old.develop = Arc::new(DevelopSettings { optics: Default::default(), ..old.camera_defaults() });
+        assert!(!old.develop.optics.lens_profile && !old.is_edited());
+        assert!(old.develop_is(old.camera_defaults()), "still its import look (its embedded preview stands in)");
+        old.embedded_lens = Some(Default::default());
+        assert!(old.is_edited() && !old.develop_is(old.camera_defaults()), "with lens data to apply, off is an edit");
     }
 
     #[test]

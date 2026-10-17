@@ -703,7 +703,9 @@ impl Default for Optics {
 
 /// Lens corrections embedded in the file, converted to the oriented, default-cropped image: a DNG's `OpcodeList3`
 /// (`WarpRectilinear`, `FixVignetteRadial`), or a raw reader's equivalent of the camera's own correction (Panasonic /
-/// Leica RW2 distortion, `lightcraft_raw`'s `vendor/rw2.rs`). This is camera/file data (stored on the photo record, not in the develop
+/// Leica RW2 distortion, `lightcraft_raw`'s `vendor/rw2.rs`), a lens database profile, or the vignetting a CR3's
+/// camera corrected in its JPEG, measured from that JPEG (the engine's `camera_preview::jpeg_vignetting`). This is
+/// camera/file data (stored on the photo record, not in the develop
 /// settings); "Enable Profile Corrections" applies it, scaled by the profile distortion/vignetting amounts.
 /// LightCraft never uses Adobe LCP lens profiles.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

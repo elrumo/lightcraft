@@ -37,9 +37,66 @@ Normalisation follows lensfun's documentation: distortion and TCA radii are 1 at
 calibration frame (its `cropfactor` and `aspect-ratio`), vignetting radii 1 at its corner; the optical centre is
 the image centre (lensfun's `<center>` offsets are not read).
 
+## Canon CR3: vignetting measured from the camera JPEG
+
+A CR3 has no lens correction LightCraft can read (Canon's maker note records that Peripheral Illumination Correction
+was on, tag `0x4016` `PeripheralLightingSetting`, not the correction itself), and no lens database is bundled, so RF
+lenses rendered with dark corners where Lightroom applies its profile and the camera JPEG has Canon's correction.
+The correction the camera applied can be read back from that JPEG: it is the sensor times a radial gain, put through
+the camera's tone curve. `camera_preview::jpeg_vignetting` pairs the 96 px sensor proxy with the camera JPEG proxy
+(the same pair the camera-look fit uses, orientation and framing aligned) and fits the gain
+`1 + k0 ρ² + k1 ρ⁴ + k2 ρ⁸` (ρ: distance from the centre over the half diagonal; every term ≥ 0, so the gain never
+dips below 1 and rises to the corners) together with a monotone tone curve, by Gauss-Newton on pixels away from
+clipping and edges. On the 19 photos below, `1 + k0 ρ² + k1 ρ⁴` alone fell 0.1 EV short of the camera's gain in the
+outer corners (ρ² > 0.8; 0.02 EV with the ρ⁸ term), and unconstrained it dipped to 0.92 just off the centre without
+explaining held-out pixels any better.
+
+The estimate is kept only when a third of the pixels, held out of the fit, are explained clearly better than without
+it (squared error below 0.9 of the uncorrected one), when it brightens the corners by 1.05–4×, and with at least 400
+usable training pixels, 64 of them beyond ρ ≈ 0.7. It is the same `EmbeddedVignette` a DNG's `FixVignetteRadial` gives: **Enable
+Profile Corrections** applies it with its Vignetting amount, on the CPU and GPU path, and Export as DNG / Convert to
+DNG write it as a `FixVignetteRadial`. CR3s start with Enable Profile Corrections on (as raws with lens data do); the
+estimate is made when the photo is first decoded (an import only reads headers), recorded on the photo so smart
+previews and synced devices render with it, and turns the correction on for a photo still as import left it. Reload
+keeps it. While a photo has no lens data the switch corrects nothing and is not counted as an edit
+(`Photo::develop_is`), so CR3s imported earlier stay unedited and keep their embedded-preview thumbnails. A CR3 whose camera did not correct (setting off, a third-party lens the camera has no data for, a small
+aperture with little vignetting) gets nothing. Lens data a file carries, or a database profile, wins; other formats
+are not estimated yet (their cameras correct too: Sony shading, Nikon vignette control).
+
+The camera-look fit of CR3s without measured matrices (`fit_preview`) now pairs the JPEG with the sensor corrected
+the same way, or its tone curve would learn part of the correction and brighten the corners a second time.
+`LOOK_VERSION` 12 rebuilds the smart previews of raws and `RENDER_CACHE_VERSION` 68 redraws renders; a sync server
+needs the new build to record the estimate for photos it decodes.
+
+Measured on the 19 EOS R6 CR3s (RF 24-105 mm F4 L at 24, 85 and 105 mm, f/4) of
+[camera-preview-colour.md](camera-preview-colour.md#canon-cr3-a-neutral-look-instead-of-the-camera-jpeg), all
+accepted: corner gain 1.47–2.54 (mean 1.98), held-out error 0.19 of the uncorrected one on average (at most 0.40).
+Brightness at ρ relative to each reference, rendered at 2048 px with default settings, after a monotone tone map from
+the render to the reference fitted on ρ < 0.4 (EV in the reference's display-linear values, mean over the photos;
+positive: the reference is brighter there):
+
+| reference | ρ 0.55–0.7 | 0.7–0.8 | 0.8–0.9 | 0.9–1 |
+|---|---|---|---|---|
+| camera JPEG, before | +0.23 | +0.41 | +0.67 | +1.08 |
+| camera JPEG, after | +0.05 | +0.05 | +0.06 | +0.13 |
+| Lightroom (default export, lens profile on), before | +0.38 | +0.66 | +1.01 | +1.58 |
+| Lightroom, after | +0.21 | +0.32 | +0.44 | +0.67 |
+| Lightroom against the camera JPEG | +0.15 | +0.26 | +0.37 | +0.55 |
+
+Most of what is left against the camera JPEG is one photo (+0.87 EV in its outer ring; +0.09 over the other 18). Its
+fitted gain follows the camera's in linear values, and its corners are dark: likely Auto Lighting Optimizer (Strong
+on that photo) lifting dark regions, which a lens correction should not copy. Lightroom's corners stay brighter than the camera's: Canon's in-camera correction is partial (its
+manuals say it is below the maximum Digital Photo Professional applies), and LightCraft reproduces the camera's, not
+Adobe's profile. The CC0 corpus CR3s: the EOS M50 with the EF-M 15-45 mm at 15 mm f/4 gets corner gain 1.37 (held-out
+error 0.43 of uncorrected); the 90D at f/6.3, the R at f/11, the R5 with a Sigma lens and the R6 at f/25 get none
+(gain under 1.05, or no clear held-out gain).
+
 ## Limits
 
 - Only raws: rendered images (JPEG, HEIF, TIFF) are often already corrected in camera.
 - The focus distance is not read from maker notes yet: vignetting uses the farthest calibrated distance.
 - No manual make / model picker yet; matching is automatic.
-- Not yet validated against real photos and another renderer; the tests use synthetic profiles and grids.
+- Database profiles are not yet validated against real photos and another renderer; the tests use synthetic profiles
+  and grids.
+- The CR3 estimate copies the camera's partial correction (about 0.5 EV short of Lightroom's in the outer corners on
+  the RF 24-105 mm), is centred (no optical-centre offset) and covers vignetting only (no distortion or lateral CA).

@@ -198,8 +198,9 @@ read: Lightroom's output was measured and four numbers chosen to match it.
 What remains is not tone. Hues: against Lightroom, yellows and sand render about 9° greener, reds about 10° and cyans
 7-14° off, while against Canon's own JPEGs of the CC0 corpus samples the spectral colour is within about 3° in every
 well-populated hue sector, so these are Adobe Color's own choices, not errors of the matrices; they are left alone.
-Corners: Lightroom applies its lens profile for RF lenses, and LightCraft has no lens data for them (a darker, vignetted
-frame edge). The CC0 corpus CR3s check that the neutral look reads as Canon's own rendering too (ΔE00 against each
+Corners: Lightroom applies its lens profile for RF lenses; LightCraft has no lens data for them, but now applies the
+vignetting correction the camera applied to its JPEG, measured from that JPEG ([lens-profiles.md](lens-profiles.md#canon-cr3-vignetting-measured-from-the-camera-jpeg)),
+which brings the outer corners from 1.6 EV darker than Lightroom's to 0.7 EV (the camera's own correction is partial). The CC0 corpus CR3s check that the neutral look reads as Canon's own rendering too (ΔE00 against each
 file's camera JPEG, per-file fit → neutral look, and ΔL\*): EOS R6 Standard 2.1 → 2.0 (+0.6 L\*), R5 Standard 2.2 → 2.7
 (−1.4), R Landscape 2.3 → 2.3 (+1.3).
 

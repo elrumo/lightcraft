@@ -1201,7 +1201,6 @@ fn subfolders(ui: &egui::Ui, path: &str) -> Vec<(String, String)> {
     fs_cached(ui, "subfolders", path, 2.0, lightcraft_apphost::local::list_subfolders).unwrap_or_default()
 }
 
-
 /// How many [`fs_cached`] answers for `ctx` are being worked out right now. Rows appear (and
 /// the sidebar below them moves) when they land, so the headless driver counts them as pending
 /// work and waits for them before acting on widget positions.
