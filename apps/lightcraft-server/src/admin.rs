@@ -498,6 +498,9 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request_full(name);
             folders(st, name)
         }
+        // files cut short among the user's originals: the last check, and how far a running one is
+        (Method::Get, ["users", name, "check"]) => known_user(st, name).map(|()| st.checker.status(name, &accounts::user_dir(&st.data, name))),
+        (Method::Post, ["users", name, "check"]) => known_user(st, name).and_then(|()| start_check(st, &me, name)),
         (Method::Get, ["limits"]) => Ok(st.limits.status()),
         (Method::Get, ["usage"]) => Ok(usage(st)),
         (Method::Put, ["limits"]) => read_json::<crate::limits::Values>(req).map_err(Err).and_then(|v| {
@@ -1055,6 +1058,30 @@ fn folders(st: &State, name: &str) -> AdminResult {
     let mut scan = st.folders.status(name);
     (scan.previews_have, scan.previews_photos) = st.folders.coverage(st, name).unzip();
     Ok(json!({"folders": list, "ignore": u.ignore, "scan": scan}))
+}
+
+fn known_user(st: &State, name: &str) -> Result<(), std::result::Result<(u16, String), Resp>> {
+    if accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?.users.contains_key(name) { Ok(()) } else { Err(Ok((404, format!("no user `{name}`")))) }
+}
+
+/// Start checking a user's originals (their library folders' files and the ones the server keeps).
+fn start_check(st: &State, me: &str, name: &str) -> AdminResult {
+    let dir = accounts::user_dir(&st.data, name);
+    let mut files = {
+        let l = crate::api::lib(st, name).map_err(|e| Ok((500, e)))?;
+        let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+        let names = crate::integrity::photo_names(l.core.catalog());
+        let files = crate::integrity::folder_originals(&l.index, &names);
+        (files, names)
+    };
+    // (listed without the library's lock: devices keep syncing meanwhile)
+    files.0.extend(crate::integrity::kept_originals(&dir, &files.1));
+    let n = files.0.len();
+    if !st.checker.start(name, dir.clone(), files.0) {
+        return Err(Ok((409, "a check of these files is running".to_string())));
+    }
+    log::info!("admin {me}: check {name}'s {n} original files");
+    Ok(st.checker.status(name, &dir))
 }
 
 fn devices(st: &State, name: &str) -> AdminResult {

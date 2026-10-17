@@ -9,15 +9,37 @@
 //! rollback of a failed batch included, as those are ops too.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::OnceLock;
 
 use crate::{AlbumId, Catalog, PhotoId, StackId};
+
+/// A hasher for ids: one multiply (the default one is built to resist attackers, which ids are not, and
+/// hashing every photo of a big library twice over was a tenth of a second).
+#[derive(Default)]
+pub(crate) struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.write_u64(u64::from(*b));
+        }
+    }
+    fn write_u64(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+pub(crate) type ById<V> = HashMap<PhotoId, V, BuildHasherDefault<IdHasher>>;
 
 #[derive(Default)]
 pub(crate) struct Indexes {
     /// Photo → the stack it is in; `None` when the catalog was read with a photo in two stacks
     /// (only a hand-edited file can hold that: ops refuse it), where a scan says which one counts.
-    stacks: OnceLock<Option<HashMap<PhotoId, StackId>>>,
+    stacks: OnceLock<Option<ById<StackId>>>,
     /// Album → its photos (regular albums; a smart album's list is empty).
     albums: OnceLock<HashMap<AlbumId, HashSet<PhotoId>>>,
 }
@@ -39,7 +61,7 @@ impl PartialEq for Indexes {
 
 impl std::fmt::Debug for Indexes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let stacks = self.stacks.get().map(|m| m.as_ref().map(HashMap::len));
+        let stacks = self.stacks.get().map(|m| m.as_ref().map(|m| m.len()));
         f.debug_struct("Indexes").field("stacks", &stacks).field("albums", &self.albums.get().map(HashMap::len)).finish()
     }
 }
@@ -76,7 +98,7 @@ impl Catalog {
     /// The stack photo `photo` is in, by the index (built on first use).
     pub(crate) fn stack_id_of(&self, photo: PhotoId) -> Option<StackId> {
         let m = self.index.stacks.get_or_init(|| {
-            let mut m = HashMap::new();
+            let mut m = ById::default();
             for s in self.stacks.values() {
                 for p in &s.photos {
                     if m.insert(*p, s.id).is_some_and(|other| other != s.id) {

@@ -148,6 +148,43 @@ impl Sort {
     }
 }
 
+/// The first bytes of a date, zero-padded, for [`Sort::sort_photos`] (`None` before any text, as `Option` orders it).
+type DateKey = (bool, [u8; 32]);
+
+fn date_key(date: Option<&str>) -> DateKey {
+    let mut key = [0u8; 32];
+    for (to, from) in key.iter_mut().zip(date.unwrap_or_default().bytes()) {
+        *to = from;
+    }
+    (date.is_some(), key)
+}
+
+impl Sort {
+    /// `v` in [`Sort::order`]'s order. For the date sorts (the default) it sorts by a fixed-size key kept beside
+    /// each photo, so that most pairs are told apart without opening either one (at 200k photos two cache misses
+    /// per photo per comparison were most of a second); pairs whose keys are equal go through `order` in full, so the
+    /// result is exactly `order`'s.
+    pub(crate) fn sort_photos(&self, v: &mut Vec<&Photo>) {
+        let key = |p: &Photo| match self.key {
+            SortKey::CaptureDate => date_key(p.captured.as_deref()),
+            SortKey::ImportDate => date_key(Some(&p.imported)),
+            _ => date_key(p.edited.as_deref()),
+        };
+        if !matches!(self.key, SortKey::CaptureDate | SortKey::ImportDate | SortKey::EditDate) {
+            v.sort_unstable_by(|a, b| self.order(a, b));
+            return;
+        }
+        let mut keyed: Vec<(DateKey, &Photo)> = v.iter().map(|p| (key(p), *p)).collect();
+        keyed.sort_unstable_by(|(ka, a), (kb, b)| match ka.cmp(kb) {
+            std::cmp::Ordering::Equal => self.order(a, b),
+            o if self.ascending => o,
+            o => o.reverse(),
+        });
+        v.clear();
+        v.extend(keyed.into_iter().map(|(_, p)| p));
+    }
+}
+
 impl Default for Sort {
     fn default() -> Self {
         Sort { key: SortKey::CaptureDate, ascending: false, group: crate::GroupBy::Auto, seed: 0 }
@@ -441,7 +478,7 @@ impl Catalog {
             .map(|p| p.as_ref())
             .filter(|p| filter.matches_in(p, self, &prepared) || (keep.contains(&p.id) && within.matches_in(p, self, &within_prepared)))
             .collect();
-        v.sort_by(|a, b| sort.order(a, b));
+        sort.sort_photos(&mut v);
         v.into_iter().map(|p| p.id).collect()
     }
 
@@ -784,5 +821,52 @@ pub fn merged_kind(file_name: &str) -> Option<&'static str> {
         Some("panorama")
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod sort_photos_tests {
+    use super::*;
+    use crate::{Photo, Source};
+
+    /// Dates that tie on the key's 32 bytes, differ past it, are missing, are empty, repeat, or hold more bytes than
+    /// the key, in every sort: `sort_photos` gives what sorting by `order` gives.
+    #[test]
+    fn sort_photos_is_order_s_order() {
+        let long = "2026-10-11T23:11:27.755+02:00";
+        let dates: Vec<Option<String>> = vec![
+            None,
+            Some(String::new()),
+            Some("2026-10-11T23:11".into()),
+            Some(long.into()),
+            Some(format!("{long}+x")),
+            Some(format!("{long}+y")),
+            Some("2026-10-11T23:11:27.755+02:00".into()),
+            Some("2025-01-01".into()),
+            Some("2025-01-01\0".into()),
+            Some("é2025".into()),
+            Some("é2026".into()),
+        ];
+        let mut photos = Vec::new();
+        for i in 0..400u64 {
+            let name = format!("IMG_{:03}.jpg", (i * 7) % 50);
+            let mut p = Photo::new(PhotoId(i + 1), Source::Demo { scene: 0 }, &name, "JPEG", 10, 10, dates.get((i % 11) as usize).and_then(|d| d.as_deref()).unwrap_or(""));
+            p.captured = dates.get(((i * 3) % 11) as usize).cloned().flatten();
+            p.edited = dates.get(((i * 5) % 11) as usize).cloned().flatten();
+            p.rating = (i % 4) as u8;
+            p.file_size = i % 9;
+            photos.push(p);
+        }
+        for key in [SortKey::CaptureDate, SortKey::ImportDate, SortKey::EditDate, SortKey::FileName, SortKey::Rating, SortKey::FileSize, SortKey::Random] {
+            for ascending in [true, false] {
+                let sort = Sort { key, ascending, group: crate::GroupBy::Auto, seed: 3 };
+                let mut fast: Vec<&Photo> = photos.iter().rev().collect();
+                sort.sort_photos(&mut fast);
+                let mut plain: Vec<&Photo> = photos.iter().collect();
+                plain.sort_by(|a, b| sort.order(a, b));
+                let ids = |v: &[&Photo]| v.iter().map(|p| p.id).collect::<Vec<_>>();
+                assert_eq!(ids(&fast), ids(&plain), "{key:?} ascending {ascending}");
+            }
+        }
     }
 }

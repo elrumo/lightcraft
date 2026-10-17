@@ -745,3 +745,51 @@ fn rebuilding_previews_replaces_the_ones_there_and_generating_does_not() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Check files (admin page → Folders): a photo file cut short (a copy that stopped part-way) is listed with its
+/// path, a whole one isn't, and the report stays for the page.
+#[test]
+fn check_files_finds_a_photo_file_cut_short() {
+    let root = temp("check");
+    let photos = root.join("nas/photos");
+    write_png(&photos.join("whole.png"), 1);
+    let cut = png_bytes(2);
+    std::fs::create_dir_all(&photos).unwrap();
+    std::fs::write(photos.join("cut.png"), &cut[..cut.len() / 2]).unwrap();
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::set_admin(&data, "ann", true).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    let server = Server::start(cfg).unwrap();
+    let url = format!("http://{}", server.addr());
+    let token = admin_token(&url);
+    scanned(&server, 0);
+    let (status, started) = admin_post(&url, &token, "users/ann/check");
+    assert_eq!(status, 200, "{started}");
+    let get = || -> Value {
+        let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let mut r = agent.get(format!("{url}/api/admin/users/ann/check")).header("Authorization", format!("Bearer {token}")).call().unwrap();
+        serde_json::from_slice(&r.body_mut().read_to_vec().unwrap()).unwrap()
+    };
+    let mut st = get();
+    for _ in 0..200 {
+        if st["running"] == false && !st["report"].is_null() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        st = get();
+    }
+    let report = &st["report"];
+    assert_eq!(report["files"], 2, "{st}");
+    let cut = report["cut"].as_array().unwrap();
+    assert_eq!(cut.len(), 1, "{st}");
+    assert_eq!(cut[0]["path"], "Photos/cut.png");
+    // (too damaged to import: the scan made no photo of it, and the check still lists it)
+    assert_eq!(cut[0]["photos"], json!([]));
+    assert_eq!(admin_post(&url, &token, "users/nobody/check").0, 404);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}

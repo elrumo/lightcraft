@@ -9,6 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::index::ById;
 use crate::query::cmp_name;
 use crate::{Catalog, CatalogError, Op, PhotoId, Result, Stack, StackId};
 
@@ -182,14 +183,14 @@ impl Catalog {
         if self.stacks.is_empty() {
             return (ids.to_vec(), counts);
         }
-        let index = self.stack_index();
-        let present: HashSet<PhotoId> = ids.iter().copied().collect();
+        let index: ById<StackId> = self.stacks.iter().flat_map(|(id, s)| s.photos.iter().map(move |p| (*p, *id))).collect();
+        let present: ById<()> = ids.iter().map(|id| (*id, ())).collect();
         let mut done: HashSet<StackId> = HashSet::new();
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             match index.get(id) {
                 None => out.push(*id),
-                Some((sid, _)) => {
+                Some(sid) => {
                     if !done.insert(*sid) {
                         continue;
                     }
@@ -197,7 +198,7 @@ impl Catalog {
                         out.push(*id);
                         continue;
                     };
-                    let mut members = s.photos.iter().copied().filter(|p| present.contains(p));
+                    let mut members = s.photos.iter().copied().filter(|p| present.contains_key(p));
                     if s.collapsed {
                         if let Some(shown) = members.next() {
                             out.push(shown);

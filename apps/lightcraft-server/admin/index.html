@@ -304,6 +304,18 @@
           <div class="meter" id="scanBar" hidden><div></div></div>
           <div class="alert negative" id="scanErrors" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>Some files couldn't be read</b><ul></ul></div></div>
         </section>
+        <section class="panel scan" id="checkPanel">
+          <div class="scan-head">
+            <div>
+              <h3 id="checkTitle">Check files</h3>
+              <p class="muted" id="checkText"></p>
+              <p class="muted help">Looks for photo files cut short, such as copies or downloads that stopped part-way. They still open, but devices show the camera's built-in preview or develop what is left, so the photo looks wrong. Covers the library folders and the photos devices uploaded. Reads only each file's headers and changes nothing.</p>
+            </div>
+            <button type="button" class="btn secondary" id="checkRun"><svg class="icon"><use href="#i-sparkle"/></svg><span>Check files</span></button>
+          </div>
+          <div class="meter" id="checkBar" hidden><div></div></div>
+          <div class="alert negative" id="checkFound" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b id="checkFoundTitle"></b><p>Copy these files to the server again from a whole copy (the camera's card, a backup, the service they were downloaded from), then scan.</p><ul id="checkList"></ul><button type="button" class="btn secondary" id="checkSave">Download the list (CSV)</button></div></div>
+        </section>
       </div>
     </section>
 

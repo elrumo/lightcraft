@@ -118,6 +118,11 @@ impl UserLib {
         (c.len(), c.albums().count())
     }
 
+    /// The library's catalog.
+    pub fn catalog(&self) -> &lightcraft_catalog::Catalog {
+        self.core.catalog()
+    }
+
     /// Open a user's library (the command line, while the server isn't running).
     pub fn open_for(data: &Path, user: &str) -> Result<UserLib, String> {
         UserLib::open(data, user)
