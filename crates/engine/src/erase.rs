@@ -8,24 +8,113 @@
 //! build fetches it itself, keeps it in the site's storage and hands the bytes over
 //! ([`Session::install_eraser`]). Either way the file must be exactly the pinned one.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use lightcraft_catalog::PhotoId;
-use lightcraft_develop::DevelopSettings;
-use lightcraft_erase::Eraser;
+use lightcraft_develop::{DevelopSettings, Spot, SpotFill, SpotMode};
+use lightcraft_erase::{Eraser, Painter, fill_with};
+use lightcraft_geom::Point;
+use lightcraft_pipeline::spots::EraseInput;
 
 use crate::Session;
+use crate::activity::Cancel;
 use crate::media::SourceLevel;
 
+/// High quality's model, LaMa: what the apps show before downloading it.
+pub use lightcraft_erase::lama::{CREDIT as LAMA_CREDIT, FILE_SIZE as LAMA_FILE_SIZE, ID as LAMA_ID, LICENCE as LAMA_LICENCE};
 pub use lightcraft_erase::{BASE_URL, CREDIT, FILE, FILE_SIZE, ID, LICENCE, verify};
 
 /// The start of the error when the model isn't here: the apps offer the download on it.
 pub const NOT_INSTALLED: &str = "The AI Remove model (MI-GAN) is not downloaded";
 
-/// The loaded model, kept for the session once loaded.
+/// The loaded model, kept for the session once loaded, and the fills being painted in the background.
 #[derive(Default)]
 pub struct EraseModel {
     loaded: Mutex<Option<Arc<Eraser>>>,
+    jobs: Mutex<Vec<EraseTask>>,
+    /// Held while a network paints: one at a time, however many strokes wait (a big network takes seconds and
+    /// hundreds of megabytes).
+    pub(crate) turn: Arc<Mutex<()>>,
+}
+
+/// How AI Remove paints: the small network or the larger one. A fill is stored with its spot whichever made it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RemoveQuality {
+    /// MI-GAN: about 30 MB, a fraction of a second on a computer.
+    #[default]
+    Fast,
+    /// LaMa: about 208 MB, seconds on a computer; continues textures and larger areas better.
+    High,
+}
+
+impl RemoveQuality {
+    /// The name in commands (`quality`).
+    pub fn id(self) -> &'static str {
+        match self {
+            RemoveQuality::Fast => "fast",
+            RemoveQuality::High => "high",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<RemoveQuality> {
+        match id {
+            "fast" => Some(RemoveQuality::Fast),
+            "high" => Some(RemoveQuality::High),
+            _ => None,
+        }
+    }
+
+    /// The model that paints at this quality (its id in `models.list`).
+    pub fn model_id(self) -> &'static str {
+        match self {
+            RemoveQuality::Fast => lightcraft_erase::ID,
+            RemoveQuality::High => lightcraft_erase::lama::ID,
+        }
+    }
+}
+
+/// What tells a spot apart while its fill is being painted: strokes have no ids, and the user may move, resize or
+/// delete spots meanwhile.
+#[derive(Clone, Debug, PartialEq)]
+struct SpotKey {
+    points: Vec<Point>,
+    size: f64,
+    shape: Option<lightcraft_develop::SegMask>,
+}
+
+impl SpotKey {
+    fn of(s: &Spot) -> SpotKey {
+        SpotKey { points: s.points.clone(), size: s.size, shape: s.shape.clone() }
+    }
+
+    fn is(&self, s: &Spot) -> bool {
+        s.mode == SpotMode::Remove && s.points == self.points && s.size == self.size && s.shape == self.shape
+    }
+}
+
+/// A fill on its worker thread.
+struct EraseTask {
+    photo: PhotoId,
+    key: SpotKey,
+    rx: Receiver<Result<SpotFill, String>>,
+}
+
+/// Everything painting one spot's fill needs, ready to run off the UI thread.
+pub struct EraseJob {
+    photo: PhotoId,
+    key: SpotKey,
+    input: EraseInput,
+    painter: Arc<dyn Painter>,
+}
+
+impl EraseJob {
+    /// Paint the fill.
+    fn run(&self) -> Result<SpotFill, String> {
+        let filled = fill_with(self.painter.as_ref(), &self.input.image, &self.input.hole).map_err(|e| e.to_string())?;
+        self.input.finish(&filled).ok_or_else(|| "AI Remove made no fill".to_string())
+    }
 }
 
 impl Session {
@@ -87,10 +176,36 @@ impl Session {
         Ok(e)
     }
 
-    /// Fill spot `index` of `d` (photo `id`'s settings) with AI Remove: render the area around
-    /// the stroke, let the model paint it, store the answer in the spot.
-    pub fn erase_spot(&mut self, id: PhotoId, d: &mut DevelopSettings, index: usize) -> Result<(), String> {
-        let eraser = self.eraser()?;
+    /// Whether AI Remove can paint at `quality` now: the model is in place, the device runs it and the user hasn't
+    /// turned it off.
+    pub fn remove_ready(&self, quality: RemoveQuality) -> bool {
+        match quality {
+            RemoveQuality::Fast => self.eraser_ready(),
+            RemoveQuality::High => self.lama_ready(),
+        }
+    }
+
+    /// The network that paints at `quality`, loaded once.
+    fn erase_painter(&self, quality: RemoveQuality) -> Result<Arc<dyn Painter>, String> {
+        match quality {
+            RemoveQuality::Fast => Ok(self.eraser()? as Arc<dyn Painter>),
+            RemoveQuality::High => {
+                if !self.expand_available(crate::expand::ExpandModel::Lama) {
+                    return Err(format!("High quality AI Remove (LaMa) doesn't run on this device ({})", self.device.describe()));
+                }
+                Ok(self.lama()? as Arc<dyn Painter>)
+            }
+        }
+    }
+
+    /// Render the area around spot `index` of `d` (photo `id`'s settings) for the network of `quality`.
+    pub fn erase_job(&mut self, id: PhotoId, d: &DevelopSettings, index: usize, quality: RemoveQuality) -> Result<EraseJob, String> {
+        let painter = self.erase_painter(quality)?;
+        self.erase_job_with(id, d, index, painter)
+    }
+
+    /// [`Session::erase_job`] for a given network.
+    pub(crate) fn erase_job_with(&mut self, id: PhotoId, d: &DevelopSettings, index: usize, painter: Arc<dyn Painter>) -> Result<EraseJob, String> {
         let info = self.source_info(id);
         let mut src = self.source_now(id, SourceLevel::Preview)?;
         let mut input = lightcraft_pipeline::spots::erase_input(&src, &info, d, index).ok_or("the stroke is outside the photo")?;
@@ -100,10 +215,104 @@ impl Session {
             src = self.source_now(id, SourceLevel::Full)?;
             input = lightcraft_pipeline::spots::erase_input(&src, &info, d, index).ok_or("the stroke is outside the photo")?;
         }
-        let filled = eraser.fill(&input.image, &input.hole).map_err(|e| e.to_string())?;
-        let fill = input.finish(&filled).ok_or("AI Remove made no fill")?;
+        let key = SpotKey::of(d.spots.get(index).ok_or("no such spot")?);
+        Ok(EraseJob { photo: id, key, input, painter })
+    }
+
+    /// Fill spot `index` of `d` (photo `id`'s settings) with AI Remove here and now (scripts, agents, the browser):
+    /// render the area around the stroke, let the network paint it, store the answer in the spot.
+    pub fn erase_spot_with(&mut self, id: PhotoId, d: &mut DevelopSettings, index: usize, quality: RemoveQuality) -> Result<(), String> {
+        let fill = self.erase_job(id, d, index, quality)?.run()?;
         let spot = d.spots.get_mut(index).ok_or("no such spot")?;
         spot.fill = Some(fill);
         Ok(())
+    }
+
+    /// [`Session::erase_spot_with`] at the default quality.
+    pub fn erase_spot(&mut self, id: PhotoId, d: &mut DevelopSettings, index: usize) -> Result<(), String> {
+        self.erase_spot_with(id, d, index, RemoveQuality::Fast)
+    }
+
+    /// Paint the fill of spot `index` of `d` on a worker thread, with a row in the activity stack (✕ stops it before
+    /// it starts); [`Session::poll_erase`] stores it. In the browser it runs inline.
+    pub fn start_erase(&mut self, id: PhotoId, d: &DevelopSettings, index: usize, quality: RemoveQuality) -> Result<(), String> {
+        let job = self.erase_job(id, d, index, quality)?;
+        let label = match quality {
+            RemoveQuality::Fast => "Removing with AI",
+            RemoveQuality::High => "Removing with AI (high quality)",
+        };
+        self.spawn_erase(job, label)
+    }
+
+    pub(crate) fn spawn_erase(&mut self, job: EraseJob, label: &str) -> Result<(), String> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let guard = self.activity.start("erase", label, Cancel::Flag(cancel.clone()));
+        let (tx, rx) = channel();
+        let (photo, key) = (job.photo, job.key.clone());
+        let turn = self.eraser.turn.clone();
+        let work = move || {
+            let _turn = turn.lock().unwrap_or_else(PoisonError::into_inner);
+            let r = if cancel.load(Ordering::Relaxed) {
+                Err("cancelled".to_string())
+            } else {
+                // a panicking network reports an error instead of leaving the row up forever
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).unwrap_or_else(|_| Err("AI Remove failed unexpectedly".into()))
+            };
+            let _ = tx.send(r);
+            drop(guard);
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::Builder::new().name("ai-remove".into()).spawn(work).map_err(|e| e.to_string())?;
+        #[cfg(target_arch = "wasm32")]
+        work();
+        self.eraser.jobs.lock().unwrap_or_else(PoisonError::into_inner).push(EraseTask { photo, key, rx });
+        Ok(())
+    }
+
+    /// How many fills are being painted or wait their turn.
+    pub fn erase_running(&self) -> usize {
+        self.eraser.jobs.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
+    /// Store the fills that are done (call every tick), one undo step each. An error for each that failed; a fill
+    /// whose stroke was moved, resized or deleted meanwhile, or that was cancelled, is dropped without one.
+    pub fn poll_erase(&mut self) -> Vec<String> {
+        let done: Vec<(PhotoId, SpotKey, Result<SpotFill, String>)> = {
+            let mut jobs = self.eraser.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut done = Vec::new();
+            jobs.retain(|t| match t.rx.try_recv() {
+                Err(TryRecvError::Empty) => true,
+                Ok(r) => {
+                    done.push((t.photo, t.key.clone(), r));
+                    false
+                }
+                Err(TryRecvError::Disconnected) => {
+                    done.push((t.photo, t.key.clone(), Err("AI Remove stopped unexpectedly".into())));
+                    false
+                }
+            });
+            done
+        };
+        let mut errors = Vec::new();
+        for (photo, key, r) in done {
+            match r {
+                Ok(fill) => {
+                    if let Err(e) = self.finish_erase(photo, &key, fill) {
+                        errors.push(e);
+                    }
+                }
+                Err(e) if e == "cancelled" => {}
+                Err(e) => errors.push(e),
+            }
+        }
+        errors
+    }
+
+    /// Put `fill` in the spot `key` names, if it is still there: one undo step.
+    fn finish_erase(&mut self, photo: PhotoId, key: &SpotKey, fill: SpotFill) -> Result<(), String> {
+        let Some(mut d) = self.develop_of(photo).map(|d| (*d).clone()) else { return Ok(()) };
+        let Some(spot) = d.spots.iter_mut().find(|s| key.is(s)) else { return Ok(()) };
+        spot.fill = Some(fill);
+        self.set_develop(photo, d, "AI Remove").map_err(|e| e.to_string())
     }
 }

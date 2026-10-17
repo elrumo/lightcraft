@@ -2496,5 +2496,9 @@
   "Flag photos that might be sensitive, to review and hide (opt-in)": "标出可能敏感的照片，供您查看和隐藏（需手动启用）。",
   "Import Lightroom Albums": "导入 Lightroom 相册",
   "Import Lightroom Albums…": "导入 Lightroom 相册…",
-  "Lightroom Catalog": "Lightroom 目录"
+  "Lightroom Catalog": "Lightroom 目录",
+  "High quality": "高质量",
+  "Paint with LaMa, a larger model: slower, and better on textures and large areas": "使用较大的 LaMa 模型绘制：速度较慢，但在纹理和大面积区域上效果更好",
+  "LaMa is turned off in Settings → AI Models.": "LaMa 已在“设置 → AI 模型”中关闭。",
+  "LaMa isn't available in this build.": "此版本不提供 LaMa。"
 }

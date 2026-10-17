@@ -426,11 +426,19 @@ impl Session {
     }
 
     /// Whether LaMa's file is in place and the user hasn't turned it off.
-    fn lama_ready(&self) -> bool {
+    pub(crate) fn lama_ready(&self) -> bool {
         self.expand_available(ExpandModel::Lama)
             && !self.enhancer.disabled.contains(lightcraft_erase::lama::ID)
             && (self.expand.lama.lock().unwrap_or_else(PoisonError::into_inner).is_some()
                 || self.lama_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == lightcraft_erase::lama::FILE_SIZE)))
+    }
+
+    /// LaMa, loaded once (from the models folder the first time).
+    pub(crate) fn lama(&self) -> Result<Arc<Lama>, String> {
+        if self.enhancer.disabled.contains(lightcraft_erase::lama::ID) {
+            return Err("LaMa is turned off: turn its model on in Settings → AI Models.".into());
+        }
+        load_lama(&self.lama_file().ok_or_else(lama_missing)?, &self.expand.lama)
     }
 
     fn lama_file(&self) -> Option<std::path::PathBuf> {

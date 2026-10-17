@@ -90,7 +90,10 @@ fn the_browser_fetch_is_asked_first_then_offers_the_download() {
 /// stroke shows "Removing with AI…" and then carries the model's fill.
 #[test]
 fn with_the_model_a_stroke_gets_the_models_fill() {
-    let Some(path) = std::env::var_os("LIGHTCRAFT_MIGAN") else { return };
+    let Some(path) = std::env::var_os("LIGHTCRAFT_MIGAN") else {
+        lightcraft_testkit::skip!(Model, "LIGHTCRAFT_MIGAN names no MI-GAN file");
+        return;
+    };
     let dir = tmp("erase-run");
     let (mut h, _) = app(&dir);
     h.app.session.install_eraser(&std::fs::read(path).unwrap()).unwrap();
@@ -98,12 +101,45 @@ fn with_the_model_a_stroke_gets_the_models_fill() {
     assert!(!h.app.widgets.iter().any(|(w, _)| w == "button:removeAiDownload"), "nothing to offer");
     stroke(&mut h);
     let t = Instant::now();
+    // (the notice, then the stroke at once, then the fill from the worker)
     while crate::erase::busy(&h.app) {
         assert!(t.elapsed() < Duration::from_secs(60), "the fill never ran");
         h.step();
     }
+    assert_eq!(spots(&h).len(), 1, "the stroke is there before its fill");
+    while h.app.session.erase_running() > 0 || spots(&h).iter().all(|s| s.fill.is_none()) {
+        assert!(t.elapsed() < Duration::from_secs(60), "the fill never arrived");
+        h.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let s = spots(&h);
     assert_eq!(s.len(), 1);
     assert!(s[0].fill.is_some(), "the model's fill is stored with the spot");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// High quality is offered where the device runs LaMa; on, without the model, it offers the download and strokes use the
+/// fast model.
+#[test]
+fn high_quality_is_offered_where_the_device_runs_lama() {
+    use lightcraft_engine::erase::RemoveQuality;
+    use lightcraft_engine::hardware::{DeviceClass, DeviceProfile, GB};
+    let dir = tmp("erase-hq");
+    let (mut h, _) = app(&dir);
+    let has = |h: &Headless, id: &str| h.app.widgets.iter().any(|(w, _)| w == id);
+    h.app.session.set_device(DeviceProfile { class: DeviceClass::Phone, memory_bytes: Some(GB), gpu: false, cores: 4 });
+    remove_tool(&mut h);
+    assert!(has(&h, "check:removeAi") && !has(&h, "check:removeAiHq"), "a phone with 1 GB doesn't run LaMa");
+    h.app.session.set_device(DeviceProfile { class: DeviceClass::Computer, memory_bytes: Some(16 * GB), gpu: false, cores: 8 });
+    settle(&mut h);
+    assert!(has(&h, "check:removeAiHq"));
+    assert!(!has(&h, "button:removeAiHqDownload"), "the offer shows once it is on");
+    let r = h.request("ui.clickWidget", json!({"id": "check:removeAiHq"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    settle(&mut h);
+    assert!(h.app.ui.remove_hq);
+    assert_eq!(has(&h, "button:removeAiHqDownload"), Enhancer::AVAILABLE, "the offer, where this build can download");
+    assert_eq!(crate::erase::quality(&h.app), RemoveQuality::Fast, "until LaMa is here strokes use the fast model");
+    assert_eq!(crate::erase::ai_params(RemoveQuality::High)["quality"], "high");
     let _ = std::fs::remove_dir_all(&dir);
 }

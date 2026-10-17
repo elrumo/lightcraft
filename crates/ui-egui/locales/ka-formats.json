@@ -350,5 +350,8 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Lightroom-ის კატალოგი შემოწმდა: ალბომი: {albums}, საქაღალდე: {folders}, ფოტო ალბომებში: {photos}",
   "{ambiguous} photos fit more than one photo here, and were left out.": "აქ ერთზე მეტ ფოტოს ემთხვევა და გამოტოვებულია ფოტო: {ambiguous}.",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "ალბომების ფოტოებიდან ამ ბიბლიოთეკაშია: {matched}; აქ არ არის და გამოტოვებულია: {unmatched}.",
-  "{updated} albums that were already here got photos.": "უკვე არსებულ ალბომებს დაემატა ფოტოები: {updated}."
+  "{updated} albums that were already here got photos.": "უკვე არსებულ ალბომებს დაემატა ფოტოები: {updated}.",
+  "Downloading LaMa… {:.0} %": "Downloading LaMa… {:.0} %",
+  "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.": "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.",
+  "AI Remove failed: {}": "AI Remove failed: {}"
 }

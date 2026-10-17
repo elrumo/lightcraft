@@ -1,7 +1,7 @@
 # AI Remove
 
-**Remove ▸ Generative AI** fills a Remove stroke with what the photo most likely shows behind it, painted by a small neural
-network, **MI-GAN**. Without it, Remove copies texture from around the stroke (patch synthesis), which works well on
+**Remove ▸ Generative AI** fills a Remove stroke with what the photo most likely shows behind it, painted by a neural
+network: **MI-GAN**, small and fast, or, with **High quality**, **LaMa**, larger and slower. Without it, Remove copies texture from around the stroke (patch synthesis), which works well on
 grass, sand and water but can't continue an edge or a shape it can't find nearby.
 
 **The model is optional.** It isn't part of LightCraft, nothing requires it, and everything else works without it.
@@ -12,10 +12,18 @@ grass, sand and water but can't continue an edge or a shape it can't find nearby
    under Size). Turn it off to go back to filling from around the stroke; the switch stays as you leave it.
 2. The first time, the switch offers the model: a one-time download of about 30 MB, its licence (MIT) and its authors.
    Nothing downloads until you press **Download**.
-3. Paint over what should go. "Removing with AI…" shows while it works (about half a second on a computer, a few
-   seconds in a browser), then the spot is added as one undo step.
+3. Paint over what should go. The stroke is there at once, filled from around it; "Removing with AI" shows in the
+   activity stack while the network paints (about half a second with MI-GAN on a computer, seconds with LaMa), and its
+   fill replaces the first one as a second undo step, "AI Remove" (Undo takes the AI fill back and leaves the stroke).
+   In a browser, where there are no threads, the page waits a few seconds behind a "Removing with AI…" notice and the
+   spot is added as one step.
 4. Drag the spot's pin to move it and it is painted again at its new place. Copied spots (Copy / Paste settings,
    presets) leave their fill behind, so on another photo they fill from around them.
+
+**High quality** (below Generative AI, on computers and on phones with the memory for it; not in the browser) paints with
+**LaMa** (Apache-2.0, a 208 MB download after the same consent): larger and about ten times slower on a CPU, it continues
+textures and large areas better than MI-GAN. It is used once downloaded; until then strokes use MI-GAN. A fill is
+stored with its spot whichever network made it. The choice is saved with the app's settings.
 
 **Tap to Remove (SwiftUI iPhone / iPad app).** With Remove selected, **Tap** beside Brush selects by
 tapping: tap an object and Apple Vision's model selects it ([ai-masks.md](ai-masks.md) → On iPhone), and the object's own
@@ -27,10 +35,14 @@ it, for the selected tapped spot as you drag (a spot the AI filled is painted ag
 spot with a shape belongs to its photo: Copy Settings and presets leave it behind. Agents: `spot.add {bitmap: {width,
 height, data}, ai?}` with a selection from outside the engine (`mask.inputImage` shows what the bitmap must line up with).
 
-Agents and scripts: `spot.add {points, size?, feather?, opacity?, "ai": true}`, `spot.erase {index?}` (paint an
-existing Remove spot again). The model: `models.download {"id": "migan", "acknowledged": true}` (only after the user
-agreed), `models.list`, `models.cancel`, `models.delete`. Without the model both commands fail with "The AI Remove model
-(MI-GAN) is not downloaded…" and add nothing.
+Agents and scripts: `spot.add {points, size?, feather?, opacity?, "ai": true, quality?: "fast" | "high", wait?: bool}`,
+`spot.erase {index?, quality?, wait?}` (paint an existing Remove spot again). `wait` (default true) answers when the fill
+is painted; with `wait: false` the answer is `{index, started: true}` at once and the fill follows on a worker (a row
+`erase` in `activity.list`, ✕ cancels it before it starts; an app's host loop stores it: `Session::poll_erase`), dropped
+if the stroke was moved, resized or deleted meanwhile (moving it starts a new one). The models:
+`models.download {"id": "migan" | "lama", "acknowledged": true}` (only after the user agreed), `models.list`,
+`models.cancel`, `models.delete`. Without the model the commands fail with "The AI Remove model (MI-GAN) is not
+downloaded…" (or "…(LaMa)…") and add nothing; `quality: "high"` on a device that doesn't run LaMa says so.
 
 ## How it works
 
@@ -60,7 +72,8 @@ agreed), `models.list`, `models.cancel`, `models.delete`. Without the model both
 - Changing Upright, lens corrections or Transform after painting moves the photo under a fill made for the old geometry;
   paint the spot again (`spot.erase`, or move its pin) after such changes.
 - In the browser the model runs on the page's thread, so the page pauses for a few seconds per stroke (the notice is
-  shown first). Running it in a Web Worker is the next step.
+  shown first). Running it in a Web Worker is the next step. Elsewhere it runs on a worker, one stroke at a time, and a
+  stroke whose fill is still being painted renders as classic Remove.
 - The settings of a photo with many AI spots grow by the size of their fills.
 - The fill is not written to Lightroom's XMP fields; LightCraft keeps it in its own settings (and its XMP block).
 

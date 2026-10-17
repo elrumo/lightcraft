@@ -102,7 +102,10 @@ fn ai_remove_without_its_model_says_so_and_adds_nothing() {
 /// AI spot carries its fill, one undo step; moving the spot moves the fill until it is redone.
 #[test]
 fn ai_remove_stores_the_models_fill_with_the_spot() {
-    let Some(path) = std::env::var_os("LIGHTCRAFT_MIGAN") else { return };
+    let Some(path) = std::env::var_os("LIGHTCRAFT_MIGAN") else {
+        lightcraft_testkit::skip!(Model, "LIGHTCRAFT_MIGAN names no MI-GAN file");
+        return;
+    };
     let mut s = Session::with_demo();
     s.install_eraser(&std::fs::read(path).unwrap()).unwrap();
     assert!(s.eraser_ready());
@@ -123,4 +126,149 @@ fn ai_remove_stores_the_models_fill_with_the_spot() {
     assert_ne!(redone.data, moved.data, "painted again at the new place");
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(spots(&s)[0].fill.as_ref().map(|f| f.rect), Some(moved.rect));
+}
+
+/// A network that fills the hole with the mean of the rest: enough to tell a fill was painted.
+struct Flat;
+
+impl lightcraft_erase::Painter for Flat {
+    fn paint(&self, img: &lightcraft_raster::Rgb32f, hole: &[bool]) -> lightcraft_erase::Result<lightcraft_raster::Rgb32f> {
+        let (mut sum, mut n) = ([0f32; 3], 0f32);
+        for (p, h) in img.data.iter().zip(hole) {
+            if !h {
+                (0..3).for_each(|c| sum[c] += p[c]);
+                n += 1.0;
+            }
+        }
+        let mean = sum.map(|v| v / n.max(1.0));
+        let mut out = img.clone();
+        out.data.iter_mut().zip(hole).filter(|(_, h)| **h).for_each(|(p, _)| *p = mean);
+        Ok(out)
+    }
+
+    fn label(&self) -> &'static str {
+        "flat"
+    }
+}
+
+/// Spot 0 of the demo photo and a job to fill it with [`Flat`].
+fn flat_job(s: &mut Session) -> crate::erase::EraseJob {
+    s.execute("spot.add", &json!({"points": [[0.4, 0.5]], "size": 0.03})).unwrap();
+    let id = s.active().unwrap();
+    let d = (*s.develop_of(id).unwrap()).clone();
+    s.erase_job_with(id, &d, 0, std::sync::Arc::new(Flat)).unwrap()
+}
+
+/// Polls until nothing is being painted (a worker answers in well under a second here).
+fn poll_all(s: &mut Session) -> Vec<String> {
+    let mut errors = Vec::new();
+    for _ in 0..4000 {
+        errors.extend(s.poll_erase());
+        if s.erase_running() == 0 {
+            return errors;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    panic!("the fill never finished");
+}
+
+#[test]
+fn a_fill_painted_on_a_worker_is_stored_with_its_spot_as_one_undo_step() {
+    let mut s = Session::with_demo();
+    let job = flat_job(&mut s);
+    s.spawn_erase(job, "test").unwrap();
+    assert_eq!(s.erase_running(), 1);
+    assert!(poll_all(&mut s).is_empty());
+    let fill = spots(&s)[0].fill.clone().expect("the fill arrived");
+    assert!(fill.w.max(fill.h) <= 512 && fill.pixels().is_some());
+    assert!(s.activity.list().iter().all(|t| t.kind != "erase"), "its row in the activity stack ended");
+    s.execute("edit.undo", &json!({})).unwrap();
+    let sp = &spots(&s)[0];
+    assert!(sp.fill.is_none(), "undo takes the fill back, the stroke stays (it renders as a plain Remove)");
+}
+
+#[test]
+fn a_fill_whose_stroke_changed_meanwhile_is_dropped() {
+    let mut s = Session::with_demo();
+    let job = flat_job(&mut s);
+    s.spawn_erase(job, "test").unwrap();
+    s.execute("spot.update", &json!({"move": [0.1, 0.0]})).unwrap();
+    assert!(poll_all(&mut s).is_empty(), "no error for a fill nobody wants");
+    assert!(spots(&s)[0].fill.is_none(), "the moved stroke gets no fill of the old place");
+    // deleted: nothing to store, nothing breaks
+    let job = flat_job(&mut s);
+    s.spawn_erase(job, "test").unwrap();
+    s.execute("spot.delete", &json!({"index": 1})).unwrap();
+    assert!(poll_all(&mut s).is_empty());
+    assert_eq!(spots(&s).len(), 1);
+}
+
+#[test]
+fn a_fill_cancelled_in_the_activity_stack_before_its_turn_is_not_painted() {
+    let mut s = Session::with_demo();
+    let job = flat_job(&mut s);
+    // another fill holds the turn, so this one waits with its row up
+    let turn = s.eraser.turn.clone();
+    let held = turn.lock().unwrap();
+    s.spawn_erase(job, "test").unwrap();
+    let row = s.activity.list().into_iter().find(|t| t.kind == "erase").expect("a row while it waits");
+    s.activity.cancel(row.id).unwrap();
+    drop(held);
+    assert!(poll_all(&mut s).is_empty(), "cancelling is not an error");
+    assert!(spots(&s)[0].fill.is_none());
+}
+
+#[test]
+fn ai_remove_says_what_is_missing_and_adds_nothing() {
+    let mut s = Session::with_demo();
+    let before = spots(&s).len();
+    for params in [
+        json!({"points": [[0.4, 0.5]], "ai": true, "wait": false}),
+        json!({"points": [[0.4, 0.5]], "ai": true, "quality": "high"}),
+        json!({"points": [[0.4, 0.5]], "ai": true, "quality": "high", "wait": false}),
+    ] {
+        let e = s.execute("spot.add", &params).unwrap_err().to_string();
+        assert!(e.contains("not downloaded") || e.contains("LaMa"), "{e}");
+    }
+    let e = s.execute("spot.add", &json!({"points": [[0.4, 0.5]], "ai": true, "quality": "best"})).unwrap_err().to_string();
+    assert!(e.contains("unknown quality"), "{e}");
+    assert_eq!(spots(&s).len(), before, "a refused command leaves no spot");
+    assert!(!s.remove_ready(crate::erase::RemoveQuality::High) && !s.remove_ready(crate::erase::RemoveQuality::Fast));
+    assert_eq!(crate::erase::RemoveQuality::from_id("high").map(|q| q.model_id()), Some("lama"));
+}
+
+/// With LaMa (a copy at `$LIGHTCRAFT_LAMA`; it is never part of the repository) `quality: high` paints the fill with it,
+/// on a worker and as one undo step; the Fast model is not needed for it.
+#[test]
+fn high_quality_ai_remove_paints_with_lama_on_a_worker() {
+    let Some(path) = std::env::var_os("LIGHTCRAFT_LAMA") else {
+        lightcraft_testkit::skip!(Model, "LIGHTCRAFT_LAMA names no LaMa file");
+        return;
+    };
+    let mut s = Session::with_demo();
+    s.set_device(crate::hardware::DeviceProfile {
+        class: crate::hardware::DeviceClass::Computer,
+        memory_bytes: Some(32 * crate::hardware::GB),
+        gpu: false,
+        cores: 8,
+    });
+    let dir = std::env::temp_dir().join(format!("lc-remove-hq-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("lama")).unwrap();
+    let file = dir.join("lama").join(lightcraft_erase::lama::FILE);
+    if std::fs::hard_link(&path, &file).is_err() {
+        std::fs::copy(&path, &file).unwrap();
+    }
+    s.enhancer.dir = Some(dir.clone());
+    assert!(s.remove_ready(crate::erase::RemoveQuality::High) && !s.remove_ready(crate::erase::RemoveQuality::Fast));
+    let r =
+        s.execute("spot.add", &json!({"points": [[0.4, 0.5], [0.45, 0.52]], "size": 0.03, "ai": true, "quality": "high", "wait": false})).unwrap();
+    assert_eq!(r["started"], true);
+    assert!(spots(&s)[0].fill.is_none(), "the spot is there at once, the fill follows");
+    assert!(s.activity.list().iter().any(|t| t.kind == "erase"));
+    assert!(poll_all(&mut s).is_empty());
+    let fill = spots(&s)[0].fill.clone().expect("LaMa's fill");
+    assert!(fill.w.max(fill.h) <= 512 && fill.pixels().is_some());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(spots(&s)[0].fill.is_none());
+    let _ = std::fs::remove_dir_all(dir);
 }

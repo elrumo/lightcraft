@@ -6,7 +6,7 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_develop::{DevelopSettings, MaskShape, mask_handles};
 use lightcraft_geom::{Affine, Point};
 use lightcraft_pipeline::geometry::Frame;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::LightcraftApp;
 use crate::haptics::{self, Haptic};
@@ -3186,7 +3186,9 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
             let _ = app.run("develop.endInteraction", json!({}));
             // an AI spot moved: its fill went along, paint the new place
             if !source && d.spots.get(spot).is_some_and(|sp| sp.fill.is_some()) {
-                crate::erase::queue(app, ui.ctx(), "spot.erase", json!({"index": spot}));
+                let mut params = crate::erase::ai_params(crate::erase::quality(app));
+                params["index"] = json!(spot);
+                crate::erase::queue(app, ui.ctx(), "spot.erase", params);
             }
         }
         return;
@@ -3228,9 +3230,11 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
         let pts: Vec<[f64; 2]> = points.iter().map(|q| [q.x, q.y]).collect();
         let params =
             json!({"mode": mode, "points": pts, "size": app.ui.remove_size, "feather": app.ui.remove_feather, "opacity": app.ui.remove_opacity});
-        if mode == "remove" && crate::erase::wanted(app, ui.ctx()) {
+        if let Some(q) = (mode == "remove").then(|| crate::erase::wanted(app, ui.ctx())).flatten() {
             let mut params = params;
-            params["ai"] = json!(true);
+            if let (Some(p), Value::Object(extra)) = (params.as_object_mut(), crate::erase::ai_params(q)) {
+                p.extend(extra);
+            }
             crate::erase::queue(app, ui.ctx(), "spot.add", params);
         } else {
             let _ = app.run("spot.add", params);

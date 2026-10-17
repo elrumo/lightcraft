@@ -1119,6 +1119,8 @@ pub struct UiState {
     /// Remove tool ▸ Generative AI: new Remove strokes are filled by the AI Remove model (saved in
     /// `ui.json`, so it stays as the user left it).
     pub remove_ai: bool,
+    /// Remove tool ▸ Generative AI ▸ High quality: paint with LaMa (larger, slower) when it is downloaded and this device runs it.
+    pub remove_hq: bool,
     /// Crop ▸ Expand ▸ Fill With: the Generative Expand model the user picked (`migan`, `lama`,
     /// `classic`; empty: the best one on this device). Saved in `ui.json`.
     pub expand_model: String,
@@ -1812,6 +1814,7 @@ impl Default for UiState {
             remove_feather: 50.0,
             remove_opacity: 100.0,
             remove_ai: false,
+            remove_hq: false,
             expand_model: String::new(),
             expand_pending: None,
             point_color: 0,

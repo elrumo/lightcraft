@@ -1004,6 +1004,7 @@ impl Engine {
         self.poll_export();
         self.poll_super_res();
         self.poll_expand();
+        self.poll_erase();
         self.poll_merge();
         self.poll_vision();
         self.poll_lightroom();
@@ -1353,6 +1354,17 @@ impl Engine {
             Err(e) => (format!("Generate failed: {e}"), "error"),
         };
         self.events.push(Event::Message { text, level: level.into() }.to_value());
+    }
+
+    /// AI Remove fills painted on a worker (`spot.add` / `spot.erase` with `wait: false`): store the finished ones, one
+    /// undo step each, and say which failed.
+    fn poll_erase(&mut self) {
+        for e in self.session.poll_erase() {
+            self.events.push(Event::Message { text: format!("AI Remove failed: {e}"), level: "error".into() }.to_value());
+        }
+        if self.session.erase_running() > 0 {
+            self.busy = true;
+        }
     }
 
     fn poll_super_res(&mut self) {

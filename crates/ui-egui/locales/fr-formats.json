@@ -350,5 +350,8 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Catalogue Lightroom analysé : {albums} albums, {folders} dossiers, {photos} photos dans des albums",
   "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} photos correspondent à plusieurs photos ici et ont été ignorées.",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} des photos des albums sont dans cette bibliothèque ; {unmatched} n’y sont pas et ont été ignorées.",
-  "{updated} albums that were already here got photos.": "{updated} albums déjà présents ont reçu des photos."
+  "{updated} albums that were already here got photos.": "{updated} albums déjà présents ont reçu des photos.",
+  "Downloading LaMa… {:.0} %": "Téléchargement de LaMa… {:.0} %",
+  "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.": "Utilise le modèle LaMa, un téléchargement de {:.0} Mo (licence {}). {}. Tant qu’il n’est pas téléchargé, les traits utilisent le modèle rapide.",
+  "AI Remove failed: {}": "Échec de la suppression par IA : {}"
 }

@@ -350,5 +350,8 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Katalog Lightroom byl prozkoumán: alb: {albums}, složek: {folders}, fotografií v albech: {photos}",
   "{ambiguous} photos fit more than one photo here, and were left out.": "Fotografií, které odpovídají více fotografiím zde, a proto byly vynechány: {ambiguous}.",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "Fotografií z alb v této knihovně: {matched}; nejsou v ní, a proto byly vynechány: {unmatched}.",
-  "{updated} albums that were already here got photos.": "Alb, která tu už byla a přibyly do nich fotografie: {updated}."
+  "{updated} albums that were already here got photos.": "Alb, která tu už byla a přibyly do nich fotografie: {updated}.",
+  "Downloading LaMa… {:.0} %": "Downloading LaMa… {:.0} %",
+  "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.": "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.",
+  "AI Remove failed: {}": "AI Remove failed: {}"
 }

@@ -1127,7 +1127,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Remove Spot",
             [],
             None,
-            "{mode?: remove|heal|clone|fill (content-aware), points: [[x,y],…] | bitmap: {width, height, data} (Tap to Remove: a selection of the photo as `mask.inputImage` shows it; the object is the area), size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby), ai?: bool (Remove only: the AI Remove model paints the fill)} — selects the new spot; returns {index}",
+            "{mode?: remove|heal|clone|fill (content-aware), points: [[x,y],…] | bitmap: {width, height, data} (Tap to Remove: a selection of the photo as `mask.inputImage` shows it; the object is the area), size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby), ai?: bool (Remove only: the AI Remove model paints the fill), quality?: `fast` (MI-GAN, default) | `high` (LaMa: larger, slower, better on textures and big areas; needs its model), wait?: bool (default true: the fill is painted before the command answers; false: the spot is added at once, filled like a plain Remove, and the fill follows on a worker as its own undo step, `AI Remove`, with a row in the activity stack)} — selects the new spot; returns {index} (and started: true with wait: false)",
             has_active,
             |s, p| {
                 let mode: SpotMode =
@@ -1162,6 +1162,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 if ai && mode != SpotMode::Remove {
                     return Err(bad("spot.add", "AI fills Remove spots only"));
                 }
+                let quality = remove_quality(p, "spot.add")?;
+                let wait = bool_or(p, "wait", true);
                 let id = s.active().ok_or_else(|| bad("spot.add", "no active photo"))?;
                 let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
                 if spot.source_offset.is_none() && spot.mode != SpotMode::Fill && !ai {
@@ -1170,12 +1172,17 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 dd.spots.push(spot);
                 let n = dd.spots.len();
-                if ai {
-                    s.erase_spot(id, &mut dd, n - 1).map_err(|e| bad("spot.add", e))?;
+                if ai && wait {
+                    s.erase_spot_with(id, &mut dd, n - 1, quality).map_err(|e| bad("spot.add", e))?;
                 }
-                s.set_develop(id, dd, if ai { "AI Remove" } else { "Remove" })?;
+                // (started before the spot is stored, so a network that isn't there refuses the whole command)
+                let started = ai && !wait;
+                if started {
+                    s.start_erase(id, &dd, n - 1, quality).map_err(|e| bad("spot.add", e))?;
+                }
+                s.set_develop(id, dd, if ai && wait { "AI Remove" } else { "Remove" })?;
                 s.active_spot = Some(n - 1);
-                Ok(json!({"index": n - 1}))
+                Ok(if started { json!({"index": n - 1, "started": true}) } else { json!({"index": n - 1}) })
             }
         ),
         cmd!(
@@ -1183,7 +1190,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "AI Remove Spot",
             [],
             None,
-            "{index? (the selected spot)} — (re)fills a Remove spot with the AI Remove model, e.g. after moving or resizing it",
+            "{index? (the selected spot), quality?: \"fast\" | \"high\" (as spot.add), wait?: bool (default true; false: the fill follows on a worker, as spot.add)} — (re)fills a Remove spot with the AI Remove model, e.g. after moving or resizing it",
             has_active,
             |s, p| {
                 let c = "spot.erase";
@@ -1193,7 +1200,12 @@ pub fn specs() -> Vec<CommandSpec> {
                 if dd.spots.get(i).is_none_or(|sp| sp.mode != SpotMode::Remove) {
                     return Err(bad(c, "AI fills Remove spots only"));
                 }
-                s.erase_spot(id, &mut dd, i).map_err(|e| bad(c, e))?;
+                let quality = remove_quality(p, c)?;
+                if !bool_or(p, "wait", true) {
+                    s.start_erase(id, &dd, i, quality).map_err(|e| bad(c, e))?;
+                    return Ok(json!({"index": i, "started": true}));
+                }
+                s.erase_spot_with(id, &mut dd, i, quality).map_err(|e| bad(c, e))?;
                 s.set_develop(id, dd, "AI Remove")?;
                 Ok(json!({"index": i}))
             }
@@ -1367,6 +1379,14 @@ fn spots_len(s: &Session) -> usize {
 }
 
 /// `index` from the params, else the selected spot.
+/// `quality` of `spot.add` / `spot.erase`: how AI Remove paints (default fast).
+fn remove_quality(p: &Value, c: &str) -> Result<crate::erase::RemoveQuality> {
+    match p.get("quality").and_then(Value::as_str) {
+        None => Ok(crate::erase::RemoveQuality::Fast),
+        Some(q) => crate::erase::RemoveQuality::from_id(q).ok_or_else(|| bad(c, format!("unknown quality `{q}` (fast, high)"))),
+    }
+}
+
 fn spot_index(s: &Session, p: &Value, c: &str) -> Result<usize> {
     let i = p.get("index").and_then(Value::as_u64).map(|v| v as usize).or(s.active_spot).ok_or_else(|| bad(c, "no spot selected (give `index`)"))?;
     if i >= spots_len(s) {

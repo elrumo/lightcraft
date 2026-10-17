@@ -350,5 +350,8 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "已检查 Lightroom 目录：{albums} 个相册，{folders} 个文件夹，相册中有 {photos} 张照片",
   "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} 张照片与此处多张照片相符，已略过。",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "相册中的照片有 {matched} 张在此图库中；{unmatched} 张不在，已略过。",
-  "{updated} albums that were already here got photos.": "{updated} 个已有相册加入了照片。"
+  "{updated} albums that were already here got photos.": "{updated} 个已有相册加入了照片。",
+  "Downloading LaMa… {:.0} %": "正在下载 LaMa… {:.0} %",
+  "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.": "使用 LaMa 模型（需下载 {:.0} MB，{} 许可证）。{}。下载完成前，笔触使用快速模型。",
+  "AI Remove failed: {}": "AI 移除失败：{}"
 }
