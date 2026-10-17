@@ -187,6 +187,41 @@ fn newer_snapshot_is_refused_untouched() {
     assert!(e.contains(&format!("v{}", VERSION + 1)), "{e}");
 }
 
+/// The header is read from the bytes before `"catalog":`; a file laid out otherwise is still read whole, and the
+/// refusals are the same either way.
+#[test]
+fn snapshot_header_is_read_from_the_prefix_or_the_whole_file() {
+    let (base, _, _) = legacy_parts();
+    let cat = base.to_snapshot();
+    let head = format!("\"format\":\"lightcraft-catalog\",\"version\":{VERSION},\"seq\":2");
+    // catalog first, header after: the prefix holds no header, the whole file does
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"catalog\":{cat},{head}}}\n").into_bytes());
+    let (_, c, r) = Journal::open(Box::new(m)).unwrap();
+    assert_eq!((c.to_snapshot(), r.snapshot_seq), (cat.clone(), 2));
+    // spaces around the header's keys
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{ {head} , \"catalog\" : {cat} }}\n").into_bytes());
+    assert_eq!(Journal::open(Box::new(m)).unwrap().1.to_snapshot(), cat);
+    // another format, refused from the prefix alone
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"other\",\"version\":1,\"seq\":0,\"catalog\":{cat}}}\n").into_bytes());
+    let e = Journal::open(Box::new(m)).err().unwrap();
+    assert!(matches!(e, CatalogError::Corrupt(_)) && e.to_string().contains("not a LightCraft catalog"), "{e}");
+    // a `"catalog":` inside the format string cuts the prefix short: read whole, refused the same
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"a\\\"catalog\\\":b\",\"version\":1,\"seq\":0,\"catalog\":{cat}}}\n").into_bytes());
+    let e = Journal::open(Box::new(m)).err().unwrap();
+    assert!(matches!(e, CatalogError::Corrupt(_)) && e.to_string().contains("not a LightCraft catalog"), "{e}");
+    // no header at all, or no JSON: corrupt
+    for bytes in [b"{\"catalog\":{}}\n".to_vec(), b"\"catalog\":".to_vec(), Vec::new(), b"{\"format\":\"lightcraft-catalog\",".to_vec()] {
+        let m = MemStore::new();
+        m.set(SNAPSHOT, bytes);
+        let e = Journal::open(Box::new(m)).err().unwrap();
+        assert!(matches!(e, CatalogError::Corrupt(_)), "{e:?}");
+    }
+}
+
 /// A log record with a valid CRC whose op this version doesn't know: refused, not taken for a
 /// torn tail (truncated) or damage (renamed) — wherever it is in the log.
 #[test]
