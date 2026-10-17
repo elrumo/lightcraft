@@ -38,7 +38,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     // a long name is cut short (with …) at the panel's edge
     let g = one_line(ui.painter(), crate::i18n::profile_label(&d.profile.id, name), t.font(14.0), t.text_label, cr.width() - 84.0 - 24.0);
     ui.painter().galley(pos2(cr.left() + 84.0, cr.center().y - g.size().y / 2.0), g, t.text_label);
-    if d.profile.id != "lc.color" {
+    if lightcraft_engine::presets::has_amount(&d.profile.id) {
         super::edit::control(app, ui, &d, "profile.amount", true);
         ui.add_space(6.0);
     }

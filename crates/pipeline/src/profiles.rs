@@ -41,11 +41,15 @@ fn fade(pts: &mut Vec<Point>, black: f64, white: f64, k: f64) {
     }
 }
 
+/// The Camera Matching profile: the camera's own look where the source carries one ([`crate::CameraMatch`], swapped
+/// in by the engine before the pipeline runs), else the same as `lc.color`. No slider deltas, no amount.
+pub const CAMERA: &str = "lc.camera";
+
 /// The settings the pipeline actually renders: user settings plus the profile's look.
 pub fn effective(s: &DevelopSettings) -> Cow<'_, DevelopSettings> {
     let k = (s.profile.amount / 100.0).clamp(0.0, 2.0);
     let id = s.profile.id.as_str();
-    if id == "lc.color" || id.is_empty() || k == 0.0 {
+    if id == "lc.color" || id == CAMERA || id.is_empty() || k == 0.0 {
         return Cow::Borrowed(s);
     }
     let mut e = s.clone();

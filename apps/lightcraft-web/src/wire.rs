@@ -192,17 +192,17 @@ impl WorkerCore {
                     // a synced photo's preview standing in for its original (no decoder facts:
                     // the catalog's); kept only when it is the right one for this size
                     (Source::File { .. }, Some(bytes)) if lightcraft_engine::smart::is_smart_preview(bytes) => {
-                        let (mut image, camera_tone) = lightcraft_engine::smart::decode(bytes)?;
+                        let (mut image, camera_tone, camera_match) = lightcraft_engine::smart::decode(bytes)?;
                         let small = image.width.max(image.height) <= lightcraft_engine::cloud_sync::MINI_EDGE;
                         if image.width.max(image.height) > job.max_edge {
                             use lightcraft_raster::resample::{Filter, fit};
                             image = fit(&image, job.max_edge, job.max_edge, Filter::Mitchell);
                         }
-                        let src = DecodedSource { image: Arc::new(image), info: None, camera_tone, denoised: None };
+                        let src = DecodedSource::proxy(image, camera_tone, camera_match);
                         if small && job.max_edge > lightcraft_engine::cloud_sync::MINI_EDGE {
                             // the smart preview is on its way: don't keep the stand-in
-                            let info = src.info_or(job.info());
-                            return Ok(lightcraft_engine::pipeline::render(&src.image, &info, &job.settings, &job.request()));
+                            let (image, info) = src.develop_input(&job.settings, job.info());
+                            return Ok(lightcraft_engine::pipeline::render(&image, &info, &job.settings, &job.request()));
                         }
                         src
                     }
@@ -220,16 +220,17 @@ impl WorkerCore {
                 src
             }
         };
-        let info = src.info_or(job.info());
+        // (in the camera's own look for the Camera Matching profile)
+        let (image, info) = src.develop_input(&job.settings, job.info());
         let mut rendered = match &job.stages {
             Some(view) => {
                 let st = self.stages.entry(view.clone()).or_default().clone();
-                lightcraft_engine::pipeline::render_cached(&src.image, &info, &job.settings, &job.request(), &st)
+                lightcraft_engine::pipeline::render_cached(&image, &info, &job.settings, &job.request(), &st)
             }
-            None => lightcraft_engine::pipeline::render(&src.image, &info, &job.settings, &job.request()),
+            None => lightcraft_engine::pipeline::render(&image, &info, &job.settings, &job.request()),
         };
         // an HDR edit's histogram shows its HDR range (as on native)
-        if let Some(h) = lightcraft_engine::pipeline::hdr_histogram(&src.image, &info, &job.settings, &job.request()) {
+        if let Some(h) = lightcraft_engine::pipeline::hdr_histogram(&image, &info, &job.settings, &job.request()) {
             rendered.histogram = h;
         }
         Ok(rendered)

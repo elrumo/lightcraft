@@ -11,7 +11,9 @@
   shot with custom picture styles it lands within about 1 L\* of Lightroom's default export, with the same
   colourfulness at every brightness (colour difference 5.6 → 4.6). Some hues still differ (Lightroom renders yellows a
   little warmer), and corners stay darker without a lens profile for RF lenses.
-- Photos open faster too: the embedded JPEG is no longer read to fit a look.
+- The look the camera gave the photo is still there: choose the **Camera Look** profile (Profile ▸ Camera Matching)
+  to see the photo as the camera's JPEG showed it, picture style and all, as LightCraft opened it before. It works on
+  phones that show photos from a sync server's previews too.
 - Smart previews of raws are rebuilt once from their originals. A server rebuilds its photos' previews with Rebuild
   all previews on its admin page.
 

@@ -1737,7 +1737,7 @@ fn malformed_smart_preview_look_versions_are_handled() {
     let dir = temp_dir("smartlook-bad");
     let img = lightcraft_scenes::demo_library()[0].render(32, 20);
     let file = dir.join("a.lcsp");
-    std::fs::write(&file, crate::smart::encode(&img, None).unwrap()).unwrap();
+    std::fs::write(&file, crate::smart::encode(&img, None, None).unwrap()).unwrap();
     let cur = u64::from(crate::camera_preview::LOOK_VERSION);
     for bad in [json!("1"), json!(-1), json!(1.5), json!(null), json!([]), json!({}), json!(true), json!(1e30), json!(-0.0)] {
         let shown = bad.to_string();

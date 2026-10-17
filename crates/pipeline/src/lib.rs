@@ -70,6 +70,33 @@ pub struct CameraColor {
     pub developed_for: lightcraft_color::Xy,
 }
 
+/// A raw's camera look, for a raw whose source pixels carry another starting look (a Canon CR3 of a model with
+/// measured matrices starts from LightCraft's neutral look, not from a fit to its camera JPEG): `matrix`, then
+/// `hue_sat`, turn those pixels into the ones the camera look gives, and `tone` takes the place of
+/// [`SourceInfo::camera_tone`]. The Camera Matching profile ([`profiles::CAMERA`]) renders it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CameraMatch {
+    /// Linear Rec.2020 of the starting look → of the camera look, before `hue_sat`.
+    pub matrix: lightcraft_color::Mat3,
+    /// The camera look's hue/saturation table (applied in linear ProPhoto RGB, as a DNG `ProfileHueSatMap`).
+    pub hue_sat: Option<lightcraft_raw::profile::HsvTable>,
+    /// The camera look's tone curve; `None`: the default raw tone map.
+    pub tone: Option<tone::CameraTone>,
+}
+
+impl CameraMatch {
+    /// `self` if every number in it is usable (it may come from a file): a finite matrix and a hue/saturation table
+    /// whose size matches its divisions, read as a DNG file's would be (the tone curve checks itself when it is read).
+    pub fn checked(mut self) -> Option<CameraMatch> {
+        if let Some(t) = self.hue_sat.take() {
+            let data: Vec<f64> = t.data.iter().flatten().map(|v| f64::from(*v)).collect();
+            let dims = [t.hue_divisions, t.sat_divisions, t.val_divisions].map(|d| d as u64);
+            self.hue_sat = Some(lightcraft_raw::profile::HsvTable::from_tags(&dims, &data, u64::from(t.srgb_value))?);
+        }
+        self.matrix.0.iter().flatten().all(|v| v.is_finite()).then_some(self)
+    }
+}
+
 /// Facts about the source the settings are interpreted against.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceInfo {
@@ -90,6 +117,9 @@ pub struct SourceInfo {
     /// the developed pixels (Bradford, linear Rec.2020).
     pub camera_color: Option<Arc<CameraColor>>,
     pub camera_tone: Option<tone::CameraTone>,
+    /// The camera's own look, for a raw whose source starts from another one: what the Camera Matching profile
+    /// ([`profiles::CAMERA`]) renders.
+    pub camera_match: Option<Arc<CameraMatch>>,
     /// Segmentation mattes stored in the file (DNG semantic masks): AI masks use them.
     pub mattes: Option<Arc<masks::Mattes>>,
     /// The raw's own local tone mapping (DNG `ProfileGainTableMap`), rendered only when the
@@ -113,6 +143,7 @@ impl Default for SourceInfo {
             legacy_relative_wb: false,
             camera_color: None,
             camera_tone: None,
+            camera_match: None,
             mattes: None,
             local_tone: None,
             native_long: None,

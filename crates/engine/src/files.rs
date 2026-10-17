@@ -495,7 +495,7 @@ fn load_bytes_now(
         // the camera's measured matrices (`Photo::relative_wb` decides the same from the catalog's camera)
         let scale = WbScaleOf::new(raw.format, &raw.color, raw.wb_multipliers, &raw.metadata);
         // the source's segmentation mattes (DNG semantic masks), read while the starting colour is fitted
-        let ((xy, t, camera_look), mattes) = rayon::join(
+        let ((xy, t, camera_look, camera_match), mattes) = rayon::join(
             || crate::camera_preview::starting_colour(&mut raw, &bytes, lens_geometry.as_ref(), lens.as_ref()),
             || dng_mattes(&bytes, &info),
         );
@@ -589,6 +589,7 @@ fn load_bytes_now(
                 legacy_relative_wb: scale.legacy_relative,
                 camera_color,
                 camera_tone,
+                camera_match: camera_match.map(Arc::new),
                 mattes,
                 local_tone,
                 // (the catalog knows the original's size: `media::source_info`)

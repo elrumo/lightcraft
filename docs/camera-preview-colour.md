@@ -207,8 +207,39 @@ Unchanged: CR2s and CR3s of models without measured matrices keep the per-file f
 yet); a monochrome picture style now renders in colour on these models, as in Lightroom; white balance is in Kelvin
 through the matrices as before. The look is a property of the decoded source, so no process version changes;
 `LOOK_VERSION` 11 rebuilds the smart previews of raws and `RENDER_CACHE_VERSION` 67 redraws renders. A sync server needs
-the new build and Rebuild all previews. Today's look (the camera JPEG's) is not offered as a profile yet: a Camera
-Matching profile needs the proxies to carry both looks.
+the new build and Rebuild all previews.
+
+### The camera's look as a profile: Camera Look
+
+The look these CR3s started from before stays on offer as the **Camera Look** profile (`lc.camera`, in a Camera
+Matching group, without an Amount), as Lightroom offers its Camera Matching profiles. The decode still fits the camera
+JPEG (the order of precedence below, as if step 2 were not there) and keeps the difference between the two looks with
+the source (`camera_preview::camera_match`, `lightcraft_pipeline::CameraMatch`): one 3×3 matrix from the neutral look's
+linear Rec.2020 to the fitted look's (both develop the same white-balanced camera RGB, so one matrix carries the change
+of matrices, white-balance multipliers and baseline exposure), the fit's hue/saturation table, and its tone curve
+(none when the fit failed: the default tone map, or a black-and-white JPEG's curve). When a render's profile is Camera
+Look, the engine turns the decoded picture into the camera look (`DecodedSource::develop_input`), once per picture, and
+keeps it while only sliders move; the tone curve takes the neutral one's place. White balance, exposure and every
+slider keep their values and their meaning, so switching looks never moves a slider. The CPU and GPU pipelines see an
+ordinary source picture.
+
+Smart previews, and a sync server's previews that a phone renders from, carry the camera look in a JPEG segment of
+their own (`smart.rs`, APP11, zlib-compressed JSON, about 8 KB for the corpus EOS R6 file; older builds skip it), so the profile works without the original;
+`LOOK_VERSION` 12 rebuilds raw previews once to add it. Against a render of the same photo by the build before the
+neutral look (2048 px PNGs from `lightcraft-cli render` of the 19 EOS R6 photos above), Camera Look differs by 0.014
+levels on average (median photo; 0.001 to 0.125), and on the median photo 0.001% of pixels differ by more than 2
+levels; Color differs from it by 13.4 levels on average, 98% of pixels by more than 2. The CC0 corpus's EOS R, R5 and
+R6 CR3s agree as closely (at most 0.02% of pixels more than 2 levels off), and its EOS 90D (no measured matrices)
+renders byte-identically in every profile. The camera look is rebuilt on the neutral decode, so what that decode
+loses stays lost: fully clipped highlights are rebuilt neutral through the measured matrices rather than through the
+fit, and the camera look's matrix then tints them by a few levels (in 4 of the 19 photos, 0.1–2% of pixels, all in
+blown highlights, differ by more than 2 levels, at most 1% by more than 5); colours the measured matrices put below
+zero in Rec.2020 are clipped before that matrix applies.
+
+Every other photo renders Camera Look exactly as Color: raws whose starting look already is the fit to their camera
+JPEG (CR2s, other makes, CR3s of models without measured matrices), DNGs, which carry their own profile, and non-raw
+files. The tools that read the photo's pixels to set sliders (Auto, Auto White Balance, the white-balance picker) read
+the neutral look.
 
 ## Spectral camera matrices and the order of precedence
 

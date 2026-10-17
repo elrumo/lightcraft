@@ -646,6 +646,8 @@ pub const PROFILES: &[ProfileInfo] = &[
     ProfileInfo { id: "lc.landscape", name: "Landscape", group: "Basic" },
     ProfileInfo { id: "lc.portrait", name: "Portrait", group: "Basic" },
     ProfileInfo { id: "lc.mono", name: "Monochrome", group: "Basic" },
+    // the look the camera gave the photo (its picture style), for a raw that starts from another one
+    ProfileInfo { id: crate::pipeline::profiles::CAMERA, name: "Camera Look", group: "Camera Matching" },
     ProfileInfo { id: "lc.film.warm-print", name: "Warm Print", group: "Film" },
     ProfileInfo { id: "lc.film.cool-fade", name: "Cool Fade", group: "Film" },
     ProfileInfo { id: "lc.film.golden-hour", name: "Golden Hour", group: "Film" },
@@ -663,6 +665,12 @@ pub const PROFILES: &[ProfileInfo] = &[
     ProfileInfo { id: "lc.bw.soft", name: "Mono Soft", group: "B&W" },
     ProfileInfo { id: "lc.bw.sepia", name: "Sepia Tone", group: "B&W" },
 ];
+
+/// Whether profile `id` has an Amount: every one but Color and Camera Look, which are starting points, not looks
+/// laid over one (as in Lightroom, whose Adobe Raw and Camera Matching profiles have none).
+pub fn has_amount(id: &str) -> bool {
+    id != "lc.color" && id != crate::pipeline::profiles::CAMERA
+}
 
 /// Profile groups in menu/browser order.
 pub fn profile_groups() -> Vec<&'static str> {
@@ -701,8 +709,7 @@ impl Session {
 
     /// The profile menu: favourites, recent, then every group (`profiles.menu`).
     pub fn profile_menu(&self) -> Value {
-        let item =
-            |p: &ProfileInfo| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.iter().any(|f| f == p.id)});
+        let item = |p: &ProfileInfo| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.iter().any(|f| f == p.id), "amount": has_amount(p.id)});
         let lut_item = |id: &str| {
             self.lut_profiles
                 .iter()
@@ -756,10 +763,10 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for p in PROFILES {
             assert!(ids.insert(p.id), "{}", p.id);
-            assert!(p.id == "lc.color" || looks.contains(&p.id), "{} has no look", p.id);
+            assert!(!has_amount(p.id) || looks.contains(&p.id), "{} has no look", p.id);
         }
         assert!(PROFILES.len() >= 22);
-        assert_eq!(profile_groups(), ["Basic", "Film", "Cinematic", "Muted", "B&W"]);
+        assert_eq!(profile_groups(), ["Basic", "Camera Matching", "Film", "Cinematic", "Muted", "B&W"]);
     }
 
     #[test]

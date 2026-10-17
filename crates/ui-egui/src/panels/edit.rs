@@ -178,7 +178,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 });
             });
         });
-        if d.profile.id != "lc.color" {
+        if lightcraft_engine::presets::has_amount(&d.profile.id) {
             control(app, ui, &d, "profile.amount", true);
             ui.add_space(6.0);
         }

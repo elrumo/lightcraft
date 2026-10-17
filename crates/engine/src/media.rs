@@ -201,13 +201,52 @@ pub struct DecodedSource {
     /// A smart preview's stored camera tone curve: the one decoder fact its pixels need that the
     /// catalog's header facts lack (used when `info` is `None`).
     pub camera_tone: Option<lightcraft_pipeline::tone::CameraTone>,
+    /// A smart preview's stored camera look (Camera Matching), like `camera_tone`.
+    pub camera_match: Option<Arc<lightcraft_pipeline::CameraMatch>>,
     /// The same picture developed from the AI-denoised mosaic, when the photo has one cached.
     pub denoised: Option<Arc<Twin>>,
+    /// The picture last developed in the camera's own look, and the one it was made from ([`Self::develop_input`]).
+    pub camera_matched: Arc<std::sync::Mutex<Option<(Arc<Rgb32f>, Arc<Rgb32f>)>>>,
 }
 
 impl DecodedSource {
     pub fn new(image: Arc<Rgb32f>, info: Option<SourceInfo>) -> Self {
-        DecodedSource { image, info, camera_tone: None, denoised: None }
+        DecodedSource { image, info, camera_tone: None, camera_match: None, denoised: None, camera_matched: Default::default() }
+    }
+
+    /// A smart preview's picture with its stored camera tone curve and camera look (no decoder facts).
+    pub fn proxy(
+        image: Rgb32f,
+        camera_tone: Option<lightcraft_pipeline::tone::CameraTone>,
+        camera_match: Option<Arc<lightcraft_pipeline::CameraMatch>>,
+    ) -> Self {
+        DecodedSource { camera_tone, camera_match, ..DecodedSource::new(Arc::new(image), None) }
+    }
+
+    /// The picture and facts to develop `s` from: [`Self::image_for`] its Denoise amount and [`Self::info_or`]
+    /// `header`, in the camera's own look when `s` has the Camera Matching profile and the source carries that look
+    /// ([`lightcraft_pipeline::CameraMatch`]; any other source renders as with `lc.color`). That picture is made once
+    /// and kept while the profile stays, so the stages after it are reused as sliders move; a thumbnail-size one is
+    /// not kept (rendered once, and its cache entry's cost was counted when it was stored).
+    pub fn develop_input(&self, s: &DevelopSettings, header: SourceInfo) -> (Arc<Rgb32f>, SourceInfo) {
+        let image = self.image_for(s.denoise_amount());
+        let mut info = self.info_or(header);
+        // (never held while the picture is made: the UI thread reads the cost through it)
+        let kept = || self.camera_matched.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(m) = info.camera_match.clone().filter(|_| s.profile.id == lightcraft_pipeline::profiles::CAMERA) else {
+            *kept() = None;
+            return (image, info);
+        };
+        info.camera_tone = m.tone;
+        let hit = kept().as_ref().filter(|(from, _)| Arc::ptr_eq(from, &image)).map(|(_, matched)| matched.clone());
+        if let Some(matched) = hit {
+            return (matched, info);
+        }
+        let matched = Arc::new(crate::camera_preview::camera_matched(&image, &m));
+        if image.width.max(image.height) > SourceLevel::Thumb.max_edge() {
+            *kept() = Some((image, matched.clone()));
+        }
+        (matched, info)
     }
 
     /// The picture to develop for a Denoise `amount` (0 to 1, see [`DevelopSettings::denoise_amount`]): the plain one,
@@ -241,7 +280,8 @@ impl DecodedSource {
     pub fn bytes(&self) -> usize {
         let mattes = self.info.as_ref().and_then(|i| i.mattes.as_ref()).map_or(0, |m| m.bytes());
         let mattes = mattes + self.info.as_ref().and_then(|i| i.local_tone.as_ref()).map_or(0, |t| t.map.gains.len() * 4);
-        self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes())
+        let matched = self.camera_matched.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.data.len() * 12);
+        self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes()) + matched
     }
 
     /// What to render these pixels against: the decoder's facts, else `header` (the catalog's)
@@ -250,7 +290,11 @@ impl DecodedSource {
     pub fn info_or(&self, header: SourceInfo) -> SourceInfo {
         match &self.info {
             Some(info) => SourceInfo { native_long: info.native_long.or(header.native_long), ..info.clone() },
-            None => SourceInfo { camera_tone: self.camera_tone.or(header.camera_tone), ..header },
+            None => SourceInfo {
+                camera_tone: self.camera_tone.or(header.camera_tone),
+                camera_match: self.camera_match.clone().or(header.camera_match),
+                ..header
+            },
         }
     }
 }
@@ -311,7 +355,7 @@ impl SourceRef {
                     return Ok((**from).clone());
                 }
                 let image = lightcraft_raster::resample::fit(&from.image, *max_edge, *max_edge, lightcraft_raster::resample::Filter::Box);
-                return Ok(DecodedSource { image: Arc::new(image), denoised: None, ..(**from).clone() });
+                return Ok(DecodedSource { image: Arc::new(image), denoised: None, camera_matched: Default::default(), ..(**from).clone() });
             }
             SourceRef::Demo { scene, max_edge } => crate::demo::scene_pixels(scene, *max_edge)?,
             SourceRef::File { path, max_edge, loader, fallback, denoise } => {
@@ -335,10 +379,8 @@ impl SourceRef {
                                     return Err("the cached AI Denoise picture could not be read; clear the denoise cache and retry".into());
                                 }
                                 Ok(DecodedSource {
-                                    image: Arc::new(image),
-                                    info: Some(info),
-                                    camera_tone: None,
                                     denoised: twin.map(|t| Arc::new(Twin::new(Arc::new(t)))),
+                                    ..DecodedSource::new(Arc::new(image), Some(info))
                                 })
                             })
                         } else {
@@ -375,11 +417,11 @@ impl SourceRef {
             SourceRef::Smart { .. } | SourceRef::Synced { .. } => return Err("smart previews are not available here".into()),
             SourceRef::Bytes { bytes, max_edge } => {
                 use lightcraft_raster::resample::{Filter, fit};
-                let (mut image, camera_tone) = crate::smart::decode(bytes)?;
+                let (mut image, camera_tone, camera_match) = crate::smart::decode(bytes)?;
                 if image.width.max(image.height) > *max_edge {
                     image = fit(&image, *max_edge, *max_edge, Filter::Mitchell);
                 }
-                return Ok(DecodedSource { image: Arc::new(image), info: None, camera_tone, denoised: None });
+                return Ok(DecodedSource::proxy(image, camera_tone, camera_match));
             }
         };
         Ok(DecodedSource::new(image, None))
@@ -1116,9 +1158,10 @@ impl RenderJob {
         };
         match source {
             Ok(source) => {
-                // the plain picture, or (Denoise amount above 0 and a denoised picture cached) the mix the amount asks for
-                let src = &source.image_for(self.settings.denoise_amount());
-                let info = source.info_or(self.info);
+                // the plain picture, or (Denoise amount above 0 and a denoised picture cached) the mix the amount asks for,
+                // in the camera's own look for the Camera Matching profile
+                let (src, info) = source.develop_input(&self.settings, self.info);
+                let src = &src;
                 // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
                 // the GPU when there is one.
                 let gpu = self.cache.is_none();
@@ -2197,6 +2240,55 @@ mod tests {
         assert_eq!(source.bytes(), reserved, "creating a mix cannot evade the LRU's recorded cost");
         let _ = source.image_for(0.25);
         assert_eq!(source.bytes(), reserved, "changing Amount replaces the reserved mix");
+    }
+
+    /// Camera Matching (`lc.camera`) develops a source that carries the camera's own look in that look: its matrix
+    /// on the pixels, its tone curve in place of the source's. Any other profile, and a source without that look,
+    /// develop the plain picture. A preview's camera-look picture is kept (and counted) while the profile stays.
+    #[test]
+    fn camera_matching_develops_the_cameras_own_look() {
+        use lightcraft_pipeline::{CameraMatch, profiles::CAMERA, tone::CameraTone};
+        let tone = |f: fn(f32) -> f32| {
+            CameraTone::new(std::array::from_fn(|i| {
+                let x = 0.004 * 1.17f32.powi(i as i32);
+                [x, f(x)]
+            }))
+            .unwrap()
+        };
+        let (neutral, camera) = (tone(|x| x / (1.0 + x)), tone(|x| (x / (1.0 + x)).sqrt()));
+        let m = Arc::new(CameraMatch { matrix: lightcraft_color::Mat3::diag(2.0, 1.0, 0.5), hue_sat: None, tone: Some(camera) });
+        let picture = |edge: usize| {
+            let mut p = Rgb32f::new(edge, 2);
+            p.data.fill([0.2, 0.3, 0.4]);
+            Arc::new(p)
+        };
+        let edge = SourceLevel::Thumb.max_edge() + 1;
+        let info = SourceInfo { raw: true, camera_tone: Some(neutral), camera_match: Some(m.clone()), ..Default::default() };
+        let source = DecodedSource::new(picture(edge), Some(info.clone()));
+        let base = source.bytes();
+        let mut s = DevelopSettings::default();
+        let (image, got) = source.develop_input(&s, SourceInfo::default());
+        assert!(Arc::ptr_eq(&image, &source.image) && got.camera_tone == Some(neutral), "Color: the plain picture and tone");
+        s.profile.id = CAMERA.into();
+        let (image, got) = source.develop_input(&s, SourceInfo::default());
+        assert_eq!((image.data[0], got.camera_tone), ([0.4, 0.3, 0.2], Some(camera)));
+        assert!(Arc::ptr_eq(&image, &source.develop_input(&s, SourceInfo::default()).0), "made once");
+        assert_eq!(source.bytes(), base + edge * 2 * 12, "and counted");
+        s.profile.id = "lc.color".into();
+        let _ = source.develop_input(&s, SourceInfo::default());
+        assert_eq!(source.bytes(), base, "back to Color: the kept picture goes");
+        s.profile.id = CAMERA.into();
+        // a thumbnail's is made each time, never kept
+        let thumb = DecodedSource::new(picture(4), Some(info));
+        let (a, b) = (thumb.develop_input(&s, SourceInfo::default()).0, thumb.develop_input(&s, SourceInfo::default()).0);
+        assert!(a.data[0] == [0.4, 0.3, 0.2] && !Arc::ptr_eq(&a, &b) && thumb.bytes() == DecodedSource::new(picture(4), None).bytes());
+        // a smart preview carries the look too (no decoder facts)
+        let proxy = DecodedSource::proxy((*picture(4)).clone(), Some(neutral), Some(m));
+        assert_eq!(proxy.develop_input(&s, SourceInfo { raw: true, ..Default::default() }).1.camera_tone, Some(camera));
+        // a source without it (a JPEG, a raw that starts from the camera's look): Camera Look is Color
+        let other = DecodedSource::new(picture(edge), Some(SourceInfo { camera_tone: Some(neutral), ..Default::default() }));
+        let (image, got) = other.develop_input(&s, SourceInfo::default());
+        assert!(Arc::ptr_eq(&image, &other.image) && got.camera_tone == Some(neutral));
     }
 
     #[test]
