@@ -197,7 +197,10 @@ says the time left at the pace of the last ten minutes (`perMinute`, counting th
 users), how many photos wait for their previews (`waiting`), how many couldn't be done (`failed`: tried again after a
 restart) and the last problem. A photo the model can't take is set aside on its own: it no longer fails its whole batch
 on every pass, which used to stop describing for good. `ready` is the photos left that have previews and weren't set
-aside; the time left is worked out from it.
+aside; the time left is worked out from it. The SwiftUI app's Settings ▸ Server Administration ▸ Search & People shows the
+same, from `host.admin.search` (the host works out what the numbers mean, `crates/apphost/src/host/admin/search.rs`),
+and sets each index's Pause and daily window as the web page does (`PUT search/schedule/<part>`, the times shown and
+picked in the admin's own time, sent in UTC once the picker rests).
 
 Until it is installed every route says so (`503`) instead of failing, and uploads are still accepted. Old servers answer
 `404`, which clients read as "this server can't search". The routes are additive: old clients and servers keep working.

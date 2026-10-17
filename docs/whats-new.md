@@ -17,6 +17,10 @@
 - One photo the model couldn't take made describing retry the same few photos forever, so the count never moved
   again. It is now set aside on its own and the rest carry on.
 - Describing a big library no longer holds up reading the words in photos and finding people: the three take turns.
+- The app's Settings ▸ Server Administration ▸ Search & People shows the same: the line with the dot, the time left of
+  each index with Pause and Resume, and under each user's bar their time left, waiting and failed counts and the last
+  problem. Each index's daily window is set there too, as on the web page: **When** is Any Time or Only Between, with
+  From and Until in your own time.
 
 ### Edit In on the Mac app, and a hand-off on iPhone and iPad
 - The Mac app has Photo ▸ Edit In (⇧⌘E PhotoCraft, ⌥⌘E another editor, and Open Original in Other Editor for a raw
