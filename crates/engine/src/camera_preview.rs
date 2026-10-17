@@ -1712,17 +1712,43 @@ impl<'a> HueSat<'a> {
         std::array::from_fn(|i| rgb[i] + (out[i] * before / after - rgb[i]) * w)
     }
 
-    /// The colour that [`Self::apply`] turns into `rgb`, found by fixed-point iteration (`x ← x + rgb − apply(x)`): a
-    /// table moves hue and saturation by small, smooth amounts, so a few steps get within float rounding.
+    /// The colour that [`Self::apply`] turns into `rgb`, found from `rgb` itself by Newton's method (the Jacobian by
+    /// forward differences, a step halved while it makes the miss larger), or by the fixed-point step (`x ← x + rgb −
+    /// apply(x)`) where Newton's can't do better. The fixed-point iteration alone does not converge where a table's
+    /// hue shift changes faster than the hue (sky blues in a fitted table); Newton's alone stops where the table
+    /// clips saturation (the output doesn't move with the input there, saturated yellows), which only the
+    /// fixed-point step leaves. A colour the decode clipped below zero comes back as close as it can.
     pub fn undo(&self, rgb: [f32; 3]) -> [f32; 3] {
-        let mut x = rgb;
-        for _ in 0..UNDO_STEPS {
+        let miss = |x: [f32; 3]| -> [f32; 3] {
             let y = self.apply(x);
-            let next: [f32; 3] = std::array::from_fn(|i| x[i] + rgb[i] - y[i]);
-            if !next.iter().all(|v| v.is_finite()) {
+            std::array::from_fn(|i| y[i] - rgb[i])
+        };
+        let size = |r: &[f32; 3]| r.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let (mut x, mut r) = (rgb, miss(rgb));
+        for _ in 0..UNDO_STEPS {
+            let scale = size(&x).max(1e-6);
+            if !(size(&r) > 1e-6 * scale) {
                 break;
             }
-            x = next;
+            let h = 1e-3 * scale;
+            let columns: [[f32; 3]; 3] = std::array::from_fn(|j| {
+                let mut xj = x;
+                xj[j] += h;
+                let rj = miss(xj);
+                std::array::from_fn(|i| (rj[i] - r[i]) / h)
+            });
+            let jacobian = Mat3(std::array::from_fn(|i| std::array::from_fn(|j| f64::from(columns[j][i]))));
+            let newton = jacobian.inverse().map(|inverse| inverse.apply(r.map(f64::from)).map(|v| v as f32));
+            let better = newton.into_iter().chain([r]).find_map(|step| {
+                (0..4).find_map(|halvings| {
+                    let k = 0.5f32.powi(halvings);
+                    let next: [f32; 3] = std::array::from_fn(|i| x[i] - k * step[i]);
+                    let rn = miss(next);
+                    (next.iter().all(|v| v.is_finite()) && size(&rn) < size(&r)).then_some((next, rn))
+                })
+            });
+            let Some((next, rn)) = better else { break };
+            (x, r) = (next, rn);
         }
         x
     }
@@ -1764,8 +1790,8 @@ impl<'a> HueSat<'a> {
     }
 }
 
-/// Fixed-point steps of [`HueSat::undo`].
-const UNDO_STEPS: usize = 6;
+/// Most Newton steps of [`HueSat::undo`].
+const UNDO_STEPS: usize = 8;
 
 /// HSV hue (degrees) and saturation; `None` for black or non-finite colours.
 fn hue_saturation(p: [f64; 3]) -> Option<(f64, f64)> {
@@ -2935,6 +2961,82 @@ mod tests {
         let mut other = upright.clone();
         other.data.reverse();
         assert!(neutral_pairs(&mut raw, &png(&other)).is_none_or(|p| p.len() < pairs.len() / 2));
+    }
+
+    /// [`HueSat::undo`] inverts the EOS R6's neutral-look table (fitted to Lightroom exports; its sky blues shift
+    /// faster than the hue, where a fixed-point iteration doesn't converge) over colours of every hue, saturation and
+    /// brightness the table doesn't clip.
+    #[test]
+    fn undo_inverts_the_r6_neutral_table() {
+        let look = neutral_look(Some("Canon EOS R6")).unwrap();
+        let hs = HueSat::new(look.hue_sat.as_ref().expect("the R6's table")).unwrap();
+        let (mut worst, mut off, mut n, mut fixed_off) = (0.0f32, 0, 0, 0);
+        for h in 0..180 {
+            for s in [0.03f32, 0.08, 0.15, 0.25, 0.4, 0.6] {
+                for v in [0.05f32, 0.2, 0.5, 0.9, 1.6] {
+                    // a colour of hue `h`·2°, saturation `s`, largest channel `v` (HSV in Rec.2020)
+                    let hue = h as f32 * 2.0 / 60.0;
+                    let f = |k: f32| {
+                        let k = (k + hue).rem_euclid(6.0);
+                        v * (1.0 - s * k.min(4.0 - k).clamp(0.0, 1.0))
+                    };
+                    let x = [f(5.0), f(3.0), f(1.0)];
+                    let y = hs.apply(x);
+                    let back = hs.undo(y);
+                    // always a colour that gives `y`; the very colour unless the table clipped its saturation
+                    let missed = (0..3).map(|i| (hs.apply(back)[i] - y[i]).abs() / v).fold(0.0, f32::max);
+                    assert!(missed < 1e-4, "{x:?} -> {y:?} -> {back:?}: misses by {missed}");
+                    let err = (0..3).map(|i| (back[i] - x[i]).abs() / v).fold(0.0, f32::max);
+                    worst = worst.max(err);
+                    off += usize::from(err > 1e-3);
+                    n += 1;
+                    // the plain fixed-point iteration, for comparison
+                    let mut z = y;
+                    for _ in 0..8 {
+                        let a = hs.apply(z);
+                        z = std::array::from_fn(|i| z[i] + y[i] - a[i]);
+                    }
+                    fixed_off += usize::from((0..3).any(|i| (z[i] - x[i]).abs() / v > 1e-3));
+                }
+            }
+        }
+        eprintln!("undo: {n} colours, worst {worst:.2e}, {off} off by more than 1e-3 (fixed-point: {fixed_off})");
+        assert!(n == 5400 && off * 200 < n, "{n} {off} {worst}");
+    }
+
+    #[test]
+    #[ignore]
+    fn diag_undo_on_a_photo() {
+        let Some(path) = std::env::var_os("LC_DIAG_CR3") else { return };
+        let bytes = std::fs::read(path).unwrap();
+        let (img, info) = crate::files::load_bytes(&bytes, 256).unwrap();
+        let m = info.camera_match.unwrap();
+        let hs = HueSat::new(m.start_hue_sat.as_ref().unwrap()).unwrap();
+        let (mut far, mut bad, mut clipped) = (0, 0, 0);
+        let mut shown = 0;
+        for y in &img.data {
+            let x = hs.undo(*y);
+            let back = hs.apply(x);
+            let v = y[0].max(y[1]).max(y[2]).max(1e-6);
+            let resid = (0..3).map(|i| (back[i] - y[i]).abs() / v).fold(0.0, f32::max);
+            let dist = (0..3).map(|i| (x[i] - y[i]).abs() / v).fold(0.0, f32::max);
+            clipped += usize::from(y.iter().any(|c| *c <= 0.0));
+            bad += usize::from(resid > 1e-3);
+            far += usize::from(dist > 0.3);
+            if resid > 1e-3 {
+                if shown < 10 && shown * 1000 < bad {
+                    shown += 1;
+                    // the fixed-point answer, for comparison
+                    let mut z = *y;
+                    for _ in 0..8 {
+                        let a = hs.apply(z);
+                        z = std::array::from_fn(|i| z[i] + y[i] - a[i]);
+                    }
+                    eprintln!("y {y:?} -> newton {x:?} (resid {resid:.1e}) fixed {z:?} apply(fixed) {:?}", hs.apply(z));
+                }
+            }
+        }
+        eprintln!("{} px: {far} moved > 0.3, {bad} residual > 1e-3, {clipped} with a channel <= 0", img.data.len());
     }
 
     /// The neutral tone keeps the brightness it was set to (the median of Lightroom's default exports of 19 EOS R6
