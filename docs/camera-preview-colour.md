@@ -197,7 +197,25 @@ read: Lightroom's output was measured and four numbers chosen to match it.
 
 What remains is not tone. Hues: against Lightroom, yellows and sand render about 9° greener, reds about 10° and cyans
 7-14° off, while against Canon's own JPEGs of the CC0 corpus samples the spectral colour is within about 3° in every
-well-populated hue sector, so these are Adobe Color's own choices, not errors of the matrices; they are left alone.
+well-populated hue sector, so these are Adobe Color's own choices, not errors of the matrices.
+
+**The EOS R6's hue/saturation table (maintainer decision, 2026-10-17).** For the EOS R6 the maintainer asked for those
+choices too, accepting that the table is derived from Adobe's output: `lightcraft-cli calibrate --references DIR`
+pairs each CR3 with a render of the same photo (here Lightroom's default export) instead of its camera JPEG and fits
+the hue/saturation table the neutral look adds for that model (`camera_preview::neutral_pairs`, `fit_neutral_table`;
+the same 72 × 5 × 5 table and kernels as the per-file fit, on the scene colour through the spectral matrices). The
+targets have the neutral look's chroma curve taken out first (`without_chroma`), so the table adds only what the tone
+and chroma curves leave; pairs where the render touches the sRGB gamut's edge are left out. The result,
+`assets/camera-profiles/Canon_EOS_R6.neutral.json` (18 of the 19 photos, a night shot gave no colour; 62,852 pairs;
+hue shifts −9° to +11°, saturation ×0.68 to ×1.65), is loaded by `camera_profiles::neutral_table` (a local
+`<model>.neutral.json` in the profiles folder replaces it) and applied like a camera profile's table. Held out by scene
+(fitted on 13 photos, checked on 6 photos of 4 other scenes: the seascapes, the bird, the beach and 2V2A5389), mean
+ΔE00 against Lightroom 5.72 → 5.40, every photo closer; yellows +7.4° → −1.4°, yellow-greens +3.7° → −0.2°, sky blue
++6.2° → −2.1°, while the sky's chroma fell to ×0.88 (no blue sky among the 13). Fitted on all of them: ΔE00 4.63 →
+4.13 (median 4.64 → 4.06), chroma ×1.04 → ×1.01, the sky ×0.96 at +0.1°. No Adobe file was read; nothing but
+Lightroom's rendered output of the maintainer's own photos went in. Other models get no table until someone fits one
+the same way.
+
 Corners: Lightroom applies its lens profile for RF lenses, and LightCraft has no lens data for them (a darker, vignetted
 frame edge). The CC0 corpus CR3s check that the neutral look reads as Canon's own rendering too (ΔE00 against each
 file's camera JPEG, per-file fit → neutral look, and ΔL\*): EOS R6 Standard 2.1 → 2.0 (+0.6 L\*), R5 Standard 2.2 → 2.7
@@ -206,7 +224,7 @@ file's camera JPEG, per-file fit → neutral look, and ΔL\*): EOS R6 Standard 2
 Unchanged: CR2s and CR3s of models without measured matrices keep the per-file fit (no Lightroom references for them
 yet); a monochrome picture style now renders in colour on these models, as in Lightroom; white balance is in Kelvin
 through the matrices as before. The look is a property of the decoded source, so no process version changes;
-`LOOK_VERSION` 11 rebuilds the smart previews of raws and `RENDER_CACHE_VERSION` 67 redraws renders. A sync server needs
+`LOOK_VERSION` 11 (12 with the EOS R6 table) rebuilds the smart previews of raws and `RENDER_CACHE_VERSION` 67 (68) redraws renders. A sync server needs
 the new build and Rebuild all previews. Today's look (the camera JPEG's) is not offered as a profile yet: a Camera
 Matching profile needs the proxies to carry both looks.
 
