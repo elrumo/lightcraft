@@ -1,5 +1,20 @@
 # What's new in LightCraft
 
+## 2026-10-17
+
+### Canon raws open like they do in Lightroom
+- A Canon CR3 used to start from the look of the JPEG the camera embedded in it: the picture style set on the camera
+  (including film-look styles loaded onto it) and Auto Lighting Optimizer's lifted shadows. Lightroom ignores both, so
+  the same photo looked flatter, dimmer in the highlights and differently coloured in LightCraft.
+- CR3s from the EOS R, RP, R5, R5 Mark II, R6, R6 Mark II, R10 and 200D II now start from the camera's measured sensor
+  colour and a neutral tone curve of LightCraft's own, set to match Lightroom's default brightness. On 19 EOS R6 photos
+  shot with custom picture styles it lands within about 1 L\* of Lightroom's default export, with the same
+  colourfulness at every brightness (colour difference 5.6 → 4.6). Some hues still differ (Lightroom renders yellows a
+  little warmer), and corners stay darker without a lens profile for RF lenses.
+- Photos open faster too: the embedded JPEG is no longer read to fit a look.
+- Smart previews of raws are rebuilt once from their originals. A server rebuilds its photos' previews with Rebuild
+  all previews on its admin page.
+
 ## 2026-10-16
 
 ### iPhone ProRAW and other DNG raws in their full colour
