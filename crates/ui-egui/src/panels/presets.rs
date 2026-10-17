@@ -216,7 +216,12 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 } else if resp.hovered() {
                     ui.painter().rect_filled(r, 0.0, t.hover.gamma_multiply(0.7));
                 }
-                let look = if thumbs || resp.hovered() { current.as_ref().map(|d| pr.apply(d, 1.0)) } else { None };
+                // as Apply stores it (an Upright correction settled with the photo)
+                let look = if thumbs || resp.hovered() {
+                    active.and_then(|id| app.session.preset_look(id, &pr, 1.0)).or_else(|| current.as_ref().map(|d| pr.apply(d, 1.0)))
+                } else {
+                    None
+                };
                 let mut text_x = r.left() + 40.0;
                 if thumbs && let (Some(id), Some(s)) = (active, look.as_ref()) {
                     let tr = Rect::from_min_size(pos2(r.left() + 36.0, r.top() + 5.0), vec2(66.0, row_h - 10.0));
@@ -268,7 +273,8 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.data(|d| d.get_temp::<(lightcraft_catalog::PhotoId, Preset, String)>(last_hover_id))
             && saved_id == id
         {
-            app.hover_preview = Some(HoverPreview { label: saved_label, settings: saved_preset.apply(curr, 1.0) });
+            let settings = app.session.preset_look(id, &saved_preset, 1.0).unwrap_or_else(|| saved_preset.apply(curr, 1.0));
+            app.hover_preview = Some(HoverPreview { label: saved_label, settings });
         }
     } else {
         ui.data_mut(|d| d.remove::<(lightcraft_catalog::PhotoId, Preset, String)>(last_hover_id));
@@ -364,7 +370,11 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
                 let mut uv_texture = None;
                 if ui.is_rect_visible(r)
                     && let (Some(id), Some(cur)) = (active, current)
-                    && let Some(job) = app.session.variant_job(id, &pr.apply(cur, 1.0), THUMB_EDGE)
+                    && let Some(job) = {
+                        // as Apply stores it (an Upright correction settled with the photo)
+                        let look = app.session.preset_look(id, &pr, 1.0).unwrap_or_else(|| pr.apply(cur, 1.0));
+                        app.session.variant_job(id, &look, THUMB_EDGE)
+                    }
                     && let Some(tex) = app.renderer.variant(job)
                 {
                     uv_texture = Some((tex.tex.id(), cover_uv(img, tex.size)));

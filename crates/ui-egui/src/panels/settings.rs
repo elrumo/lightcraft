@@ -53,6 +53,55 @@ const CACHE_SIZES: [u32; 5] = [512, 1024, 2048, 4096, 8192];
 
 const LABEL_W: f32 = 150.0;
 
+/// `path` shortened to fit `max` (as `width` measures it) by dropping leading folders, after
+/// either kind of separator, so that its end stays (`…/Pictures/Library`,
+/// `…\Pictures\Library`): the end says which folder it is. A last folder too long by itself
+/// loses its end ([`crate::widgets::elide_head`]).
+fn elide_path(path: &str, max: f32, width: impl Fn(&str) -> f32) -> String {
+    if width(path) <= max {
+        return path.to_string();
+    }
+    // (a separator at the very end is not where a name starts: `…/` alone would say nothing)
+    let end = path.trim_end_matches(['/', '\\']).len();
+    let mut rest = path;
+    while let Some(i) = rest.find(['/', '\\']).filter(|i| path.len() - rest.len() + i + 1 < end) {
+        let separator = if rest.get(i..).is_some_and(|r| r.starts_with('\\')) { '\\' } else { '/' };
+        rest = rest.get(i + 1..).unwrap_or("");
+        let shorter = format!("…{separator}{rest}");
+        if width(&shorter) <= max {
+            return shorter;
+        }
+    }
+    let name = rest.trim_end_matches(['/', '\\']);
+    // (nothing but separators: never an empty label)
+    if name.is_empty() { "…".to_string() } else { crate::widgets::elide_head(name, max, width) }
+}
+
+/// A folder or file path on one line in the room left in its row (`text:{id}`): shortened from
+/// the front when it is too long ([`elide_path`]), with all of it in a tooltip then.
+fn path_label(ui: &mut egui::Ui, id: &str, path: &str, font: egui::FontId, color: egui::Color32) {
+    path_label_beside(ui, id, path, font, color, &[]);
+}
+
+/// [`path_label`] with room left after it for `beside`, the texts of the controls that follow it in
+/// the row (their buttons are as wide as the text and the padding round it): a long path gives way
+/// to them, so they stay in the row.
+fn path_label_beside(ui: &mut egui::Ui, id: &str, path: &str, font: egui::FontId, color: egui::Color32, beside: &[&str]) {
+    let pad = ui.spacing().button_padding.x * 2.0 + ui.spacing().item_spacing.x;
+    let reserve: f32 = beside
+        .iter()
+        .map(|text| ui.painter().layout_no_wrap(text.to_string(), egui::TextStyle::Button.resolve(ui.style()), color).size().x + pad)
+        .sum();
+    let room = (ui.available_width() - reserve).max(24.0);
+    let shown = elide_path(path, room, |s| ui.painter().layout_no_wrap(s.to_string(), font.clone(), color).size().x);
+    // (`truncate` is the last resort, for a room narrower than "…")
+    let r = ui.add(egui::Label::new(RichText::new(&shown).font(font).color(color)).truncate().show_tooltip_when_elided(false));
+    register(ui.ctx(), format!("text:{id}"), r.rect);
+    if shown != path {
+        r.on_hover_text(path);
+    }
+}
+
 /// A desktop choice with more options than this is a combo box rather than a row of buttons.
 const PICK_BUTTONS: usize = 6;
 
@@ -121,7 +170,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_he
     let page = Rect::from_min_max(pos2(line_x + 1.0, outer.top()), outer.max);
     ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
         // (each section starts at its top)
-        egui::ScrollArea::vertical().id_salt(("settings-page", tab.clone())).auto_shrink([false, false]).show(ui, |ui| {
+        let scrolled = egui::ScrollArea::vertical().id_salt(("settings-page", tab.clone())).auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::NONE.inner_margin(Margin { left: 20 + CARD_PAD as i8, right: 10 + CARD_PAD as i8, top: 0, bottom: 12 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 page_header(ui, &t, tab.as_str());
@@ -145,8 +194,11 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_he
                 }
                 card_end(ui, &t);
                 ui.data_mut(|d| d.remove::<Column>(column_id()));
+                // (what the page took: wider than the room for it would mean a control is cut off)
+                register(ui.ctx(), "settings:page", ui.min_rect());
             });
         });
+        register(ui.ctx(), "settings:pageRoom", scrolled.inner_rect);
     });
 }
 
@@ -779,7 +831,7 @@ pub(super) fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, options:
     let mut changed = false;
     ui.spacing_mut().item_spacing.x = 4.0;
     for (i, (v, l)) in options.iter().enumerate() {
-        if crate::widgets::text_button(ui, &format!("{id}-{i}"), l, *value == *v).clicked() && *value != *v {
+        if crate::widgets::choice_button(ui, &format!("{id}-{i}"), l, *value == *v).clicked() && *value != *v {
             *value = *v;
             changed = true;
         }
@@ -800,7 +852,7 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             None => crate::i18n::tr("In memory — nothing is saved").to_string(),
         };
         row(ui, t, crate::i18n::tr("Location"), |ui| {
-            ui.add(egui::Label::new(RichText::new(location.clone()).color(t.text_label)).truncate()).on_hover_text(location);
+            path_label(ui, "settingsLocation", &location, egui::TextStyle::Body.resolve(ui.style()), t.text_label);
         });
         row(ui, t, "", |ui| {
             let can = app.services.pick_folder.is_some();
@@ -1099,7 +1151,13 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         heading(ui, t, crate::i18n::tr("Auto Import"));
         hint(ui, t, crate::i18n::tr("Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete."));
         row(ui, t, crate::i18n::tr("Watched folder"), |ui| {
-            ui.label(RichText::new(d.auto_folder.clone().unwrap_or_else(|| crate::i18n::tr("Off").into())).color(t.text));
+            match &d.auto_folder {
+                Some(folder) => {
+                    let beside = [crate::i18n::tr("Choose…"), crate::i18n::tr("Turn Off")];
+                    path_label_beside(ui, "settingsAutoFolder", folder, egui::TextStyle::Body.resolve(ui.style()), t.text, &beside)
+                }
+                None => drop(ui.label(RichText::new(crate::i18n::tr("Off")).color(t.text))),
+            }
             let can = app.services.pick_folder.is_some();
             let r = ui.add_enabled(can, egui::Button::new(crate::i18n::tr("Choose…")));
             register(ui.ctx(), "button:settingsAutoFolder", r.rect);
@@ -1114,6 +1172,17 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             }
         });
         if d.auto_folder.is_some() {
+            let mut sub = d.auto_subfolders;
+            if check(ui, "settings.autoImportSubfolders", &mut sub, "Include subfolders") {
+                let _ = app.run("library.autoImport", json!({"subfolders": sub}));
+            }
+            hint(
+                ui,
+                t,
+                crate::i18n::tr(
+                    "Photos in folders inside the watched folder are added too (hidden folders and the library's own folder are skipped).",
+                ),
+            );
             row(ui, t, "", |ui| {
                 let mut copy = d.auto_copy;
                 if crate::widgets::check(ui, &mut copy, crate::i18n::tr("Copy into the library (else use the files where they are)")).changed() {
@@ -1187,6 +1256,8 @@ fn performance_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     if clear {
         let _ = app.run("library.clearPreviews", json!({}));
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    thumb_cache_folder(app, ui, t);
     // (no Local folders on iOS: an app sees only its own container)
     if IOS {
         return;
@@ -1206,6 +1277,100 @@ fn performance_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     );
     #[cfg(not(target_arch = "wasm32"))]
     smart_previews(app, ui, t);
+}
+
+/// Where this library keeps its thumbnail cache (issue #903): the effective folder, and choosing
+/// another one, like the smart previews folder below.
+#[cfg(not(target_arch = "wasm32"))]
+fn thumb_cache_folder(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    // (the iOS app's cache lives in its container)
+    if IOS {
+        return;
+    }
+    // listing a big cache every frame would be slow: refresh every 2 s and after a change
+    let cache = egui::Id::new("thumbs-location");
+    let now = ui.input(|i| i.time);
+    let loc: Value = match ui.data(|d| d.get_temp::<(f64, Value)>(cache)) {
+        Some((at, v)) if now - at < 2.0 => v,
+        _ => {
+            let v = app.run("library.thumbnailCacheLocation", json!({})).unwrap_or(Value::Null);
+            ui.data_mut(|d| d.insert_temp(cache, (now, v.clone())));
+            v
+        }
+    };
+    if loc.is_null() {
+        return;
+    }
+    let path = loc["path"].as_str().unwrap_or_default().to_string();
+    let available = loc["available"].as_bool().unwrap_or(true);
+    let custom = loc["custom"].as_bool().unwrap_or(false);
+    row(ui, t, crate::i18n::tr("Folder"), |ui| {
+        let beside: &[&str] = if custom { &[] } else { &["(library default)"] };
+        path_label_beside(
+            ui,
+            "settingsThumbsFolder",
+            &path,
+            egui::TextStyle::Body.resolve(ui.style()),
+            if available { t.text } else { t.reject },
+            beside,
+        );
+        if !custom {
+            ui.label(RichText::new("(library default)").color(t.text));
+        }
+    });
+    if !available {
+        hint(
+            ui,
+            t,
+            crate::i18n::tr(
+                "This folder is not available (drive disconnected?). Thumbnails are kept in memory only until it is back or you choose another folder.",
+            ),
+        );
+    }
+    // what happens to the thumbnails already cached when the folder changes
+    let mode_id = egui::Id::new("thumbs-existing");
+    let mut mode: u8 = ui.data(|d| d.get_temp(mode_id)).unwrap_or(0);
+    if loc["count"].as_u64().unwrap_or(0) > 0 {
+        row(ui, t, crate::i18n::tr("Existing thumbnails"), |ui| {
+            if choices(ui, "settingsThumbsExisting", &[(0u8, "Move them"), (1, "Leave them"), (2, "Delete them")], &mut mode) {
+                ui.data_mut(|d| d.insert_temp(mode_id, mode));
+            }
+        });
+    }
+    let existing = ["move", "leave", "discard"][mode.min(2) as usize];
+    let mut result = None;
+    row(ui, t, "", |ui| {
+        if app.services.pick_folder.is_some() {
+            let r = ui.button(crate::i18n::tr("Choose Folder…"));
+            register(ui.ctx(), "button:settingsThumbsChoose", r.rect);
+            if r.clicked()
+                && let Some(dir) = app.services.pick_folder.as_mut().and_then(|f| f())
+            {
+                result = Some(app.run("library.thumbnailCacheLocation", json!({"path": dir, "existing": existing})));
+            }
+        }
+        let r = ui.add_enabled(custom, egui::Button::new(crate::i18n::tr("Use Library Folder")));
+        register(ui.ctx(), "button:settingsThumbsReset", r.rect);
+        if r.clicked() {
+            result = Some(app.run("library.thumbnailCacheLocation", json!({"reset": true, "existing": existing})));
+        }
+    });
+    if let Some(r) = result {
+        ui.data_mut(|d| d.remove::<(f64, Value)>(cache));
+        match r {
+            Ok(v) => {
+                let failed = v["failed"].as_array().map_or(0, Vec::len);
+                let msg = match (existing, v["handled"].as_u64().unwrap_or(0)) {
+                    ("move", n) if n > 0 => format!("Thumbnail cache folder changed; moved {n}"),
+                    ("discard", n) if n > 0 => format!("Thumbnail cache folder changed; deleted {n}"),
+                    _ => "Thumbnail cache folder changed".to_string(),
+                };
+                app.toast(ui.ctx(), if failed > 0 { crate::i18n::tr_format!("{msg} ({failed} failed)", failed = failed, msg = msg) } else { msg });
+            }
+            Err(e) => app.toast(ui.ctx(), e),
+        }
+    }
+    hint(ui, t, crate::i18n::tr("A fast local drive keeps the grid quick when the library itself is on a network or slow drive."));
 }
 
 /// Where this library keeps its smart previews (the offline-editing proxies, which can be large):
@@ -1231,8 +1396,18 @@ fn smart_previews(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let available = loc["available"].as_bool().unwrap_or(true);
     let custom = loc["custom"].as_bool().unwrap_or(false);
     row(ui, t, crate::i18n::tr("Folder"), |ui| {
-        let text = format!("{path}{}", if custom { "" } else { "  (library default)" });
-        ui.add(egui::Label::new(RichText::new(text.clone()).color(if available { t.text } else { t.reject })).truncate()).on_hover_text(text);
+        let beside: &[&str] = if custom { &[] } else { &["(library default)"] };
+        path_label_beside(
+            ui,
+            "settingsSmartFolder",
+            &path,
+            egui::TextStyle::Body.resolve(ui.style()),
+            if available { t.text } else { t.reject },
+            beside,
+        );
+        if !custom {
+            ui.label(RichText::new("(library default)").color(t.text));
+        }
     });
     let (count, bytes) = (loc["count"].as_u64().unwrap_or(0), loc["bytes"].as_u64().unwrap_or(0));
     if available {
@@ -1299,7 +1474,7 @@ fn smart_previews(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             Err(e) => app.toast(ui.ctx(), e),
         }
     }
-    hint(ui, t, crate::i18n::tr("Keep it on a drive with room: smart previews are about 1 MB per photo. The thumbnail cache stays in the library."));
+    hint(ui, t, crate::i18n::tr("Keep it on a drive with room: smart previews are about 1 MB per photo."));
 }
 
 // ---------------------------------------------------------------------------------- Interface
@@ -1347,7 +1522,7 @@ fn display_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let info = d.describe();
         if !screen {
             row(ui, t, crate::i18n::tr("File"), |ui| {
-                ui.add(egui::Label::new(RichText::new(&d.path).size(11.5).color(t.text_dim)).truncate()).on_hover_text(&d.path);
+                path_label(ui, "settingsDisplayFile", &d.path, egui::FontId::proportional(11.5), t.text_dim);
             });
         }
         row(ui, t, crate::i18n::tr("Type"), |ui| {
@@ -2653,5 +2828,50 @@ mod tests {
         let err = open_library(&mut app, &json!({"path": "other"})).unwrap_err();
         assert!(err.contains("import to finish"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::elide_path;
+
+    /// Width = characters, so a limit of 20 is "20 characters".
+    fn fit(path: &str, max: usize) -> String {
+        elide_path(path, max as f32, |s| s.chars().count() as f32)
+    }
+
+    #[test]
+    fn a_path_that_fits_is_left_alone() {
+        assert_eq!(fit("/Users/me/Pictures", 18), "/Users/me/Pictures");
+        assert_eq!(fit("", 5), "");
+    }
+
+    #[test]
+    fn leading_folders_go_first_and_the_end_stays() {
+        assert_eq!(fit("/Users/me/Pictures/Library", 20), "…/Pictures/Library");
+        assert_eq!(fit("/Users/me/Pictures/Library", 10), "…/Library");
+    }
+
+    /// Windows paths: `Path::display` gives backslashes there.
+    #[test]
+    fn a_path_with_backslashes_keeps_its_end_too() {
+        assert_eq!(fit(r"C:\Users\me\Pictures\Library", 20), r"…\Pictures\Library");
+        assert_eq!(fit(r"C:\Users\me/Pictures\Library", 10), r"…\Library");
+    }
+
+    #[test]
+    fn a_last_folder_too_long_by_itself_loses_its_end() {
+        assert_eq!(fit("/Users/me/a-very-long-folder-name", 8), "a-very-…");
+        assert_eq!(fit("no-separator-at-all", 8), "no-sepa…");
+        assert_eq!(fit("/Users/Фотографии-из-отпуска", 8), "Фотогра…");
+    }
+
+    #[test]
+    fn a_separator_at_the_end_is_not_where_the_name_starts() {
+        assert_eq!(fit("/Users/me/Pictures/Library/", 11), "…/Library/");
+        assert_eq!(fit("/Users/me/a-very-long-folder-name/", 8), "a-very-…");
+        assert_eq!(fit(r"C:\Users\me\Library\", 11), r"…\Library\");
+        assert_eq!(fit("///", 2), "…");
+        assert_eq!(fit(r"\\server\share\folder", 15), r"…\share\folder");
     }
 }

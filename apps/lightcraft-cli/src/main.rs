@@ -112,7 +112,8 @@ USAGE:
   lightcraft-cli controls [--json]   list every develop control id with its range
   lightcraft-cli calibrate [--max N] [--out DIR] FOLDERS/FILES…
       Fit a colour profile per camera model from raw files and their embedded camera JPEGs
-      (Sony ARW, Nikon NEF, Fujifilm RAF): up to N files spread over the folders (default 300; 0 = all), pooled per
+      (ARW, NEF/NRW, RAF, CR2/CR3): up to N files spread over the
+      folders (default 300; 0 = all), pooled per
       model, written as <model>.json to DIR (default: the profiles folder LightCraft reads,
       <config>/camera-profiles, or $LIGHTCRAFT_CAMERA_PROFILES). Raws of a profiled model then
       take their colour from the profile and only their tone from their own JPEG.
@@ -201,8 +202,9 @@ fn main() -> ExitCode {
 
 /// Raw files below `path` (or `path` itself), skipping hidden and NAS metadata folders.
 fn raw_files(path: &Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
-    let is_raw =
-        |p: &Path| p.extension().and_then(|e| e.to_str()).is_some_and(|e| ["arw", "nef", "nrw", "raf"].iter().any(|x| e.eq_ignore_ascii_case(x)));
+    let is_raw = |p: &Path| {
+        p.extension().and_then(|e| e.to_str()).is_some_and(|e| ["arw", "nef", "nrw", "raf", "cr2", "cr3"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    };
     if path.is_file() {
         if is_raw(path) {
             out.push(path.to_path_buf());
@@ -255,28 +257,37 @@ fn calibrate(args: &[String]) -> Result<(), String> {
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 6);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let done = std::sync::atomic::AtomicUsize::new(0);
-    let pools: Vec<lightcraft_engine::camera_profiles::Pool> = std::thread::scope(|scope| {
+    let mut pools: Vec<(usize, lightcraft_engine::camera_profiles::Pool)> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 scope.spawn(|| {
-                    let mut pool = lightcraft_engine::camera_profiles::Pool::default();
-                    while let Some(path) = files.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) {
+                    let mut pools = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(path) = files.get(index) else { break };
+                        let mut pool = lightcraft_engine::camera_profiles::Pool::default();
                         let result = std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| pool.add(&bytes));
                         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         match result {
-                            Ok(Some(model)) => eprintln!("[{n}/{}] {} ({model})", files.len(), path.display()),
+                            Ok(Some(model)) => {
+                                eprintln!("[{n}/{}] {} ({model})", files.len(), path.display());
+                                pools.push((index, pool));
+                            }
                             Ok(None) => eprintln!("[{n}/{}] {}: skipped (no usable camera JPEG or colour)", files.len(), path.display()),
                             Err(e) => eprintln!("[{n}/{}] {}: {e}", files.len(), path.display()),
                         }
                     }
-                    pool
+                    pools
                 })
             })
             .collect();
-        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        handles.into_iter().filter_map(|h| h.join().ok()).flatten().collect()
     });
+    // The fitting holdout and floating-point sums depend on pair order. Keep parallel decoding,
+    // but merge in the sorted input order rather than worker admission/completion order.
+    pools.sort_by_key(|(index, _)| *index);
     let mut pool = lightcraft_engine::camera_profiles::Pool::default();
-    for p in pools {
+    for (_, p) in pools {
         pool.merge(p);
     }
     let mut written = 0;

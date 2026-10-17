@@ -65,13 +65,15 @@ type RunsKey = (u64, Option<SortKey>, GroupBy);
 
 /// What the grid derives from the visible photos, kept across frames. Everything is keyed by the
 /// session's visible-list generation ([`lightcraft_engine::Session::visible_shared`]), which
-/// changes whenever the list is recomputed (any catalog change: crops, orientation, dates, stacks;
-/// or another source, filter or sort) — so an unchanged frame neither copies nor hashes the ids.
+/// changes whenever the list is recomputed (a library change: dates, stacks, photos; a develop
+/// edit when the filter or sort reads it; or another source, filter or sort) — so an unchanged
+/// frame neither copies nor hashes the ids. Photo shapes (crop, orientation) are develop state:
+/// the justified layout keys on the catalog revision too.
 #[derive(Default)]
 pub struct GridCache {
     runs: Option<(RunsKey, Arc<Vec<DateRun>>)>,
-    /// Layout by (runs key, width, thumbnail size, square).
-    layout: Option<((RunsKey, u32, u32, bool), Arc<GridLayout>)>,
+    /// Layout by (runs key, width, thumbnail size, square, catalog revision for photo shapes).
+    layout: Option<((RunsKey, u32, u32, bool, u64), Arc<GridLayout>)>,
     /// Stack index by generation.
     stacks: Option<(u64, Arc<StackIndex>)>,
     /// How many of the photos are browsed (Local) ones, by generation.
@@ -275,9 +277,11 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let stats = &mut app.caches.grid_stats;
     let runs = app.caches.grid.runs(stats, &app.session.catalog, app.session.visible_stacked(), &ids, runs_key);
     // the layout only changes with the photos (and their shapes), the grouping, the width and
-    // the thumbnail size
+    // the thumbnail size; a develop edit (crop, rotation) changes a shape without changing the
+    // list, so justified rows also key on the catalog revision
     // (phone tiles have their own width and size, so they key apart from desktop squares)
-    let lay_key = (runs_key, avail_w.to_bits(), target.to_bits(), square);
+    let shapes = if square { 0 } else { app.session.catalog.revision };
+    let lay_key = (runs_key, avail_w.to_bits(), target.to_bits(), square, shapes);
     let lay = match &app.caches.grid.layout {
         Some((k, l)) if *k == lay_key => l.clone(),
         _ => {
@@ -1141,7 +1145,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
         x += photo.rating as f32 * 13.0 + 4.0;
         match photo.flag {
-            Flag::Pick => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagPick, t.photo_pick),
+            Flag::Pick => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagPickFilled, t.photo_pick),
             Flag::Reject => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagReject, t.reject),
             Flag::None => {}
         }

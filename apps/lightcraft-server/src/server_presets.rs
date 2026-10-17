@@ -138,7 +138,9 @@ pub fn check(items: &[Value]) -> Result<Vec<Value>, String> {
         if id == HIDDEN {
             let names = |k: &str| -> Result<Vec<String>, String> {
                 let list = v.get(k).and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
-                list.iter().map(|n| n.as_str().filter(|n| short(n)).map(str::to_string).ok_or_else(|| format!("`{HIDDEN}`: `{k}` must be names"))).collect()
+                list.iter()
+                    .map(|n| n.as_str().filter(|n| short(n)).map(str::to_string).ok_or_else(|| format!("`{HIDDEN}`: `{k}` must be names")))
+                    .collect()
             };
             out.push(json!({"id": HIDDEN, "presets": names("presets")?, "groups": names("groups")?}));
             continue;
@@ -191,7 +193,13 @@ mod tests {
         ] {
             assert!(check(std::slice::from_ref(&bad)).is_err(), "{bad}");
         }
-        assert!(check(&[json!({"id": "srv.a", "name": "A", "group": "G", "settings": {}}), json!({"id": "srv.a", "name": "B", "group": "G", "settings": {}})]).is_err());
+        assert!(
+            check(&[
+                json!({"id": "srv.a", "name": "A", "group": "G", "settings": {}}),
+                json!({"id": "srv.a", "name": "B", "group": "G", "settings": {}})
+            ])
+            .is_err()
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 

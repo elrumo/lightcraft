@@ -101,7 +101,8 @@ fn shared(c: &Catalog) -> Catalog {
     c.next_album = 0;
     c.next_stack = 0;
     c.browsed.clear();
-    c.revision = 0;
+    // (both revisions: the library revision counts the ops of this device, and is part of what Catalog compares)
+    c.set_revision(0);
     c
 }
 

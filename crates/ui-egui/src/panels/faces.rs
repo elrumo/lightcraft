@@ -587,7 +587,8 @@ pub fn hints_for(app: &mut LightcraftApp, photo: u64) -> Option<std::sync::Arc<H
     if !app.caches.faces_active {
         return None;
     }
-    let (rev, indexed) = (app.session.catalog.revision, app.caches.faces_indexed);
+    // faces and names are metadata: a develop edit (a slider tick in the loupe) doesn't ask again
+    let (rev, indexed) = (app.session.catalog.library_revision, app.caches.faces_indexed);
     if let Some((p, r, i, h)) = &app.caches.face_hints
         && (*p, *r, *i) == (photo, rev, indexed)
     {

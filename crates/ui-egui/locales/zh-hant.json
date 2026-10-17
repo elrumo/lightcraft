@@ -909,7 +909,6 @@
   "Join the ArtCraft Discord": "加入 ArtCraft Discord",
   "Join the ArtCraft Discord…": "加入 ArtCraft Discord…",
   "Keep in Local": "保留在本機",
-  "Keep it on a drive with room: smart previews are about 1 MB per photo. The thumbnail cache stays in the library.": "請放在空間充足的磁碟：每張智慧型預覽約 1 MB。縮圖快取仍保留在照片庫中。",
   "Keyboard Shortcuts": "鍵盤快速鍵",
   "Keyboard shortcuts": "鍵盤快速鍵",
   "Keyword": "關鍵字",
@@ -2408,5 +2407,16 @@
   "All Presets": "所有預設集",
   "Delete Group": "刪除群組",
   "Rename Group": "重新命名群組",
-  "New Group": "新增群組"
+  "New Group": "新增群組",
+  "Keep it on a drive with room: smart previews are about 1 MB per photo.": "請放在空間充足的磁碟：每張智慧型預覽約 1 MB。",
+  "Photos in folders inside the watched folder are added too (hidden folders and the library's own folder are skipped).": "監看資料夾內各資料夾中的相片也會加入（略過隱藏資料夾和圖庫本身的資料夾）。",
+  "Continue in Background": "在背景繼續",
+  "Folder not found": "找不到資料夾",
+  "Dismiss": "忽略",
+  "Review…": "檢視…",
+  "Open Synchronize Folder with what the scan found": "以掃描結果開啟「同步資料夾」",
+  "You can go on working: a notice at the top left says when the scan is done.": "你可以繼續工作：掃描完成時左上角會出現通知。",
+  "Render to DNG": "渲染為 DNG",
+  "Rendering to DNG": "正在渲染為 DNG",
+  "Render to DNG stopped unexpectedly": "渲染為 DNG 意外停止"
 }

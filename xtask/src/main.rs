@@ -2810,6 +2810,26 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/data/Mamiya/ZD/RAW_MAMIYA_ZD.MEF",
         "bcd63507c3c4cc3ea1bad2945e3f88cb4677a1a3c762e1acc38df4445714eb7c",
     ),
+    (
+        "mrw-minolta-dimage7hi-words16.mrw",
+        "https://raw.pixls.us/data/Minolta/DiMAGE%207Hi/RAW_MINOLTA_DIMAGE_7HI.MRW",
+        "2919a05757197a5424e02970c016893bca5aa29363a67b62b1a4b36326a10f6a",
+    ),
+    (
+        "mrw-minolta-dimage-a1.mrw",
+        "https://raw.pixls.us/data/Minolta/DiMAGE%20A1/RAW_MINOLTA_A1.MRW",
+        "bde1e2cd788e49c9bef20dfdd41be948fb02c2ee198c6b0959a67a3f79fd41c9",
+    ),
+    (
+        "mrw-minolta-dimage-a200-gbrg.mrw",
+        "https://raw.pixls.us/data/Minolta/DiMAGE%20A200/RAW_MINOLTA_DIMAGE_A200.MRW",
+        "2a95f6af2168e536dfb6d02b47e3b6119b35b497eebf179d7c20a6e496c26641",
+    ),
+    (
+        "mrw-minolta-dynax7d.mrw",
+        "https://raw.pixls.us/data/Minolta/Dynax%207D/PICT3410.MRW",
+        "713819e33e5302ec864d576d57223cfc8dcf46e8d45e0ae744d1fec40290a89f",
+    ),
 ];
 
 fn cmd_corpus(download: bool) -> Result<(), String> {

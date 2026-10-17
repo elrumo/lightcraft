@@ -790,7 +790,10 @@ impl SyncState {
         let mut moving: Vec<(&u64, &Job)> = self.jobs.iter().collect();
         moving.sort_by_key(|(request, _)| **request);
         let minis = mini_previews.then(|| self.minis.iter().chain(self.minis_failed.iter().map(|(_, job)| job))).into_iter().flatten();
-        moving.into_iter().map(|(_, job)| (job, true)).chain(self.urgent.iter().chain(self.ready.iter()).chain(self.plan.iter()).chain(minis).map(|job| (job, false)))
+        moving
+            .into_iter()
+            .map(|(_, job)| (job, true))
+            .chain(self.urgent.iter().chain(self.ready.iter()).chain(self.plan.iter()).chain(minis).map(|job| (job, false)))
     }
 
     /// Photo file transfers queued or running: (uploads, downloads). (Every frame: the mini previews
@@ -2523,7 +2526,9 @@ impl Session {
         if let Err(e) = self.persist() {
             log::error!("sync: {e}");
         }
-        c.revision = self.catalog.revision + 1;
+        // (both revisions move past the old catalog's: a view keyed on the library revision must not take the
+        // new catalog for the one it was worked out from)
+        c.set_revision(self.catalog.revision + 1);
         self.catalog = c;
         self.undo.clear();
         self.redo.clear();

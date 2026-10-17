@@ -133,6 +133,7 @@ fn centre(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, from: f32, to:
         } else {
             t.icon
         };
+        let icon = if on && f == Flag::Pick { Icon::FlagPickFilled } else { icon };
         paint(pill_ui.painter(), r.shrink(3.0), icon, c);
         if resp.clicked() {
             let mut params = json!({"flag": match f { Flag::Pick => "pick", Flag::Reject => "reject", Flag::None => "none" }});

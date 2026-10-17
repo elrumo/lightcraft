@@ -999,7 +999,6 @@
   "Info overlay": "Накладання інформації",
   "Into one folder": "До однієї теки",
   "Keep in Local": "Залишити в локальних",
-  "Keep it on a drive with room: smart previews are about 1 MB per photo. The thumbnail cache stays in the library.": "Зберігайте на диску з вільним місцем: смарт-перегляд займає приблизно 1 МБ на фото. Кеш мініатюр залишається в бібліотеці.",
   "Keyboard shortcuts": "Клавіатурні скорочення",
   "Keyword": "Ключове слово",
   "Keyword Painter": "Призначення ключових слів",
@@ -2472,5 +2471,16 @@
   "All Presets": "Усі набори налаштувань",
   "Delete Group": "Видалити групу",
   "Rename Group": "Перейменувати групу",
-  "New Group": "Нова група"
+  "New Group": "Нова група",
+  "Keep it on a drive with room: smart previews are about 1 MB per photo.": "Зберігайте на диску з вільним місцем: смарт-перегляд займає приблизно 1 МБ на фото.",
+  "Photos in folders inside the watched folder are added too (hidden folders and the library's own folder are skipped).": "Фотографії з тек усередині відстежуваної теки теж додаються (приховані теки та тека самої бібліотеки пропускаються).",
+  "Continue in Background": "Продовжити у фоні",
+  "Folder not found": "Теку не знайдено",
+  "Dismiss": "Сховати",
+  "Review…": "Переглянути…",
+  "Open Synchronize Folder with what the scan found": "Відкрити «Синхронізувати теку» з результатами пошуку",
+  "You can go on working: a notice at the top left says when the scan is done.": "Можна працювати далі: сповіщення вгорі ліворуч повідомить, коли пошук завершиться.",
+  "Render to DNG": "Рендерити в DNG",
+  "Rendering to DNG": "Рендеринг у DNG",
+  "Render to DNG stopped unexpectedly": "Рендеринг у DNG несподівано зупинено"
 }

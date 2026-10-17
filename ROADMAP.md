@@ -31,7 +31,7 @@ Each audience with its own hours (Opus 5.5 agent wall-clock hours to ~95%):
 The gap between breadth and readiness is quality and coverage, not missing buttons: camera colour is
 estimated rather than measured, CR3 decodes on 26 verified Canon bodies (rarer CRX variants still open as previews), compressed ORF and HE NEF
 open as previews, rendering is tuned by eye, AI masks are heuristics, there is no lens database, and
-tests run in CI on FreeBSD only. **Why alpha:** core workflows run end to end, but readiness is below
+`main` does not yet pass the tests CI now runs on macOS, Windows and Linux (`ci.yml`). **Why alpha:** core workflows run end to end, but readiness is below
 the ~75% beta bar (it is above the ~40% alpha bar) and Lightroom's main inputs, raw files, still have blocking gaps (compressed ORF and HE NEF open as previews; Canon,
 ~30% of raw users, decodes CR3 on 26 verified bodies). It passes the alpha gate: all six core workflows
 (import, cull, develop, save and reopen, batch looks, export) work end to end on macOS
@@ -167,6 +167,10 @@ it); then sharing between people with accounts (comments, likes, shared librarie
   file's preview; 3 bodies verified on CC0 files. 240 models verified; headline numbers unchanged.
 - 2026-10-11: Leica Q3 verified by a recorded check of 38 private DNGs (all decode and develop at full
   size; mean ΔE to the camera JPEG 6.3–13.9). 236 models verified; headline numbers unchanged.
+- 2026-10-11 (CI): `ci.yml` runs `cargo xtask ci` on Linux and clippy and the tests on macOS and Windows, and the CPU ↔ GPU equivalence tests on lavapipe, Metal and WARP (`LIGHTCRAFT_GPU_ALLOW_SOFTWARE`, tests only), within the documented bounds on all three (max 1 LSB on lavapipe and WARP, 2 in one case on the runner's Metal; the bound is 3). `main` fails there until the #989 fixes and #1052 (Windows) land (#1050). Headline numbers unchanged.
+- 2026-10-12: Minolta / Konica Minolta MRW decodes from sensor data (12-bit packed and 16-bit words,
+  RGGB and GBRG, as-shot WB from `WBG`); DiMAGE 7, 7Hi, A1, A2, A200 and Dynax / Maxxum 7D verified on
+  CC0 files. 241 models verified, 222 preview-only; headline numbers unchanged.
 - 2026-10-12: 22 more Canon CR3 bodies verified (EOS R, RP, R3, R5, R6, R6 Mark II / III, R7, R10, R50,
   R50 V, 90D, 250D, 850D, M200, M50 Mark II, M6 Mark II, 1D X Mark III, PowerShot G5 X II, G7 X III, SX70,
   V1): one CC0 file each pinned and checked against the camera JPEG; all 110 CC0 CR3s on raw.pixls.us
@@ -246,6 +250,8 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 | 2026-10-12 | minor | Epson ERF decoded: 3 more verified models (240); headline numbers unchanged |
 | 2026-10-12 | minor | Georgian (`ka`) interface language added (every catalog message) |
 | 2026-10-12 | minor | UI/UX remaining 40–70 h → 34–58 h (accessibility audit landed); headline numbers unchanged |
+| 2026-10-11 | minor | Tests in CI on macOS, Windows and Linux (`ci.yml`, #1050), GPU equivalence tests on software adapters; not green on `main` yet, gap 9 6–12 h → 2–4 h; headline numbers unchanged |
+| 2026-10-12 | minor | Minolta MRW decoded: 6 more verified models (241), 11 fewer preview-only; headline numbers unchanged |
 | 2026-10-12 | minor | 22 more CR3 bodies verified, EOS R6 Mark III white balance: RAW decoding 77% → 83%, RAW ~56% → ~60%; mainstream 49% → 51%, essentials 64% → 65%; full unchanged at ~61% |
 | 2026-10-12 | minor | 117 Nikon and Fujifilm bodies verified (354 models, 24%); headline numbers unchanged |
 | 2026-10-11 | minor | EOS R5 Mark II CR3 verified: CR3 on four verified bodies, RAW decoding 76% → 77%; headline numbers unchanged |

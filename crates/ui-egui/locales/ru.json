@@ -579,7 +579,6 @@
   "Join the ArtCraft Discord": "Присоединяйтесь к Discord ArtCraft",
   "Join the ArtCraft Discord…": "Присоединиться к Discord ArtCraft…",
   "Keep in Local": "Оставить в «Локальном»",
-  "Keep it on a drive with room: smart previews are about 1 MB per photo. The thumbnail cache stays in the library.": "Храните их на диске со свободным местом: смарт-просмотр занимает около 1 МБ на фото. Кэш миниатюр остаётся в библиотеке.",
   "Keyboard Shortcuts": "Сочетания клавиш",
   "Keyboard shortcuts": "Сочетания клавиш",
   "Keyword": "Ключевое слово",
@@ -2467,5 +2466,16 @@
   "All Presets": "Все пресеты",
   "Delete Group": "Удалить группу",
   "Rename Group": "Переименовать группу",
-  "New Group": "Новая группа"
+  "New Group": "Новая группа",
+  "Keep it on a drive with room: smart previews are about 1 MB per photo.": "Храните их на диске со свободным местом: смарт-просмотр занимает около 1 МБ на фото.",
+  "Photos in folders inside the watched folder are added too (hidden folders and the library's own folder are skipped).": "Фотографии из папок внутри отслеживаемой папки тоже добавляются (скрытые папки и папка самой библиотеки пропускаются).",
+  "Continue in Background": "Продолжить в фоне",
+  "Folder not found": "Папка не найдена",
+  "Dismiss": "Скрыть",
+  "Review…": "Просмотреть…",
+  "Open Synchronize Folder with what the scan found": "Открыть «Синхронизировать папку» с результатами поиска",
+  "You can go on working: a notice at the top left says when the scan is done.": "Можно продолжать работу: уведомление слева вверху сообщит, когда поиск завершится.",
+  "Render to DNG": "Отрисовать в DNG",
+  "Rendering to DNG": "Отрисовка в DNG",
+  "Render to DNG stopped unexpectedly": "Отрисовка в DNG неожиданно остановлена"
 }

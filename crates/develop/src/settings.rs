@@ -88,18 +88,24 @@ pub enum Process {
     /// Detail holds back halos on strong edges, instead of a band at 0.18 % of the long edge (about
     /// 10 px on a 24 MP photo) that drew halos at every size, the fitted view included.
     V3,
+    /// Dehaze estimates haze from a patch-minimum dark channel, eases in, and never pushes a pixel
+    /// below a tenth of its darkest channel (issue #1237); everything else renders as in V3 (upstream's
+    /// own "V3" is this process: the fork's V3 is capture sharpening, so a photo already on V3 keeps
+    /// the dehaze it was made with).
+    V4,
 }
 
 impl Process {
     /// Every process, oldest first.
-    pub const ALL: [Process; 3] = [Process::V1, Process::V2, Process::V3];
-    pub const LATEST: Process = Process::V3;
+    pub const ALL: [Process; 4] = [Process::V1, Process::V2, Process::V3, Process::V4];
+    pub const LATEST: Process = Process::V4;
 
     pub const fn version(self) -> ProcessVersion {
         match self {
             Process::V1 => ProcessVersion(1),
             Process::V2 => ProcessVersion(2),
             Process::V3 => ProcessVersion(3),
+            Process::V4 => ProcessVersion(4),
         }
     }
 }

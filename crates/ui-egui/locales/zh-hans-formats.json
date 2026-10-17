@@ -340,5 +340,9 @@
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "这张照片本身没有深度数据：镜头模糊会使用 Depth Anything V2 Small 来估算（需下载 {:.0} MB，{} 许可证）。{}。",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "对焦范围：{:.0}–{:.0}（0 最近，100 最远）",
   "Delete the group “{name}” and its {n} presets?": "删除分组“{name}”及其 {n} 个预设？",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "已隐藏“{name}”。使用面板菜单中的“显示隐藏的预设”可将其找回。"
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "已隐藏“{name}”。使用面板菜单中的“显示隐藏的预设”可将其找回。",
+  "Changes found: {n}": "发现的更改：{n}",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}”仍在扫描：请等待完成，或用其所在行的 ✕ 停止",
+  "Look at the changes found in “{name}” first, or dismiss them": "请先查看在“{name}”中发现的更改，或将其忽略",
+  "Rendered {ok} of {total} to DNG": "已将 {total} 张中的 {ok} 张渲染为 DNG"
 }

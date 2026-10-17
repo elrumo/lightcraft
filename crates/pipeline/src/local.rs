@@ -243,6 +243,70 @@ fn median_row(src: &[f32], out: &mut [f32], r: usize) {
     }
 }
 
+/// Separable minimum (`2r+1` px along each row, then each column; clamped edges): a square
+/// erosion. Dehaze's patch dark channel from process V4 (#1237; upstream's "V3", see
+/// [`lightcraft_develop::Process::V4`]).
+pub fn min_hv(p: &Plane, r: usize) -> Plane {
+    if r == 0 || p.data.is_empty() {
+        return p.clone();
+    }
+    let rows = |src: &Plane| {
+        let mut out = Plane::new(src.width, src.height);
+        for_rows(&mut out.data, src.width, |y, row| min_row(src.row(y), row, r));
+        out
+    };
+    transpose(&rows(&transpose(&rows(p))))
+}
+
+/// Minimum of `src` over `2r+1` taps (clamped to the row) into `out`, in O(1) per pixel (van Herk /
+/// Gil–Werman: block-wise running minima from both ends).
+fn min_row(src: &[f32], out: &mut [f32], r: usize) {
+    let n = src.len();
+    let k = 2 * r + 1;
+    // padded with +inf: r before, enough after to complete the last block
+    let len = (n + 2 * r).div_ceil(k) * k;
+    let at = |i: usize| if i >= r { src.get(i - r).copied().unwrap_or(f32::INFINITY) } else { f32::INFINITY };
+    let mut fwd = vec![f32::INFINITY; len];
+    let mut bwd = vec![f32::INFINITY; len];
+    for i in 0..len {
+        let v = at(i);
+        fwd[i] = if i % k == 0 { v } else { v.min(fwd[i - 1]) };
+    }
+    for i in (0..len).rev() {
+        let v = at(i);
+        bwd[i] = if i % k == k - 1 || i + 1 == len { v } else { v.min(bwd[i + 1]) };
+    }
+    for (x, o) in out.iter_mut().enumerate().take(n) {
+        // window [x, x + 2r] in padded coordinates
+        *o = bwd.get(x).copied().unwrap_or(f32::INFINITY).min(fwd.get(x + 2 * r).copied().unwrap_or(f32::INFINITY));
+    }
+}
+
+/// Patch radius of dehaze's dark channel from process V4, as a fraction of the long edge.
+pub const DEHAZE_PATCH: f64 = 0.005;
+/// Largest [`dehaze_patch_radius`] (px).
+pub const DEHAZE_PATCH_MAX: usize = 64;
+
+/// Patch (minimum) radius of the dehaze dark channel of `s`'s process at `px_per_long`: 0 (the
+/// per-pixel minimum) before V4.
+pub fn dehaze_patch_radius(s: &DevelopSettings, px_per_long: f64) -> usize {
+    match s.process.process() {
+        Process::V1 | Process::V2 | Process::V3 => 0,
+        Process::V4 => ((DEHAZE_PATCH * px_per_long).round().max(1.0) as usize).min(DEHAZE_PATCH_MAX),
+    }
+}
+
+/// Cache key of the dark-channel plane: its blur radius and patch radius.
+pub fn dark_key(sigma: f32, patch: usize) -> u64 {
+    u64::from(sigma.to_bits()) | ((patch as u64) << 32)
+}
+
+/// The dehaze dark channel: the Gaussian (`sigma`) of the `patch`-px minimum of each pixel's
+/// darkest channel.
+pub fn dark_plane(img: &Rgb32f, sigma: f32, patch: usize) -> Plane {
+    gaussian(&min_hv(&img.map(dark_of), patch), sigma)
+}
+
 fn transpose(p: &Plane) -> Plane {
     let (w, h) = (p.width, p.height);
     let mut t = Plane::new(h, w);
@@ -273,7 +337,7 @@ pub fn base_detail_radius(px_per_long: f64) -> usize {
 pub fn tone_base_detail(s: &DevelopSettings, px_per_long: f64) -> usize {
     match s.process.process() {
         Process::V1 => 0,
-        Process::V2 | Process::V3 => base_detail_radius(px_per_long),
+        Process::V2 | Process::V3 | Process::V4 => base_detail_radius(px_per_long),
     }
 }
 
@@ -372,7 +436,7 @@ pub struct Capture {
 pub fn capture_process(s: &DevelopSettings) -> bool {
     match s.process.process() {
         Process::V1 | Process::V2 => false,
-        Process::V3 => true,
+        Process::V3 | Process::V4 => true,
     }
 }
 
@@ -380,7 +444,16 @@ pub fn capture_process(s: &DevelopSettings) -> bool {
 /// ([`crate::Plan::detail_scale`]): `None` before V3, with no sharpening (global or local) or when
 /// a preview is too small to show any.
 pub fn capture_sharpen(s: &DevelopSettings, scale: f32) -> Option<Capture> {
-    if !capture_process(s) || (s.detail.sharpen_amount == 0.0 && !s.masks.iter().any(|m| m.adjust.sharpness != 0.0)) {
+    if s.detail.sharpen_amount == 0.0 && !s.masks.iter().any(|m| m.adjust.sharpness != 0.0) {
+        return None;
+    }
+    capture_view(s, scale)
+}
+
+/// [`capture_sharpen`] whether or not anything is sharpened: what the Radius and Detail sliders
+/// would sharpen with, which the Alt-drag sharpening views show ([`crate::Overlay::SharpenDetail`]).
+pub fn capture_view(s: &DevelopSettings, scale: f32) -> Option<Capture> {
+    if !capture_process(s) {
         return None;
     }
     let scale = if scale.is_finite() { scale.clamp(0.0, 1.0) } else { 1.0 };
@@ -460,7 +533,7 @@ pub(crate) struct Planes {
     /// Capture sharpening's blur of log luminance ([`Capture`]).
     pub sharpen: Option<(u32, Arc<Plane>)>,
     /// Dark channel and its airlight.
-    pub dark: Option<(u32, Arc<Plane>, f32)>,
+    pub dark: Option<(u64, Arc<Plane>, f32)>,
     /// Blurred chromaticity (local Moiré / Noise).
     pub chroma: Option<(u32, Arc<Rgb32f>)>,
 }
@@ -524,8 +597,15 @@ pub struct PlaneSigmas {
     pub texture: Option<f32>,
     /// Dehaze dark channel (Gaussian).
     pub dark: Option<f32>,
+    /// Patch radius (px) of that dark channel ([`dehaze_patch_radius`]: 0 before V4).
+    pub dark_patch: usize,
     /// Chromaticity blur for local Moiré / colour noise (Gaussian).
     pub chroma: Option<f32>,
+}
+
+/// Gaussian sigma (pixels) of the texture / sharpening band at `px_per_long`.
+pub fn texture_sigma(px_per_long: f64) -> f32 {
+    (0.0018 * px_per_long as f32).max(0.6)
 }
 
 pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneSigmas {
@@ -550,15 +630,16 @@ pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneS
         || (band_sharpens && local_any(|a| a.sharpness))
         || local_any(|a| a.noise)
         || s.masks.iter().any(|m| m.adjust.defringe > 0.0))
-    .then(|| (0.0018 * ppl).max(0.6));
+    .then(|| texture_sigma(px_per_long));
     let dark = (s.effects.dehaze != 0.0 || local_any(|a| a.dehaze)).then(|| (0.02 * ppl).max(1.0));
     let chroma = (local_any(|a| a.moire) || s.masks.iter().any(|m| m.adjust.noise > 0.0)).then(|| (CHROMA_SIGMA * ppl).max(1.0));
     let base_detail = if base.is_some() { tone_base_detail(s, px_per_long) } else { 0 };
-    PlaneSigmas { base, base_detail, clarity, texture, dark, chroma }
+    let dark_patch = if dark.is_some() { dehaze_patch_radius(s, px_per_long) } else { 0 };
+    PlaneSigmas { base, base_detail, clarity, texture, dark, dark_patch, chroma }
 }
 
-/// The spatial planes the per-pixel stage needs for `img` (white-balanced, before exposure),
-/// reusing whatever `planes` already holds for it. Missing planes are computed side by side (each
+/// The spatial planes and mask alphas the per-pixel stage needs for `img` (white-balanced, before
+/// exposure), reusing whatever `planes` and `alphas` already hold for it. Missing planes are computed side by side (each
 /// one alone scales poorly: the guided filters work on small subsampled grids).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare(
@@ -569,11 +650,19 @@ pub(crate) fn prepare(
     q: Quality,
     capture: Option<Capture>,
     planes: &mut Planes,
-    mattes: Option<&masks::Mattes>,
+    mattes: Option<&Arc<masks::Mattes>>,
+    alphas: (&mut masks::AlphaCache, masks::AlphaKeys),
 ) -> Prepared {
     let log_l = planes.log_l.get_or_insert_with(|| Arc::new(timed("log_l", || img.map(log_lum)))).clone();
-    let PlaneSigmas { base: base_sigma, base_detail, clarity: clarity_sigma, texture: texture_sigma, dark: dark_sigma, chroma: chroma_sigma } =
-        plane_sigmas(s, px_per_long, q);
+    let PlaneSigmas {
+        base: base_sigma,
+        base_detail,
+        clarity: clarity_sigma,
+        texture: texture_sigma,
+        dark: dark_sigma,
+        dark_patch,
+        chroma: chroma_sigma,
+    } = plane_sigmas(s, px_per_long, q);
 
     let Planes { base: sb, clarity: sc, texture: st, sharpen: ssh, dark: sd, chroma: sch, .. } = planes;
     let chroma_blur = chroma_sigma.map(|sg| match sch {
@@ -599,11 +688,11 @@ pub(crate) fn prepare(
                         },
                         || {
                             dark_sigma.map(|sg| match sd {
-                                Some((k, d, air)) if *k == sg.to_bits() => (d.clone(), *air),
+                                Some((k, d, air)) if *k == dark_key(sg, dark_patch) => (d.clone(), *air),
                                 _ => {
-                                    let d = timed("dehaze", || Arc::new(gaussian(&img.map(dark_of), sg)));
+                                    let d = timed("dehaze", || Arc::new(dark_plane(&img, sg, dark_patch)));
                                     let air = airlight(&d);
-                                    *sd = Some((sg.to_bits(), d.clone(), air));
+                                    *sd = Some((dark_key(sg, dark_patch), d.clone(), air));
                                     (d, air)
                                 }
                             })
@@ -619,7 +708,8 @@ pub(crate) fn prepare(
         None => (None, 1.0),
     };
     let ev = s.light.exposure as f32;
-    let masks = timed("masks", || masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l, ev, mattes));
+    let (cache, keys) = alphas;
+    let masks = timed("masks", || masks::evaluate_cached(&s.masks, frame, img.width, img.height, &img, &log_l, ev, mattes, keys, cache));
     Prepared { img, log_l, base, clarity_blur, texture_blur, sharpen, dark, chroma_blur, air, masks, px_per_long }
 }
 
@@ -628,8 +718,9 @@ pub(crate) fn prepare(
 pub(crate) fn frame_airlight(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, frame: &Frame, proxy_w: usize, proxy_h: usize) -> f32 {
     let mut img = Rgb32f::clone(&frame_proxy(src, frame, proxy_w, proxy_h));
     white_balance(&mut img, info, s);
-    let sigma = (0.02 * frame.px_per_long(proxy_w)).max(1.0) as f32;
-    airlight(&gaussian(&img.map(dark_of), sigma))
+    let ppl = frame.px_per_long(proxy_w);
+    let sigma = (0.02 * ppl).max(1.0) as f32;
+    airlight(&dark_plane(&img, sigma, dehaze_patch_radius(s, ppl)))
 }
 
 /// How many airlight proxies [`frame_proxy`] keeps (one per photo and frame being zoomed into; each ≤ 1.8 MB).
@@ -719,7 +810,8 @@ mod tests {
         let fresh = |src: &Rgb32f, frame: &Frame| {
             let mut img = frame.sample(src, 48, 32);
             white_balance(&mut img, &info, &s);
-            airlight(&gaussian(&img.map(dark_of), (0.02 * frame.px_per_long(48)).max(1.0) as f32))
+            let ppl = frame.px_per_long(48);
+            airlight(&dark_plane(&img, (0.02 * ppl).max(1.0) as f32, dehaze_patch_radius(&s, ppl)))
         };
         let frame = crate::frame_for(&hazy, &info, &s, true);
         let kept = frame_proxy(&hazy, &frame, 48, 32);

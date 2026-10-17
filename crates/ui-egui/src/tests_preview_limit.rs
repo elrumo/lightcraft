@@ -838,6 +838,35 @@ mod in_the_loupe {
         assert!(after.iter().all(|(_, clip, _)| clip.left() >= canvas.center().x), "the After window spills into the Before pane: {after:?}");
     }
 
+    #[test]
+    fn clicking_either_before_after_pane_zooms_to_the_clicked_photo_point() {
+        use crate::state::{BeforeAfter, Zoom};
+        for mode in [BeforeAfter::SideBySide, BeforeAfter::TopBottom] {
+            for before in [true, false] {
+                let (mut h, _) = detail_in([1400.0, 1000.0]);
+                h.app.ui.before_after = mode;
+                h.settle(SETTLE);
+                let canvas = h.app.canvas_rect.unwrap().shrink(24.0);
+                let after_img = h.app.image_rect.unwrap();
+                let before_img = match mode {
+                    BeforeAfter::SideBySide => after_img.translate(egui::vec2(-(canvas.width() / 2.0 + 6.0), 0.0)),
+                    _ => after_img.translate(egui::vec2(0.0, -(canvas.height() / 2.0 + 14.0))),
+                };
+                let img = if before { before_img } else { after_img };
+                let expected = (0.63, 0.41);
+                let click = img.min + egui::vec2(img.width() * expected.0, img.height() * expected.1);
+                let r = h.request("ui.click", json!({"x": click.x, "y": click.y}), T);
+                assert_eq!(r["ok"], true, "{r}");
+                assert_eq!(h.app.ui.zoom, Zoom::Percent(100.0));
+                let actual = h.app.ui.pan;
+                assert!(
+                    (actual.0 - expected.0).abs() < 0.01 && (actual.1 - expected.1).abs() < 0.01,
+                    "{mode:?}, before={before}: clicked {expected:?}, zoom anchored at {actual:?}"
+                );
+            }
+        }
+    }
+
     // Given a Before and an After with the same look (an unedited photo), both windows are kept
     // apart: the job key is the same, and one tile must not replace the other
     #[test]

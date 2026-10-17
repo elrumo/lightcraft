@@ -340,5 +340,9 @@
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У этого фото нет собственной карты глубины: «Размытие объектива» оценивает её с помощью Depth Anything V2 Small, загрузка {:.0} МБ (лицензия {}). {}.",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "В фокусе: {:.0}–{:.0} (0 — ближе всего, 100 — дальше всего)",
   "Delete the group “{name}” and its {n} presets?": "Удалить группу «{name}» и её пресеты ({n})?",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Скрыто: «{name}». Вернуть можно командой «Показывать скрытые пресеты» в меню панели."
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Скрыто: «{name}». Вернуть можно командой «Показывать скрытые пресеты» в меню панели.",
+  "Changes found: {n}": "Найдено изменений: {n}",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "«{name}» ещё просматривается: дождитесь окончания или остановите поиск кнопкой ✕ в его строке",
+  "Look at the changes found in “{name}” first, or dismiss them": "Сначала просмотрите изменения, найденные в «{name}», или скройте их",
+  "Rendered {ok} of {total} to DNG": "В DNG отрисовано {ok} из {total}"
 }

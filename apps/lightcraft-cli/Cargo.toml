@@ -26,6 +26,9 @@ lightcraft-merge = { workspace = true }
 serde_json = { workspace = true }
 dhat = { workspace = true, optional = true }
 
+[dev-dependencies]
+lightcraft-tiff = { workspace = true }
+
 [features]
 default = ["denoise", "rawnind-model"]
 denoise = ["lightcraft-engine/denoise"]

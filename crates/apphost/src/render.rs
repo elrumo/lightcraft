@@ -384,6 +384,8 @@ pub struct Scheduler<V> {
     drafted: Vec<u64>,
     /// Jobs finished since start (for inspect/perf).
     pub completed: u64,
+    /// Finished jobs thrown away because a newer request for their slot had replaced them.
+    pub discarded: u64,
     /// Keep the renders of the neighbouring photos ([`Slot::Prefetch`]) as textures, for the phone
     /// loupe to slide in; elsewhere they only warm the engine's caches.
     pub keep_neighbours: bool,
@@ -524,6 +526,7 @@ impl<V> Scheduler<V> {
             draft_ids: Vec::new(),
             drafted: Vec::new(),
             completed: 0,
+            discarded: 0,
             keep_neighbours: false,
             stages: HashMap::new(),
             quick_tried: HashMap::new(),
@@ -1179,6 +1182,7 @@ impl<V> Scheduler<V> {
                     && self.shown_ids.get(&slot).is_none_or(|shown| r.request_id > *shown)
                     && r.rendered.is_ok();
                 if !newer_draft {
+                    self.discarded += 1;
                     continue;
                 }
                 session.accept(&r);

@@ -113,7 +113,10 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
         Dialog::EditIn { .. } => "Edit",
         Dialog::ShareLink { .. } => "Create Link",
         Dialog::LightroomCatalog { .. } => "Import Lightroom Catalog…",
+        // the scan need not be waited for
+        Dialog::SynchronizeFolder { counts: None, .. } => "Continue in Background",
         Dialog::SynchronizeFolder { .. } => "Synchronize",
+        Dialog::ReportBug { .. } => "Create Report",
         Dialog::Export { .. } => "Export",
         Dialog::SamModel { then: Some(_), .. } if installed => "Continue",
         Dialog::SamModel { .. } if installed || running || nowhere => return String::new(),
@@ -229,6 +232,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewSmartAlbum { .. } => "Create Smart Album",
         Dialog::AllMetadata { .. } => "All Metadata",
         Dialog::SystemInfo { .. } => "System Info",
+        Dialog::ReportBug { .. } => "Report a Bug",
         Dialog::DenoiseModel { .. } => "AI Denoise Model",
         Dialog::FaceModel { info, .. } if info["download"].is_string() => "Download Face Model",
         Dialog::FaceModel { .. } => "Add Face Model",
@@ -275,7 +279,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         || matches!(&dlg, Dialog::PresetImport { review } if crate::preset_import::informational(review))
         || matches!(dlg, Dialog::LightroomResult { first: None, .. })
         || only_shows(&dlg);
-    // installing waits for the licence to be accepted (and Synchronize waits for the scan); smart-album
+    // installing waits for the licence to be accepted (and Synchronize a moment after its scan ended); smart-album
     // rules that can't mean anything wait to be fixed
     // (a person's rename waits for a name that can be applied, and for the say-so to combine two people)
     let rename_blocked = match &dlg {
@@ -287,10 +291,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     };
     let can_confirm = !rename_blocked
         && (informational
-            || !matches!(
-                &dlg,
-                Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. } | Dialog::SynchronizeFolder { counts: None, .. }
-            ) && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty())
+            || !matches!(&dlg, Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. })
+            // (Synchronize, just after its button stopped being Continue in Background)
+            && !(matches!(&dlg, Dialog::SynchronizeFolder { counts: Some(_), .. }) && !crate::sync::settled(app, ctx))
+            && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty())
             // (a link's password, if there is one, is long enough)
             && !matches!(&dlg, Dialog::ShareLink { password, .. } if !password.is_empty() && password.chars().count() < lightcraft_engine::cloud_sync::SHARE_PASSWORD_MIN));
     // (taken before `body` borrows the dialog)
@@ -326,6 +330,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::AllMetadata { .. } => 620.0,
         Dialog::Print => 1100.0,
         Dialog::FaceModel { .. } => 460.0,
+        Dialog::ReportBug { .. } => 560.0,
         Dialog::LightroomCatalog { .. } => 440.0,
         Dialog::ManageEffects { .. } => 560.0,
         _ => 380.0,
@@ -440,6 +445,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     ui.add(egui::Label::new(detail).wrap().selectable(true));
                 }
             }
+            Dialog::ReportBug { opts, rows, logs } => crate::bug_report::dialog_body(ui, &t, opts, rows, logs),
             Dialog::SystemInfo { rows } => {
                 egui::Grid::new("sysinfo").num_columns(2).spacing([16.0, 4.0]).striped(true).show(ui, |ui| {
                     for (k, v) in rows.iter() {
@@ -1343,6 +1349,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         | Dialog::KeywordTag { .. }
                         | Dialog::KeywordSet { .. }
                         | Dialog::SynchronizeFolder { .. }
+                        | Dialog::ReportBug { .. }
                         | Dialog::ShareLink { .. }
                         | Dialog::SaveEffect { .. }
                 ) =>
@@ -1771,6 +1778,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         Dialog::DenoiseModel { info, accepted } => crate::panels::denoise::install(app, info, *accepted),
         Dialog::FaceModel { path, info, accepted } => crate::panels::faces::install(app, path, info, *accepted),
         Dialog::AllMetadata { .. } | Dialog::SystemInfo { .. } | Dialog::WhatsNew => Ok(serde_json::Value::Null),
+        Dialog::ReportBug { opts, rows, logs } => crate::bug_report::create(app, opts, rows, logs),
         Dialog::Cull { reject_below, pick_best } => {
             let mut p = json!({"pickBest": pick_best});
             if *reject_below > 0.0 {
@@ -2147,9 +2155,7 @@ pub fn confirm_style(dlg: &Dialog) -> ConfirmStyle {
         | Dialog::DeleteKeyword { .. }
         | Dialog::DeleteEffects { .. }
         | Dialog::DeletePresetGroup { .. }
-        | Dialog::RemoveFolder { .. } => {
-            ConfirmStyle::Plain
-        }
+        | Dialog::RemoveFolder { .. } => ConfirmStyle::Plain,
         _ if only_shows(dlg) => ConfirmStyle::Plain,
         _ => ConfirmStyle::Primary,
     }

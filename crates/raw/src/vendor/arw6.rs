@@ -20,12 +20,12 @@ fn unsupported(why: &str) -> RawError {
     RawError::Unsupported(format!("ARW6 {why}"))
 }
 
-fn u16_be(b: &[u8], at: usize) -> Option<usize> {
+pub(crate) fn u16_be(b: &[u8], at: usize) -> Option<usize> {
     let s = b.get(at..at.checked_add(2)?)?;
     Some(usize::from(u16::from_be_bytes([*s.first()?, *s.get(1)?])))
 }
 
-fn u24_be(b: &[u8], at: usize) -> Option<usize> {
+pub(crate) fn u24_be(b: &[u8], at: usize) -> Option<usize> {
     let s = b.get(at..at.checked_add(3)?)?;
     Some(s.iter().fold(0usize, |a, &v| (a << 8) | usize::from(v)))
 }
@@ -46,7 +46,10 @@ pub(crate) struct TileEntry {
 }
 
 /// Most tiles a strip may hold (real files have 1 or 4).
-const MAX_TILES: usize = 16;
+pub(crate) const MAX_TILES: usize = 16;
+
+/// TIFF `Compression` of ARW6: Sony's "Compressed RAW 2" (SMPTE RDD 34), written by the ILCE-7RM6 and ILCE-7M5.
+pub(crate) const COMPRESSION: u16 = 32766;
 
 /// Parse the tile table at the start of the strip (file structure, *Container*): `u32` count, `u32` 0, then
 /// 24-byte entries `u64` offset (relative to the strip), `u32` x, y, width, height, all little-endian.
@@ -169,6 +172,26 @@ pub(crate) fn parse_tile_header(tile: &[u8], tw: usize, th: usize) -> Result<Til
         }
     }
     Ok(TileHeader { hs, vs, streams })
+}
+
+/// Word positions of a tile's 13 stream header words, from the group tables alone (bytes 48..128: per group a count
+/// byte then `u24` stream sizes). [`crate::sparse`] loads those words before running [`parse_tile_header`] on a
+/// partly loaded buffer; the two walks must agree.
+pub(crate) fn stream_header_positions(tables: &[u8]) -> Option<[usize; 13]> {
+    let mut out = [0usize; 13];
+    let (mut word, mut i) = (8usize, 0usize);
+    for (group, &n) in GROUP_STREAMS.iter().enumerate() {
+        let base = (3 + group) * 16;
+        if usize::from(*tables.get(base)?) != n {
+            return None;
+        }
+        for comp in 0..n {
+            out[i] = word;
+            i += 1;
+            word = word.checked_add(u24_be(tables, base + 1 + 3 * comp)?)?;
+        }
+    }
+    Some(out)
 }
 
 /// One half-TU of a stream: `len` bytes at byte `start` of the tile, quantiser index per band

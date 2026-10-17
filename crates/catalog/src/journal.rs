@@ -524,7 +524,7 @@ impl Journal {
                 Err(e) => log::warn!("catalog: can't write the format v{VERSION} snapshot: {e}"),
             }
         }
-        catalog.revision = 0;
+        catalog.set_revision(0);
         Ok((j, catalog, report))
     }
 

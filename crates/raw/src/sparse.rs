@@ -12,10 +12,12 @@
 //! start of the first one, where the coding headers a header probe validates sit), a CR3's image
 //! tracks (keeping the raw track's coding headers and quantization maps, and the timed-metadata
 //! track where Canon puts the as-shot white balance), a RAF's CFA strip (keeping its compression
-//! header) and a Panasonic RW2's raw data. Formats whose header probe reads samples (NEF: masked
-//! columns; ORF: bit depth and CFA phase; PEF: dark borders; ARW6, for its header plan only: the
-//! start of every tile) and anything else get [`HeaderPlan::Whole`], as does a structure that is
-//! incomplete, inconsistent or keeps metadata inside its sample data: the plan never guesses.
+//! header) and a Panasonic RW2's raw data. A Sony ARW6's strip is not a prefix but the scattered
+//! bytes its header probe validates (the tile table, the stream headers and index tables, the
+//! residual stream's first half: see [`arw6_keep`]). Formats whose header probe reads samples (NEF:
+//! masked columns; ORF: bit depth and CFA phase; PEF: dark borders; ERF and MEF) and anything else
+//! get [`HeaderPlan::Whole`], as does a structure that is incomplete, inconsistent or keeps metadata
+//! inside its sample data: the plan never guesses.
 
 use std::collections::HashSet;
 
@@ -163,7 +165,7 @@ pub fn preview_plan(bytes: &[u8], loaded: &Ranges) -> HeaderPlan {
 fn plan(bytes: &[u8], loaded: &Ranges, preview: bool) -> HeaderPlan {
     let mut w = Want::new(bytes, loaded);
     if !w.want(0, 16) {
-        return w.into_plan().unwrap_or(HeaderPlan::Whole("file too short"));
+        return w.pending_plan().unwrap_or(HeaderPlan::Whole("file too short"));
     }
     if is_cr3(bytes) {
         cr3_plan(bytes, loaded, preview)
@@ -205,9 +207,9 @@ impl<'a> Want<'a> {
         false
     }
 
-    /// `Need` when something is missing.
-    fn into_plan(self) -> Option<HeaderPlan> {
-        (!self.need.is_empty()).then_some(HeaderPlan::Need(self.need))
+    /// `Need` when something is missing (the asks are taken).
+    fn pending_plan(&mut self) -> Option<HeaderPlan> {
+        (!self.need.is_empty()).then(|| HeaderPlan::Need(std::mem::take(&mut self.need)))
     }
 }
 
@@ -228,7 +230,7 @@ fn tiff_plan(bytes: &[u8], loaded: &Ranges, preview: bool) -> HeaderPlan {
         Ok(meta) => meta,
         Err(why) => return HeaderPlan::Whole(why),
     };
-    if let Some(plan) = w.into_plan() {
+    if let Some(plan) = w.pending_plan() {
         return plan;
     }
     // (the Make is usually in the first kilobytes: a NEF, PEF or ORF is known before the rest is read)
@@ -238,21 +240,59 @@ fn tiff_plan(bytes: &[u8], loaded: &Ranges, preview: bool) -> HeaderPlan {
     let Ok(tiff) = Tiff::parse(bytes) else { return HeaderPlan::Whole("TIFF structure") };
     let mut holes = Ranges::new();
     for ifd in tiff.all_ifds() {
-        let chunks: Vec<(u64, u64)> = match ifd.image() {
+        let info = ifd.image().ok();
+        // A JPEG-interchange image (compression 6/7: tags 0x0201/0x0202 are `JPEGInterchangeFormat` and
+        // `JPEGInterchangeFormatLength`, not strip tags, which is why `image()` declines; e.g. a Sony
+        // ARW's full-size JPEG): the header probe never reads it and `embedded_preview` wants it whole,
+        // so under [`header_plan`] its bulk is holed like any other image's.
+        let jif = (|| {
+            if preview || !matches!(ifd.u16(t::COMPRESSION), Some(6 | 7)) {
+                return None;
+            }
+            let off = ifd.u64(t::JPEG_INTERCHANGE_FORMAT)?;
+            let jif_len = ifd.u64(t::JPEG_INTERCHANGE_FORMAT_LENGTH)?;
+            (jif_len >= BULK).then_some((off, jif_len))
+        })();
+        let chunks: Vec<(u64, u64)> = match &info {
             // a preview's strips are read when the preview is wanted: only the raw image is skipped
-            Ok(info) if preview && !matches!(info.photometric, t::photometric::CFA | t::photometric::LINEAR_RAW) => continue,
-            // (Sony Compressed RAW 2: the header probe decodes the start of every tile; a preview reads none)
-            Ok(info) if !preview && info.compression == 32766 => return HeaderPlan::Whole("an ARW6 header probe reads its tiles"),
-            Ok(info) => info.chunks(len).iter().map(|c| (c.offset, c.len)).collect(),
+            Some(info) if preview && !matches!(info.photometric, t::photometric::CFA | t::photometric::LINEAR_RAW) => continue,
+            Some(info) => info.chunks(len).iter().map(|c| (c.offset, c.len)).collect(),
             // a raw IFD without the tags a TIFF image needs (an older CR2's) still lists its strips
-            Err(_) => match (ifd.u64s(t::STRIP_OFFSETS), ifd.u64s(t::STRIP_BYTE_COUNTS)) {
+            None => match (ifd.u64s(t::STRIP_OFFSETS), ifd.u64s(t::STRIP_BYTE_COUNTS)) {
                 (Some(offsets), Some(counts)) if offsets.len() == counts.len() => offsets.into_iter().zip(counts).collect(),
-                _ => continue,
+                // nothing to hole but for a JPEG-interchange image (see `jif`)
+                _ => {
+                    if let Some((off, jif_len)) = jif {
+                        holes.insert(off.saturating_add(HEAD), off.saturating_add(jif_len).min(len));
+                    }
+                    continue;
+                }
             },
         };
         let total = chunks.iter().fold(0u64, |n, c| n.saturating_add(c.1));
         if total < BULK {
             continue;
+        }
+        // A compression-32766 (ARW6) strip: its header probe reads scattered bytes (the tile table, stream
+        // headers, index tables, the residual's first half), not a prefix — keep exactly those and hole the
+        // rest ([`arw6_keep`]). Multiple strips or a layout it cannot walk fail the probe identically on the
+        // whole file, so they stay here for the generic prefix hole or fall to `Whole`.
+        if let Some(info) = &info
+            && info.compression == crate::vendor::arw6::COMPRESSION
+            && let Some(&(chunk_offset, chunk_size)) = chunks.first()
+        {
+            match arw6_keep(&mut w, bytes, (chunk_offset, chunk_size), info.width as usize, info.height as usize) {
+                None => return w.pending_plan().unwrap_or(HeaderPlan::Whole("ARW6 strip")),
+                Some(Ok(keep)) => {
+                    let mut full = Ranges::new();
+                    full.insert(chunk_offset, chunk_offset.saturating_add(chunk_size).min(len));
+                    for &(a, b) in full.minus(&keep).spans() {
+                        holes.insert(a, b);
+                    }
+                    continue;
+                }
+                Some(Err(_)) => return HeaderPlan::Whole("ARW6 strip"),
+            }
         }
         for (i, &(offset, size)) in chunks.iter().enumerate() {
             let start = if i == 0 { offset.saturating_add(HEAD) } else { offset };
@@ -285,7 +325,7 @@ pub fn image_plan(bytes: &[u8], loaded: &Ranges) -> HeaderPlan {
     let len = bytes.len() as u64;
     let mut w = Want::new(bytes, loaded);
     if !w.want(0, 16) {
-        return w.into_plan().unwrap_or(HeaderPlan::Whole("file too short"));
+        return w.pending_plan().unwrap_or(HeaderPlan::Whole("file too short"));
     }
     if Tiff::sniff(bytes).is_none() {
         return HeaderPlan::Whole("not a TIFF");
@@ -295,7 +335,7 @@ pub fn image_plan(bytes: &[u8], loaded: &Ranges) -> HeaderPlan {
         Err(why) => return HeaderPlan::Whole(why),
     };
     let big = std::mem::take(&mut w.big);
-    if let Some(plan) = w.into_plan() {
+    if let Some(plan) = w.pending_plan() {
         return plan;
     }
     let Ok(tiff) = Tiff::parse(bytes) else { return HeaderPlan::Whole("TIFF structure") };
@@ -453,7 +493,7 @@ fn cr3_plan(bytes: &[u8], loaded: &Ranges, preview: bool) -> HeaderPlan {
         }
         at = end;
     }
-    if let Some(plan) = w.into_plan() {
+    if let Some(plan) = w.pending_plan() {
         return plan;
     }
     let mut w = Want::new(bytes, loaded);
@@ -479,7 +519,7 @@ fn cr3_plan(bytes: &[u8], loaded: &Ranges, preview: bool) -> HeaderPlan {
             }
         }
     }
-    w.into_plan().unwrap_or(HeaderPlan::Ready)
+    w.pending_plan().unwrap_or(HeaderPlan::Ready)
 }
 
 /// A RAF is read whole but for its CFA strip: the header, the embedded JPEG (its metadata), the
@@ -488,7 +528,7 @@ fn raf_plan(bytes: &[u8], loaded: &Ranges) -> HeaderPlan {
     let len = bytes.len() as u64;
     let mut w = Want::new(bytes, loaded);
     if !w.want(0, 160) {
-        return w.into_plan().unwrap_or(HeaderPlan::Whole("RAF header"));
+        return w.pending_plan().unwrap_or(HeaderPlan::Whole("RAF header"));
     }
     let (Some(start), Some(size)) = (be32(bytes, 100), be32(bytes, 104)) else { return HeaderPlan::Whole("RAF header") };
     let Some(end) = start.checked_add(size).filter(|&e| start > 0 && size > 0 && e <= len) else { return HeaderPlan::Whole("RAF raw container") };
@@ -497,7 +537,7 @@ fn raf_plan(bytes: &[u8], loaded: &Ranges) -> HeaderPlan {
         Ok(meta) => meta,
         Err(why) => return HeaderPlan::Whole(why),
     };
-    if let Some(plan) = w.into_plan() {
+    if let Some(plan) = w.pending_plan() {
         return plan;
     }
     let Ok(ifd) = crate::vendor::raf::raw_ifd(container) else { return HeaderPlan::Whole("RAF raw IFD") };
@@ -508,6 +548,105 @@ fn raf_plan(bytes: &[u8], loaded: &Ranges) -> HeaderPlan {
         holes.insert(s.saturating_add(HEAD), s.saturating_add(strip).min(end));
     }
     finish(len, loaded, &holes, &meta, || HeaderPlan::Ready)
+}
+
+/// Ask for several ranges in one go, keeping the loaded ones; false when any is still missing.
+fn load_all(w: &mut Want, keep: &mut Ranges, spans: &[(u64, u64)]) -> bool {
+    let mut all = true;
+    for &(start, end) in spans {
+        let end = end.min(w.len);
+        if w.want(start, end) {
+            keep.insert(start, end);
+        } else {
+            all = false;
+        }
+    }
+    all
+}
+
+/// A compression-32766 (ARW6) strip's byte ranges that [`crate::vendor::arw6::decode`] reads in header mode — *not*
+/// a prefix like the other codecs (`docs/arw6-compression.md`): the tile table, and per tile the picture and group
+/// tables, the 13 stream header words, every stream's index table and the residual stream's first half, whose
+/// lines fix the first-half shift. The later ranges' positions are only known once earlier ones are loaded, so the
+/// walk runs in stages that ask for what they can in one round (`None` while something is still missing; its asks
+/// wait in `w`); `Err` when the layout cannot be walked at all — the probe then stops at the same validation of
+/// loaded bytes on the whole file, so the caller reads the file whole.
+fn arw6_keep(w: &mut Want, bytes: &[u8], strip: (u64, u64), width: usize, height: usize) -> Option<Result<Ranges, &'static str>> {
+    use crate::vendor::arw6;
+    let (offset, size) = strip;
+    let strip_end = offset.saturating_add(size).min(bytes.len() as u64);
+    // the tile table: a count and at most sixteen 24-byte entries
+    if !w.want(offset, offset.saturating_add(8 + 24 * arw6::MAX_TILES as u64).min(strip_end)) {
+        return None;
+    }
+    let (at, end) = match (usize::try_from(offset), usize::try_from(strip_end)) {
+        (Ok(at), Ok(end)) if at <= end => (at, end),
+        _ => return Some(Err("ARW6 strip")),
+    };
+    let Some(strip) = bytes.get(at..end) else { return Some(Err("ARW6 strip")) };
+    let Ok(tiles) = arw6::parse_tile_table(strip, width, height) else { return Some(Err("ARW6 tile table")) };
+    // each tile's bytes run to the next tile's offset (the last: the strip end), as `tile_bytes` does: the
+    // `end_rel(i)` are positions in the strip and `abs` makes one absolute
+    let end_rel = |i: usize| -> usize {
+        match tiles.get(i + 1) {
+            Some(next) => next.offset,
+            None => strip.len(),
+        }
+    };
+    let abs = |rel: usize| offset.saturating_add(rel as u64);
+    // stage A: every tile's picture header (word 0) and group tables (words 3..8)
+    let mut keep = Ranges::new();
+    keep.insert(offset, offset.saturating_add(8 + 24 * tiles.len() as u64).min(strip_end));
+    let tables: Vec<(u64, u64)> = tiles.iter().enumerate().map(|(i, entry)| (abs(entry.offset), abs((entry.offset + 128).min(end_rel(i))))).collect();
+    if !load_all(w, &mut keep, &tables) {
+        return None;
+    }
+    // stage B: the 13 stream header words, at positions the group tables alone imply
+    let mut spans = Vec::with_capacity(tiles.len() * 13);
+    for (i, entry) in tiles.iter().enumerate() {
+        let Some(found) = strip.get(entry.offset..(entry.offset + 128).min(end_rel(i))).and_then(arw6::stream_header_positions) else {
+            return Some(Err("ARW6 tile header"));
+        };
+        let start = abs(entry.offset);
+        for p in found {
+            let at = start.saturating_add(p as u64 * 16);
+            spans.push((at, at.saturating_add(16)));
+        }
+    }
+    if !load_all(w, &mut keep, &spans) {
+        return None;
+    }
+    // stage C: with the header words loaded, the probe's own parse places each stream's index table
+    let mut headers = Vec::with_capacity(tiles.len());
+    let mut spans = Vec::with_capacity(tiles.len() * 13);
+    for (i, entry) in tiles.iter().enumerate() {
+        let Some(tile) = strip.get(entry.offset..end_rel(i)) else { return Some(Err("ARW6 tile header")) };
+        let Ok(header) = arw6::parse_tile_header(tile, entry.width, entry.height) else { return Some(Err("ARW6 tile header")) };
+        let start = abs(entry.offset);
+        for st in &header.streams {
+            let from = start.saturating_add((st.word as u64 + 1) * 16);
+            spans.push((from, from.saturating_add(st.index_words as u64 * 16)));
+        }
+        headers.push(header);
+    }
+    if !load_all(w, &mut keep, &spans) {
+        return None;
+    }
+    // stage D: each residual stream's first half — its first index entry (loaded with the index table) gives
+    // the half's byte length, and [`arw6::first_half_shift`] decodes its lines for the anchor offset
+    let mut spans = Vec::with_capacity(tiles.len());
+    for (i, entry) in tiles.iter().enumerate() {
+        let Some(tile) = strip.get(entry.offset..end_rel(i)) else { return Some(Err("ARW6 tile header")) };
+        let Some(header) = headers.get(i) else { return Some(Err("ARW6 tile header")) };
+        let Some(g4) = header.streams.get(12) else { return Some(Err("ARW6 tile header")) };
+        let Some(a) = arw6::u16_be(tile, (g4.word + 1) * 16) else { return Some(Err("ARW6 residual half")) };
+        let data = abs(entry.offset).saturating_add((g4.word as u64 + 1) * 16).saturating_add(g4.index_words as u64 * 16);
+        spans.push((data, data.saturating_add(a as u64).min(abs(end_rel(i)))));
+    }
+    if !load_all(w, &mut keep, &spans) {
+        return None;
+    }
+    Some(Ok(keep))
 }
 
 #[cfg(test)]
@@ -655,16 +794,55 @@ mod tests {
         assert_eq!(run(&raf, 160, 0).0, HeaderPlan::Whole("RAF raw container"));
     }
 
-    /// An ARW6 header probe reads every tile's headers and the first lines of its data, which lie in the strip a
-    /// plan would skip: here the second tile, past a first one of bulk size.
+    /// An ARW6 strip's probe reads are not a prefix: the residual stream — whose first half fixes the first-half
+    /// shift — starts behind other streams' data (the corpus's `arw6-sony-ilce7rm6-apsc-land-hq.arw` used to be
+    /// described from zeros there and failed with "first-half row count outside 2..=7"). The plan keeps those
+    /// bytes, wherever in the strip they sit.
     #[test]
-    fn arw6_is_described_from_the_whole_file() {
+    fn arw6_plan_keeps_the_scattered_probe_reads() {
+        use crate::vendor::arw6_testenc::{Qis, arw6_file, one_tile_quantised};
+        for file in [
+            // one tile, like the ILCE-7RM6's APS-C crop
+            arw6_file(&[(0, 0, 1024, 1024, one_tile_quantised(1024, 1024, 3, Qis::REAL).0)], 1024, 1024),
+            // several tiles, like the full frame (each tile's reads are kept)
+            arw6_file(
+                &[
+                    (0, 0, 1024, 1024, one_tile_quantised(1024, 1024, 0, Qis::REAL).0),
+                    (1024, 0, 1024, 1024, one_tile_quantised(1024, 1024, 0, Qis::REAL).0),
+                ],
+                2048,
+                1024,
+            ),
+        ] {
+            for fill in [0u8, 0xff] {
+                let (plan, buf, loaded) = run(&file, 512 * 1024, fill);
+                assert!(matches!(plan, HeaderPlan::Ready), "{plan:?} (fill {fill})");
+                // the plan asked for bytes past the prefix keep: the probe's reads off a prefix (zeros or 0xFF)
+                // would break the first-half shift, the regression above
+                assert!(loaded.spans().iter().any(|&(a, _)| a >= 512 * 1024), "nothing read past the prefix (fill {fill})");
+                assert_eq!(format!("{:?}", crate::probe_info(&buf)), format!("{:?}", crate::probe_info(&file)), "fill {fill}");
+            }
+        }
+    }
+
+    /// The case a plan once declined (the whole file was read): a second tile past a first one of bulk size. The plan
+    /// either describes the file as the whole file is described or reads it whole; it never describes it differently.
+    #[test]
+    fn arw6_second_tile_past_a_bulk_first_is_described_as_the_whole_file() {
         use crate::vendor::arw6_testenc::{Qis, arw6_file, one_tile_quantised};
         let (tile, _) = one_tile_quantised(64, 48, 0, Qis::REAL);
         let mut first = tile.clone();
         first.resize(BULK as usize, 0);
         let file = arw6_file(&[(0, 0, 64, 48, first), (64, 0, 64, 48, tile)], 128, 48);
         assert!(crate::probe_info(&file).is_ok());
-        assert_eq!(run(&file, 16, 0).0, HeaderPlan::Whole("an ARW6 header probe reads its tiles"));
+        for fill in [0u8, 0xff] {
+            match run(&file, 16, fill) {
+                (HeaderPlan::Ready, buf, _) => {
+                    assert_eq!(format!("{:?}", crate::probe_info(&buf)), format!("{:?}", crate::probe_info(&file)), "fill {fill}")
+                }
+                (HeaderPlan::Whole(_), ..) => {}
+                (other, ..) => panic!("{other:?}"),
+            }
+        }
     }
 }

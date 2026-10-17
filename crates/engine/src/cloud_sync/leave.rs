@@ -280,8 +280,8 @@ impl Session {
         self.library_generation = crate::LIBRARY_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.library_identity = std::sync::Arc::new(());
         // (rendered pictures are keyed by content and stay on disk; what is shown from them is dropped, in every host)
-        match self.library.as_ref().filter(|l| l.on_disk).map(|l| l.thumbs_dir()) {
-            Some(dir) => self.media.attach_disk_cache(&dir, self.cache_bytes()),
+        match self.thumb_cache_dir() {
+            Some(dir) => self.media.attach_disk_cache(&dir, self.cache_bytes(), self.thumbs_dir.is_some()),
             None => self.media.rendered.clear(),
         }
         self.purge_synced_files();

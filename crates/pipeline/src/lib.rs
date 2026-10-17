@@ -247,9 +247,10 @@ pub fn frame_for(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, apply_cro
 ///
 /// Each stage is keyed by exactly the inputs it depends on: the resampled source by the source
 /// buffer, framing and output size; the white-balanced, retouched, denoised image by those plus
-/// white balance, spots and noise reduction; each spatial plane by that plus its own radius. So a
-/// tone or colour slider drag (or exposure) re-runs only the per-pixel stage, a clarity drag skips
-/// resampling and noise reduction, and so on. Holds the last few output sizes (a draft-size and a
+/// white balance, spots and noise reduction; each spatial plane by that plus its own radius; each
+/// mask's alpha by its definition, the framing and, for masks that read them, that image and the
+/// exposure ([`masks::alpha_key`]). So a tone or colour slider drag (or exposure) re-runs only the
+/// per-pixel stage, a clarity drag skips resampling and noise reduction, and so on. Holds the last few output sizes (a draft-size and a
 /// full-size render of the same view both stay warm).
 pub struct StageCache {
     entries: Mutex<Vec<CacheEntry>>,
@@ -311,8 +312,12 @@ impl StageCache {
             }
             let pl = &e.planes;
             let planes = pl.log_l.iter().chain(pl.base.iter().map(|x| &x.1)).chain(pl.clarity.iter().map(|x| &x.1));
-            for p in planes.chain(pl.texture.iter().map(|x| &x.1)).chain(pl.dark.iter().map(|x| &x.1)) {
+            let planes = planes.chain(pl.texture.iter().map(|x| &x.1)).chain(pl.sharpen.iter().map(|x| &x.1));
+            for p in planes.chain(pl.dark.iter().map(|x| &x.1)).chain(e.masks.planes()) {
                 add(Arc::as_ptr(p) as usize, size(p));
+            }
+            if let Some((_, c)) = &pl.chroma {
+                add(Arc::as_ptr(c) as usize, size(c));
             }
         }
         total
@@ -352,6 +357,9 @@ struct CacheEntry {
     sampled: Arc<Rgb32f>,
     lin: Option<(u64, Arc<Rgb32f>)>,
     planes: local::Planes,
+    /// Alphas of the last render's masks (kept across changes to the image: those of masks that
+    /// don't read it stay valid).
+    masks: masks::AlphaCache,
 }
 
 fn hash_of(parts: impl std::hash::Hash) -> u64 {
@@ -609,6 +617,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         }
     };
     lap("wb/spots/nr", &mut t);
+    let mut alphas = cached.as_ref().map(|e| e.masks.clone()).unwrap_or_default();
     let mut planes = match cached.map(|e| e.planes) {
         Some(p) if p.key == lin_key => p,
         // A draft while noise reduction changes (a slider drag): the wide, edge-aware planes of the
@@ -619,13 +628,14 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         _ => local::Planes { key: lin_key, pre_nr: plan.pre_nr_key, ..Default::default() },
     };
     let capture = local::capture_sharpen(s, detail_scale);
-    let mut prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, capture, &mut planes, plan.mattes.as_deref());
+    let keys = masks::AlphaKeys { geo, image: lin_key };
+    let mut prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, capture, &mut planes, plan.mattes.as_ref(), (&mut alphas, keys));
     if let Some(a) = plan.fixed_air {
         prep.air = a;
     }
     lap("prepare", &mut t);
     if let Some((a, c)) = shared {
-        c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes });
+        c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes, masks: alphas });
     }
     if req.depth != OutputDepth::U8 {
         let deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth, req.proof);
@@ -698,12 +708,16 @@ pub fn color_range_sample(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, 
     Some(acc.map(|v| v / n))
 }
 
-/// The alpha plane a mask overlay shows: the one the render evaluated, or (for a hidden mask) a
-/// fresh evaluation.
+/// The plane an overlay shows: a sharpening view's detail plane, or the alpha of a mask overlay
+/// (the one the render evaluated, or for a hidden mask a fresh evaluation).
 fn overlay_alpha(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Plane> {
+    if o.reads_detail() {
+        let capture = prep.sharpen.as_ref().map(|(c, b)| (c, &**b));
+        return visualize::sharpen_plane(o, plan, &prep.log_l, prep.texture_blur.as_deref(), capture);
+    }
     let m = o.mask(&plan.settings)?;
     if let Some(e) = prep.masks.iter().find(|e| e.id == m.id) {
-        return Some(e.alpha.clone());
+        return Some((*e.alpha).clone());
     }
     let ev = plan.settings.light.exposure as f32;
     Some(masks::evaluate_one(m, &plan.frame, plan.w, plan.h, &prep.img, &prep.log_l, ev, plan.mattes.as_deref()))
@@ -719,7 +733,7 @@ fn overlay_alphas_all(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Ve
     let mut out = Vec::new();
     for m in plan.settings.masks.iter().filter(|m| m.visible && !m.components.is_empty()) {
         if let Some(e) = prep.masks.iter().find(|e| e.id == m.id) {
-            out.push(e.alpha.clone());
+            out.push((*e.alpha).clone());
         } else {
             out.push(masks::evaluate_one(m, &plan.frame, plan.w, plan.h, &prep.img, &prep.log_l, ev, plan.mattes.as_deref()));
         }
@@ -762,6 +776,8 @@ pub(crate) fn for_rows<T: Send>(data: &mut [T], w: usize, f: impl Fn(usize, &mut
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_dehaze;
 #[cfg(test)]
 mod tests_geometry;
 #[cfg(test)]

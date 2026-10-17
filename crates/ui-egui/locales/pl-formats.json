@@ -340,5 +340,9 @@
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
   "Delete the group “{name}” and its {n} presets?": "Usunąć grupę „{name}” i jej ustawienia wstępne ({n})?",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Ukryto „{name}”. Opcja „Pokaż ukryte ustawienia wstępne” w menu panelu przywraca widoczność."
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Ukryto „{name}”. Opcja „Pokaż ukryte ustawienia wstępne” w menu panelu przywraca widoczność.",
+  "Changes found: {n}": "Changes found: {n}",
+  "Look at the changes found in “{name}” first, or dismiss them": "Look at the changes found in “{name}” first, or dismiss them",
+  "Rendered {ok} of {total} to DNG": "Rendered {ok} of {total} to DNG",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row"
 }

@@ -711,7 +711,6 @@
   "Join the ArtCraft Discord…": "Unirse al Discord de ArtCraft…",
   "Join the ArtCraft community on Discord": "Unirse a la comunidad de ArtCraft en Discord",
   "Keep in Local": "Conservar en Local",
-  "Keep it on a drive with room: smart previews are about 1 MB per photo. The thumbnail cache stays in the library.": "Conviene un disco con espacio: las vistas previas inteligentes ocupan aproximadamente 1 MB por foto. La caché de miniaturas permanece en la biblioteca.",
   "Keyboard Shortcuts": "Métodos abreviados de teclado",
   "Keyboard shortcuts": "Métodos abreviados de teclado",
   "Keyword": "Palabra clave",
@@ -2473,5 +2472,16 @@
   "All Presets": "Todos los ajustes preestablecidos",
   "Delete Group": "Eliminar grupo",
   "Rename Group": "Cambiar nombre del grupo",
-  "New Group": "Nuevo grupo"
+  "New Group": "Nuevo grupo",
+  "Keep it on a drive with room: smart previews are about 1 MB per photo.": "Conviene un disco con espacio: las vistas previas inteligentes ocupan aproximadamente 1 MB por foto.",
+  "Photos in folders inside the watched folder are added too (hidden folders and the library's own folder are skipped).": "También se añaden las fotos de las carpetas que hay dentro de la carpeta vigilada (se omiten las carpetas ocultas y la propia carpeta de la biblioteca).",
+  "Continue in Background": "Continuar en segundo plano",
+  "Folder not found": "Carpeta no encontrada",
+  "Dismiss": "Descartar",
+  "Review…": "Revisar…",
+  "Open Synchronize Folder with what the scan found": "Abrir Sincronizar carpeta con lo que encontró la búsqueda",
+  "You can go on working: a notice at the top left says when the scan is done.": "Puedes seguir trabajando: un aviso arriba a la izquierda indica cuándo termina la búsqueda.",
+  "Render to DNG": "Renderizar a DNG",
+  "Rendering to DNG": "Renderizando a DNG",
+  "Render to DNG stopped unexpectedly": "La renderización a DNG se detuvo inesperadamente"
 }

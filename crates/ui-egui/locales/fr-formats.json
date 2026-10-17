@@ -340,5 +340,9 @@
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Cette photo n’a pas de profondeur propre : le flou de l’objectif l’estime avec Depth Anything V2 Small, un téléchargement de {:.0} Mo (licence {}). {}.",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Mise au point : {:.0}–{:.0} (0 le plus proche, 100 le plus éloigné)",
   "Delete the group “{name}” and its {n} presets?": "Supprimer le groupe « {name} » et ses {n} préréglages ?",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "« {name} » est masqué. « Afficher les préréglages masqués », dans le menu du panneau, le fait réapparaître."
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "« {name} » est masqué. « Afficher les préréglages masqués », dans le menu du panneau, le fait réapparaître.",
+  "Changes found: {n}": "Modifications trouvées : {n}",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "« {name} » est encore en cours d'analyse : attendez la fin ou arrêtez-la avec ✕ sur sa ligne",
+  "Look at the changes found in “{name}” first, or dismiss them": "Examinez d'abord les modifications trouvées dans « {name} », ou ignorez-les",
+  "Rendered {ok} of {total} to DNG": "{ok} sur {total} rendues en DNG"
 }

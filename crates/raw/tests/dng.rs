@@ -209,6 +209,146 @@ fn normalized_and_develop() {
     }
 }
 
+/// Linear DNG sample planes have independent black/white endpoints, even without a CFA.
+#[test]
+fn normalization_uses_each_linear_sample_planes_black_level() {
+    let (w, h) = (8usize, 6usize);
+    let mut ifd = base_ifd(w, h, 16, 3, false);
+    ifd.set(t::BLACK_LEVEL, Value::Rational(vec![(64, 1), (256, 1), (512, 1)]));
+    ifd.set(t::WHITE_LEVEL, Value::Long(vec![1024, 2048, 4096]));
+    let samples: Vec<u8> = (0..w * h).flat_map(|_| [1024u16, 2048, 4096].into_iter().flat_map(u16::to_le_bytes)).collect();
+    ifd.set_image(ImageData::Strips { rows_per_strip: h as u32, strips: vec![samples] });
+    let raw = decode(&dng(ifd, ByteOrder::Little)).unwrap();
+    let n = raw.normalized().unwrap();
+    for (i, &v) in n.data.iter().enumerate() {
+        assert!((v - 1.0).abs() < 1e-6, "white in plane {} mapped to {v}", i % 3);
+    }
+}
+
+/// The maximum computed black is per sample plane, including row/column deltas and their phases.
+#[test]
+fn normalization_uses_maximum_black_in_the_active_area() {
+    let mut raw = synthetic(12, 10, Cfa::bayer("RGGB"), 1);
+    raw.white = vec![1024.0];
+    raw.black = BlackLevel {
+        repeat_rows: 2,
+        repeat_cols: 2,
+        values: vec![64.0, 128.0, 192.0, 256.0],
+        delta_h: vec![100.0, -10.0, 0.0, -20.0, 0.0, -10.0, 0.0, -20.0, 900.0],
+        delta_v: vec![80.0, -5.0, 0.0, -10.0, 0.0, -5.0, 0.0, -10.0, 900.0],
+    };
+    // Only the first 8 columns/rows of the deltas belong to the active area. The maximum is
+    // 192 + 100 - 5 = 287, not max(base) + max(horizontal) + max(vertical) = 436.
+    assert_eq!((raw.active_area.width, raw.active_area.height), (8, 8));
+    let max_black = 287.0;
+    let (a, w) = (raw.active_area, raw.width);
+    let mut data = vec![0.0; w * raw.height];
+    for y in 0..a.height {
+        for x in 0..a.width {
+            data[(a.y + y) * w + a.x + x] = raw.black.at(x, y, 0, 1) + (1024.0 - max_black) * 0.5;
+        }
+    }
+    // Preserve negative shadow noise and linear headroom, as the existing Normalized API promises.
+    data[a.y * w + a.x] = raw.black.at(0, 0, 0, 1) - 4.0;
+    data[(a.y + 7) * w + a.x + 7] = raw.black.at(7, 7, 0, 1) + (1024.0 - max_black) * 1.25;
+    raw.data = RawData::F32(data);
+    let n = raw.normalized().unwrap();
+    assert!((n.data[0] + 4.0 / 737.0).abs() < 1e-6);
+    for &v in &n.data[1..63] {
+        assert!((v - 0.5).abs() < 1e-6, "mid-grey mapped to {v}");
+    }
+    assert!((n.data[63] - 1.25).abs() < 1e-6);
+}
+
+#[test]
+fn normalization_and_binning_share_dng_scaling_and_clipping() {
+    let mut raw = synthetic(20, 16, Cfa::bayer("RGGB"), 1);
+    raw.white = vec![1024.0];
+    raw.black = BlackLevel { repeat_rows: 2, repeat_cols: 2, values: vec![64.0, 128.0, 192.0, 256.0], ..Default::default() };
+    let (a, w) = (raw.active_area, raw.width);
+    let mut data = vec![0.0; w * raw.height];
+    for y in 0..a.height {
+        for x in 0..a.width {
+            data[(a.y + y) * w + a.x + x] = raw.black.at(x, y, 0, 1) + 768.0 * 0.995;
+        }
+    }
+    raw.data = RawData::F32(data);
+    let direct = raw.develop_binned_masked(2, 0.99).unwrap().unwrap();
+    // An identity opcode forces the binner through RawImage::normalized instead of its fast path.
+    raw.opcodes.list2.push(Opcode::MapPolynomial {
+        area: Area { top: 0, left: 0, bottom: a.height as u32, right: a.width as u32, plane: 0, planes: 1, row_pitch: 1, col_pitch: 1 },
+        coefficients: vec![0.0, 1.0],
+    });
+    let via_normalized = raw.develop_binned_masked(2, 0.99).unwrap().unwrap();
+    assert_eq!(direct, via_normalized);
+    for p in &direct.0.data {
+        assert!(p.iter().all(|v| (*v - 0.995).abs() < 1e-6), "{p:?}");
+    }
+    assert!(direct.1.iter().all(|&m| m == 7), "all three channels must be marked clipped");
+    let full = raw.develop(Method::Bilinear).unwrap();
+    assert!(full.data.iter().all(|p| p.iter().all(|v| (*v - 0.995).abs() < 1e-6)));
+}
+
+proptest::proptest! {
+    #[test]
+    fn normalization_matches_a_brute_force_black_maximum(
+        aw in 1usize..10, ah in 1usize..10,
+        br in 1usize..5, bc in 1usize..5, cpp in 1usize..4,
+        dh in proptest::collection::vec(-50i16..50, 0..12),
+        dv in proptest::collection::vec(-50i16..50, 0..12),
+    ) {
+        // (two samples a pixel are refused, issue #1511)
+        let cpp = if cpp == 2 { 3 } else { cpp };
+        let mut raw = synthetic(20, 16, None, cpp);
+        raw.active_area = Rect::new(2, 1, aw, ah);
+        raw.black = BlackLevel {
+            repeat_rows: br,
+            repeat_cols: bc,
+            values: (0..br * bc * cpp).map(|i| 100.0 + (i % 7) as f32 * 16.0).collect(),
+            delta_h: dh.iter().map(|&v| v as f32).collect(),
+            delta_v: dv.iter().map(|&v| v as f32).collect(),
+        };
+        raw.white = (0..cpp).map(|s| 2048.0 + s as f32 * 256.0).collect();
+        let maximum: Vec<f32> = (0..cpp).map(|s| {
+            let mut max = f32::NEG_INFINITY;
+            for y in 0..ah {
+                for x in 0..aw {
+                    max = max.max(raw.black.at(x, y, s, cpp));
+                }
+            }
+            max
+        }).collect();
+        let mut data = vec![0.0; raw.width * raw.height * cpp];
+        for y in 0..ah {
+            for x in 0..aw {
+                for s in 0..cpp {
+                    data[((y + 1) * raw.width + x + 2) * cpp + s] =
+                        raw.black.at(x, y, s, cpp) + 0.25 * (raw.white_at(s) - maximum[s]);
+                }
+            }
+        }
+        raw.data = RawData::F32(data);
+        let n = raw.normalized().unwrap();
+        proptest::prop_assert!(n.data.iter().all(|v| (*v - 0.25).abs() < 1e-6));
+    }
+}
+
+#[test]
+fn non_dng_normalization_keeps_the_existing_vendor_scale() {
+    let mut raw = synthetic(20, 16, Cfa::bayer("RGGB"), 1);
+    raw.format = RawFormat::Cr2;
+    raw.black = BlackLevel { repeat_rows: 2, repeat_cols: 2, values: vec![64.0, 128.0, 192.0, 256.0], ..Default::default() };
+    let RawData::U16(d) = &raw.data else { unreachable!() };
+    let n = raw.normalized().unwrap();
+    for y in 0..n.height {
+        for x in 0..n.width {
+            let v = d[(y + raw.active_area.y) * raw.width + x + raw.active_area.x] as f32;
+            let expected = (v - raw.black.at(x, y, 0, 1)) / (raw.white_at(0) - 160.0);
+            assert!((n.data[y * n.width + x] - expected).abs() < 1e-6);
+        }
+    }
+}
+
 // ---------------------------------------------------------------- hand-built variants
 
 fn base_ifd(w: usize, h: usize, bits: u16, cpp: usize, cfa: bool) -> IfdBuilder {

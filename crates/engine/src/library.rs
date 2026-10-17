@@ -8,7 +8,7 @@
 //!   prefs.json     (library preferences: XMP sidecars, import defaults, cache size, last export)
 //!   location.json  (the folder the library was last opened from: see below)
 //!   sidecars.json  (when each XMP sidecar was last read or written: see `sidecar::SidecarTimes`)
-//!   thumbs/        (rendered thumbnail cache, safe to delete)
+//!   thumbs/        (rendered thumbnail cache, safe to delete; prefs.json may name another folder)
 //!   map-tiles/     (map tiles seen in the Map view, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
 //! ```
@@ -252,6 +252,7 @@ impl Library {
     pub(crate) fn files_mut(&mut self) -> &mut dyn Store {
         self.files.as_mut()
     }
+    /// The library's own thumbnail cache folder (the default; see [`Session::thumb_cache_dir`]).
     pub fn thumbs_dir(&self) -> PathBuf {
         self.dir.join("thumbs")
     }
@@ -303,6 +304,8 @@ struct PrefsFile {
     cache_mb: u32,
     /// Folder for smart previews (default: `Smart Previews` in the library).
     smart_previews_dir: Option<String>,
+    /// Folder for the thumbnail cache (default: `thumbs` in the library).
+    thumbs_dir: Option<String>,
     /// Days after which untouched Local records of unbrowsed folders are forgotten (missing =
     /// the default, 0 = never).
     forget_local_days: Option<u32>,
@@ -560,7 +563,7 @@ impl Session {
         // in this process its own range: otherwise an empty library opened after one that was
         // never edited this session would look unchanged and show the old library's numbers.
         static LOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        catalog.revision = LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1) << 32;
+        catalog.set_revision(LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1) << 32);
         self.catalog = catalog;
         // (nothing of the list the last library showed is this one's)
         self.refresh_view();
@@ -633,6 +636,15 @@ impl Session {
         if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
             self.catalog.set_id_space(st.config.space);
         }
+        self.thumbs_dir = prefs.thumbs_dir.filter(|_| on_disk).map(PathBuf::from);
+        // a chosen folder that is gone is reported, and stays the cache folder: thumbnails are
+        // then kept in memory only (nothing is written to the library drive instead)
+        if let Some(d) = self.thumbs_dir.as_ref().filter(|d| !d.is_dir()) {
+            settings.warnings.push(format!(
+                "The thumbnail cache folder {} is not available (drive disconnected?): thumbnails are kept in memory only until it is back or you choose another folder in Settings",
+                d.display()
+            ));
+        }
         // presets
         if let Some(f) = settings.read::<PresetsFile>(files.as_mut(), "presets.json") {
             for p in &mut self.presets {
@@ -681,7 +693,8 @@ impl Session {
         // photo ids are per library: drop decoded sources of the previous one
         self.media.clear_sources();
         if on_disk {
-            self.media.attach_disk_cache(&dir.join("thumbs"), self.cache_bytes());
+            let thumbs = self.thumbs_dir.clone().unwrap_or_else(|| dir.join("thumbs"));
+            self.media.attach_disk_cache(&thumbs, self.cache_bytes(), self.thumbs_dir.is_some());
             self.tidy_thumbnail_cache();
         }
         let view_written = self.view_json();
@@ -1004,6 +1017,7 @@ impl Session {
             import: self.import_defaults.clone(),
             cache_mb: self.cache_mb,
             smart_previews_dir: self.smart_previews_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
+            thumbs_dir: self.thumbs_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
             forget_local_days: Some(self.forget_local_days),
             search_share: self.vision.share_with_server,
             search_local_only: self.vision.local_only,
@@ -1038,6 +1052,14 @@ impl Session {
         new
     }
 
+    /// Where the open library keeps its thumbnail cache: the chosen folder
+    /// ([`Session::thumbs_dir`], which may be unavailable), else `thumbs` in the library. `None`
+    /// without a library on disk.
+    pub fn thumb_cache_dir(&self) -> Option<PathBuf> {
+        let lib = self.library.as_ref().filter(|l| l.on_disk)?;
+        Some(self.thumbs_dir.clone().unwrap_or_else(|| lib.thumbs_dir()))
+    }
+
     /// The thumbnail disk cache budget in bytes ([`Session::cache_mb`], else the default).
     pub fn cache_bytes(&self) -> u64 {
         if self.cache_mb == 0 { crate::media::DISK_CACHE_BYTES } else { u64::from(self.cache_mb) << 20 }
@@ -1048,9 +1070,8 @@ impl Session {
     /// Saved with the library preferences.
     pub fn set_cache_mb(&mut self, mb: u32) -> Result<()> {
         self.cache_mb = mb;
-        if let Some(lib) = self.library.as_ref().filter(|l| l.on_disk) {
-            let dir = lib.thumbs_dir();
-            self.media.set_disk_cache_bytes(&dir, self.cache_bytes());
+        if let Some(dir) = self.thumb_cache_dir() {
+            self.media.set_disk_cache_bytes(&dir, self.cache_bytes(), self.thumbs_dir.is_some());
         }
         self.save_prefs()
     }

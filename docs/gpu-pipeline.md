@@ -43,6 +43,9 @@ Overrides (read once at launch):
 - else `WGPU_BACKEND` (wgpu's own variable, same names) — before #136 only the window honoured it,
   the compute device always used Vulkan + DX12 (+ Metal).
 - `LIGHTCRAFT_GPU=0`: GPU rendering off for the process (the window is unaffected).
+- `LIGHTCRAFT_GPU_ALLOW_SOFTWARE=1`: accept a software adapter (llvmpipe / lavapipe, WARP), which is
+  otherwise refused because the CPU pipeline is faster. For tests on machines without a GPU (CI);
+  the app never sets it.
 
 **DX12 shader compiler (issue #471).** Every instance (window and compute) compiles DX12 shaders with
 FXC (`d3dcompiler_47.dll`, part of Windows; `lightcraft_gpu::backend::backend_options`). wgpu's
@@ -167,6 +170,14 @@ walks the drive.
 - Stage cache: `GpuStages` mirrors `StageCache` (same keys: source identity + `geo`, `lin_key`,
   per-plane radii) and lives in it as an extension, so the UI needs no change. The uploaded source is
   kept per view. A tone / colour / exposure drag re-runs one dispatch of `finish` plus the readback.
+  Mask alphas are cached too, on both sides (`masks::AlphaCache`, one plane per visible mask of the
+  last render), each keyed by `masks::alpha_key`: the mask's components, Refine Edges, Invert and
+  Amount, `geo`, plus `lin_key` when it reads the image (range masks, Sky / Subject / Background
+  heuristics, Auto Mask brushes, Refine Edges) and the exposure when it reads that (luminance and
+  colour range, Sky). An Exposure drag over gradient and brush masks, or a drag of a mask's own
+  sliders, evaluates no mask; a cached alpha is the buffer a fresh evaluation produced, so warm and
+  fresh renders stay bit-identical. Both caches' `bytes()` count the alphas and the blurred
+  chromaticity.
 - One command encoder per render; the only mid-render readback is the airlight samples (dehaze, when
   the dark channel is recomputed). Dropped buffers are recycled (exact size, ≤ 2 GB pool) once the
   thread that dropped them has submitted — allocating and zero-filling fresh 100–300 MB buffers
@@ -262,11 +273,27 @@ non-Apple GPU verified: all 16 tests pass, 135 compared cases. 124 differ by max
 bit-identical, and one (the point colour range overlay) has max 2 LSB on 0.0002% of pixels. Worst
 mean 0.0003 LSB. That is the same picture as on Metal, inside the bounds
 (`cargo test -p lightcraft-gpu --release --test equivalence -- --nocapture`).
+**In CI** (`.github/workflows/ci.yml`, issue #1050) they run on every platform: on Metal on the macOS
+runners, and on software adapters on Linux (Mesa lavapipe) and Windows (WARP, DX12 with FXC), which
+`LIGHTCRAFT_GPU_ALLOW_SOFTWARE=1` admits (tests only: the app never sets it). The step fails if they
+skip. Measured on lavapipe (CI and locally) and WARP: all 134 compared renders within **max 1 LSB,
+mean ≤ 0.0003 LSB**, as on the M4 Pro; on the macOS runner's (paravirtual) Metal device one case reaches
+2 LSB (point colour range overlay, 0.0002% of pixels over 1), the rest max 1. The suite takes about
+50 s on lavapipe, 30 s on the macOS runner and 2–7.5 min on WARP. lavapipe's
+storage bindings stop at 128 MiB (the WebGPU default), so the two big-source tests use a 117 MiB
+source: above what a view keeps with its stages (96 MiB) and small enough to be uploaded there.
 
 Remaining differences come from f32 vs f64 coordinate math, fast-math transcendental functions on
 Metal and summation order in the box filters — all far below one 8-bit step.
 
 ## Measurements
+**In the app:** Help ▸ Debug ▸ Show Frame Rate (`view.frameRate`, `{show?}`; `LIGHTCRAFT_FPS=1`
+starts with it on, never saved) draws frames per second, each frame's UI CPU time against its
+time spent waiting (for vsync, or for the GPU), the latest whole-frame and zoom-window render
+times, the render queue, renders thrown away as superseded, the GPU adapter and its memory, and a
+graph of the last frames with a tick where a render arrived. Once a second it logs the same
+numbers (`fps-hud:`), so a scripted drag (`ui.dragWidget`) can be measured from the log.
+
 `render_bench` on `corpus/raw/arw-sony-a7m3-compressed.arw` (24 MP; loupe = 2560 px preview →
 1920×1280), min of 7 runs, wall clock, on a heavily shared machine (load average 60–110 on 14 cores,
 so CPU numbers are pessimistic; the GPU numbers are less affected):

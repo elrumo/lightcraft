@@ -19,13 +19,13 @@ import and export formats. Ours come from `crates/codecs/src/sniff.rs`, `crates/
 | TIFF | ✅ 8/16/32-bit | ✅ 8/16-bit, LZW/ZIP | ✅ 1–64-bit integer, 16–64-bit float, bilevel, CCITT fax, WhiteIsZero | ✅ 8/16-bit, 32-bit float linear, none / LZW / ZIP | `crates/tiff`, `crates/codecs/src/tiff_codec.rs` |
 | PNG | ✅ | ✅ | ✅ | ✅ | |
 | PSD / PSB | ✅ (maximized-compatibility composite) | ✅ (Classic: PSD export, edit-in round trip) | ✅ merged composite | ✅ PSD, flat 8/16-bit with ICC (export, Edit In); ⬜ PSB. Edit In round trip: an editor's saves over the file come back, and so does its Save As beside it (e.g. a PSD of the TIFF copy, added to the stack) | `crates/codecs/src/psd.rs`, `crates/engine/src/tests_external_edit.rs` |
-| HEIC / HEIF | ✅ | ⬜ (Classic) / HDR only | ✅ in every release build (`crates/heif`, heic-rs) | ⬜ | `heif` feature on by packaging scripts |
-| AVIF | ✅ | ✅ (HDR) | ⬜ recognised, not decoded (no permissive pure-Rust AV1 decoder) | ✅ 8/10-bit, PQ HDR | |
+| HEIC / HEIF | ✅ | ⬜ (Classic) / HDR only | ✅ in every release build (`crates/heif`, heic-rs) | ⬜ | `heif` feature on by packaging scripts; EXIF and XMP read from the container in every build (`crates/meta/src/heif.rs`, #693) |
+| AVIF | ✅ | ✅ (HDR) | ⬜ recognised, not decoded (no permissive pure-Rust AV1 decoder) | ✅ 8/10-bit, PQ HDR | EXIF and XMP read from the container (`crates/meta/src/heif.rs`); exported EXIF reads back |
 | JPEG XL | ✅ | ✅ | ✅ (`jxl-oxide`) incl. DNG 1.7 JXL tiles | ✅ lossy / lossless, 8/16-bit, PQ HDR (`jixel`, native only; ⬜ web) | `crates/engine/src/tests_export.rs` |
 | WebP | not in its document types | ⬜ | ✅ | ✅ | beyond target |
 | GIF, BMP | ⬜ | ⬜ | ✅ | ⬜ | beyond target |
 | DNG (from raw) | ✅ | ✅ incl. lossy, embedded original | ✅ | ✅ uncompressed, LJ92, Deflate or lossy (JPEG tiles, optional long edge); ⬜ embedded original | `crates/raw/src/dngwrite.rs` |
-| Render to DNG (15.5) | — | ✅ | — | 🟡 export format "Rendered DNG" (linear float DNG, edit baked in); not yet added to the catalog | `crates/raw/src/dngwrite.rs` (`write_rendered_dng`) |
+| Render to DNG (15.5) | — | ✅ | — | ✅ Photo ▸ Render to DNG (stacked with the original) and the "Rendered DNG" export (linear float DNG, edit baked in) | `crates/raw/src/dngwrite.rs` (`write_rendered_dng`) |
 | Original + sidecar | — | ✅ | — | ✅ | |
 | HDR gain map JPEG (ISO 21496-1) | ✅ | ✅ | ✅ (gain map read) | ✅ | `crates/codecs/src/gainmap.rs` |
 | PQ / HLG HDR | ✅ | ✅ AVIF, JXL, TIFF | — | 🟡 PQ AVIF, PQ JPEG XL, float TIFF; no HLG | |
@@ -81,3 +81,6 @@ Remaining: **22–39 h** (AVIF decode 8–15 h if a permissive decoder is writte
 | 2026-10-12 | minor | Lossy DNG export (JPEG tiles, `dngCompression: "lossy"`); PSD write had already landed (#953), so it leaves the remaining hours |
 | 2026-10-10 | major | Created from the code and the installed Lightroom's document types |
 | 2026-10-10 | minor | JPEG XL export (#247): JXL write ✅ (native only), PQ JPEG XL HDR |
+| 2026-10-12 | minor | Render to DNG: "Rendered DNG" export format (linear 16-bit float DNG of the rendered photo) |
+| 2026-10-12 | minor | Photo ▸ Render to DNG: rendered DNGs written next to the originals and stacked with them |
+| 2026-10-12 | minor | HEIC / HEIF and AVIF: EXIF and XMP read from the container, without the decoder (#693); statuses unchanged |

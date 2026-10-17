@@ -631,8 +631,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let budget = app.renderer.draft_scale(drafting.is_some(), full_edge * full_edge / long_over_short);
     let draft = drafting.map(|s| if s >= 1.0 { s } else { s.min(budget) });
     // Diagnostic views that need whole-frame context, or reads too far for one window, still
-    // render the whole frame at the size it is drawn. Mask overlays and soft proofing (both act
-    // pixel by pixel) are window-safe.
+    // render the whole frame at the size it is drawn. Per-pixel ones (a mask, clipping) and soft
+    // proofing are window-safe.
     let sizes = crate::region::ViewSizes {
         drawn_long,
         canvas_long: canvas.width().max(canvas.height()) * ppp,
@@ -705,7 +705,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     app.renderer.keep_neighbours = app.compact;
     let mut near = Vec::new();
     if idle || slide != 0.0 {
-        let ids = app.session.visible_cloned();
+        let ids = app.session.visible_shared().1;
         if let Some(i) = ids.iter().position(|p| *p == id) {
             let next = ids.get(i + 1).copied();
             let prev = i.checked_sub(1).and_then(|j| ids.get(j)).copied();
@@ -1583,12 +1583,19 @@ fn targeted_drag(app: &mut LightcraftApp, resp: &egui::Response, map: &CanvasMap
     }
 }
 
-/// The diagnostic overlay the loupe shows (the selected mask, Point Color's visualized range,
-/// Visualize Spots).
+/// The diagnostic overlay the loupe shows (an Alt-drag preview, the selected mask, Point Color's
+/// visualized range, Visualize Spots).
 pub(crate) fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcraft_pipeline::Overlay {
     use lightcraft_pipeline::{MaskView, Overlay};
     if app.ui.fullscreen {
         return Overlay::None;
+    }
+    // Lightroom's temporary previews: clipping, greyscale, sharpening detail / mask
+    if app.ui.right == RightPanel::Edit
+        && app.ui.alt_held
+        && let Some(o) = app.ui.dragging_control.as_deref().and_then(Overlay::for_control)
+    {
+        return o;
     }
     // Show every visible mask's region at once (Ctrl+Shift+O / Cmd+Shift+O), ahead of the selected-mask overlay
     // so the shortcut is not shadowed by the always-on single-mask overlay.
@@ -3378,7 +3385,8 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(r, 0.0, t.canvas);
     ui.painter().rect_filled(Rect::from_min_size(r.min, vec2(r.width(), 4.0)), 0.0, t.divider);
-    let ids = app.session.visible_cloned();
+    // shared, not copied: the strip is drawn every frame
+    let ids = app.session.visible_shared().1;
     let active = app.session.selection.active;
     let cell_w = 120.0;
     let ppp = ui.ctx().pixels_per_point();
@@ -3506,7 +3514,7 @@ fn film_badges(p: &egui::Painter, t: &Tokens, fr: Rect, ph: &lightcraft_catalog:
     }
     x += ph.rating as f32 * 9.0 + 2.0;
     match ph.flag {
-        Flag::Pick => paint(p, Rect::from_min_size(pos2(x, y - 5.0), vec2(10.0, 10.0)), Icon::FlagPick, t.pick),
+        Flag::Pick => paint(p, Rect::from_min_size(pos2(x, y - 5.0), vec2(10.0, 10.0)), Icon::FlagPickFilled, t.pick),
         Flag::Reject => paint(p, Rect::from_min_size(pos2(x, y - 5.0), vec2(10.0, 10.0)), Icon::FlagReject, t.reject),
         Flag::None => {}
     }

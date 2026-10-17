@@ -36,6 +36,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.autoAdvance", "Auto Advance", None, "Photo"),
     ("view.filmstrip", "Filmstrip", Some("/"), "View"),
     ("view.leftPanel", "My Photos Panel", Some("Cmd+Shift+L"), "View"),
+    // F8 / Shift+Tab as in Lightroom Classic (F7 and F6 are PR #1078; Tab toggles the side panels there).
+    // On a Mac keyboard F8 is Play/Pause unless fn is held or "Use F1, F2, … as standard function keys" is on.
+    ("view.rightPanel", "Right Panel", Some("F8"), "View"),
+    ("view.allPanels", "Hide All Panels", Some("Shift+Tab"), "View"),
     ("view.beforeAfter", "Compare Before and After", Some("Y"), "View"),
     ("view.beforeAfterSplit", "Before/After Split", Some("Shift+Y"), "View"),
     ("view.beforeAfterTopBottom", "Before/After Top/Bottom", Some("Alt+Y"), "View"),
@@ -222,11 +226,14 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.about", "About LightCraft", None, "Help"),
     ("app.systemInfo", "System Info…", None, "Help"),
     ("app.openLogFolder", "Open Log Folder", None, "Help"),
+    // the frame-rate display (`frame_rate` in ui-egui): a debugging aid, never saved
+    ("view.frameRate", "Show Frame Rate", None, "Help>Debug"),
     ("app.whatsNew", "What's New", None, "Help"),
     ("dialog.cull", "Assisted Culling…", None, "Photo"),
     ("app.help", "LightCraft Help", Some("F1"), "Help"),
     ("app.discord", "Join the ArtCraft Discord…", None, "Help"),
     ("app.feedback", "Send Feedback…", None, "Help"),
+    ("app.reportBug", "Report a Bug…", None, "Help"),
     ("app.website", "LightCraft Website", None, "Help"),
     ("app.github", "LightCraft on GitHub", None, "Help"),
     ("app.artcraft", "ArtCraft Website", None, "Help"),

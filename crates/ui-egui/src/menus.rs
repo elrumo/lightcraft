@@ -58,6 +58,14 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
     }
 }
 
+/// A tool panel going away ends its gesture, as closing it from its own key does.
+fn end_panel_tool(app: &mut LightcraftApp) {
+    if app.ui.tool != "wbPicker" {
+        app.ui.tool.clear();
+    }
+    let _ = app.session.end_interaction();
+}
+
 fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str) {
     if app.ui.right == p && crate::docking::exposed(app, crate::docking::Panel::Tools) {
         app.ui.right = RightPanel::None;
@@ -540,9 +548,32 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.filmstrip = !app.ui.filmstrip;
             Ok(Value::Null)
         }
+        "view.frameRate" => {
+            // {show?: bool} (toggles when omitted)
+            app.ui.frame_rate = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.frame_rate);
+            Ok(json!({"show": app.ui.frame_rate}))
+        }
         "view.leftPanel" => {
             app.ui.left_panel = !app.ui.left_panel;
             Ok(Value::Null)
+        }
+        // F8: `show` (true / false) says which; without it the panel toggles
+        "view.rightPanel" => {
+            let was = app.ui.right;
+            let shown = app.ui.toggle_right_panel(p.get("show").and_then(Value::as_bool));
+            if was != RightPanel::None && !shown {
+                end_panel_tool(app);
+            }
+            Ok(json!({"shown": shown, "right": app.ui.right}))
+        }
+        // Shift+Tab: `hide` (true / false) says which; without it the panels hide, then come back
+        "view.allPanels" => {
+            let was = app.ui.right;
+            let hidden = app.ui.toggle_all_panels(p.get("hide").and_then(Value::as_bool));
+            if was != RightPanel::None && app.ui.right == RightPanel::None {
+                end_panel_tool(app);
+            }
+            Ok(json!({"hidden": hidden}))
         }
         "view.beforeAfter" => {
             app.ui.before_after = if app.ui.before_after == BeforeAfter::SideBySide { BeforeAfter::Off } else { BeforeAfter::SideBySide };
@@ -1309,33 +1340,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"text": crate::panels::dialogs::WHATS_NEW}))
         }
         "app.systemInfo" => {
-            // the engine's facts, with this app's own rows among them
-            let mut rows = lightcraft_engine::about::system_rows(&app.session);
-            let after = |rows: &Vec<(String, String)>, label: &str| rows.iter().position(|(k, _)| k == label).map_or(rows.len(), |i| i + 1);
-            let i = after(&rows, "GPU");
-            rows.insert(i, ("GPU rendering".to_string(), if app.ui.settings.gpu { "on".into() } else { "off".into() }));
-            let i = after(&rows, "Memory budget");
-            let preview = match app.ui.settings.preview_limit {
-                0 => "automatic".to_string(),
-                n => format!("{n} px"),
-            };
-            rows.insert(i, ("Preview size".to_string(), preview));
-            let i = rows.iter().position(|(k, _)| k == "Last GPU fallback").unwrap_or(rows.len());
-            let frame = [
-                ("Frame time".to_string(), format!("{:.1} ms ({:.0} fps)", app.perf.frame_ms, app.perf.fps)),
-                (
-                    "Frame update".to_string(),
-                    format!("{:.1} ms (logic {:.1} ms; slowest {:.0} ms)", app.perf.update_ms, app.perf.logic_ms, app.perf.max_update_ms),
-                ),
-                ("Last loupe render".to_string(), format!("{:.0} ms", app.renderer.last_main_ms)),
-            ];
-            rows.splice(i..i, frame);
+            let rows = crate::bug_report::system_rows(app);
             let r = json!(rows.iter().map(|(k, v)| json!({"label": k, "value": v})).collect::<Vec<_>>());
             if p.get("open").and_then(Value::as_bool).unwrap_or(true) {
                 app.ui.dialog = Some(Dialog::SystemInfo { rows });
             }
             Ok(r)
         }
+        "app.reportBug" => crate::bug_report::command(app, p),
         "app.shortcuts" => {
             app.ui.dialog = Some(Dialog::Shortcuts);
             Ok(Value::Null)
@@ -2007,6 +2019,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             return Some(r);
         }
         "app.export" => crate::control::export_active(app, p),
+        "photo.renderToDng" => return crate::render_dng_task::start(app, p),
         "app.showInFinder" => show_in_finder(app),
         "app.openLogFolder" => open_log_folder(app),
         "app.discord" | "app.website" | "app.github" | "app.artcraft" | "app.help" | "app.feedback" => {

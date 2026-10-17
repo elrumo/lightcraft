@@ -151,9 +151,11 @@ fn develop_set_and_interaction_coalesces() {
 }
 
 /// A slider drag changes the catalog every frame; the grid and filmstrip's list (a sort of the whole
-/// library) is made again once, when the drag ends, not on every frame of it.
+/// library) is not made again on any frame of it. Nor when it ends: a develop edit changes nothing a
+/// view that doesn't read develop state shows (`lightcraft_catalog::revision`), so the list is the
+/// very same one; a change to the library still makes it again.
 #[test]
-fn a_drag_keeps_the_photo_list_until_it_ends() {
+fn a_drag_keeps_the_photo_list() {
     let mut s = demo();
     let (before, _) = s.visible_shared();
     s.execute("develop.beginInteraction", &json!({"label": "Exposure"})).unwrap();
@@ -162,7 +164,9 @@ fn a_drag_keeps_the_photo_list_until_it_ends() {
         assert_eq!(s.visible_shared().0, before, "the same list while dragging");
     }
     s.execute("develop.endInteraction", &json!({})).unwrap();
-    assert_ne!(s.visible_shared().0, before, "made again for the edit");
+    assert_eq!(s.visible_shared().0, before, "and when the drag ends");
+    s.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    assert_ne!(s.visible_shared().0, before, "made again for a change to the library");
 }
 
 #[test]
