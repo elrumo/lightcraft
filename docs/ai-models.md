@@ -141,6 +141,15 @@ settled before LightCraft hosts a mirror.
 | Generative expand, new detail | Kandinsky 2.2 decoder-inpaint + the prior's image encoder (OpenCLIP ViT-bigG/14) | Apache-2.0 / Apache-2.0 | 9.0 GB | **in use** (`crates/diffuse/src/kandinsky.rs`, re-written from diffusers; computers with 16 GB): conditioned on the photo's own CLIP image embedding, no prompt; image encoder, UNet and MoVQ match diffusers to 5 × 10⁻⁵ (2026-10-14); the only permissively licensed diffusion inpainting model at a size a computer runs |
 | Generative expand, the most detail | SDXL 1.0 Inpainting 0.1 (`diffusers/stable-diffusion-xl-1.0-inpainting-0.1`, 16-bit) | CreativeML Open RAIL++-M (use-based restrictions; not OSI) | 6.9 GB | **in use** (`crates/diffuse/src/sd.rs`, with the added time / text conditioning candle's UNet lacks; computers with a GPU and 16 GB, or 32 GB): its two text encoders, pooled embedding and one UNet step match diffusers to 5 × 10⁻⁴ (checked 2026-10-14) |
 
+**AI Remove, better models (checked 2026-10-17, `remove_eval`, [ai-remove.md](ai-remove.md)).** MI-GAN stays the fast default;
+**LaMa** is the High quality option (Apache-2.0, already shipped for Expand). **Stable Diffusion 1.5 Inpainting** with a
+removal prompt (`quality: ultra`, experimental, in no UI) was no better than LaMa on four strokes over real people and
+painted a person-shaped blob into one hole, and cropping tighter made every network invent more. **PixelHacker**
+(Apache-2.0, 0.8B, best published inpainting scores on Places2 at 512) needs `flash-attn`, `triton` and
+`flash-linear-attention`, all CUDA-only: it can't run on a Mac or convert to Core ML until its gated linear attention is
+rewritten in plain PyTorch. RORem and OSOR (removal-tuned, SDXL-based) are heavier than SD 1.5 and their weights'
+licences (RAIL, FLUX non-commercial) were not cleared. A diffusion model fine-tuned for removal is the thing to try next.
+
 Subject, Sky, People and Landscape masks can use SAM 3's Describe path with fixed prompts for users who have it.
 
 **Generative expand (outpainting), checked 2026-10-12, extended 2026-10-14.** Nothing permissively licensed reaches

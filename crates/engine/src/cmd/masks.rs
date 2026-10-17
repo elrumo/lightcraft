@@ -1127,7 +1127,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Remove Spot",
             [],
             None,
-            "{mode?: remove|heal|clone|fill (content-aware), points: [[x,y],…] | bitmap: {width, height, data} (Tap to Remove: a selection of the photo as `mask.inputImage` shows it; the object is the area), size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby), ai?: bool (Remove only: the AI Remove model paints the fill), quality?: `fast` (MI-GAN, default) | `high` (LaMa: larger, slower, better on textures and big areas; needs its model), wait?: bool (default true: the fill is painted before the command answers; false: the spot is added at once, filled like a plain Remove, and the fill follows on a worker as its own undo step, `AI Remove`, with a row in the activity stack)} — selects the new spot; returns {index} (and started: true with wait: false)",
+            "{mode?: remove|heal|clone|fill (content-aware), points: [[x,y],…] | bitmap: {width, height, data} (Tap to Remove: a selection of the photo as `mask.inputImage` shows it; the object is the area), size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby), ai?: bool (Remove only: the AI Remove model paints the fill), quality?: `fast` (MI-GAN, default) | `high` (LaMa: larger, slower, better on textures and big areas; needs its model) | `ultra` (experimental: a diffusion model, Stable Diffusion 1.5 Inpainting or what `crop.expandModels` offers here; gigabytes, tens of seconds, and on the tests so far no better than `high`: it can paint objects into the hole), wait?: bool (default true: the fill is painted before the command answers; false: the spot is added at once, filled like a plain Remove, and the fill follows on a worker as its own undo step, `AI Remove`, with a row in the activity stack)} — selects the new spot; returns {index} (and started: true with wait: false)",
             has_active,
             |s, p| {
                 let mode: SpotMode =
@@ -1190,7 +1190,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "AI Remove Spot",
             [],
             None,
-            "{index? (the selected spot), quality?: \"fast\" | \"high\" (as spot.add), wait?: bool (default true; false: the fill follows on a worker, as spot.add)} — (re)fills a Remove spot with the AI Remove model, e.g. after moving or resizing it",
+            "{index? (the selected spot), quality?: \"fast\" | \"high\" | \"ultra\" (as spot.add), wait?: bool (default true; false: the fill follows on a worker, as spot.add)} — (re)fills a Remove spot with the AI Remove model, e.g. after moving or resizing it",
             has_active,
             |s, p| {
                 let c = "spot.erase";
@@ -1383,7 +1383,7 @@ fn spots_len(s: &Session) -> usize {
 fn remove_quality(p: &Value, c: &str) -> Result<crate::erase::RemoveQuality> {
     match p.get("quality").and_then(Value::as_str) {
         None => Ok(crate::erase::RemoveQuality::Fast),
-        Some(q) => crate::erase::RemoveQuality::from_id(q).ok_or_else(|| bad(c, format!("unknown quality `{q}` (fast, high)"))),
+        Some(q) => crate::erase::RemoveQuality::from_id(q).ok_or_else(|| bad(c, format!("unknown quality `{q}` (fast, high, ultra)"))),
     }
 }
 

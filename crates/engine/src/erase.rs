@@ -14,12 +14,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_develop::{DevelopSettings, Spot, SpotFill, SpotMode};
-use lightcraft_erase::{Eraser, Painter, fill_with};
+use lightcraft_erase::expand::Monitor;
+use lightcraft_erase::{Eraser, Painter, fill_with_watched};
 use lightcraft_geom::Point;
 use lightcraft_pipeline::spots::EraseInput;
 
 use crate::Session;
-use crate::activity::Cancel;
+use crate::activity::{Cancel, Unit};
+use crate::expand::ExpandModel;
 use crate::media::SourceLevel;
 
 /// High quality's model, LaMa: what the apps show before downloading it.
@@ -47,6 +49,11 @@ pub enum RemoveQuality {
     Fast,
     /// LaMa: about 208 MB, seconds on a computer; continues textures and larger areas better.
     High,
+    /// Experimental, offered by no app: a diffusion model (Stable Diffusion 1.5 Inpainting, or Kandinsky 2.2 / SDXL
+    /// where the device runs them), the ones Generative Expand offers. Gigabytes, tens of seconds. On `remove_eval`
+    /// strokes over real people (2026-10-17) Stable Diffusion 1.5 was no better than LaMa and painted a person into a
+    /// hole; a model made for removal could change that.
+    Ultra,
 }
 
 impl RemoveQuality {
@@ -55,6 +62,7 @@ impl RemoveQuality {
         match self {
             RemoveQuality::Fast => "fast",
             RemoveQuality::High => "high",
+            RemoveQuality::Ultra => "ultra",
         }
     }
 
@@ -62,15 +70,18 @@ impl RemoveQuality {
         match id {
             "fast" => Some(RemoveQuality::Fast),
             "high" => Some(RemoveQuality::High),
+            "ultra" => Some(RemoveQuality::Ultra),
             _ => None,
         }
     }
 
-    /// The model that paints at this quality (its id in `models.list`).
+    /// The model that paints at this quality (its id in `models.list`); for Ultra the one the device offers first
+    /// (see [`Session::ultra_model`] for the one that paints).
     pub fn model_id(self) -> &'static str {
         match self {
             RemoveQuality::Fast => lightcraft_erase::ID,
             RemoveQuality::High => lightcraft_erase::lama::ID,
+            RemoveQuality::Ultra => ExpandModel::Sd15.id(),
         }
     }
 }
@@ -101,18 +112,37 @@ struct EraseTask {
     rx: Receiver<Result<SpotFill, String>>,
 }
 
+/// What paints a fill: a network that is loaded, or a diffusion model's folder (gigabytes: loaded on the worker for the
+/// job and dropped after it).
+#[derive(Clone)]
+pub(crate) enum Brush {
+    Net(Arc<dyn Painter>),
+    Diffusion { model: ExpandModel, dir: std::path::PathBuf },
+}
+
 /// Everything painting one spot's fill needs, ready to run off the UI thread.
 pub struct EraseJob {
     photo: PhotoId,
     key: SpotKey,
     input: EraseInput,
-    painter: Arc<dyn Painter>,
+    brush: Brush,
 }
 
 impl EraseJob {
-    /// Paint the fill.
-    fn run(&self) -> Result<SpotFill, String> {
-        let filled = fill_with(self.painter.as_ref(), &self.input.image, &self.input.hole).map_err(|e| e.to_string())?;
+    /// Paint the fill. `cancelled` is asked before the network starts (and between a diffusion model's steps);
+    /// `progress` hears the fraction done (a diffusion model's).
+    fn run(&self, cancelled: &(dyn Fn() -> bool + Sync), progress: &(dyn Fn(f32) + Sync)) -> Result<SpotFill, String> {
+        let paint = |p: &dyn Painter, mon: &Monitor<'_>| fill_with_watched(p, &self.input.image, &self.input.hole, mon).map_err(|e| e.to_string());
+        let filled = match &self.brush {
+            Brush::Net(p) => paint(p.as_ref(), &Monitor { cancelled, progress })?,
+            Brush::Diffusion { model, dir } => {
+                // loading the model is the first tenth
+                let load = |f: f32| progress(0.1 * f);
+                let p = crate::expand::load_diffusion_for(*model, dir, &Monitor { cancelled, progress: &load }, true)?;
+                let steps = |f: f32| progress(0.1 + 0.9 * f);
+                paint(&*p, &Monitor { cancelled, progress: &steps })?
+            }
+        };
         self.input.finish(&filled).ok_or_else(|| "AI Remove made no fill".to_string())
     }
 }
@@ -182,30 +212,80 @@ impl Session {
         match quality {
             RemoveQuality::Fast => self.eraser_ready(),
             RemoveQuality::High => self.lama_ready(),
+            RemoveQuality::Ultra => self.ultra_model().is_some(),
         }
     }
 
-    /// The network that paints at `quality`, loaded once.
-    fn erase_painter(&self, quality: RemoveQuality) -> Result<Arc<dyn Painter>, String> {
+    /// The diffusion models Ultra can paint with, the one Generative Expand's picker chose first when it is one, then
+    /// the fastest.
+    fn ultra_candidates(&self) -> Vec<ExpandModel> {
+        let chosen = self.chosen_expand_model();
+        let mut out: Vec<ExpandModel> = if chosen.diffusion() { vec![chosen] } else { Vec::new() };
+        for m in [ExpandModel::Sd15, ExpandModel::Kandinsky, ExpandModel::Sdxl] {
+            if !out.contains(&m) {
+                out.push(m);
+            }
+        }
+        out.retain(|m| self.expand_available(*m));
+        out
+    }
+
+    /// Whether this device runs a diffusion model for Ultra (it may still need its download).
+    pub fn ultra_available(&self) -> bool {
+        !self.ultra_candidates().is_empty()
+    }
+
+    /// The diffusion model Ultra paints with now: downloaded, on, and run by this device.
+    pub fn ultra_model(&self) -> Option<ExpandModel> {
+        self.ultra_candidates().into_iter().find(|m| !self.enhancer.disabled.contains(m.id()) && self.enhancer.installed(m.id()))
+    }
+
+    /// What paints at `quality`: a network, loaded once, or the folder of a diffusion model.
+    fn erase_brush(&self, quality: RemoveQuality) -> Result<Brush, String> {
         match quality {
-            RemoveQuality::Fast => Ok(self.eraser()? as Arc<dyn Painter>),
+            RemoveQuality::Fast => Ok(Brush::Net(self.eraser()? as Arc<dyn Painter>)),
             RemoveQuality::High => {
-                if !self.expand_available(crate::expand::ExpandModel::Lama) {
+                if !self.expand_available(ExpandModel::Lama) {
                     return Err(format!("High quality AI Remove (LaMa) doesn't run on this device ({})", self.device.describe()));
                 }
-                Ok(self.lama()? as Arc<dyn Painter>)
+                Ok(Brush::Net(self.lama()? as Arc<dyn Painter>))
             }
+            RemoveQuality::Ultra => {
+                if !self.ultra_available() {
+                    return Err(format!("Ultra quality AI Remove (a diffusion model) doesn't run on this device ({})", self.device.describe()));
+                }
+                let Some(model) = self.ultra_model() else {
+                    let m = self.ultra_candidates().first().copied().unwrap_or(ExpandModel::Sd15);
+                    return Err(format!(
+                        "{NOT_INSTALLED} ({}). Download it (about {:.1} GB, {} licence) when LightCraft offers it, or with `models.download {{\"id\": \"{}\", \"acknowledged\": true}}`.",
+                        m.label(),
+                        m.download_bytes() as f64 / 1e9,
+                        m.licence().0,
+                        m.id()
+                    ));
+                };
+                let dir = self.enhancer.model_dir(model.id()).ok_or("the models folder is not set")?;
+                Ok(Brush::Diffusion { model, dir })
+            }
+        }
+    }
+
+    /// The network that paints at `quality`, loaded now (tools and tests; a job loads a diffusion model on its worker).
+    pub fn remove_painter(&self, quality: RemoveQuality) -> Result<Arc<dyn Painter>, String> {
+        match self.erase_brush(quality)? {
+            Brush::Net(p) => Ok(p),
+            Brush::Diffusion { model, dir } => Ok(Arc::from(crate::expand::load_diffusion_for(model, &dir, &Monitor::NONE, true)?)),
         }
     }
 
     /// Render the area around spot `index` of `d` (photo `id`'s settings) for the network of `quality`.
     pub fn erase_job(&mut self, id: PhotoId, d: &DevelopSettings, index: usize, quality: RemoveQuality) -> Result<EraseJob, String> {
-        let painter = self.erase_painter(quality)?;
-        self.erase_job_with(id, d, index, painter)
+        let brush = self.erase_brush(quality)?;
+        self.erase_job_with(id, d, index, brush)
     }
 
-    /// [`Session::erase_job`] for a given network.
-    pub(crate) fn erase_job_with(&mut self, id: PhotoId, d: &DevelopSettings, index: usize, painter: Arc<dyn Painter>) -> Result<EraseJob, String> {
+    /// [`Session::erase_job`] for a given brush.
+    pub(crate) fn erase_job_with(&mut self, id: PhotoId, d: &DevelopSettings, index: usize, brush: Brush) -> Result<EraseJob, String> {
         let info = self.source_info(id);
         let mut src = self.source_now(id, SourceLevel::Preview)?;
         let mut input = lightcraft_pipeline::spots::erase_input(&src, &info, d, index).ok_or("the stroke is outside the photo")?;
@@ -216,13 +296,13 @@ impl Session {
             input = lightcraft_pipeline::spots::erase_input(&src, &info, d, index).ok_or("the stroke is outside the photo")?;
         }
         let key = SpotKey::of(d.spots.get(index).ok_or("no such spot")?);
-        Ok(EraseJob { photo: id, key, input, painter })
+        Ok(EraseJob { photo: id, key, input, brush })
     }
 
     /// Fill spot `index` of `d` (photo `id`'s settings) with AI Remove here and now (scripts, agents, the browser):
     /// render the area around the stroke, let the network paint it, store the answer in the spot.
     pub fn erase_spot_with(&mut self, id: PhotoId, d: &mut DevelopSettings, index: usize, quality: RemoveQuality) -> Result<(), String> {
-        let fill = self.erase_job(id, d, index, quality)?.run()?;
+        let fill = self.erase_job(id, d, index, quality)?.run(&|| false, &|_| {})?;
         let spot = d.spots.get_mut(index).ok_or("no such spot")?;
         spot.fill = Some(fill);
         Ok(())
@@ -240,6 +320,7 @@ impl Session {
         let label = match quality {
             RemoveQuality::Fast => "Removing with AI",
             RemoveQuality::High => "Removing with AI (high quality)",
+            RemoveQuality::Ultra => "Removing with AI (ultra quality)",
         };
         self.spawn_erase(job, label)
     }
@@ -247,16 +328,19 @@ impl Session {
     pub(crate) fn spawn_erase(&mut self, job: EraseJob, label: &str) -> Result<(), String> {
         let cancel = Arc::new(AtomicBool::new(false));
         let guard = self.activity.start("erase", label, Cancel::Flag(cancel.clone()));
+        guard.set_unit(Unit::Percent);
         let (tx, rx) = channel();
         let (photo, key) = (job.photo, job.key.clone());
         let turn = self.eraser.turn.clone();
         let work = move || {
             let _turn = turn.lock().unwrap_or_else(PoisonError::into_inner);
+            let h = guard.handle();
             let r = if cancel.load(Ordering::Relaxed) {
                 Err("cancelled".to_string())
             } else {
+                let run = || job.run(&|| cancel.load(Ordering::Relaxed), &|f| h.progress((f * 100.0).round() as u64, 100));
                 // a panicking network reports an error instead of leaving the row up forever
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run())).unwrap_or_else(|_| Err("AI Remove failed unexpectedly".into()))
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|_| Err("AI Remove failed unexpectedly".into()))
             };
             let _ = tx.send(r);
             drop(guard);

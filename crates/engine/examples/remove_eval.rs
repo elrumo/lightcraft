@@ -57,6 +57,7 @@ enum Mode {
     Remove,
     Migan,
     Lama,
+    Ultra,
 }
 
 impl Mode {
@@ -66,6 +67,7 @@ impl Mode {
             Mode::Remove => "remove",
             Mode::Migan => "ai migan",
             Mode::Lama => "ai lama",
+            Mode::Ultra => "ai ultra",
         }
     }
 }
@@ -145,6 +147,13 @@ fn run() -> Result<(), String> {
     } else {
         eprintln!("(no LIGHTCRAFT_LAMA model file: the LaMa row is skipped)");
     }
+    // a diffusion model for Ultra: the folder of Stable Diffusion 1.5 Inpainting (needs `--features enhance`)
+    let ultra = std::env::var("LIGHTCRAFT_SD15").ok().and_then(|dir| load_ultra(&dir));
+    if ultra.is_some() {
+        modes.push(Mode::Ultra);
+    } else {
+        eprintln!("(no LIGHTCRAFT_SD15 model folder, or no `--features enhance`: the Ultra row is skipped)");
+    }
 
     let mut cases = Vec::new();
     for image in 0..images.len() {
@@ -167,6 +176,7 @@ fn run() -> Result<(), String> {
             let painter: Option<&dyn Painter> = match mode {
                 Mode::Migan => migan.as_ref().map(|m| m as &dyn Painter),
                 Mode::Lama => lama.as_ref().map(|m| m as &dyn Painter),
+                Mode::Ultra => ultra.as_deref(),
                 _ => None,
             };
             let Some(done) = paint(src, &[case.pos], case.size, *mode, painter, feather) else {
@@ -204,7 +214,7 @@ fn run() -> Result<(), String> {
     }
     write_sheet(&out, &sheet_rows)?;
     if args.iter().any(|a| a == "--removal") {
-        removal(&corpus, &modes, migan.as_ref(), lama.as_ref(), feather, &out.replace(".png", "-removal.png"))?;
+        removal(&corpus, &modes, (migan.as_ref(), lama.as_ref(), ultra.as_deref()), feather, &out.replace(".png", "-removal.png"))?;
     }
     Ok(())
 }
@@ -219,7 +229,14 @@ const REMOVALS: [Task; 4] = [
 ];
 
 /// The strokes of [`REMOVALS`] with each mode: a row a stroke, the photo then each mode, for looking at.
-fn removal(corpus: &str, modes: &[Mode], migan: Option<&Eraser>, lama: Option<&Lama>, feather: f64, out: &str) -> Result<(), String> {
+fn removal(
+    corpus: &str,
+    modes: &[Mode],
+    nets: (Option<&Eraser>, Option<&Lama>, Option<&dyn Painter>),
+    feather: f64,
+    out: &str,
+) -> Result<(), String> {
+    let (migan, lama, ultra) = nets;
     let mut rows = Vec::new();
     for (file, pts, size) in REMOVALS {
         let path = format!("{corpus}/cc0-remove/{file}");
@@ -240,6 +257,7 @@ fn removal(corpus: &str, modes: &[Mode], migan: Option<&Eraser>, lama: Option<&L
             let painter: Option<&dyn Painter> = match mode {
                 Mode::Migan => migan.map(|m| m as &dyn Painter),
                 Mode::Lama => lama.map(|m| m as &dyn Painter),
+                Mode::Ultra => ultra,
                 _ => None,
             };
             match paint(&src, pts, size, *mode, painter, feather) {
@@ -271,6 +289,25 @@ fn paint(src: &Rgb32f, pts: &[(f64, f64)], size: f64, mode: Mode, painter: Optio
     let ppl = frame.px_per_long(img.width);
     spots::apply(&mut img, &s.spots, &frame, ppl);
     Some(img)
+}
+
+/// AI Remove's Ultra network from the model folder `dir`, the way the engine loads it (so a session's settings and
+/// the device decide, not this tool): `None` when this build has no diffusion models or the folder is no model.
+fn load_ultra(dir: &str) -> Option<std::sync::Arc<dyn Painter>> {
+    let models = std::env::temp_dir().join(format!("lc-remove-eval-{}", std::process::id()));
+    std::fs::create_dir_all(&models).ok()?;
+    let link = models.join(lightcraft_engine::expand::ExpandModel::Sd15.id());
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(dir, &link).ok()?;
+    let mut s = lightcraft_engine::Session::with_demo();
+    s.enhancer.dir = Some(models);
+    match s.remove_painter(lightcraft_engine::erase::RemoveQuality::Ultra) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            eprintln!("(Ultra: {e})");
+            None
+        }
+    }
 }
 
 const EPS: f32 = 1e-3;

@@ -156,7 +156,7 @@ fn flat_job(s: &mut Session) -> crate::erase::EraseJob {
     s.execute("spot.add", &json!({"points": [[0.4, 0.5]], "size": 0.03})).unwrap();
     let id = s.active().unwrap();
     let d = (*s.develop_of(id).unwrap()).clone();
-    s.erase_job_with(id, &d, 0, std::sync::Arc::new(Flat)).unwrap()
+    s.erase_job_with(id, &d, 0, crate::erase::Brush::Net(std::sync::Arc::new(Flat))).unwrap()
 }
 
 /// Polls until nothing is being painted (a worker answers in well under a second here).
@@ -226,14 +226,16 @@ fn ai_remove_says_what_is_missing_and_adds_nothing() {
         json!({"points": [[0.4, 0.5]], "ai": true, "wait": false}),
         json!({"points": [[0.4, 0.5]], "ai": true, "quality": "high"}),
         json!({"points": [[0.4, 0.5]], "ai": true, "quality": "high", "wait": false}),
+        json!({"points": [[0.4, 0.5]], "ai": true, "quality": "ultra"}),
     ] {
         let e = s.execute("spot.add", &params).unwrap_err().to_string();
-        assert!(e.contains("not downloaded") || e.contains("LaMa"), "{e}");
+        assert!(e.contains("not downloaded") || e.contains("LaMa") || e.contains("Ultra"), "{e}");
     }
     let e = s.execute("spot.add", &json!({"points": [[0.4, 0.5]], "ai": true, "quality": "best"})).unwrap_err().to_string();
     assert!(e.contains("unknown quality"), "{e}");
     assert_eq!(spots(&s).len(), before, "a refused command leaves no spot");
     assert!(!s.remove_ready(crate::erase::RemoveQuality::High) && !s.remove_ready(crate::erase::RemoveQuality::Fast));
+    assert!(!s.remove_ready(crate::erase::RemoveQuality::Ultra), "no diffusion model is downloaded");
     assert_eq!(crate::erase::RemoveQuality::from_id("high").map(|q| q.model_id()), Some("lama"));
 }
 

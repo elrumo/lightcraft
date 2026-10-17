@@ -137,6 +137,11 @@ fn check_side(img: &Rgb32f, hole: &[bool]) -> Result<()> {
 /// `img` (any size up to [`MAX_SIDE`]) with its `hole` painted by `painter`, scaled to the network's
 /// size and back; the pixels outside the hole are returned unchanged.
 pub fn fill_with(painter: &dyn Painter, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f> {
+    fill_with_watched(painter, img, hole, &expand::Monitor::NONE)
+}
+
+/// [`fill_with`], asking `mon` whether to stop and telling it the fraction done (a diffusion model's steps).
+pub fn fill_with_watched(painter: &dyn Painter, img: &Rgb32f, hole: &[bool], mon: &expand::Monitor<'_>) -> Result<Rgb32f> {
     let (w, h) = (img.width, img.height);
     if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE || img.data.len() != w * h {
         return Err(Error::Image(format!("can't fill a {w} × {h} image")));
@@ -152,7 +157,7 @@ pub fn fill_with(painter: &dyn Painter, img: &Rgb32f, hole: &[bool]) -> Result<R
     // stroke must not vanish; scaled up, the edge must not shrink)
     let cover = resize(&Plane { width: w, height: h, data: hole.iter().map(|&b| if b { 1.0 } else { 0.0 }).collect() }, SIDE, SIDE, Filter::Bilinear);
     let small_hole: Vec<bool> = cover.data.iter().map(|&c| c > 0.01).collect();
-    let filled = painter.paint(&small, &small_hole)?;
+    let filled = painter.paint_watched(&small, &small_hole, mon)?;
     let back = resize(&filled, w, h, Filter::Mitchell);
     let mut res = img.clone();
     for ((o, b), &k) in res.data.iter_mut().zip(&back.data).zip(hole) {

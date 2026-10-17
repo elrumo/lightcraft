@@ -87,6 +87,22 @@ impl Recipe {
     }
 }
 
+impl Recipe {
+    /// What AI Remove uses for `kind`: the same steps, a little more guidance, and a text that asks for the background
+    /// and says what must not appear in the hole (an inpainting model told nothing paints what usually sits there:
+    /// another person, another object).
+    pub const fn for_removal(kind: Kind, gpu: bool) -> Recipe {
+        let r = Recipe::for_kind(kind, gpu);
+        Recipe { guidance: 6.0, prompt: REMOVE_PROMPT, negative: REMOVE_NEGATIVE, ..r }
+    }
+}
+
+/// What the hole of a removal is drawn after: the empty place behind the object.
+const REMOVE_PROMPT: &str = "empty background, seamless, nothing there";
+/// What it must not become: the thing removed, or any other thing.
+const REMOVE_NEGATIVE: &str = "person, people, man, woman, child, face, body, animal, dog, car, object, building, sign, text, caption, watermark, \
+     signature, logo, frame, border, collage, blurry, lowres, jpeg artifacts";
+
 /// The text the new area is drawn after: nothing but "the rest of this photograph".
 const PROMPT: &str = "";
 /// What it must not become (an outpainted edge's usual failures).

@@ -353,16 +353,25 @@ impl ExpandJob {
 }
 
 /// Diffusion model `model` from its folder `dir` (on the GPU when there is one).
-#[cfg(feature = "enhance")]
 fn load_diffusion(model: ExpandModel, dir: &std::path::Path, mon: &Monitor<'_>) -> Result<Box<dyn Painter>, String> {
+    load_diffusion_for(model, dir, mon, false)
+}
+
+/// [`load_diffusion`], asked to paint what AI Remove needs (`removal`: the background behind an object, no new object)
+/// instead of what Generative Expand needs (more of the scene).
+#[cfg(feature = "enhance")]
+pub(crate) fn load_diffusion_for(model: ExpandModel, dir: &std::path::Path, mon: &Monitor<'_>, removal: bool) -> Result<Box<dyn Painter>, String> {
     use lightcraft_diffuse::{Target, kandinsky, sd};
     let target = Target::best();
     let gpu = target.gpu();
+    let recipe = |kind| if removal { sd::Recipe::for_removal(kind, gpu) } else { sd::Recipe::for_kind(kind, gpu) };
     let r: Result<Box<dyn Painter>, lightcraft_diffuse::Error> = match model {
-        ExpandModel::Sd15 => sd::StableDiffusion::load(sd::Kind::Sd15, dir, target, sd::Recipe::for_kind(sd::Kind::Sd15, gpu), mon)
-            .map(|m| Box::new(m) as Box<dyn Painter>),
-        ExpandModel::Sdxl => sd::StableDiffusion::load(sd::Kind::Sdxl, dir, target, sd::Recipe::for_kind(sd::Kind::Sdxl, gpu), mon)
-            .map(|m| Box::new(m) as Box<dyn Painter>),
+        ExpandModel::Sd15 => {
+            sd::StableDiffusion::load(sd::Kind::Sd15, dir, target, recipe(sd::Kind::Sd15), mon).map(|m| Box::new(m) as Box<dyn Painter>)
+        }
+        ExpandModel::Sdxl => {
+            sd::StableDiffusion::load(sd::Kind::Sdxl, dir, target, recipe(sd::Kind::Sdxl), mon).map(|m| Box::new(m) as Box<dyn Painter>)
+        }
         ExpandModel::Kandinsky => kandinsky::Kandinsky::load(dir, target, kandinsky::Recipe::new(gpu), mon).map(|m| Box::new(m) as Box<dyn Painter>),
         _ => return Err(format!("{} isn't a diffusion model", model.label())),
     };
@@ -370,7 +379,7 @@ fn load_diffusion(model: ExpandModel, dir: &std::path::Path, mon: &Monitor<'_>) 
 }
 
 #[cfg(not(feature = "enhance"))]
-fn load_diffusion(model: ExpandModel, _dir: &std::path::Path, _mon: &Monitor<'_>) -> Result<Box<dyn Painter>, String> {
+pub(crate) fn load_diffusion_for(model: ExpandModel, _dir: &std::path::Path, _mon: &Monitor<'_>, _removal: bool) -> Result<Box<dyn Painter>, String> {
     Err(format!("{} isn't available in this build", model.label()))
 }
 
