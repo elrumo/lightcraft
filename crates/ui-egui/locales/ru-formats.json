@@ -338,5 +338,10 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "В «{1}» перемещено фото: {n}{0:.0}. Правка → Отменить вернёт их.",
   "Downloading the depth model… {:.0} %": "Загрузка модели глубины… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У этого фото нет собственной карты глубины: «Размытие объектива» оценивает её с помощью Depth Anything V2 Small, загрузка {:.0} МБ (лицензия {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "В фокусе: {:.0}–{:.0} (0 — ближе всего, 100 — дальше всего)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "В фокусе: {:.0}–{:.0} (0 — ближе всего, 100 — дальше всего)",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Каталог Lightroom проверен: альбомов — {albums}, папок — {folders}, фото в альбомах — {photos}",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Альбомы Lightroom импортированы: создано альбомов — {albums}, папок — {folders}; добавлено фото в альбомы — {added}",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "Фото из альбомов в этой библиотеке: {matched}; отсутствуют и пропущены: {unmatched}.",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "Пропущено фото, подходящих сразу к нескольким фото здесь: {ambiguous}.",
+  "{updated} albums that were already here got photos.": "Уже существовавших альбомов, получивших фото: {updated}."
 }

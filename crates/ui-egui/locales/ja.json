@@ -2593,5 +2593,8 @@
   "Blur Brush": "ぼかしブラシ",
   "Erase Brush": "消去ブラシ",
   "Clear Brush": "ブラシをクリア",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "深度情報を持たない写真での、レンズぼかしと深度範囲マスク"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "深度情報を持たない写真での、レンズぼかしと深度範囲マスク",
+  "Import Lightroom Albums…": "Lightroom のアルバムを読み込む…",
+  "Import Lightroom Albums": "Lightroom のアルバムを読み込む",
+  "Lightroom Catalog": "Lightroom カタログ"
 }

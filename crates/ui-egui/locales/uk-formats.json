@@ -338,5 +338,10 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "До «{1}» переміщено фото: {n}{0:.0}. Редагування → Скасувати поверне їх.",
   "Downloading the depth model… {:.0} %": "Завантаження моделі глибини… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У цього фото немає власної глибини: розмиття об’єктива оцінює її за допомогою Depth Anything V2 Small, завантаження {:.0} МБ (ліцензія {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "У фокусі: {:.0}–{:.0} (0 найближче, 100 найдалі)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "У фокусі: {:.0}–{:.0} (0 найближче, 100 найдалі)",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Каталог Lightroom перевірено: альбомів — {albums}, тек — {folders}, фото в альбомах — {photos}",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Альбоми Lightroom імпортовано: створено альбомів — {albums}, тек — {folders}; додано фото до альбомів — {added}",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "Фото з альбомів у цій бібліотеці: {matched}; відсутні й пропущені: {unmatched}.",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "Пропущено фото, що відповідають одразу кільком фото тут: {ambiguous}.",
+  "{updated} albums that were already here got photos.": "Наявних альбомів, що отримали фото: {updated}."
 }

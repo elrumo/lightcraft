@@ -338,5 +338,10 @@
   "{what} merge added at {mp}, the largest a panorama can be (its full size is {full})": "{what} mesclagem adicionada em {mp}, o maior tamanho possível para um panorama (tamanho completo: {full})",
   "Downloading the depth model… {:.0} %": "Baixando o modelo de profundidade… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Esta foto não tem profundidade própria: o Desfoque de lente a estima com o Depth Anything V2 Small, um download de {:.0} MB (licença {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Em foco: {:.0}–{:.0} (0 mais perto, 100 mais longe)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Em foco: {:.0}–{:.0} (0 mais perto, 100 mais longe)",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Catálogo do Lightroom inspecionado: {albums} álbuns, {folders} pastas, {photos} fotos em álbuns",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Álbuns do Lightroom importados: {albums} álbuns e {folders} pastas criados, {added} fotos colocadas em álbuns",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} das fotos dos álbuns estão nesta biblioteca; {unmatched} não estão e foram deixadas de fora.",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} fotos correspondem a mais de uma foto aqui e foram deixadas de fora.",
+  "{updated} albums that were already here got photos.": "{updated} álbuns que já existiam receberam fotos."
 }

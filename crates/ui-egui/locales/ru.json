@@ -2453,5 +2453,8 @@
   "Blur Brush": "Кисть «Размытие»",
   "Erase Brush": "Кисть «Стереть»",
   "Clear Brush": "Очистить кисть",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "Размытие объектива и маски «Диапазон глубины» для фото без собственных данных о глубине"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "Размытие объектива и маски «Диапазон глубины» для фото без собственных данных о глубине",
+  "Import Lightroom Albums…": "Импортировать альбомы Lightroom…",
+  "Import Lightroom Albums": "Импортировать альбомы Lightroom",
+  "Lightroom Catalog": "Каталог Lightroom"
 }

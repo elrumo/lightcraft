@@ -2458,5 +2458,8 @@
   "Blur Brush": "Пензель «Розмиття»",
   "Erase Brush": "Пензель «Стирання»",
   "Clear Brush": "Очистити пензель",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "Розмиття об’єктива та маски «Діапазон глибини» для фото без власних даних про глибину"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "Розмиття об’єктива та маски «Діапазон глибини» для фото без власних даних про глибину",
+  "Import Lightroom Albums…": "Імпортувати альбоми Lightroom…",
+  "Import Lightroom Albums": "Імпортувати альбоми Lightroom",
+  "Lightroom Catalog": "Каталог Lightroom"
 }

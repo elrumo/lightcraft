@@ -338,5 +338,10 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "{n} foto{0} movida{0} a “{1}”. Editar → Deshacer las devuelve.",
   "Downloading the depth model… {:.0} %": "Descargando el modelo de profundidad… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Esta foto no tiene profundidad propia: el desenfoque de objetivo la estima con Depth Anything V2 Small, una descarga de {:.0} MB (licencia {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Enfocado: {:.0}–{:.0} (0 lo más cerca, 100 lo más lejos)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Enfocado: {:.0}–{:.0} (0 lo más cerca, 100 lo más lejos)",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Catálogo de Lightroom inspeccionado: {albums} álbumes, {folders} carpetas, {photos} fotos en álbumes",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Álbumes de Lightroom importados: {albums} álbumes y {folders} carpetas creados, {added} fotos añadidas a álbumes",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} de las fotos de los álbumes están en esta biblioteca; {unmatched} no lo están y se omitieron.",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} fotos coinciden con más de una foto de aquí y se omitieron.",
+  "{updated} albums that were already here got photos.": "{updated} álbumes que ya existían recibieron fotos."
 }

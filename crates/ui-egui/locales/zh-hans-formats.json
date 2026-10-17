@@ -338,5 +338,10 @@
   "{what} merge added at {mp}, the largest a panorama can be (its full size is {full})": "已添加 {what} 合并（{mp}），这是全景图的最大尺寸（完整尺寸：{full}）",
   "Downloading the depth model… {:.0} %": "正在下载深度模型… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "这张照片本身没有深度数据：镜头模糊会使用 Depth Anything V2 Small 来估算（需下载 {:.0} MB，{} 许可证）。{}。",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "对焦范围：{:.0}–{:.0}（0 最近，100 最远）"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "对焦范围：{:.0}–{:.0}（0 最近，100 最远）",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "已检查 Lightroom 目录：{albums} 个相册，{folders} 个文件夹，相册中有 {photos} 张照片",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "已导入 Lightroom 相册：创建了 {albums} 个相册和 {folders} 个文件夹，{added} 张照片已放入相册",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "相册中的照片有 {matched} 张在此图库中；{unmatched} 张不在，已略过。",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} 张照片与此处多张照片相符，已略过。",
+  "{updated} albums that were already here got photos.": "{updated} 个已有相册加入了照片。"
 }

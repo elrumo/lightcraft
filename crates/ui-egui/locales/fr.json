@@ -2458,5 +2458,8 @@
   "Blur Brush": "Pinceau Flou",
   "Erase Brush": "Pinceau Effacer",
   "Clear Brush": "Effacer les coups de pinceau",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "Flou de l’objectif et masques Plage de profondeur sur les photos sans données de profondeur propres"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "Flou de l’objectif et masques Plage de profondeur sur les photos sans données de profondeur propres",
+  "Import Lightroom Albums…": "Importer des albums Lightroom…",
+  "Import Lightroom Albums": "Importer des albums Lightroom",
+  "Lightroom Catalog": "Catalogue Lightroom"
 }

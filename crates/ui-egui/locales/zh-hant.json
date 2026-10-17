@@ -2394,5 +2394,8 @@
   "Blur Brush": "模糊筆刷",
   "Erase Brush": "擦除筆刷",
   "Clear Brush": "清除筆刷",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "用於本身沒有深度資料之照片的鏡頭模糊與深度範圍遮色片"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "用於本身沒有深度資料之照片的鏡頭模糊與深度範圍遮色片",
+  "Import Lightroom Albums…": "匯入 Lightroom 相簿…",
+  "Import Lightroom Albums": "匯入 Lightroom 相簿",
+  "Lightroom Catalog": "Lightroom 目錄"
 }

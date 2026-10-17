@@ -338,5 +338,10 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "{n} Foto{0} nach „{1}“ verschoben. Bearbeiten → Rückgängig holt sie zurück.",
   "Downloading the depth model… {:.0} %": "Tiefenmodell wird heruntergeladen… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Dieses Foto enthält keine eigene Tiefe: Objektivunschärfe schätzt sie mit Depth Anything V2 Small, einem Download von {:.0} MB (Lizenz {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Scharf: {:.0}–{:.0} (0 = am nächsten, 100 = am weitesten)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Scharf: {:.0}–{:.0} (0 = am nächsten, 100 = am weitesten)",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Lightroom-Katalog geprüft: {albums} Alben, {folders} Ordner, {photos} Fotos in Alben",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Lightroom-Alben importiert: {albums} Alben und {folders} Ordner erstellt, {added} Fotos in Alben aufgenommen",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} Fotos der Alben sind in dieser Bibliothek; {unmatched} nicht, sie wurden ausgelassen.",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} Fotos passen zu mehr als einem Foto hier und wurden ausgelassen.",
+  "{updated} albums that were already here got photos.": "{updated} bereits vorhandene Alben haben Fotos erhalten."
 }

@@ -2461,5 +2461,8 @@
   "Blur Brush": "Unschärfe-Pinsel",
   "Erase Brush": "Radierpinsel",
   "Clear Brush": "Pinselstriche löschen",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "Objektivunschärfe und Tiefenbereich-Masken für Fotos ohne eigene Tiefendaten"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "Objektivunschärfe und Tiefenbereich-Masken für Fotos ohne eigene Tiefendaten",
+  "Import Lightroom Albums…": "Lightroom-Alben importieren …",
+  "Import Lightroom Albums": "Lightroom-Alben importieren",
+  "Lightroom Catalog": "Lightroom-Katalog"
 }

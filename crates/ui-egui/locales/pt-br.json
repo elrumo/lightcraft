@@ -2299,5 +2299,8 @@
   "Blur Brush": "Pincel de desfoque",
   "Erase Brush": "Pincel de apagar",
   "Clear Brush": "Limpar pincel",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "Desfoque de lente e máscaras de intervalo de profundidade em fotos sem dados de profundidade próprios"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "Desfoque de lente e máscaras de intervalo de profundidade em fotos sem dados de profundidade próprios",
+  "Import Lightroom Albums…": "Importar álbuns do Lightroom…",
+  "Import Lightroom Albums": "Importar álbuns do Lightroom",
+  "Lightroom Catalog": "Catálogo do Lightroom"
 }

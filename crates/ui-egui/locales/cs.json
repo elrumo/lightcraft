@@ -2064,5 +2064,8 @@
   "Select none": "Zrušit celý výběr",
   "Select all": "Vybrat vše",
   "Visualize HDR": "Zobrazit rozsah HDR",
-  "Place (from GPS)": "Místo (z GPS)"
+  "Place (from GPS)": "Místo (z GPS)",
+  "Import Lightroom Albums…": "Importovat alba z Lightroom…",
+  "Import Lightroom Albums": "Importovat alba z Lightroom",
+  "Lightroom Catalog": "Katalog Lightroom"
 }

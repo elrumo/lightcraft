@@ -2158,5 +2158,8 @@
   "Unnamed Faces": "Nienazwane twarze",
   "Vertical inset (% of short edge)": "Margines pionowy (% krótszego boku)",
   "not added to Apple Photos (cancelled)": "nie dodano do aplikacji Zdjęcia (anulowano)",
-  "Place (from GPS)": "Miejsce (z GPS)"
+  "Place (from GPS)": "Miejsce (z GPS)",
+  "Import Lightroom Albums…": "Importuj albumy Lightrooma…",
+  "Import Lightroom Albums": "Importuj albumy Lightrooma",
+  "Lightroom Catalog": "Katalog Lightrooma"
 }

@@ -1701,22 +1701,22 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         // ---- import
         cmd!(query "library.inspectLightroom", "Inspect Lightroom Catalog", [], None,
-        "{path: .lrcat} → {photos, collections, missing, warnings}; read-only, no Lightroom required",
+        "{path: .lrcat | .mcat} → Classic {kind: classic, photos, collections, missing, warnings} or Lightroom (cloud) {kind: cloud, albums, folders, photos, warnings}; read-only, no Lightroom required",
         always, |_, p| {
             let path = str_param(p,"path").ok_or_else(|| bad("library.inspectLightroom","missing path"))?;
-            let data = crate::lightroom_catalog::read(std::path::Path::new(path)).map_err(|e| bad("library.inspectLightroom",e))?;
-            Ok(json!({"photos":data.photos.len(),"collections":data.collections.iter().filter(|r|r.get("systemOnly").and_then(Value::as_f64).unwrap_or(0.0)==0.0).count(),"missing":data.photos.iter().filter(|p| !std::path::Path::new(&p.path).is_file()).map(|p|&p.path).collect::<Vec<_>>(),"warnings":data.warnings}))
+            let (cancel, total, done) = Default::default();
+            crate::lightroom_catalog::inspect(std::path::Path::new(path), &cancel, &total, &done).map_err(|e| bad("library.inspectLightroom",e))
         }),
         cmd!(
             "library.importLightroom",
             "Import Lightroom Catalog",
             [],
             None,
-            "{path: .lrcat, updateExisting?: false}; direct import of paths, ratings, flags, metadata, keywords, collections, virtual copies & mapped edits. Archives source settings/history first. Existing edited photos are preserved unless updateExisting=true; source catalog is read-only.",
+            "{path: .lrcat | .mcat, updateExisting?: false, albumsOnly?: false}; direct import of paths, ratings, flags, metadata, keywords, collections, virtual copies & mapped edits. Archives source settings/history first. Existing edited photos are preserved unless updateExisting=true; source catalog is read-only. albumsOnly (always for a Lightroom cloud .mcat): only the albums and folders, holding the photos already in this library (matched by file name, size, capture time and dimensions) → {albums, folders, albumsUpdated, added, matched, ambiguous, unmatched, warnings}.",
             always,
             |s, p| {
                 let path = str_param(p, "path").ok_or_else(|| bad("library.importLightroom", "missing path"))?;
-                crate::lightroom_catalog::import(s, std::path::Path::new(path), bool_or(p, "updateExisting", false))
+                crate::lightroom_catalog::import(s, std::path::Path::new(path), bool_or(p, "updateExisting", false), bool_or(p, "albumsOnly", false))
             }
         ),
         cmd!(

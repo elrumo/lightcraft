@@ -338,5 +338,10 @@
   "{} isn't downloaded yet: download it below.": "{} isn't downloaded yet: download it below.",
   "Downloading the depth model… {:.0} %": "Downloading the depth model… {:.0} %",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)",
-  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}."
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Katalog Lightroom byl prozkoumán: alb: {albums}, složek: {folders}, fotografií v albech: {photos}",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Alba z Lightroom byla importována: vytvořených alb: {albums}, složek: {folders}, fotografií vložených do alb: {added}",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "Fotografií z alb v této knihovně: {matched}; nejsou v ní, a proto byly vynechány: {unmatched}.",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "Fotografií, které odpovídají více fotografiím zde, a proto byly vynechány: {ambiguous}.",
+  "{updated} albums that were already here got photos.": "Alb, která tu už byla a přibyly do nich fotografie: {updated}."
 }
