@@ -1008,8 +1008,10 @@ fn edit_in_brings_back_what_the_editor_saved() {
     let id = imported["result"]["imported"][0].as_u64().unwrap_or_else(|| panic!("{imported}"));
     exec(&h, 2, "library.select", json!({"ids": [id]}));
 
+    // an image file asked for without a mode is not copied: the frontend is asked how to hand it over
+    assert_eq!(run(&h, 3, "host.editIn", json!({"format": "psd"}))["result"]["ask"], true);
     // Edit In: a PSD copy beside the photo, stacked with it
-    let edit = run(&h, 3, "host.editIn", json!({"format": "psd", "bitDepth": 8}));
+    let edit = run(&h, 3, "host.editIn", json!({"mode": "render", "format": "psd", "bitDepth": 8}));
     assert!(edit["error"].is_null(), "{edit}");
     let copy = edit["result"]["copies"][0]["path"].as_str().unwrap().to_string();
     let new = edit["result"]["copies"][0]["id"].as_u64().unwrap();
@@ -1037,7 +1039,10 @@ fn edit_in_brings_back_what_the_editor_saved() {
 
     // a Save As under the same name is added on top of the stack
     let as_png = Path::new(&copy).with_extension("png");
-    std::fs::copy(&png, &as_png).unwrap();
+    // (not a copy of the original: the same bytes would be a duplicate and not imported)
+    let px = vec![20000u16; 24 * 16 * 3];
+    let img = lightcraft_codecs::EncodeImage::new(24, 16, 3, lightcraft_codecs::Samples::U16(&px));
+    std::fs::write(&as_png, lightcraft_codecs::encode_png(&img, &Default::default()).unwrap()).unwrap();
     let check = run(&h, 7, "host.editIn.check", json!({}));
     let added = check["result"]["added"][0]["id"].as_u64().unwrap_or_else(|| panic!("{check}"));
     assert_eq!(row(&h, added)["stack"]["count"], 3, "{check}");
