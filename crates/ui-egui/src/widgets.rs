@@ -87,6 +87,13 @@ pub fn preview_only_explanation(reason: &str) -> String {
         )
         .to_string();
     }
+    // (`RawError::Corrupt`: a damaged file, often a copy cut short, not a variant LightCraft lacks)
+    if reason.contains("corrupt raw data") {
+        return crate::i18n::tr(
+            "This file's raw data is damaged or incomplete (for example a copy that was cut short). You're editing the camera's embedded JPEG preview, which already includes the camera's picture style and white balance. Copy the original file again to edit the raw.",
+        )
+        .to_string();
+    }
     crate::i18n::tr_format!(
         "LightCraft can't decode this raw variant yet ({}). You're editing the camera's embedded JPEG preview, which already includes the camera's picture style (e.g. Monochrome) and white balance.",
         preview_only_variant(reason)

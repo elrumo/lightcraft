@@ -1919,6 +1919,10 @@ impl crate::Session {
             if src.info.as_ref().is_some_and(|i| i.raw) && self.catalog.photo(r.photo).is_some_and(|p| p.preview_only.is_some()) {
                 crate::cmd::convert::heal_preview_only(self, r.photo);
             }
+            // and one catalogued as developable whose file only gave its embedded JPEG (a decoded source: never a smart preview)
+            if src.info.as_ref().is_some_and(|i| !i.raw) && self.catalog.photo(r.photo).is_some_and(|p| p.develops_raw()) {
+                crate::cmd::convert::flag_preview_only(self, r.photo);
+            }
         }
     }
 

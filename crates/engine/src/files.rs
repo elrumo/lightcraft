@@ -2708,6 +2708,42 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The reverse: a raw catalogued as developable whose file only gives its embedded JPEG (a CR3 copy cut short
+    /// on a sync server, catalogued by a device that never decoded it, was edited on a phone as if it were the raw
+    /// with nothing saying so). Rendering it flags it and its copies "Preview only", keeps their edits, and is no
+    /// undo step.
+    #[test]
+    fn a_raw_that_only_gives_its_preview_is_flagged_when_rendered() {
+        use serde_json::json;
+        let dir = std::env::temp_dir().join(format!("lc-flag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("IMG_0001.dng");
+        std::fs::write(&path, crate::tests_xmp::synthetic_dng_with(None, lightcraft_meta::Metadata::default())).unwrap();
+        let mut s = crate::Session::new().with_fs();
+        let r = s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+        let id = lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap());
+        s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+        let copy = lightcraft_catalog::PhotoId(s.execute("photo.virtualCopy", &json!({"ids": [id.0]})).unwrap()["ids"][0].as_u64().unwrap());
+        assert!(s.catalog.photo(id).unwrap().develops_raw());
+        let undo = s.undo.len();
+        // the file turns out to hold only a camera JPEG this build shows in place of the raw
+        std::fs::write(&path, cr3_with_preview(96, 64)).unwrap();
+        s.media.forget(id);
+        let r = s.loupe_job(id, 48, 48, true).unwrap().run();
+        assert!(r.rendered.is_ok());
+        s.accept(&r);
+        for p in [id, copy] {
+            let p = s.catalog.photo(p).unwrap();
+            assert!(p.preview_only.as_deref().is_some_and(|why| why.to_uppercase().contains("CR3")), "{:?}", p.preview_only);
+            assert_eq!((p.width, p.height), (96, 64), "the file's size");
+            assert_eq!(p.develop.light.exposure, 0.5, "the edit stays");
+        }
+        assert_eq!(s.undo.len(), undo, "not an undo step");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A raw whose TIFF shell holds only a small RGB image (IFD0) next to a private block, as Exif
     /// declares a picture 25x its size.
     fn tiff_shell(w: u32, h: u32, shell: bool) -> Vec<u8> {
