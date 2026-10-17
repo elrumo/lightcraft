@@ -15,8 +15,9 @@ use std::sync::{Arc, Weak};
 
 use lightcraft_engine::catalog::Source;
 use lightcraft_engine::develop::{DevelopSettings, EmbeddedLens};
+use lightcraft_engine::export::{ExportOptions, Exported, RenderParts, encode_render_export};
 use lightcraft_engine::media::{DecodedSource, MediaCache, RenderJob, SourceLevel, SourceRef};
-use lightcraft_engine::pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
+use lightcraft_engine::pipeline::{OutputDepth, OutputSpace, Quality, RenderRequest, Rendered, SourceInfo, StageCache};
 use lightcraft_preview::{Hash128, Lru, PreviewCache};
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +62,11 @@ pub struct WireJob {
     /// Render only this window `[x, y, w, h]` of the output `max_w × max_h` describes (a zoomed view).
     #[serde(default)]
     pub window: Option<[usize; 4]>,
+    /// The colour space and sample format of an export's render (previews: sRGB, 8-bit).
+    #[serde(default)]
+    pub space: OutputSpace,
+    #[serde(default)]
+    pub depth: OutputDepth,
 }
 
 impl WireJob {
@@ -95,6 +101,8 @@ impl WireJob {
             stages: job.stages.is_some().then(|| view.to_string()),
             overlay: job.request.overlay.to_parts(),
             window: job.request.window.map(|w| [w.x, w.y, w.w, w.h]),
+            space: job.request.space,
+            depth: job.request.depth,
         }
     }
 
@@ -118,9 +126,8 @@ impl WireJob {
             quality: if self.draft { Quality::Draft } else { Quality::Full },
             apply_crop: self.apply_crop,
             overlay: lightcraft_engine::pipeline::Overlay::from_parts(self.overlay.0, self.overlay.1),
-            // workers render previews (exports run in-process)
-            space: lightcraft_engine::pipeline::OutputSpace::Srgb,
-            depth: lightcraft_engine::pipeline::OutputDepth::U8,
+            space: self.space,
+            depth: self.depth,
             proof: None,
             window: self.window.map(|[x, y, w, h]| lightcraft_engine::pipeline::PixelWindow { x, y, w, h }),
             display: None,
@@ -138,6 +145,35 @@ impl WireJob {
     /// Storage key of the cached thumbnail.
     pub fn thumb_key(&self) -> Option<String> {
         self.thumb.as_ref().map(|h| thumb_storage_key(h))
+    }
+}
+
+/// One photo's export for the export worker: its render job(s) at the output size and what
+/// encodes them. [`WorkerCore::export`] makes the file the page's [`PreparedExport::run`] would.
+///
+/// [`PreparedExport::run`]: lightcraft_engine::export::PreparedExport::run
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportWire {
+    pub file_name: String,
+    pub job: WireJob,
+    /// The HDR rendition of a gain map JPEG (`job` renders its SDR base).
+    #[serde(default)]
+    pub hdr_job: Option<WireJob>,
+    #[serde(default)]
+    pub meta: Option<lightcraft_meta::Metadata>,
+    pub opts: ExportOptions,
+}
+
+impl ExportWire {
+    /// `parts`: [`lightcraft_engine::export::PreparedExport::render_parts`] of the photo exporting as `file_name`.
+    pub fn from_parts(file_name: &str, parts: &RenderParts) -> ExportWire {
+        ExportWire {
+            file_name: file_name.to_string(),
+            job: WireJob::from_job(&parts.job, false, "Export"),
+            hdr_job: parts.hdr_job.as_ref().map(|j| WireJob::from_job(j, false, "Export")),
+            meta: parts.meta.clone(),
+            opts: parts.opts.clone(),
+        }
     }
 }
 
@@ -184,6 +220,23 @@ impl WorkerCore {
 
     /// Render `job`; `original` holds the file's bytes when [`WorkerCore::needs_original`] asked.
     pub fn render(&mut self, job: &WireJob, original: Option<&[u8]>) -> Result<Rendered, String> {
+        self.render_with(job, original, true)
+    }
+
+    /// The photo's file, as an export makes it: [`WorkerCore::render_with`] for `wire`'s job(s), then
+    /// the engine's own encoder ([`encode_render_export`]). `original` is the file's bytes.
+    pub fn export(&mut self, wire: &ExportWire, original: Option<&[u8]>) -> Result<Exported, String> {
+        let r = self.render_with(&wire.job, original, false)?;
+        let hdr = match &wire.hdr_job {
+            Some(j) => Some(self.render_with(j, original, false)?),
+            None => None,
+        };
+        encode_render_export(wire.file_name.clone(), r, hdr, &wire.opts, wire.meta.as_ref())
+    }
+
+    /// [`WorkerCore::render`]; `keep` = false for an export, whose full-size source must not stay
+    /// in the worker's cache (it would push out every preview) and whose histogram nobody reads.
+    fn render_with(&mut self, job: &WireJob, original: Option<&[u8]>, keep: bool) -> Result<Rendered, String> {
         let key = job.source_key();
         let src = match self.sources.get(&key).cloned() {
             Some(s) => s,
@@ -215,8 +268,10 @@ impl WorkerCore {
                     }
                     (origin @ Source::Demo { .. }, _) => self.media.origin_ref(origin, job.max_edge).load_source()?,
                 };
-                let cost = src.image.width * src.image.height * 12 + 64;
-                self.sources.insert(key, src.clone(), cost);
+                if keep {
+                    let cost = src.image.width * src.image.height * 12 + 64;
+                    self.sources.insert(key, src.clone(), cost);
+                }
                 src
             }
         };
@@ -229,7 +284,7 @@ impl WorkerCore {
             None => lightcraft_engine::pipeline::render(&src.image, &info, &job.settings, &job.request()),
         };
         // an HDR edit's histogram shows its HDR range (as on native)
-        if let Some(h) = lightcraft_engine::pipeline::hdr_histogram(&src.image, &info, &job.settings, &job.request()) {
+        if keep && let Some(h) = lightcraft_engine::pipeline::hdr_histogram(&src.image, &info, &job.settings, &job.request()) {
             rendered.histogram = h;
         }
         Ok(rendered)
@@ -532,6 +587,44 @@ mod tests {
         assert_eq!(old.request().window, None);
     }
 
+    // An export crosses to the export worker as JSON and comes back as the file the page's own
+    // `PreparedExport::run` makes: same name, size and (CPU pipeline on both sides) bytes
+    #[test]
+    fn an_export_through_the_wire_is_the_file_the_page_would_make() {
+        use lightcraft_engine::export::{ExportOptions, prepare_export};
+        let mut s = Session::with_demo();
+        let id = s.visible_cloned()[0];
+        s.execute("library.select", &serde_json::json!({"ids": [id.0]})).unwrap();
+        s.execute("develop.set", &serde_json::json!({"control": "light.exposure", "value": 0.7})).unwrap();
+        s.execute("develop.set", &serde_json::json!({"control": "color.saturation", "value": 20})).unwrap();
+        for params in [
+            serde_json::json!({"format": "jpeg", "width": 160, "quality": 85, "metadata": "all", "sharpen": "screen", "colorSpace": "displayP3"}),
+            serde_json::json!({"format": "tiff", "width": 120, "bitDepth": 16, "colorSpace": "adobeRgb"}),
+            serde_json::json!({"format": "png", "longEdge": 96, "watermark": "© Me"}),
+        ] {
+            let o = ExportOptions::from_json(&params);
+            let item = prepare_export(&mut s, id, &o, 3).unwrap();
+            let parts = item.render_parts().expect("a rendered export");
+            let wire = ExportWire::from_parts(&item.file_name, &parts);
+            let wire: ExportWire = serde_json::from_str(&serde_json::to_string(&wire).unwrap()).unwrap();
+            assert_eq!(wire.opts, o, "the options survive the trip: {params}");
+            let (w, h) = (wire.job.max_w, wire.job.max_h);
+            let mut core = WorkerCore::default();
+            assert_eq!(core.needs_original(&wire.job), None, "demo scenes are generated");
+            let made = core.export(&wire, None).unwrap();
+            let whole = item.run().unwrap();
+            assert_eq!((made.file_name.as_str(), made.width, made.height), (whole.file_name.as_str(), whole.width, whole.height), "{params}");
+            assert_eq!((made.width, made.height), (w, h), "the job asks for the output size");
+            if lightcraft_engine::gpu::available() {
+                // (a GPU render may differ by a level or two: docs/gpu-pipeline.md)
+                assert!(made.bytes.len().abs_diff(whole.bytes.len()) <= whole.bytes.len() / 20, "{params}");
+            } else {
+                assert_eq!(made.bytes, whole.bytes, "{params}");
+            }
+            assert_eq!(core.sources.len(), 0, "an export's full-size source is not kept");
+        }
+    }
+
     #[test]
     fn wire_job_renders_like_the_engine() {
         let mut s = Session::with_demo();
@@ -580,6 +673,8 @@ mod tests {
             stages: Some("Main".into()),
             overlay: (0, 0.0),
             window: None,
+            space: Default::default(),
+            depth: Default::default(),
         };
         let mut core = WorkerCore::default();
         assert_eq!(core.needs_original(&job).as_deref(), Some(hash.as_str()));
@@ -681,6 +776,8 @@ mod tests {
             stages: None,
             overlay: (0, 0.0),
             window: None,
+            space: Default::default(),
+            depth: Default::default(),
         };
         assert_eq!(proxy_keys(&hash, 512)[0], format!("proxies/{hash}.lcsm"), "the mini preview first for thumbnails");
         assert_eq!(proxy_keys(&hash, 2560)[0], format!("proxies/{hash}.lcsp"));

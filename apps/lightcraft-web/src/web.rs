@@ -141,7 +141,7 @@ fn open_picker(originals: Originals, backend: Option<Backend>, ctx: egui::Contex
 }
 
 /// Offer `bytes` as a download named after `path`.
-fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     let e = |e: JsValue| format!("download failed: {e:?}");
     let arr = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
     let opts = web_sys::BlobPropertyBag::new();
@@ -172,6 +172,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
     let erase_backend = backend.clone();
     let depth_backend = backend.clone();
     let chooser_ctx = ctx.clone();
+    let export_runner = crate::export::runner(backend.as_ref().map_or("memory", |b| b.kind()).to_string(), ctx.clone());
     Services {
         picker: None,
         // Import Profiles & Presets…: the chosen files are read into memory and handed over by content
@@ -230,8 +231,11 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         pick_slideshow_templates: None,
         save_slideshow_template: None,
         write: Some(Box::new(download)),
-        // downloads happen on the main thread: exports run in the foreground on the web
+        // downloads happen on the main thread (a Blob and a link are the page's to make), so there is no
+        // thread-safe writer; UI-started exports run as a task between frames with the photos on a
+        // Web Worker (`export.rs`)
         write_shared: None,
+        export_runner: Some(export_runner),
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
@@ -722,6 +726,10 @@ impl WebApp {
         let (alive, ready, remote, inline) = self.workers.as_ref().map_or((0, 0, 0, 0), Workers::stats);
         let (orig_n, orig_bytes) = self.originals.usage();
         let (draft_scale, draft_ms_per_mpx) = self.app.renderer.draft_report();
+        // what exports have done, the one running now and how the last one ended
+        let mut export = crate::export::stats();
+        export["running"] = json!(self.app.export.as_ref().map(lightcraft_ui_egui::export_task::ExportTask::status));
+        export["last"] = json!(self.app.last_export_result);
         json!({
             "storage": self.backend.as_ref().map_or("memory", |b| b.kind()),
             "library": self.lib_dir,
@@ -729,6 +737,7 @@ impl WebApp {
             "flushing": self.flushing.get(),
             "saveError": self.files.error(),
             "workers": {"alive": alive, "ready": ready, "remoteJobs": remote, "inlineJobs": inline, "restarted": self.workers.as_ref().map_or(0, Workers::restarted)},
+            "export": export,
             "graphicsLost": lifecycle::graphics_lost(),
             "originalsInMemory": orig_n,
             "originalBytesInMemory": orig_bytes,
@@ -752,6 +761,10 @@ impl WebApp {
             let r = match id.as_str() {
                 "web.stats" => Ok(self.web_stats()),
                 "web.crashWorker" => Ok(self.crash_worker(&params)),
+                "web.crashExportWorker" => {
+                    crate::export::crash_next();
+                    Ok(json!({"armed": true}))
+                }
                 _ => self.app.run(&id, params),
             };
             let _ = match r {
