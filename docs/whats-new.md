@@ -11,6 +11,11 @@
   shot with custom picture styles it lands within about 1 L\* of Lightroom's default export, with the same
   colourfulness at every brightness (colour difference 5.6 → 4.6). Some hues still differ (Lightroom renders yellows a
   little warmer), and corners stay darker without a lens profile for RF lenses.
+- EOS R6 photos go a step further: a colour table fitted to Lightroom's exports of the same photos gives them
+  Lightroom's hues too (warmer yellows and sand, its lighter sky blue, more orange wood). Colour difference on those
+  photos 4.6 → 4.1, and 5.7 → 5.4 on photos the table never saw.
+- `lightcraft-cli calibrate --references DIR` fits such a table for any of these Canon models from your own photos
+  and another converter's exports of them.
 - Photos open faster too: the embedded JPEG is no longer read to fit a look.
 - Smart previews of raws are rebuilt once from their originals. A server rebuilds its photos' previews with Rebuild
   all previews on its admin page.

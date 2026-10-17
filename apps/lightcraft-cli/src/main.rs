@@ -11,7 +11,7 @@
 //! lightcraft-cli denoise-serve [--model ID] [--models DIR] [--listen ADDR] [--token-env VAR] [--run-on auto|gpu|cpu]
 //! lightcraft-cli commands [--json]
 //! lightcraft-cli controls [--json]
-//! lightcraft-cli calibrate [--max N] [--out DIR] FOLDERS/FILES…
+//! lightcraft-cli calibrate [--max N] [--out DIR] [--references DIR] FOLDERS/FILES…
 //! ```
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -113,12 +113,15 @@ USAGE:
       Forget the library's Hidden password (a forgotten one): the next unlock in the app sets a new one.
       Synced libraries forget it on every device at their next sync.
   lightcraft-cli controls [--json]   list every develop control id with its range
-  lightcraft-cli calibrate [--max N] [--out DIR] FOLDERS/FILES…
+  lightcraft-cli calibrate [--max N] [--out DIR] [--references DIR] FOLDERS/FILES…
       Fit a colour profile per camera model from raw files and their embedded camera JPEGs
-      (Sony ARW, Nikon NEF, Fujifilm RAF): up to N files spread over the folders (default 300; 0 = all), pooled per
+      (Sony ARW, Nikon NEF, Fujifilm RAF, Canon CR3 / CR2): up to N files spread over the folders (default 300; 0 = all), pooled per
       model, written as <model>.json to DIR (default: the profiles folder LightCraft reads,
       <config>/camera-profiles, or $LIGHTCRAFT_CAMERA_PROFILES). Raws of a profiled model then
       take their colour from the profile and only their tone from their own JPEG.
+      --references DIR: Canon CR3s of models with measured matrices instead: fit the hue/saturation table
+      their neutral look adds, against renders of the same photos in DIR (<raw name>.jpg, .jpeg, .png or
+      .tif, upright, sRGB or tagged), written as <model>.neutral.json.
   lightcraft-cli --version | --help
 ";
 
@@ -205,8 +208,9 @@ fn main() -> ExitCode {
 
 /// Raw files below `path` (or `path` itself), skipping hidden and NAS metadata folders.
 fn raw_files(path: &Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
-    let is_raw =
-        |p: &Path| p.extension().and_then(|e| e.to_str()).is_some_and(|e| ["arw", "nef", "nrw", "raf"].iter().any(|x| e.eq_ignore_ascii_case(x)));
+    let is_raw = |p: &Path| {
+        p.extension().and_then(|e| e.to_str()).is_some_and(|e| ["arw", "nef", "nrw", "raf", "cr3", "cr2"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    };
     if path.is_file() {
         if is_raw(path) {
             out.push(path.to_path_buf());
@@ -229,12 +233,14 @@ fn raw_files(path: &Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
 fn calibrate(args: &[String]) -> Result<(), String> {
     let mut max = 300usize;
     let mut out: Option<std::path::PathBuf> = None;
+    let mut references: Option<std::path::PathBuf> = None;
     let mut inputs = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--max" => max = take_value(args, &mut i, "--max")?.parse().map_err(|_| "--max needs a number".to_string())?,
             "--out" => out = Some(take_value(args, &mut i, "--out")?.into()),
+            "--references" => references = Some(take_value(args, &mut i, "--references")?.into()),
             a if a.starts_with("--") => return Err(format!("unknown option `{a}`")),
             f => inputs.push(f.to_string()),
         }
@@ -265,7 +271,15 @@ fn calibrate(args: &[String]) -> Result<(), String> {
                 scope.spawn(|| {
                     let mut pool = lightcraft_engine::camera_profiles::Pool::default();
                     while let Some(path) = files.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed)) {
-                        let result = std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| pool.add(&bytes));
+                        let result = std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| match &references {
+                            None => pool.add(&bytes),
+                            Some(dir) => match reference_render(dir, path) {
+                                Some(reference) => {
+                                    pool.add_reference(&bytes, &std::fs::read(&reference).map_err(|e| format!("{}: {e}", reference.display()))?)
+                                }
+                                None => Err(format!("no render of it in {}", dir.display())),
+                            },
+                        });
                         let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         match result {
                             Ok(Some(model)) => eprintln!("[{n}/{}] {} ({model})", files.len(), path.display()),
@@ -284,7 +298,19 @@ fn calibrate(args: &[String]) -> Result<(), String> {
         pool.merge(p);
     }
     let mut written = 0;
-    for result in pool.fit(5) {
+    if references.is_some() {
+        for result in pool.fit_neutral(5) {
+            match result {
+                Ok(table) => {
+                    let path = lightcraft_engine::camera_profiles::save_neutral(&table, &dir)?;
+                    println!("{}: {} photos, {} colour pairs, neutral-look table → {}", table.model, table.files, table.samples, path.display());
+                    written += 1;
+                }
+                Err(e) => eprintln!("calibrate: {e}"),
+            }
+        }
+    }
+    for result in if references.is_some() { Vec::new() } else { pool.fit(5) } {
         match result {
             Ok(profile) => {
                 let path = lightcraft_engine::camera_profiles::save(&profile, &dir)?;
@@ -310,6 +336,15 @@ fn calibrate(args: &[String]) -> Result<(), String> {
         return Err("no profile written".into());
     }
     Ok(())
+}
+
+/// The render of raw `path` in `dir`: the file with the raw's name and an image extension.
+fn reference_render(dir: &Path, path: &Path) -> Option<std::path::PathBuf> {
+    let stem = path.file_stem()?;
+    ["jpg", "jpeg", "JPG", "JPEG", "png", "PNG", "tif", "tiff", "TIF", "TIFF"]
+        .iter()
+        .map(|ext| dir.join(stem).with_extension(ext))
+        .find(|p| p.is_file())
 }
 
 fn mcp(args: &[String]) -> Result<(), String> {

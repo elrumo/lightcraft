@@ -67,7 +67,10 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   integration tests, examples and benches. New crates start with the attribute.
 
 ## Non-negotiables
-- **Clean-room.** Never read/disassemble anything inside Adobe app bundles (names/listings only). Never copy Adobe icons, presets, profiles (DCP), lens profiles (LCP), camera matrices, fonts. Observation of the installed Lightroom is read-only (it syncs the user's personal library: never import/edit/rate/delete there). Never copy GPL/LGPL/AGPL code (darktable, RawTherapee, ART, LibRaw, rawspeed, rawloader, rawler, lensfun, dcraw-derived GPL code…).
+- **Clean-room.** Never read/disassemble anything inside Adobe app bundles (names/listings only). Never copy Adobe icons, presets, profiles (DCP), lens profiles (LCP), camera matrices, fonts. Observation of the installed Lightroom is read-only (it syncs the user's personal library: never import/edit/rate/delete there). Never copy GPL/LGPL/AGPL code (darktable, RawTherapee, ART, LibRaw, rawspeed, rawloader, rawler, lensfun, dcraw-derived GPL code…). **One exception (maintainer decision, 2026-10-17):** the EOS R6's neutral-look hue/saturation table
+  (`assets/camera-profiles/Canon_EOS_R6.neutral.json`) is fitted to Lightroom's default exports of the maintainer's
+  own photos (rendered output only, no Adobe file read; `docs/camera-preview-colour.md`). Fitting anything else to
+  Adobe output needs the maintainer's go-ahead first.
 - **Pure Rust** in the product. No C/C++ dependencies. One exception: the SwiftUI app's UI layer (iPhone, iPad and Mac;
   `apps/lightcraft-ios-swift/LightCraft/`, [`docs/ios-swift.md`](docs/ios-swift.md)) is Swift over the `lc_*` C ABI. It
   holds presentation only: no document logic, no edit geometry, no image math, no C/C++/Objective-C sources, no
