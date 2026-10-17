@@ -690,7 +690,8 @@ impl Engine {
             "host.editIn.check" => self.check_external_edits().map_err(|e| ErrorBody::engine(&e)),
             "host.editIn.originals" => crate::external_edit::originals(&self.session, p).map_err(|e| ErrorBody::new("other", e)),
             "host.editIn.claim" => {
-                let paths: Vec<String> = p.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+                let paths: Vec<String> =
+                    p.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
                 let (r, text) = self.edits.claim(&mut self.session, &paths).map_err(|e| ErrorBody::engine(&e))?;
                 self.note_external_edits(text);
                 Ok(r)

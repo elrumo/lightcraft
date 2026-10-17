@@ -790,7 +790,10 @@ impl SyncState {
         let mut moving: Vec<(&u64, &Job)> = self.jobs.iter().collect();
         moving.sort_by_key(|(request, _)| **request);
         let minis = mini_previews.then(|| self.minis.iter().chain(self.minis_failed.iter().map(|(_, job)| job))).into_iter().flatten();
-        moving.into_iter().map(|(_, job)| (job, true)).chain(self.urgent.iter().chain(self.ready.iter()).chain(self.plan.iter()).chain(minis).map(|job| (job, false)))
+        moving
+            .into_iter()
+            .map(|(_, job)| (job, true))
+            .chain(self.urgent.iter().chain(self.ready.iter()).chain(self.plan.iter()).chain(minis).map(|job| (job, false)))
     }
 
     /// Photo file transfers queued or running: (uploads, downloads). (Every frame: the mini previews
