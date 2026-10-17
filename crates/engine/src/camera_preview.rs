@@ -41,7 +41,9 @@ use lightcraft_raw::{
 /// 12: the EOS R6's neutral look adds its hue/saturation table (`camera_profiles::NEUTRAL_BUNDLED`).
 /// 13: that table refitted with pooled pairs in a fixed order (`camera_profiles::in_order`).
 /// 14: such a CR3's proxy also carries the look fitted to its camera JPEG (the Camera Matching profile).
-pub const LOOK_VERSION: u32 = 14;
+/// 15: a CR3's look is fitted to the sensor with the vignetting correction its camera applied to the JPEG
+/// (`jpeg_vignetting`, which the render applies too).
+pub const LOOK_VERSION: u32 = 15;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {
@@ -236,18 +238,48 @@ pub(crate) fn starting_colour_tags(raw: &mut RawImage, bytes: &[u8]) -> Option<C
 /// Give a raw about to be written as a DNG of its own (Export as DNG, Convert / Copy as DNG) the colour it opens
 /// with, when the file has no colour matrices (issue #1745: a Z 9 NEF's DNG had no `ColorMatrix1`, and other raw
 /// converters refused it). The lens corrections stay in the DNG; only the fit sees the raw without them, as when
-/// the photo opens.
+/// the photo opens. A raw that opens with the vignetting its camera corrected in its JPEG ([`jpeg_vignetting`])
+/// gets it as a `FixVignetteRadial`, so the DNG opens with it too.
 pub(crate) fn with_starting_colour(raw: &mut RawImage, bytes: &[u8]) {
     if lightcraft_raw::color::has_matrix(&raw.color) {
         return;
     }
+    let lens = crate::lens_profiles::for_raw(&raw.info(), || lightcraft_meta::extract(bytes));
     let list3 = raw.opcodes.list3.clone();
     raw.opcodes.list3.retain(|op| !op.is_lens_correction());
     let tags = starting_colour_tags(raw, bytes);
+    // (the transform the photo opens with: `starting_colour_tags` filled in any measured matrices)
+    let t = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
+    let vignette = if lens.is_none() { jpeg_vignetting(raw, bytes, &t).and_then(|l| vignette_opcode(raw, l.vignette.as_ref()?)) } else { None };
     raw.opcodes.list3 = list3;
+    raw.opcodes.list3.extend(vignette);
     if let Some(tags) = tags {
         raw.color = tags;
     }
+}
+
+/// A vignette centred on `raw`'s default crop (as [`jpeg_vignetting`] gives it) as a DNG `FixVignetteRadial` of its
+/// active area: the opcode's radius is the farthest active-area corner (`files::embedded_lens` reads it back).
+fn vignette_opcode(raw: &RawImage, v: &lightcraft_develop::EmbeddedVignette) -> Option<lightcraft_raw::Opcode> {
+    let a = raw.active_area;
+    let c = raw.crop.clipped(a.width, a.height);
+    let c = if c.width == 0 || c.height == 0 { lightcraft_raw::Rect::new(0, 0, a.width, a.height) } else { c };
+    if a.width < 2 || a.height < 2 {
+        return None;
+    }
+    let (aw, ah) = (a.width as f64 - 1.0, a.height as f64 - 1.0);
+    // the crop's centre in the opcode's pixel-index convention (0 and 1 at the first and last pixel)
+    let (px, py) = (c.x as f64 + (c.width as f64 - 1.0) / 2.0, c.y as f64 + (c.height as f64 - 1.0) / 2.0);
+    let far = [(0.0, 0.0), (aw, 0.0), (0.0, ah), (aw, ah)].iter().map(|&(x, y)| (x - px).hypot(y - py)).fold(0.0, f64::max);
+    let s = far / (v.radius * c.width.max(c.height) as f64);
+    if !(s.is_finite() && s > 0.0) {
+        return None;
+    }
+    let mut k = v.k;
+    for (i, ki) in k.iter_mut().enumerate() {
+        *ki *= s.powi(2 * i as i32 + 2);
+    }
+    Some(lightcraft_raw::Opcode::FixVignetteRadial { k, center: [px / aw, py / ah] })
 }
 
 /// DNG tags that render white-balanced camera RGB at its as-shot white as `t` with `look` on top does: one forward
@@ -332,6 +364,7 @@ pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransf
         return (None, false);
     }
     let Some((sensor, reference, clipped)) = proxies(raw, bytes, transform, PROXY, 0.0, lens) else { return (None, false) };
+    let sensor = with_jpeg_vignetting(raw, sensor, &reference, &clipped);
     let black_and_white = monochrome(&reference);
     // A camera profile pooled from many photos knows colours this photo shows too little of;
     // try its colour first and fit tone/chroma per photo (picture styles vary).
@@ -657,6 +690,277 @@ fn correct_vignetting(sensor: &mut Rgb32f, lens: Option<&lightcraft_develop::Emb
         let gain = lightcraft_pipeline::optics::embedded_vignette_gain(&vignette, lightcraft_geom::Point::new(x, y), ow, oh) as f32;
         *p = p.map(|v| v * gain);
     }
+}
+
+/// Long edge of the proxies the camera's vignetting correction is estimated on ([`jpeg_vignetting`]).
+const VIGNETTE_PROXY: usize = 96;
+/// The estimated correction must brighten the corners by at least this gain (0.07 EV): less is a camera that
+/// corrected nothing (Peripheral Illumination Correction off), not worth a lens correction of its own.
+const MIN_CORNER_GAIN: f64 = 1.05;
+/// ...and by at most this (2 EV): more is a JPEG brightened by something other than a lens correction.
+const MAX_CORNER_GAIN: f64 = 4.0;
+/// ...and cut the held-out pixels' (outlier-limited) squared error below this share of the error without it.
+const MAX_VIGNETTE_HOLDOUT: f64 = 0.9;
+
+/// One proxy pixel the vignetting is estimated on: log2 luminance of the sensor and of the camera JPEG, squared
+/// distance from the centre over the half diagonal, and whether it is held out of the fit.
+#[derive(Clone, Copy)]
+struct RadialSample {
+    sensor: f64,
+    jpeg: f64,
+    r2: f64,
+    held_out: bool,
+}
+
+/// The lens vignetting correction the camera applied to its JPEG, for a raw whose file carries no lens data of its
+/// own (a Canon CR3 with an RF lens: the camera JPEG has Peripheral Illumination Correction applied, and there is no
+/// lens database to look the lens up in): [`vignetting_from_proxies`] on the sensor and camera JPEG proxies. Only
+/// for CR3s, the format it was measured on (19 EOS R6 photos against their camera JPEGs and Lightroom,
+/// `docs/lens-profiles.md`); the caller asks only for a raw without lens data of its own.
+pub(crate) fn jpeg_vignetting(raw: &RawImage, bytes: &[u8], transform: &CameraTransform) -> Option<lightcraft_develop::EmbeddedLens> {
+    // ponytail: CR3 only; other formats' cameras correct too (Sony shading, Nikon vignette control) once measured.
+    // A CR3 without measured matrices builds these proxies twice per decode (`fit_preview` too): pass the estimate
+    // out of `starting_colour` if decode time matters.
+    if raw.format != RawFormat::Cr3 {
+        return None;
+    }
+    let t0 = web_time::Instant::now();
+    let (sensor, reference, clipped) = proxies(raw, bytes, transform, VIGNETTE_PROXY, 0.0, None)?;
+    let lens = vignetting_from_proxies(&sensor, &reference, &clipped);
+    if lightcraft_pipeline::profiling() {
+        eprintln!("[profile] JPEG vignetting {}: {:.1} ms", if lens.is_some() { "kept" } else { "none" }, t0.elapsed().as_secs_f64() * 1e3);
+    }
+    lens
+}
+
+/// The radial gain that takes the sensor proxy to the camera JPEG's: the JPEG is the sensor times a radial gain put
+/// through the camera's tone curve, so the gain `1 + k0 ρ² + k1 ρ⁴ + k2 ρ⁸` (ρ: distance from the centre over the
+/// half diagonal; all terms ≥ 0, so it rises from 1 at the centre) is fitted alongside a monotone tone curve
+/// ([`fit_radial_gain`]) on the proxy pixels away from clipping and edges. Returned as the same
+/// [`lightcraft_develop::EmbeddedLens`] vignette a file's own correction is, in the oriented, default-cropped frame
+/// (centred, so the orientation doesn't matter). `None` with too few usable pixels near the corners, or a gain that
+/// brightens the corners by less than [`MIN_CORNER_GAIN`] or more than [`MAX_CORNER_GAIN`], or doesn't explain
+/// held-out pixels clearly better than no gain ([`MAX_VIGNETTE_HOLDOUT`]).
+fn vignetting_from_proxies(sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool]) -> Option<lightcraft_develop::EmbeddedLens> {
+    let (w, h) = (sensor.width, sensor.height);
+    if (reference.width, reference.height) != (w, h) || w < 16 || h < 16 || clipped.len() != w * h {
+        return None;
+    }
+    let half_diagonal2 = (w * w + h * h) as f64 / 4.0;
+    let samples: Vec<RadialSample> = (0..w * h)
+        .filter_map(|i| {
+            let (s, j) = (*sensor.data.get(i)?, *reference.data.get(i)?);
+            let (ls, lj) = (luminance_2020(s), luminance_2020(j));
+            let usable = s.iter().all(|v| v.is_finite() && *v > 0.0)
+                && ls > 0.002
+                && (0.01..0.9).contains(&lj)
+                && !clipped.get(i).copied().unwrap_or(true)
+                && local_contrast(sensor, i) <= EDGE_CONTRAST
+                && local_contrast(reference, i) <= EDGE_CONTRAST;
+            let (x, y) = (i % w, i / w);
+            let (dx, dy) = (x as f64 + 0.5 - w as f64 / 2.0, y as f64 + 0.5 - h as f64 / 2.0);
+            usable.then(|| RadialSample {
+                sensor: f64::from(ls).log2(),
+                jpeg: f64::from(lj).log2(),
+                r2: (dx * dx + dy * dy) / half_diagonal2,
+                held_out: (x * 17 + y * 11) % 3 == 0,
+            })
+        })
+        .collect();
+    let train: Vec<RadialSample> = samples.iter().filter(|s| !s.held_out).copied().collect();
+    let held: Vec<RadialSample> = samples.iter().filter(|s| s.held_out).copied().collect();
+    if train.len() < 400 || train.iter().filter(|s| s.r2 > 0.5).count() < 64 || held.len() < 150 {
+        return None;
+    }
+    let (k, knots) = fit_radial_gain(&train)?;
+    let corner = radial_gain(&k, 1.0);
+    let flat = monotone_knots(train.iter().map(|s| (s.sensor, s.jpeg)).collect())?;
+    let (with, without) = (radial_error(&held, &k, &knots), radial_error(&held, &[0.0; 3], &flat));
+    if lightcraft_pipeline::profiling() {
+        eprintln!(
+            "[profile] JPEG vignetting: k {k:?}, corner gain {corner:.3}, held-out error {with:.5} vs {without:.5} uncorrected, {} pixels",
+            samples.len()
+        );
+    }
+    if !((MIN_CORNER_GAIN..=MAX_CORNER_GAIN).contains(&corner) && with < MAX_VIGNETTE_HOLDOUT * without) {
+        return None;
+    }
+    let vignette = lightcraft_develop::EmbeddedVignette {
+        k: [k[0], k[1], 0.0, k[2], 0.0],
+        center: lightcraft_geom::Point::new(0.5, 0.5),
+        radius: half_diagonal2.sqrt() / w.max(h) as f64,
+    };
+    Some(lightcraft_develop::EmbeddedLens { vignette: Some(vignette), ..Default::default() })
+}
+
+/// A CR3's sensor proxy with the vignetting correction its camera applied to the JPEG proxy it is paired with
+/// ([`vignetting_from_proxies`]; the proxies are oriented alike): a look fitted to the uncorrected sensor learns some of
+/// that correction as brightness, which the render's lens correction ([`jpeg_vignetting`]) would then add again.
+fn with_jpeg_vignetting(raw: &RawImage, mut sensor: Rgb32f, reference: &Rgb32f, clipped: &[bool]) -> Rgb32f {
+    if raw.format == RawFormat::Cr3 {
+        let lens = vignetting_from_proxies(&sensor, reference, clipped);
+        correct_vignetting(&mut sensor, lens.as_ref(), lightcraft_geom::Orientation::Normal);
+    }
+    sensor
+}
+
+/// The radial gain `1 + k0 ρ² + k1 ρ⁴ + k2 ρ⁸` (all ≥ 0) at `r2` = ρ².
+fn radial_gain(k: &[f64; 3], r2: f64) -> f64 {
+    1.0 + r2 * (k[0] + r2 * (k[1] + r2 * r2 * k[2]))
+}
+
+/// The radial gain ([`radial_gain`]) and the monotone tone curve (log2 → log2) that together best map the sensor
+/// samples onto the JPEG's: Gauss-Newton steps on the gain ([`nonnegative_step`]), the curve refitted to the gained
+/// sensor before each ([`monotone_knots`]), samples beyond three robust deviations left out of the step. On the 19 EOS
+/// R6 photos `1 + k0 ρ² + k1 ρ⁴` alone fell 0.1 EV short of the camera's gain in the outer corners (ρ² > 0.8), and
+/// unconstrained it dipped to 0.92 just off the centre; the ρ⁸ term and non-negative terms fix both.
+fn fit_radial_gain(samples: &[RadialSample]) -> Option<([f64; 3], Vec<(f64, f64)>)> {
+    let mut k = [0.0f64; 3];
+    let gained = |k: &[f64; 3], s: &RadialSample| s.sensor + radial_gain(k, s.r2).max(1e-3).log2();
+    for _ in 0..24 {
+        let knots = monotone_knots(samples.iter().map(|s| (gained(&k, s), s.jpeg)).collect())?;
+        let residuals: Vec<f64> = samples.iter().map(|s| s.jpeg - knot_eval(&knots, gained(&k, s)).0).collect();
+        let cut = 3.0 * 1.4826 * median(&mut residuals.iter().map(|e| e.abs()).collect::<Vec<_>>())?.max(0.01);
+        let (mut a, mut b) = ([[0.0f64; 3]; 3], [0.0f64; 3]);
+        for (s, e) in samples.iter().zip(&residuals) {
+            if e.abs() > cut {
+                continue;
+            }
+            let slope = knot_eval(&knots, gained(&k, s)).1 / (radial_gain(&k, s.r2).max(1e-3) * std::f64::consts::LN_2);
+            let j = [slope * s.r2, slope * s.r2 * s.r2, slope * s.r2.powi(4)];
+            for (row, ji) in a.iter_mut().zip(j) {
+                for (v, jj) in row.iter_mut().zip(j) {
+                    *v += ji * jj;
+                }
+            }
+            for (v, ji) in b.iter_mut().zip(j) {
+                *v += ji * e;
+            }
+        }
+        let step = nonnegative_step(&a, &b, &k);
+        let next: [f64; 3] = std::array::from_fn(|i| (k[i] + step[i]).max(0.0));
+        if !next.iter().all(|v| v.is_finite() && *v < 16.0) {
+            return None;
+        }
+        let moved = next.iter().zip(&k).map(|(n, o)| (n - o).abs()).fold(0.0, f64::max);
+        k = next;
+        if moved < 1e-4 {
+            break;
+        }
+    }
+    let knots = monotone_knots(samples.iter().map(|s| (gained(&k, s), s.jpeg)).collect())?;
+    Some((k, knots))
+}
+
+/// The Gauss-Newton step `d` of normal equations `A d = b` that keeps `k + d ≥ 0`: the least `dᵀAd/2 − bᵀd` over
+/// every choice of which terms move freely (the others go to 0). Leaving all at 0 is always allowed.
+fn nonnegative_step(a: &[[f64; 3]; 3], b: &[f64; 3], k: &[f64; 3]) -> [f64; 3] {
+    let mut best = (0.0, k.map(|v| -v));
+    best.0 = quadratic(a, b, &best.1);
+    for free in 1u8..8 {
+        let is_free = |i: usize| free & (1 << i) != 0;
+        let mut d = k.map(|v| -v);
+        let idx: Vec<usize> = (0..3).filter(|&i| is_free(i)).collect();
+        // the free terms' rows, with the fixed terms' moves taken to the right-hand side
+        let mut m: Vec<Vec<f64>> = idx
+            .iter()
+            .map(|&i| {
+                let rhs = b[i] - (0..3).filter(|&j| !is_free(j)).map(|j| a[i][j] * d[j]).sum::<f64>();
+                idx.iter().map(|&j| a[i][j]).chain([rhs]).collect()
+            })
+            .collect();
+        let Some(x) = solve_small(&mut m) else { continue };
+        for (&i, v) in idx.iter().zip(x) {
+            d[i] = v;
+        }
+        if d.iter().zip(k).all(|(d, k)| k + d >= -1e-12) {
+            let q = quadratic(a, b, &d);
+            if q < best.0 {
+                best = (q, d);
+            }
+        }
+    }
+    best.1
+}
+
+/// `dᵀAd/2 − bᵀd`.
+fn quadratic(a: &[[f64; 3]; 3], b: &[f64; 3], d: &[f64; 3]) -> f64 {
+    let ad: [f64; 3] = std::array::from_fn(|i| (0..3).map(|j| a[i][j] * d[j]).sum());
+    (0..3).map(|i| d[i] * (ad[i] / 2.0 - b[i])).sum()
+}
+
+/// The solution of a small linear system given as rows `[a…, rhs]`, by elimination with partial pivoting; `None` when
+/// singular.
+fn solve_small(m: &mut [Vec<f64>]) -> Option<Vec<f64>> {
+    let n = m.len();
+    for col in 0..n {
+        let pivot = (col..n).max_by(|&p, &q| m[p][col].abs().total_cmp(&m[q][col].abs()))?;
+        let p = m[pivot][col];
+        if p.is_nan() || p.abs() <= 1e-12 {
+            return None;
+        }
+        m.swap(col, pivot);
+        let (top, rest) = m.split_at_mut(col + 1);
+        let pivot_row = top.last()?;
+        for target in rest {
+            let f = target[col] / pivot_row[col];
+            for (t, v) in target.iter_mut().zip(pivot_row).skip(col) {
+                *t -= f * v;
+            }
+        }
+    }
+    let mut x = vec![0.0; n];
+    for (row, r) in m.iter().enumerate().rev() {
+        let known: f64 = r.iter().zip(&x).take(n).skip(row + 1).map(|(a, x)| a * x).sum();
+        x[row] = (r[n] - known) / r[row];
+    }
+    x.iter().all(|v| v.is_finite()).then_some(x)
+}
+
+/// Mean squared error of `samples` under gain `k` and tone curve `knots`, each sample's error limited to 0.5 (EV²)
+/// so a few mismatched pixels don't decide.
+fn radial_error(samples: &[RadialSample], k: &[f64; 3], knots: &[(f64, f64)]) -> f64 {
+    let sum: f64 = samples
+        .iter()
+        .map(|s| {
+            let x = s.sensor + radial_gain(k, s.r2).max(1e-3).log2();
+            (s.jpeg - knot_eval(knots, x).0).powi(2).min(0.5)
+        })
+        .sum();
+    sum / samples.len().max(1) as f64
+}
+
+/// A monotone curve through `(x, y)` points: the medians of 24 equal-count bins along `x`, each `y` at least the one
+/// before. `None` with fewer than 8 points a bin or fewer than 4 distinct knots.
+fn monotone_knots(mut points: Vec<(f64, f64)>) -> Option<Vec<(f64, f64)>> {
+    const BINS: usize = 24;
+    points.retain(|(x, y)| x.is_finite() && y.is_finite());
+    if points.len() < BINS * 8 {
+        return None;
+    }
+    points.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let n = points.len();
+    let mut knots: Vec<(f64, f64)> = Vec::with_capacity(BINS);
+    for bin in 0..BINS {
+        let chunk = points.get(bin * n / BINS..(bin + 1) * n / BINS)?;
+        let x = median(&mut chunk.iter().map(|p| p.0).collect::<Vec<_>>())?;
+        let y = median(&mut chunk.iter().map(|p| p.1).collect::<Vec<_>>())?;
+        match knots.last() {
+            Some(&(px, _)) if x <= px => {}
+            Some(&(_, py)) => knots.push((x, y.max(py))),
+            None => knots.push((x, y)),
+        }
+    }
+    (knots.len() >= 4).then_some(knots)
+}
+
+/// The curve through `knots` (increasing `x`) at `x`, and its slope there: linear between knots, the end segments
+/// continued beyond them.
+fn knot_eval(knots: &[(f64, f64)], x: f64) -> (f64, f64) {
+    let i = knots.partition_point(|k| k.0 < x).max(1).min(knots.len().saturating_sub(1));
+    let (Some(&(x0, y0)), Some(&(x1, y1))) = (knots.get(i.wrapping_sub(1)), knots.get(i)) else { return (x, 1.0) };
+    let slope = if x1 > x0 { (y1 - y0) / (x1 - x0) } else { 0.0 };
+    (y0 + slope * (x - x0), slope)
 }
 
 /// The embedded preview's long edge must be at least this share of the raw's (and 384 px): a DNG whose preview is a
@@ -1603,6 +1907,7 @@ fn monochrome_look(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, le
     if !monochrome(&reference) {
         return None;
     }
+    let sensor = with_jpeg_vignetting(raw, sensor, &reference, &clipped);
     let unclipped = without_clipped(&sensor, &clipped);
     let look = fit_tone_only(unclipped.as_ref().unwrap_or(&sensor), &reference, None)?;
     // Sony's Dynamic Range Optimizer brightens a B/W JPEG as much as a colour one
@@ -4447,5 +4752,50 @@ mod tests {
         let mut looked = color;
         looked.profile.look_table = HsvTable::from_tags(&[1, 2, 1], &[0.0, 1.0, 1.0, 0.0, 1.0, 1.0], 0);
         assert!(looked.profile.look_table.is_some() && !eligible(RawFormat::Dng, looked), "a look table is the file's own rendering");
+    }
+
+    /// Sensor and camera JPEG proxies (96 × 64) of a grey scene whose brightness waves between 0.015 and 0.45 (not
+    /// tied to the radius), the JPEG the sensor times `gain` (of ρ², ρ the distance from the centre over the half
+    /// diagonal) through a tone curve.
+    fn vignetted_pair(gain: impl Fn(f64) -> f64) -> (Rgb32f, Rgb32f) {
+        let (w, h) = (96, 64);
+        let (mut sensor, mut reference) = (Rgb32f::new(w, h), Rgb32f::new(w, h));
+        for y in 0..h {
+            for x in 0..w {
+                let l = 0.015 * 30f32.powf(0.5 + 0.5 * (0.21 * x as f32 + 1.3).sin() * (0.17 * y as f32 - 0.4).cos());
+                let (dx, dy) = (x as f64 + 0.5 - w as f64 / 2.0, y as f64 + 0.5 - h as f64 / 2.0);
+                let v = l * gain((dx * dx + dy * dy) / ((w * w + h * h) as f64 / 4.0)) as f32;
+                sensor.data[y * w + x] = [l; 3];
+                reference.data[y * w + x] = [1.6 * v / (1.0 + 1.6 * v); 3];
+            }
+        }
+        (sensor, reference)
+    }
+
+    /// The camera's vignetting correction comes back from its JPEG through the tone curve, as a centred vignette with
+    /// the same gain at the centre, half way out and in the corners; a JPEG the camera didn't correct, or one darkened
+    /// toward the corners (a vignette effect), gives none.
+    #[test]
+    fn vignetting_is_measured_from_a_corrected_jpeg() {
+        let truth = |r2: f64| 1.0 + 0.15 * r2 + 0.55 * r2 * r2;
+        let (sensor, reference) = vignetted_pair(truth);
+        let clipped = vec![false; sensor.data.len()];
+        let lens = vignetting_from_proxies(&sensor, &reference, &clipped).expect("a vignette");
+        assert!(lens.warp.is_none() && !lens.has_stages());
+        let v = lens.vignette.expect("a vignette");
+        let (w, h) = (sensor.width as f64, sensor.height as f64);
+        for (x, y) in [(w / 2.0, h / 2.0), (w * 0.75, h * 0.75), (0.0, 0.0), (w, 0.0)] {
+            let r2 = ((x - w / 2.0).powi(2) + (y - h / 2.0).powi(2)) / ((w * w + h * h) / 4.0);
+            let g = lightcraft_pipeline::optics::embedded_vignette_gain(&v, lightcraft_geom::Point::new(x, y), w, h);
+            assert!((g / truth(r2) - 1.0).abs() < 0.03, "at ({x}, {y}): {g:.3}, truth {:.3}", truth(r2));
+        }
+        // nothing corrected, or darker corners: no lens correction
+        let others: [fn(f64) -> f64; 2] = [|_| 1.0, |r2| 1.0 - 0.3 * r2];
+        for gain in others {
+            let (sensor, reference) = vignetted_pair(gain);
+            assert!(vignetting_from_proxies(&sensor, &reference, &clipped).is_none());
+        }
+        // too few usable pixels (all clipped)
+        assert!(vignetting_from_proxies(&sensor, &reference, &vec![true; sensor.data.len()]).is_none());
     }
 }

@@ -62,7 +62,7 @@ impl SettingsHashes {
 }
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 69;
+pub const RENDER_CACHE_VERSION: u64 = 70;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -1905,13 +1905,14 @@ impl crate::Session {
     }
 
     /// Accept a finished job's loaded source into the cache. What the decode learnt about the file that the catalog
-    /// has wrong is corrected too ([`Self::learn_as_shot_wb`]).
+    /// has wrong or lacks is recorded too ([`Self::learn_as_shot_wb`], [`Self::learn_lens`]).
     pub fn accept(&mut self, r: &RenderResult) {
         if let Some(src) = &r.loaded
             && r.source_key.is_none_or(|key| self.catalog.photo(r.photo).is_some_and(|p| Hasher128::new().str(&content_key(p)).finish() == key))
         {
             if let Some(info) = &src.info {
                 self.learn_as_shot_wb(r.photo, info);
+                self.learn_lens(r.photo, info);
             }
             self.media.insert_source(r.photo, r.level, src.clone());
             // a raw catalogued as preview-only (by a build that couldn't decode it) just developed from its sensor data
@@ -1937,6 +1938,24 @@ impl crate::Session {
         }
         if let Err(e) = self.apply_system(Op::SetAsShotWb { id, wb: Some(read) }) {
             log::warn!("photo {}: as-shot white balance not recorded: {e}", id.0);
+        }
+    }
+
+    /// Record the lens data a decode of raw `id` found (`info`) when the catalog has none: the vignetting a CR3's camera
+    /// corrected in its JPEG is measured from the pixels ([`crate::camera_preview::jpeg_vignetting`]), so no import
+    /// probe sees it. Then smart previews and synced devices render with it, and a photo still as import left it gets
+    /// the correction turned on, as import does for a file's own lens data ([`crate::cmd::convert::lens_ops`]).
+    /// Bookkeeping, not an undo step. Lens data the catalog has is never replaced (devices may measure a hair apart).
+    fn learn_lens(&mut self, id: PhotoId, info: &SourceInfo) {
+        let Some(p) = self.catalog.photo(id) else { return };
+        if !info.raw || info.lens.is_none() || p.embedded_lens.is_some() || !p.develops_raw() {
+            return;
+        }
+        for op in crate::cmd::convert::lens_ops(id, p, info.lens) {
+            if let Err(e) = self.apply_system(op) {
+                log::warn!("photo {}: lens data not recorded: {e}", id.0);
+                return;
+            }
         }
     }
 

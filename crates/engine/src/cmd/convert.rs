@@ -489,7 +489,7 @@ pub(crate) fn heal_preview_only(s: &mut Session, id: lightcraft_catalog::PhotoId
     let mut ops = Vec::new();
     for p in &photos {
         ops.extend(content_op(p.id, p, info.clone()));
-        if *p.develop == p.import_defaults() {
+        if p.develop_is(p.import_defaults()) {
             let mut fresh = (**p).clone();
             (fresh.preview_only, fresh.as_shot_wb, fresh.embedded_lens) = (None, info.as_shot_wb, info.embedded_lens);
             crate::import::apply_import_defaults(s, &mut fresh);
@@ -544,18 +544,20 @@ fn fill_missing_meta(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::P
     ops
 }
 
-/// Ops that give a photo the lens data its file carries now (`info`, a fresh probe), or none when
-/// it already has them. A catalog from before the lens data was read at import has none, so such a
+/// Ops that give a photo the lens data its file carries now (`lens`: a fresh probe's, or what a decode found), or
+/// none when it already has them. A catalog from before the lens data was read at import has none, so such a
 /// photo's correction stayed off. When the photo gains lens data and its develop settings are still
 /// what import gave it, the lens correction is turned on as import would; an edited photo keeps
-/// its settings.
-pub(crate) fn lens_ops(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::Photo, info: &crate::media::ProbeInfo) -> Vec<Op> {
-    if info.embedded_lens == ph.embedded_lens {
+/// its settings. A vignette alone that a probe doesn't see is kept: it was measured from the pixels when the photo
+/// was decoded (a CR3's, `camera_preview::jpeg_vignetting`), and a probe reads headers only.
+pub(crate) fn lens_ops(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::Photo, lens: Option<lightcraft_develop::EmbeddedLens>) -> Vec<Op> {
+    let measured = |l: &lightcraft_develop::EmbeddedLens| l.vignette.is_some() && l.warp.is_none() && !l.has_stages();
+    if lens == ph.embedded_lens || (lens.is_none() && ph.embedded_lens.as_ref().is_some_and(measured)) {
         return Vec::new();
     }
-    let mut ops = vec![Op::SetEmbeddedLens { id, lens: info.embedded_lens.map(Box::new) }];
+    let mut ops = vec![Op::SetEmbeddedLens { id, lens: lens.map(Box::new) }];
     // (a photo with a default-preset look keeps it: that look is its import state)
-    if ph.embedded_lens.is_none() && info.embedded_lens.is_some() && ph.import_look.is_none() && !ph.is_edited() && !ph.develop.optics.lens_profile {
+    if ph.embedded_lens.is_none() && lens.is_some() && ph.import_look.is_none() && !ph.is_edited() && !ph.develop.optics.lens_profile {
         let mut d = (*ph.develop).clone();
         d.optics.lens_profile = true;
         ops.push(Op::SetDevelop { id, settings: std::sync::Arc::new(d), label: "Lens Corrections".into(), edited: ph.edited.clone() });
@@ -585,8 +587,12 @@ pub(crate) fn reload_ops(
     // camera fields the catalog lacks (e.g. a raw imported before its format was read) are filled in;
     // nothing already set is overwritten
     let meta_ops = fill_missing_meta(id, ph, info);
-    let mut mine: Vec<Op> =
-        content_op(id, ph, info.clone()).into_iter().chain(meta_ops).chain(lens_ops(id, ph, info)).chain(as_shot_wb_op(id, ph, info)).collect();
+    let mut mine: Vec<Op> = content_op(id, ph, info.clone())
+        .into_iter()
+        .chain(meta_ops)
+        .chain(lens_ops(id, ph, info.embedded_lens))
+        .chain(as_shot_wb_op(id, ph, info))
+        .collect();
     if !mine.is_empty() {
         ops.append(&mut mine);
         changed.push(id);
@@ -594,7 +600,7 @@ pub(crate) fn reload_ops(
     // virtual copies share the file
     for c in cat.photos().filter(|c| c.copy_of == Some(id)) {
         let theirs: Vec<Op> =
-            content_op(c.id, c, info.clone()).into_iter().chain(lens_ops(c.id, c, info)).chain(as_shot_wb_op(c.id, c, info)).collect();
+            content_op(c.id, c, info.clone()).into_iter().chain(lens_ops(c.id, c, info.embedded_lens)).chain(as_shot_wb_op(c.id, c, info)).collect();
         if !theirs.is_empty() {
             ops.extend(theirs);
             changed.push(c.id);
@@ -842,7 +848,7 @@ mod tests {
     fn reload_adds_lens_data_and_turns_the_correction_on_for_an_untouched_photo() {
         let ph = old_rw2();
         let info = crate::media::ProbeInfo { embedded_lens: Some(lens()), ..Default::default() };
-        let ops = lens_ops(ph.id, &ph, &info);
+        let ops = lens_ops(ph.id, &ph, info.embedded_lens);
         assert!(matches!(ops.first(), Some(Op::SetEmbeddedLens { lens: Some(_), .. })), "{ops:?}");
         let Some(Op::SetDevelop { settings, .. }) = ops.get(1) else { panic!("{ops:?}") };
         assert!(settings.optics.lens_profile);
@@ -856,7 +862,7 @@ mod tests {
         assert_eq!(after.embedded_lens, Some(lens()));
         assert!(!after.is_edited());
         assert_eq!(*after.develop, after.camera_defaults());
-        assert!(lens_ops(after.id, after, &info).is_empty(), "nothing more to do the second time");
+        assert!(lens_ops(after.id, after, info.embedded_lens).is_empty(), "nothing more to do the second time");
     }
 
     #[test]
@@ -867,8 +873,22 @@ mod tests {
         ph.develop = std::sync::Arc::new(d);
         assert!(ph.is_edited());
         let info = crate::media::ProbeInfo { embedded_lens: Some(lens()), ..Default::default() };
-        let ops = lens_ops(ph.id, &ph, &info);
+        let ops = lens_ops(ph.id, &ph, info.embedded_lens);
         assert!(matches!(ops.as_slice(), [Op::SetEmbeddedLens { lens: Some(_), .. }]), "{ops:?}");
+    }
+
+    /// A vignette measured from the pixels when the photo was decoded (a CR3's camera correction) is not in a probe:
+    /// Reload keeps it, while a probe that does read lens data still replaces what the catalog has.
+    #[test]
+    fn reload_keeps_a_vignette_measured_at_decode() {
+        let mut ph = old_rw2();
+        let measured = lightcraft_develop::EmbeddedLens { vignette: Some(Default::default()), ..Default::default() };
+        ph.embedded_lens = Some(measured);
+        assert!(lens_ops(ph.id, &ph, None).is_empty());
+        assert!(matches!(lens_ops(ph.id, &ph, Some(lens())).as_slice(), [Op::SetEmbeddedLens { lens: Some(_), .. }]));
+        // a file's own warp that a probe no longer finds is dropped as before
+        ph.embedded_lens = Some(lens());
+        assert!(matches!(lens_ops(ph.id, &ph, None).as_slice(), [Op::SetEmbeddedLens { lens: None, .. }]));
     }
 
     #[test]
@@ -879,7 +899,7 @@ mod tests {
         d.optics.lens_profile = false;
         ph.develop = std::sync::Arc::new(d);
         let info = crate::media::ProbeInfo { embedded_lens: Some(lens()), ..Default::default() };
-        assert!(lens_ops(ph.id, &ph, &info).is_empty());
+        assert!(lens_ops(ph.id, &ph, info.embedded_lens).is_empty());
     }
 
     /// End to end on a public Panasonic raw (skipped without the corpus): a catalog from before the lens data was read
@@ -977,5 +997,65 @@ mod tests {
         assert!(r["copies"].as_array().unwrap().len() < 6);
         assert!(s.activity.list().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// End to end on a public CR3 (skipped without the corpus; EOS M50, EF-M 15-45 mm at 15 mm f/4, its camera JPEG
+    /// with Peripheral Illumination Correction): it opens with lens corrections on and no lens data; its first decode
+    /// measures the vignetting the camera corrected and records it on the photo, which Reload keeps; the corners
+    /// render brighter than with the correction off while the centre stays; and a DNG of it carries the vignette.
+    #[test]
+    fn corpus_cr3_records_the_vignetting_its_camera_corrected() {
+        let root = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"));
+        let f = root.join("raw/cr3-canon-m50-craw.cr3");
+        if !f.exists() {
+            lightcraft_testkit::skip!(Corpus, "{} absent", f.display());
+            return;
+        }
+        let mut s = Session::new().with_fs();
+        s.execute("library.import", &json!({"paths": [f.to_string_lossy()]})).unwrap();
+        let id = s.active().unwrap();
+        let ph = s.catalog.photo(id).unwrap().clone();
+        assert!(ph.embedded_lens.is_none() && ph.develop.optics.lens_profile && !ph.is_edited(), "import: on, nothing measured yet");
+        let (w, h) = (192, 128);
+        let on = s.render_now(id, w, h).unwrap().image;
+        let learnt = s.catalog.photo(id).unwrap().embedded_lens;
+        let v = learnt.and_then(|l| l.vignette).expect("measured when decoded");
+        assert!(learnt.is_some_and(|l| l.warp.is_none() && !l.has_stages()));
+        s.execute("photo.reload", &json!({"ids": [id.0]})).unwrap();
+        assert_eq!(s.catalog.photo(id).unwrap().embedded_lens, learnt, "Reload keeps it");
+        let mut off = (*ph.develop).clone();
+        off.optics.lens_profile = false;
+        s.catalog.apply(Op::SetDevelop { id, settings: std::sync::Arc::new(off), label: "x".into(), edited: None }).unwrap();
+        let off = s.render_now(id, w, h).unwrap().image;
+        let mean = |img: &lightcraft_raster::Rgba8, x0: usize, y0: usize| {
+            let mut sum = 0.0;
+            for y in y0..y0 + 8 {
+                for x in x0..x0 + 8 {
+                    sum += f64::from(img.get(x, y)[1]);
+                }
+            }
+            sum / 64.0
+        };
+        let (iw, ih) = (on.width, on.height);
+        let centre = mean(&on, iw / 2 - 4, ih / 2 - 4) / mean(&off, iw / 2 - 4, ih / 2 - 4);
+        assert!((centre - 1.0).abs() < 0.03, "centre {centre:.3}");
+        for (x, y) in [(0, 0), (iw - 8, 0), (0, ih - 8), (iw - 8, ih - 8)] {
+            let corner = mean(&on, x, y) / mean(&off, x, y);
+            assert!(corner > 1.08, "corner ({x}, {y}) {corner:.3}");
+        }
+        // the DNG opens with the same vignette (its own `FixVignetteRadial`)
+        let bytes = std::fs::read(&f).unwrap();
+        let mut raw = lightcraft_raw::decode(&bytes).unwrap();
+        crate::camera_preview::with_starting_colour(&mut raw, &bytes);
+        let dng = lightcraft_raw::write_dng(&raw, &Default::default()).unwrap();
+        let in_dng = crate::files::probe_bytes("x.dng", &dng).unwrap().embedded_lens.and_then(|l| l.vignette).expect("in the DNG");
+        let (fw, fh) = (f64::from(ph.width), f64::from(ph.height));
+        for p in [lightcraft_geom::Point::new(0.0, 0.0), lightcraft_geom::Point::new(fw * 0.7, fh * 0.3)] {
+            let gain = |v: &lightcraft_develop::EmbeddedVignette| lightcraft_pipeline::optics::embedded_vignette_gain(v, p, fw, fh);
+            let (a, b) = (gain(&v), gain(&in_dng));
+            assert!((a / b - 1.0).abs() < 0.02, "at {p:?}: photo {a:.3}, DNG {b:.3}");
+        }
     }
 }

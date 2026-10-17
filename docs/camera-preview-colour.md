@@ -221,8 +221,9 @@ hue shifts −9° to +11°, saturation ×0.68 to ×1.65), is loaded by `camera_p
 Lightroom's rendered output of the maintainer's own photos went in. Other models get no table until someone fits one
 the same way.
 
-Corners: Lightroom applies its lens profile for RF lenses, and LightCraft has no lens data for them (a darker, vignetted
-frame edge). The CC0 corpus CR3s check that the neutral look reads as Canon's own rendering too (ΔE00 against each
+Corners: Lightroom applies its lens profile for RF lenses; LightCraft has no lens data for them, but now applies the
+vignetting correction the camera applied to its JPEG, measured from that JPEG ([lens-profiles.md](lens-profiles.md#canon-cr3-vignetting-measured-from-the-camera-jpeg)),
+which brings the outer corners from 1.6 EV darker than Lightroom's to 0.7 EV (the camera's own correction is partial). The CC0 corpus CR3s check that the neutral look reads as Canon's own rendering too (ΔE00 against each
 file's camera JPEG, per-file fit → neutral look, and ΔL\*): EOS R6 Standard 2.1 → 2.0 (+0.6 L\*), R5 Standard 2.2 → 2.7
 (−1.4), R Landscape 2.3 → 2.3 (+1.3).
 
