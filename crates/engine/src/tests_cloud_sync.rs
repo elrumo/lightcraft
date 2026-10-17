@@ -2467,7 +2467,11 @@ fn the_sync_queue_lists_the_photos_behind_each_count() {
         s.execute("sync.queue", &p).unwrap()
     };
     let nothing = page(&mut a, "changes", json!({}));
-    assert_eq!((nothing["total"].as_u64(), nothing["changes"].as_u64(), nothing["items"].as_array().map(Vec::len)), (Some(0), Some(0), Some(0)), "{nothing}");
+    assert_eq!(
+        (nothing["total"].as_u64(), nothing["changes"].as_u64(), nothing["items"].as_array().map(Vec::len)),
+        (Some(0), Some(0), Some(0)),
+        "{nothing}"
+    );
 
     // an edit, a rating and an album, not sent yet: a record each, with what changes in it, in the order they were made
     a.selection = crate::Selection::single(ids[0]);
@@ -2480,7 +2484,8 @@ fn the_sync_queue_lists_the_photos_behind_each_count() {
     assert_eq!(q["changes"], status["pending"], "the same count the sheet shows: {q}");
     let items = q["items"].as_array().unwrap();
     assert_eq!(q["total"].as_u64(), Some(items.len() as u64), "{q}");
-    let seen: Vec<(&str, u64, &str)> = items.iter().map(|i| (i["kind"].as_str().unwrap(), i["id"].as_u64().unwrap_or(0), i["name"].as_str().unwrap())).collect();
+    let seen: Vec<(&str, u64, &str)> =
+        items.iter().map(|i| (i["kind"].as_str().unwrap(), i["id"].as_u64().unwrap_or(0), i["name"].as_str().unwrap())).collect();
     assert_eq!(seen[0], ("photo", ids[0].0, "a.png"), "{q}");
     assert_eq!(items[0]["what"], json!(["develop"]));
     assert_eq!(seen[1], ("photo", ids[1].0, "b.png"), "{q}");
