@@ -99,6 +99,49 @@ impl HsvTable {
         if v0 == v1 { plane(v0) } else { lerp(plane(v0), plane(v1), tv) }
     }
 
+    /// The colour, with largest channel `value`, that [`Self::apply`] turns into one of `out`'s hue and saturation
+    /// (linear ProPhoto RGB): `apply` undone. The hue is where the table's shift lands on `out`'s (fixed-point steps,
+    /// else bisection, which always finds one: a shift is less than half a turn); the saturation is `out`'s over the
+    /// table's scale there, so where the scale clips at 1 it is the least saturated colour that clips. The value is
+    /// the caller's: a table's value scale is undone by whoever sets the brightness after it.
+    pub fn undo(&self, out: [f32; 3], value: f32) -> [f32; 3] {
+        let max = out[0].max(out[1]).max(out[2]);
+        if !(max > 0.0 && max.is_finite() && value > 0.0 && value.is_finite()) {
+            return out;
+        }
+        let d = max - out[0].min(out[1]).min(out[2]);
+        let (hue, sat) = (hue_of(out, max, d), d / max);
+        let v = if self.srgb_value { linear_to_srgb(value.min(1.0)) } else { value };
+        let (mut h, mut s) = (hue, sat);
+        // hue for this saturation, then saturation for this hue, until both land (the shift and the scale change
+        // slowly with saturation, the hue a few rounds settle)
+        for _ in 0..16 {
+            let miss = |h: f32| h + self.lookup(h, s, v)[0] - hue;
+            for _ in 0..4 {
+                h -= miss(h);
+            }
+            if !(miss(h).abs() < 1e-3) {
+                let (mut lo, mut hi) = (hue - 180.0, hue + 180.0);
+                for _ in 0..24 {
+                    let mid = 0.5 * (lo + hi);
+                    if miss(mid) < 0.0 { lo = mid } else { hi = mid }
+                }
+                h = 0.5 * (lo + hi);
+            }
+            let scale = self.lookup(h, s, v)[1];
+            if !(scale > 0.0) {
+                break;
+            }
+            let next = (sat / scale).clamp(0.0, 2.0);
+            let settled = (next - s).abs() < 1e-5 && miss(h).abs() < 1e-3;
+            s = next;
+            if settled {
+                break;
+            }
+        }
+        hsv_to_rgb(h, s, value)
+    }
+
     /// Apply the table to one linear ProPhoto RGB colour.
     pub fn apply(&self, rgb: [f32; 3]) -> [f32; 3] {
         let max = rgb[0].max(rgb[1]).max(rgb[2]);

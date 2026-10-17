@@ -243,17 +243,22 @@ their values and their meaning, so switching looks never moves a slider. The CPU
 source picture.
 
 Smart previews, and a sync server's previews that a phone renders from, carry the camera look in a JPEG segment of
-their own (`smart.rs`, APP11, zlib-compressed JSON, about 8 KB for the corpus EOS R6 file; older builds skip it), so the profile works without the original;
-`LOOK_VERSION` 13 rebuilds raw previews once to add it. Against a render of the same photo by the build before the
-neutral look (2048 px PNGs from `lightcraft-cli render` of the 19 EOS R6 photos above), Camera Look differs by 0.014
-levels on average (median photo; 0.001 to 0.125), and on the median photo 0.001% of pixels differ by more than 2
-levels; Color differs from it by 13.4 levels on average, 98% of pixels by more than 2. The CC0 corpus's EOS R, R5 and
-R6 CR3s agree as closely (at most 0.02% of pixels more than 2 levels off), and its EOS 90D (no measured matrices)
-renders byte-identically in every profile. The camera look is rebuilt on the neutral decode, so what that decode
-loses stays lost: fully clipped highlights are rebuilt neutral through the measured matrices rather than through the
-fit, and the camera look's matrix then tints them by a few levels (in 4 of the 19 photos, 0.1–2% of pixels, all in
-blown highlights, differ by more than 2 levels, at most 1% by more than 5); colours the measured matrices put below
-zero in Rec.2020 are clipped before that matrix applies.
+their own (`smart.rs`, APP11, zlib-compressed JSON, about 8 KB for the corpus EOS R6 file; older builds skip it), so
+the profile works without the original; `LOOK_VERSION` 13 rebuilds raw previews once to add it. The EOS R6's neutral
+table is undone in its own terms (`HsvTable::undo`: the hue where the table's shift lands, by bisection where a
+fixed-point step doesn't settle; the saturation over the table's scale; the brightness that keeps the luminance),
+since a fixed-point or Newton iteration on RGB fails where its sky-blue shifts change faster than the hue and where it
+clips the saturation of yellows. Against a render of the same photo by the build before the neutral look (2048 px PNGs
+from `lightcraft-cli render` of the 19 EOS R6 photos above), Camera Look differs by 0.033 levels on average (median
+photo; 0.010 to 0.57), and on the median photo 0.04% of pixels differ by more than 2 levels; Color differs from it by
+12.9 levels on average, 97% of pixels by more than 2. The CC0 corpus's EOS R, R5 and R6 CR3s agree as closely (at most
+0.02% of pixels more than 2 levels off), and its EOS 90D (no measured matrices) renders byte-identically in every
+profile. The camera look is rebuilt on the neutral decode, so what that decode loses stays lost. Fully clipped
+highlights are rebuilt neutral through the measured matrices rather than through the fit, and the camera look's matrix
+then tints them by a few levels. Colours below zero in Rec.2020 are clipped before Camera Look sees them, and the R6
+table puts saturated yellow-greens there, which then come back paler. In 9 of the 19 photos more than 0.05% of pixels
+differ by more than 2 levels: blown highlights in most (2V2A5380 4.2%, 2V2A5031 1.2%), out-of-focus yellow-green
+foliage in 2V2A5301 (9.1%, paler by about 20 levels of blue).
 
 Every other photo renders Camera Look exactly as Color: raws whose starting look already is the fit to their camera
 JPEG (CR2s, other makes, CR3s of models without measured matrices), DNGs, which carry their own profile, and non-raw
