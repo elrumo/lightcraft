@@ -114,6 +114,100 @@ fn calibrate_reads_raf_inputs_and_reports_bad_files() {
     assert!(!out.join("X-T4.json").exists(), "bad input must not produce a profile");
 }
 
+#[test]
+fn calibrate_discovers_canon_inputs_without_touching_files() {
+    let input = tmp("calibrate-canon-inputs");
+    let nested = input.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    let extensions = ["ARW", "nef", "NRW", "raf", "CR2", "cr3"];
+    for extension in extensions {
+        std::fs::write(nested.join(format!("camera.{extension}")), b"invalid raw fixture").unwrap();
+    }
+    // DNG supplies its own colour model; rendered inputs cannot train a vendor RAW profile.
+    for extension in ["dng", "jpg", "png", "tif", "txt", "rw2", "rwl", "raw", "pef", "srw", "orf"] {
+        std::fs::write(nested.join(format!("ignored.{extension}")), b"ignored fixture").unwrap();
+    }
+    let hidden = input.join(".hidden");
+    std::fs::create_dir_all(&hidden).unwrap();
+    std::fs::write(hidden.join("hidden.CR3"), b"hidden fixture").unwrap();
+    let out = tmp("canon-calibration-profiles");
+    let result = Command::new(BIN).args(["calibrate", "--out"]).arg(&out).arg(&input).output().unwrap();
+    assert!(!result.status.success(), "invalid raws cannot produce a profile");
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("6 of 6 raw files"), "Canon inputs silently ignored: {stderr}");
+    for extension in extensions {
+        let name = format!("camera.{extension}");
+        assert!(stderr.contains(&name), "{name} was not passed to the decoder: {stderr}");
+        assert_eq!(std::fs::read(nested.join(name)).unwrap(), b"invalid raw fixture");
+    }
+    assert!(stderr.contains("no profile written"), "{stderr}");
+    assert!(!out.exists(), "invalid inputs must not create a profile folder");
+}
+
+/// Original, uncompressed Bayer TIFF with Sony container metadata and an authored JPEG chart.
+/// The varying dimensions let worker completion/admission order differ between runs.
+fn calibration_arw(index: usize) -> Vec<u8> {
+    use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+    let (w, h) = (160 + index * 16, 96 + index * 8);
+    let colour = |x: usize, y: usize| {
+        let (x, y) = (x / 8, y / 8);
+        [0.06 + 0.6 * x as f32 / (w / 8) as f32, 0.07 + 0.55 * y as f32 / (h / 8) as f32, 0.08 + 0.5 * ((x * 7 + y * 3 + index) % 13) as f32 / 13.0]
+    };
+    let pixels: Vec<u8> = (0..h)
+        .flat_map(|y| {
+            (0..w).flat_map(move |x| {
+                let ch = [[0, 1], [1, 2]][y % 2][x % 2];
+                (512 + (colour(x, y)[ch] * 15871.0) as u16).to_le_bytes()
+            })
+        })
+        .collect();
+    let preview = lightcraft_raster::Rgba8::from_fn(w, h, |x, y| {
+        let p = colour(x, y).map(|v| (255.0 * (1.055 * v.powf(1.0 / 2.4) - 0.055)).round() as u8);
+        [p[0], p[1], p[2], 255]
+    });
+    let jpeg = lightcraft_codecs::encode_jpeg(
+        &lightcraft_codecs::EncodeImage::rgba8(&preview),
+        95,
+        lightcraft_codecs::ChromaSubsampling::S444,
+        &Default::default(),
+    )
+    .unwrap();
+    let mut raw = IfdBuilder::new();
+    raw.set(t::MAKE, Value::Ascii("SONY".into()));
+    raw.set(t::MODEL, Value::Ascii("TEST-CALIBRATION".into()));
+    raw.set(t::IMAGE_WIDTH, Value::Long(vec![w as u32]));
+    raw.set(t::IMAGE_LENGTH, Value::Long(vec![h as u32]));
+    raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![16]));
+    raw.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+    raw.set(t::PHOTOMETRIC, Value::Short(vec![t::photometric::CFA]));
+    raw.set(t::COMPRESSION, Value::Short(vec![1]));
+    raw.set(t::WHITE_LEVEL, Value::Long(vec![16383]));
+    raw.set_image(ImageData::Strips { rows_per_strip: h as u32, strips: vec![pixels] });
+    // An undefined TIFF value is a supported camera-JPEG preview carrier.
+    raw.set(0xc7ff, Value::Undefined(jpeg));
+    TiffWriter::default().write(&[raw]).unwrap()
+}
+
+#[test]
+fn calibrate_is_reproducible_with_parallel_workers() {
+    let input = tmp("calibration-repeatable-input");
+    std::fs::create_dir_all(&input).unwrap();
+    for i in 0..8 {
+        std::fs::write(input.join(format!("chart-{i}.ARW")), calibration_arw(i)).unwrap();
+    }
+    let mut first = None;
+    for run in 0..4 {
+        let out = tmp(&format!("calibration-repeatable-out-{run}"));
+        let result = Command::new(BIN).args(["calibrate", "--out"]).arg(&out).arg(&input).output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let bytes = std::fs::read(out.join("TEST-CALIBRATION.json")).unwrap();
+        match &first {
+            None => first = Some(bytes),
+            Some(expected) => assert!(&bytes == expected, "the same chart files produced a different camera profile"),
+        }
+    }
+}
+
 fn mean(path: &std::path::Path) -> f64 {
     let d = lightcraft_codecs::decode(&std::fs::read(path).unwrap(), Default::default()).unwrap();
     let img = d.to_srgb8();

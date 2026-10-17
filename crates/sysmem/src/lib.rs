@@ -16,7 +16,11 @@
 //! by its footprint. [`ReturningAlloc`], the apps' global allocator, gives large blocks pages of their
 //! own that go back to the system the moment they are freed.
 //!
-//! This is LightCraft's only crate allowed `unsafe` (FFI calls into libSystem, in `apple`: the two
+//! [`fsync`] is the plain POSIX `fsync`, which std doesn't offer on macOS: there `File::sync_all`
+//! and `sync_data` are `F_FULLFSYNC`, which SMB shares refuse with ENOTSUP while `fsync` works
+//! (issue #1407).
+//!
+//! This is LightCraft's only crate allowed `unsafe` (FFI calls into libSystem, in `apple`: the ones
 //! above, and `mmap` / `munmap` for the allocator). Its API is safe, and on failure or on other
 //! platforms it releases nothing / knows nothing / allocates as the system does.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -32,6 +36,19 @@ pub fn release_free_memory() -> usize {
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
         0
+    }
+}
+
+/// Flush `file` to the storage device with a plain `fsync`. On macOS that is the libSystem call
+/// (std's `sync_all` is `F_FULLFSYNC`, which some volumes refuse); elsewhere it is `sync_all`.
+pub fn fsync(file: &std::fs::File) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        apple::fsync(file)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        file.sync_all()
     }
 }
 
@@ -159,6 +176,8 @@ mod returning {
 #[allow(unsafe_code)]
 mod apple {
     use std::ffi::{c_int, c_void};
+    #[cfg(target_os = "macos")]
+    use std::os::fd::AsRawFd;
 
     const PROT_READ: c_int = 1;
     const PROT_WRITE: c_int = 2;
@@ -170,6 +189,10 @@ mod apple {
         fn mmap(addr: *mut c_void, len: usize, prot: c_int, flags: c_int, fd: c_int, offset: i64) -> *mut c_void;
         /// libSystem (`sys/mman.h`): give the pages of `[addr, addr + len)` back to the system.
         fn munmap(addr: *mut c_void, len: usize) -> c_int;
+        /// libSystem (unistd.h): flush the open file `fd` to the device. 0, or -1 and `errno`.
+        #[cfg(target_os = "macos")]
+        #[link_name = "fsync"]
+        fn c_fsync(fd: c_int) -> c_int;
         /// libSystem malloc: release free memory of `zone` (all zones when null) back to the
         /// system, up to `goal` bytes (0 = as much as possible). Returns the bytes released.
         fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
@@ -210,6 +233,21 @@ mod apple {
         // memory we own, takes no pointers we must keep alive, and has no failure mode beyond
         // releasing 0 bytes.
         unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn fsync(file: &std::fs::File) -> std::io::Result<()> {
+        loop {
+            // SAFETY: `fsync` (libSystem, unistd.h) takes a file descriptor by value and touches no
+            // memory of ours. The descriptor is open for the whole call: `file` is borrowed.
+            if unsafe { c_fsync(file.as_raw_fd()) } == 0 {
+                return Ok(());
+            }
+            let e = std::io::Error::last_os_error();
+            if e.kind() != std::io::ErrorKind::Interrupted {
+                return Err(e);
+            }
+        }
     }
 }
 
@@ -308,6 +346,21 @@ mod tests {
             .collect();
         for h in handles {
             assert!(h.join().is_ok());
+        }
+    }
+
+    #[test]
+    fn fsync_flushes_an_open_file_and_reports_errors() {
+        use std::io::Write;
+        let p = std::env::temp_dir().join(format!("lc-sysmem-fsync-{}", std::process::id()));
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(b"data").unwrap();
+        super::fsync(&f).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"data");
+        let _ = std::fs::remove_file(&p);
+        // a directory opened read-only can be synced too; what fails is an error, not a panic
+        if let Ok(d) = std::fs::File::open(std::env::temp_dir()) {
+            let _ = super::fsync(&d);
         }
     }
 

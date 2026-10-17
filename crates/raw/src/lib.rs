@@ -110,7 +110,7 @@ pub enum RawFormat {
     Srw,
     /// Canon CRW (CIFF heap), the bodies before the CR2 era.
     Crw,
-    /// Minolta MRW (`\0MRM` block container).
+    /// Minolta MRW (`\0MRM` block container, `vendor::mrw`).
     Mrw,
     /// Sigma / Foveon X3F (`FOVb`).
     X3f,
@@ -147,6 +147,7 @@ impl RawFormat {
                 | RawFormat::KodakDcs
                 | RawFormat::Erf
                 | RawFormat::Mef
+                | RawFormat::Mrw
         )
     }
 }
@@ -421,6 +422,7 @@ fn decode_with(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         RawFormat::KodakDcs => vendor::kodak::decode(bytes, mode),
         RawFormat::Erf => vendor::erf::decode(bytes, mode),
         RawFormat::Mef => vendor::mef::decode(bytes, mode),
+        RawFormat::Mrw => vendor::mrw::decode(bytes, mode),
         RawFormat::OtherTiff => Err(RawError::Unsupported(other_tiff_reason(bytes))),
         other => Err(RawError::Unsupported(format!("{other:?} files are not decoded yet"))),
     }
@@ -634,6 +636,35 @@ impl BlackLevel {
         let base = self.values.get(idx).or_else(|| self.values.first()).copied().unwrap_or(0.0);
         base + self.delta_h.get(x).copied().unwrap_or(0.0) + self.delta_v.get(y).copied().unwrap_or(0.0)
     }
+    /// Maximum computed black of one sample plane over the active area (DNG 1.7.1, p. 99).
+    /// Delta maxima must share the repeat-pattern phase of the base value: independent global
+    /// maxima can describe a black level that occurs nowhere in the image.
+    fn maximum(&self, width: usize, height: usize, s: usize, cpp: usize) -> f32 {
+        fn phase_maxima(deltas: &[f32], len: usize, period: usize) -> Vec<f32> {
+            if deltas.is_empty() {
+                return vec![0.0; len.min(period)];
+            }
+            let mut maxima = vec![f32::NEG_INFINITY; len.min(period)];
+            for i in 0..len {
+                if let Some(v) = maxima.get_mut(i % period) {
+                    *v = v.max(deltas.get(i).copied().unwrap_or(0.0));
+                }
+            }
+            maxima
+        }
+        let (r, c) = (self.repeat_rows.max(1), self.repeat_cols.max(1));
+        let dx = phase_maxima(&self.delta_h, width, c);
+        let dy = phase_maxima(&self.delta_v, height, r);
+        let mut max = f32::NEG_INFINITY;
+        for (y, &v) in dy.iter().enumerate() {
+            for (x, &h) in dx.iter().enumerate() {
+                let idx = y.saturating_mul(c).saturating_add(x).saturating_mul(cpp).saturating_add(s);
+                let base = self.values.get(idx).or_else(|| self.values.first()).copied().unwrap_or(0.0);
+                max = max.max(base + h + v);
+            }
+        }
+        max
+    }
     /// Mean of the repeat-pattern values (for display / heuristics).
     pub fn mean(&self) -> f32 {
         if self.values.is_empty() { 0.0 } else { self.values.iter().sum::<f32>() / self.values.len() as f32 }
@@ -807,6 +838,19 @@ impl RawImage {
         self.white.get(s).or_else(|| self.white.first()).copied().unwrap_or(65535.0)
     }
 
+    /// Shared by full-resolution and binned development. DNG's scale uses the maximum computed
+    /// black independently for each sample plane; vendor formats keep their existing scaling.
+    pub(crate) fn normalization_scales(&self) -> Vec<f32> {
+        let dng = matches!(self.format, RawFormat::Dng | RawFormat::CfaTiff);
+        (0..self.cpp)
+            .map(|s| {
+                let black = if dng { self.black.maximum(self.active_area.width, self.active_area.height, s, self.cpp) } else { self.black.mean() };
+                let range = self.white_at(s) - black;
+                if range.is_finite() && range > 0.0 && range.recip().is_finite() { range.recip() } else { 1.0 }
+            })
+            .collect()
+    }
+
     /// Black-subtract, white-scale and crop to the active area, applying `OpcodeList1` (on raw values) first and
     /// `OpcodeList2` (on normalised values) after. 1.0 = white level.
     pub fn normalized(&self) -> Result<Normalized> {
@@ -825,12 +869,7 @@ impl RawImage {
             Some(v) => v[i],
             None => self.data.get(i),
         };
-        let scale: Vec<f32> = (0..cpp)
-            .map(|s| {
-                let range = self.white_at(s) - self.black.mean();
-                if range > 0.0 { 1.0 / range } else { 1.0 }
-            })
-            .collect();
+        let scale = self.normalization_scales();
         let mut out = vec![0f32; a.width * a.height * cpp];
         let row_len = a.width * cpp;
         use rayon::prelude::*;
@@ -1145,10 +1184,10 @@ mod tests {
         assert_eq!(probe(b"II\x1a\0\0\0HEAPCCDR\0\0"), Some(RawFormat::Crw));
         assert_eq!(probe(b"\0MRM\0\x01\0\0"), Some(RawFormat::Mrw));
         assert_eq!(probe(b"FOVb\x02\0\x02\0"), Some(RawFormat::X3f));
-        for f in [RawFormat::Crw, RawFormat::Mrw, RawFormat::X3f] {
+        for f in [RawFormat::Crw, RawFormat::X3f] {
             assert!(!f.is_supported());
         }
-        assert!(matches!(decode(b"\0MRM\0\x01\0\0"), Err(RawError::Unsupported(w)) if w.contains("Mrw")));
+        assert!(matches!(decode(b"FOVb\x02\0\x02\0"), Err(RawError::Unsupported(w)) if w.contains("X3f")));
         // too short for the CIFF signature
         assert_eq!(probe(b"II\x1a\0\0\0HEAP"), None);
     }
@@ -1423,6 +1462,42 @@ mod tests {
         // without raw evidence (an RGB image from such a body) neither reader claims it (#281)
         assert_eq!(probe(&with_note(b"AOC\0MM\0\x01\0\0\0\0\0\0", false)), None);
         assert_eq!(probe(&with_note(b"STMN100\0\0\0\0\0\0\0\0\0", false)), None);
+    }
+
+    #[test]
+    fn normalization_scales_fall_back_for_empty_or_non_finite_ranges() {
+        let mut raw = RawImage {
+            format: RawFormat::Dng,
+            width: 1,
+            height: 1,
+            cpp: 1,
+            data: RawData::U16(vec![0]),
+            cfa: None,
+            bits: 16,
+            black: BlackLevel::default(),
+            white: vec![1024.0],
+            active_area: Rect::new(0, 0, 1, 1),
+            crop: Rect::new(0, 0, 1, 1),
+            orientation: Orientation::Rotate90,
+            color: ColorData::default(),
+            wb_multipliers: None,
+            linearized: false,
+            pixel_aspect: 1.0,
+            opcodes: OpcodeLists::default(),
+            metadata: Metadata::default(),
+            lens_metadata: LensMetadata::default(),
+        };
+        assert_eq!(raw.normalization_scales(), vec![1.0 / 1024.0]);
+        for (width, height) in [(0, 1), (1, 0), (0, 0)] {
+            raw.active_area = Rect::new(0, 0, width, height);
+            assert_eq!(raw.normalization_scales(), vec![1.0], "empty area {width}×{height}");
+            assert!(raw.normalized().is_err());
+        }
+        raw.active_area = Rect::new(0, 0, 1, 1);
+        for white in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 0.0, f32::from_bits(1)] {
+            raw.white = vec![white];
+            assert_eq!(raw.normalization_scales(), vec![1.0], "white {white}");
+        }
     }
 
     #[test]

@@ -32,10 +32,11 @@ use serde::{Deserialize, Serialize};
 use crate::Session;
 use crate::media::ProbeInfo;
 
-/// File extensions LightCraft imports (lower case).
+/// File extensions offered by import discovery and file pickers (lower case).
+/// This includes preview-only raws; the file probe decides whether sensor decoding is available.
 pub const EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "raf", "orf", "rw2", "rwl", "raw", "pef", "srw", "psd",
-    "jxl", "gif", "bmp",
+    "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "rw2", "rwl", "raw", "pef",
+    "srw", "psd", "jxl", "gif", "bmp",
     // Decoded when built with the codecs' `heif` feature; otherwise the import reports them as
     // failed with the reason ("HEIC/HEIF support isn't included in this build").
     "heic", "heif", "avif", // no AV1 decoder yet: reported as failed, like a HEIC without the feature
@@ -310,6 +311,8 @@ pub struct ImportDefaults {
     pub auto_folder: Option<String>,
     pub auto_copy: bool,
     pub auto_album: Option<String>,
+    /// Auto import also looks in the watched folder's subfolders (off: its top level only).
+    pub auto_subfolders: bool,
     /// Folder and file names scanning and importing skip, wherever they are below the folder
     /// chosen ([`is_ignored`]): `*.fcpbundle`, `Proxy Media`.
     pub ignore: Vec<String>,
@@ -361,7 +364,8 @@ pub fn apply_import_defaults(s: &Session, p: &mut Photo) {
     let preset = s.import_defaults.preset_for(raw, &p.meta.camera).and_then(|id| s.presets.iter().find(|x| x.id == id));
     match preset {
         Some(pr) => {
-            let look = std::sync::Arc::new(pr.apply(&base, 1.0));
+            // a preset carries no Upright correction (an old one may still hold one: not this photo's)
+            let look = std::sync::Arc::new(crate::upright_transfer::apply_preset(p, &base, pr, 1.0));
             p.develop = look.clone();
             p.import_look = (*look != base).then_some(look);
         }
@@ -1162,7 +1166,11 @@ impl ImportJob {
             let packet = sidecar_file.as_ref().and_then(|(f, _)| std::fs::read_to_string(f).ok()).or_else(|| info.xmp.clone().filter(|_| raw));
             let target = crate::crs::Target::for_file(info.kind, &info.format, info.preview_only.is_some(), &info.meta.camera);
             let sidecar = packet.and_then(|x| match crate::sidecar::parse_sidecar(&x, target) {
-                Ok(sc) => Some(sc),
+                Ok(mut sc) => {
+                    // Lightroom's crop and saved Upright refer to the file's stored image
+                    sc.set_frame(info.stored_frame());
+                    Some(sc)
+                }
                 Err(e) => {
                     log::warn!("import {path}: XMP: {e}");
                     None
@@ -1547,7 +1555,8 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                     }
                 }
                 if let Some(preset) = &opts.preset {
-                    let d = std::sync::Arc::new(preset.apply(&p.develop, 1.0));
+                    // after the sidecar: the photo keeps the Upright correction it was given
+                    let d = std::sync::Arc::new(crate::upright_transfer::apply_preset(&p, &p.develop, preset, 1.0));
                     let label = format!("Preset: {}", preset.name);
                     p.develop = d.clone();
                     p.edited = Some(now.clone());

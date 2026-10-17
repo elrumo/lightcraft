@@ -88,6 +88,26 @@ impl RightPanel {
     pub fn is_edit_tool(self) -> bool {
         matches!(self, RightPanel::Edit | RightPanel::Profiles | RightPanel::Crop | RightPanel::Remove | RightPanel::Masking | RightPanel::RedEye)
     }
+
+    /// What comes back when the panel is shown again (F8, Shift+Tab). The tools that work on the
+    /// photo (crop, remove, masking, red eye) end when their panel is hidden, so they return as
+    /// Edit; every other panel returns as it was.
+    pub fn restored(self) -> RightPanel {
+        match self {
+            RightPanel::None | RightPanel::Crop | RightPanel::Remove | RightPanel::Masking | RightPanel::RedEye => RightPanel::Edit,
+            other => other,
+        }
+    }
+}
+
+/// The panels Shift+Tab (Hide All Panels) hid, to bring back exactly those.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HiddenPanels {
+    pub left_panel: bool,
+    pub right: RightPanel,
+    pub presets: bool,
+    pub filmstrip: bool,
 }
 
 /// How the phone and tablet (compact) layout is coloured: like the system (the default), or always
@@ -843,9 +863,18 @@ pub struct UiState {
     /// where a click on the cloud button would have put it.
     #[serde(skip)]
     pub sync_popover: bool,
+    /// Help ▸ Debug ▸ Show Frame Rate (`view.frameRate`): the frame-rate display
+    /// (`crate::frame_rate`). A debugging aid, never saved; `LIGHTCRAFT_FPS=1` starts with it on.
+    #[serde(skip)]
+    pub frame_rate: bool,
     pub view: ViewMode,
     pub left_panel: bool,
     pub right: RightPanel,
+    /// The panel the right side showed before F8 (or Hide All Panels) hid it; F8 brings it back.
+    pub right_hidden: RightPanel,
+    /// Set while Hide All Panels (Shift+Tab) is in effect: what to bring back. Showing any panel
+    /// by hand makes it stale (see [`UiState::all_panels_hidden`]).
+    pub hidden_panels: Option<HiddenPanels>,
     /// Widths of the left sidebar and of the right panel in points (dragging their inner edge
     /// resizes them; within [`LEFT_WIDTH`] / [`RIGHT_WIDTH`]).
     pub left_width: f32,
@@ -905,7 +934,8 @@ pub struct UiState {
     /// Mirroring of the triangle / spiral crop guides (0..4).
     pub crop_overlay_orient: u8,
     pub crop_overlay: CropOverlay,
-    /// Last explicitly chosen aspect, retained across photos and app launches.
+    /// Last chosen aspect, retained across photos and launches; Original until a choice is made.
+    #[serde(deserialize_with = "deserialize_crop_default_aspect")]
     pub crop_default_aspect: Option<serde_json::Value>,
     pub show_filenames: bool,
     /// What the square grid's caption shows: `filename`, `exposure` (shutter · aperture · ISO ·
@@ -970,9 +1000,16 @@ pub struct UiState {
     /// import review when a camera or card is connected" is on; `None` = not looked yet.
     #[serde(skip)]
     pub known_cards: Option<Vec<String>>,
+    /// The last auto-import listing's warnings, shown once until they change.
+    #[serde(skip)]
+    pub auto_import_warned: Vec<String>,
     /// The develop control whose slider is being dragged (geometry sliders show a grid).
     #[serde(skip)]
     pub dragging_control: Option<String>,
+    /// Alt (Option on macOS) is held this frame: a dragged Edit slider shows its temporary
+    /// preview ([`lightcraft_pipeline::Overlay::for_control`]).
+    #[serde(skip)]
+    pub alt_held: bool,
     pub search: String,
     /// Where the Map was looking (latitude, longitude, zoom) when it was last used.
     pub map_view: Option<(f64, f64, f64)>,
@@ -1455,6 +1492,13 @@ pub enum Dialog {
     SystemInfo {
         rows: Vec<(String, String)>,
     },
+    /// Help ▸ Report a Bug… (#1015): the choices, and the logs found when it opened.
+    ReportBug {
+        opts: crate::bug_report::ReportOptions,
+        /// The System Info rows when it opened: what the preview shows is what the report holds.
+        rows: Vec<(String, String)>,
+        logs: Vec<crate::bug_report::LogInfo>,
+    },
     /// Every metadata field of a photo's file (`photo.allMetadata`), filtered by `search`.
     AllMetadata {
         title: String,
@@ -1661,6 +1705,7 @@ impl Default for UiState {
             face_naming: None,
             tag_face: false,
             sync_popover: false,
+            frame_rate: std::env::var("LIGHTCRAFT_FPS").is_ok_and(|v| matches!(v.trim(), "1" | "on" | "true" | "yes")),
             luminance_map_restore: None,
             view: ViewMode::Detail,
             map_view: None,
@@ -1668,6 +1713,8 @@ impl Default for UiState {
             left_width: LEFT_WIDTH.default,
             right_width: RIGHT_WIDTH.default,
             right: RightPanel::Edit,
+            right_hidden: RightPanel::None,
+            hidden_panels: None,
             presets: false,
             preset_thumbs: false,
             show_hidden_presets: false,
@@ -1696,7 +1743,7 @@ impl Default for UiState {
             tool_overlay: ToolOverlay::Auto,
             mask_overlay_all: false,
             crop_overlay: CropOverlay::Thirds,
-            crop_default_aspect: None,
+            crop_default_aspect: Some(serde_json::json!("original")),
             crop_overlay_orient: 0,
             show_filenames: true,
             grid_info: "filename".into(),
@@ -1715,12 +1762,14 @@ impl Default for UiState {
             unnamed_focus: false,
             hidden_locations: Vec::new(),
             dragging_control: None,
+            alt_held: false,
             external_edits: Vec::new(),
             was_focused: false,
             auto_import_at: 0.0,
             sidecar_retry_at: 0.0,
             sidecars_waiting: 0,
             known_cards: None,
+            auto_import_warned: Vec::new(),
             search: String::new(),
             focus_search: false,
             renaming_mask: None,
@@ -1918,6 +1967,11 @@ fn lenient_ids<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D:
     Ok(value.as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect())
 }
 
+fn deserialize_crop_default_aspect<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<serde_json::Value>, D::Error> {
+    // Legacy null means no choice yet. An explicitly unlocked crop is saved as "free".
+    Ok(Option::<serde_json::Value>::deserialize(d)?.or_else(|| Some(serde_json::json!("original"))))
+}
+
 fn deserialize_favorite_themes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
     let values = Vec::<String>::deserialize(d)?;
     let mut seen = std::collections::BTreeSet::new();
@@ -1927,4 +1981,71 @@ fn deserialize_favorite_themes<'de, D: serde::Deserializer<'de>>(d: D) -> Result
         }
     }
     Ok(values)
+}
+
+impl UiState {
+    /// Every side panel and the filmstrip are hidden.
+    fn no_panel_shown(&self) -> bool {
+        !self.left_panel && self.right == RightPanel::None && !self.presets && !self.filmstrip
+    }
+
+    /// Hide All Panels is in effect: its snapshot is kept and nothing has been shown since. (Showing
+    /// a panel by hand drops it out of this state, so the next Shift+Tab hides again instead of
+    /// bringing back panels the user had put away.)
+    pub fn all_panels_hidden(&self) -> bool {
+        self.hidden_panels.is_some() && self.no_panel_shown()
+    }
+
+    /// F8: hide the right panel, or show the one that was there (Edit when there was none).
+    /// `show` forces the state. Returns whether the panel is shown now.
+    pub fn toggle_right_panel(&mut self, show: Option<bool>) -> bool {
+        let show = show.unwrap_or(self.right == RightPanel::None);
+        if show && self.right == RightPanel::None {
+            self.right = self.right_hidden.restored();
+        } else if !show && self.right != RightPanel::None {
+            self.right_hidden = self.right.restored();
+            self.right = RightPanel::None;
+        }
+        self.right != RightPanel::None
+    }
+
+    /// Shift+Tab: hide the side panels, the Presets column and the filmstrip, remembering what was
+    /// shown; again, bring back exactly that. When nothing is shown and nothing was remembered, it
+    /// shows the usual panels (left sidebar, the last right panel, filmstrip). `hide` forces the
+    /// direction. Returns whether the panels are hidden now.
+    pub fn toggle_all_panels(&mut self, hide: Option<bool>) -> bool {
+        let hide = hide.unwrap_or_else(|| !self.all_panels_hidden() && !(self.no_panel_shown() && self.hidden_panels.is_none()));
+        if hide {
+            if self.no_panel_shown() {
+                return true;
+            }
+            self.hidden_panels =
+                Some(HiddenPanels { left_panel: self.left_panel, right: self.right, presets: self.presets, filmstrip: self.filmstrip });
+            if self.right != RightPanel::None {
+                self.right_hidden = self.right.restored();
+            }
+            self.left_panel = false;
+            self.right = RightPanel::None;
+            self.presets = false;
+            self.filmstrip = false;
+        } else {
+            match self.hidden_panels.take() {
+                Some(was) if self.no_panel_shown() => {
+                    self.left_panel = was.left_panel;
+                    self.right = if was.right == RightPanel::None { RightPanel::None } else { was.right.restored() };
+                    self.presets = was.presets;
+                    self.filmstrip = was.filmstrip;
+                }
+                _ => {
+                    self.hidden_panels = None;
+                    self.left_panel = true;
+                    if self.right == RightPanel::None {
+                        self.right = self.right_hidden.restored();
+                    }
+                    self.filmstrip = true;
+                }
+            }
+        }
+        self.all_panels_hidden()
+    }
 }

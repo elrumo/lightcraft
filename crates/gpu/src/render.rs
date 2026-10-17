@@ -9,6 +9,7 @@ use lightcraft_geom::Orientation;
 use lightcraft_pipeline::finish::{FinishParams, MASK_TERMS, mask_terms};
 use lightcraft_pipeline::geometry::{SampleMode, SamplePlan, SourceCut};
 use lightcraft_pipeline::local::plane_at;
+use lightcraft_pipeline::masks::{AlphaCache, AlphaKeys, alpha_key};
 use lightcraft_pipeline::{Plan, RenderRequest, Rendered, SourceInfo, local};
 use lightcraft_raster::resample::Filter;
 use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, orient_map};
@@ -34,6 +35,9 @@ struct Entry {
     sampled: Arc<Buf>,
     lin: Option<(u64, Arc<Buf>)>,
     planes: Planes,
+    /// Alphas of the last render's masks, as [`lightcraft_pipeline::masks::AlphaCache`] keeps them
+    /// on the CPU (same keys).
+    masks: AlphaCache<Buf>,
 }
 
 /// Spatial planes of one linear image (`key` = its `lin_key`), each tagged with its radius.
@@ -46,7 +50,7 @@ struct Planes {
     texture: Option<(u32, Arc<Buf>)>,
     /// Capture sharpening's blur (process V3).
     sharpen: Option<(u32, Arc<Buf>)>,
-    dark: Option<(u32, Arc<Buf>, f32)>,
+    dark: Option<(u64, Arc<Buf>, f32)>,
     chroma: Option<(u32, Arc<Buf>)>,
 }
 
@@ -109,6 +113,8 @@ impl GpuStages {
             p.texture.iter().for_each(|(_, b)| add(b));
             p.sharpen.iter().for_each(|(_, b)| add(b));
             p.dark.iter().for_each(|(_, b, _)| add(b));
+            p.chroma.iter().for_each(|(_, b)| add(b));
+            e.masks.planes().for_each(&mut add);
         }
         if let Some((_, b)) = &*self.source.lock().unwrap_or_else(|e| e.into_inner()) {
             add(b);
@@ -336,6 +342,19 @@ fn median_hv(cx: &mut Cx<'_>, p: &Buf, w: usize, h: usize, r: usize) -> Buf {
     cx.run("median_h", &pr, &[Some(p), Some(&tmp)], groups2(w, h, [16, 16]));
     let out = cx.gpu.buffer(w * h);
     cx.run("median_v", &pr, &[Some(&tmp), Some(&out)], groups2(w, h, [16, 16]));
+    out
+}
+
+/// Separable minimum of a plane (`local::min_hv`).
+fn min_hv(cx: &mut Cx<'_>, p: Buf, w: usize, h: usize, r: usize) -> Buf {
+    if r == 0 || w * h == 0 {
+        return p;
+    }
+    let pr = [w as u32, h as u32, 1, r.min(local::DEHAZE_PATCH_MAX) as u32];
+    let tmp = cx.gpu.buffer(w * h);
+    cx.run("min_h", &pr, &[Some(&p), Some(&tmp)], groups2(w, h, [16, 16]));
+    let out = cx.gpu.buffer(w * h);
+    cx.run("min_v", &pr, &[Some(&tmp), Some(&out)], groups2(w, h, [16, 16]));
     out
 }
 
@@ -658,6 +677,7 @@ pub fn render(
     lap("wb/nr", &mut t, &mut cx);
 
     // 3. spatial planes
+    let mut alphas = cached.as_ref().map(|e| e.masks.clone()).unwrap_or_default();
     let mut planes = match cached.map(|e| e.planes) {
         Some(p) if p.key == plan.lin_key => p,
         _ => Planes { key: plan.lin_key, ..Default::default() },
@@ -668,13 +688,13 @@ pub fn render(
         prep.air = a;
     }
     lap("planes", &mut t, &mut cx);
-    if let Some(c) = stages {
-        c.put(Entry { src: src.clone(), geo: plan.geo, sampled, lin: Some((plan.lin_key, lin.clone())), planes });
-    }
 
     // 4. masks
-    let (masks, terms) = masks(&mut cx, &lin, &prep, &plan, &mut host);
+    let (masks, terms) = masks(&mut cx, &lin, &prep, &plan, &mut host, &mut alphas);
     lap("masks", &mut t, &mut cx);
+    if let Some(c) = stages {
+        c.put(Entry { src: src.clone(), geo: plan.geo, sampled, lin: Some((plan.lin_key, lin.clone())), planes, masks: alphas });
+    }
 
     // 5. per-pixel stage
     let mut fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air, req.space);
@@ -818,6 +838,16 @@ pub fn render(
             lightcraft_pipeline::masks::evaluate_one(m, &plan.frame, w, h, &img, &l, s.light.exposure as f32, plan.mattes.as_deref())
         }
     });
+    // a sharpening view: the detail planes this render sharpened with
+    let overlay_mask = overlay_mask.or_else(|| {
+        req.overlay.reads_detail().then(|| {
+            let l = host.log_l.get_or_insert_with(|| Arc::new(cx.read_plane(&prep.log_l, w, h))).clone();
+            let tex = prep.texture.as_deref().map(|b| cx.read_plane(b, w, h));
+            let capture = prep.sharpen.as_ref().map(|(c, b)| (*c, cx.read_plane(b, w, h)));
+            let capture = capture.as_ref().map(|(c, p)| (c, p));
+            lightcraft_pipeline::visualize::sharpen_plane(req.overlay, &plan, &l, tex.as_ref(), capture)
+        })?
+    });
     lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan, overlay_mask.as_ref(), all_overlay_alphas.as_deref());
     // spots grew the window the render worked on: cut it back to the request
     let mut halves = halves;
@@ -958,10 +988,11 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
     let (dark, air) = match sig.dark {
         None => (None, 1.0),
         Some(sg) => match &planes.dark {
-            Some((k, d, air)) if *k == sg.to_bits() => (Some(d.clone()), *air),
+            Some((k, d, air)) if *k == local::dark_key(sg, sig.dark_patch) => (Some(d.clone()), *air),
             _ => {
                 let d0 = cx.gpu.buffer(n);
                 map(cx, "dark_k", n, &[], [Some(lin), None, None], &d0);
+                let d0 = min_hv(cx, d0, w, h, sig.dark_patch);
                 let d = gaussian(cx, &d0, w, h, 1, sg);
                 // airlight: a percentile of every 7th value, as on the CPU
                 let m = n.div_ceil(local::AIRLIGHT_STEP);
@@ -970,7 +1001,7 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
                 let air = local::airlight_of(cx.read(&sub, m));
                 cx.flush();
                 let b = Arc::new(d);
-                planes.dark = Some((sg.to_bits(), b.clone(), air));
+                planes.dark = Some((local::dark_key(sg, sig.dark_patch), b.clone(), air));
                 (Some(b), air)
             }
         },
@@ -1026,14 +1057,25 @@ fn guided_cross_max(cx: &mut Cx<'_>, guide: &Buf, p: &Buf, w: usize, h: usize, s
 
 /// Evaluate the masks (`lightcraft_pipeline::masks::evaluate`): their alpha planes (concatenated,
 /// followed by the blurred chromaticity when local Moiré / Noise need it) and their adjustment
-/// terms. Shapes without a kernel (Sky, Subject, …) run on the CPU.
-fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Host) -> (Option<Buf>, Vec<[f32; MASK_TERMS]>) {
+/// terms. Shapes without a kernel (Sky, Subject, …) run on the CPU. A mask whose alpha `alphas`
+/// holds (same [`alpha_key`]) is copied from there; `alphas` keeps this render's.
+fn masks(
+    cx: &mut Cx<'_>,
+    lin: &Buf,
+    prep: &Prep,
+    plan: &Plan<'_>,
+    host: &mut Host,
+    alphas: &mut AlphaCache<Buf>,
+) -> (Option<Buf>, Vec<[f32; MASK_TERMS]>) {
     use lightcraft_develop::{MaskOp, MaskShape};
     let s = &*plan.settings;
     let list: Vec<_> = s.masks.iter().filter(|m| m.visible && !m.components.is_empty()).collect();
+    let old = alphas.take(plan.mattes.as_ref());
     if list.is_empty() {
         return (None, Vec::new());
     }
+    let keys = AlphaKeys { geo: plan.geo, image: plan.lin_key };
+    let mut used = Vec::with_capacity(list.len());
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
     let frame = &plan.frame;
@@ -1048,6 +1090,12 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
     }
     let comp_plane = cx.gpu.buffer(n);
     for (mi, m) in list.iter().enumerate() {
+        let key = alpha_key(m, keys, ev);
+        if let Some((_, b)) = old.iter().find(|(k, _)| *k == key) {
+            cx.copy_into(b, &alpha, mi * n);
+            used.push((key, b.clone()));
+            continue;
+        }
         let mut first = true;
         for comp in &m.components {
             let op = match comp.op {
@@ -1158,7 +1206,9 @@ fn masks(cx: &mut Cx<'_>, lin: &Buf, prep: &Prep, plan: &Plan<'_>, host: &mut Ho
             &[None, None, None, Some(&comp_plane), Some(&alpha)],
             groups1(n),
         );
+        used.push((key, Arc::new(cx.slice(&alpha, mi * n, n))));
     }
+    alphas.keep(plan.mattes.as_ref(), used);
     let terms = list.iter().map(|m| mask_terms(&m.adjust)).collect();
     (Some(alpha), terms)
 }

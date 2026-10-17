@@ -10,8 +10,8 @@ assessment and the notes that don't fit a row. Visual reference for agents: `pla
 
 ## Measured counts (2026-10-10)
 
-- 226 engine commands (`crates/engine/src/cmd/`, 30 modules) and 143 UI commands (`UI_COMMANDS` in
-  `crates/ui-egui/src/menus.rs`, 73 with a shortcut) plus 10 language commands; 23 secondary
+- 226 engine commands (`crates/engine/src/cmd/`, 30 modules) and 158 UI commands (`UI_COMMANDS` in
+  `crates/ui-egui/src/menus.rs`, 77 with a shortcut; recounted 2026-10-12) plus 10 language commands; 23 secondary
   shortcut bindings (`FIXED_KEYS` in `crates/apphost/src/keys.rs`, which `crates/ui-egui/src/shortcuts.rs` reads as `ALIASES`); a keymap editor.
 - 122 develop controls plus 10 indexed templates (`crates/develop/src/controls.rs`).
 - Checklist: menus 95.3% (86 in-scope rows), desktop shortcuts 94.4% (81 rows), Classic extras
@@ -65,15 +65,23 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Create Version | ⌘⇧S (+ ⇧M) | ⇧M (Windows: Ctrl+⇧S) | — |
 | Select None | ⌘⇧A (+ ⌘D) | ⌘D | — |
 
+**Library culling (KEYC-RATING):** `0–5`, `6–9` and `P/X/U` reach egui on macOS even when displayed in the native menu (adapted from PR #261; issue #283). `Shift+0–9` applies and advances once; `Shift+P` picks and advances in Photo Grid / Square Grid and retains Presets elsewhere. See [library shortcuts](library-shortcuts.md) for the verified Classic mapping and regression coverage. Remaining Classic gaps: flag cycling (backtick), the filter-bar `\` key, Tab and F5.
+**Alt/Option-drag previews (issue #937):** hold Alt (Option on macOS) while dragging an Edit slider, before or during
+the drag. Exposure, Highlights and Whites show highlight clipping (black, clipped channels in their colour, white where
+all three clip); Shadows and Blacks show shadow clipping (white, black where all three clip). Sharpening Amount shows
+greyscale, Radius and Detail the detail band sharpening amplifies, Masking the mask (white = sharpened); luminance Noise
+Reduction (Luminance, Detail, Contrast) shows greyscale. Releasing the key or the slider brings the photo back; the
+edit, its history and the histogram are unchanged (on a profiled display too). Not yet: mask range sliders and the
+Masking panel's local sliders. On Linux desktops that move windows with Alt+drag (KDE Plasma's
+default, also some GNOME / Xfce setups) the window manager takes the drag first: set its window-move modifier to Meta.
 **Library culling (KEYC-RATING):** `0–5`, `6–9` and `P/X/U` reach egui on macOS even when displayed in the native menu (adapted from PR #261; issue #283). `Shift+0–9` applies and advances once; `Shift+P` picks and advances in Photo Grid / Square Grid and retains Presets elsewhere. See [library shortcuts](library-shortcuts.md) for the verified Classic mapping and regression coverage. `` ` `` cycles the flag (unflagged → pick → reject → unflagged) and ⌘↑ / ⌘↓ raise / lower it; the native menu leaves ⌘↑ / ⌘↓ to egui so Compare/Survey act on the active photo. Remaining Classic gaps: filter-bar keys.
-
 **Grid thumbnail size (KEYC-COMPARE):** Classic's `=` and `-` increase and decrease the Grid thumbnail size (same keys on macOS and Windows; `+` also works for the larger size here, as Shift+`=` or the keypad). They step the bottom-bar slider by 30 pt inside its 90–480 pt range, in Photo Grid, Square Grid and People only; Detail, Compare, Survey and Reference ignore them, and ⌘= / ⌘− stay Zoom In / Out. See [library shortcuts](library-shortcuts.md).
-
 **Library navigation keys (KEYC-COMPARE):** in Photo Grid and Square Grid, `Home` / `End` make the first / last photo of the view the active, selected one, and `Shift+Left` / `Shift+Right` add the previous / next photo of the view to the selection (the added photo becomes active; the keys never remove a photo from the selection, and do nothing at either end of the view). They wait in the other views, in the full-screen preview, while a text field or a dialog has the keyboard, and when you gave the key to a command; they are listed under Fixed keys in Help → Keyboard Shortcuts. `Cmd+O` (`Ctrl+O` on Windows and Linux) runs File → Open Library… ; View → Visualize HDR has no default key (`Shift+H` cycles the Tool Overlay, issue #224; `Cmd+Shift+H` stays the Histogram). Covered by `crates/ui-egui/src/tests_keymap.rs`; the macOS native menu path for `Cmd+O` is not exercised by the headless tests.
 
 **Still missing / broken:**
-- No command yet: F1 help (verify the rest of the old list: full screen, settings, stacks,
-  visualize spots and merges have commands now).
+- No Tab (side panels) or F5 yet; F6 and F7 are in PR #1078. F8 (right panel) and ⇧Tab (hide / show all
+  panels) work: ⇧Tab hides the side panels, Presets and filmstrip and brings back exactly those; on a Mac
+  keyboard F8 is Play/Pause unless fn is held.
 - ⌘M / ⌘H / ⌘Q / ⌘W rely on the platform window defaults (unverified).
 
 
@@ -139,5 +147,7 @@ a real screen reader on any platform yet.
 | 2026-10-13 | minor | Shortcuts: Home / End and Shift+Left / Right in the two library grids, Cmd+O (Open Library…) and Shift+H (Visualize HDR) get bindings and keyboard tests; percentages and the dated counts above are unchanged |
 | 2026-10-12 | minor | Accessibility: crop handles, spots, gradient handles and mask pins operable by keyboard with AccessKit names and values; Tab order test for the right panels; hand-drawn icons and rows named; 55% → 75%; UI remaining 34–58 h → 32–54 h |
 | 2026-10-12 | minor | Accessibility: an AccessKit tree audit test over every view, Develop tool and 13 dialogs; unnamed fields, slider ranges and the Auto Stack slider fixed; 30% → 55%; UI remaining 40–70 h → 34–58 h |
+| 2026-10-12 | minor | Shortcuts: F8 and Shift+Tab panel keys; F1 help and `[` `]` rating were already implemented; UI command counts recounted |
+| 2026-10-11 | minor | Alt/Option-drag slider previews (clipping, sharpening) and the Linux window-manager note |
 | 2026-10-11 | minor | Zoom row: Compare and Reference get zoom windows; what remains of LR-VIEW-ZOOM is overlays and soft proofing |
 | 2026-10-10 | major | Created: measured command and shortcut counts, assessment by area, estimates; moved the shortcut conflicts section here from the checklist |

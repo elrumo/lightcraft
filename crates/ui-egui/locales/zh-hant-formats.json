@@ -341,5 +341,14 @@
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "對焦範圍：{:.0}–{:.0}（0 最近，100 最遠）",
   "Delete the group “{name}” and its {n} presets?": "要刪除群組「{name}」及其 {n} 個預設集嗎？",
   "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "已隱藏「{name}」。使用面板選單中的「顯示隱藏的預設集」即可將其找回。",
-  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} 張照片可能敏感。在您選擇之前，不會隱藏任何內容。"
+  "Changes found: {n}": "找到的變更：{n}",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "「{name}」仍在掃描：請等待完成，或用其所在列的 ✕ 停止",
+  "Look at the changes found in “{name}” first, or dismiss them": "請先檢視在「{name}」中找到的變更，或將其忽略",
+  "Rendered {ok} of {total} to DNG": "已將 {total} 張中的 {ok} 張渲染為 DNG",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} 張照片可能敏感。在您選擇之前，不會隱藏任何內容。",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "已匯入 Lightroom 相簿：建立了 {albums} 個相簿和 {folders} 個資料夾，{added} 張相片已放入相簿",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "已檢查 Lightroom 目錄：{albums} 個相簿，{folders} 個資料夾，相簿中有 {photos} 張相片",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} 張相片與此處多張相片相符，已略過。",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "相簿中的相片有 {matched} 張在此照片庫中；{unmatched} 張不在，已略過。",
+  "{updated} albums that were already here got photos.": "{updated} 個既有相簿加入了相片。"
 }

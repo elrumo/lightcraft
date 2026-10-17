@@ -3381,6 +3381,7 @@ dependencies = [
  "lightcraft-geom",
  "lightcraft-meta",
  "lightcraft-raw",
+ "lightcraft-sysmem",
  "log",
  "proptest",
  "serde",
@@ -3402,6 +3403,7 @@ dependencies = [
  "lightcraft-raster",
  "lightcraft-raw",
  "lightcraft-sysmem",
+ "lightcraft-tiff",
  "lightcraft-ui-egui",
  "serde_json",
 ]

@@ -270,6 +270,8 @@ mod tests {
         assert_eq!(reg_value("ERROR: The system was unable to find the specified registry key or value."), None);
     }
 
+    /// (Unix: `Path::is_absolute` decides by the platform's rules, and desktop entries run there)
+    #[cfg(unix)]
     #[test]
     fn desktop_entries_give_their_program() {
         let appimage = "[Desktop Entry]\nName=PhotoCraft\nExec=\"/home/simon/Apps/photocraft-1.2-linux-x86_64.AppImage\" %F\n";

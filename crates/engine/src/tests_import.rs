@@ -31,11 +31,31 @@ fn ids(v: &Value, key: &str) -> usize {
 }
 
 #[test]
+fn recursive_discovery_includes_sony_sr2_and_srf_case_insensitively() {
+    let src = temp_dir("sony-discovery");
+    std::fs::create_dir_all(src.join("trip").join("day2")).unwrap();
+    let names = ["r1.SR2", "f828.srf", "trip/r1.sr2", "trip/f828.SRF", "trip/day2/r1.Sr2", "trip/day2/f828.SrF", "control.JPG"];
+    let mut expected: Vec<String> =
+        names.iter().map(|name| name.split('/').fold(src.clone(), |p, part| p.join(part)).to_string_lossy().into_owned()).collect();
+    for path in &expected {
+        std::fs::write(path, b"discovery only, not a decoded photo").unwrap();
+    }
+    std::fs::write(src.join("trip/notes.txt"), b"not a photo").unwrap();
+
+    let mut found = crate::import::expand(&[src.to_string_lossy().into_owned()], None, &[]);
+    found.sort();
+    expected.sort();
+    assert_eq!(found, expected);
+    assert_eq!(crate::import::expand(&expected, None, &[]), expected, "folder and direct discovery agree");
+    std::fs::remove_dir_all(src).unwrap();
+}
+
+#[test]
 fn recursive_import_with_duplicates() {
     let src = temp_dir("src");
     write_png(&src.join("a.png"), 1);
     write_png(&src.join("trip/b.png"), 2);
-    write_png(&src.join("trip/day2/c.PNG"), 3);
+    write_png(&src.join("trip").join("day2").join("c.PNG"), 3);
     std::fs::copy(src.join("a.png"), src.join("trip/a-copy.png")).unwrap(); // same bytes
     write_png(&src.join(".hidden/x.png"), 9);
     std::fs::write(src.join("notes.txt"), "not a photo").unwrap();
@@ -986,6 +1006,82 @@ fn smart_previews_folder_is_chosen_per_library() {
     assert_eq!(r["path"], lib.join("Smart Previews").to_string_lossy().as_ref());
 }
 
+/// The thumbnail cache can live outside the library, like smart previews (issue #903): the
+/// folder is saved per library, relative paths and missing drives are refused, the thumbnails
+/// already cached need an explicit choice, and a chosen folder that is gone when the library
+/// opens is reported (never a silent fallback to the library drive, nothing created there).
+#[test]
+fn thumbnail_cache_folder_is_chosen_per_library() {
+    let lib = temp_dir("thumbloc-lib");
+    let away = temp_dir("thumbloc-away");
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    const C: &str = "library.thumbnailCacheLocation";
+    let loc = s.execute(C, &json!({})).unwrap();
+    assert_eq!((loc["custom"].clone(), loc["available"].clone()), (json!(false), json!(true)), "{loc}");
+    assert_eq!(loc["path"], lib.join("thumbs").to_string_lossy().as_ref());
+    assert_eq!(loc["default"], lib.join("thumbs").to_string_lossy().as_ref());
+    // a cached thumbnail in the library's folder
+    let key = lightcraft_preview::hash_bytes(b"thumb");
+    let img = lightcraft_raster::Rgba8 { width: 4, height: 4, data: vec![[90, 120, 200, 255]; 16] };
+    s.media.rendered.disk().unwrap().put(key, &img);
+    assert_eq!(s.execute(C, &json!({})).unwrap()["count"], 1);
+
+    // relative paths and missing drives are refused, and nothing is created on this drive
+    let err = s.execute(C, &json!({"path": "rel/thumbs"})).unwrap_err().to_string();
+    assert!(err.contains("absolute"), "{err}");
+    let gone = away.join("unplugged/thumbs");
+    let err = s.execute(C, &json!({"path": gone.to_string_lossy()})).unwrap_err().to_string();
+    assert!(err.contains("not available"), "{err}");
+    assert!(!away.join("unplugged").exists());
+    // the thumbnails already cached need an explicit choice
+    let to = away.join("thumbs");
+    let err = s.execute(C, &json!({"path": to.to_string_lossy()})).unwrap_err().to_string();
+    assert!(err.contains("existing"), "{err}");
+    assert_eq!(s.execute(C, &json!({})).unwrap()["custom"], false);
+
+    let r = s.execute(C, &json!({"path": to.to_string_lossy(), "existing": "move"})).unwrap();
+    assert_eq!((r["custom"].clone(), r["handled"].clone(), r["count"].clone()), (json!(true), json!(1), json!(1)), "{r}");
+    assert_eq!(s.media.rendered.disk().unwrap().dir(), to.as_path(), "new thumbnails go to the chosen folder");
+    assert!(s.media.rendered.disk().unwrap().get(key).is_some(), "the moved thumbnail is used");
+    assert_eq!(lightcraft_preview::disk::cache_stats(&lib.join("thumbs")).0, 0);
+
+    // the setting is saved with the library
+    drop(s); // one session per library (issue #99)
+    let mut again = Session::new().with_fs();
+    again.open_library(&lib, false).unwrap();
+    assert!(again.take_library_warnings().is_empty());
+    assert_eq!(again.execute(C, &json!({})).unwrap()["path"], to.to_string_lossy().as_ref());
+    assert_eq!(again.media.rendered.disk().unwrap().dir(), to.as_path());
+
+    // leaving the old thumbnails keeps them where they are; the new folder fills as the grid renders
+    let drive = away.join("drive");
+    std::fs::create_dir_all(&drive).unwrap();
+    let on_drive = drive.join("thumbs");
+    let r = again.execute(C, &json!({"path": on_drive.to_string_lossy(), "existing": "leave"})).unwrap();
+    assert_eq!((r["handled"].clone(), r["count"].clone()), (json!(0), json!(0)), "{r}");
+    assert_eq!(lightcraft_preview::disk::cache_stats(&to).0, 1, "left in the old folder");
+
+    // the chosen folder is gone when the library opens (its drive's mount point is still
+    // there): reported, and the folder is not created again
+    drop(again);
+    std::fs::remove_dir_all(&on_drive).unwrap();
+    let mut third = Session::new().with_fs();
+    third.open_library(&lib, false).unwrap();
+    let warnings = third.take_library_warnings();
+    assert!(warnings.iter().any(|w| w.contains("not available") && w.contains("thumbs")), "{warnings:?}");
+    let loc = third.execute(C, &json!({})).unwrap();
+    assert_eq!((loc["available"].clone(), loc["path"].clone()), (json!(false), json!(on_drive.to_string_lossy())), "{loc}");
+    third.media.rendered.disk().unwrap().put(key, &img);
+    assert!(!on_drive.exists(), "the missing chosen folder is not recreated");
+
+    // back to the library's own folder
+    let r = third.execute(C, &json!({"reset": true})).unwrap();
+    assert_eq!((r["custom"].clone(), r["available"].clone()), (json!(false), json!(true)), "{r}");
+    assert_eq!(r["path"], lib.join("thumbs").to_string_lossy().as_ref());
+    assert_eq!(third.media.rendered.disk().unwrap().dir(), lib.join("thumbs").as_path());
+}
+
 /// Missing Photos covers library photos only: a small library next to many Local browse
 /// records (and a deleted photo) checks — and lists, and counts — the library files alone.
 #[test]
@@ -1806,6 +1902,40 @@ fn heic_imports_as_a_normal_photo_or_says_why_not() {
         d.image.data.iter().map(|p| p[1]).sum::<f32>() / d.image.data.len() as f32
     };
     assert!(mean(&brighter.bytes) > mean(&plain.bytes) * 1.3, "exposure +1 brightens the HEIC");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// Issue #693: a HEIC's EXIF reaches the catalog (camera, capture time) and All Metadata, as a
+/// JPEG's does. The file is made like the issue sweep's `synthetic-metadata.heic`: the HEIF test
+/// builder, 96 × 64, with an EXIF block naming the camera and the capture time. The container is
+/// read without the decoder; importing needs the codecs' `heif` feature (`cargo xtask ci` runs
+/// this test with it).
+#[test]
+fn heic_exif_reaches_the_catalog_and_all_metadata() {
+    use lightcraft_heif::testdata::{Spec, build};
+    let photo = |x: u32, y: u32| [((x * 7 + y * 13) % 200 + 30) as u16, 110, 150];
+    let exif = lightcraft_meta::write_exif(&lightcraft_meta::Metadata {
+        make: Some("Synthetic".into()),
+        model: Some("Issue sweep camera".into()),
+        capture_time: lightcraft_meta::DateTime::parse_iso("2026-10-12T12:34:56"),
+        ..Default::default()
+    });
+    let bytes = build(&Spec { exif: Some(exif), ..Spec::new(96, 64, &photo) });
+    let m = lightcraft_meta::extract(&bytes);
+    assert_eq!(m.model.as_deref(), Some("Issue sweep camera"));
+    assert_eq!(m.capture_time.map(|d| d.to_iso()).as_deref(), Some("2026-10-12T12:34:56"));
+    if !lightcraft_codecs::Format::Heif.can_decode() {
+        return; // importing needs the decoder; `heic_imports_as_a_normal_photo_or_says_why_not` checks the error
+    }
+    let src = temp_dir("heic-exif");
+    std::fs::write(src.join("IMG_0002.HEIC"), &bytes).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(ids(&r, "imported"), 1, "{r}");
+    let p = s.catalog.photos().next().unwrap().clone();
+    assert_eq!((p.meta.camera.as_str(), p.captured.as_deref()), ("Synthetic Issue sweep camera", Some("2026-10-12T12:34:56")));
+    let all = s.execute("photo.allMetadata", &json!({"id": p.id.0})).unwrap();
+    assert!(all["exif"].as_array().unwrap().iter().any(|r| r["name"] == "Model" && r["value"] == "Issue sweep camera"), "{all}");
     let _ = std::fs::remove_dir_all(&src);
 }
 

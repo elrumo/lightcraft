@@ -22,7 +22,7 @@ use std::sync::{Arc, Weak};
 use lightcraft_catalog::{MediaKind, Op, Photo, PhotoId, Source};
 use lightcraft_develop::DevelopSettings;
 use lightcraft_pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
-use lightcraft_preview::{Hash128, Hasher128, Lru, PreviewCache};
+use lightcraft_preview::{DiskCache, Hash128, Hasher128, Lru, PreviewCache};
 use lightcraft_raster::{Histogram, Rgb32f, Rgba8};
 use serde::{Deserialize, Serialize};
 
@@ -566,19 +566,22 @@ fn rendered_budget(share: usize) -> usize {
 impl MediaCache {
     /// Keep rendered thumbnails on disk in `dir` as well. The cache this replaces is retired
     /// (its files stay): render jobs still holding it can't write through it any more, even
-    /// into a directory a later clear emptied (`dir` may be the same one).
-    pub fn attach_disk_cache(&mut self, dir: &std::path::Path, disk_bytes: u64) {
+    /// into a directory a later clear emptied (`dir` may be the same one). A `chosen` folder
+    /// (the user's, not the library's own) is never created: while it is missing, thumbnails
+    /// are kept in memory only.
+    pub fn attach_disk_cache(&mut self, dir: &std::path::Path, disk_bytes: u64, chosen: bool) {
         self.rendered.retire();
-        self.rendered = Arc::new(PreviewCache::with_disk(rendered_budget(self.budget), dir, disk_bytes));
+        let disk = if chosen { DiskCache::chosen(dir, disk_bytes) } else { DiskCache::new(dir, disk_bytes) };
+        self.rendered = Arc::new(PreviewCache::with_disk_cache(rendered_budget(self.budget), disk));
     }
 
     /// Change the disk budget of the cache in `dir`: in place when that cache is attached (its
     /// thumbnails are keyed by content, so they and the textures shown from them stay valid,
     /// and the same cache object keeps its generation), else attach it.
-    pub fn set_disk_cache_bytes(&mut self, dir: &std::path::Path, disk_bytes: u64) {
+    pub fn set_disk_cache_bytes(&mut self, dir: &std::path::Path, disk_bytes: u64, chosen: bool) {
         match self.rendered.disk().filter(|d| d.dir() == dir) {
             Some(d) => d.set_budget(disk_bytes),
-            None => self.attach_disk_cache(dir, disk_bytes),
+            None => self.attach_disk_cache(dir, disk_bytes, chosen),
         }
     }
 
@@ -685,9 +688,8 @@ impl MediaCache {
         }
     }
 
-    /// The facts of photo `id`'s cached sources: the decoder's when one has them, else `header`
-    /// (with a smart preview's stored camera tone curve).
-    fn source_facts(&self, id: PhotoId, header: SourceInfo) -> SourceInfo {
+    /// Prefer a cached source with decoder facts, preserving thumbnail/preview/full priority.
+    fn cached_source(&self, id: PhotoId) -> Option<&DecodedSource> {
         let cached = || {
             self.thumbs
                 .peek(&id)
@@ -695,7 +697,12 @@ impl MediaCache {
                 .chain(self.previews.iter().filter(|e| e.0 == id).map(|e| &e.1))
                 .chain(self.full.iter().filter(|e| e.0 == id).map(|e| &e.1))
         };
-        match cached().find(|s| s.info.is_some()).or_else(|| cached().next()) {
+        cached().find(|s| s.info.is_some()).or_else(|| cached().next())
+    }
+
+    /// The decoder's cached facts, else `header` (with a smart preview's stored camera tone curve).
+    fn source_facts(&self, id: PhotoId, header: SourceInfo) -> SourceInfo {
+        match self.cached_source(id) {
             Some(s) => s.info_or(header),
             None => header,
         }
@@ -1165,17 +1172,30 @@ impl RenderJob {
                 // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
                 // the GPU when there is one.
                 let gpu = self.cache.is_none();
+                // a clipping preview tests sRGB values, like the histogram: rendered in sRGB, then
+                // converted for the display below (an HDR view is never a diagnostic overlay, see `with_hdr_display`)
+                let clip_view = self.request.overlay.is_clipping();
+                let request = if clip_view { RenderRequest { display: None, ..self.request } } else { self.request };
                 let (mut rendered, gpu_fallback, hdr) = if self.hdr_view {
-                    let request = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..self.request };
+                    let request = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..request };
                     develop_hdr(src, &info, &self.settings, &request, self.stages.as_deref(), gpu)
                 } else {
-                    let (r, f) = develop_reporting(src, &info, &self.settings, &self.request, self.stages.as_deref(), gpu);
+                    let (r, f) = develop_reporting(src, &info, &self.settings, &request, self.stages.as_deref(), gpu);
                     (r, f, None)
                 };
                 // for a display profile: the image goes to the display's values, the histogram
                 // and the cached view preview stay sRGB
                 let mut srgb = None;
                 let display = match (&self.display, self.request.display) {
+                    // a diagnostic view: the histogram stays the photo's (taken before the overlay
+                    // was drawn), and nothing goes to the view cache
+                    (Some(d), Some(_)) if self.request.overlay != lightcraft_pipeline::Overlay::None => {
+                        let converted = if clip_view { d.profile.from_srgb(&mut rendered.image) } else { d.profile.correct(&mut rendered.image) };
+                        if let Err(e) = converted {
+                            log::warn!("display profile: {e}");
+                        }
+                        Some(d.id())
+                    }
                     (Some(d), Some(_)) => {
                         let keep = self.view_cache.is_some() && self.request.quality == Quality::Full;
                         let (s, h) = crate::display::finish_render(&mut rendered.image, d, keep);
@@ -1988,6 +2008,11 @@ impl crate::Session {
         self.catalog.photo(id).and_then(|p| p.embedded_lens).or_else(|| self.source_info(id).lens)
     }
 
+    /// Borrow source mattes for selection notices without constructing render facts each frame.
+    pub fn source_mattes(&self, id: PhotoId) -> Option<&lightcraft_pipeline::masks::Mattes> {
+        self.media.cached_source(id).and_then(|s| s.info.as_ref()).and_then(|info| info.mattes.as_deref())
+    }
+
     /// The source proxy for pixel-statistics commands (auto tone/WB), loading synchronously.
     pub fn source_now(&mut self, id: PhotoId, level: SourceLevel) -> Result<Arc<Rgb32f>, String> {
         let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
@@ -2057,6 +2082,18 @@ pub struct ProbeInfo {
     /// A raw variant that can't be decoded yet: why. The file is described (and will be shown and
     /// edited) from its embedded preview; see [`lightcraft_catalog::Photo::preview_only`].
     pub preview_only: Option<String>,
+    /// How the stored image is turned into the oriented one `width × height` describes (the
+    /// file's EXIF orientation, as the decoder applies it); `None` when not known. Lightroom's
+    /// saved Upright matrices are in the stored frame ([`crate::crs::SavedUpright`]).
+    pub orientation: Option<lightcraft_geom::Orientation>,
+}
+
+impl ProbeInfo {
+    /// The stored image's frame: its orientation and its size before that orientation, when both
+    /// are known (see [`crate::sidecar::SidecarData::set_frame`]).
+    pub fn stored_frame(&self) -> Option<crate::sidecar::StoredFrame> {
+        crate::sidecar::StoredFrame::of_shown(self.orientation?, f64::from(self.width), f64::from(self.height))
+    }
 }
 
 pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;
@@ -2211,6 +2248,24 @@ mod thumbnail_hash_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selection_notices_borrow_the_same_mattes_as_render_facts() {
+        let mut session = crate::Session::with_demo();
+        let id = session.active().unwrap();
+        assert!(session.source_mattes(id).is_none());
+        let mattes = std::sync::Arc::new(lightcraft_pipeline::masks::Mattes::default());
+        session.media.insert_source(
+            id,
+            super::SourceLevel::Thumb,
+            super::DecodedSource::new(
+                std::sync::Arc::new(lightcraft_raster::Rgb32f::new(8, 8)),
+                Some(lightcraft_pipeline::SourceInfo { mattes: Some(mattes.clone()), ..Default::default() }),
+            ),
+        );
+        assert!(std::ptr::eq(session.source_mattes(id).unwrap(), mattes.as_ref()));
+        assert!(std::sync::Arc::ptr_eq(session.source_info(id).mattes.as_ref().unwrap(), &mattes));
+    }
+
     use super::*;
 
     #[test]

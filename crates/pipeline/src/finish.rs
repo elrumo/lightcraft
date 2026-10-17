@@ -22,15 +22,29 @@ use crate::{Prepared, SourceInfo, for_rows};
 #[inline]
 pub(crate) fn capture_delta(sp: f32, det: f32, detail: f32, mask: f32) -> f32 {
     let a = det.abs();
-    let m = if mask > 0.0 { smooth(mask * 0.25, mask * 0.25 + 0.15, a) } else { 1.0 };
-    let keep = detail + (1.0 - detail) * (1.0 - smooth(0.15, 1.0, a));
-    sp * 1.3 * det.clamp(-0.8, 0.8) * m * keep
+    sp * 1.3 * det.clamp(-0.8, 0.8) * sharpen_mask_weight(mask, a) * capture_keep(detail, a)
+}
+
+/// What a strong edge (`a`, the size of its detail in EV) keeps of capture sharpening under Detail
+/// `detail` (0..1): all of it for fine texture, only `detail` of it where halos would show.
+#[inline]
+pub(crate) fn capture_keep(detail: f32, a: f32) -> f32 {
+    detail + (1.0 - detail) * (1.0 - smooth(0.15, 1.0, a))
 }
 
 #[inline]
 fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// How much of the sharpening a pixel gets (0..1) under Masking `masking` (0..1), from its fine
+/// detail `det` (log luminance minus its texture blur): 1 everywhere at 0, only stronger edges
+/// as it rises. The GPU kernel (`finish.wgsl`) computes the same; Alt-drag on Masking shows it
+/// ([`crate::Overlay::SharpenMask`]).
+#[inline]
+pub fn sharpen_mask_weight(masking: f32, det: f32) -> f32 {
+    if masking > 0.0 { smooth(masking * 0.25, masking * 0.25 + 0.15, det.abs()) } else { 1.0 }
 }
 
 /// Parametric region curve (encoded domain) composed with the master point curve.
@@ -124,6 +138,22 @@ pub const MASK_TERMS: usize = 21;
 /// Number of alpha-weighted terms at the start of [`mask_terms`].
 pub const MASK_SUMS: usize = 17;
 
+/// Positive dehaze from process V4 (#1237; upstream's "V3") of scene-linear `c`: `dz` the strength (0..1, with a
+/// local adjustment's added), `d` the dark channel over the airlight (0..1), `air` the airlight.
+/// The strength eases in (`dz·(0.4 + 0.6·dz)`: +10 acts at about half V1's), the transmission is
+/// floored at 0.15, and the veil removed never exceeds 90 % of the pixel's darkest channel, so no
+/// pixel is pushed to black (V1 clipped shadows next to bright sky from +10). The GPU mirrors it in
+/// `finish.wgsl`. Sources: He, Sun, Tang, "Single Image Haze Removal Using Dark Channel Prior"
+/// (CVPR 2009), with own easing and veil limit.
+#[inline]
+pub fn dehaze_v4_pixel(c: [f32; 3], dz: f32, d: f32, air: f32) -> [f32; 3] {
+    let k = dz.clamp(0.0, 1.0);
+    let k = k * (0.4 + 0.6 * k);
+    let t = (1.0 - 0.95 * k * d).max(0.15);
+    let veil = (air * (1.0 - t)).min(0.9 * c[0].min(c[1]).min(c[2]).max(0.0));
+    c.map(|v| ((v - veil) / t).max(0.0))
+}
+
 /// A mask's local adjustments as the per-pixel stage uses them (alpha-weighted sums), in order:
 /// exposure, temp, tint, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze,
 /// saturation, hue, sharpness, noise, moiré, defringe, then the colour overlay: on (0/1), cos and
@@ -187,6 +217,8 @@ pub struct FinishParams {
     pub clar: f32,
     pub tex: f32,
     pub dehaze: f32,
+    /// Dehaze's process-V4 response ([`dehaze_v4_pixel`]) instead of V1's.
+    pub dehaze_v4: bool,
     pub sharpen: f32,
     pub sharpen_mask: f32,
     /// Sharpening reads the texture band (before process V3); from V3 it reads the capture plane.
@@ -260,6 +292,7 @@ impl FinishParams {
             clar,
             tex,
             dehaze,
+            dehaze_v4: matches!(s.process.process(), Process::V4),
             sharpen: (s.detail.sharpen_amount / 150.0) as f32,
             sharpen_mask: (s.detail.sharpen_masking / 100.0) as f32,
             band_sharpen: !crate::local::capture_process(s),
@@ -299,8 +332,8 @@ impl FinishParams {
 pub fn base_tone(s: &DevelopSettings, info: &SourceInfo, peak: f32) -> ToneMap {
     let l = &s.light;
     match s.process.process() {
-        // V2 changes the Highlights/Shadows base (`local::tone_base`), V3 sharpening: not the tone map
-        Process::V1 | Process::V2 | Process::V3 => match info.camera_tone.as_ref().filter(|_| info.raw) {
+        // V2 changes the Highlights/Shadows base (`local::tone_base`), V3 sharpening, V4 dehaze: not the tone map
+        Process::V1 | Process::V2 | Process::V3 | Process::V4 => match info.camera_tone.as_ref().filter(|_| info.raw) {
             Some(curve) => ToneMap::camera_hdr(curve, l.contrast, l.whites, l.blacks, peak),
             None if info.raw => ToneMap::hdr(l.contrast, l.whites, l.blacks, peak),
             None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
@@ -396,6 +429,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
         clar,
         tex,
         dehaze,
+        dehaze_v4,
         sharpen,
         sharpen_mask,
         band_sharpen,
@@ -407,6 +441,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
         ..
     } = fp;
     let band_sharpen = *band_sharpen;
+    let dehaze_v4 = *dehaze_v4;
     let (hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev) =
         (*hl, *sh, *clar, *tex, *dehaze, *sharpen, *sharpen_mask, *air, *air_pre, *gain, *ev);
     let terms: Vec<[f32; MASK_TERMS]> = p.masks.iter().map(|m| mask_terms(&m.adjust)).collect();
@@ -472,7 +507,9 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 && let Some(dark) = &p.dark
             {
                 let d = (dark.data[i] / air_pre).clamp(0.0, 1.0);
-                if dz > 0.0 {
+                if dz > 0.0 && dehaze_v4 {
+                    c = dehaze_v4_pixel(c, dz, d, air);
+                } else if dz > 0.0 {
                     let t = (1.0 - 0.95 * dz.min(1.0) * d).max(0.12);
                     c = c.map3(|v| ((v - air * (1.0 - t)) / t).max(0.0));
                 } else {
@@ -532,7 +569,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 let tame = 1.0 - 0.6 * smooth(0.4, 1.6, det.abs());
                 delta += tx * 1.1 * det.clamp(-1.0, 1.0) * tame;
                 if sp_band != 0.0 {
-                    let m = if sharpen_mask > 0.0 { smooth(sharpen_mask * 0.25, sharpen_mask * 0.25 + 0.15, det.abs()) } else { 1.0 };
+                    let m = sharpen_mask_weight(sharpen_mask, det);
                     delta += sp_band * 1.3 * det.clamp(-0.8, 0.8) * m;
                 }
             }

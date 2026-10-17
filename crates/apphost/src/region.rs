@@ -137,12 +137,11 @@ pub fn plan(preview_limit: u32, v: ViewSizes) -> LoupePlan {
     LoupePlan { main_edge: edge_at(scale), window_edge }
 }
 
-/// Whether a window render can carry `overlay` (one that reads only around each pixel: a mask's,
-/// every visible mask's at once, or none); the others need the whole frame, so the loupe renders
-/// that at the drawn size instead.
+/// Whether a window render can carry `overlay` (one that works pixel by pixel on the finished
+/// image: a mask's, every visible mask's at once, clipping, greyscale, or none); the others need
+/// the whole frame, so the loupe renders that at the drawn size instead.
 pub fn overlay_supports_window(overlay: lightcraft_engine::pipeline::Overlay) -> bool {
-    use lightcraft_engine::pipeline::Overlay;
-    matches!(overlay, Overlay::None | Overlay::Mask { .. } | Overlay::AllMasks { .. })
+    overlay.per_pixel()
 }
 
 /// Whether the picture on screen has the frame's aspect (to the one pixel a texture's whole-pixel

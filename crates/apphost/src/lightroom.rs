@@ -161,8 +161,9 @@ fn unsupported_wasm() -> Result<Value, String> {
     Err("Lightroom catalog import is unavailable in browser builds; open the catalog in the native LightCraft app".into())
 }
 
-/// The catalog `path` names: the `.lrcat` itself, a Lightroom catalog folder (or part of one), or
-/// a folder holding one at its top level or one folder down (a catalog's folder beside its photos).
+/// The catalog `path` names: the `.lrcat` or `.mcat` itself, a Lightroom catalog folder (or part
+/// of one, or a Lightroom cloud `.lrlibrary`), or a folder holding one at its top level or one
+/// folder down (a catalog's folder beside its photos).
 pub fn find_catalog(path: &Path) -> Result<PathBuf, String> {
     if path.is_file() {
         return Ok(path.to_path_buf());
@@ -180,8 +181,8 @@ pub fn find_catalog(path: &Path) -> Result<PathBuf, String> {
         .collect();
     dirs.sort();
     dirs.iter()
-        .find_map(|d| lightcraft_engine::lightroom_folder::find_lrcat(d))
-        .ok_or_else(|| format!("{}: no Lightroom Classic catalog (.lrcat) there", path.display()))
+        .find_map(|d| lightcraft_engine::lightroom_folder::find_catalog(d))
+        .ok_or_else(|| format!("{}: no Lightroom catalog (.lrcat, or a Lightroom Library's Managed Catalog.mcat) there", path.display()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -190,9 +191,9 @@ fn spawn_inspect(path: PathBuf, cancel: Arc<AtomicBool>, progress: LightroomProg
         .name("lc-lightroom-inspect".into())
         .spawn(move || {
             let result = lightcraft_engine::guard::catch("Lightroom inspect", || {
-                lightcraft_engine::lightroom_catalog::read_with_progress(&path, &cancel, &progress.catalog_total, &progress.catalog_done)
+                lightcraft_engine::lightroom_catalog::inspect(&path, &cancel, &progress.catalog_total, &progress.catalog_done)
             })
-            .and_then(|r| r.map(inspect_report));
+            .and_then(|r| r);
             let _ = tx.send(Message::Inspected(result));
             wake();
         })
@@ -250,17 +251,6 @@ fn spawn_finalize(
     unsupported_wasm().map(|_| ())
 }
 
-/// An inspection's answer: photos, collections (not Lightroom's own), originals not found, warnings.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn inspect_report(data: lightcraft_engine::lightroom_catalog::CatalogImport) -> Value {
-    json!({
-        "photos": data.photos.len(),
-        "collections": data.collections.iter().filter(|r| r.get("systemOnly").and_then(Value::as_f64).unwrap_or(0.0) == 0.0).count(),
-        "missing": data.photos.iter().filter(|p| !std::path::Path::new(&p.path).is_file()).map(|p| &p.path).collect::<Vec<_>>(),
-        "warnings": data.warnings,
-    })
-}
-
 impl Runner {
     pub fn running(&self) -> bool {
         self.task.is_some()
@@ -294,13 +284,16 @@ impl Runner {
         Ok(json!({"running": true, "kind": "inspect", "path": path}))
     }
 
-    /// Prepare the import of the catalog at `path` on a worker (committed in [`Runner::poll`]).
+    /// Prepare the import of the catalog at `path` on a worker (committed in [`Runner::poll`]); with
+    /// `albums_only` (always for a Lightroom cloud catalog) only its albums, holding the photos the
+    /// library has.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn start_import(
         &mut self,
         s: &mut Session,
         path: &Path,
         update_existing: bool,
+        albums_only: bool,
         wake: Wake,
         words: &dyn Fn(&'static str) -> String,
     ) -> Result<Value, String> {
@@ -308,7 +301,7 @@ impl Runner {
             return Err("a Lightroom catalog task is already running".into());
         }
         let path = find_catalog(path)?;
-        let job = lightcraft_engine::lightroom_job::LightroomJob::new(s, path.clone(), update_existing).map_err(|e| e.to_string())?;
+        let job = lightcraft_engine::lightroom_job::LightroomJob::new(s, path.clone(), update_existing, albums_only).map_err(|e| e.to_string())?;
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = job.progress();
         let (tx, rx) = mpsc::channel();
@@ -329,6 +322,7 @@ impl Runner {
         _s: &mut Session,
         _path: &Path,
         _update_existing: bool,
+        _albums_only: bool,
         _wake: Wake,
         _words: &dyn Fn(&'static str) -> String,
     ) -> Result<Value, String> {
@@ -523,12 +517,13 @@ mod tests {
 
     #[test]
     fn inspect_report_keeps_empty_catalog_shape() {
-        let report = inspect_report(CatalogImport {
+        let report = lightcraft_engine::lightroom_catalog::classic_report(&CatalogImport {
             source: "synthetic.lrcat".into(),
             photos: Vec::new(),
             collections: Vec::new(),
             members: Vec::new(),
             collection_content: Vec::new(),
+            stacks: Vec::new(),
             warnings: vec!["warning".into()],
         });
         assert_eq!(report["photos"], 0);

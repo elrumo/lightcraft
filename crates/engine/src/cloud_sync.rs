@@ -2553,7 +2553,9 @@ impl Session {
         if let Err(e) = self.persist() {
             log::error!("sync: {e}");
         }
-        c.revision = self.catalog.revision + 1;
+        // (both revisions move past the old catalog's: a view keyed on the library revision must not take the
+        // new catalog for the one it was worked out from)
+        c.set_revision(self.catalog.revision + 1);
         self.catalog = c;
         self.undo.clear();
         self.redo.clear();

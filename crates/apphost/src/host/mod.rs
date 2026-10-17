@@ -1074,7 +1074,8 @@ impl Engine {
             self.lightroom.start_inspect(&self.session, &path, wake, &words)
         } else {
             let update = p.get("updateExisting").and_then(Value::as_bool).unwrap_or(false);
-            self.lightroom.start_import(&mut self.session, &path, update, wake, &words)
+            let albums_only = p.get("albumsOnly").and_then(Value::as_bool).unwrap_or(false);
+            self.lightroom.start_import(&mut self.session, &path, update, albums_only, wake, &words)
         };
         match started {
             Ok(_) => {

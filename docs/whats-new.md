@@ -723,6 +723,43 @@
 - The kept original no longer pushes everything else out of the cache: on a 64 MP raw it filled the cache share
   alone, so the photo's preview and thumbnail sources and its neighbours' were decoded from the raw again on every
   edit at 1:1, every zoom out and every step to the next photo.
+## 2026-10-12
+
+### Lens distortion correction for the Sony A7 III
+- Raws from the Sony A7 III (ILCE-7M3) now get the camera's own distortion correction, read from the file, like
+  the A7R IVA's: straight lines stay straight at wide angles (the FE 16–35 F4 ZA at 16 mm shifts detail near the
+  corners by up to about 40 px on a 24 MP photo) and at long ones (the FE 28–70 at 70 mm). It lines up with the
+  camera's JPEG to well under a pixel. Optics ▸ Enable Lens Corrections turns it off and Profile Distortion scales
+  it; photos imported before this pick it up with Photo ▸ Reload from Disk. Vignetting and chromatic aberration
+  from Sony files are not read yet.
+## 2026-10-12
+
+### Lightroom Upright comes across
+- Photos edited in Lightroom with Upright Auto, Full, Level or Vertical now keep the correction Lightroom saved
+  with the edit instead of being analysed again (issue #205), so they open framed as they are in Lightroom. Upright
+  Auto matches Lightroom's exports to under a pixel; Full, Level and Vertical use the same saved correction but
+  haven't been compared with exports yet. Not covered yet: Transform sliders or a straightened crop on top of
+  Upright, and Lightroom's lens profile corrections (details in docs/xmp-interop.md, *Saved Upright geometry*).
+  This works for XMP sidecars and DNG files with the edit inside, on import, with Photo ▸ Read Metadata from File
+  and with Synchronize Folder. Lightroom Classic catalogs still have it worked out again for now, and the import
+  says so.
+- Rotate Left and Rotate Right turn an Upright correction with the photo. It used to stay as it was, so the photo
+  came out skewed after a turn. Settings JSON that changes the rotation (Apply Settings JSON, MCP `set_develop`, the
+  CLI) turns it the same way, also when the settings are sent back whole, again after each change or with their
+  numbers rounded.
+- An Upright correction stays with its photo: it is the analysis of that one image. Paste, Sync and Auto Sync give a
+  virtual copy the correction turned its way. Other photos get the rest of the Geometry settings (the Upright mode,
+  the Transform sliders, guides) and keep their own correction, or work out their own when the mode changes; Lightroom
+  community experts report that Lightroom's Sync with only Upright Mode checked works out each photo too. Presets keep
+  the mode, never a correction. LightCraft used to copy its own correction to other photos as it was, which applied
+  one scene's correction to another.
+- A crop read from an XMP sidecar now lands where Lightroom put it on photos shown on their side (portrait raws),
+  and straightened crops keep Lightroom's frame. A portrait crop used to cut the wrong side of the photo.
+  Synchronize Folder reads sidecars the same way, and its report lists what a sidecar couldn't carry over.
+- Lightroom's Upright values 2, 3 and 4 now read as Full, Level and Vertical. They used to come in as Level,
+  Vertical and Full.
+- Guided Upright doesn't come across yet (Lightroom's guides aren't read), and the import report says so. The
+  report no longer lists Lightroom's Upright analysis fields as adjustments that weren't imported.
 
 ## 2026-10-11
 
@@ -760,6 +797,28 @@
   files, the same files as `library.import` (issue #1080). They used to be skipped without a word.
 - Compare and Reference View panes say "Rendering…" (or that the photo can't be opened) the same way, so a
   magnified preview isn't taken for the photo when checking focus at 1:1.
+### Auto Import looks in subfolders
+- Settings ▸ Import ▸ Auto Import has an **Include subfolders** box (issue #1109): photos that arrive anywhere
+  inside the watched folder, e.g. a tethering or sync app's dated folders, are added too. Off by default, so the
+  watched folder's top level only, as before. Hidden folders, links to folders and the library's own folder (where
+  copied photos go) are never looked in; the scan goes 16 folder levels deep and stops after 200,000 files and
+  folders, and says so. A subfolder LightCraft can't read is skipped with a warning. Agents: `subfolders` on
+  `library.autoImport`.
+### Report a Bug
+- Help ▸ Report a Bug… (issue #1015), next to Send Feedback…: describe what happened and LightCraft saves a report
+  file with the system info and the logs, shows it in Finder or Explorer, and opens a new GitHub issue already filled
+  in, for you to check, attach the file to and submit. Your home folder and photo file names are hidden unless you
+  untick the box, and the dialog shows exactly what goes in. Nothing is sent by the app.
+### Synchronize Folder: no need to wait for the scan
+- While Synchronize Folder… scans a folder (a large one on a network share can take minutes), its button is
+  **Continue in Background**: the dialog closes, the scan goes on under its row in the activity stack, and you can
+  go on working. When it is done nothing pops up: a notice in the activity stack says how many changes were found.
+  Click it to open the dialog with the result, or ✕ to let go of it. A scan that found nothing to do only says so.
+  Cancel and the row's ✕ stop the scan as before. One folder is scanned at a time.
+- Working on the folder's photos while it is scanned (ratings, flags, colour labels, keywords, edits, albums,
+  virtual copies) no longer sends Synchronize back to scanning. What the scan found still holds, and Synchronize
+  does it. It scans again only when the folder holds other photos than it did, one of them is another file now, or
+  a photo whose sidecar is about to be read was changed here since.
 
 ### Lens corrections
 - Sony A7R VI (ILCE-7RM6) raws are corrected for lens distortion from the table the camera records in each file,
@@ -806,6 +865,27 @@
 - Lossy JPEG XL files in Display P3 or Rec. 2020 now open in their real colours; saturated colours used to come in
   noticeably duller.
 
+### Thumbnail cache folder
+- The thumbnail cache can live outside the library (issue #903): Settings ▸ Performance ▸ Thumbnail cache ▸ Choose
+  Folder…, next to the size limit. Useful when the library sits on a network share or a slow disk and the grid
+  waits on it. The choice is saved per library, like the smart previews folder.
+- Thumbnails already cached can be moved, left where they are or deleted; the new folder fills as the grid renders.
+  Use Library Folder goes back to `thumbs` in the library.
+- The folder must be an absolute path on a drive that is there. If it is missing when the library opens (drive
+  disconnected), LightCraft says so and keeps thumbnails in memory only; nothing is written to the library drive
+  instead.
+- Agents use `library.thumbnailCacheLocation {path?, reset?, existing?: move|leave|discard}`.
+### Alt/Option-drag previews
+- Hold Alt (Option on macOS) while dragging Exposure, Highlights or Whites to see which areas clip to white: the
+  photo turns black, fully clipped areas show white and areas clipped in one or two channels show those channels'
+  colour. Shadows and Blacks do the same for clipping to black, on white (issue #937).
+- In Detail ▸ Sharpening the same key shows Amount in greyscale, Radius and Detail as the fine detail being
+  sharpened, and Masking as the mask: white is sharpened, black is protected. Radius and Detail don't change the
+  render yet, so their preview stays the same while you drag them. Noise Reduction's Luminance, Detail and Contrast
+  show the photo in greyscale.
+- The preview lasts while the key and the slider are held, and never changes the edit, its history or exports.
+- Linux: KDE Plasma (and some other desktops) move windows with Alt+drag. If Alt+drag moves the window instead,
+  set the window manager's move modifier to Meta.
 ### Export next to the originals
 - The Export dialog has Export to: Specific folder (as before) or Same folder as original photo, like Lightroom
   Classic (issue #956). With the second, each photo is exported into the folder its original is in, plus the
@@ -815,7 +895,6 @@
   is missing (moved, drive unplugged) is not exported; it gets its own error naming it.
 - The choice is saved in export presets and Export with Previous. Agents pass
   `destinationMode: "sameAsOriginal"` (or `"specificFolder"`) to `app.export`; `dir` is then not needed.
-
 ### Open Library knows a Lightroom catalog
 - Choosing a Lightroom Classic catalog folder in File → Open Library… (or one of its `Previews.lrdata` /
   `.lrcat-data` folders, or the `.lrcat`) no longer makes an empty LightCraft library inside it (issue #891). The
@@ -826,6 +905,23 @@
 - Canon EOS R5 Mark II C-RAW files that opened as "preview only" (more than half of them, depending on the
   scene) now develop from their sensor data with every editing tool, like the camera's other raws. Photos
   imported earlier switch over with Photo ▸ Reload from Disk.
+
+### Settings window
+- Settings is one size on every tab and stays where it is as you go through them; before, each tab made its own
+  size and the tabs moved under the pointer. The tabs stay in place while a long page scrolls, a page that goes on
+  below shows a scroll handle without the pointer on it, and each page remembers where it was scrolled to.
+- Nothing in Settings runs off the side any more. A row with more choices than fit (the languages on General) wraps
+  onto further lines and a long label wraps in its column, where both used to widen the window: in a small
+  LightCraft window the labels and the Close button of General ended up off screen.
+- The tabs of Settings look like tabs: names on the window with a line under the open one, no longer the same
+  buttons as the choices under them (on General the languages read as a second row of tabs). In Settings a chosen
+  option is outlined as well as filled, so it stands out in every theme.
+- A tab or a choice reached with the keyboard shows a ring. Tab moves through them, ← and → along a row, and Space
+  or Return opens or chooses, as before: the focus was there all along but could not be seen. Text buttons
+  elsewhere in LightCraft show the same ring. Screen readers are told a choice in Settings is a radio button.
+- A long folder (General ▸ Library ▸ Location, the folder Auto Import watches, the smart previews folder, a monitor
+  profile's file) is shortened to its last folders ("…/Pictures/Library") on one line; rest the pointer on it for
+  the whole path.
 
 ### Switching libraries
 - File ▸ New Library… asks for a name, then where to put it, and opens the new library (issue #902).

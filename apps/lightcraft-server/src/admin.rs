@@ -543,6 +543,15 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         (Method::Post, ["search", "sensitive", "download"]) => {
             read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Sensitive, l))
         }
+        // Delete a part's model files from this server (what it found stays); it can be downloaded again
+        (Method::Delete, ["search", "models", kind]) => match Part::from_key(kind) {
+            None => Err(Ok((404, "no such part".to_string()))),
+            Some(part) => st.vision.remove_models(part).map_err(|e| Ok((409, e))).map(|(files, bytes)| {
+                log::info!("admin {me}: deleted the {kind} models ({files} files, {bytes} bytes)");
+                st.vision.wake();
+                search(st)
+            }),
+        },
         (Method::Delete, ["search", "download"]) => {
             st.vision.switch.cancel(Part::Search);
             Ok(search(st))

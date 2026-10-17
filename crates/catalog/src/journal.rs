@@ -359,6 +359,27 @@ struct SnapHeader {
     version: u32,
 }
 
+/// Read [`SnapHeader`] without parsing the catalog: both writers put `{"format":…,"version":…,"seq":…,"catalog":`
+/// first, so the bytes before `"catalog":` (closed with a `}`) are the header. A file laid out any other way (or
+/// damaged there) is parsed whole, as before, so the answer is the same either way (a full parse of a big
+/// library took a quarter of its open).
+fn snap_header(bytes: &[u8]) -> std::result::Result<SnapHeader, serde_json::Error> {
+    const KEY: &[u8] = b"\"catalog\":";
+    let head = bytes.get(..bytes.len().min(256)).unwrap_or(bytes);
+    let prefix = head.windows(KEY.len()).position(|w| w == KEY).and_then(|at| head.get(..at));
+    if let Some(prefix) = prefix {
+        let mut closed = prefix.trim_ascii_end().to_vec();
+        if closed.last() == Some(&b',') {
+            closed.pop();
+            closed.push(b'}');
+            if let Ok(h) = serde_json::from_slice(&closed) {
+                return Ok(h);
+            }
+        }
+    }
+    serde_json::from_slice(bytes)
+}
+
 /// The whole `catalog.snap` (after [`SnapHeader`] was checked; `format` and `version` are ignored).
 #[derive(serde::Deserialize)]
 struct SnapFile {
@@ -377,7 +398,7 @@ impl Journal {
         let (mut catalog, snapshot_seq, snapshot_version) = match snap {
             Some(bytes) => {
                 // the header first: a newer snapshot may not parse as this version's catalog
-                let h: SnapHeader = serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
+                let h = snap_header(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
                 if h.format != FORMAT {
                     return Err(CatalogError::Corrupt(format!("{SNAPSHOT}: not a LightCraft catalog (format {:?})", h.format)));
                 }
@@ -525,7 +546,7 @@ impl Journal {
                 Err(e) => log::warn!("catalog: can't write the format v{VERSION} snapshot: {e}"),
             }
         }
-        catalog.revision = 0;
+        catalog.set_revision(0);
         Ok((j, catalog, report))
     }
 

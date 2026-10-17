@@ -1116,7 +1116,8 @@ fn missing_count(app: &mut LightcraftApp, ui: &mut egui::Ui) -> usize {
     }
     let id = egui::Id::new("missing-count");
     let now = ui.input(|i| i.time);
-    let rev = app.session.catalog.revision;
+    // which files the library expects is not develop state: a slider drag doesn't check them all again
+    let rev = app.session.catalog.library_revision;
     let mut job: Job = ui.data(|d| d.get_temp(id)).unwrap_or(Job { rev: u64::MAX, at: f64::MIN, ..Default::default() });
     let fresh = now - job.at < 5.0 && job.rev == rev;
     if !fresh && !job.running.load(Relaxed) {

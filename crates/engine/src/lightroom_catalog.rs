@@ -8,15 +8,16 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-use crate::lightroom_sqlite::{Database, LiveTable, Value as SqlValue};
-use lightcraft_catalog::{Album, Flag, Op, Photo, PhotoId, Source};
-use lightcraft_geom::{Affine, Orientation, Point, Rect};
+use crate::lightroom_albums::{AlbumSource, PhotoIdentity, SourceAlbum, second};
+use crate::lightroom_sqlite::{Database, FileSource, LiveTable, Value as SqlValue};
+use lightcraft_catalog::{Flag, Op, Photo, PhotoId, Source};
+use lightcraft_geom::Orientation;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 type Row = BTreeMap<String, Value>;
 const COMMAND: &str = "library.importLightroom";
-/// Largest catalog database or WAL read into memory (4 GiB). The whole file is held in RAM, so the cap stays finite.
+/// Largest WAL read into memory (4 GiB). The database itself is read a page at a time.
 const MAX_FILE: u64 = 1 << 32;
 
 fn error(why: impl Into<String>) -> crate::EngineError {
@@ -36,6 +37,10 @@ pub(crate) fn number_for_job(r: &Row, k: &str) -> i64 {
 fn key(path: &str) -> String {
     let p = path.replace('\\', "/");
     if cfg!(windows) { p.to_lowercase() } else { p }
+}
+/// A path as imports compare it (`/` separators; any case on Windows).
+pub(crate) fn path_key(path: &str) -> String {
+    key(path)
 }
 fn source_path(p: &Photo) -> Option<&str> {
     match &p.source {
@@ -155,6 +160,9 @@ pub struct CatalogImport {
     pub collections: Vec<Row>,
     pub members: Vec<Row>,
     pub collection_content: Vec<Row>,
+    /// `AgLibraryFolderStackImage` rows (`stack`, `image`, `position`, `collapsed`).
+    #[serde(default)]
+    pub stacks: Vec<Row>,
     pub warnings: Vec<String>,
 }
 
@@ -237,7 +245,7 @@ fn bytes(path: &Path) -> Result<Vec<u8>, String> {
     let f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let len = f.metadata().map_err(|e| e.to_string())?.len();
     if len > MAX_FILE {
-        return Err("catalog or WAL exceeds 4 GiB import limit".into());
+        return Err("catalog WAL exceeds 4 GiB import limit".into());
     }
     let mut out = Vec::new();
     // Reserve the exact size up front: growing by doubling would briefly need about twice the catalog's size.
@@ -303,6 +311,7 @@ fn wal_checksum(bytes: &[u8], big: bool, mut sum: (u32, u32)) -> (u32, u32) {
 // SQLite file format §4: validate the live checksum chain in constant space, then overlay
 // only its last committed prefix. The forensic timeline materializes EVERY historical
 // database snapshot; it must never be used to validate a large, actively used catalog.
+// `main` is the start of the database file (its header).
 fn committed_wal_len(main: &[u8], wal: &[u8]) -> Result<usize, String> {
     if wal.is_empty() {
         return Ok(0);
@@ -373,27 +382,12 @@ pub fn read(path: &Path) -> Result<CatalogImport, String> {
 }
 
 pub fn read_with_progress(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize) -> Result<CatalogImport, String> {
-    // 13 catalog tables plus one validation stage; ImportJob adds one unit per original path.
-    total.store(14, Ordering::Relaxed);
+    // 14 catalog tables plus one validation stage; ImportJob adds one unit per original path.
+    total.store(15, Ordering::Relaxed);
     done.store(0, Ordering::Relaxed);
     ensure_read_active(cancel)?;
-    let before = std::fs::metadata(path).map_err(|e| e.to_string())?;
-    let wal_path = PathBuf::from(format!("{}-wal", path.display()));
-    let wal_before = std::fs::metadata(&wal_path).ok().map(|m| (m.len(), m.modified().ok()));
-    let main = bytes(path)?;
-    let wal = match std::fs::metadata(&wal_path) {
-        Ok(_) => bytes(&wal_path)?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e.to_string()),
-    };
-    let wal_len = committed_wal_len(&main, &wal)?;
+    let (db, unchanged) = open_database(path)?;
     ensure_read_active(cancel)?;
-    let db = Database::open_with_wal(main, &wal[..wal_len]).map_err(|e| format!("invalid SQLite catalog: {e:?}"))?;
-    let after = std::fs::metadata(path).map_err(|e| e.to_string())?;
-    let wal_after = std::fs::metadata(&wal_path).ok().map(|m| (m.len(), m.modified().ok()));
-    if before.len() != after.len() || before.modified().ok() != after.modified().ok() || wal_before != wal_after {
-        return Err("catalog changed during reading; close Lightroom and retry".into());
-    }
     let reader = Reader { tables: db.live_tables()?, db };
     let mut warnings = Vec::new();
     let table = |name: &str, required: bool| -> Result<Vec<Row>, String> {
@@ -479,6 +473,7 @@ pub fn read_with_progress(path: &Path, cancel: &AtomicBool, total: &AtomicUsize,
         collections: optional_table("AgLibraryCollection", &mut warnings)?,
         members: optional_table("AgLibraryCollectionImage", &mut warnings)?,
         collection_content: optional_table("AgLibraryCollectionContent", &mut warnings)?,
+        stacks: optional_table("AgLibraryFolderStackImage", &mut warnings)?,
         warnings,
     };
     for image in table("Adobe_images", true)? {
@@ -514,7 +509,33 @@ pub fn read_with_progress(path: &Path, cancel: &AtomicBool, total: &AtomicUsize,
         });
     }
     ensure_read_active(cancel)?;
+    unchanged(&reader.db)?;
     Ok(out)
+}
+
+/// Open a catalog database (`.lrcat`, `.mcat`) with its committed WAL pages, read-only. Pages
+/// are read while the caller works, so the returned check, called with the database once the
+/// caller is done, says whether Lightroom changed the database file or its WAL meanwhile.
+pub(crate) fn open_database(path: &Path) -> Result<(Database, impl Fn(&Database) -> Result<(), String>), String> {
+    let stamp = |path: &Path| std::fs::metadata(path).ok().map(|m| (m.len(), m.modified().ok()));
+    let wal_path = PathBuf::from(format!("{}-wal", path.display()));
+    let wal_before = stamp(&wal_path);
+    let main = FileSource::open(path)?;
+    let wal = match std::fs::metadata(&wal_path) {
+        Ok(_) => bytes(&wal_path)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(e.to_string()),
+    };
+    let wal_len = committed_wal_len(main.header(), &wal)?;
+    let db = Database::open_file_with_wal(main, wal.get(..wal_len).unwrap_or_default()).map_err(|e| format!("invalid SQLite catalog: {e:?}"))?;
+    let unchanged = move |db: &Database| {
+        db.ensure_unchanged()?;
+        if wal_before != stamp(&wal_path) {
+            return Err("catalog changed during reading; close Lightroom and retry".into());
+        }
+        Ok(())
+    };
+    Ok((db, unchanged))
 }
 
 fn ensure_read_active(cancel: &AtomicBool) -> Result<(), String> {
@@ -538,7 +559,13 @@ fn mapped_settings(
         props.insert("crs:HasCrop".into(), vec!["True".into()]);
     }
     let (mut partial, mut unknown) = crate::crs::to_partial_report(&props, Some(&values), target, aspect);
-    catalog_crop(&mut partial, orientation, stored_aspect);
+    crate::crs::crop_in_frame(&mut partial, orientation, stored_aspect);
+    // Lightroom's saved Upright isn't kept from catalogs yet: how a catalog encodes it, and whether
+    // its orientation agrees with the decoded file, haven't been checked on a real catalog (issue
+    // #205). The mode is solved again, and the report says what was lost.
+    if let Some(mode) = crate::crs::upright_at_risk(&props) {
+        unknown.push(catalog_upright_note(mode));
+    }
     if deferred > 0 {
         unknown.push("Deferred Lightroom adjustments (-999999)".into());
     }
@@ -568,34 +595,25 @@ fn lightroom_orientation(code: &str) -> Option<Orientation> {
     ALL.into_iter().find(|&o| code.chars().eq([corner(o, 0.0, 0.0), corner(o, 1.0, 0.0)]))
 }
 
-/// Lightroom's crop in LightCraft's frame. `crs` gives the crop's top-left (`CropLeft`, `CropTop`)
-/// and bottom-right (`CropRight`, `CropBottom`) corners on the stored image (before orientation and
-/// straightening), normalized to its size, plus a straighten angle that turns the other way to
-/// LightCraft's. LightCraft's crop is a rectangle in the oriented image rotated by `angle` about its
-/// centre, normalized to the oriented image's size, so the corners go through the orientation and
-/// then the rotation; `stored_aspect` (width / height of the stored image) matters once the
-/// rectangle turns. On a real catalog this reproduced the frame aspect of all 223 straightened crops
-/// in Lightroom's exports within 1%.
-fn catalog_crop(partial: &mut Value, orientation: Orientation, stored_aspect: f64) {
-    let Some(geometry) = partial.pointer_mut("/crop/geometry").and_then(Value::as_object_mut) else { return };
-    let edge = |k: &str| geometry.get("rect").and_then(|r| r.get(k)).and_then(Value::as_f64);
-    let (Some(x0), Some(y0), Some(x1), Some(y1)) = (edge("x0"), edge("y0"), edge("x1"), edge("y1")) else { return };
-    let lightroom_angle = geometry.get("angle").and_then(Value::as_f64).unwrap_or(0.0);
-    if orientation == Orientation::Normal && lightroom_angle == 0.0 {
-        return;
+/// How a catalog import reports Lightroom Upright geometry it doesn't carry over.
+fn catalog_upright_note(mode: crate::import::ImportUprightMode) -> String {
+    match mode {
+        crate::import::ImportUprightMode::Guided => "Upright (Guided: Lightroom's guides aren't read)".into(),
+        _ => "Upright (Lightroom's saved geometry, solved again: not read from catalogs yet)".into(),
     }
-    let w = if stored_aspect.is_finite() && stored_aspect > 0.0 { stored_aspect } else { 1.0 };
-    let (ow, oh) = if orientation.swaps_axes() { (1.0, w) } else { (w, 1.0) };
-    // a mirror turns the straighten the other way too
-    let angle = if orientation.to_parts().0 { lightroom_angle } else { -lightroom_angle };
-    let to_rotated = Affine::rotate_about(angle.to_radians(), Point::new(ow / 2.0, oh / 2.0));
-    let corner = |x: f64, y: f64| {
-        let (u, v) = orientation.map(x * w, y, w, 1.0);
-        to_rotated.apply(Point::new(u, v))
-    };
-    let r = Rect::from_points(corner(x0, y0), corner(x1, y1));
-    geometry.insert("rect".into(), json!({"x0": r.x0 / ow, "y0": r.y0 / oh, "x1": r.x1 / ow, "y1": r.y1 / oh}));
-    geometry.insert("angle".into(), json!(angle));
+}
+
+/// The catalog report's names for what an XMP packet's import diagnostics say wasn't carried over.
+fn catalog_notes(warnings: &[crate::import::ImportWarning]) -> Vec<String> {
+    use crate::import::ImportWarningCode as C;
+    warnings
+        .iter()
+        .flat_map(|w| match w.code {
+            C::CameraProfile => vec!["CameraProfile".to_string()],
+            C::UprightGeometry => vec![catalog_upright_note(w.mode.unwrap_or(crate::import::ImportUprightMode::Unknown))],
+            C::UnmappedXmp => w.fields.clone(),
+        })
+        .collect()
 }
 
 fn strip_lua_sentinels(value: &mut crate::preset_import::Lua) -> usize {
@@ -640,9 +658,11 @@ fn strip_xmp_sentinels(value: &mut Value) {
 }
 
 /// Import into the current library. Existing edited records are preserved unless explicitly
-/// requested; missing originals remain catalogued for later relinking. The source catalog is read-only.
-pub fn import(s: &mut crate::Session, path: &Path, update_existing: bool) -> crate::Result<Value> {
-    let mut job = crate::lightroom_job::LightroomJob::new(s, path.to_path_buf(), update_existing)?;
+/// requested; missing originals remain catalogued for later relinking. With `albums_only` (always
+/// for a Lightroom cloud catalog), only albums are made, holding the photos the library already
+/// has ([`crate::lightroom_albums`]). The source catalog is read-only.
+pub fn import(s: &mut crate::Session, path: &Path, update_existing: bool, albums_only: bool) -> crate::Result<Value> {
+    let mut job = crate::lightroom_job::LightroomJob::new(s, path.to_path_buf(), update_existing, albums_only)?;
     let cancel = AtomicBool::new(false);
     let prepared = job.prepare(&cancel)?;
     let completion = crate::lightroom_job::commit_prepared(s, prepared)?;
@@ -651,6 +671,74 @@ pub fn import(s: &mut crate::Session, path: &Path, update_existing: bool) -> cra
     }
     completion.finalization.finish()?;
     Ok(completion.report)
+}
+
+/// The catalog's collections (not Lightroom's own) as albums, each one's photos (image ids) in
+/// Lightroom's order, and what the catalog knows of those photos' files. A smart collection
+/// carries its rules ([`crate::lightroom_smart::smart_rules`]) or why they can't be read.
+pub(crate) fn album_source(data: &CatalogImport) -> AlbumSource {
+    let mut out = AlbumSource { source: data.source.clone(), ..AlbumSource::default() };
+    let smart_content: HashMap<i64, &str> = data
+        .collection_content
+        .iter()
+        .filter(|r| text(r, "owningModule") == "ag.library.smart_collection")
+        .map(|r| (number(r, "collection"), text(r, "content")))
+        .collect();
+    for c in data.collections.iter().filter(|c| number(c, "systemOnly") == 0) {
+        let creation = text(c, "creationId");
+        let smart = creation.contains("smart").then(|| match smart_content.get(&number(c, "id_local")) {
+            Some(content) => crate::lightroom_smart::smart_rules(content),
+            None => Err("smart rules missing".into()),
+        });
+        out.albums.push(SourceAlbum {
+            key: number(c, "id_local").to_string(),
+            name: text(c, "name").to_string(),
+            parent: Some(number(c, "parent")).filter(|p| *p != 0).map(|p| p.to_string()),
+            folder: creation.contains("group"),
+            smart,
+        });
+    }
+    let kept: HashSet<String> = out.albums.iter().map(|a| a.key.clone()).collect();
+    let mut members: Vec<&Row> = data.members.iter().filter(|m| kept.contains(&number(m, "collection").to_string())).collect();
+    members.sort_by(|a, b| text(a, "positionInCollection").cmp(text(b, "positionInCollection")));
+    for m in members {
+        out.members.entry(number(m, "collection").to_string()).or_default().push(number(m, "image").to_string());
+    }
+    for p in &data.photos {
+        let (w, h) = (number(&p.image, "fileWidth"), number(&p.image, "fileHeight"));
+        out.photos.insert(
+            p.source_id.to_string(),
+            PhotoIdentity {
+                name: Path::new(&p.path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                size: None,
+                captured: second(text(&p.image, "captureTime")),
+                dims: u32::try_from(w).ok().zip(u32::try_from(h).ok()).filter(|(w, h)| *w > 0 && *h > 0),
+                path: Some(p.path.clone()),
+            },
+        );
+    }
+    out
+}
+
+/// A Classic catalog's report: photos, collections (not Lightroom's own), originals not found,
+/// warnings.
+pub fn classic_report(data: &CatalogImport) -> Value {
+    json!({
+        "kind": "classic",
+        "photos": data.photos.len(),
+        "collections": data.collections.iter().filter(|r| number(r, "systemOnly") == 0).count(),
+        "missing": data.photos.iter().filter(|p| !Path::new(&p.path).is_file()).map(|p| &p.path).collect::<Vec<_>>(),
+        "warnings": data.warnings,
+    })
+}
+
+/// What the catalog at `path` holds, read-only: a Classic catalog's [`classic_report`], or a
+/// Lightroom (cloud) catalog's [`crate::lightroom_cloud::inspect`].
+pub fn inspect(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize) -> Result<Value, String> {
+    if crate::lightroom_cloud::is_cloud(path) {
+        return crate::lightroom_cloud::inspect(path, cancel, total, done);
+    }
+    read_with_progress(path, cancel, total, done).map(|data| classic_report(&data))
 }
 
 #[cfg(test)]
@@ -770,11 +858,16 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, data: CatalogImport, contex
         if keep_develop {
             preserved += 1;
         }
+        // what the XMP and the develop settings couldn't carry over, each named once
+        let mut notes: Vec<String> = Vec::new();
         if !src.xmp.is_empty() {
             match crate::sidecar::parse_sidecar(&src.xmp, crate::crs::Target::for_photo(&p)) {
                 Ok(mut sc) => {
                     if let Some(crate::sidecar::DevelopPatch::Partial(partial)) = &mut sc.develop {
                         strip_xmp_sentinels(partial);
+                    }
+                    if !keep_develop {
+                        notes.extend(catalog_notes(&sc.warnings));
                     }
                     crate::sidecar::merge_into(&mut p, &sc, &now);
                 }
@@ -807,12 +900,15 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, data: CatalogImport, contex
                 Ok((partial, unknown)) => {
                     p.develop = Arc::new(lightcraft_develop::apply_partial(&p.develop, &partial, 1.0));
                     p.edited = Some(now.clone());
-                    if !unknown.is_empty() {
-                        unmapped.insert(src.source_id, unknown);
-                    }
+                    notes.extend(unknown);
                 }
                 Err(e) => warnings.push(format!("image {} settings: {e}", src.source_id)),
             }
+        }
+        let mut seen = std::collections::HashSet::new();
+        notes.retain(|n| seen.insert(n.clone()));
+        if !notes.is_empty() {
+            unmapped.insert(src.source_id, notes);
         }
         if keep_develop {
             (p.develop, p.edited) = previous_develop;
@@ -846,86 +942,61 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, data: CatalogImport, contex
         }
         by_path.entry(key(&src.path)).or_insert(photo_id);
     }
-    let mut albums = HashMap::new();
-    for collection in &data.collections {
-        if number(collection, "systemOnly") != 0 {
-            continue;
-        }
-        let collection_key = format!("{}:{}", key(&data.source), number(collection, "id_local"));
-        let id = index
-            .collections
-            .get(&collection_key)
-            .copied()
-            .map(lightcraft_catalog::AlbumId)
-            .filter(|id| s.catalog.album(*id).is_some())
-            .unwrap_or_else(|| s.catalog.alloc_album_id());
-        index.collections.insert(collection_key, id.0);
-        albums.insert(number(collection, "id_local"), id);
-    }
-    let parents: HashMap<_, _> = data.collections.iter().map(|r| (number(r, "id_local"), number(r, "parent"))).collect();
-    let mut grouped_members: HashMap<i64, Vec<&Row>> = HashMap::new();
-    for member in &data.members {
-        grouped_members.entry(number(member, "collection")).or_default().push(member);
-    }
-    for members in grouped_members.values_mut() {
-        members.sort_by(|a, b| text(a, "positionInCollection").cmp(text(b, "positionInCollection")));
-    }
-    let mut ordered: Vec<_> = data.collections.iter().collect();
-    ordered.sort_by_key(|r| {
-        let mut depth = 0;
-        let mut at = number(r, "parent");
-        while at != 0 && depth < 64 {
-            depth += 1;
-            at = parents.get(&at).copied().unwrap_or(0);
-        }
-        depth
-    });
-    for collection in ordered {
-        let Some(id) = albums.get(&number(collection, "id_local")).copied() else { continue };
-        let mut album = Album::new(id, text(collection, "name"));
-        album.parent = albums.get(&number(collection, "parent")).copied();
-        album.folder = text(collection, "creationId").contains("group");
-        if text(collection, "creationId").contains("smart") {
-            warnings.push(format!("{}: smart rules preserved in archive; imported current membership", album.name));
-        }
-        if !album.folder {
-            album.photos = grouped_members
-                .get(&number(collection, "id_local"))
-                .into_iter()
-                .flatten()
-                .filter_map(|r| ids.get(&number(r, "image")).copied())
-                .collect();
-        }
-        if s.catalog.album(id).is_some() {
-            // Reimport preserves the user's album name/hierarchy, merges only new membership.
-            if let Some(old) = s.catalog.album(id).filter(|a| !a.folder && !a.is_smart()) {
-                let mut photos = old.photos.clone();
-                let mut seen: HashSet<_> = photos.iter().copied().collect();
-                for photo in album.photos {
-                    if seen.insert(photo) {
-                        photos.push(photo);
-                    }
-                }
-                ops.push(Op::SetAlbumPhotos { id, photos });
-            }
-        } else {
-            ops.push(Op::AddAlbum { album });
-        }
-    }
+    let albums = album_source(&data);
+    warnings.extend(albums.warnings.iter().cloned());
+    let members = albums
+        .members
+        .iter()
+        .map(|(album, photos)| (album.clone(), photos.iter().filter_map(|p| p.parse::<i64>().ok().and_then(|p| ids.get(&p).copied())).collect()))
+        .collect();
+    let (album_ops, made) = crate::lightroom_albums::album_ops(s, &data.source, &albums.albums, &members, index);
+    ops.extend(album_ops);
+    warnings.extend(made.warnings.iter().cloned());
+    let stacks = stack_ops(s, &data, &ids, &mut ops, &mut warnings);
     if !ops.is_empty() {
         s.commit("Import Lightroom Catalog", Op::Batch { ops })?;
     }
     s.merge_undo(s.undo.len().saturating_sub(undo0), "Import Lightroom Catalog");
     Ok(AppliedImport {
-        report: json!({"source":data.source,"photos":ids.len(),"imported":imported,"library":s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.to_string_lossy()),"collections":albums.len(),"preservedExistingEdits":preserved,"missing":missing,"failed":files.failed,"warnings":warnings,"unmapped":unmapped,"archive":archive_path,"mapping":ids}),
+        report: json!({"source":data.source,"photos":ids.len(),"imported":imported,"library":s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.to_string_lossy()),"collections":albums.albums.len(),"smartAlbums":made.smart,"smartAsStatic":made.smart_as_static,"smartKept":made.smart_kept,"stacks":stacks,"preservedExistingEdits":preserved,"missing":missing,"failed":files.failed,"warnings":warnings,"unmapped":unmapped,"archive":archive_path,"mapping":ids}),
         index: index.clone(),
     })
 }
 
+/// Lightroom folder stacks → stacks, top (position 1) first. Photos already stacked in the library
+/// keep their stack; a stack that would have fewer than two photos is skipped.
+fn stack_ops(s: &mut crate::Session, data: &CatalogImport, ids: &HashMap<i64, PhotoId>, ops: &mut Vec<Op>, warnings: &mut Vec<String>) -> usize {
+    let mut groups: BTreeMap<i64, Vec<(f64, PhotoId, bool)>> = BTreeMap::new();
+    for r in &data.stacks {
+        let Some(photo) = ids.get(&number(r, "image")).copied() else { continue };
+        let position = r.get("position").and_then(Value::as_f64).filter(|p| p.is_finite()).unwrap_or(f64::MAX);
+        groups.entry(number(r, "stack")).or_default().push((position, photo, number(r, "collapsed") != 0));
+    }
+    let mut taken: HashSet<PhotoId> = HashSet::new();
+    let mut made = 0;
+    for (stack, mut members) in groups {
+        members.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let collapsed = members.iter().any(|m| m.2);
+        let stacked = members.iter().any(|m| s.catalog.stack_of(m.1).is_some());
+        let photos: Vec<PhotoId> = members.into_iter().map(|m| m.1).filter(|p| s.catalog.stack_of(*p).is_none() && taken.insert(*p)).collect();
+        if stacked && photos.len() < 2 {
+            continue; // already stacked by an earlier import
+        }
+        if photos.len() < 2 {
+            warnings.push(format!("stack {stack}: fewer than two photos left to stack; skipped"));
+            continue;
+        }
+        let id = s.catalog.alloc_stack_id();
+        ops.push(Op::AddStack { stack: lightcraft_catalog::Stack { id, photos, collapsed } });
+        made += 1;
+    }
+    made
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use lightcraft_geom::CropGeometry;
+    use lightcraft_geom::{Affine, CropGeometry, Point, Rect};
     fn row(v: Value) -> Row {
         serde_json::from_value(v).unwrap()
     }
@@ -959,6 +1030,7 @@ mod tests {
                 row(json!({"collection":10,"image":1,"positionInCollection":"b"})),
             ],
             collection_content: Vec::new(),
+            stacks: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -1038,6 +1110,39 @@ mod tests {
         assert!(s.catalog.is_empty());
         assert!(s.catalog.albums().next().is_none());
         assert!(data.photos[1].settings.contains("CameraProfile")); // unmapped source stays intact
+    }
+    #[test]
+    fn smart_collections_become_smart_albums_and_stacks_are_kept() {
+        let mut s = crate::Session::new();
+        let mut data = sample();
+        data.collections.push(row(json!({"id_local":11,"name":"Best","creationId":"com.adobe.ag.library.smart_collection"})));
+        data.collections.push(row(json!({"id_local":12,"name":"Odd","creationId":"com.adobe.ag.library.smart_collection"})));
+        data.members.push(row(json!({"collection":12,"image":1})));
+        data.collection_content = vec![
+            row(json!({"collection":11,"owningModule":"ag.library.smart_collection",
+                "content":"s = { { criteria = \"rating\", operation = \">=\", value = 4 }, combine = \"intersect\" }"})),
+            row(json!({"collection":12,"owningModule":"ag.library.smart_collection",
+                "content":"s = { { criteria = \"collection\", operation = \"all\", value = \"x\" } }"})),
+        ];
+        data.stacks =
+            vec![row(json!({"stack":5,"image":1,"position":2.0,"collapsed":1})), row(json!({"stack":5,"image":2,"position":1.0,"collapsed":1}))];
+        let r = apply(&mut s, data.clone(), false).unwrap();
+        assert_eq!(r["smartAlbums"], 1);
+        assert_eq!(r["smartAsStatic"], 1);
+        assert_eq!(r["stacks"], 1);
+        let best = s.catalog.albums().find(|a| a.name == "Best").unwrap();
+        assert!(best.is_smart());
+        let odd = s.catalog.albums().find(|a| a.name == "Odd").unwrap();
+        assert!(!odd.is_smart() && odd.photos.len() == 1);
+        let copy = s.catalog.photos().find(|p| p.copy_of.is_some()).unwrap().id;
+        let stack = s.catalog.stacks().next().unwrap();
+        assert_eq!(stack.photos.first(), Some(&copy));
+        assert!(stack.collapsed);
+        // Reimport neither duplicates the stack nor warns about it.
+        let r = apply(&mut s, data, false).unwrap();
+        assert_eq!(r["stacks"], 0);
+        assert_eq!(s.catalog.stacks().count(), 1);
+        assert!(!r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().is_some_and(|w| w.starts_with("stack"))), "{}", r["warnings"]);
     }
     #[test]
     fn preserves_existing_edits_and_rejects_invalid_structure_before_mutation() {
@@ -1241,6 +1346,73 @@ mod tests {
         assert_eq!(r, [0.1, 0.1, 0.8, 0.6]);
     }
 
+    /// Lightroom's saved Upright isn't read from catalogs until a real catalog verifies how it is
+    /// stored there (issue #205): whatever form the fields take, the mode is solved again (no
+    /// transform is kept) and the report names what was lost. Upright Off loses nothing.
+    #[test]
+    fn catalog_upright_falls_back_to_solving_and_is_reported() {
+        let auto = "1.010477639,-0.008540717,-0.006124940,0.014938050,1.011645918,-0.015359712,-0.007190889,-0.003396748,1.000000000";
+        for settings in [
+            format!(r#"s = {{ PerspectiveUpright = 1, UprightVersion = 151388160, UprightTransformCount = 6, UprightTransform_1 = "{auto}" }}"#),
+            "s = { PerspectiveUpright = 3, UprightVersion = 151388160, UprightTransform_3 = { 1, 0, 0, 0, 1, 0, 0, 0, 1 } }".to_string(),
+            r#"s = { PerspectiveUpright = 5, UprightFourSegmentsCount = 2, UprightFourSegments_0 = "0.2, 0.1, 0.25, 0.9" }"#.to_string(),
+        ] {
+            for o in [Orientation::Normal, Orientation::Rotate90] {
+                let (partial, unknown) = mapped_settings(&settings, crate::crs::Target::RawAbsolute, 1.5, o, 1.5).unwrap();
+                assert!(partial["geometry"]["upright_transform"].is_null(), "{settings}: {partial}");
+                assert_eq!(unknown.iter().filter(|u| u.starts_with("Upright")).count(), 1, "{settings}: {unknown:?}");
+            }
+        }
+        let off = format!(r#"s = {{ PerspectiveUpright = 0, UprightVersion = 151388160, UprightTransform_1 = "{auto}" }}"#);
+        let (_, unknown) = mapped_settings(&off, crate::crs::Target::RawAbsolute, 1.5, Orientation::Normal, 1.5).unwrap();
+        assert!(unknown.iter().all(|u| !u.starts_with("Upright")), "{unknown:?}");
+    }
+
+    /// The catalog's XMP column reports what it can't carry over too: Guided guides there used
+    /// to import as Guided without guides and no word; a saved Upright in both the XMP and the
+    /// develop settings is reported once.
+    #[test]
+    fn catalog_xmp_upright_and_guides_are_reported() {
+        let xmp = |fields: &str| {
+            format!(
+                r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="+0.30" {fields}/></rdf:RDF></x:xmpmeta>"#
+            )
+        };
+        let guides = xmp(
+            r#"crs:PerspectiveUpright="5" crs:UprightFourSegmentsCount="2" crs:UprightFourSegments_0="0.2, 0.1, 0.25, 0.9" crs:UprightFourSegments_1="0.8, 0.1, 0.75, 0.9""#,
+        );
+        let auto = "1.010477639,-0.008540717,-0.006124940,0.014938050,1.011645918,-0.015359712,-0.007190889,-0.003396748,1.000000000";
+        let matrix = xmp(&format!(
+            r#"crs:PerspectiveUpright="1" crs:UprightVersion="151388160" crs:UprightTransformCount="6" crs:UprightTransform_1="{auto}""#
+        ));
+        let lua =
+            format!(r#"s = {{ PerspectiveUpright = 1, UprightVersion = 151388160, UprightTransformCount = 6, UprightTransform_1 = "{auto}" }}"#);
+        for (packet, settings, mode) in
+            [(guides, String::new(), lightcraft_develop::Upright::Guided), (matrix, lua, lightcraft_develop::Upright::Auto)]
+        {
+            let mut data = sample();
+            data.photos.truncate(1);
+            data.photos[0].image.remove("masterImage");
+            data.photos[0].xmp = packet;
+            data.photos[0].settings = settings;
+            let mut s = crate::Session::new();
+            let r = apply(&mut s, data, false).unwrap();
+            let p = s.catalog.photos().next().unwrap();
+            assert_eq!((p.develop.geometry.upright, p.develop.geometry.upright_transform), (mode, None));
+            let notes: Vec<String> = r["unmapped"]
+                .as_object()
+                .into_iter()
+                .flat_map(|m| m.values())
+                .filter_map(Value::as_array)
+                .flatten()
+                .filter_map(|v| v.as_str())
+                .filter(|v| v.starts_with("Upright"))
+                .map(String::from)
+                .collect();
+            assert_eq!(notes.len(), 1, "{mode:?}: {r}");
+        }
+    }
+
     #[test]
     fn deferred_auto_tone_sentinels_never_become_real_slider_values() {
         let mut data = sample();
@@ -1301,6 +1473,61 @@ mod tests {
         }
     }
 
+    fn smart_sample(content: &str) -> CatalogImport {
+        let mut data = sample();
+        data.collections.push(row(json!({"id_local":11,"name":"Best","creationId":"com.adobe.ag.library.smart_collection"})));
+        data.members.push(row(json!({"collection":11,"image":1})));
+        data.collection_content = vec![row(json!({"collection":11,"owningModule":"ag.library.smart_collection","content":content}))];
+        data
+    }
+    const SUPPORTED: &str = "s = { { criteria = \"rating\", operation = \">=\", value = 4 }, combine = \"intersect\" }";
+    const UNSUPPORTED: &str = "s = { { criteria = \"collection\", operation = \"all\", value = \"x\" } }";
+    #[test]
+    fn reimport_keeps_an_earlier_static_album_static_and_merges_its_membership() {
+        let dir = std::env::temp_dir().join(format!("lightcraft-lrcat-reimport_keeps_an_earlie-{}", std::process::id()));
+        let mut s = crate::Session::new();
+        s.open_library(&dir, false).unwrap();
+        let r = apply(&mut s, smart_sample(UNSUPPORTED), false).unwrap();
+        assert_eq!((r["smartAlbums"].as_u64(), r["smartAsStatic"].as_u64()), (Some(0), Some(1)));
+        let albums = s.catalog.albums().count();
+        let mut data = smart_sample(SUPPORTED);
+        data.members.push(row(json!({"collection":11,"image":2})));
+        let r = apply(&mut s, data.clone(), false).unwrap();
+        assert_eq!((r["smartAlbums"].as_u64(), r["smartAsStatic"].as_u64(), r["smartKept"].as_u64()), (Some(0), Some(1), Some(0)));
+        assert!(
+            r["warnings"].as_array().unwrap().iter().any(|w| w.as_str().is_some_and(|w| w.starts_with("Best:") && w.contains("stays static"))),
+            "{}",
+            r["warnings"]
+        );
+        let best = s.catalog.albums().find(|a| a.name == "Best").unwrap();
+        assert!(!best.is_smart());
+        assert_eq!(best.photos.len(), 2, "new membership merged");
+        // Repeating the import creates no duplicates.
+        apply(&mut s, data, false).unwrap();
+        assert_eq!(s.catalog.albums().count(), albums);
+        assert_eq!(s.catalog.albums().find(|a| a.name == "Best").unwrap().photos.len(), 2);
+        s.close_library().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn reimport_preserves_user_edited_smart_rules() {
+        let dir = std::env::temp_dir().join(format!("lightcraft-lrcat-reimport_preserves_user_-{}", std::process::id()));
+        let mut s = crate::Session::new();
+        s.open_library(&dir, false).unwrap();
+        let r = apply(&mut s, smart_sample(SUPPORTED), false).unwrap();
+        assert_eq!(r["smartAlbums"], 1);
+        let albums = s.catalog.albums().count();
+        let id = s.catalog.albums().find(|a| a.name == "Best").unwrap().id;
+        let edited = lightcraft_catalog::Filter { rating: 2, ..Default::default() };
+        s.commit("Edit rules", Op::SetAlbumRules { id, rules: Box::new(edited.clone()) }).unwrap();
+        let r = apply(&mut s, smart_sample(SUPPORTED), false).unwrap();
+        assert_eq!((r["smartAlbums"].as_u64(), r["smartAsStatic"].as_u64(), r["smartKept"].as_u64()), (Some(1), Some(0), Some(1)));
+        let best = s.catalog.album(id).unwrap();
+        assert_eq!(best.smart.as_deref().map(|f| f.rating), Some(2));
+        assert_eq!(s.catalog.albums().count(), albums);
+        s.close_library().unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn persistent_reimport_keeps_copy_and_collection_ids_and_capture_time() {
         let dir = std::env::temp_dir().join(format!("lightcraft-lrcat-reimport-{}", std::process::id()));
@@ -1351,7 +1578,12 @@ mod tests {
                     body.extend(s.as_bytes());
                     13 + 2 * s.len() as u64
                 }
-                _ => unreachable!(),
+                // with the TEXT type, as Lightroom (cloud) stores its MessagePack documents
+                SqlValue::Blob(b) => {
+                    body.extend(b);
+                    13 + 2 * b.len() as u64
+                }
+                SqlValue::Real(_) => unreachable!(),
             };
             header.extend(varint(serial));
         }
@@ -1377,8 +1609,27 @@ mod tests {
     }
     /// A one-row-per-table SQLite file: `(name, columns, row)` each.
     fn native_catalog(tables: &[(&str, &str, Vec<SqlValue>)]) -> Vec<u8> {
+        native_catalog_with_last_table_page(tables, None)
+    }
+
+    /// [`native_catalog`] with the last table's root page set to `last_page`, when given.
+    fn native_catalog_with_last_table_page(tables: &[(&str, &str, Vec<SqlValue>)], last_page: Option<i64>) -> Vec<u8> {
+        sqlite_file_with_last_table_page(
+            &tables.iter().map(|(name, columns, row)| (*name, *columns, vec![row.clone()])).collect::<Vec<_>>(),
+            last_page,
+        )
+    }
+
+    /// A SQLite file with one 2 KiB leaf page per table: `(name, columns, rows)` each; row `i` has
+    /// rowid `i + 1`.
+    pub(crate) fn sqlite_file(tables: &[(&str, &str, Vec<Vec<SqlValue>>)]) -> Vec<u8> {
+        sqlite_file_with_last_table_page(tables, None)
+    }
+
+    fn sqlite_file_with_last_table_page(tables: &[(&str, &str, Vec<Vec<SqlValue>>)], last_page: Option<i64>) -> Vec<u8> {
         use SqlValue::{Integer as I, Text as T};
-        let mut bytes = vec![0u8; 5 * 2048];
+        let pages = tables.len() + 1;
+        let mut bytes = vec![0u8; pages * 2048];
         bytes[..16].copy_from_slice(b"SQLite format 3\0");
         bytes[16..18].copy_from_slice(&2048u16.to_be_bytes());
         bytes[18] = 1;
@@ -1386,19 +1637,19 @@ mod tests {
         bytes[21] = 64;
         bytes[22] = 32;
         bytes[23] = 32;
-        bytes[28..32].copy_from_slice(&5u32.to_be_bytes());
+        bytes[28..32].copy_from_slice(&(pages as u32).to_be_bytes());
         bytes[44..48].copy_from_slice(&4u32.to_be_bytes());
         bytes[56..60].copy_from_slice(&1u32.to_be_bytes());
         let mut schema = Vec::new();
-        for (i, (name, columns, row)) in tables.iter().enumerate() {
+        for (i, (name, columns, rows)) in tables.iter().enumerate() {
             schema.push(vec![
                 T("table".into()),
                 T((*name).into()),
                 T((*name).into()),
-                I(i as i64 + 2),
+                I(if i + 1 == tables.len() { last_page.unwrap_or(i as i64 + 2) } else { i as i64 + 2 }),
                 T(format!("CREATE TABLE {name} ({columns})")),
             ]);
-            leaf(&mut bytes[(i + 1) * 2048..(i + 2) * 2048], 0, std::slice::from_ref(row));
+            leaf(&mut bytes[(i + 1) * 2048..(i + 2) * 2048], 0, rows);
         }
         leaf(&mut bytes[..2048], 100, &schema);
         bytes
@@ -1432,6 +1683,29 @@ mod tests {
         assert_eq!(catalog.photos[0].uuid, "fixture-image");
         assert_eq!(number(&catalog.photos[0].image, "rating"), 5);
         assert!(catalog.photos[0].path.ends_with("test.ARW"));
+        // Put the required image table beyond the old 1 GiB cutoff without allocating it.
+        // A main-file-sized allocation would defeat the purpose of the page-backed reader.
+        // The large fixture relies on Unix sparse-file behavior; small parity runs everywhere.
+        #[cfg(unix)]
+        {
+            let far_offset = 1u64 << 30;
+            let bytes = native_catalog_with_last_table_page(&photo_tables(("/catalog/", "")), Some((far_offset / 2048 + 1) as i64));
+            use std::io::{Seek, SeekFrom, Write};
+            let mut sparse = std::fs::OpenOptions::new().write(true).truncate(true).open(&path).unwrap();
+            sparse.write_all(&bytes).unwrap();
+            sparse.set_len(far_offset + 2048).unwrap();
+            sparse.seek(SeekFrom::Start(far_offset)).unwrap();
+            sparse.write_all(&bytes[4 * 2048..5 * 2048]).unwrap();
+            drop(sparse);
+            let large = read(&path).unwrap();
+            assert_eq!(serde_json::to_value(&large.photos).unwrap(), serde_json::to_value(&catalog.photos).unwrap());
+            let mut session = crate::Session::new();
+            session.execute("library.importLightroom", &json!({"path": path.to_string_lossy()})).unwrap();
+            assert_eq!(session.catalog.len(), 1);
+            assert_eq!(session.catalog.photos().next().unwrap().rating, 5);
+            session.execute("edit.undo", &json!({})).unwrap();
+            assert!(session.catalog.is_empty());
+        }
         std::fs::write(&path, b"bad catalog").unwrap();
         assert!(read(&path).is_err());
         std::fs::remove_file(path).unwrap();
@@ -1452,7 +1726,7 @@ mod tests {
             calls.fetch_add(1, Ordering::Relaxed);
             Err("a known-missing original must not be probed".into())
         }));
-        let mut job = crate::lightroom_job::LightroomJob::new(&mut s, source, false).unwrap();
+        let mut job = crate::lightroom_job::LightroomJob::new(&mut s, source, false, false).unwrap();
         let prepared = job.prepare(&AtomicBool::new(false)).unwrap();
         assert_eq!(probes.load(Ordering::Relaxed), 0);
         let result = crate::lightroom_job::commit_prepared(&mut s, prepared).unwrap();
@@ -1482,7 +1756,7 @@ mod tests {
             Ok(crate::media::ProbeInfo { format: "ARW".into(), width: 20, height: 10, ..Default::default() })
         }));
         for expected in [1, 0] {
-            let mut job = crate::lightroom_job::LightroomJob::new(&mut s, source.clone(), false).unwrap();
+            let mut job = crate::lightroom_job::LightroomJob::new(&mut s, source.clone(), false, false).unwrap();
             let prepared = job.prepare(&AtomicBool::new(false)).unwrap();
             let completion = crate::lightroom_job::commit_prepared(&mut s, prepared).unwrap();
             assert_eq!(completion.report["imported"], expected);

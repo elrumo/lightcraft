@@ -341,5 +341,14 @@
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
   "Delete the group “{name}” and its {n} presets?": "Eliminare il gruppo «{name}» e i suoi {n} preset?",
   "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Hai nascosto «{name}». «Mostra preset nascosti», nel menu del pannello, lo fa ricomparire.",
-  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} foto potrebbero essere sensibili. Non viene nascosto nulla finché non scegli."
+  "Changes found: {n}": "Changes found: {n}",
+  "Look at the changes found in “{name}” first, or dismiss them": "Look at the changes found in “{name}” first, or dismiss them",
+  "Rendered {ok} of {total} to DNG": "Rendered {ok} of {total} to DNG",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} foto potrebbero essere sensibili. Non viene nascosto nulla finché non scegli.",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Album di Lightroom importati: creati {albums} album e {folders} cartelle, {added} foto inserite negli album",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Catalogo di Lightroom esaminato: album {albums}, cartelle {folders}, foto negli album {photos}",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} foto corrispondono a più di una foto qui e sono state escluse.",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} foto degli album sono in questa libreria; {unmatched} no e sono state escluse.",
+  "{updated} albums that were already here got photos.": "{updated} album già presenti hanno ricevuto foto."
 }

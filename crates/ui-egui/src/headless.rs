@@ -2479,6 +2479,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(&out);
     }
 
+    /// Photo ▸ Render to DNG renders on a worker: the request answers at once, the window keeps
+    /// drawing frames with the activity row up, and the DNGs arrive stacked on their originals.
+    #[test]
+    fn render_to_dng_keeps_the_window_drawing() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(30);
+        let out = std::env::temp_dir().join(format!("lc-render-dng-ui-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        h.app.services.write_shared = Some(Arc::new(|p: &str, bytes: &[u8]| lightcraft_engine::export::write_file(p, bytes)));
+        let ids: Vec<u64> = h.app.session.visible_cloned().iter().take(4).map(|p| p.0).collect();
+        let started = Instant::now();
+        let r = h.request("engine.execute", json!({"command": "photo.renderToDng", "params": {"ids": ids, "dir": out.to_string_lossy()}}), t);
+        assert_eq!((r["ok"].as_bool(), r["result"]["background"].as_bool()), (Some(true), Some(true)), "{r}");
+        assert!(h.app.render_dng.is_some(), "the renders run on a worker");
+        let row = h.app.session.activity.list().into_iter().find(|r| r.kind == "renderDng").expect("its activity row");
+        assert!(row.cancellable);
+        let mut frames = 0;
+        while h.app.render_dng.is_some() && started.elapsed() < Duration::from_secs(120) {
+            h.step();
+            frames += 1;
+        }
+        assert!(h.app.render_dng.is_none(), "the batch finished");
+        assert!(frames > 1, "frames were drawn while the DNGs rendered ({frames})");
+        let last = h.app.last_render_dng.clone().expect("the batch reports");
+        let copies = last["copies"].as_array().unwrap();
+        assert_eq!(copies.len(), 4, "{last}");
+        for c in copies {
+            let new = lightcraft_catalog::PhotoId(c["id"].as_u64().unwrap());
+            let orig = lightcraft_catalog::PhotoId(c["original"].as_u64().unwrap());
+            let st = h.app.session.catalog.stack_of(new).expect("stacked");
+            assert!(st.photos.first() == Some(&new) && st.photos.contains(&orig));
+        }
+        assert!(h.app.session.activity.list().iter().all(|r| r.kind != "renderDng"));
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
     /// Issue #236 review: control requests run on the UI thread, which must not wait minutes for
     /// Photos. `export.addToPhotos` and `app.export {addToPhotos}` without `background` answer at
     /// once with the running job; the app announces the outcome when Photos is done.
@@ -2773,6 +2810,42 @@ mod tests {
         assert_eq!(h.app.session.develop_of(photo).unwrap(), before);
     }
 
+    #[test]
+    fn crop_starts_locked_to_original_without_editing_and_remembers_unlock() {
+        use crate::state::UiState;
+        for saved in [json!({}), json!({"cropDefaultAspect": null})] {
+            let mut h = demo([1200.0, 800.0]);
+            h.app.ui = serde_json::from_value::<UiState>(saved).unwrap();
+            let photos: Vec<_> =
+                h.app.session.visible_cloned().into_iter().filter(|id| !h.app.session.catalog.photo(*id).unwrap().is_edited()).collect();
+            let photo = photos[0];
+            h.app.run("library.select", json!({"ids": [photo.0]})).unwrap();
+            h.app.run("panel.crop", json!({})).unwrap();
+            let before = h.app.session.develop_of(photo).unwrap();
+            let p = h.app.session.catalog.photo(photo).unwrap();
+            let original = (p.width * 100, p.height * 100);
+            let undo = h.app.session.undo.len();
+            h.settle(SETTLE);
+            assert_eq!(h.app.crop_tool_aspect(), Some(original));
+            assert_eq!(h.app.session.develop_of(photo).unwrap(), before);
+            assert_eq!(h.app.session.undo.len(), undo);
+            h.app.run("develop.beginInteraction", json!({"label": "Crop"})).unwrap();
+            h.app.begin_crop().unwrap();
+            h.app.run("crop.drag", json!({"handle": "bottomRight", "from": [0.8, 0.8], "to": [0.7, 0.6]})).unwrap();
+            h.app.run("develop.endInteraction", json!({})).unwrap();
+            assert_eq!(h.app.session.develop_of(photo).unwrap().crop.aspect, Some(original));
+            assert_eq!(h.app.session.undo.len(), undo + 1);
+            h.app.run("edit.undo", json!({})).unwrap();
+            assert_eq!(h.app.session.develop_of(photo).unwrap(), before);
+            h.app.run("crop.aspect", json!({"aspect": "toggle"})).unwrap();
+            let saved = serde_json::to_value(&h.app.ui).unwrap();
+            h.app.ui = serde_json::from_value(saved).unwrap();
+            h.app.run("library.select", json!({"ids": [photos[1].0]})).unwrap();
+            assert_eq!(h.app.ui.crop_default_aspect, Some(json!("free")));
+            assert_eq!(h.app.crop_tool_aspect(), None);
+        }
+    }
+
     /// While cropping: O cycles the guides, ⇧O mirrors them, A locks / unlocks the aspect.
     #[test]
     fn crop_keys() {
@@ -2787,12 +2860,12 @@ mod tests {
         h.request("ui.key", json!({"key": "O", "shift": true}), t);
         assert_eq!(h.app.ui.crop_overlay_orient, 1);
         assert_eq!(h.app.ui.mask_overlay, mask_overlay, "O doesn't toggle the mask overlay while cropping");
-        let locked = |h: &Headless| h.app.session.develop_of(h.app.session.active().unwrap()).unwrap().crop.aspect.is_some();
-        assert!(!locked(&h));
-        h.request("ui.key", json!({"key": "A"}), t);
+        let locked = |h: &Headless| h.app.crop_tool_aspect().is_some();
         assert!(locked(&h));
         h.request("ui.key", json!({"key": "A"}), t);
         assert!(!locked(&h));
+        h.request("ui.key", json!({"key": "A"}), t);
+        assert!(locked(&h));
         assert!(!h.app.ui.visualize_spots);
     }
 
@@ -4383,17 +4456,28 @@ mod tests {
         for _ in 0..4 {
             h.step();
         }
-        // Performance: the thumbnail cache size goes to the library preferences
+        // Performance: the thumbnail cache size goes to the library preferences. The GPU status
+        // line at the top of this tab reads process-wide GPU state that tests running alongside
+        // change (app.gpu off, a device failure); when its text rewraps between the frame that
+        // placed a button and the click, everything below shifts and the click misses. These
+        // choices are idempotent, so click again until the setting takes.
+        fn click_until(h: &mut Headless, id: &str, done: impl Fn(&Headless) -> bool) {
+            for _ in 0..5 {
+                let r = h.request("ui.clickWidget", json!({"id": id}), Duration::from_secs(10));
+                assert_eq!(r["ok"], true, "{id}: {r}");
+                if done(h) {
+                    return;
+                }
+            }
+            panic!("clicking {id} never took effect");
+        }
         h.request("ui.clickWidget", json!({"id": "button:settingsTab-performance"}), t);
-        h.request("ui.clickWidget", json!({"id": "button:settingsCache-0"}), t);
-        assert_eq!(h.app.session.cache_mb, 512);
-        h.request("ui.clickWidget", json!({"id": "button:settingsPreview-3"}), t);
-        assert_eq!(h.app.ui.settings.preview_limit, 3840);
-        h.request("ui.clickWidget", json!({"id": "button:settingsMemory-2"}), t);
-        assert_eq!(h.app.ui.settings.memory_mb, 1024);
+        click_until(&mut h, "button:settingsCache-0", |h| h.app.session.cache_mb == 512);
+        click_until(&mut h, "button:settingsPreview-3", |h| h.app.ui.settings.preview_limit == 3840);
+        click_until(&mut h, "button:settingsMemory-2", |h| h.app.ui.settings.memory_mb == 1024);
         h.step();
         assert_eq!(lightcraft_engine::memory::budget(), 1024 << 20, "applied through app.memoryBudget");
-        h.request("ui.clickWidget", json!({"id": "button:settingsMemory-0"}), t);
+        click_until(&mut h, "button:settingsMemory-0", |h| h.app.ui.settings.memory_mb == 0);
         h.step();
         assert_eq!(lightcraft_engine::memory::budget(), lightcraft_engine::memory::default_budget(), "back to automatic");
         // Import: per-camera defaults
