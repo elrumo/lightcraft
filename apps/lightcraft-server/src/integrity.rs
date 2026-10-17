@@ -289,7 +289,7 @@ fn tiff<R: Read + Seek>(f: &mut Reader<R>) -> std::io::Result<Verdict> {
                 return Ok(cut(None, "a directory runs past the end of the file"));
             }
             let mut tags: HashMap<u64, (u64, u64, &[u8])> = HashMap::new();
-            for e in ent.chunks_exact(12).take(usize::try_from(n).unwrap_or(0)) {
+            for e in ent.as_chunks::<12>().0.iter().take(usize::try_from(n).unwrap_or(0)) {
                 if let (Some(tag), Some(typ), Some(count)) = (u16_(e, 0), u16_(e, 2), u32_(e, 4)) {
                     tags.insert(tag, (typ, count, e.get(8..12).unwrap_or(&[])));
                 }

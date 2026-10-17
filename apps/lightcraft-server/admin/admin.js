@@ -1289,7 +1289,9 @@ function showCheck(name, r) {
   if (r.running) progress(bar, r.total ? r.done / r.total : 0);
   $('checkFound').hidden = r.running || !bad.length;
   $('checkFoundTitle').textContent = plural(bad.length, 'damaged file', 'damaged files');
-  const why = (d) => d.why + (d.missing ? ' (' + bytes(d.missing) + ' missing)' : '') + (d.photos.length ? ': ' + d.photos.join(', ') : '');
+  // (a photo is named only when its name isn't the file's own)
+  const named = (d) => d.photos.filter((p) => !d.path.endsWith('/' + p));
+  const why = (d) => d.why + (d.missing ? ' (' + bytes(d.missing) + ' missing)' : '') + (named(d).length ? ': ' + named(d).join(', ') : '');
   const shown = bad.slice(0, 200);
   $('checkList').replaceChildren(
     ...shown.map((d) => el('li', {}, el('code', {}, d.path), ' ', el('span', { class: 'muted' }, why(d)))),
