@@ -208,6 +208,26 @@ impl CropGeometry {
         CropGeometry { rect: self.rect, angle: angle_deg }.constrained_in(w, h, true)
     }
 
+    /// This crop zoomed `by` about its own centre, as a pinch on Lightroom's crop does (`by` > 1
+    /// zooms in: the crop shrinks): its shape kept, no smaller than a drag allows, and when it would
+    /// reach past the photo (or with `expand`, past the grown photo), pulled in and shrunk as
+    /// [`CropGeometry::constrained_in`] does. A `by` that is not a positive number changes nothing.
+    pub fn zoomed_in(&self, by: f64, w: f64, h: f64, expand: bool) -> CropGeometry {
+        let r = self.rect_px(w, h);
+        let short = r.width().min(r.height());
+        if !(by.is_finite() && by > 0.0 && short > 0.0) {
+            return *self;
+        }
+        // (a crop already below the smallest is not grown by zooming in)
+        let min_side = MIN_CROP_FRACTION * w.min(h);
+        let s = (1.0 / by).max((min_side / short).min(1.0));
+        let zoomed = CropGeometry { rect: Rect::from_center(r.center(), r.width() * s, r.height() * s).scale(1.0 / w, 1.0 / h), angle: self.angle };
+        if !zoomed.rect.x0.is_finite() || !zoomed.rect.y1.is_finite() {
+            return *self;
+        }
+        if zoomed.is_within(w, h, expand) { zoomed } else { zoomed.constrained_in(w, h, expand) }
+    }
+
     /// Whether some of the crop lies outside the photo (there is area for Generative Expand to
     /// fill).
     pub fn reaches_past(&self, w: f64, h: f64) -> bool {
@@ -346,6 +366,32 @@ mod tests {
         // hostile aspect: the photo's own
         let own = crop_cover_angle(600.0, 400.0, 0.0, Some(f64::NAN));
         assert!((own.rect.width() - 1.0).abs() < 1e-9 && (own.rect.height() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zooming_scales_the_crop_about_its_centre_within_the_photo() {
+        let (w, h) = (600.0, 400.0);
+        let c = CropGeometry { rect: Rect::new(0.2, 0.2, 0.6, 0.8), angle: 5.0 };
+        let aspect = c.rect_px(w, h).aspect();
+        // in: half the size, same centre and shape
+        let z = c.zoomed_in(2.0, w, h, false);
+        assert!((z.rect.width() - 0.2).abs() < 1e-9 && (z.rect.height() - 0.3).abs() < 1e-9, "{z:?}");
+        assert!((z.rect.center().x - 0.4).abs() < 1e-9 && (z.rect.center().y - 0.5).abs() < 1e-9);
+        assert_eq!(z.angle, 5.0);
+        // out, far: no bigger than fits, its shape kept
+        let out = c.zoomed_in(0.1, w, h, false);
+        assert!(out.is_within_image(w, h), "{out:?}");
+        assert!((out.rect_px(w, h).aspect() - aspect).abs() < 1e-6);
+        assert!(out.rect.width() > c.rect.width());
+        // in, far: stops at the smallest crop a drag allows
+        let tiny = c.zoomed_in(1e6, w, h, false);
+        assert!(tiny.rect_px(w, h).width().min(tiny.rect_px(w, h).height()) >= MIN_CROP_FRACTION * h - 1e-6, "{tiny:?}");
+        // hostile factors change nothing
+        for by in [0.0, -2.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(c.zoomed_in(by, w, h, false), c, "{by}");
+        }
+        // with Expand the crop may grow past the photo
+        assert!(CropGeometry::default().zoomed_in(0.8, w, h, true).reaches_past(w, h));
     }
 
     #[test]
