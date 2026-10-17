@@ -17,3 +17,5 @@ plan/
 *.onnx
 *.onnx.part
 dng-test.dng
+
+/temp
