@@ -465,6 +465,18 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request(name);
             folders(st, name)
         }),
+        // The same for every user at once (the Processing page): `pause` and `resume` were global already
+        (Method::Post, ["previews", action @ ("pause" | "resume" | "generate" | "rebuild")]) => {
+            let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+            match *action {
+                "pause" => st.folders.pause(true),
+                "resume" => st.folders.pause(false),
+                "rebuild" => names.iter().for_each(|n| st.folders.rebuild_all(n)),
+                _ => names.iter().for_each(|n| st.folders.generate_all(n)),
+            }
+            log::info!("admin {me}: {action} previews (everyone)");
+            Ok(search(st))
+        }
         // `generate`: the previews that are missing; `rebuild`: every preview, the ones there too
         (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate" | "rebuild")]) => {
             match *action {
@@ -506,6 +518,12 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             log::info!("admin {me}: reading the text in photos turned {}", if b.enabled { "on" } else { "off" });
             Ok(search(st))
         }),
+        (Method::Put, ["search", "sensitive"]) => read_json::<Enabled>(req).map_err(Err).and_then(|b| {
+            st.vision.set_sensitive_enabled(b.enabled).map_err(|e| Ok((500, e)))?;
+            log::info!("admin {me}: checking photos for sensitive content turned {}", if b.enabled { "on" } else { "off" });
+            st.vision.wake();
+            Ok(search(st))
+        }),
         (Method::Put, ["search", "schedule", kind]) => match Part::from_key(kind) {
             None => Err(Ok((404, "no such part".to_string()))),
             Some(part) => read_json::<Schedule>(req).map_err(Err).and_then(|b| {
@@ -522,6 +540,9 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         (Method::Post, ["search", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Search, l)),
         (Method::Post, ["search", "text", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Text, l)),
         (Method::Post, ["search", "faces", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Faces, l)),
+        (Method::Post, ["search", "sensitive", "download"]) => {
+            read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Sensitive, l))
+        }
         (Method::Delete, ["search", "download"]) => {
             st.vision.switch.cancel(Part::Search);
             Ok(search(st))
@@ -532,6 +553,10 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         }
         (Method::Delete, ["search", "faces", "download"]) => {
             st.vision.switch.cancel(Part::Faces);
+            Ok(search(st))
+        }
+        (Method::Delete, ["search", "sensitive", "download"]) => {
+            st.vision.switch.cancel(Part::Sensitive);
             Ok(search(st))
         }
         // (faces are personal data: found only for a user an admin turned it on for)
@@ -753,6 +778,10 @@ fn terms(part: Part) -> (f64, String) {
         Part::Faces => {
             (FACE_BYTES as f64, format!("{} ({}) and {} ({})", FACE_LICENSES[0].0, FACE_LICENSES[0].1, FACE_LICENSES[1].0, FACE_LICENSES[1].1))
         }
+        Part::Sensitive => {
+            use lightcraft_engine::vision::{SENSITIVE_BYTES, SENSITIVE_LICENSE_NAME, SENSITIVE_LICENSE_URL};
+            (SENSITIVE_BYTES as f64, format!("{SENSITIVE_LICENSE_NAME} ({SENSITIVE_LICENSE_URL})"))
+        }
     }
 }
 
@@ -765,12 +794,14 @@ fn fetch_models(st: &State, me: &str, part: Part, l: Licence) -> AdminResult {
             Part::Search => ("the search model", format!("{:.1} GB", bytes / 1e9)),
             Part::Text => ("the text-reading models", format!("{:.0} MB", bytes / 1e6)),
             Part::Faces => ("the face models", format!("{:.0} MB", bytes / 1e6)),
+            Part::Sensitive => ("the sensitive-content model", format!("{:.0} MB", bytes / 1e6)),
         };
         return Err(Ok((400, format!("{what}: a {size} download under the {licences}: send `acknowledged: true` once you agree to it"))));
     }
     match part {
         Part::Search => st.vision.set_enabled(true),
         Part::Text => st.vision.set_text_enabled(true),
+        Part::Sensitive => st.vision.set_sensitive_enabled(true),
         Part::Faces => Ok(()),
     }
     .map_err(|e| Ok((500, e)))?;
@@ -796,7 +827,7 @@ fn search(st: &State) -> Value {
     let v = &st.vision;
     let (model, dim) = v.spec();
     // (what the server has indexed only matters while it does something)
-    let busy = v.installed() || v.text_installed() || v.faces_installed();
+    let busy = v.installed() || v.text_installed() || v.faces_installed() || v.sensitive_installed();
     let users: Vec<Value> = accounts::read_users(&st.data)
         .map(|f| f.users.into_iter().map(|(name, u)| (name, u.faces)).collect::<Vec<_>>())
         .unwrap_or_default()
@@ -807,6 +838,7 @@ fn search(st: &State) -> Value {
                 None => (None, None, None),
             };
             let total = a.as_ref().or(b.as_ref()).or(c.as_ref()).map(|p| p.total);
+            let checked = v.sensitive_installed().then(|| v.sensitive.index(&st.data, &name, false).ok().flatten().map_or(0, |ix| ix.lock().unwrap_or_else(PoisonError::into_inner).len()));
             // (how the worker gets on with this user's photos: its pace, what waits for previews, what it couldn't do and why)
             let work = |part: Part| {
                 json!({
@@ -816,8 +848,8 @@ fn search(st: &State) -> Value {
                     "problem": crate::vision::problem(st, part, &name),
                 })
             };
-            let work = json!({"search": work(Part::Search), "text": work(Part::Text), "faces": work(Part::Faces)});
-            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done), "work": work})
+            let work = json!({"search": work(Part::Search), "text": work(Part::Text), "faces": work(Part::Faces), "sensitive": work(Part::Sensitive)});
+            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done), "checked": checked, "work": work})
         })
         .collect();
     // paused / window / time left for one part; `ready` is the photos left that have their previews
@@ -844,6 +876,7 @@ fn search(st: &State) -> Value {
         })
     };
     json!({
+        "previews": previews(st),
         "schedule": schedule(Part::Search, |u| u["indexed"].as_u64()),
         "enabled": v.switch.enabled(),
         "installed": v.files_installed(),
@@ -873,7 +906,50 @@ fn search(st: &State) -> Value {
             "download": v.switch.status(Part::Faces),
             "schedule": schedule(Part::Faces, |u| u["found"].as_u64()),
         },
+        "sensitive": {
+            "enabled": v.switch.sensitive_enabled(),
+            "installed": v.sensitive.files_installed(),
+            "active": v.sensitive_installed(),
+            "sizeBytes": lightcraft_engine::vision::SENSITIVE_BYTES,
+            "license": lightcraft_engine::vision::SENSITIVE_LICENSE_NAME,
+            "licenseUrl": lightcraft_engine::vision::SENSITIVE_LICENSE_URL,
+            "download": v.switch.status(Part::Sensitive),
+            "schedule": schedule(Part::Sensitive, |u| u["checked"].as_u64()),
+        },
         "users": users,
+    })
+}
+
+/// Building previews, for the Processing page: every user's batch added up (`left`, `done`, the pace), the time left
+/// (the slowest user's), what is being built now, and per user how many photos have previews.
+fn previews(st: &State) -> Value {
+    let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+    let (mut left, mut done, mut per_min, mut eta, mut have, mut photos, mut counted) = (0usize, 0usize, 0u64, None::<u64>, 0usize, 0usize, true);
+    let (mut building, mut users, mut last, mut rebuilding) = (Vec::new(), Vec::new(), None::<(usize, u64)>, false);
+    for name in &names {
+        let s = st.folders.status(name);
+        let cov = st.folders.coverage(st, name);
+        counted &= cov.is_some();
+        let (h, p) = cov.unwrap_or((0, 0));
+        (left, done, have, photos) = (left + s.previews, done + s.previews_done, have + h, photos + p);
+        per_min += s.previews_per_min.unwrap_or(0);
+        eta = eta.max(s.previews_eta_secs);
+        rebuilding |= s.previews_rebuilding;
+        if let Some((at, n)) = s.previews_last_at.zip(s.previews_last_done)
+            && last.is_none_or(|l| at > l.1)
+        {
+            last = Some((n, at));
+        }
+        building.extend(s.previews_building.iter().cloned());
+        users.push(json!({"name": name, "left": s.previews, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len()}));
+    }
+    building.sort();
+    json!({
+        "paused": st.folders.status("").previews_paused,
+        "left": left, "done": done, "perMinute": per_min, "etaSecs": eta, "rebuilding": rebuilding,
+        "have": counted.then_some(have), "photos": counted.then_some(photos),
+        "lastDone": last.map(|l| l.0), "lastAt": last.map(|l| l.1),
+        "building": building, "users": users,
     })
 }
 

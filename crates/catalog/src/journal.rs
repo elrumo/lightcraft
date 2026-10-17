@@ -53,6 +53,7 @@
 //! | 8 | History cursor: Go to History Step adds no step | `Op::SetHistoryCursor`, `Photo.history_cursor` |
 //! | 9 | preview-only recheck (#662, upstream) | `Photo.preview_checked`, `Op::SetContent.preview_checked` |
 //! | 10 | library folders on the sync server (this fork) | `Op::SetServerPath`, `Photo.server_path`. This fork wrote `SetServerPath` as format 3, then 8, then 9, before upstream's own format 9 made it 10; those libraries still open and are upgraded, as every op in them is known |
+//! | 11 | the Hidden album (this fork) | `Op::SetHidden`, `Photo.hidden` |
 //!
 //! Rules:
 //! - **Bump [`VERSION`]** (and add a row above) in the change that adds an [`Op`] variant or a
@@ -77,7 +78,7 @@ pub const LOG: &str = "catalog.log";
 const FORMAT: &str = "lightcraft-catalog";
 /// The catalog format this build writes (and the newest it reads). See the module docs →
 /// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
-pub const VERSION: u32 = 10;
+pub const VERSION: u32 = 11;
 
 /// [`Journal::records_since`] finds its place in the log through an index with one entry per this
 /// many records.

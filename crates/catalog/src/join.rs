@@ -183,6 +183,10 @@ fn fill_in(server: &mut Catalog, outbox: &mut Outbox, sid: PhotoId, l: &Photo) {
     if s.label.is_none() && l.label.is_some() {
         ops.push(Op::SetLabel { id: sid, label: l.label });
     }
+    // hidden on either side stays hidden
+    if !s.hidden && l.hidden {
+        ops.push(Op::SetHidden { id: sid, hidden: true });
+    }
     if !s.is_edited() && l.is_edited() {
         ops.push(Op::SetDevelop { id: sid, settings: l.develop.clone(), label: "Joined library".into(), edited: l.edited.clone() });
     }

@@ -16,7 +16,7 @@ to its licence, and everything else works without it.
   are then indexed in the background (you can search the ones that are ready meanwhile).
 - **A device with no model** (the web build, iOS, or a desktop that didn't download it) searches through the sync server when
   the server can: the switch appears once the server says so, and the panel says how many photos the server has ready.
-  An administrator turns that on once for everyone from the server's admin page (**Search**), so no device downloads the
+  An administrator turns that on once for everyone from the server's admin page (**Processing**), so no device downloads the
   model. If it is off or still downloading, the panel says so instead of offering a download it can't use (on a device
   that can't run the model).
 - **This device only:** a desktop next to a server that can search answers from the server by default and offers no
@@ -68,7 +68,7 @@ Traditional), Japanese and 46 other languages. It is a separate, opt-in step wit
   forms don't matter, hiragana and katakana are the same, one wrong letter in a word of five or more still matches, and
   Chinese/Japanese match as phrases or when most of their character pairs are there. Text search works without the
   description model.
-- **On the server:** with the models installed (the admin page's **Search ▸ Words in photos**, or `lightcraft-server model download --accept-licences --text`; `model disable --text` or the switch turns it off, keeping what was read) the server reads
+- **On the server:** with the models installed (the admin page's **Processing ▸ Words in photos**, or `lightcraft-server model download --accept-licences --text`; `model disable --text` or the switch turns it off, keeping what was read) the server reads
   each photo's smart preview, 25 photos at a time so new photos are never kept waiting, and `GET /api/search` merges the
   words and the looks; a desktop can send what it read (`vision.share`, same opt-in as the vectors) — the server keeps text
   for photos of that user's library only and refuses another reader's or a damaged upload whole. A server that only has text
@@ -115,7 +115,7 @@ scores 0.86 and different people 0.11–0.16; a photo takes about 150 ms to look
 same background pass as the description and the text, from a 1280 px unedited rendering.
 
 **On the server** (faces are personal data, so it is separate and off): install the models once and allow each user,
-on the admin page (**Search ▸ People**: download the models after reading their licences, then a switch per user that asks
+on the admin page (**Processing ▸ People**: download the models after reading their licences, then a switch per user that asks
 before it turns on) or from a shell:
 
 ```sh
@@ -145,6 +145,14 @@ drag and no suggestions from your other names yet; it has been checked on a hand
 on a large real library. Face recognition is only as fair as its training data: expect more mistakes on some groups of people
 than others, which is one more reason names stay yours to give and confirm.
 
+## Possibly sensitive photos
+
+A fourth opt-in model, its own download: Falconsai's NSFW classifier flags photos that might be sensitive, in the same
+background pass, so they can be reviewed and hidden. It hides nothing by itself. See [hidden.md](hidden.md) →
+*Possibly sensitive photos* (commands `vision.setSensitive`, `vision.sensitive.download`, `vision.sensitive.list`,
+`library.hideSensitive`, `library.setBlurSensitive`; server `GET /api/sensitive`, admin page ▸ Processing ▸ Sensitive
+content, `model download --sensitive`).
+
 ## On the server
 
 The server indexes each user's photos from the previews it already keeps (a worker wakes when a preview arrives, a folder
@@ -157,7 +165,7 @@ GET  /api/index/embeddings/keys    {model, dim, keys: [content hash]}      what 
 POST /api/index/embeddings         vectors a device computed (checked whole; see below)
 ```
 
-An admin turns search on for everyone from the admin page (**Search**): the switch shows the model's size and licence,
+An admin turns search on for everyone from the admin page (**Processing**): the switch shows the model's size and licence,
 downloads it onto the server after the admin agrees (resumable, SHA-256-checked, it keeps going if the page is closed)
 and turns search on. The same from a shell (never without the flag; Docker: `docker compose exec lightcraft-server …`):
 
@@ -197,7 +205,7 @@ says the time left at the pace of the last ten minutes (`perMinute`, counting th
 users), how many photos wait for their previews (`waiting`), how many couldn't be done (`failed`: tried again after a
 restart) and the last problem. A photo the model can't take is set aside on its own: it no longer fails its whole batch
 on every pass, which used to stop describing for good. `ready` is the photos left that have previews and weren't set
-aside; the time left is worked out from it. The SwiftUI app's Settings ▸ Server Administration ▸ Search & People shows the
+aside; the time left is worked out from it. The SwiftUI app's Settings ▸ Server Administration ▸ Processing shows the
 same, from `host.admin.search` (the host works out what the numbers mean, `crates/apphost/src/host/admin/search.rs`),
 and sets each index's Pause and daily window as the web page does (`PUT search/schedule/<part>`, the times shown and
 picked in the admin's own time, sent in UTC once the picker rests).

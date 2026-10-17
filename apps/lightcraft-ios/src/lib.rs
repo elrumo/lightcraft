@@ -128,6 +128,8 @@ impl Host {
         match event {
             Lifecycle::WillResignActive => self.save(),
             Lifecycle::DidEnterBackground => {
+                // Hidden locks while nobody can see the app
+                self.app.session.hidden_lock();
                 self.save();
                 // an export in progress gets the time the system allows to finish
                 if self.app.export.is_some() && self.background.is_none() {

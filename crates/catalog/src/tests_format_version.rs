@@ -92,6 +92,21 @@ fn fork_v3_library_with_server_paths_loads_and_is_upgraded() {
     assert_eq!(snapshot_version(&m), u64::from(VERSION));
 }
 
+/// A format 10 library (before the Hidden album) opens with every photo shown, and is upgraded.
+#[test]
+fn v10_library_loads_with_nothing_hidden_and_is_upgraded() {
+    let (base, _, _) = legacy_parts();
+    let id = base.photos().next().unwrap().id;
+    let op = Op::SetServerPath { id, path: Some("Photos/IMG_1.jpg".into()) };
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":10,\"seq\":2,\"catalog\":{}}}\n", base.to_snapshot()).into_bytes());
+    m.set(LOG, format!("{}\n", encode_record(3, &op)).into_bytes());
+    let (_, c, r) = Journal::open(Box::new(m.clone())).unwrap();
+    assert_eq!(r.upgraded_from, Some(10));
+    assert!(c.photos().all(|p| !p.hidden));
+    assert_eq!(snapshot_version(&m), u64::from(VERSION));
+}
+
 /// Before upstream's own format 9 (the preview-only stamp), this fork wrote `SetServerPath` as format 9:
 /// such a library opens with its server paths and is rewritten as format 10.
 #[test]
@@ -308,10 +323,11 @@ fn op_variants_are_versioned() {
             Op::SetAsShotWb { .. } => 7,
             Op::SetHistoryCursor { .. } => 8,
             Op::SetServerPath { .. } => 10,
+            Op::SetHidden { .. } => 11,
         }
     }
     /// v9 carries upstream's `Photo.preview_checked` and `Op::SetContent.preview_checked` (no op of its own).
     const NEWEST_FIELDS: u32 = 9;
-    let newest = since(&Op::SetServerPath { id: PhotoId(1), path: None });
+    let newest = since(&Op::SetHidden { id: PhotoId(1), hidden: true });
     assert_eq!(newest.max(NEWEST_FIELDS), VERSION, "the newest op's or fields' version must be the current format version");
 }

@@ -183,6 +183,9 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if app.ui.filter_bar {
         super::filterbar::show(app, ui);
     }
+    if app.session.source == lightcraft_engine::LibrarySource::Sensitive {
+        sensitive_bar(app, ui, ids.len());
+    }
     app.canvas_rect = Some(ui.max_rect());
     // photos dropped on the window: a tile for each until it is in the catalog (after the last row)
     let dropped = crate::file_drop::pending(app);
@@ -1005,6 +1008,65 @@ pub const BACKGROUND_THUMB_PRIORITY: u32 = lightcraft_apphost::render::BACKGROUN
 /// A thumbnail in the grid's reach above and below the screen (everything above this is on screen or wanted now).
 pub const PREFETCH_THUMB_PRIORITY: u32 = lightcraft_apphost::render::PREFETCH_THUMB_PRIORITY;
 
+/// A photo that might be sensitive, obscured (Blur Sensitive Photos): a coarse mosaic of its own colours
+/// under a dark veil, and an eye with a slash. Opening it shows it as it is.
+// ponytail: a mosaic, not a gaussian blur (egui has no blur); a GPU blur pass if it should look softer.
+/// Above the Possibly Sensitive photos: what they are, Hide All, and the blur switch.
+fn sensitive_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, n: usize) {
+    let t = Tokens::get(ui.ctx());
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(20.0);
+        let text = if n == 0 {
+            crate::i18n::tr("Nothing here looks sensitive.").to_string()
+        } else {
+            crate::i18n::tr_format!("{n} photos might be sensitive. Nothing is hidden until you choose.", n = n)
+        };
+        ui.label(egui::RichText::new(text).color(t.text_dim));
+        if n > 0 {
+            let r = ui.button(crate::i18n::tr("Hide All"));
+            register(ui.ctx(), "button:hideSensitive", r.rect);
+            if r.clicked()
+                && let Err(e) = app.run("library.hideSensitive", json!({}))
+            {
+                app.toast(ui.ctx(), e);
+            }
+        }
+        let mut blur = app.session.blur_sensitive;
+        let r = ui.checkbox(&mut blur, crate::i18n::tr("Blur Sensitive Photos"));
+        register(ui.ctx(), "check:blurSensitive", r.rect);
+        if r.changed()
+            && let Err(e) = app.run("library.setBlurSensitive", json!({"on": blur}))
+        {
+            app.toast(ui.ctx(), e);
+        }
+    });
+    ui.add_space(6.0);
+}
+
+/// Whether `id` is drawn obscured: Blur Sensitive Photos is on and the model flagged it.
+pub(crate) fn obscured(app: &mut LightcraftApp, id: PhotoId) -> bool {
+    app.session.blur_sensitive && app.session.sensitive_ids().contains(&id)
+}
+
+pub(crate) fn paint_obscured(p: &egui::Painter, tex: egui::TextureId, r: Rect, uv: Rect, fade: f32) {
+    const N: usize = 8;
+    let mut mesh = egui::Mesh::with_texture(tex);
+    let tint = Color32::WHITE.gamma_multiply(fade);
+    for j in 0..N {
+        for i in 0..N {
+            let at = |a: usize, b: usize| vec2(a as f32 / N as f32, b as f32 / N as f32);
+            let tile = Rect::from_min_max(r.lerp_inside(at(i, j)), r.lerp_inside(at(i + 1, j + 1)));
+            // (each tile one colour: the one at its middle)
+            let c = uv.lerp_inside((at(i, j) + at(i + 1, j + 1)) / 2.0);
+            mesh.add_rect_with_uv(tile, Rect::from_min_max(c, c), tint);
+        }
+    }
+    p.add(mesh);
+    p.rect_filled(r, 0.0, Color32::from_black_alpha((110.0 * fade) as u8));
+    let s = (r.width().min(r.height()) * 0.28).clamp(12.0, 36.0);
+    paint(p, Rect::from_center_size(r.center(), vec2(s, s)), Icon::EyeOff, Color32::WHITE.gamma_multiply(fade));
+}
+
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
@@ -1052,6 +1114,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     // (the rings are the page's text colour: white on the dark pages, black on the light ones)
     let dark = crate::theme::Tokens::is_dark(ui.ctx());
     let (ring, ring_sel) = if dark { (Color32::WHITE, Color32::from_gray(170)) } else { (t.text, t.text_dim) };
+    let blur = obscured(app, id);
     if let Some(tex) = app.renderer.thumb(id) {
         let [tw, th] = tex.size;
         // Preserve the decoded preview's ratio when it differs from the catalog dimensions
@@ -1060,7 +1123,20 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         let uv = if tiles { cover_uv(tw as f32, th as f32) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
         // a thumbnail that was not there yet fades in (one that was, shows at once: it has no stored 0)
         let fade = if app.compact { ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), true, 0.2) } else { 1.0 };
-        p.image(tex.tex.id(), fit, uv, Color32::WHITE.gamma_multiply(fade));
+        // (Blur Sensitive Photos: a photo the sensitive-content model flagged)
+        if blur {
+            paint_obscured(p, tex.tex.id(), fit, uv, fade);
+            register(ui.ctx(), format!("blurred:{}", id.0), fit);
+        } else {
+            p.image(tex.tex.id(), fit, uv, Color32::WHITE.gamma_multiply(fade));
+        }
+        // a hidden photo shown with the rest (Show Hidden)
+        if photo.hidden {
+            let s = (fit.width().min(fit.height()) * 0.16).clamp(12.0, 20.0);
+            let at = Rect::from_min_size(fit.left_top() + vec2(5.0, 5.0), vec2(s, s));
+            p.rect_filled(at.expand(3.0), 4.0, Color32::from_black_alpha(140));
+            paint(p, at, Icon::EyeOff, Color32::WHITE);
+        }
         if active {
             super::detail::note_tile(ui.ctx(), id, fit, uv);
         }
@@ -1726,6 +1802,15 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
     });
     ui.separator();
+    // into the Hidden album, or back out of it
+    let (hide, label) = if crate::menubar::selection_hidden(app) { ("photo.unhide", "Unhide Photo") } else { ("photo.hide", "Hide Photo") };
+    let r = ui.button(crate::i18n::tr(label));
+    register(ui.ctx(), "button:contextHide", r.rect);
+    if r.clicked()
+        && let Err(e) = app.run(hide, json!({}))
+    {
+        app.toast(ui.ctx(), e);
+    }
     if crate::menubar::selection_deleted(app) {
         if ui.button(crate::i18n::tr("Restore")).clicked() {
             let _ = app.run("photo.restore", json!({}));

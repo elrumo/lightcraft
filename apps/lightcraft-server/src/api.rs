@@ -286,6 +286,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Post, ["index", "text"]) => crate::vision::text_upload(st, req, &l, &who.user),
         (Method::Get, ["people", "status"]) => crate::vision::people_status(st, &l, &who.user),
         (Method::Get, ["people", "clusters"]) => crate::vision::people_clusters(st, &l, &who.user),
+        (Method::Get, ["sensitive"]) => crate::sensitive::list(st, &l, &who.user),
         (Method::Get, ["index", "faces", "keys"]) => crate::vision::face_keys(st, &who.user),
         (Method::Post, ["index", "faces"]) => crate::vision::face_upload(st, req, &l, &who.user),
         (Method::Delete, ["index", "faces"]) => crate::vision::face_delete(st, &who.user),
@@ -476,7 +477,7 @@ fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
     }
     match l.core.since(since, limit) {
         Ok(Pull::Ops(ops)) => {
-            let body = serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs });
+            let body = serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs, format: lightcraft_catalog::journal::VERSION });
             drop(l);
             match body {
                 Ok(body) => big_json(req, body),

@@ -138,6 +138,8 @@ mod tests_grid;
 #[cfg(test)]
 mod tests_grid_touch;
 #[cfg(test)]
+mod tests_hidden;
+#[cfg(test)]
 mod tests_info_dialogs;
 #[cfg(test)]
 mod tests_ios_host;
@@ -2062,6 +2064,8 @@ pub struct LibraryCounts {
     pub total: usize,
     pub picks: usize,
     pub deleted: usize,
+    /// In the Hidden album (shown only while Hidden is unlocked).
+    pub hidden: usize,
 }
 
 /// The values the filter bar's pickers offer.
@@ -2245,12 +2249,14 @@ impl Caches {
         }
         let mut c = LibraryCounts::default();
         for p in cat.photos() {
-            if p.in_library() {
+            if p.visible() {
                 c.total += 1;
                 if p.flag == lightcraft_catalog::Flag::Pick {
                     c.picks += 1;
                 }
-            } else if p.deleted && !p.local {
+            } else if p.in_library() {
+                c.hidden += 1;
+            } else if p.deleted && !p.local && !p.hidden {
                 c.deleted += 1;
             }
         }

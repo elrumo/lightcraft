@@ -138,13 +138,18 @@ fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, onscre
         super::grid::thumb_px(r.width().max(r.height()), ppp),
         if onscreen { 10 } else { super::grid::PREFETCH_THUMB_PRIORITY },
     );
+    let blur = super::grid::obscured(app, id);
     let p = ui.painter();
     match app.renderer.thumb(id) {
         Some(tex) => {
             let [tw, th] = tex.size;
             let uv = cover(tw as f32, th as f32, r.width() / r.height().max(1.0));
             let k = ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), true, 0.2);
-            p.add(egui::epaint::RectShape::filled(r, ROUND, Color32::WHITE.gamma_multiply(k)).with_texture(tex.tex.id(), uv));
+            if blur {
+                super::grid::paint_obscured(p, tex.tex.id(), r, uv, k);
+            } else {
+                p.add(egui::epaint::RectShape::filled(r, ROUND, Color32::WHITE.gamma_multiply(k)).with_texture(tex.tex.id(), uv));
+            }
         }
         None => {
             p.rect_filled(r, ROUND, if Tokens::is_dark(ui.ctx()) { Color32::from_gray(38) } else { t.inset });

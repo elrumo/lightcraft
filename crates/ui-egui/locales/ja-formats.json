@@ -345,5 +345,6 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Lightroom カタログを確認しました：アルバム {albums} 件、フォルダ {folders} 件、アルバム内の写真 {photos} 枚",
   "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} 枚の写真はここにある複数の写真に該当するため除外しました。",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "アルバムの写真のうち {matched} 枚はこのライブラリにあります。{unmatched} 枚はないため除外しました。",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n}枚の写真がセンシティブな可能性があります。選択するまで何も非表示にはなりません。",
   "{updated} albums that were already here got photos.": "既存のアルバム {updated} 件に写真を追加しました。"
 }

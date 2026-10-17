@@ -345,5 +345,6 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Katalog Lightroom byl prozkoumán: alb: {albums}, složek: {folders}, fotografií v albech: {photos}",
   "{ambiguous} photos fit more than one photo here, and were left out.": "Fotografií, které odpovídají více fotografiím zde, a proto byly vynechány: {ambiguous}.",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "Fotografií z alb v této knihovně: {matched}; nejsou v ní, a proto byly vynechány: {unmatched}.",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "Fotografie, které mohou být citlivé: {n}. Nic se neskryje, dokud se nerozhodnete.",
   "{updated} albums that were already here got photos.": "Alb, která tu už byla a přibyly do nich fotografie: {updated}."
 }

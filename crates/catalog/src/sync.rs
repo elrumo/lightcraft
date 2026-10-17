@@ -71,6 +71,7 @@ pub fn key_of(op: &Op) -> Option<String> {
         Op::SetDevelop { id, .. } => p(id, "develop"),
         Op::SetMeta { id, .. } => p(id, "meta"),
         Op::SetDeleted { id, .. } => p(id, "deleted"),
+        Op::SetHidden { id, .. } => p(id, "hidden"),
         Op::SetVersions { id, .. } => p(id, "versions"),
         Op::SetCaptured { id, .. } => p(id, "captured"),
         Op::SetAnalysis { id, .. } => p(id, "analysis"),
@@ -161,6 +162,7 @@ fn photo_of(op: &Op) -> Option<PhotoId> {
         | Op::SetDevelop { id, .. }
         | Op::SetMeta { id, .. }
         | Op::SetDeleted { id, .. }
+        | Op::SetHidden { id, .. }
         | Op::SetVersions { id, .. }
         | Op::SetCaptured { id, .. }
         | Op::SetAnalysis { id, .. }
@@ -286,6 +288,16 @@ impl Outbox {
     }
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// A change waiting to go that hides a photo (or adds one hidden): what a server older than the Hidden
+    /// album would drop, showing the photo on every other device.
+    pub fn carries_hidden(&self) -> bool {
+        self.entries.iter().any(|e| match &e.latest {
+            Op::SetHidden { hidden, .. } => *hidden,
+            Op::AddPhoto { photo } => photo.hidden,
+            _ => false,
+        })
     }
 
     /// The pending changes in the order they will be sent, each as the record it is about and the
@@ -847,6 +859,10 @@ pub mod proto {
         /// Versions of the other shared documents ([`Doc`]) that have been written, by name.
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         pub docs: std::collections::BTreeMap<String, u64>,
+        /// The catalog format the server keeps ([`crate::journal::VERSION`]; 0: a server older than this
+        /// field). A device holds back changes a server of an older format would drop (hidden photos).
+        #[serde(default)]
+        pub format: u32,
     }
 
     /// `POST /api/ops`: ops made on top of op `base`. `200` [`Head`]; `409` [`Head`] (behind:

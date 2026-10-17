@@ -236,7 +236,7 @@ impl Catalog {
         // photos per containing folder, as spelled (sorted, so the spelling that names a folder
         // never depends on hash order)
         let mut dirs: BTreeMap<&str, usize> = BTreeMap::new();
-        for p in self.photos().filter(|p| p.in_library()) {
+        for p in self.photos().filter(|p| p.visible()) {
             if let Source::File { path } = &p.source
                 && let Some(i) = path.rfind(['/', '\\'])
                 // a photo straight in the root has an empty folder part: the root itself

@@ -345,5 +345,6 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "已檢查 Lightroom 目錄：{albums} 個相簿，{folders} 個資料夾，相簿中有 {photos} 張相片",
   "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} 張相片與此處多張相片相符，已略過。",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "相簿中的相片有 {matched} 張在此照片庫中；{unmatched} 張不在，已略過。",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} 張照片可能敏感。在您選擇之前，不會隱藏任何內容。",
   "{updated} albums that were already here got photos.": "{updated} 個既有相簿加入了相片。"
 }

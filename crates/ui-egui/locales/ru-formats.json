@@ -345,5 +345,6 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Каталог Lightroom проверен: альбомов — {albums}, папок — {folders}, фото в альбомах — {photos}",
   "{ambiguous} photos fit more than one photo here, and were left out.": "Пропущено фото, подходящих сразу к нескольким фото здесь: {ambiguous}.",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "Фото из альбомов в этой библиотеке: {matched}; отсутствуют и пропущены: {unmatched}.",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "Фото, которые могут быть деликатными: {n}. Ничего не будет скрыто без вашего решения.",
   "{updated} albums that were already here got photos.": "Уже существовавших альбомов, получивших фото: {updated}."
 }

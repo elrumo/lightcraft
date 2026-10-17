@@ -1,10 +1,10 @@
-//! What the numbers of `GET /api/admin/search` mean for the Search & People screen, worked out as the
+//! What the numbers of `GET /api/admin/search` mean for the Processing screen, worked out as the
 //! web console does (`apps/lightcraft-server/admin/admin.js`: `liveState`, `showSched`, `userLines`), so
 //! the SwiftUI app only words and draws them. `host.admin.search` adds it to the server's answer as
 //! `progress`:
 //!
 //! ```text
-//! progress: {search | text | faces: null | {
+//! progress: {search | text | faces | sensitive: null | {
 //!   paused, window: null | {from, to},
 //!   live:  null | {state: "on" | "stuck" | "idle", why, user, secs, lastSecs},
 //!   left:  {state: "done" | "paused" | "window" | "estimate" | "counting", photos, secs, perMinute, from, to},
@@ -39,7 +39,7 @@ const MAX_ETA: u64 = 100 * 365 * 24 * 3600;
 
 /// Each kind of index: its key in the answer (and in a user's `work`), and the per-user count of its
 /// photos done.
-const PARTS: [(&str, &str); 3] = [("search", "indexed"), ("text", "read"), ("faces", "found")];
+const PARTS: [(&str, &str); 4] = [("search", "indexed"), ("text", "read"), ("faces", "found"), ("sensitive", "checked")];
 
 /// Where `part`'s schedule is in the answer (the description's is at the top).
 fn schedule<'a>(s: &'a Value, part: &str) -> &'a Value {
@@ -323,8 +323,8 @@ mod tests {
     // An older server (no schedules) and answers that aren't what they should be give nulls, never a panic
     #[test]
     fn odd_answers_give_nothing() {
-        assert_eq!(progress(&json!({"users": []})), json!({"search": null, "text": null, "faces": null}));
-        assert_eq!(progress(&json!("not an object")), json!({"search": null, "text": null, "faces": null}));
+        assert_eq!(progress(&json!({"users": []})), json!({"search": null, "text": null, "faces": null, "sensitive": null}));
+        assert_eq!(progress(&json!("not an object")), json!({"search": null, "text": null, "faces": null, "sensitive": null}));
         let weird = json!({"active": true, "schedule": {"left": -3, "ready": "many", "perMinute": "fast", "now": {"secs": -1}, "lastSecs": 1.5}, "users": [{"name": 3}, {"name": "bob", "indexed": 5, "total": 2, "work": {"search": {"waiting": u64::MAX, "failed": u64::MAX, "perMinute": f64::MAX}}}]});
         let p = progress(&weird);
         assert_eq!(p["search"]["left"], json!({"state": "done", "photos": 0}));
@@ -341,6 +341,6 @@ mod tests {
         s["active"] = json!(false);
         s["text"]["active"] = json!(false);
         s["faces"]["installed"] = json!(false);
-        assert_eq!(progress(&s), json!({"search": null, "text": null, "faces": null}));
+        assert_eq!(progress(&s), json!({"search": null, "text": null, "faces": null, "sensitive": null}));
     }
 }

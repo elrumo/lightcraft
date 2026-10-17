@@ -29,6 +29,8 @@ pub enum ErrorKind {
     Cancelled,
     /// The feature needs this model, which is not installed (or still downloading).
     ModelMissing(AiModel),
+    /// Hidden is locked: unlock it (password, Face ID) and try again.
+    Locked,
     Other,
 }
 
@@ -45,6 +47,7 @@ impl EngineError {
             Self::LightroomCatalog { .. } => ErrorKind::LightroomCatalog,
             Self::Cancelled(_) => ErrorKind::Cancelled,
             Self::ModelMissing { model, .. } => ErrorKind::ModelMissing(*model),
+            Self::Locked(_) => ErrorKind::Locked,
             Self::Other(_) => ErrorKind::Other,
         }
     }

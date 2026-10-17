@@ -8,7 +8,7 @@
 //!   Answers the server's JSON (`{}` when it sends none). Without a session only `state` and `setup`
 //!   work, against `server`.
 //! - `host.admin.search` — `GET /api/admin/search` with `progress` added: what its numbers mean for the
-//!   Search & People screen (whether the worker is at each index, the time left, each user's lines),
+//!   Processing screen (whether the worker is at each index, the time left, each user's lines),
 //!   worked out as the web console does ([`search`]).
 //! - `host.admin.signOut` — forget the session (the server is told, best effort).
 //! - `host.admin.session` — `{signedIn, server, user}`.

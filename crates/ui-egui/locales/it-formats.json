@@ -345,5 +345,6 @@
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Catalogo di Lightroom esaminato: album {albums}, cartelle {folders}, foto negli album {photos}",
   "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} foto corrispondono a più di una foto qui e sono state escluse.",
   "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} foto degli album sono in questa libreria; {unmatched} no e sono state escluse.",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} foto potrebbero essere sensibili. Non viene nascosto nulla finché non scegli.",
   "{updated} albums that were already here got photos.": "{updated} album già presenti hanno ricevuto foto."
 }

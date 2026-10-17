@@ -41,11 +41,17 @@ struct Fixture {
 }
 
 fn start(data: &Path, model: Option<Arc<dyn Embedder>>) -> Server {
-    start_with(data, model, None)
+    start_with(data, model, None, None)
 }
 
-fn start_with(data: &Path, model: Option<Arc<dyn Embedder>>, reader: Option<Arc<dyn TextReader>>) -> Server {
+fn start_with(
+    data: &Path,
+    model: Option<Arc<dyn Embedder>>,
+    reader: Option<Arc<dyn TextReader>>,
+    classifier: Option<Arc<dyn lightcraft_vision::Classifier>>,
+) -> Server {
     let mut cfg = Config::new(data, "127.0.0.1:0");
+    cfg.classifier = classifier;
     cfg.scan_interval = None;
     cfg.preview_threads = Some(1);
     cfg.embedder = model;
@@ -61,6 +67,16 @@ fn fixture(tag: &str, model: Option<Arc<dyn Embedder>>) -> Fixture {
 }
 
 fn fixture_with(tag: &str, model: Option<Arc<dyn Embedder>>, reader: Option<Arc<dyn TextReader>>) -> Fixture {
+    fixture_classified(tag, model, reader, None)
+}
+
+/// [`fixture_with`], checking photos for sensitive content with `classifier` too.
+fn fixture_classified(
+    tag: &str,
+    model: Option<Arc<dyn Embedder>>,
+    reader: Option<Arc<dyn TextReader>>,
+    classifier: Option<Arc<dyn lightcraft_vision::Classifier>>,
+) -> Fixture {
     let root = temp(tag);
     let nas = root.join("nas");
     for (name, rgb) in [("red", [220, 20, 20]), ("green", [20, 200, 40]), ("blue", [20, 40, 220]), ("grey", [128, 128, 128])] {
@@ -70,7 +86,7 @@ fn fixture_with(tag: &str, model: Option<Arc<dyn Embedder>>, reader: Option<Arc<
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     accounts::set_user(&data, "bob", "battery staple", false).unwrap();
     accounts::add_folder(&data, "ann", &nas.to_string_lossy(), Some("Photos")).unwrap();
-    let server = start_with(&data, model, reader);
+    let server = start_with(&data, model, reader, classifier);
     let ann = login(&server, "ann", "correct horse");
     let f = Fixture { server, ann, data, nas };
     wait_scan(&f);
@@ -360,8 +376,8 @@ fn a_thin_client_searches_through_the_server() {
     // a device with no model of its own (the web build, iOS)
     let mut s = device(&f, "thin-device", None);
     assert!(!s.vision.available(), "nothing to search with until the server says it can");
-    // (two words: one word that is part of a file name, "red", finds red.png by its name without a model)
-    let e = s.execute("library.search", &json!({"q": "red sky", "wait": true})).unwrap_err().to_string();
+    // (a word no file name holds: a file name is found without any model)
+    let e = s.execute("library.search", &json!({"q": "crimson", "wait": true})).unwrap_err().to_string();
     assert!(e.contains("server"), "{e}");
 
     // it asks, the answer comes with the next sync round, and now the switch would show
@@ -386,7 +402,7 @@ fn a_thin_client_searches_through_the_server() {
         assert_eq!(s.filter.semantic.as_deref(), Some(q));
     }
     // this device can't search on its own
-    let e = s.execute("library.search", &json!({"q": "red sky", "wait": true, "source": "local"})).unwrap_err().to_string();
+    let e = s.execute("library.search", &json!({"q": "crimson", "wait": true, "source": "local"})).unwrap_err().to_string();
     assert!(e.contains("server") && e.contains("model"), "{e}");
     assert!(s.execute("library.search", &json!({"q": "red", "wait": true, "source": "nowhere"})).is_err());
 
@@ -894,8 +910,8 @@ fn an_admin_turns_search_on_and_off_for_every_device() {
     let s = get(&admin, "/api/admin/search").1;
     assert_eq!((&s["enabled"], &s["installed"], &s["active"]), (&json!(true), &json!(true), &json!(true)), "{s}");
     let (ann, bob) = (
-        json!({"name": "ann", "faces": false, "total": 4, "indexed": 4, "read": null, "found": null}),
-        json!({"name": "bob", "faces": false, "total": 0, "indexed": 0, "read": null, "found": null}),
+        json!({"name": "ann", "faces": false, "total": 4, "indexed": 4, "read": null, "found": null, "checked": null}),
+        json!({"name": "bob", "faces": false, "total": 0, "indexed": 0, "read": null, "found": null, "checked": null}),
     );
     let mut users = s["users"].clone();
     users.as_array_mut().unwrap().iter_mut().for_each(|u| drop(u.as_object_mut().unwrap().remove("work")));
@@ -983,4 +999,31 @@ fn an_admin_turns_text_reading_and_people_on_from_the_admin_page() {
     assert_eq!(put(&admin, "/api/admin/users/..%2Fx/faces", json!({"enabled": true})).0, 400);
     assert_eq!(put(&admin, "/api/admin/users/ann/faces", json!({"enabled": false})).0, 200);
     assert_eq!(get(&f.ann, "/api/people/status").1["enabled"], false);
+}
+
+/// The server checks each photo for sensitive content and lists the flagged ones for devices that can't
+/// (the stand-in classifier flags the mostly red photo).
+#[test]
+fn photos_that_might_be_sensitive_are_flagged_for_devices() {
+    let f = fixture_classified("sensitive", None, None, Some(Arc::new(lightcraft_vision::fake::FakeClassifier)));
+    // (the red photo's content hash, which the server's list names it by)
+    let (_, snap) = get(&f.ann, "/api/snapshot");
+    let red = snap["catalog"]["photos"].as_object().unwrap().values().find(|p| p["file_name"] == "red.png").unwrap()["content_hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut r = Value::Null;
+    for _ in 0..1200 {
+        f.server.index_for_search();
+        r = get(&f.ann, "/api/sensitive").1;
+        if r["checked"].as_u64() == Some(4) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(r["checked"].as_u64(), Some(4), "{r}");
+    let keys: Vec<&str> = r["keys"].as_array().unwrap().iter().filter_map(|k| k[0].as_str()).collect();
+    assert_eq!(keys, [red.as_str()], "{r}");
+    let (_, s) = get(&f.ann, "/api/search/status");
+    assert_eq!(s["sensitive"]["enabled"], true, "{s}");
 }

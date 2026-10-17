@@ -1,5 +1,5 @@
 // LightCraft server admin page (served at /admin; API: /api/admin/…, see src/admin.rs).
-// Views by URL hash: #/overview, #/users, #/users/NAME[/devices|/folders|/shares], #/presets, #/search, #/storage.
+// Views by URL hash: #/overview, #/users, #/users/NAME[/devices|/folders|/shares], #/presets, #/processing (was #/search), #/storage.
 // Text from the server (user and device names, errors) is only ever set as text, never as HTML.
 'use strict';
 
@@ -307,11 +307,12 @@ function ask({ title, text, fields, ok, danger, action }) {
 
 // ---------------------------------------------------------------- routing
 
-const VIEWS = ['overview', 'users', 'presets', 'search', 'storage'];
+const VIEWS = ['overview', 'users', 'presets', 'processing', 'storage'];
 
 async function route() {
   if ($('dash').hidden) return;
-  const [, view, name, tab] = location.hash.split('/');
+  const [, view0, name, tab] = location.hash.split('/');
+  const view = view0 === 'search' ? 'processing' : view0; // (the page's old name: bookmarks still work)
   clearTimeout(timer);
   clearTimeout(recountTimer);
   clearTimeout(usageTimer);
@@ -329,7 +330,7 @@ async function route() {
     s.hidden = s.dataset.view !== v;
     if (!s.hidden && !was) window.scrollTo(0, 0);
   }
-  const load = { overview: loadOverview, users: loadUsers, presets: loadPresets, search: loadSearch, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
+  const load = { overview: loadOverview, users: loadUsers, presets: loadPresets, processing: loadSearch, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
   try {
     await load();
   } catch (e) {
@@ -1372,6 +1373,26 @@ const FEATURES = {
       bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading them means accepting that licence: ' + f.licenseUrl +
       " Afterwards the server reads every user's photos in the background, about a second each.",
     done: 'Finding photos by their words is on for everyone on this server.',
+    models: 'PP-OCRv6',
+  },
+  sn: {
+    path: 'search/sensitive',
+    pick: (s) => s.sensitive,
+    users: 'checked',
+    what: 'sensitive-content model',
+    on: "On: the server checks every user's photos in the background, and their devices list and blur the ones that might be sensitive. Nothing is hidden by it.",
+    off: 'Off. What was checked is kept, so turning this on again picks up where it left off.',
+    needs: (f) => 'Needs the sensitive-content model: ' + bytes(f.sizeBytes) + ', downloaded once onto this server.',
+    getting: 'Downloading the sensitive-content model onto this server…',
+    label: 'Photos are checked once the model is ready.',
+    idle: 'Nothing is checked while this is off.',
+    title: 'Download the sensitive-content model?',
+    ask: (f) =>
+      'Flagging photos that might be sensitive (nudity and the like) uses an AI model that looks at each photo. It is not part of LightCraft: it is nsfw_image_detection from Falcons.ai, a ' +
+      bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading it means accepting that licence: ' + f.licenseUrl +
+      " Afterwards the server checks every user's photos in the background. It can be wrong both ways: it only suggests, and each person decides what to hide.",
+    done: 'Flagging photos that might be sensitive is on for everyone on this server.',
+    models: 'nsfw_image_detection',
   },
 };
 
@@ -1401,7 +1422,7 @@ function fact(list, k, v, code) {
   list.append(el('dt', {}, k), el('dd', { class: code ? 'code' : null }, v));
 }
 
-const PART_KEY = { sr: 'search', tx: 'text', fc: 'faces' };
+const PART_KEY = { sr: 'search', tx: 'text', fc: 'faces', sn: 'sensitive' };
 const hhmm = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
 // (the server keeps the window in UTC; the admin sees and sets their own time)
 const toLocalMin = (utc) => (((utc - new Date().getTimezoneOffset()) % 1440) + 1440) % 1440;
@@ -1414,7 +1435,7 @@ const etaOf = (photos, perMinute) => 'About ' + dur(Math.max(1, Math.round((phot
 /** Whether the worker is at one kind of index, for the line with the dot: what it is on, and how long ago it last finished a photo. */
 function liveState(p, c) {
   if (!c.left || c.paused || !c.runsNow) return null;
-  const what = { sr: 'Describing ', tx: 'Reading the words in ', fc: 'Looking for faces in ' }[p] + (c.now ? c.now.user + "'s photos" : 'photos');
+  const what = { sr: 'Describing ', tx: 'Reading the words in ', fc: 'Looking for faces in ', sn: 'Checking ' }[p] + (c.now ? c.now.user + "'s photos" : 'photos');
   const last = c.lastSecs;
   const lastly = last === null ? '' : ' · last one ' + (last < 5 ? 'just now' : dur(last) + ' ago');
   // (each turn finishes a photo every few seconds: ten minutes on one without any means something hangs)
@@ -1491,7 +1512,7 @@ function userLines(p, w, done, total, c) {
   if (ready && going && w.perMinute) bits.push(etaOf(ready, w.perMinute) + ' (' + pace(w.perMinute) + ')');
   else if (ready && !w.problem && liveState(p, c)?.kind === 'on') bits.push('Working out the time left…');
   if (w.waiting) bits.push(n(w.waiting) + ' waiting for previews');
-  if (w.failed) bits.push(n(w.failed) + " couldn't be " + { sr: 'described', tx: 'read', fc: 'looked at' }[p]);
+  if (w.failed) bits.push(n(w.failed) + " couldn't be " + { sr: 'described', tx: 'read', fc: 'looked at', sn: 'checked' }[p]);
   const out = bits.length ? [el('p', { class: 'sub', title: w.failed ? 'Photos that could not be done are tried again when the server restarts.' : null }, bits.join(' · '))] : [];
   if (w.problem && left) out.push(el('p', { class: 'sub problem' }, w.problem.charAt(0).toUpperCase() + w.problem.slice(1)));
   return out;
@@ -1515,7 +1536,7 @@ function showFeature(p, s) {
     fact(facts, 'Kept in', s.dir, true);
     if (f.active) fact(facts, 'In memory', s.loaded ? 'Yes (it unloads after ten idle minutes)' : 'Not now (it loads on the first search)');
   } else {
-    fact(facts, 'Models', f.installed ? 'PP-OCRv6 (installed)' : 'PP-OCRv6 (not downloaded)');
+    fact(facts, 'Models', F.models + (f.installed ? ' (installed)' : ' (not downloaded)'));
     fact(facts, 'Licence', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
   }
   const list = $(p + 'Users');
@@ -1572,8 +1593,90 @@ function showPeople(s) {
   return s.users.some((u) => u.faces && u.found !== null && u.found < u.total);
 }
 
+/** Building previews for everyone: the batch added up, what is being built, and each user's coverage. */
+function showPreviewsAll(v) {
+  const paused = v.paused;
+  const cover = v.photos == null ? 'Counting previews…' : n(v.have) + ' of ' + plural(v.photos, 'photo has', 'photos have') + ' previews' + (v.photos ? ' (' + Math.floor((100 * v.have) / v.photos) + '%)' : '');
+  $('pvCover').textContent = (paused ? 'Paused. ' : v.left ? (v.rebuilding ? 'Rebuilding. ' : 'Building. ') : '') + cover;
+  const total = v.done + v.left;
+  $('pvText').textContent =
+    (v.left
+      ? n(v.done) + ' built, ' + n(v.left) + ' left' + (v.etaSecs && !paused ? ', about ' + dur(v.etaSecs) + ' to go' : '') + (v.perMinute && !paused ? ' (' + n(v.perMinute) + ' a minute)' : '') + '.'
+      : 'Nothing waiting: 0 left.' + (v.lastAt ? ' The last batch, ' + plural(v.lastDone, 'preview', 'previews') + ', finished ' + ago(v.lastAt) + '.' : '')) +
+    (paused ? ' Paused for every user: the ones being built finish, then it waits.' : '');
+  progress($('pvBar'), v.rebuilding && total ? v.done / total : v.photos ? v.have / v.photos : v.left && total ? v.done / total : 0);
+  $('pvNow').replaceChildren(
+    ...v.building.slice(0, 6).map((f) => el('li', {}, el('b', {}, 'Now'), el('code', { title: f }, f.slice(f.lastIndexOf('/') + 1)))),
+    ...(v.left && !v.building.length && !paused ? [el('li', { class: 'muted' }, 'Waiting for a builder.')] : []),
+  );
+  const pause = $('pvPause');
+  pause.hidden = !paused && !v.left;
+  pause.querySelector('span').textContent = paused ? 'Resume' : 'Pause';
+  pause.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
+  pause.onclick = () => previewsAll(paused ? 'resume' : 'pause');
+  $('pvAll').onclick = $('pvMissing').onclick = () => previewsAll('generate');
+  $('pvRebuild').onclick = () =>
+    ask({
+      title: 'Rebuild all previews?',
+      text: "The server builds the previews of every photo in every user's library folders again, the ones that exist too, and replaces them as each new one is ready. It can take hours on a big library. To make only the missing ones, choose Build missing previews.",
+      ok: 'Rebuild all previews',
+      action: () => previewsAll('rebuild'),
+    });
+  const list = $('pvUsers');
+  list.replaceChildren();
+  $('pvUsersNone').hidden = v.users.length > 0;
+  for (const u of v.users) {
+    const meter = el('div', { class: 'meter' + (u.left && !paused ? ' busy' : '') }, el('div', {}));
+    const text = u.photos == null ? 'Counting…' : n(u.have) + ' / ' + n(u.photos);
+    list.append(
+      el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), el('span', { class: 'bytes' }, text), meter,
+        ...(u.left || u.errors ? [el('p', { class: 'sub' }, [u.left ? n(u.left) + ' left' : '', u.errors ? plural(u.errors, 'preview', 'previews') + " couldn't be built" : ''].filter(Boolean).join(' · '))] : [])),
+    );
+    progress(meter, u.photos ? u.have / u.photos : u.photos === 0 ? 1 : 0);
+  }
+  return !!v.left;
+}
+
+async function previewsAll(action) {
+  try {
+    await api('POST', 'previews/' + action);
+    if (action === 'generate') toast('Queued every missing preview.');
+    if (action === 'rebuild') toast('Rebuilding every preview.');
+  } catch (e) {
+    fail(e);
+  }
+  await route();
+}
+
+/** One row per AI model: what it is for, its size, whether it is here, and a button to get it. */
+function showModels(s) {
+  const rows = [
+    ['sr', 'Search by description', s.model, s, () => downloadFeature('sr', s)],
+    ['tx', 'Words in photos', FEATURES.tx.models, s.text, () => downloadFeature('tx', s.text)],
+    ['fc', 'People', 'YuNet and SFace', s.faces, downloadFaces],
+    ['sn', 'Sensitive content', FEATURES.sn.models, s.sensitive, () => downloadFeature('sn', s.sensitive)],
+  ];
+  let going = false;
+  $('mmList').replaceChildren(
+    ...rows.map(([p, what, model, f, get]) => {
+      const d = f.download;
+      going ||= d.running;
+      const btn = d.running
+        ? el('button', { type: 'button', class: 'btn secondary', onclick: () => cancelDownload(p) }, 'Cancel')
+        : f.installed
+          ? el('span', { class: 'ok' }, 'Installed')
+          : el('button', { type: 'button', class: 'btn accent', onclick: get }, 'Download');
+      const meter = d.running ? el('div', { class: 'meter' }, el('div', {})) : null;
+      const li = el('li', {}, el('span', { class: 'what' }, el('b', {}, what), el('span', { class: 'muted' }, model + ' · ' + bytes(f.sizeBytes))), btn, ...(meter ? [meter] : []));
+      if (meter) progress(meter, d.total ? d.done / d.total : 0);
+      return li;
+    }),
+  );
+  return going;
+}
+
 function showSearch([s]) {
-  const again = [showFeature('sr', s), showFeature('tx', s), showPeople(s)].some(Boolean);
+  const again = [showPreviewsAll(s.previews), showModels(s), showFeature('sr', s), showFeature('tx', s), showFeature('sn', s), showPeople(s)].some(Boolean);
   clearTimeout(timer);
   // (downloads and describing run on the server: watch them)
   if (again) timer = setTimeout(route, 2000);
@@ -1596,8 +1699,7 @@ async function toggleFeature(p, e) {
       await api('PUT', F.path, { enabled: true });
       toast(F.done);
     } else {
-      const ok = await ask({ title: F.title, text: F.ask(f), ok: 'Download and turn on', action: () => api('POST', F.path + '/download', { acknowledged: true }) });
-      if (ok) toast('Downloading the ' + F.what + '. You can leave this page: it keeps going.', 'info');
+      await downloadFeature(p, f);
     }
   } catch (x) {
     fail(x);
@@ -1605,6 +1707,13 @@ async function toggleFeature(p, e) {
     // (shows what is true now, whichever way it went, and puts the switch back if it was cancelled)
     await route();
   }
+}
+
+/** Ask about the licence, then download a feature's models and turn it on. */
+async function downloadFeature(p, f) {
+  const F = FEATURES[p];
+  const ok = await ask({ title: F.title, text: F.ask(f), ok: 'Download and turn on', action: () => api('POST', F.path + '/download', { acknowledged: true }) });
+  if (ok) toast('Downloading the ' + F.what + '. You can leave this page: it keeps going.', 'info');
 }
 
 async function downloadFaces() {
@@ -1823,6 +1932,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('copyOrigin').addEventListener('click', copyOrigin);
   splitMenu('scanSplit');
   splitMenu('previewsSplit');
+  splitMenu('pvSplit');
   $('limForm').addEventListener('submit', saveLimits);
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);
@@ -1832,8 +1942,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   $('presetFiles').addEventListener('change', importPresets);
   $('gcRun').addEventListener('click', gcRun);
-  for (const p of ['sr', 'tx']) $(p + 'Switch').addEventListener('change', (e) => toggleFeature(p, e));
-  for (const p of ['sr', 'tx', 'fc']) $(p + 'Cancel').addEventListener('click', () => cancelDownload(p));
+  for (const p of ['sr', 'tx', 'sn']) $(p + 'Switch').addEventListener('change', (e) => toggleFeature(p, e));
+  for (const p of ['sr', 'tx', 'fc', 'sn']) $(p + 'Cancel').addEventListener('click', () => cancelDownload(p));
   $('fcDownload').addEventListener('click', downloadFaces);
   window.addEventListener('hashchange', route);
   start();
