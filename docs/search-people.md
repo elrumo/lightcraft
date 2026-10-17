@@ -167,7 +167,7 @@ POST /api/index/embeddings         vectors a device computed (checked whole; see
 
 An admin turns search on for everyone from the admin page (**Processing**): the switch shows the model's size and licence,
 downloads it onto the server after the admin agrees (resumable, SHA-256-checked, it keeps going if the page is closed)
-and turns search on. The same from a shell (never without the flag; Docker: `docker compose exec lightcraft-server …`):
+and turns search on. The page's **AI Models** list shows every model (description, words, people, sensitive content) with Download, Cancel and, once installed, Remove: it asks, then deletes only that model's files (`DELETE /api/admin/search/models/<search|text|faces|sensitive>`); what the model found stays, and downloading again resumes. Standalone clients remove theirs in Settings ▸ AI Models (`models.delete`). The same from a shell (never without the flag; Docker: `docker compose exec lightcraft-server …`):
 
 ```sh
 lightcraft-server model status

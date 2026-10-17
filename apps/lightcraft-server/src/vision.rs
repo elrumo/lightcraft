@@ -412,6 +412,56 @@ impl Search {
         self.switch.start(part, &self.dir, mirrors_file(&self.dir))
     }
 
+    /// Delete `part`'s model files from the model folder, and their partial downloads: only the files the model is made
+    /// of, never the folder's other contents, and never what the model found (indexes, text, faces, scores stay, so
+    /// downloading it again picks up where it left off). Refused while it downloads. → files and bytes removed.
+    pub fn remove_models(&self, part: Part) -> Result<(usize, u64), String> {
+        if self.switch.status(part).running {
+            return Err(format!("{} is downloading: cancel the download first", part.what()));
+        }
+        // (out of memory first: a loaded model holds its files)
+        match part {
+            Part::Search => self.unload(),
+            Part::Text => self.unload_text(),
+            Part::Faces => {
+                lock(&self.finder).take();
+                lock(&self.faces).clear();
+            }
+            Part::Sensitive => self.sensitive.unload(),
+        }
+        let sets = match part {
+            Part::Search => vec![(lightcraft_vision::models::SIGLIP_FILES, Vec::new(), self.dir.clone())],
+            Part::Text => lightcraft_vision::models::ocr_downloads(&self.dir.join(lightcraft_engine::vision::TEXT_DIR), None, None),
+            Part::Faces => lightcraft_vision::models::face_downloads(&self.faces_dir(), None, None),
+            Part::Sensitive => lightcraft_vision::models::nsfw_downloads(&self.dir.join(lightcraft_engine::vision::SENSITIVE_DIR), None, None),
+        };
+        let (mut files, mut bytes, mut failed) = (0usize, 0u64, Vec::new());
+        for (specs, _, dir) in &sets {
+            for spec in *specs {
+                for name in [spec.name.to_string(), format!("{}.part", spec.name)] {
+                    let path = dir.join(&name);
+                    let Ok(meta) = std::fs::metadata(&path) else { continue };
+                    if !meta.is_file() {
+                        continue;
+                    }
+                    match std::fs::remove_file(&path) {
+                        Ok(()) => (files, bytes) = (files + 1, bytes.saturating_add(meta.len())),
+                        Err(e) => failed.push(format!("{name}: {e}")),
+                    }
+                }
+            }
+            // (a part's own folder goes when nothing else is in it; the model folder itself stays)
+            if *dir != self.dir {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+        if !failed.is_empty() {
+            return Err(format!("couldn't delete everything ({})", failed.join("; ")));
+        }
+        log::info!("{} deleted ({files} files, {bytes} bytes)", part.what());
+        Ok((files, bytes))
+    }
+
     /// The model's id and vector length (known without loading it).
     pub(crate) fn spec(&self) -> (String, usize) {
         match &self.injected {

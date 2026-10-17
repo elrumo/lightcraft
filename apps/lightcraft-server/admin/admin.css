@@ -683,6 +683,6 @@ main > section { animation: enter 0.18s ease-out; }
 .models li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
 .models .what { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .models .what b { color: var(--heading); }
-.models .ok { color: var(--text-3); font-weight: 600; }
+.models .ok { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-weight: 600; }
 .models .meter { grid-column: 1 / -1; }
 #dash [data-view="processing"] .btn-row { margin-top: 14px; }
