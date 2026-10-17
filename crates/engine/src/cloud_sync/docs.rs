@@ -237,7 +237,9 @@ impl Session {
         for id in items.iter().take(ITEMS_MAX).filter_map(|v| v.get("id").and_then(Value::as_str)) {
             if let Some(p) = id.strip_prefix("preset:").filter(|p| !p.is_empty() && !hidden.presets.iter().any(|h| h == p)) {
                 hidden.presets.push(p.to_string());
-            } else if let Some(g) = id.strip_prefix("group:").filter(|g| !g.is_empty() && g.chars().count() <= NAME_MAX && !hidden.groups.iter().any(|h| h == g)) {
+            } else if let Some(g) =
+                id.strip_prefix("group:").filter(|g| !g.is_empty() && g.chars().count() <= NAME_MAX && !hidden.groups.iter().any(|h| h == g))
+            {
                 hidden.groups.push(g.to_string());
             }
         }
@@ -254,13 +256,27 @@ impl Session {
         for v in items.iter().take(SERVER_PRESETS_MAX) {
             if v.get("id").and_then(Value::as_str) == Some(SERVER_HIDDEN_ITEM) {
                 let names = |k: &str| -> Vec<String> {
-                    v.get(k).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|s| short(s)).take(ITEMS_MAX).map(str::to_string).collect()
+                    v.get(k)
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .filter(|s| short(s))
+                        .take(ITEMS_MAX)
+                        .map(str::to_string)
+                        .collect()
                 };
                 hidden = crate::presets::Hidden { presets: names("presets"), groups: names("groups") };
                 continue;
             }
             let Ok(p) = serde_json::from_value::<lightcraft_develop::Preset>(v.clone()) else { continue };
-            if p.id.starts_with(crate::presets::SERVER_PREFIX) && short(&p.id) && short(&p.name) && short(&p.group) && p.settings.is_object() && seen.insert(p.id.clone()) {
+            if p.id.starts_with(crate::presets::SERVER_PREFIX)
+                && short(&p.id)
+                && short(&p.name)
+                && short(&p.group)
+                && p.settings.is_object()
+                && seen.insert(p.id.clone())
+            {
                 list.push(lightcraft_develop::Preset { favorite: false, ..p });
             }
         }
