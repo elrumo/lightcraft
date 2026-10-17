@@ -120,7 +120,8 @@ impl HsvTable {
             for _ in 0..4 {
                 h -= miss(h);
             }
-            if !(miss(h).abs() < 1e-3) {
+            let off = miss(h).abs();
+            if off.is_nan() || off >= 1e-3 {
                 let (mut lo, mut hi) = (hue - 180.0, hue + 180.0);
                 for _ in 0..24 {
                     let mid = 0.5 * (lo + hi);
@@ -129,7 +130,7 @@ impl HsvTable {
                 h = 0.5 * (lo + hi);
             }
             let scale = self.lookup(h, s, v)[1];
-            if !(scale > 0.0) {
+            if scale.is_nan() || scale <= 0.0 {
                 break;
             }
             let next = (sat / scale).clamp(0.0, 2.0);
