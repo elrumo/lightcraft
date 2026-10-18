@@ -143,7 +143,7 @@ settled before LightCraft hosts a mirror.
 
 **AI Remove, better models (checked 2026-10-17, `remove_eval`, [ai-remove.md](ai-remove.md)).** MI-GAN stays the fast default;
 **LaMa** is the High quality option (Apache-2.0, already shipped for Expand). **Stable Diffusion 1.5 Inpainting** with a
-removal prompt (`quality: ultra`, experimental, in no UI) was no better than LaMa on four strokes over real people and
+removal prompt (`quality: ultra`, experimental, a switch only in the SwiftUI app) was no better than LaMa on four strokes over real people and
 painted a person-shaped blob into one hole, and cropping tighter made every network invent more. **PixelHacker**
 (Apache-2.0, 0.8B, best published inpainting scores on Places2 at 512) needs `flash-attn`, `triton` and
 `flash-linear-attention`, all CUDA-only: it can't run on a Mac or convert to Core ML until its gated linear attention is

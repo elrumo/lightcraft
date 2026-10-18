@@ -87,7 +87,7 @@ the end and answers `{model, passes, width, height, storedBytes}`; with `wait: f
 background, `activity.cancel` stops it), `crop.expandModel {model: "auto" | id}` (the choice
 Settings and the crop tool make), and `crop.expandModels` (each model with `available`, `ready`,
 `restricted`, `recommended`, `chosen` and `default`; whether the choice is `automatic`; the
-`device` profile). The models download with `models.download {"id": …, "acknowledged": true}`,
+`device` profile; `ultra`, the diffusion model Remove's Ultra quality paints with here, or null). The models download with `models.download {"id": …, "acknowledged": true}`,
 only after the user agreed. `crop.drag`, `crop.set`, `crop.straighten` and `crop.aspect` all honour
 Expand.
 

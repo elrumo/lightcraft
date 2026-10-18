@@ -25,7 +25,7 @@ grass, sand and water but can't continue an edge or a shape it can't find nearby
 textures and large areas better than MI-GAN. It is used once downloaded; until then strokes use MI-GAN. A fill is
 stored with its spot whichever network made it. The choice is saved with the app's settings.
 
-**Ultra** (`quality: "ultra"`, experimental, in no app's UI): a diffusion model, Stable Diffusion 1.5 Inpainting (2.1 GB, the
+**Ultra** (`quality: "ultra"`, experimental; the SwiftUI app's Remove panel offers it as **Ultra quality (experimental)** under High quality, where the device runs a diffusion model: `crop.expandModels` → `ultra` names it, Stable Diffusion 1.5 on a recent iPhone or iPad, with the same licence offer and download as Fill With; egui has no switch): a diffusion model, Stable Diffusion 1.5 Inpainting (2.1 GB, the
 one Generative Expand offers) or whichever of Kandinsky 2.2 and SDXL this device runs, asked for the empty background
 behind the stroke (`sd::Recipe::for_removal`). Tried 2026-10-17 with `remove_eval --removal` (Stable Diffusion 1.5 on an M1
 Max's GPU, about 30 s a stroke): **no better than LaMa**, and it painted a person-shaped blob into one of four holes;

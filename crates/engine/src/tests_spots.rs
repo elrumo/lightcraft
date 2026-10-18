@@ -239,6 +239,22 @@ fn ai_remove_says_what_is_missing_and_adds_nothing() {
     assert_eq!(crate::erase::RemoveQuality::from_id("high").map(|q| q.model_id()), Some("lama"));
 }
 
+/// An app's Ultra switch asks `crop.expandModels` which diffusion model it would paint with: Stable Diffusion 1.5 on a
+/// phone with a GPU that may use 4 GB, none on one that may not.
+#[test]
+fn ultra_names_the_diffusion_model_this_device_runs() {
+    use crate::hardware::{DeviceClass, DeviceProfile, GB};
+    let mut s = Session::with_demo();
+    let mut ultra = |memory: u64| {
+        s.set_device(DeviceProfile { class: DeviceClass::Phone, memory_bytes: Some(memory), gpu: true, cores: 6 });
+        s.execute("crop.expandModels", &json!({})).unwrap()["ultra"].clone()
+    };
+    assert!(ultra(2 * GB).is_null(), "a phone that may use 2 GB runs no diffusion model");
+    if crate::enhance::Enhancer::AVAILABLE {
+        assert_eq!(ultra(5 * GB), "sd15-inpaint");
+    }
+}
+
 /// With LaMa (a copy at `$LIGHTCRAFT_LAMA`; it is never part of the repository) `quality: high` paints the fill with it,
 /// on a worker and as one undo step; the Fast model is not needed for it.
 #[test]

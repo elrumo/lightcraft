@@ -240,6 +240,12 @@ impl Session {
         self.ultra_candidates().into_iter().find(|m| !self.enhancer.disabled.contains(m.id()) && self.enhancer.installed(m.id()))
     }
 
+    /// The diffusion model Ultra asks for: the one that paints now, else the one to download first (`None`: this
+    /// device runs none). What an app's Ultra switch offers.
+    pub fn ultra_pick(&self) -> Option<ExpandModel> {
+        self.ultra_model().or_else(|| self.ultra_candidates().first().copied())
+    }
+
     /// What paints at `quality`: a network, loaded once, or the folder of a diffusion model.
     fn erase_brush(&self, quality: RemoveQuality) -> Result<Brush, String> {
         match quality {

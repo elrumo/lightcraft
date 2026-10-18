@@ -770,11 +770,14 @@ pub fn specs() -> Vec<CommandSpec> {
             "Generative Expand Models",
             [],
             None,
-            "{} — the ways Generative Expand can paint: models (id, label, note, available: this device runs it, ready: downloaded and on, downloadBytes, licence, credit, restricted: its licence restricts use, diffusion, recommended: Automatic's pick here, chosen: what the pickers show, default: what crop.generate uses without a model); automatic (no model chosen: Automatic); device (class computer|phone|browser, memoryBytes, gpu, cores); and running ({photo, model}) while a Generate runs",
+            "{} — the ways Generative Expand can paint: models (id, label, note, available: this device runs it, ready: downloaded and on, downloadBytes, licence, credit, restricted: its licence restricts use, diffusion, recommended: Automatic's pick here, chosen: what the pickers show, default: what crop.generate uses without a model); automatic (no model chosen: Automatic); device (class computer|phone|browser, memoryBytes, gpu, cores); running ({photo, model}) while a Generate runs; and ultra (the id of the diffusion model Ultra AI Remove paints with, or null when this device runs none)",
             always,
             |s, _| {
                 let running = s.expand_running().map(|(photo, m)| json!({"photo": photo.0, "model": m.id()}));
-                Ok(json!({"models": s.expand_choices(), "automatic": s.expand.preferred.is_none(), "device": s.device, "running": running}))
+                let ultra = s.ultra_pick().map(|m| m.id());
+                Ok(
+                    json!({"models": s.expand_choices(), "automatic": s.expand.preferred.is_none(), "device": s.device, "running": running, "ultra": ultra}),
+                )
             }
         ),
         cmd!(
