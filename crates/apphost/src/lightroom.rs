@@ -84,7 +84,16 @@ impl Task {
     /// then what is being done.
     fn refresh(&self, words: &dyn Fn(&'static str) -> String) {
         let (step, done, total) = self.progress.step();
+        let stage = match self.progress.stage_id() {
+            "opening" => Some(words("Opening the catalog…")),
+            "listing" => Some(words("Listing the catalog's documents…")),
+            "albums" => Some(words("Reading albums…")),
+            "photos" => Some(words("Reading the albums' photos…")),
+            "matching" => Some(words("Matching photos with the library…")),
+            _ => None,
+        };
         let detail = match (self.phase, self.kind, step) {
+            (Phase::Reading, _, _) if stage.is_some() => stage.unwrap_or_default(),
             (Phase::Reading, Kind::Inspect, _) => String::new(),
             (Phase::Reading, Kind::Import, LightroomStep::Catalog) => words("Reading Lightroom catalog…"),
             (Phase::Reading, Kind::Import, LightroomStep::ReadPhotos) => words("Reading photos…"),
@@ -122,6 +131,7 @@ impl Task {
             "path": self.path,
             "phase": phase,
             "step": step,
+            "stage": self.progress.stage_id(),
             "done": done,
             "total": total,
             "fraction": self.progress.fraction(),
@@ -191,7 +201,7 @@ fn spawn_inspect(path: PathBuf, cancel: Arc<AtomicBool>, progress: LightroomProg
         .name("lc-lightroom-inspect".into())
         .spawn(move || {
             let result = lightcraft_engine::guard::catch("Lightroom inspect", || {
-                lightcraft_engine::lightroom_catalog::inspect(&path, &cancel, &progress.catalog_total, &progress.catalog_done)
+                lightcraft_engine::lightroom_catalog::inspect_staged(&path, &cancel, &progress.catalog_total, &progress.catalog_done, &progress.stage)
             })
             .and_then(|r| r);
             let _ = tx.send(Message::Inspected(result));

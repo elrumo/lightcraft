@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 use serde_json::Value;
 
@@ -61,9 +61,37 @@ fn str_at<'a>(doc: &'a Value, pointer: &str) -> &'a str {
     doc.pointer(pointer).and_then(Value::as_str).unwrap_or("")
 }
 
+/// What the reader is doing now, for [`crate::lightroom_job::LightroomProgress::stage`]: each is set
+/// as the code path starts it.
+pub mod stage {
+    /// Reading the catalog's write-ahead log and table list.
+    pub const OPENING: u8 = 1;
+    /// Walking the table of documents (no count: it is one pass over the file).
+    pub const LISTING: u8 = 2;
+    /// Reading the albums, folders and which photos each holds (counted).
+    pub const ALBUMS: u8 = 3;
+    /// Reading the files' names, sizes and times of the photos albums hold (counted).
+    pub const PHOTOS: u8 = 4;
+    /// Matching those photos with the library's (set by the job).
+    pub const MATCHING: u8 = 5;
+}
+
 /// The albums and folders of the catalog at `path`, each album's photos, and (with `photos`) what
 /// identifies those photos' files; `total` / `done` count the documents read.
 pub fn read(path: &Path, photos: bool, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize) -> Result<AlbumSource, String> {
+    read_staged(path, photos, cancel, total, done, &AtomicU8::new(0))
+}
+
+/// [`read`], saying in `progress_stage` what it is doing ([`stage`]).
+pub fn read_staged(
+    path: &Path,
+    photos: bool,
+    cancel: &AtomicBool,
+    total: &AtomicUsize,
+    done: &AtomicUsize,
+    progress_stage: &AtomicU8,
+) -> Result<AlbumSource, String> {
+    progress_stage.store(stage::OPENING, Ordering::Relaxed);
     let (db, unchanged) = crate::lightroom_catalog::open_database(path)?;
     let tables = db.live_tables()?;
     let table = |name: &str| tables.iter().find(|t| t.name == name).ok_or_else(|| format!("not a Lightroom catalog: no {name} table"));
@@ -73,6 +101,7 @@ pub fn read(path: &Path, photos: bool, cancel: &AtomicBool, total: &AtomicUsize,
     let (rev_columns, at) = columns(revs, &["content", "deleted"])?;
     let &[content_at, rev_deleted_at] = at.as_slice() else { return Err("revs columns".into()) };
 
+    progress_stage.store(stage::LISTING, Ordering::Relaxed);
     let mut wanted = Vec::new();
     let mut photo_revs = HashMap::new();
     for row in db.read_table(docs.rootpage, doc_columns)? {
@@ -112,6 +141,7 @@ pub fn read(path: &Path, photos: bool, cancel: &AtomicBool, total: &AtomicUsize,
         done.fetch_add(n, Ordering::Relaxed);
         if cancel.load(Ordering::Relaxed) { Err("Lightroom import cancelled".into()) } else { Ok(()) }
     };
+    progress_stage.store(stage::ALBUMS, Ordering::Relaxed);
     total.store(wanted.len(), Ordering::Relaxed);
     done.store(0, Ordering::Relaxed);
 
@@ -151,6 +181,7 @@ pub fn read(path: &Path, photos: bool, cancel: &AtomicBool, total: &AtomicUsize,
     }
 
     if photos {
+        progress_stage.store(stage::PHOTOS, Ordering::Relaxed);
         let mut needed: Vec<(i64, String)> = out
             .members
             .values()
@@ -201,7 +232,12 @@ fn identity(doc: &Value) -> PhotoIdentity {
 /// A report of the catalog at `path` without reading its photos: `{kind, albums, folders, photos,
 /// warnings}`.
 pub fn inspect(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize) -> Result<Value, String> {
-    let source = read(path, false, cancel, total, done)?;
+    inspect_staged(path, cancel, total, done, &AtomicU8::new(0))
+}
+
+/// [`inspect`], saying in `progress_stage` what it is doing ([`stage`]).
+pub fn inspect_staged(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize, progress_stage: &AtomicU8) -> Result<Value, String> {
+    let source = read_staged(path, false, cancel, total, done, progress_stage)?;
     let photos: HashSet<_> = source.members.values().flatten().collect();
     Ok(serde_json::json!({
         "kind": "cloud",
@@ -285,6 +321,17 @@ pub(crate) mod tests {
     fn read_all(path: &Path) -> AlbumSource {
         let (cancel, total, done) = Default::default();
         read(path, true, &cancel, &total, &done).unwrap()
+    }
+
+    #[test]
+    fn the_reader_says_where_it_is() {
+        let dir = temp_dir("stage");
+        let (cancel, total, done, at) = (Default::default(), Default::default(), Default::default(), AtomicU8::new(0));
+        inspect_staged(&mcat(&dir), &cancel, &total, &done, &at).unwrap();
+        assert_eq!(at.load(Ordering::Relaxed), stage::ALBUMS, "an inspection never reads the photos");
+        read_staged(&mcat(&dir), true, &cancel, &total, &done, &at).unwrap();
+        assert_eq!(at.load(Ordering::Relaxed), stage::PHOTOS);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

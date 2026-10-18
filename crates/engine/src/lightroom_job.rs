@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
 };
 
 use serde_json::Value;
@@ -161,6 +161,8 @@ pub struct LightroomProgress {
     add_done: Arc<AtomicUsize>,
     /// The catalog is read: the photos are next.
     photos: Arc<AtomicBool>,
+    /// What a Lightroom (cloud) catalog's reader is doing now ([`crate::lightroom_cloud::stage`]; 0 = none).
+    pub stage: Arc<AtomicU8>,
 }
 
 impl LightroomProgress {
@@ -168,6 +170,20 @@ impl LightroomProgress {
     /// take the rest of [`LightroomProgress::fraction`].
     const CATALOG_SHARE: f32 = 0.05;
     const READ_SHARE: f32 = 0.85;
+
+    /// What the cloud reader is doing now, as an id (`opening`, `listing`, `albums`, `photos`, `matching`), or
+    /// an empty one when nothing says (a Classic catalog, or not started).
+    pub fn stage_id(&self) -> &'static str {
+        use crate::lightroom_cloud::stage;
+        match self.stage.load(Ordering::Relaxed) {
+            stage::OPENING => "opening",
+            stage::LISTING => "listing",
+            stage::ALBUMS => "albums",
+            stage::PHOTOS => "photos",
+            stage::MATCHING => "matching",
+            _ => "",
+        }
+    }
 
     /// The step under way, with how much of it is done and its total (0 while not yet known).
     pub fn step(&self) -> (LightroomStep, usize, usize) {
@@ -291,7 +307,7 @@ impl LightroomJob {
     fn prepare_albums(&self, library: &[LibraryPhoto], cancel: &AtomicBool) -> crate::Result<PreparedLightroom> {
         let (total, done) = (&self.progress.catalog_total, &self.progress.catalog_done);
         let source = if crate::lightroom_cloud::is_cloud(&self.path) {
-            crate::lightroom_cloud::read(&self.path, true, cancel, total, done)
+            crate::lightroom_cloud::read_staged(&self.path, true, cancel, total, done, &self.progress.stage)
         } else {
             lightroom_catalog::read_with_progress(&self.path, cancel, total, done).map(|data| lightroom_catalog::album_source(&data))
         }
@@ -315,7 +331,10 @@ impl LightroomJob {
             update_existing: self.update_existing,
             now: self.import.now().to_string(),
             cancelled: cancel.load(Ordering::Relaxed),
-            albums: Some(AlbumPlan::new(source, library)),
+            albums: {
+                self.progress.stage.store(crate::lightroom_cloud::stage::MATCHING, Ordering::Relaxed);
+                Some(AlbumPlan::new(source, library))
+            },
         })
     }
 }

@@ -735,8 +735,14 @@ pub fn classic_report(data: &CatalogImport) -> Value {
 /// What the catalog at `path` holds, read-only: a Classic catalog's [`classic_report`], or a
 /// Lightroom (cloud) catalog's [`crate::lightroom_cloud::inspect`].
 pub fn inspect(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize) -> Result<Value, String> {
+    inspect_staged(path, cancel, total, done, &std::sync::atomic::AtomicU8::new(0))
+}
+
+/// [`inspect`], saying in `at` what a Lightroom (cloud) catalog's reader is doing
+/// ([`crate::lightroom_cloud::stage`]; a Classic catalog has no stages).
+pub fn inspect_staged(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize, at: &std::sync::atomic::AtomicU8) -> Result<Value, String> {
     if crate::lightroom_cloud::is_cloud(path) {
-        return crate::lightroom_cloud::inspect(path, cancel, total, done);
+        return crate::lightroom_cloud::inspect_staged(path, cancel, total, done, at);
     }
     read_with_progress(path, cancel, total, done).map(|data| classic_report(&data))
 }
