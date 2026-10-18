@@ -75,6 +75,10 @@ pub fn open_session_or_err(dir: Option<&Path>) -> Result<Session, String> {
 /// models in the settings folder (shared with egui, the CLI and MCP), and Add to Apple Photos on a
 /// worker, since it waits for the user to answer macOS's Automation prompt.
 pub fn configure_desktop(session: &mut Session) {
+    // (a build with the models' code, the Mac app's, can search, read text, find faces and check photos itself or
+    // for its server; the models are downloaded only when the user agrees)
+    session.vision.dir = lightcraft_engine::config::default_vision_dir();
+    session.vision.mirrors_file = lightcraft_engine::config::default_vision_mirrors();
     session.enhancer.dir = lightcraft_engine::config::config_dir().map(|d| d.join("models"));
     session.face_models_dir = lightcraft_engine::config::default_face_models_dir();
     // (the web build has no Apple Photos)

@@ -111,7 +111,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Processing for the Server",
             [],
             None,
-            "{} — how this device is doing as the sync server's processing unit (vision.setHelper) → {parts, supported, running, state (working|waiting|stopped), done: {search, text, faces, sensitive}, failed, error, unavailable: {part: why}, refused: {part: why}}",
+            "{} — how this device is doing as the sync server's processing unit (vision.setHelper) → {parts, supported, available: {part: true | why not here}, running, state (working|waiting|stopped), done: {search, text, faces, sensitive}, failed, error, unavailable: {part: why}, refused: {part: why}}",
             always,
             |s, _| Ok(s.vision_helper_status())
         ),

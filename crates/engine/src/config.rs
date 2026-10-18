@@ -133,12 +133,35 @@ fn sam3_dir(var: Option<std::ffi::OsString>, config: Option<PathBuf>) -> Option<
     var.filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| config.map(|d| d.join("models").join("sam3")))
 }
 
+/// Where the search model is kept: `$LIGHTCRAFT_VISION_DIR` if set, else `<config>/models/siglip2` (the text, face
+/// and sensitive-content models sit beside it).
+pub fn default_vision_dir() -> Option<PathBuf> {
+    std::env::var_os("LIGHTCRAFT_VISION_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| config_dir().map(|d| d.join("models").join("siglip2")))
+}
+
+/// The user's own download locations for those models, one base URL per line.
+pub fn default_vision_mirrors() -> Option<PathBuf> {
+    config_dir().map(|d| d.join("models").join("siglip2-mirrors.txt"))
+}
+
 impl Session {
     /// Look for the SAM 3 model in the shared default folder ([`default_sam3_dir`]), and for the user's
     /// download mirrors in `<config>/models/sam3-mirrors.txt`.
     pub fn with_default_sam3_model(mut self) -> Self {
         self.segmenter.dir = default_sam3_dir();
         self.segmenter.mirrors_file = config_dir().map(|d| d.join("models").join("sam3-mirrors.txt"));
+        self
+    }
+
+    /// Look for the search, text, face and sensitive-content models in the shared default folder
+    /// (`$LIGHTCRAFT_VISION_DIR`, else `<config>/models/siglip2`, the others beside it), and for the user's
+    /// download mirrors in `<config>/models/siglip2-mirrors.txt`.
+    pub fn with_default_vision_models(mut self) -> Self {
+        self.vision.dir = default_vision_dir();
+        self.vision.mirrors_file = default_vision_mirrors();
         self
     }
 

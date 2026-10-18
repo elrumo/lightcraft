@@ -255,8 +255,11 @@ PUT  /api/work/settings   {moved: [part]} | {add?: [part], remove?: [part]}
 POST /api/index/sensitive scores a device computed (checked whole, like the others)
 ```
 
-Not done yet: the SwiftUI app has no switch for it (the commands work there), and other work that could move the same
-way (building previews from the originals, Lens Blur depth) does not: the originals would have to travel.
+The Mac apps do it (egui: the Describe panel; SwiftUI: Settings ▸ AI Models ▸ Search, People and Sensitive Content, a
+**Server Work** section for a library signed in to a server). The SwiftUI Mac build carries the models' code and keeps
+them in `<config>/models` like the egui app; the iPhone and iPad builds don't (memory), so they show no switch. Other work
+that could move the same way (building previews from the originals, Lens Blur depth) does not: the originals would have
+to travel.
 
 ## Limits (honest)
 

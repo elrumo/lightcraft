@@ -105,7 +105,7 @@ impl Downloader {
 
     /// Start downloading `files` from `mirrors` into `dir` on a background thread, shown in the activity stack as
     /// `name` (its ✕ cancels like [`Downloader::cancel`]). False when one is already running.
-    #[cfg(feature = "sam")]
+    #[cfg(any(feature = "sam", feature = "vision"))]
     #[allow(clippy::too_many_arguments)]
     pub fn start(
         &self,

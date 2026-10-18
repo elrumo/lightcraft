@@ -407,6 +407,23 @@ fn each(
     }
 }
 
+impl super::Vision {
+    /// For each part, `true` when this device can run its model now, else why it can't.
+    fn helper_availability(&self) -> serde_json::Map<String, Value> {
+        let mut out = serde_json::Map::new();
+        for part in HelperPart::ALL {
+            let made = match part {
+                HelperPart::Search => self.provider().map(|_| ()),
+                HelperPart::Text => self.reader_provider().map(|_| ()),
+                HelperPart::Faces => self.finder_provider().map(|_| ()),
+                HelperPart::Sensitive => self.classifier_provider().map(|_| ()),
+            };
+            out.insert(part.key().to_string(), made.map_or_else(|e| json!(e), |()| json!(true)));
+        }
+        out
+    }
+}
+
 impl crate::Session {
     /// The parts this device processes for its server.
     pub fn vision_helper_parts(&self) -> &[String] {
@@ -444,6 +461,8 @@ impl crate::Session {
         let mut v = self.vision.helper.as_ref().map_or_else(|| json!({"running": false, "state": "stopped"}), |j| j.json());
         v["parts"] = json!(self.vision.helper_parts);
         v["supported"] = json!(true);
+        // what this device can run now: true, or why not (no model code in this build, or not downloaded yet)
+        v["available"] = json!(self.vision.helper_availability());
         if v["error"].is_null() {
             v["error"] = json!(self.vision.helper_error);
         }

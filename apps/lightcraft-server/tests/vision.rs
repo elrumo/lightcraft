@@ -1222,6 +1222,9 @@ fn the_choice_is_kept_with_the_library_and_a_missing_model_is_said() {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(r["active"], json!(["search"]), "{r}");
+    // the status says what this device can run, for a screen that offers only that
+    assert_eq!(r["available"]["search"], true, "{r}");
+    assert!(r["available"]["faces"].is_string(), "no face finder here: why not, in words: {r}");
     assert!(!r["unavailable"]["text"].as_str().unwrap_or("").is_empty(), "{r}");
     sync(&mut s);
     assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!(["search"]));
