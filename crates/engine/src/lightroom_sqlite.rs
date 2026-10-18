@@ -85,7 +85,9 @@ const MAX_COLUMNS: usize = 16_384;
 const MAX_ROWS: usize = 1_000_000;
 const MAX_CELLS: usize = 4_000_000;
 const MAX_PAYLOAD: usize = 64 * 1024 * 1024;
-const MAX_TABLE_PAYLOAD: usize = 256 * 1024 * 1024;
+/// What a table scan may read in all (rows are read one at a time and only their first columns kept: a cloud
+/// catalog's `docs` holds ~290 MB of annotations).
+const MAX_TABLE_PAYLOAD: u64 = 4 << 30;
 const MAX_OVERFLOW_PAGES: usize = 1_048_576;
 const MAX_BTREE_DEPTH: usize = 64;
 
@@ -365,7 +367,7 @@ impl Database {
                     }
                     let rowid = i64::from_be_bytes(read_varint(content, &mut at)?.to_be_bytes());
                     state.payload_total = state.payload_total.checked_add(payload_len).ok_or("SQLite table payload total overflow")?;
-                    if state.payload_total > MAX_TABLE_PAYLOAD {
+                    if u64::try_from(state.payload_total).unwrap_or(u64::MAX) > MAX_TABLE_PAYLOAD {
                         return Err("SQLite table payload exceeds bounded import size".into());
                     }
                     let payload = self.payload(&page, at, payload_len)?;

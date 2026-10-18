@@ -353,3 +353,64 @@ pub(crate) mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[cfg(test)]
+mod scratch_debug {
+    use crate::lightroom_sqlite::Value as Sql;
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+    use std::sync::atomic::AtomicUsize;
+
+    fn keys(v: &Value, prefix: &str, depth: usize, out: &mut BTreeSet<String>) {
+        if depth > 5 {
+            return;
+        }
+        match v {
+            Value::Object(m) => {
+                for (k, v) in m {
+                    let p = format!("{prefix}/{k}");
+                    out.insert(p.clone());
+                    keys(v, &p, depth + 1, out);
+                }
+            }
+            Value::Array(a) => {
+                for v in a.iter().take(2) {
+                    keys(v, &format!("{prefix}[]"), depth + 1, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn real_catalog() {
+        let path = std::path::PathBuf::from(std::env::var("LC_MCAT").unwrap());
+        let t = std::time::Instant::now();
+        let report = super::inspect(&path, &Default::default(), &AtomicUsize::new(0), &AtomicUsize::new(0));
+        eprintln!("inspect {:?}: {:?}", t.elapsed(), report.map(|r| r.to_string().chars().take(400).collect::<String>()));
+        let (db, _) = crate::lightroom_catalog::open_database(&path).unwrap();
+        let tables = db.live_tables().unwrap();
+        let docs = tables.iter().find(|t| t.name == "docs").unwrap();
+        let revs = tables.iter().find(|t| t.name == "revs").unwrap();
+        let mut seen = std::collections::HashMap::<String, usize>::new();
+        for row in db.read_table(docs.rootpage, 10).unwrap() {
+            let (Some(Sql::Text(ty)), Some(Sql::Text(sub))) = (row.values.get(8), row.values.get(9)) else { continue };
+            if !["asset", "version", "album_asset"].contains(&ty.as_str()) {
+                continue;
+            }
+            let n = seen.entry(format!("{ty}/{sub}")).or_default();
+            *n += 1;
+            if *n > 1 {
+                continue;
+            }
+            let Some(Sql::Integer(rev)) = row.values.get(2) else { continue };
+            let Some(r) = db.get_row(revs.rootpage, *rev, 7).unwrap() else { continue };
+            let bytes = match r.values.get(3) { Some(Sql::Blob(b)) => b.clone(), Some(Sql::Text(t)) => t.as_bytes().to_vec(), _ => continue };
+            let doc = crate::msgpack::decode(&bytes).unwrap();
+            let mut ks = BTreeSet::new();
+            keys(&doc, "", 0, &mut ks);
+            eprintln!("--- {ty}/{sub}: {} keys\n{}", ks.len(), ks.into_iter().collect::<Vec<_>>().join("\n"));
+        }
+    }
+}
