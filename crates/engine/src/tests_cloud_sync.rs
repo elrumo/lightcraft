@@ -2756,3 +2756,24 @@ fn hidden_photos_and_the_password_reach_the_other_devices_and_an_old_server_is_r
     assert!(!a.catalog.photo(ids[1]).unwrap().hidden);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Marking a photo sensitive (or not) on one device marks it on the other, and a later mark replaces the earlier.
+#[test]
+fn sensitive_marks_reach_the_other_devices() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("marks", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+
+    a.execute("photo.markSensitive", &json!({"ids": [ids[0].0]})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert!(b.sensitive_ids().contains(&ids[0]), "marked on the other device too");
+
+    b.execute("photo.unmarkSensitive", &json!({"ids": [ids[0].0]})).unwrap();
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    assert!(!a.sensitive_ids().contains(&ids[0]), "and unmarked back");
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -39,6 +39,30 @@ pub(crate) fn set_hidden(s: &mut Session, ids: &[PhotoId], hidden: bool) -> Resu
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
+            "photo.markSensitive",
+            "Mark as Sensitive",
+            ["Photo"],
+            None,
+            "{ids?} — the photos count as possibly sensitive whatever the model scored (listed under Possibly Sensitive, blurred in the grid); saved and synced with the library → {changed}",
+            always,
+            |s, p| {
+                let ids = s.targets(p)?;
+                Ok(json!({"changed": s.mark_sensitive(&ids, true)?}))
+            }
+        ),
+        cmd!(
+            "photo.unmarkSensitive",
+            "Mark as Not Sensitive",
+            ["Photo"],
+            None,
+            "{ids?} — the photos no longer count as possibly sensitive, whatever the model scored (not listed, not blurred); saved and synced with the library → {changed}",
+            always,
+            |s, p| {
+                let ids = s.targets(p)?;
+                Ok(json!({"changed": s.mark_sensitive(&ids, false)?}))
+            }
+        ),
+        cmd!(
             "photo.hide",
             "Hide Photo",
             ["Photo"],

@@ -69,6 +69,9 @@ const IMPORT_ITEM: &str = "import";
 const PASSWORD_ITEM: &str = "password";
 /// The item of `privacy` that turns blurring the possibly sensitive photos off (absent: on).
 const BLUR_ITEM: &str = "blurSensitive";
+/// The items of `privacy` that hold what the person decided about one photo: `mark:<content hash>` with `on`
+/// true (marked sensitive) or false (marked not sensitive).
+const MARK_PREFIX: &str = "mark:";
 /// The id of the one item of the `preset-groups` document (its `groups`: the order of the preset groups).
 const GROUPS_ITEM: &str = "order";
 /// The import defaults that name a place on one computer: not shared.
@@ -216,6 +219,7 @@ impl Session {
         if !self.blur_sensitive {
             items.push(json!({"id": BLUR_ITEM, "on": false}));
         }
+        items.extend(self.vision.sensitive_marks.iter().map(|(k, on)| json!({"id": format!("{MARK_PREFIX}{k}"), "on": on})));
         items
     }
 
@@ -224,6 +228,8 @@ impl Session {
     fn set_privacy_items(&mut self, items: &[Value]) {
         let blur = items.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(BLUR_ITEM)).and_then(|v| v["on"].as_bool());
         self.blur_sensitive = blur.unwrap_or(true);
+        let marks = items.iter().filter_map(|v| Some((v.get("id")?.as_str()?.strip_prefix(MARK_PREFIX)?.to_string(), v.get("on")?.as_bool()?)));
+        self.vision.set_sensitive_marks(marks);
         match items.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(PASSWORD_ITEM)) {
             None => self.hidden.password = None,
             Some(item) => {

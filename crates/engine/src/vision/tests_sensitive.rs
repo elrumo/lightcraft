@@ -99,3 +99,32 @@ fn the_download_needs_the_users_yes() {
     let e = s.execute("vision.sensitive.download", &json!({})).unwrap_err();
     assert!(e.to_string().contains("acknowledged"), "{e}");
 }
+
+#[test]
+fn a_photo_can_be_marked_sensitive_without_the_model() {
+    let mut s = Session::with_demo();
+    let id = s.visible()[0];
+    assert!(s.sensitive_photos().is_empty());
+    let r = s.execute("photo.markSensitive", &json!({"ids": [id.0]})).unwrap();
+    assert_eq!(r["changed"], 1);
+    assert_eq!(s.sensitive_photos().iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![id]);
+    let rows = s.execute("catalog.query", &json!({"limit": 1})).unwrap();
+    assert_eq!(rows["photos"][0]["sensitive"], true, "{rows}");
+    // marking again changes nothing; marking not sensitive takes it out
+    assert_eq!(s.execute("photo.markSensitive", &json!({"ids": [id.0]})).unwrap()["changed"], 0);
+    assert_eq!(s.execute("photo.unmarkSensitive", &json!({"ids": [id.0]})).unwrap()["changed"], 1);
+    assert!(s.sensitive_photos().is_empty());
+}
+
+#[test]
+fn marking_not_sensitive_beats_the_model() {
+    let mut s = session(Arc::new(All));
+    let total = s.visible().len();
+    s.vision_index(None, true).unwrap();
+    let id = s.visible()[0];
+    s.execute("photo.unmarkSensitive", &json!({"ids": [id.0]})).unwrap();
+    assert_eq!(s.sensitive_photos().len(), total - 1);
+    assert!(!s.sensitive_ids().contains(&id));
+    s.execute("photo.markSensitive", &json!({"ids": [id.0]})).unwrap();
+    assert_eq!(s.sensitive_photos().len(), total);
+}

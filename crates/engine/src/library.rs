@@ -326,6 +326,8 @@ struct PrefsFile {
     search_helper: Vec<String>,
     /// Blur the possibly sensitive photos in the grid (`library.setBlurSensitive`; missing = on).
     blur_sensitive: Option<bool>,
+    /// Photos the person marked sensitive (`true`) or not (`false`), by content hash (`photo.markSensitive`).
+    sensitive_marks: std::collections::BTreeMap<String, bool>,
     /// Slideshow playback settings.
     slideshow: crate::slideshow::PlaybackSettings,
     /// Slideshow slide layout (margins, options, backdrop).
@@ -627,6 +629,7 @@ impl Session {
         self.vision.helper_parts = prefs.search_helper;
         self.vision.sensitive = prefs.search_sensitive;
         self.blur_sensitive = prefs.blur_sensitive.unwrap_or(true);
+        self.vision.set_sensitive_marks(prefs.sensitive_marks);
         // (locked, whatever the last library was)
         self.hidden = crate::hidden::HiddenLock::for_library(prefs.hidden_password.filter(|h| h.starts_with("$argon2")));
         self.hold_view = prefs.hold_view;
@@ -1044,6 +1047,7 @@ impl Session {
             search_sensitive: self.vision.sensitive,
             search_helper: self.vision.helper_parts.clone(),
             blur_sensitive: Some(self.blur_sensitive),
+            sensitive_marks: self.vision.sensitive_marks.clone(),
             slideshow: self.slideshow.clone(),
             slide_layout: self.slide_layout.clone(),
             slide_overlays: self.slide_overlays.clone(),

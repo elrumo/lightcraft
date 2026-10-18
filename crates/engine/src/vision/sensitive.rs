@@ -53,7 +53,11 @@ pub(super) struct ClassifierProvider {
 }
 
 /// What the list of possibly sensitive photos was worked out from (the library, the scores here, the server's).
-pub(super) type ListKey = (u64, u64, u64);
+pub(super) type ListKey = (u64, u64, u64, u64);
+
+/// Marks kept at most (a device's own and what the server sends back: untrusted).
+// ponytail: one synced document holds them all; a person who marks tens of thousands of photos wants a rule, not a mark each.
+pub(crate) const MARKS_MAX: usize = 50_000;
 
 /// The flagged photos the server listed, as of when it was asked.
 #[derive(Default)]
@@ -65,6 +69,16 @@ pub(crate) struct ServerFlags {
 }
 
 impl Vision {
+    /// Replace the person's marks (what a saved or synced list says): a key that isn't a content hash is dropped.
+    pub(crate) fn set_sensitive_marks(&mut self, marks: impl IntoIterator<Item = (String, bool)>) {
+        let marks: std::collections::BTreeMap<String, bool> =
+            marks.into_iter().filter(|(k, _)| Key::from_hex(k).is_some()).take(MARKS_MAX).map(|(k, v)| (k.to_ascii_lowercase(), v)).collect();
+        if marks != self.sensitive_marks {
+            self.sensitive_marks = marks;
+            self.sensitive_marks_rev = self.sensitive_marks_rev.wrapping_add(1);
+        }
+    }
+
     /// Use `classifier` instead of loading the model from the model folder (tests, other hosts).
     pub fn set_classifier(&mut self, classifier: Arc<dyn Classifier>) {
         self.injected_classifier = Some(classifier);
@@ -313,7 +327,7 @@ impl Session {
     /// The library's possibly sensitive photos, most likely first: the ones scored here, and the ones the
     /// sync server flagged.
     pub fn sensitive_photos(&mut self) -> Arc<Vec<(PhotoId, f32)>> {
-        let key: ListKey = (self.catalog.revision, self.vision.shared.sensitive_rev.load(Ordering::Relaxed), self.vision.remote.sensitive.rev);
+        let key: ListKey = (self.catalog.revision, self.vision.shared.sensitive_rev.load(Ordering::Relaxed), self.vision.remote.sensitive.rev, self.vision.sensitive_marks_rev);
         if let Some((k, list, _)) = &self.vision.sensitive_list
             && *k == key
         {
@@ -324,6 +338,15 @@ impl Session {
             for (k, s) in theirs.iter() {
                 let mine = scores.entry(*k).or_insert(*s);
                 *mine = mine.max(*s);
+            }
+        }
+        // (the person's word beats the model's: marked photos score 1, the ones marked not sensitive drop out)
+        for (hex, marked) in &self.vision.sensitive_marks {
+            let Some(k) = Key::from_hex(hex) else { continue };
+            if *marked {
+                scores.insert(k, 1.0);
+            } else {
+                scores.remove(&k);
             }
         }
         let mut list: Vec<(PhotoId, f32)> = Vec::new();
@@ -340,6 +363,22 @@ impl Session {
         let list = Arc::new(list);
         self.vision.sensitive_list = Some((key, list.clone(), Arc::new(set)));
         list
+    }
+
+    /// Mark `ids` sensitive (`true`) or not sensitive (`false`): their content hashes go into the marks, saved
+    /// and synced with the library. Returns how many photos it changed the answer for.
+    pub fn mark_sensitive(&mut self, ids: &[PhotoId], sensitive: bool) -> crate::Result<usize> {
+        let before = self.sensitive_ids();
+        let keys: Vec<Key> = ids.iter().filter_map(|id| self.catalog.photo(*id)).map(|p| Key::of(&crate::media::content_key(p))).collect();
+        let mut marks = self.vision.sensitive_marks.clone();
+        for k in keys {
+            marks.insert(k.to_hex(), sensitive);
+        }
+        self.vision.set_sensitive_marks(marks);
+        let after = self.sensitive_ids();
+        let changed = ids.iter().filter(|id| before.contains(id) != after.contains(id)).count();
+        self.save_prefs()?;
+        Ok(changed)
     }
 
     /// The possibly sensitive photos, as a set (what the grid blurs; cached like the list).

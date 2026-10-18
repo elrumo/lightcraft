@@ -314,6 +314,11 @@ pub struct Vision {
     helper_retry: Option<Instant>,
     /// The possibly sensitive photos, best first, and what they were worked out from.
     sensitive_list: Option<(sensitive::ListKey, Arc<Vec<(PhotoId, f32)>>, Arc<HashSet<PhotoId>>)>,
+    /// What the person decided about single photos, by content hash: `true` marked sensitive, `false` marked not
+    /// (`photo.markSensitive`, `photo.unmarkSensitive`). It wins over the model's score; saved and synced.
+    pub(crate) sensitive_marks: std::collections::BTreeMap<String, bool>,
+    /// Bumped when [`Vision::sensitive_marks`] change (part of the list's cache key).
+    pub(crate) sensitive_marks_rev: u64,
     people: people::Cache,
     remote: server::Remote,
     shared: Arc<Shared>,
@@ -360,6 +365,8 @@ impl Default for Vision {
             #[cfg(not(target_arch = "wasm32"))]
             helper_retry: None,
             sensitive_list: None,
+            sensitive_marks: std::collections::BTreeMap::new(),
+            sensitive_marks_rev: 0,
             people: people::Cache::default(),
             remote: server::Remote::default(),
             shared: Arc::new(Shared::default()),
