@@ -831,7 +831,7 @@ impl SyncState {
     pub fn status(&self) -> Value {
         let (uploads, downloads) = self.transfers();
         json!({
-            "state": self.state(),
+            "state": self.state_with((uploads, downloads)),
             "signedIn": self.signed_in(),
             "server": self.config.server,
             "user": self.config.user,
@@ -865,6 +865,11 @@ impl SyncState {
     /// The state for the topbar's cloud icon: `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing` or
     /// `idle`.
     pub fn state(&self) -> &'static str {
+        self.state_with(self.transfers())
+    }
+
+    /// [`SyncState::state`] with the transfers already counted (counting walks every queued job).
+    fn state_with(&self, transfers: (usize, usize)) -> &'static str {
         if !self.signed_in() {
             "signedOut"
         } else if self.config.leaving {
@@ -875,7 +880,7 @@ impl SyncState {
             "paused"
         } else if self.error.is_some() {
             "error"
-        } else if self.control.is_some() || self.reading().is_some() || !self.outbox.is_empty() || self.transfers() != (0, 0) || self.login.is_some()
+        } else if self.control.is_some() || self.reading().is_some() || !self.outbox.is_empty() || transfers != (0, 0) || self.login.is_some()
         {
             "syncing"
         } else {
@@ -2491,22 +2496,23 @@ impl Session {
         let name = |id: PhotoId| self.catalog.photo(id).map(|p| p.file_name.clone()).unwrap_or_default();
         if kind == QueueKind::Changes {
             // (in the order they will be sent, a record where its first change is)
+            // (the whole outbox is walked for the count, but only the records of the page asked for are kept:
+            // after a big import the outbox holds tens of thousands of changes)
+            let keep = offset.saturating_add(limit);
             let mut at: HashMap<Subject, usize> = HashMap::new();
             let mut groups: Vec<(Subject, Vec<&str>)> = Vec::new();
             for (subject, field) in st.outbox.changes() {
-                let i = match at.get(&subject) {
-                    Some(i) => *i,
-                    None => {
-                        at.insert(subject.clone(), groups.len());
-                        groups.push((subject, Vec::new()));
-                        groups.len() - 1
-                    }
-                };
-                if let Some((_, fields)) = groups.get_mut(i) {
-                    fields.push(field);
+                let n = at.len();
+                let i = *at.entry(subject.clone()).or_insert(n);
+                if i >= keep {
+                    continue;
+                }
+                match groups.get_mut(i) {
+                    Some((_, fields)) => fields.push(field),
+                    None => groups.push((subject, vec![field])),
                 }
             }
-            let total = groups.len();
+            let total = at.len();
             let items = groups
                 .into_iter()
                 .skip(offset)
