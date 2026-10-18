@@ -628,8 +628,18 @@ fn merges_preview_and_run_in_the_background() {
     }
     let one = h.call(&req(4, "host.merge.start", json!({"command": "merge.hdr", "ids": [ids[0]]})), Duration::from_secs(30));
     assert!(one["error"]["message"].as_str().unwrap().contains("at least 2"), "{one}");
-    let started = h.call(&req(5, "host.merge.start", json!({"command": "merge.hdr", "ids": ids})), Duration::from_secs(30));
+    let first_time = h.call(&req(6, "host.merge.lastOptions", json!({"command": "merge.hdr"})), Duration::from_secs(30));
+    assert_eq!(first_time["result"]["deghost"], "none", "{first_time}");
+    let started = h.call(
+        &req(5, "host.merge.start", json!({"command": "merge.hdr", "ids": ids, "options": {"deghost": "medium", "align": false}})),
+        Duration::from_secs(30),
+    );
     assert_eq!(started["result"]["started"], true, "{started}");
+    // the dialog opens with the options of the last merge of its kind, not of the others
+    let last = h.call(&req(7, "host.merge.lastOptions", json!({"command": "merge.hdr"})), Duration::from_secs(30));
+    assert_eq!((last["result"]["deghost"].as_str(), last["result"]["align"].as_bool()), (Some("medium"), Some(false)), "{last}");
+    let pano = h.call(&req(8, "host.merge.lastOptions", json!({"command": "merge.panorama"})), Duration::from_secs(30));
+    assert_eq!((pano["result"]["command"].as_str(), pano["result"]["deghost"].as_str()), (Some("merge.panorama"), Some("none")), "{pano}");
     let said = h.wait_for(|e| e["kind"] == "message" && e["text"].as_str().is_some_and(|t| t.starts_with("HDR merge")));
     assert!(said["text"].as_str().unwrap().contains("merge"), "{said}");
     let _ = std::fs::remove_dir_all(&dir);

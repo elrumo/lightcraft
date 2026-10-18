@@ -146,9 +146,13 @@ pub fn originals(s: &Session, p: &Value) -> Result<Value, String> {
     let mut files = Vec::new();
     let mut skipped = Vec::new();
     for id in ids {
-        match s.catalog.photo(id).map(|ph| &ph.source) {
-            Some(Source::File { path }) if Path::new(path).is_file() => files.push(json!({"id": id.0, "path": path})),
-            Some(Source::File { path }) => skipped.push(json!({"id": id.0, "reason": format!("the original is missing: {path}")})),
+        // the path may come from an imported catalog: only a photo file LightCraft reads is
+        // handed to the opener, never a program (#2135)
+        match s.catalog.photo(id).map(|ph| (&ph.file_name, &ph.source)) {
+            Some((name, Source::File { path })) => match lightcraft_engine::open_path::openable(path, name) {
+                Ok(absolute) => files.push(json!({"id": id.0, "path": absolute})),
+                Err(reason) => skipped.push(json!({"id": id.0, "reason": reason})),
+            },
             Some(_) => skipped.push(json!({"id": id.0, "reason": "a demo photo has no original file"})),
             None => skipped.push(json!({"id": id.0, "reason": "no such photo"})),
         }
@@ -167,6 +171,31 @@ pub fn originals(s: &Session, p: &Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Open Original hands the editor a photo file, never what a catalog's path names otherwise (#2135).
+    #[cfg(unix)]
+    #[test]
+    fn originals_refuse_a_path_that_is_not_a_photo_file() {
+        let dir = std::env::temp_dir().join(format!("lc-originals-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pixels = vec![128u8; 16 * 16 * 3];
+        let img = lightcraft_codecs::encode::EncodeImage::new(16, 16, 3, lightcraft_codecs::encode::Samples::U8(&pixels));
+        let png = lightcraft_codecs::encode::encode_png(&img, &Default::default()).unwrap();
+        let file = dir.join("IMG_1.png").to_string_lossy().to_string();
+        std::fs::write(&file, png).unwrap();
+        let mut s = Session::new();
+        s.execute("library.import", &json!({"paths": [file.clone()]})).unwrap();
+        let id = s.catalog.photos().next().unwrap().id.0;
+        let ok = originals(&s, &json!({"ids": [id]})).unwrap();
+        assert_eq!(ok["files"][0]["path"], file.as_str());
+        // the same name, now a link to a program
+        std::fs::remove_file(&file).unwrap();
+        std::os::unix::fs::symlink("/bin/sh", &file).unwrap();
+        let e = originals(&s, &json!({"ids": [id]})).unwrap_err();
+        assert!(e.contains("points at"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn names_match_without_extension_or_a_numbered_suffix() {

@@ -696,6 +696,11 @@ impl Engine {
                 self.note_external_edits(text);
                 Ok(r)
             }
+            // the options of the last merge of `command` (the defaults the first time): what the dialog opens with
+            "host.merge.lastOptions" => {
+                let command = p.get("command").and_then(Value::as_str).ok_or_else(|| bad("missing `command`"))?;
+                serde_json::to_value(crate::merge::last_options(&self.session, command)).map_err(|e| ErrorBody::new("other", e.to_string()))
+            }
             "host.merge.start" | "host.merge.last" => {
                 let ids = merge_ids(&self.session, p);
                 let r = if method == "host.merge.last" {
