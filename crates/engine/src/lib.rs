@@ -36,6 +36,7 @@ pub mod display;
 mod download;
 pub mod enhance;
 pub mod erase;
+pub mod doc_path;
 mod errors;
 pub mod expand;
 pub mod export;
@@ -74,6 +75,7 @@ pub mod merge;
 mod model_download;
 pub mod models;
 mod msgpack;
+pub mod open_path;
 pub mod originals;
 mod pdf;
 pub mod photo_library;
@@ -369,6 +371,10 @@ pub struct Session {
     pub xmp: sidecar::XmpPrefs,
     /// Parameters of the last export (`app.export` params, minus targets), persisted in prefs.json.
     pub last_export: Option<serde_json::Value>,
+    /// The options of the last Photo Merge started, per command (`merge.hdr`, `merge.panorama`,
+    /// `merge.hdrPanorama`): the merge dialog opens with them and "… with Last Settings" uses
+    /// them. Persisted in prefs.json.
+    pub last_merge: std::collections::BTreeMap<String, serde_json::Value>,
     /// The user's export presets (built-ins: [`export::builtin_presets`]), persisted in prefs.json.
     pub export_presets: Vec<export::ExportPreset>,
     /// The Print module's current layout, image settings, page, guides and job (`print.*`). Lives
@@ -564,6 +570,7 @@ impl Session {
             library_identity: Arc::new(()),
             xmp: sidecar::XmpPrefs::default(),
             last_export: None,
+            last_merge: Default::default(),
             export_presets: Vec::new(),
             print: Default::default(),
             print_templates: Vec::new(),

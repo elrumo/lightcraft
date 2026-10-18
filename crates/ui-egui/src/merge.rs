@@ -48,7 +48,12 @@ impl MergeState {
     }
 }
 
-/// Open the merge dialog for the selection.
+/// The options of the last merge of kind `command` started (kept in the library preferences).
+pub fn last_options(app: &LightcraftApp, command: &str) -> MergeDialog {
+    lightcraft_apphost::merge::last_options(&app.session, command)
+}
+
+/// Open the merge dialog for the selection, with the options of the last merge of this kind.
 pub fn open(app: &mut LightcraftApp, command: &str) -> Result<Value, String> {
     let ids = app.session.selected();
     if ids.len() < 2 {
@@ -60,14 +65,14 @@ pub fn open(app: &mut LightcraftApp, command: &str) -> Result<Value, String> {
     app.merge.preview_pixels = None;
     app.merge.runner.cancel_preview();
     app.merge.runner.failed = None;
-    app.ui.dialog = Some(crate::state::Dialog::Merge { opts: MergeDialog::for_command(command) });
+    app.ui.dialog = Some(crate::state::Dialog::Merge { opts: last_options(app, command) });
     Ok(json!({"photos": app.merge.ids.len()}))
 }
 
 /// Start the full-resolution merge (the dialog's Merge button / `ui.dialog.confirm`).
 pub fn start_final(app: &mut LightcraftApp, opts: &MergeDialog) -> Result<Value, String> {
     let ids = app.merge.ids.clone();
-    app.merge.runner.start(&app.session, opts, &ids)?;
+    app.merge.runner.start(&mut app.session, opts, &ids)?;
     Ok(json!({"started": true, "photos": ids.len()}))
 }
 
@@ -79,7 +84,7 @@ pub fn start_last(app: &mut LightcraftApp, command: &str) -> Result<Value, Strin
         return Err("select at least 2 photos to merge".into());
     }
     app.merge.ids = ids.clone();
-    app.merge.runner.start_last(&app.session, command, &ids)?;
+    app.merge.runner.start_last(&mut app.session, command, &ids)?;
     Ok(json!({"started": true, "photos": ids.len()}))
 }
 
@@ -104,7 +109,7 @@ pub fn start_batch(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> 
 fn next_in_batch(app: &mut LightcraftApp) -> Result<(), String> {
     let Some(ids) = app.merge.batch.pop_front() else { return Ok(()) };
     app.merge.ids = ids;
-    let opts = app.merge.runner.last.get("merge.hdr").cloned().unwrap_or_else(|| MergeDialog::for_command("merge.hdr"));
+    let opts = last_options(app, "merge.hdr");
     start_final(app, &opts).map(|_| ())
 }
 

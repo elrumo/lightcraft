@@ -172,3 +172,12 @@ An album imported before is found again (the import index in `Interop/lightroom-
 album or folder of the same kind with the same name in the same folder (a smart collection's album among
 the smart albums, any other among the regular ones), so importing twice, or on a second device, merges
 the photos it lacks instead of making a copy. This applies to the full Classic import's collections too.
+
+Original and root folder paths are resolved with the catalog as the document and are looked at
+only when they are on this computer or on the network share the catalog itself is on
+(`crates/engine/src/doc_path.rs`). An original on another computer (`\\server\share\…`,
+`//server/…`, `file://server/…`), a device path, or one whose folder or file name in the catalog is
+an absolute path is not looked at: the import lists it as missing with a warning and leaves the
+photo and its virtual copies out of the library. To import originals on a share, open the catalog
+from that share. A path that is not a path on this computer (a Windows drive path read on macOS or
+Linux) is not looked at either and stays catalogued as missing.

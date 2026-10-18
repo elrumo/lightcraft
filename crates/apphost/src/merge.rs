@@ -4,7 +4,6 @@
 //! ([`lightcraft_engine::Session::finish_merge`]). egui's merge dialog and the SwiftUI app
 //! (`host.merge.*`) drive the same [`Runner`].
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -50,10 +49,16 @@ pub enum Done {
 pub struct Runner {
     pub preview: Option<Task>,
     pub merging: Option<Task>,
-    /// The options last merged with, per command: Merge with Last Settings.
-    pub last: HashMap<String, MergeOptions>,
     /// Options whose preview failed: not tried again until they change.
     pub failed: Option<MergeOptions>,
+}
+
+/// The options of the last merge of kind `command` started (kept in the library preferences), or
+/// the defaults the first time. Fields missing from an older or hand-edited prefs.json take their
+/// defaults; options that don't parse at all fall back to the defaults.
+pub fn last_options(session: &Session, command: &str) -> MergeOptions {
+    let saved = session.last_merge.get(command).and_then(|v| serde_json::from_value::<MergeOptions>(v.clone()).ok());
+    MergeOptions { command: command.into(), ..saved.unwrap_or_default() }
 }
 
 /// Start `options`' merge of `ids` (a preview: small frames and a picture, no file).
@@ -118,7 +123,7 @@ impl Runner {
     }
 
     /// Start the full merge (one at a time), in the activity stack.
-    pub fn start(&mut self, session: &Session, options: &MergeOptions, ids: &[PhotoId]) -> Result<(), String> {
+    pub fn start(&mut self, session: &mut Session, options: &MergeOptions, ids: &[PhotoId]) -> Result<(), String> {
         if self.merging.is_some() {
             return Err("a merge is already running".into());
         }
@@ -132,13 +137,16 @@ impl Runner {
         guard.progress(0, 1000);
         task.guard = Some(guard);
         self.merging = Some(task);
-        self.last.insert(options.command.clone(), options.clone());
+        session.last_merge.insert(options.command.clone(), options.params());
+        if let Err(e) = session.save_prefs() {
+            log::warn!("merge: {e}");
+        }
         Ok(())
     }
 
     /// Merge `ids` with the options last used for `command` (the defaults the first time).
-    pub fn start_last(&mut self, session: &Session, command: &str, ids: &[PhotoId]) -> Result<(), String> {
-        let options = self.last.get(command).cloned().unwrap_or_else(|| MergeOptions::for_command(command));
+    pub fn start_last(&mut self, session: &mut Session, command: &str, ids: &[PhotoId]) -> Result<(), String> {
+        let options = last_options(session, command);
         self.start(session, &options, ids)
     }
 

@@ -157,3 +157,21 @@ fn moving_out_of_an_ordered_folder_keeps_the_others_in_place() {
     assert_eq!(names(&s, None), ["F", "X"]);
     let _ = y;
 }
+
+/// `albums.list` gives siblings in the order the sidebar shows them (folders first, then by hand), so a client that
+/// places an album by the row under it names a sibling of the same kind.
+#[test]
+fn albums_list_follows_the_hand_order() {
+    let mut s = Session::new();
+    let (a1, a2) = (make(&mut s, "A1", None, false), make(&mut s, "A2", None, false));
+    let folder = make(&mut s, "F", None, true);
+    let (x, y) = (make(&mut s, "X", Some(folder), false), make(&mut s, "Y", Some(folder), false));
+    reorder(&mut s, a2, json!({"before": a1})).unwrap();
+    reorder(&mut s, y, json!({"before": x})).unwrap();
+    let listed = s.execute("albums.list", &json!({})).unwrap();
+    let name = |v: &Value| v["name"].as_str().unwrap().to_string();
+    let top: Vec<String> = listed.as_array().unwrap().iter().map(name).collect();
+    assert_eq!(top, ["F", "A2", "A1"], "folders first, then by hand");
+    let inside: Vec<String> = listed[0]["children"].as_array().unwrap().iter().map(name).collect();
+    assert_eq!(inside, ["Y", "X"]);
+}

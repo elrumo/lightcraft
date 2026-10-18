@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <b>照片图库与 raw 显影；Adobe Lightroom 的开源净室实现，用纯 Rust 重建。</b><br>
+  <b>照片图库与 raw 显影；开源、非破坏性的照片图库与 raw 显影工具，用纯 Rust 构建。</b><br>
   在 macOS、Windows 和 Linux 上原生运行，也可通过 WebAssembly 在浏览器中使用，并能由 AI 智能体经 MCP 端到端驱动。
 </p>
 
@@ -454,9 +454,9 @@ egui 前端是一个可替换的 crate；它下面没有任何东西知道 UI �
 
 人和智能体遵循同样的规则，所以请先读 [AGENTS.md](AGENTS.md)。简短版本：
 
-- **净室。** 绝不阅读 Adobe 的二进制文件或 GPL 的 raw／照片代码（darktable、RawTherapee、LibRaw、rawspeed、dcraw……）；
+- **净室。** 绝不阅读专有软件的二进制文件或 GPL 的 raw／照片代码（darktable、RawTherapee、LibRaw、rawspeed、dcraw……）；
   只依据公开规范和黑盒观察来工作。
-- **绝不使用 Adobe 资源：** 不使用 Adobe 产品的图标、截图、预设、配置文件、LUT 或字体。仓库中的每一个
+- **绝不使用专有资源：** 不使用商业产品的图标、截图、预设、配置文件、LUT 或字体。仓库中的每一个
   图像、图标和字体都是原创、公有领域、知识共享、OFL 或宽松许可的，并在同一提交中
   于 [assets/ATTRIBUTION.md](assets/ATTRIBUTION.md) 添加条目。新字体提交到
   [storytold/craft-fonts](https://github.com/storytold/craft-fonts)，而不是这里。
@@ -579,8 +579,6 @@ Inter（SIL OFL 1.1）。用 [craft-fonts](https://github.com/storytold/craft-fo
 ArtCraft 团队的商标，不在本许可范围内。它们只能在未修改的情况下，作为
 本仓库和 LightCraft 的一部分，按 [`docs/brand/LICENSE-brand.txt`](docs/brand/LICENSE-brand.txt) 使用。
 分支和修改版本必须移除它们。
-
-<sub>Adobe、Photoshop、Illustrator、Premiere Pro、Lightroom、Acrobat、After Effects 和 InDesign 是 Adobe Inc. 在美国和／或其他国家的商标或注册商标。LightCraft 是一个独立的开源项目，与 Adobe Inc. 无隶属关系，也未获其赞助或认可；这些名称仅用于说明它所兼容的工作流。</sub>
 
 <p align="center">
   <a href="https://getartcraft.com/"><img alt="ArtCraft" src="docs/brand/artcraft-mark.svg" width="28"></a><br>

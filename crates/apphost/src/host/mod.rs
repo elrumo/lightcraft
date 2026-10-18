@@ -700,9 +700,9 @@ impl Engine {
                 let ids = merge_ids(&self.session, p);
                 let r = if method == "host.merge.last" {
                     let command = p.get("command").and_then(Value::as_str).ok_or_else(|| bad("missing `command`"))?;
-                    self.merge.start_last(&self.session, command, &ids)
+                    self.merge.start_last(&mut self.session, command, &ids)
                 } else {
-                    self.merge.start(&self.session, &merge_options(p), &ids)
+                    self.merge.start(&mut self.session, &merge_options(p), &ids)
                 };
                 r.map_err(|e| ErrorBody::new("other", e))?;
                 self.busy = true;

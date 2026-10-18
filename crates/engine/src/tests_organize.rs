@@ -361,3 +361,23 @@ fn stack_toggle_takes_the_tapped_photo_without_a_selection_and_stacks_can_be_swi
     // no stack badges either: every photo shows flat
     assert_eq!(badged(&mut s), 0);
 }
+
+/// A huge `start` is a validation error, not an arithmetic overflow in the numbering.
+#[test]
+fn rename_huge_start_is_a_bad_param() {
+    let mut s = Session::with_demo();
+    let ids: Vec<u64> = s.catalog.photos().take(3).map(|p| p.id.0).collect();
+    let names_before: Vec<String> = s.catalog.photos().map(|p| p.file_name.clone()).collect();
+    for cmd in ["photo.renamePreview", "photo.rename"] {
+        let e = s.execute(cmd, &json!({"template": "{seq}", "start": u64::MAX, "ids": ids})).unwrap_err();
+        assert!(e.to_string().contains("start out of range"), "{cmd}: {e}");
+    }
+    let names_after: Vec<String> = s.catalog.photos().map(|p| p.file_name.clone()).collect();
+    assert_eq!(names_before, names_after, "a rejected rename changes nothing");
+    // the last start whose whole sequence fits is accepted, one more is not
+    let fits = usize::MAX as u64 - 2;
+    let r = s.execute("photo.renamePreview", &json!({"template": "{seq}", "start": fits, "ids": ids}));
+    assert!(r.is_ok(), "{r:?}");
+    let r = s.execute("photo.renamePreview", &json!({"template": "{seq}", "start": fits + 1, "ids": ids}));
+    assert!(r.is_err(), "{r:?}");
+}

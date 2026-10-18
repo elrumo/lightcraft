@@ -116,6 +116,10 @@
   should be blurred, and **Erase** to take either back.
 - **Depth Range** masks (Masking ▸ Depth) select by distance with the same depth.
 - On computers, phones, in the browser and in the new iPhone and iPad app. See [lens-blur.md](lens-blur.md).
+### Model downloads time out on a name that doesn't resolve
+- Model downloads (AI denoise, faces, SAM) give up on a server name that doesn't resolve within the connect timeout,
+  and Cancel stops a download that is still looking the name up (issue #1532). The lookup used to block with no time
+  limit, and each of a server's addresses then got the whole connect timeout of its own.
 
 ### Lightroom radial masks on the right side
 - Radial masks brought over from Lightroom Classic (catalog import, XMP sidecars, edits inside DNGs and presets) now

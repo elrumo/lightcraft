@@ -37,9 +37,10 @@ pub fn photo_summary(p: &Photo) -> Value {
 /// instead of overflowing the stack.
 const MAX_ALBUM_DEPTH: usize = 64;
 
-fn album_json(a: &Album, all: &[Album], cat: &lightcraft_catalog::Catalog, depth: usize) -> Value {
+fn album_json(a: &Album, cat: &lightcraft_catalog::Catalog, depth: usize) -> Value {
+    // (siblings in the order the sidebar lists them: folders first, then by hand, else by name)
     let children: Vec<Value> = if depth < MAX_ALBUM_DEPTH {
-        all.iter().filter(|c| c.parent == Some(a.id)).map(|c| album_json(c, all, cat, depth + 1)).collect()
+        cat.album_children(Some(a.id)).into_iter().map(|c| album_json(c, cat, depth + 1)).collect()
     } else {
         Vec::new()
     };
@@ -201,8 +202,7 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(json!({"exif": exif, "xmp": xmp}))
         }),
         cmd!(query "albums.list", "List Albums", [], None, "{}", always, |s, _| {
-            let all: Vec<Album> = s.catalog.albums().cloned().collect();
-            Ok(Value::Array(all.iter().filter(|a| a.parent.is_none()).map(|a| album_json(a, &all, &s.catalog, 0)).collect()))
+            Ok(Value::Array(s.catalog.album_children(None).into_iter().map(|a| album_json(a, &s.catalog, 0)).collect()))
         }),
         cmd!(query "photo.inspect", "Inspect Photo", [], None, "{id?}", always, |s, p| {
             let id = photo_arg(s, p, "photo.inspect")?;
