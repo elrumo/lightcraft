@@ -112,6 +112,7 @@ fn count_text_by_unit() {
         queued: false,
         rate: 0,
         eta_ms: None,
+        rate_per_min: 0,
         age_ms: 600,
     };
     assert_eq!(count_text(&t), "3 of 25");

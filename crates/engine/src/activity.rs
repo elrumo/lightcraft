@@ -103,6 +103,8 @@ pub struct TaskInfo {
     pub rate: u64,
     /// Time left at that rate, when it is known.
     pub eta_ms: Option<u64>,
+    /// `rate` for a minute, for work that is slower than a unit a second (0 while not known yet).
+    pub rate_per_min: u64,
     pub age_ms: u64,
 }
 
@@ -165,6 +167,8 @@ struct Entry {
     cancellable: AtomicBool,
     queued: AtomicBool,
     meter: Mutex<Meter>,
+    /// A rate the task measures itself, in units a second, instead of the meter's ([`TaskGuard::set_rate`]).
+    rate_set: Mutex<Option<f64>>,
     /// Held while a cancel is decided ([`Activity::cancel`], [`Activity::cancel_all`]) and while
     /// cancelling is switched ([`TaskGuard::set_cancellable`], [`TaskHandle::set_cancellable`]): a
     /// step that turns it off and then reads the cancel flag either sees a cancel that was
@@ -227,7 +231,12 @@ impl Entry {
     fn info(&self) -> TaskInfo {
         let (done, total) = (self.done.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed));
         let queued = self.queued.load(Ordering::Relaxed);
-        let rate = if queued { 0.0 } else { lock(&self.meter).rate(web_time::Instant::now()) };
+        let rate = if queued {
+            0.0
+        } else {
+            let own = *lock(&self.rate_set);
+            own.filter(|r| r.is_finite() && *r > 0.0).unwrap_or_else(|| lock(&self.meter).rate(web_time::Instant::now()))
+        };
         // (the float-to-int casts saturate; a NaN never gets here)
         let eta_ms = (rate > 0.0 && total > 0).then(|| (total.saturating_sub(done) as f64 / rate * 1000.0) as u64);
         TaskInfo {
@@ -242,6 +251,7 @@ impl Entry {
             cancelling: self.is_cancelled(),
             queued,
             rate: rate.round() as u64,
+            rate_per_min: (rate * 60.0).round() as u64,
             eta_ms,
             age_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
         }
@@ -271,6 +281,7 @@ impl Activity {
             cancel,
             queued: AtomicBool::new(false),
             meter: Mutex::new(Meter::default()),
+            rate_set: Mutex::new(None),
             gate: Mutex::new(()),
         });
         lock(&self.inner.tasks).push(entry.clone());
@@ -381,6 +392,12 @@ impl TaskGuard {
     /// The file, photo or model being worked on (a name, not a sentence).
     pub fn detail(&self, text: &str) {
         self.entry.detail(text);
+    }
+
+    /// How fast `done` grows, in units a second, as the task measures it (work that comes in slow batches: the
+    /// meter, which wants a step every few seconds, reads it as stalled). `None`: the meter's.
+    pub fn set_rate(&self, per_second: Option<f64>) {
+        *lock(&self.entry.rate_set) = per_second;
     }
 
     pub fn set_unit(&self, unit: Unit) {

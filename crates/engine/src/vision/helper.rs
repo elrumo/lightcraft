@@ -31,8 +31,9 @@ use crate::activity::TaskGuard;
 use crate::cloud_sync::{self, Body, Done, Task};
 use crate::memory;
 
-/// Photos asked for in one claim.
-const CLAIM: usize = 16;
+/// Photos asked for in one claim (a claim, the counts, the results and the release are four round trips to the server:
+/// more photos for each spreads them out).
+const CLAIM: usize = 64;
 /// How long the helper waits when the server has nothing for it.
 const IDLE: Duration = Duration::from_secs(30);
 /// How long it waits after the server couldn't be reached.
@@ -45,10 +46,13 @@ pub enum HelperPart {
     Text,
     Faces,
     Sensitive,
+    /// Not a model: building the smart and mini previews of photos (the device fetches each original, builds them
+    /// and puts them on the server).
+    Previews,
 }
 
 impl HelperPart {
-    pub const ALL: [HelperPart; 4] = [HelperPart::Search, HelperPart::Text, HelperPart::Faces, HelperPart::Sensitive];
+    pub const ALL: [HelperPart; 5] = [HelperPart::Search, HelperPart::Text, HelperPart::Faces, HelperPart::Sensitive, HelperPart::Previews];
 
     /// The name the server and the commands go by.
     pub fn key(self) -> &'static str {
@@ -57,6 +61,7 @@ impl HelperPart {
             HelperPart::Text => "text",
             HelperPart::Faces => "faces",
             HelperPart::Sensitive => "sensitive",
+            HelperPart::Previews => "previews",
         }
     }
 
@@ -75,6 +80,7 @@ impl HelperPart {
             HelperPart::Text => "/api/index/text",
             HelperPart::Faces => "/api/index/faces",
             HelperPart::Sensitive => "/api/index/sensitive",
+            HelperPart::Previews => "/api/blobs",
         }
     }
 }
@@ -86,6 +92,8 @@ pub(super) enum Runner {
     Text(ReaderProvider, String),
     Faces(FinderProvider, String),
     Sensitive(ClassifierProvider, String),
+    /// Builds previews: needs no model.
+    Previews,
 }
 
 impl Runner {
@@ -95,6 +103,7 @@ impl Runner {
             Runner::Text(..) => HelperPart::Text,
             Runner::Faces(..) => HelperPart::Faces,
             Runner::Sensitive(..) => HelperPart::Sensitive,
+            Runner::Previews => HelperPart::Previews,
         }
     }
 
@@ -103,6 +112,7 @@ impl Runner {
         match self {
             Runner::Search(_, m, _) => m,
             Runner::Text(_, e) | Runner::Faces(_, e) | Runner::Sensitive(_, e) => e,
+            Runner::Previews => "previews",
         }
     }
 }
@@ -124,13 +134,13 @@ pub struct HelperJob {
     /// The server and token this helper works for (a change of either ends it).
     pub(super) server: String,
     pub(super) token: String,
-    done: [AtomicUsize; 4],
-    /// Per part, as the server last said: photos it can be done for, and how many had a result before this
+    done: [AtomicUsize; HelperPart::ALL.len()],
+    /// Per part, as the server last said: the photos in the library, and how many had a result before this
     /// helper's own `done` (so the live count is `base + done`).
-    total: [AtomicUsize; 4],
-    base: [AtomicUsize; 4],
+    total: [AtomicUsize; HelperPart::ALL.len()],
+    base: [AtomicUsize; HelperPart::ALL.len()],
     /// Per part, the milliseconds spent working on it (the rate the time left goes by).
-    worked_ms: [AtomicU64; 4],
+    worked_ms: [AtomicU64; HelperPart::ALL.len()],
     failed: AtomicUsize,
     state: Mutex<&'static str>,
     error: Mutex<Option<String>>,
@@ -163,7 +173,7 @@ impl HelperJob {
         self.done[part.slot()].load(Ordering::Relaxed)
     }
 
-    /// What the server said at a claim: `done` of `total` photos have a result for `part`.
+    /// What the server said (`/api/search/status`): `done` of `total` photos have a result for `part`.
     fn set_progress(&self, part: HelperPart, done: usize, total: usize) {
         self.total[part.slot()].store(total, Ordering::Relaxed);
         self.base[part.slot()].store(done.saturating_sub(self.done(part)), Ordering::Relaxed);
@@ -178,9 +188,15 @@ impl HelperJob {
         }
         let mine = self.done(part);
         let done = self.base[part.slot()].load(Ordering::Relaxed).saturating_add(mine).min(total);
-        let worked = self.worked_ms[part.slot()].load(Ordering::Relaxed) as f64 / 1000.0;
-        let eta = (mine >= 3 && worked >= 3.0).then(|| (worked / mine as f64 * (total - done) as f64).round() as u64);
+        let eta = self.per_second(part).map(|rate| ((total - done) as f64 / rate).round() as u64);
         Some((done, total, eta))
+    }
+
+    /// Photos a second this device does for `part`, over the time it spent working on it (once there are a few to tell by).
+    pub fn per_second(&self, part: HelperPart) -> Option<f64> {
+        let worked = self.worked_ms[part.slot()].load(Ordering::Relaxed) as f64 / 1000.0;
+        let mine = self.done(part);
+        (mine >= 3 && worked >= 3.0).then(|| mine as f64 / worked)
     }
 
     pub fn json(&self) -> Value {
@@ -194,7 +210,8 @@ impl HelperJob {
             "done": done,
             "progress": self.parts.iter().filter_map(|p| {
                 let (done, total, eta) = self.progress(*p)?;
-                Some((p.key().to_string(), json!({"done": done, "total": total, "etaSecs": eta})))
+                let per_minute = self.per_second(*p).map(|r| (r * 60.0).round() as u64);
+                Some((p.key().to_string(), json!({"done": done, "total": total, "etaSecs": eta, "perMinute": per_minute})))
             }).collect::<serde_json::Map<String, Value>>(),
             "failed": self.failed.load(Ordering::Relaxed),
             "error": self.error(),
@@ -275,9 +292,18 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guards:
             .as_object()
             .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
             .unwrap_or_default();
+        // (how far each part is: the server's own counts, which every server has; the previews' come with the claim)
+        let status = call(&cfg, "GET", "/api/search/status", Body::Empty, None);
+        let status: Value = if status.ok() { serde_json::from_str(&status.body).unwrap_or(Value::Null) } else { Value::Null };
         for (part, _) in &guards {
-            let p = &reply["progress"][part.key()];
-            if let (Some(done), Some(total)) = (p["done"].as_u64(), p["total"].as_u64()) {
+            let (done, total) = match part {
+                HelperPart::Search => (&status["indexed"], &status["total"]),
+                HelperPart::Text => (&status["text"]["indexed"], &status["total"]),
+                HelperPart::Faces => (&status["faces"]["photos"], &status["total"]),
+                HelperPart::Sensitive => (&status["sensitive"]["checked"], &status["total"]),
+                HelperPart::Previews => (&reply["progress"]["previews"]["done"], &reply["progress"]["previews"]["total"]),
+            };
+            if let (Some(done), Some(total)) = (done.as_u64(), total.as_u64()) {
                 job.set_progress(*part, usize::try_from(done).unwrap_or(usize::MAX), usize::try_from(total).unwrap_or(usize::MAX));
             }
         }
@@ -290,22 +316,41 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guards:
             continue;
         }
         job.set_state("working");
-        for runner in &cfg.runners {
-            let mine: Vec<&Item> = items.iter().filter(|i| i.part == runner.part()).collect();
-            if mine.is_empty() || job.cancel.load(Ordering::Relaxed) {
-                continue;
-            }
-            let began = web_time::Instant::now();
-            let worked = work_part(&shared, &cfg, &job, &scratch, runner, &mine);
-            job.worked_ms[runner.part().slot()].fetch_add(u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX), Ordering::Relaxed);
-            publish(&job, &guards);
-            match worked {
-                Ok(()) => job.set_error(None),
-                Err(e) => {
-                    job.set_error(Some(e));
-                    nap(&job, RETRY);
+        // (every task at once: the ones on the GPU keep it busy while the ones on the CPU use the processor, and each
+        // waits on its own downloads)
+        let results: Vec<Result<(), String>> = std::thread::scope(|scope| {
+            let mut running = Vec::new();
+            for runner in &cfg.runners {
+                let mine: Vec<&Item> = items.iter().filter(|i| i.part == runner.part()).collect();
+                if mine.is_empty() || job.cancel.load(Ordering::Relaxed) {
+                    continue;
                 }
+                let (shared, cfg, job, scratch, guards) = (&shared, &cfg, &job, &scratch, &guards);
+                let task = move || {
+                    let began = web_time::Instant::now();
+                    let worked = match runner {
+                        Runner::Previews => work_previews(shared, cfg, job, scratch, &mine, &|| publish(job, guards)),
+                        _ => work_part(shared, cfg, job, scratch, runner, &mine),
+                    };
+                    job.worked_ms[runner.part().slot()].fetch_add(u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX), Ordering::Relaxed);
+                    publish(job, guards);
+                    worked
+                };
+                running.push(
+                    std::thread::Builder::new()
+                        .name(format!("lc-vision-helper-{}", runner.part().key()))
+                        .spawn_scoped(scope, task)
+                        .map_err(|e| format!("can't start a thread for {}: {e}", runner.part().key())),
+                );
             }
+            running.into_iter().map(|h| h.and_then(|h| h.join().unwrap_or_else(|_| Err("a helper task stopped unexpectedly".to_string())))).collect()
+        });
+        let problems: Vec<String> = results.into_iter().filter_map(Result::err).collect();
+        if problems.is_empty() {
+            job.set_error(None);
+        } else {
+            job.set_error(Some(problems.join("; ")));
+            nap(&job, RETRY);
         }
     }
     let _ = std::fs::remove_dir_all(&scratch);
@@ -319,8 +364,45 @@ fn publish(job: &HelperJob, guards: &[(HelperPart, TaskGuard)]) {
     for (part, guard) in guards {
         if let Some((done, total, _)) = job.progress(*part) {
             guard.progress(done as u64, total as u64);
+            // (a batch takes seconds to minutes: the speed over the time spent working, not the meter's)
+            guard.set_rate(job.per_second(*part));
         }
     }
+}
+
+/// How many photos are worked on at once, for each task. Fetching, decoding and building previews wait on the network and the disk
+/// and use one core each, and a small model can't keep a machine's cores busy by itself.
+fn workers() -> usize {
+    std::thread::available_parallelism().map_or(4, |n| n.get() / 2).clamp(4, 10)
+}
+
+/// Runs `f` on each of `items`, [`workers`] at a time, and gives the results in the items' order. An item not started
+/// because the helper was cancelled is `None`; one whose `f` panicked is an error (a panic must not end the helper).
+fn par<T: Send>(items: &[&Item], cancelled: &(dyn Fn() -> bool + Sync), f: &(dyn Fn(&Item) -> T + Sync)) -> Vec<Option<Result<T, String>>> {
+    let out: Mutex<Vec<Option<Result<T, String>>>> = Mutex::new(items.iter().map(|_| None).collect());
+    let next = AtomicUsize::new(0);
+    let work = || {
+        while !cancelled() {
+            let i = next.fetch_add(1, Ordering::Relaxed);
+            let Some(it) = items.get(i) else { break };
+            let r = crate::guard::catch("a photo of the helper", || f(it));
+            if let Some(slot) = lock(&out).get_mut(i) {
+                *slot = Some(r);
+            }
+        }
+    };
+    std::thread::scope(|scope| {
+        let mut started = 0;
+        for n in 1..workers().min(items.len()) {
+            // (a thread that can't start: fewer work at once; this one works too)
+            if std::thread::Builder::new().name(format!("lc-vision-helper-{n}")).spawn_scoped(scope, work).is_ok() {
+                started += 1;
+            }
+        }
+        log::trace!("helper: {} photos on {} threads", items.len(), started + 1);
+        work();
+    });
+    out.into_inner().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Fetches one preview into the scratch folder, renders it and deletes the file.
@@ -348,16 +430,19 @@ fn work_part(shared: &Arc<Shared>, cfg: &Config, job: &HelperJob, scratch: &Path
                     break;
                 }
                 let (mut keys, mut images) = (Vec::new(), Vec::new());
-                for it in chunk {
-                    match fetch_and_render(cfg, scratch, it, THUMB_EDGE) {
-                        Ok(img) => {
+                // (fetched and decoded a few at a time; the model takes them together)
+                let rendered = par(chunk, &cancelled, &|it| fetch_and_render(cfg, scratch, it, THUMB_EDGE));
+                for (it, r) in chunk.iter().zip(rendered) {
+                    match r.map(|r| r.and_then(|r| r)) {
+                        Some(Ok(img)) => {
                             keys.push(it.key);
                             images.push(img);
                         }
-                        Err(e) => {
+                        Some(Err(e)) => {
                             log::debug!("helper: can't render a photo for search: {e}");
                             failed.push(it.key);
                         }
+                        None => {}
                     }
                 }
                 let refs: Vec<&Rgba8> = images.iter().collect();
@@ -383,17 +468,19 @@ fn work_part(shared: &Arc<Shared>, cfg: &Config, job: &HelperJob, scratch: &Path
         Runner::Text(provider, engine) => {
             let reader = acquire_reader(shared, provider)?;
             let mut ix = TextIndex::in_memory(engine).map_err(|e| e.to_string())?;
-            each(cfg, scratch, items, cfg.text_edge, &cancelled, &mut failed, &mut stored, |key, img| {
-                let text = crate::guard::catch("reading text", || reader.text(img)).and_then(|t| t.map_err(|e| e.to_string()))?;
-                ix.insert(key, &text).map(|_| ()).map_err(|e| e.to_string())
+            let read = each(cfg, scratch, items, cfg.text_edge, &cancelled, &|img| {
+                crate::guard::catch("reading text", || reader.text(img)).and_then(|t| t.map_err(|e| e.to_string()))
             });
+            keep(read, HelperPart::Text, &mut stored, &mut failed, |key, text| ix.insert(key, &text).map(|_| ()).map_err(|e| e.to_string()));
             ix.export(|_| false, usize::MAX)
         }
         Runner::Faces(provider, _) => {
             let finder = acquire_finder(shared, provider)?;
             let mut ix = FaceIndex::in_memory();
-            each(cfg, scratch, items, cfg.text_edge, &cancelled, &mut failed, &mut stored, |key, img| {
-                let faces = crate::guard::catch("finding faces", || finder.faces(img)).and_then(|t| t.map_err(|e| e.to_string()))?;
+            let found = each(cfg, scratch, items, cfg.text_edge, &cancelled, &|img| {
+                crate::guard::catch("finding faces", || finder.faces(img)).and_then(|t| t.map_err(|e| e.to_string()))
+            });
+            keep(found, HelperPart::Faces, &mut stored, &mut failed, |key, faces| {
                 ix.insert_photo(key, &faces).map(|_| ()).map_err(|e| e.to_string())
             });
             ix.export(|_| false, usize::MAX)
@@ -401,12 +488,14 @@ fn work_part(shared: &Arc<Shared>, cfg: &Config, job: &HelperJob, scratch: &Path
         Runner::Sensitive(provider, engine) => {
             let classifier = acquire_classifier(shared, provider)?;
             let mut ix = SensitiveIndex::in_memory(engine);
-            each(cfg, scratch, items, SENSITIVE_EDGE, &cancelled, &mut failed, &mut stored, |key, img| {
-                let score = crate::guard::catch("checking a photo", || classifier.score(img)).and_then(|t| t.map_err(|e| e.to_string()))?;
-                ix.insert(key, score).map_err(|e| e.to_string())
+            let scored = each(cfg, scratch, items, SENSITIVE_EDGE, &cancelled, &|img| {
+                crate::guard::catch("checking a photo", || classifier.score(img)).and_then(|t| t.map_err(|e| e.to_string()))
             });
+            keep(scored, HelperPart::Sensitive, &mut stored, &mut failed, |key, score| ix.insert(key, score).map_err(|e| e.to_string()));
             ix.export(|_| false, usize::MAX)
         }
+        // (built by `work_previews`)
+        Runner::Previews => return Err("previews are built by their own worker".into()),
     };
     if !stored.is_empty() {
         let file = scratch.join(format!("up-{}", next_id()));
@@ -419,40 +508,132 @@ fn work_part(shared: &Arc<Shared>, cfg: &Config, job: &HelperJob, scratch: &Path
         job.done[part.slot()].fetch_add(stored.len(), Ordering::Relaxed);
     }
     job.failed.fetch_add(failed.len(), Ordering::Relaxed);
-    // (the photos are the server's again; the ones this device can't do are not offered again)
+    release(cfg, part, &stored, &failed);
+    Ok(())
+}
+
+/// The photos are the server's again; the ones this device can't do are not offered again.
+fn release(cfg: &Config, part: HelperPart, stored: &[Key], failed: &[Key]) {
     let released: Vec<Value> = stored
         .iter()
         .map(|k| json!({"part": part.key(), "key": k.to_hex()}))
         .chain(failed.iter().map(|k| json!({"part": part.key(), "key": k.to_hex(), "failed": true})))
         .collect();
     let _ = call(cfg, "POST", "/api/work/release", Body::Json(json!({"items": released}).to_string()), None);
-    Ok(())
 }
 
-/// Fetches, renders and processes `items` one at a time with `f`, keeping which photos worked.
-#[allow(clippy::too_many_arguments)]
-fn each(
+/// Builds the previews of `items`: each original is fetched into the scratch folder, its smart and mini previews are
+/// built there and put on the server, and the three files are deleted. A photo is done when both are on the server.
+fn work_previews(
+    shared: &Arc<Shared>,
     cfg: &Config,
+    job: &HelperJob,
     scratch: &Path,
     items: &[&Item],
-    edge: usize,
-    cancelled: &dyn Fn() -> bool,
-    failed: &mut Vec<Key>,
-    stored: &mut Vec<Key>,
-    mut f: impl FnMut(Key, &Rgba8) -> Result<(), String>,
-) {
-    for it in items {
-        if cancelled() {
-            break;
+    tick: &(dyn Fn() + Sync),
+) -> Result<(), String> {
+    let _busy = Busy::new(shared);
+    let (mut stored, mut failed): (Vec<Key>, Vec<Key>) = (Vec::new(), Vec::new());
+    let mut problem = None;
+    // (a few at a time: each waits on the network for its original, then decodes it)
+    let built = par(items, &|| job.cancel.load(Ordering::Relaxed), &|it| {
+        let r = build_and_put(cfg, scratch, it);
+        if r.is_ok() {
+            job.done[HelperPart::Previews.slot()].fetch_add(1, Ordering::Relaxed);
+            tick();
         }
-        match fetch_and_render(cfg, scratch, it, edge).and_then(|img| f(it.key, &img)) {
-            Ok(()) => stored.push(it.key),
-            Err(e) => {
-                log::debug!("helper: can't process a photo for {}: {e}", it.part.key());
+        r
+    });
+    let mut back = Vec::new();
+    for (it, r) in items.iter().zip(built) {
+        match r {
+            // (cancelled before it started: it stays with this device until its time is up)
+            None => {}
+            Some(Ok(Ok(()))) => stored.push(it.key),
+            // (the server can't be reached: the photo is not at fault, it is given back unmarked)
+            Some(Ok(Err(Failure::Server(e)))) => {
+                problem.get_or_insert(e);
+                back.push(it.key);
+            }
+            Some(Ok(Err(Failure::Photo(e))) | Err(e)) => {
+                log::debug!("helper: can't build the previews of {}: {e}", it.key.to_hex());
                 failed.push(it.key);
             }
         }
     }
+    job.failed.fetch_add(failed.len(), Ordering::Relaxed);
+    stored.extend(back);
+    release(cfg, HelperPart::Previews, &stored, &failed);
+    problem.map_or(Ok(()), Err)
+}
+
+/// Why a photo's previews weren't built here.
+enum Failure {
+    /// The server wouldn't give the original or take the previews.
+    Server(String),
+    /// The original can't be read or decoded.
+    Photo(String),
+}
+
+fn build_and_put(cfg: &Config, scratch: &Path, it: &Item) -> Result<(), Failure> {
+    let hash = it.photo.content_hash.clone().ok_or_else(|| Failure::Photo("the photo has no content hash".into()))?;
+    let name = |what: &str| scratch.join(format!("previews-{}-{what}", it.key.to_hex()));
+    let (original, smart, mini) = (name("original"), name("smart"), name("mini"));
+    let text = |p: &Path| p.to_string_lossy().into_owned();
+    let result = (|| {
+        let got = call(cfg, "GET", &format!("/api/blobs/original/{hash}"), Body::Empty, Some(text(&original)));
+        if !got.ok() {
+            return Err(Failure::Server(why(&got)));
+        }
+        memory::in_background(|| cloud_sync::build_proxies(&text(&original), &text(&smart), &text(&mini))).map_err(Failure::Photo)?;
+        // (the original is not needed any more: it can be many hundred megabytes)
+        let _ = std::fs::remove_file(&original);
+        for (kind, file) in [("smart", &smart), ("mini", &mini)] {
+            let sent = call(cfg, "PUT", &format!("/api/blobs/{kind}/{hash}"), Body::File(text(file)), None);
+            if !sent.ok() {
+                return Err(Failure::Server(why(&sent)));
+            }
+        }
+        Ok(())
+    })();
+    for f in [&original, &smart, &mini] {
+        let _ = std::fs::remove_file(f);
+    }
+    result
+}
+
+/// Puts what the photos came to in the results (in order, one thread), and sorts the photos into the ones that worked
+/// and the ones that did not.
+fn keep<T>(
+    results: Vec<(Key, Result<T, String>)>,
+    part: HelperPart,
+    stored: &mut Vec<Key>,
+    failed: &mut Vec<Key>,
+    mut put: impl FnMut(Key, T) -> Result<(), String>,
+) {
+    for (key, r) in results {
+        match r.and_then(|v| put(key, v)) {
+            Ok(()) => stored.push(key),
+            Err(e) => {
+                log::debug!("helper: can't process a photo for {}: {e}", part.key());
+                failed.push(key);
+            }
+        }
+    }
+}
+
+/// Fetches, renders and processes `items` a few at a time with `f`: each photo that was worked on, with what came
+/// of it (photos left because the helper was cancelled are not in the answer).
+fn each<T: Send>(
+    cfg: &Config,
+    scratch: &Path,
+    items: &[&Item],
+    edge: usize,
+    cancelled: &(dyn Fn() -> bool + Sync),
+    f: &(dyn Fn(&Rgba8) -> Result<T, String> + Sync),
+) -> Vec<(Key, Result<T, String>)> {
+    let done = par(items, cancelled, &|it| fetch_and_render(cfg, scratch, it, edge).and_then(|img| f(&img)));
+    items.iter().zip(done).filter_map(|(it, r)| Some((it.key, r?.and_then(|r| r)))).collect()
 }
 
 impl super::Vision {
@@ -465,6 +646,8 @@ impl super::Vision {
                 HelperPart::Text => self.reader_provider().map(|_| ()),
                 HelperPart::Faces => self.finder_provider().map(|_| ()),
                 HelperPart::Sensitive => self.classifier_provider().map(|_| ()),
+                // (it needs no model)
+                HelperPart::Previews => Ok(()),
             };
             out.insert(part.key().to_string(), made.map_or_else(|e| json!(e), |()| json!(true)));
         }
@@ -483,7 +666,8 @@ impl crate::Session {
     pub fn vision_helper_set(&mut self, parts: &[String]) -> Result<Value, String> {
         let mut chosen = Vec::new();
         for name in parts {
-            let p = HelperPart::from_key(name).ok_or_else(|| format!("`{name}` is not work a device can take (search, text, faces, sensitive)"))?;
+            let p = HelperPart::from_key(name)
+                .ok_or_else(|| format!("`{name}` is not work a device can take (search, text, faces, sensitive, previews)"))?;
             if !chosen.contains(&p) {
                 chosen.push(p);
             }
@@ -554,6 +738,7 @@ impl crate::Session {
                 HelperPart::Text => v.reader_provider().map(|(p, e)| Runner::Text(p, e)),
                 HelperPart::Faces => v.finder_provider().map(|(p, e)| Runner::Faces(p, e)),
                 HelperPart::Sensitive => v.classifier_provider().map(|(p, e)| Runner::Sensitive(p, e)),
+                HelperPart::Previews => Ok(Runner::Previews),
             };
             match made {
                 Ok(r) => runners.push(r),
@@ -574,6 +759,7 @@ impl crate::Session {
                     HelperPart::Text => "Reading text in photos for your server",
                     HelperPart::Faces => "Finding people for your server",
                     HelperPart::Sensitive => "Checking sensitive content for your server",
+                    HelperPart::Previews => "Building previews for your server",
                 };
                 (*p, self.activity.start("helper", label, crate::activity::Cancel::Flag(cancel.clone())))
             })

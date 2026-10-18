@@ -526,7 +526,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Drag Crop Handle",
             [],
             None,
-            "{handle: topLeft|topRight|bottomRight|bottomLeft|top|right|bottom|left|move | 0..8, from: [x,y], to: [x,y] (normalized, straightened frame), start?: [x0,y0,x1,y1] (default: the current crop), keepRatio?: bool (default false)} — drags a crop handle; stops at the image edge (with Expand on: up to the photo's own size past it), keeps the opposite edges, honours the aspect lock; keepRatio holds the frame's current proportions for this drag even with the lock off (the UI sends it while Shift is held)",
+            "{handle: topLeft|topRight|bottomRight|bottomLeft|top|right|bottom|left|move | 0..8, from: [x,y], to: [x,y] (normalized, straightened frame), start?: [x0,y0,x1,y1] (default: the current crop), keepRatio?: bool (default false), fromCentre?: bool (default false)} — drags a crop handle; stops at the image edge (with Expand on: up to the photo's own size past it), keeps the opposite edges, honours the aspect lock; keepRatio holds the frame's current proportions for this drag even with the lock off (the UI sends it while Shift is held); fromCentre grows or shrinks the frame about its centre, the opposite side mirroring the handle (the UI sends it while Alt is held; ignored for move)",
             has_active,
             |s, p| {
                 let id = active(s, "crop.drag")?;
@@ -552,13 +552,14 @@ pub fn specs() -> Vec<CommandSpec> {
                     _ => return Err(bad("crop.drag", "`start` needs 4 numbers")),
                 };
                 let keep_ratio = bool_or(p, "keepRatio", false);
+                let centred = bool_or(p, "fromCentre", false);
                 edit(s, "crop.drag", "Crop", |d| {
                     let start = CropGeometry { rect: given.unwrap_or(d.crop.geometry.rect), angle: d.crop.geometry.angle };
                     // A locked crop keeps the shape it has: the lock stores a width:height tuple whose
                     // orientation is reinterpreted per image, so the frame itself is the truth.
                     // `keepRatio` (Shift held) asks for the same thing for one drag without touching the lock.
                     let ratio = (d.crop.aspect.is_some() || keep_ratio).then(|| start.rect_px(w, h).aspect()).filter(|a| a.is_finite() && *a > 0.0);
-                    d.crop.geometry = drag_crop_in(start, handle, from, to, w, h, ratio, d.crop.expand);
+                    d.crop.geometry = drag_crop_in(start, handle, from, to, w, h, ratio, d.crop.expand, centred);
                     Ok(())
                 })
             }

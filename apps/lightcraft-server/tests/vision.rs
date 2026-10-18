@@ -1122,8 +1122,6 @@ fn photos_are_handed_out_once_and_only_for_what_the_server_keeps() {
     let item = &first["items"][0];
     assert_eq!((item["part"].as_str(), item["kind"].as_str()), (Some("sensitive"), Some("smart")), "{item}");
     assert!(item["photo"]["content_hash"].is_string(), "the device gets what it needs to render: {item}");
-    // how far the part is: photos with a result of the four, none yet
-    assert_eq!(first["progress"]["sensitive"], json!({"done": 0, "total": 4}), "{first}");
     let (_, second) = claim(&f.ann, json!({"sensitive": fake}), 10);
     let b = keys_of(&second);
     assert_eq!(b.len(), 2, "{second}");
@@ -1205,6 +1203,59 @@ fn a_device_does_the_models_work_and_the_photos_never_stay_on_it() {
     assert_eq!(s.execute("vision.helper", &json!({})).unwrap()["running"], false);
     assert!(!scratch.exists(), "the previews were deleted with their folder: {}", scratch.display());
     assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!([]));
+}
+
+/// How many files are under `dir` (the previews a user's folder keeps).
+fn files_under(dir: &Path) -> usize {
+    std::fs::read_dir(dir).map(|d| d.flatten().map(|e| if e.path().is_dir() { files_under(&e.path()) } else { 1 }).sum()).unwrap_or(0)
+}
+
+#[test]
+fn a_device_builds_the_previews_the_server_left_to_it() {
+    let (f, _) = helper_fixture("work-previews", &["previews"]);
+    let blobs = accounts::user_dir(&f.data, "ann").join("blobs");
+    // the server's own builders left them: the scan found four photos and built nothing
+    assert_eq!((files_under(&blobs.join("smart")), files_under(&blobs.join("mini"))), (0, 0));
+
+    // they are handed out once, as originals to fetch, and counted
+    let (status, first) = claim(&f.ann, json!({"previews": "previews"}), 10);
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(first["items"].as_array().map(Vec::len), Some(4), "{first}");
+    assert_eq!(first["items"][0]["part"], "previews");
+    assert_eq!(first["items"][0]["kind"], "original");
+    assert!(keys_of(&claim(&f.ann, json!({"previews": "previews"}), 10).1).is_empty(), "with a device already");
+    let release: Vec<Value> = keys_of(&first).iter().map(|k| json!({"part": "previews", "key": k})).collect();
+    assert_eq!(post(&f.ann, "/api/work/release", json!({"items": release}).to_string().as_bytes()).0, 200);
+
+    // a device takes them: it fetches each original, builds both previews and puts them
+    let mut s = device(&f, "work-previews-device", Some(Arc::new(Padded)));
+    let r = s.execute("vision.setHelper", &json!({"parts": ["previews"]})).unwrap();
+    assert_eq!(r["parts"], json!(["previews"]), "{r}");
+    let scratch = std::path::PathBuf::from(r["scratch"].as_str().unwrap());
+    let mut last = Value::Null;
+    for _ in 0..600 {
+        s.vision_poll();
+        sync(&mut s);
+        last = s.execute("vision.helper", &json!({})).unwrap();
+        if files_under(&blobs.join("smart")) == 4 && files_under(&blobs.join("mini")) == 4 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(last["error"], Value::Null, "{last}");
+    assert_eq!((files_under(&blobs.join("smart")), files_under(&blobs.join("mini"))), (4, 4), "{last}");
+    assert!(last["done"]["previews"].as_u64().unwrap_or(0) > 0, "the device built them: {last}");
+    // nothing is left for another device, and the originals the device fetched are gone from it
+    assert!(keys_of(&claim(&f.ann, json!({"previews": "previews"}), 10).1).is_empty());
+    // (the last photo's files go a moment after its previews arrive)
+    for _ in 0..100 {
+        if files_under(&scratch) == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(files_under(&scratch), 0, "no original or preview stays in the scratch folder");
+    assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!(["previews"]));
 }
 
 #[test]

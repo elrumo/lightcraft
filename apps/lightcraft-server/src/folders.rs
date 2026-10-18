@@ -891,7 +891,7 @@ fn preview_bytes(blobs: &Path, hash: &str) -> u64 {
 }
 
 /// Previews whose photo files exist (cheap: skips the ones built).
-fn previews_missing(blobs: &Path, hash: &str) -> bool {
+pub(crate) fn previews_missing(blobs: &Path, hash: &str) -> bool {
     match (crate::api::blob_path(blobs, "smart", hash), crate::api::blob_path(blobs, "mini", hash)) {
         (Some(s), Some(m)) => !(s.is_file() && m.is_file()),
         _ => false,
@@ -949,6 +949,8 @@ struct Jobs {
     building: HashMap<(String, String), PathBuf>,
     /// The previews, waiting or being built, that are built though they are there ([`Scanner::rebuild_all`]).
     forced: HashSet<(String, String)>,
+    /// Whether the job [`Jobs::next`] gave last was one a device asked for.
+    last_urgent: bool,
 }
 
 impl Jobs {
@@ -1015,6 +1017,7 @@ impl Jobs {
         while let Some(job) = self.urgent.pop_front() {
             let key = Self::key(&job);
             if matches!(self.live.get(&key), Some(Stage::Urgent { .. })) {
+                self.last_urgent = true;
                 self.live.insert(key.clone(), Stage::Building);
                 self.building.insert(key, job.2.clone());
                 return Some(job);
@@ -1024,6 +1027,7 @@ impl Jobs {
             let key = Self::key(&job);
             match self.live.get_mut(&key) {
                 Some(stage @ Stage::Waiting) => {
+                    self.last_urgent = false;
                     *stage = Stage::Building;
                     self.building.insert(key, job.2.clone());
                     return Some(job);
@@ -1234,6 +1238,16 @@ impl Scanner {
         PreviewState::Queued
     }
 
+    /// Whether a photo's previews couldn't be built (here or by a device): they aren't offered again until a restart.
+    pub(crate) fn is_failed(&self, user: &str, hash: &str) -> bool {
+        lock(&self.failed).contains_key(&(user.to_string(), hash.to_string()))
+    }
+
+    /// Remember that a photo's previews can't be built.
+    pub(crate) fn mark_failed(&self, user: &str, hash: &str, why: &str) {
+        lock(&self.failed).insert((user.to_string(), hash.to_string()), why.to_string());
+    }
+
     pub(crate) fn shut_down(&self) {
         self.stop.store(true, Ordering::SeqCst);
         self.wake.notify_all();
@@ -1376,15 +1390,20 @@ pub(crate) fn run_previews(st: &Arc<State>) {
                     && j.building.len() < st.limits.effective().previews
                     && let Some(job) = j.next()
                 {
-                    break job;
+                    break (job, j.last_urgent);
                 }
                 j = sc.jobs_wake.wait_timeout(j, Duration::from_secs(5)).unwrap_or_else(PoisonError::into_inner).0;
             }
         };
-        let (user, hash, file) = job;
+        let ((user, hash, file), urgent) = job;
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
         let replace = lock(&sc.jobs).forced.contains(&(user.clone(), hash.clone()));
-        let r = build_previews_as(&blobs, &hash, &file, replace);
+        // a device took building previews over (or has this one now): the scans' photos wait for it; a photo a device
+        // is showing is built here at once
+        let device = !urgent
+            && (st.vision.work.previews_moved(&user)
+                || lightcraft_vision::Key::from_hex(&hash).is_some_and(|k| st.vision.work.previews_leased(&user, &k)));
+        let r = if device { Ok(false) } else { build_previews_as(&blobs, &hash, &file, replace) };
         lock(&sc.jobs).done(&user, &hash);
         // (a builder waiting for a place may take one now)
         sc.jobs_wake.notify_one();
@@ -1395,11 +1414,18 @@ pub(crate) fn run_previews(st: &Arc<State>) {
             // one more done; the batch is over when all of it is
             let mut runs = lock(&sc.runs);
             if let Some(run) = runs.get_mut(&user) {
-                run.1 += 1;
-                run.3 = run.3.saturating_add(preview_bytes(&blobs, &hash));
+                if device {
+                    // (not this server's to build: it leaves the batch, so the batch's pace and time left stay its own)
+                    run.2 = run.2.saturating_sub(1);
+                } else {
+                    run.1 += 1;
+                    run.3 = run.3.saturating_add(preview_bytes(&blobs, &hash));
+                }
                 if run.1 >= run.2 {
                     let at = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                    lock(&sc.last_batch).insert(user.clone(), (run.1, at));
+                    if run.1 > 0 {
+                        lock(&sc.last_batch).insert(user.clone(), (run.1, at));
+                    }
                     // (the count of photos with previews is stale now)
                     lock(&sc.coverage).remove(&user);
                     runs.remove(&user);

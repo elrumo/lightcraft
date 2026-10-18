@@ -302,6 +302,8 @@ fn helper_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ("text", v.text_installed(), "Text: read the words in photos on this device instead of my server"),
         ("faces", v.faces_installed(), "People: find faces on this device instead of my server"),
         ("sensitive", v.sensitive_installed(), "Sensitive content: check photos on this device instead of my server"),
+        // (needs no model; it downloads each original from the server to build its previews)
+        ("previews", true, "Previews: build photo previews on this device instead of my server"),
     ];
     let chosen: Vec<String> = app.session.vision_helper_parts().to_vec();
     let mut next = chosen.clone();

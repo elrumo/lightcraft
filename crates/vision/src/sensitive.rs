@@ -16,6 +16,10 @@ pub trait Classifier: Send + Sync {
     fn engine(&self) -> &str;
     /// How likely the photo (display-referred, any size) is to be sensitive, from 0 to 1.
     fn score(&self, img: &Rgba8) -> Result<f32, Error>;
+    /// What it runs on: `cpu` or `gpu`.
+    fn backend(&self) -> &'static str {
+        "cpu"
+    }
 }
 
 /// Bytes of a record: the key, then the score (f32, little-endian).

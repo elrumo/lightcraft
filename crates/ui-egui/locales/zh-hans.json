@@ -180,6 +180,7 @@
   "Cancel": "取消",
   "Cancel AI Mask Model Download": "取消下载 AI 蒙版模型",
   "Cancel Download": "取消下载",
+  "Previews: build photo previews on this device instead of my server": "预览：在此设备上而不是我的服务器上生成照片预览",
   "The download continues if you close this, and resumes if interrupted.": "关闭此面板后下载仍会继续，中断后可恢复。",
   "Cancel Interaction": "取消交互",
   "Cancel Preview Build": "取消生成预览",

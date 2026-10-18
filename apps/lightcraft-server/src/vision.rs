@@ -656,6 +656,31 @@ pub(crate) fn pending(st: &State, user: &str, part: Part, max: usize) -> Result<
     Ok(out)
 }
 
+/// Up to `max` of `user`'s photos whose original is here and whose smart and mini previews are not: what a device may be
+/// given to build previews of (it fetches the original). Also how many photos have previews of how many can, once counted.
+pub(crate) fn pending_previews(st: &State, user: &str, max: usize) -> Result<(Vec<Pending>, Option<(usize, usize)>), String> {
+    let lib = api::lib(st, user)?;
+    let (photos, blobs) = {
+        let l = lock(&lib);
+        (hashed(&l), l.dir.join("blobs"))
+    };
+    let mut out = Vec::new();
+    for (key, photo) in photos {
+        if out.len() >= max {
+            break;
+        }
+        let Some(hash) = photo.content_hash.as_deref() else { continue };
+        if !crate::folders::previews_missing(&blobs, hash) || st.folders.is_failed(user, hash) || st.vision.work.previews_leased(user, &key) {
+            continue;
+        }
+        let kept = api::blob_path(&blobs, "original", hash).is_some_and(|p| p.is_file()) || api::folder_original_path(st, &lib, user, hash).is_some();
+        if kept {
+            out.push(Pending { key, photo, kind: "original" });
+        }
+    }
+    Ok((out, st.folders.coverage(st, user)))
+}
+
 pub(crate) fn hashed(lib: &UserLib) -> Vec<(Key, Arc<Photo>)> {
     let mut seen = HashSet::new();
     lib.core

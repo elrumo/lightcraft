@@ -50,6 +50,8 @@ pub(super) struct ClassSpec {
 pub(super) struct ClassifierProvider {
     injected: Option<Arc<dyn Classifier>>,
     dir: Option<PathBuf>,
+    /// The user's choice of weights (`auto`, `cpu`, `gpu`).
+    backend: String,
 }
 
 /// What the list of possibly sensitive photos was worked out from (the library, the scores here, the server's).
@@ -106,6 +108,29 @@ impl Vision {
         false
     }
 
+    /// Whether the CPU model's file is in place.
+    pub fn sensitive_cpu_installed(&self) -> bool {
+        #[cfg(feature = "vision")]
+        if let Some(dir) = self.sensitive_dir() {
+            return dir.join(lightcraft_vision::nsfw::MODEL_FILE).is_file();
+        }
+        false
+    }
+
+    /// This device has a GPU the classifier can run on (its weights are offered as a download).
+    pub fn sensitive_gpu_available(&self) -> bool {
+        cfg!(feature = "vision") && !self.thin && cfg!(any(target_os = "macos", target_os = "ios"))
+    }
+
+    /// Whether the GPU weights' file is in place.
+    pub fn sensitive_gpu_installed(&self) -> bool {
+        #[cfg(feature = "vision")]
+        if let Some(dir) = self.sensitive_dir() {
+            return dir.join(lightcraft_vision::nsfw::GPU_WEIGHTS_FILE).is_file();
+        }
+        false
+    }
+
     /// Checking photos is wanted (the user's choice) and this device can do it.
     pub fn sensitive_ready(&self) -> bool {
         self.sensitive && self.sensitive_installed()
@@ -143,7 +168,7 @@ impl Vision {
         if !self.sensitive_available() {
             return Err("checking photos for sensitive content is not available in this build".into());
         }
-        if self.sensitive_installed() {
+        if self.sensitive_cpu_installed() {
             return Ok(false);
         }
         #[cfg(feature = "vision")]
@@ -168,10 +193,79 @@ impl Vision {
         false
     }
 
+    /// The GPU weights' download state.
+    pub fn sensitive_gpu_download_status(&self) -> Value {
+        #[cfg(feature = "vision")]
+        {
+            let s = self.sensitive_gpu_download.status();
+            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
+        }
+        #[cfg(not(feature = "vision"))]
+        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})
+    }
+
+    /// Start downloading the GPU weights. `Ok(false)` when they are here or downloading already.
+    pub fn start_sensitive_gpu_download(&self, activity: &crate::activity::Activity) -> Result<bool, String> {
+        if !self.sensitive_gpu_available() {
+            return Err("this device has no GPU the sensitive-content model can run on".into());
+        }
+        if self.sensitive_gpu_installed() {
+            return Ok(false);
+        }
+        #[cfg(feature = "vision")]
+        {
+            let dir = self.sensitive_dir().ok_or("no folder is set for the search models")?;
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            let parts = lightcraft_vision::models::nsfw_gpu_downloads(&dir, env.as_deref(), self.mirrors_file.as_deref());
+            self.sensitive_gpu_download.start_parts(
+                "nsfw-gpu",
+                parts,
+                lightcraft_vision::models::Options::default(),
+                activity,
+                "Sensitive-content model (GPU)",
+            )
+        }
+        #[cfg(not(feature = "vision"))]
+        {
+            let _ = activity;
+            Ok(false)
+        }
+    }
+
+    /// Stop the GPU weights' download. False when none runs.
+    pub fn cancel_sensitive_gpu_download(&self) -> bool {
+        #[cfg(feature = "vision")]
+        return self.sensitive_gpu_download.cancel();
+        #[cfg(not(feature = "vision"))]
+        false
+    }
+
+    /// Which weights check photos: the choice, what is installed and what runs now (`cpu`, `gpu`, or null before the model loads).
+    pub fn sensitive_backend_status(&self) -> Value {
+        let using = self.shared.classifier.try_lock().ok().and_then(|c| c.as_ref().map(|c| c.backend()));
+        json!({
+            "choice": self.sensitive_backend,
+            "using": using,
+            "cpuInstalled": self.sensitive_cpu_installed(),
+            "gpuInstalled": self.sensitive_gpu_installed(),
+            "gpuAvailable": self.sensitive_gpu_available(),
+        })
+    }
+
+    /// Choose the weights that check photos (`auto`, `cpu`, `gpu`): the loaded model is let go, so the next photo loads the chosen one.
+    pub fn set_sensitive_backend(&mut self, choice: &str) -> Result<(), String> {
+        if !matches!(choice, "auto" | "cpu" | "gpu") {
+            return Err(format!("`{choice}` is not a choice: auto, cpu or gpu"));
+        }
+        self.sensitive_backend = choice.to_string();
+        *self.shared.classifier.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        Ok(())
+    }
+
     /// What checks photos and how to reach it from a worker thread, with the engine's id, or why it can't be.
     pub(super) fn classifier_provider(&self) -> Result<(ClassifierProvider, String), String> {
         if let Some(c) = &self.injected_classifier {
-            return Ok((ClassifierProvider { injected: Some(c.clone()), dir: None }, c.engine().to_string()));
+            return Ok((ClassifierProvider { injected: Some(c.clone()), dir: None, backend: String::new() }, c.engine().to_string()));
         }
         #[cfg(feature = "vision")]
         {
@@ -184,7 +278,10 @@ impl Vision {
                     SENSITIVE_BYTES as f64 / 1e6
                 ));
             }
-            Ok((ClassifierProvider { injected: None, dir: self.sensitive_dir() }, lightcraft_vision::nsfw::ENGINE.to_string()))
+            Ok((
+                ClassifierProvider { injected: None, dir: self.sensitive_dir(), backend: self.sensitive_backend.clone() },
+                lightcraft_vision::nsfw::ENGINE.to_string(),
+            ))
         }
         #[cfg(not(feature = "vision"))]
         Err("checking photos for sensitive content is not available in this build".into())
@@ -203,7 +300,7 @@ pub(super) fn acquire_classifier(shared: &Shared, provider: &ClassifierProvider)
         return Ok(c.clone());
     }
     shared.loading.store(true, Ordering::SeqCst);
-    let loaded = load_classifier(provider.dir.as_deref());
+    let loaded = load_classifier(provider.dir.as_deref(), &provider.backend);
     shared.loading.store(false, Ordering::SeqCst);
     let c = loaded?;
     *slot = Some(c.clone());
@@ -212,16 +309,18 @@ pub(super) fn acquire_classifier(shared: &Shared, provider: &ClassifierProvider)
     Ok(c)
 }
 
-fn load_classifier(dir: Option<&std::path::Path>) -> Result<Arc<dyn Classifier>, String> {
+fn load_classifier(dir: Option<&std::path::Path>, backend: &str) -> Result<Arc<dyn Classifier>, String> {
     #[cfg(feature = "vision")]
     {
         let dir = dir.ok_or("no folder is set for the search models")?;
-        let model = guard::catch("loading the sensitive-content model", || lightcraft_vision::nsfw::Nsfw::load(dir))?.map_err(|e| e.to_string())?;
+        let prefer = lightcraft_vision::nsfw::Prefer::from_name(backend).unwrap_or_default();
+        let model = guard::catch("loading the sensitive-content model", || lightcraft_vision::nsfw::Nsfw::load_with(dir, prefer))?
+            .map_err(|e| e.to_string())?;
         Ok(Arc::new(model))
     }
     #[cfg(not(feature = "vision"))]
     {
-        let _ = dir;
+        let _ = (dir, backend);
         Err("checking photos for sensitive content is not available in this build".into())
     }
 }
@@ -327,7 +426,12 @@ impl Session {
     /// The library's possibly sensitive photos, most likely first: the ones scored here, and the ones the
     /// sync server flagged.
     pub fn sensitive_photos(&mut self) -> Arc<Vec<(PhotoId, f32)>> {
-        let key: ListKey = (self.catalog.revision, self.vision.shared.sensitive_rev.load(Ordering::Relaxed), self.vision.remote.sensitive.rev, self.vision.sensitive_marks_rev);
+        let key: ListKey = (
+            self.catalog.revision,
+            self.vision.shared.sensitive_rev.load(Ordering::Relaxed),
+            self.vision.remote.sensitive.rev,
+            self.vision.sensitive_marks_rev,
+        );
         if let Some((k, list, _)) = &self.vision.sensitive_list
             && *k == key
         {
@@ -447,5 +551,30 @@ impl Session {
             "licenseUrl": SENSITIVE_LICENSE_URL,
             "download": v.sensitive_download_status(),
         })
+    }
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use crate::Session;
+    use serde_json::json;
+
+    #[test]
+    fn the_weights_that_check_photos_are_a_choice_and_the_gpu_ones_are_a_model_of_their_own() {
+        let mut s = Session::new();
+        assert_eq!(s.vision.sensitive_backend_status()["choice"], "auto");
+        assert!(s.execute("vision.setSensitiveBackend", &json!({"backend": "tpu"})).is_err());
+        assert!(s.execute("vision.setSensitiveBackend", &json!({})).is_err());
+        s.vision.set_sensitive_backend("gpu").unwrap();
+        let st = s.execute("vision.sensitiveBackend", &json!({})).unwrap();
+        assert_eq!(
+            (st["choice"].as_str(), st["using"].is_null(), st["cpuInstalled"].as_bool(), st["gpuInstalled"].as_bool()),
+            (Some("gpu"), true, Some(false), Some(false)),
+            "{st}"
+        );
+        // the GPU weights are listed (to download, to delete) only where there is a GPU for them
+        let ids: Vec<String> = s.models().into_iter().map(|m| m.id).collect();
+        assert_eq!(ids.iter().any(|i| i == "nsfw-gpu"), s.vision.sensitive_gpu_available(), "{ids:?}");
+        assert!(ids.iter().any(|i| i == "nsfw"), "the CPU model is always listed: {ids:?}");
     }
 }

@@ -254,6 +254,29 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "vision.setSensitiveBackend",
+            "Choose What Checks Photos for Sensitive Content",
+            [],
+            None,
+            "{backend: auto|cpu|gpu} — which weights of the sensitive-content model check photos: auto (the GPU's when this device has a GPU and the GPU weights are downloaded, else the CPU model), cpu (the compact model, on the processor) or gpu (the full model on the graphics processor; an error when the weights aren't downloaded). Saved with the library → vision.sensitiveBackend",
+            always,
+            |s, p| {
+                let b = p.get("backend").and_then(Value::as_str).ok_or_else(|| bad("vision.setSensitiveBackend", "missing `backend`"))?;
+                s.vision.set_sensitive_backend(b).map_err(|e| bad("vision.setSensitiveBackend", e))?;
+                s.save_prefs()?;
+                Ok(s.vision.sensitive_backend_status())
+            }
+        ),
+        cmd!(
+            query "vision.sensitiveBackend",
+            "What Checks Photos for Sensitive Content",
+            [],
+            None,
+            "{} → {choice: auto|cpu|gpu, using: cpu|gpu|null (what runs now; null until the model loads), cpuInstalled, gpuInstalled, gpuAvailable (this device has a GPU the model can run on)}",
+            always,
+            |s, _| Ok(s.vision.sensitive_backend_status())
+        ),
+        cmd!(
             query "vision.sensitive.download",
             "Download Sensitive-Content Model",
             [],

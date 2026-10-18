@@ -69,6 +69,8 @@ pub const SEARCH: &str = "siglip2";
 pub const TEXT: &str = "ppocr";
 pub const FACES: &str = "faces";
 pub const NSFW: &str = "nsfw";
+/// The classifier's GPU weights.
+pub const NSFW_GPU: &str = "nsfw-gpu";
 
 /// The host of a download location ("https://user:pw@huggingface.co/a/b?x" → "huggingface.co").
 pub fn host_of(url: &str) -> String {
@@ -313,8 +315,8 @@ impl Session {
         let (files, mirrors): (Files, Vec<String>) = (Vec::new(), Vec::new());
         Facts {
             id: NSFW,
-            label: "NSFW Image Detection",
-            purpose: "Flag photos that might be sensitive, to review and hide (opt-in)",
+            label: "NSFW Image Detection (CPU)",
+            purpose: "Flag photos that might be sensitive, to review and hide (opt-in): the compact model, which runs on any processor",
             credit: "nsfw_image_detection by Falcons.ai",
             home_url: crate::vision::SENSITIVE_LICENSE_URL,
             licence: crate::vision::SENSITIVE_LICENSE_NAME,
@@ -322,7 +324,7 @@ impl Session {
             restricted: false,
             download_bytes: crate::vision::SENSITIVE_BYTES,
             available: v.sensitive_available(),
-            installed: v.sensitive_installed(),
+            installed: v.sensitive_cpu_installed(),
             // (the library's choice, `vision.setSensitive`)
             enabled: v.sensitive,
             can_disable: true,
@@ -330,6 +332,46 @@ impl Session {
             files,
             mirrors,
             download: shown(&v.sensitive_download_status()),
+        }
+        .entry()
+    }
+
+    /// The same classifier's GPU weights: a model of their own to download, delete and choose (`vision.setSensitiveBackend`).
+    fn sensitive_gpu_entry(&self) -> Entry {
+        let v = &self.vision;
+        let dir = v.sensitive_dir();
+        #[cfg(feature = "vision")]
+        let parts = dir.as_deref().map(|d| {
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            lightcraft_vision::models::nsfw_gpu_downloads(d, env.as_deref(), v.mirrors_file.as_deref())
+        });
+        #[cfg(feature = "vision")]
+        let (files, mirrors) = parts.map_or((Vec::new(), Vec::new()), |p| (files_of(&p), p.into_iter().flat_map(|(_, m, _)| m).collect()));
+        #[cfg(not(feature = "vision"))]
+        let (files, mirrors): (Files, Vec<String>) = (Vec::new(), Vec::new());
+        #[cfg(feature = "vision")]
+        let bytes = lightcraft_vision::models::NSFW_GPU_BYTES;
+        #[cfg(not(feature = "vision"))]
+        let bytes = 0;
+        Facts {
+            id: NSFW_GPU,
+            label: "NSFW Image Detection (GPU)",
+            purpose: "The same model at full precision, on the graphics processor: several times faster than the CPU model",
+            credit: "nsfw_image_detection by Falcons.ai",
+            home_url: crate::vision::SENSITIVE_LICENSE_URL,
+            licence: crate::vision::SENSITIVE_LICENSE_NAME,
+            licence_url: crate::vision::SENSITIVE_LICENSE_URL,
+            restricted: false,
+            download_bytes: bytes,
+            available: v.sensitive_gpu_available(),
+            installed: v.sensitive_gpu_installed(),
+            // (turned on and off with the CPU model's switch: which of the two runs is `vision.setSensitiveBackend`)
+            enabled: v.sensitive,
+            can_disable: false,
+            dir,
+            files,
+            mirrors,
+            download: shown(&v.sensitive_gpu_download_status()),
         }
         .entry()
     }
@@ -352,10 +394,13 @@ impl Session {
                     restricted: m.restricted,
                     download_bytes: m.bytes(),
                     // (Generative Expand's models are offered by the device's profile)
-                    available: Enhancer::AVAILABLE && crate::expand::ExpandModel::from_id(m.id).is_none_or(|x| self.expand_available(x)),
+                    available: Enhancer::AVAILABLE
+                        && crate::expand::ExpandModel::from_id(m.id).is_none_or(|x| self.expand_available(x))
+                        && (m.id != crate::depth::GPU_ID || self.depth_gpu_available()),
                     installed: e.installed(m.id),
                     enabled: !e.disabled.contains(m.id),
-                    can_disable: true,
+                    // (the depth model's GPU weights are chosen between with `depth.setBackend`, not switched off)
+                    can_disable: m.id != crate::depth::GPU_ID,
                     files: dir
                         .as_deref()
                         .map(|d| {
@@ -377,6 +422,9 @@ impl Session {
     fn model_entries(&self) -> Vec<Entry> {
         #[allow(unused_mut)]
         let mut v = vec![self.sam3_entry(), self.search_entry(), self.text_entry(), self.faces_entry(), self.sensitive_entry()];
+        if self.vision.sensitive_gpu_available() {
+            v.push(self.sensitive_gpu_entry());
+        }
         #[cfg(feature = "enhance")]
         v.extend(self.enhance_entries());
         v
@@ -406,6 +454,7 @@ impl Session {
             TEXT => self.vision.start_text_download(&self.activity),
             FACES => self.vision.start_faces_download(&self.activity),
             NSFW => self.vision.start_sensitive_download(&self.activity),
+            NSFW_GPU => self.vision.start_sensitive_gpu_download(&self.activity),
             other => self.enhancer.start_download(other, &self.activity),
         }
     }
@@ -418,6 +467,7 @@ impl Session {
             TEXT => self.vision.cancel_text_download(),
             FACES => self.vision.cancel_faces_download(),
             NSFW => self.vision.cancel_sensitive_download(),
+            NSFW_GPU => self.vision.cancel_sensitive_gpu_download(),
             other => self.enhancer.cancel_download(Some(other)),
         }
     }

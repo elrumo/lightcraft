@@ -3482,6 +3482,8 @@ dependencies = [
 name = "lightcraft-depth"
 version = "0.8.0"
 dependencies = [
+ "candle-core",
+ "candle-nn",
  "lightcraft-codecs",
  "lightcraft-raster",
  "lightcraft-vision",

@@ -129,7 +129,7 @@ pub const FACE_LICENCES: [(&str, &str); 2] = [
     ("Apache License 2.0 (BUPT, SFace)", "https://huggingface.co/opencv/face_recognition_sface"),
 ];
 
-/// The sensitive-content classifier (Falconsai's ViT-B/16, Apache-2.0): the int8 ONNX export the
+/// The sensitive-content classifier (Falconsai's ViT-B/16, Apache-2.0), for any CPU: the int8 ONNX export the
 /// onnx-community made of it, pinned to a commit. Its one file goes straight into the model's folder.
 pub const NSFW_PARTS: &[OcrPart] = &[OcrPart {
     dir: "",
@@ -142,8 +142,26 @@ pub const NSFW_PARTS: &[OcrPart] = &[OcrPart {
     default_mirror: "https://huggingface.co/onnx-community/nsfw_image_detection-ONNX/resolve/1ceb3c7fe1e9f3f2507e6df577437f23a9149fd5/onnx",
 }];
 
-/// Download size of the sensitive-content classifier.
+/// The same classifier for a GPU (a Mac, an iPhone): the original weights, pinned to a commit of Falconsai's own
+/// repository. A download of its own, beside the CPU one in the same folder; none where there is no GPU to run it.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub const NSFW_GPU_PARTS: &[OcrPart] = &[OcrPart {
+    dir: "",
+    files: &[FileSpec {
+        name: "model.safetensors",
+        size: Some(343_223_968),
+        sha256: Some("97b2ce64ec146884b37f98ee7944ca4891aa72f6827dc0cb10684a1cbecd5830"),
+        max: 343_223_968,
+    }],
+    default_mirror: "https://huggingface.co/Falconsai/nsfw_image_detection/resolve/96cb0d0342c7afb80cab76ecc58b265fa44da256",
+}];
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+pub const NSFW_GPU_PARTS: &[OcrPart] = &[];
+
+/// Download size of the CPU classifier.
 pub const NSFW_BYTES: u64 = 87_333_629;
+/// Download size of the GPU weights.
+pub const NSFW_GPU_BYTES: u64 = 343_223_968;
 
 /// The licence the user is shown before downloading the sensitive-content classifier.
 pub const NSFW_LICENCE: (&str, &str) =
@@ -176,6 +194,11 @@ pub fn ocr_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<
 /// What to download for the sensitive-content classifier into `dir` (see [`part_downloads`]; folder `nsfw`).
 pub fn nsfw_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
     part_downloads(NSFW_PARTS, "nsfw", dir, env, file)
+}
+
+/// What to download for the sensitive-content classifier's GPU weights into `dir` (same folder; nothing where there is no GPU).
+pub fn nsfw_gpu_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
+    part_downloads(NSFW_GPU_PARTS, "nsfw", dir, env, file)
 }
 
 /// What to download for the face models into `dir` (see [`part_downloads`]; folder `faces`).
@@ -258,6 +281,16 @@ mod tests {
             }
         }
         assert_eq!(parts.iter().flat_map(|(f, _, _)| f.iter()).filter_map(|f| f.size).sum::<u64>(), NSFW_BYTES);
+        // the GPU weights are a download of their own, into the same folder, where there is a GPU for them
+        let gpu = nsfw_gpu_downloads(Path::new("/m/nsfw"), None, None);
+        assert_eq!(gpu.len(), NSFW_GPU_PARTS.len());
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            assert_eq!(gpu.iter().flat_map(|(f, _, _)| f.iter()).filter_map(|f| f.size).sum::<u64>(), NSFW_GPU_BYTES);
+            assert!(gpu.iter().flat_map(|(f, _, _)| f.iter()).all(|f| f.size == Some(f.max) && f.sha256.map(str::len) == Some(64)));
+            #[cfg(feature = "onnx")]
+            assert!(gpu.iter().flat_map(|(f, _, _)| f.iter()).any(|f| f.name == crate::nsfw::GPU_WEIGHTS_FILE));
+        }
     }
 
     #[test]

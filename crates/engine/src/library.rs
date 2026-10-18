@@ -322,6 +322,10 @@ struct PrefsFile {
     hidden_password: Option<String>,
     /// Check photos for sensitive content (`vision.setSensitive`).
     search_sensitive: bool,
+    /// Which weights check photos: `auto`, `cpu` or `gpu` (`vision.setSensitiveBackend`; missing = auto).
+    search_sensitive_backend: Option<String>,
+    /// Which weights estimate depth for Lens Blur: `auto`, `cpu` or `gpu` (`depth.setBackend`; missing = auto).
+    depth_backend: Option<String>,
     /// The work this device does for its sync server (`vision.setHelper`).
     search_helper: Vec<String>,
     /// Blur the possibly sensitive photos in the grid (`library.setBlurSensitive`; missing = on).
@@ -628,6 +632,9 @@ impl Session {
         self.vision.faces = prefs.search_faces;
         self.vision.helper_parts = prefs.search_helper;
         self.vision.sensitive = prefs.search_sensitive;
+        self.vision.sensitive_backend =
+            prefs.search_sensitive_backend.filter(|b| matches!(b.as_str(), "auto" | "cpu" | "gpu")).unwrap_or_else(|| "auto".into());
+        let _ = self.set_depth_backend(prefs.depth_backend.as_deref().unwrap_or("auto"));
         self.blur_sensitive = prefs.blur_sensitive.unwrap_or(true);
         self.vision.set_sensitive_marks(prefs.sensitive_marks);
         // (locked, whatever the last library was)
@@ -1045,6 +1052,8 @@ impl Session {
             search_faces: self.vision.faces,
             hidden_password: self.hidden.password.clone(),
             search_sensitive: self.vision.sensitive,
+            search_sensitive_backend: Some(self.vision.sensitive_backend.clone()),
+            depth_backend: Some(self.depth_backend()),
             search_helper: self.vision.helper_parts.clone(),
             blur_sensitive: Some(self.blur_sensitive),
             sensitive_marks: self.vision.sensitive_marks.clone(),

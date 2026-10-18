@@ -5,11 +5,16 @@
 //! exactly as it keeps its own ([`crate::vision`]); editing never moves, it stays on the device.
 //!
 //! ```text
-//! POST /api/work/claim      {parts: {search|text|faces|sensitive: engine}, max?} → {items: [{part, key, kind, photo}], refused: {part: why}, ttl}
+//! POST /api/work/claim      {parts: {search|text|faces|sensitive: engine, previews: any}, max?} → {items: [{part, key, kind, photo}], refused: {part: why}, progress: {previews: {done, total}}, ttl}
 //! POST /api/work/release    {items: [{part, key, failed?}]}   photos the device can't do (failed: don't offer them again)
 //! GET  /api/work/settings   {moved: [part], helperSeen: seconds | null}
 //! PUT  /api/work/settings   {moved: [part]} | {add?: [part], remove?: [part]}   the parts this server leaves to the user's devices
 //! ```
+//!
+//! `previews` is not a model: the device is given photos (`kind: original`) whose smart and mini previews are
+//! missing, fetches each original (`GET /api/blobs/original/<hash>`), builds the previews itself and puts them
+//! (`PUT /api/blobs/smart|mini/<hash>`); this server's own preview builders then leave a moved user's scanned
+//! photos to it (a photo a device is showing is still built here, at once).
 //!
 //! A claimed photo is the device's for [`TTL`] (so another device, or this server, doesn't repeat it);
 //! the results go through the routes devices already use for them (`POST /api/index/embeddings`,
@@ -39,6 +44,8 @@ const DEFAULT_CLAIM: usize = 16;
 /// The file in a user's folder.
 const FILE: &str = "offload.json";
 const PARTS: [Part; 4] = [Part::Search, Part::Text, Part::Faces, Part::Sensitive];
+/// The work that isn't a model's: building previews.
+pub const PREVIEWS: &str = "previews";
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -49,6 +56,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub struct Work {
     data: Option<PathBuf>,
     leases: Mutex<HashMap<(String, Part, Key), Instant>>,
+    /// The same for previews (a photo's key is its content hash).
+    preview_leases: Mutex<HashMap<(String, Key), Instant>>,
     seen: Mutex<HashMap<String, Instant>>,
 }
 
@@ -83,12 +92,19 @@ impl Work {
         self.data.as_deref().map(|d| accounts::user_dir(d, user).join(FILE))
     }
 
-    /// The parts `user` left to their devices (missing or damaged file: none).
-    pub fn moved_parts(&self, user: &str) -> Vec<Part> {
+    /// The work `user` left to their devices, by name (missing or damaged file: none).
+    fn moved_names(&self, user: &str) -> Vec<String> {
         let v: Option<Value> = self.file(user).and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok());
-        let names: Vec<&str> =
+        let have: Vec<&str> =
             v.as_ref().and_then(|v| v["moved"].as_array()).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        PARTS.into_iter().filter(|p| names.contains(&p.key())).collect()
+        // (always in the same order)
+        PARTS.iter().map(|p| p.key()).chain([PREVIEWS]).filter(|n| have.contains(n)).map(String::from).collect()
+    }
+
+    /// The model work `user` left to their devices.
+    pub fn moved_parts(&self, user: &str) -> Vec<Part> {
+        let names = self.moved_names(user);
+        PARTS.into_iter().filter(|p| names.iter().any(|n| n == p.key())).collect()
     }
 
     /// Whether `user` left `part` to their devices: this server's worker doesn't do it for them.
@@ -96,9 +112,35 @@ impl Work {
         self.moved_parts(user).contains(&part)
     }
 
-    fn set_moved(&self, user: &str, parts: &[Part]) -> Result<(), String> {
+    /// Whether `user` left building previews to their devices.
+    pub fn previews_moved(&self, user: &str) -> bool {
+        self.moved_names(user).iter().any(|n| n == PREVIEWS)
+    }
+
+    /// Whether a device has `user`'s photo `key` to build previews of now.
+    pub fn previews_leased(&self, user: &str, key: &Key) -> bool {
+        let mut leases = lock(&self.preview_leases);
+        let k = (user.to_string(), *key);
+        match leases.get(&k) {
+            Some(at) if at.elapsed() < TTL => true,
+            Some(_) => {
+                leases.remove(&k);
+                false
+            }
+            None => false,
+        }
+    }
+
+    pub(crate) fn lease_previews(&self, user: &str, key: Key) {
+        lock(&self.preview_leases).insert((user.to_string(), key), Instant::now());
+    }
+
+    fn release_previews(&self, user: &str, key: Key) {
+        lock(&self.preview_leases).remove(&(user.to_string(), key));
+    }
+
+    fn set_moved(&self, user: &str, names: &[String]) -> Result<(), String> {
         let file = self.file(user).ok_or("this server has no data folder to keep the setting in")?;
-        let names: Vec<&str> = parts.iter().map(|p| p.key()).collect();
         accounts::write_private_json(&file, &json!({"moved": names}))
     }
 
@@ -124,13 +166,15 @@ fn refusal(st: &State, user: &str, part: Part, engine: &str) -> Option<String> {
     (ours != engine).then(|| format!("this server keeps results of {ours}, not {engine}"))
 }
 
-fn parts_of(v: &Value) -> Result<Vec<Part>, String> {
+/// The work a setting names: a model's part or `previews`, each once.
+fn parts_of(v: &Value) -> Result<Vec<String>, String> {
     let list = v.as_array().ok_or("`moved` is a list of parts")?;
-    let mut out = Vec::new();
+    let mut out: Vec<String> = Vec::new();
     for name in list {
-        let part = name.as_str().and_then(Part::from_key).ok_or_else(|| format!("{name} is not a part (search, text, faces, sensitive)"))?;
-        if !out.contains(&part) {
-            out.push(part);
+        let n = name.as_str().filter(|n| *n == PREVIEWS || Part::from_key(n).is_some());
+        let n = n.ok_or_else(|| format!("{name} is not work a device can take (search, text, faces, sensitive, previews)"))?;
+        if !out.iter().any(|o| o == n) {
+            out.push(n.to_string());
         }
     }
     Ok(out)
@@ -150,8 +194,26 @@ pub(crate) fn claim(st: &State, req: &mut Request, user: &str) -> Resp {
     let Some(asked) = body["parts"].as_object() else { return error(400, "`parts` maps each part to the engine that will process it") };
     let max = body["max"].as_u64().map_or(DEFAULT_CLAIM, |n| usize::try_from(n).unwrap_or(MAX_CLAIM)).clamp(1, MAX_CLAIM);
     let wanted: Vec<(Part, &str)> = asked.iter().filter_map(|(k, e)| Some((Part::from_key(k)?, e.as_str()?))).collect();
-    let per = max.div_ceil(wanted.len().max(1));
-    let (mut items, mut refused) = (Vec::new(), serde_json::Map::new());
+    let previews = asked.contains_key(PREVIEWS);
+    let per = max.div_ceil((wanted.len() + usize::from(previews)).max(1));
+    let (mut items, mut refused, mut progress) = (Vec::new(), serde_json::Map::new(), serde_json::Map::new());
+    if previews {
+        match crate::vision::pending_previews(st, user, per) {
+            Ok((list, covered)) => {
+                if let Some((done, total)) = covered {
+                    progress.insert(PREVIEWS.into(), json!({"done": done, "total": total}));
+                }
+                for p in list {
+                    let Ok(photo) = serde_json::to_value(&*p.photo) else { continue };
+                    st.vision.work.lease_previews(user, p.key);
+                    items.push(json!({"part": PREVIEWS, "key": p.key.to_hex(), "kind": p.kind, "photo": photo}));
+                }
+            }
+            Err(e) => {
+                refused.insert(PREVIEWS.into(), json!(e));
+            }
+        }
+    }
     for (part, engine) in wanted {
         if let Some(why) = refusal(st, user, part, engine) {
             refused.insert(part.key().into(), json!(why));
@@ -171,7 +233,7 @@ pub(crate) fn claim(st: &State, req: &mut Request, user: &str) -> Resp {
         }
     }
     lock(&st.vision.work.seen).insert(user.to_string(), Instant::now());
-    api::json(200, &json!({"items": items, "refused": refused, "ttl": TTL.as_secs()}))
+    api::json(200, &json!({"items": items, "refused": refused, "progress": progress, "ttl": TTL.as_secs()}))
 }
 
 /// `POST /api/work/release`
@@ -183,6 +245,15 @@ pub(crate) fn release(st: &State, req: &mut Request, user: &str) -> Resp {
     let Some(items) = body["items"].as_array() else { return error(400, "`items` is a list of {part, key}") };
     let mut released = 0;
     for it in items {
+        if it["part"].as_str() == Some(PREVIEWS) {
+            let Some(key) = it["key"].as_str().and_then(Key::from_hex) else { continue };
+            st.vision.work.release_previews(user, key);
+            if it["failed"].as_bool() == Some(true) {
+                st.folders.mark_failed(user, &key.to_hex(), "a device couldn't build its previews");
+            }
+            released += 1;
+            continue;
+        }
         let (Some(part), Some(key)) = (it["part"].as_str().and_then(Part::from_key), it["key"].as_str().and_then(Key::from_hex)) else { continue };
         st.vision.work.release(user, part, key);
         if it["failed"].as_bool() == Some(true) {
@@ -196,7 +267,7 @@ pub(crate) fn release(st: &State, req: &mut Request, user: &str) -> Resp {
 /// `GET /api/work/settings`
 pub(crate) fn settings(st: &State, user: &str) -> Resp {
     let w = &st.vision.work;
-    let moved: Vec<&str> = w.moved_parts(user).iter().map(|p| p.key()).collect();
+    let moved = w.moved_names(user);
     api::json(200, &json!({"moved": moved, "helperSeen": w.helper_seen(user).map(|d| d.as_secs())}))
 }
 
@@ -213,7 +284,7 @@ pub(crate) fn set_settings(st: &State, req: &mut Request, user: &str) -> Resp {
     } else {
         let (add, remove) = (parts_of(body.get("add").unwrap_or(&json!([]))), parts_of(body.get("remove").unwrap_or(&json!([]))));
         add.and_then(|add| remove.map(|remove| (add, remove))).map(|(add, remove)| {
-            let mut now = w.moved_parts(user);
+            let mut now = w.moved_names(user);
             now.retain(|p| !remove.contains(p));
             add.into_iter().filter(|p| !now.contains(p)).collect::<Vec<_>>().into_iter().fold(now, |mut all, p| {
                 all.push(p);
@@ -248,9 +319,17 @@ mod tests {
         assert!(!w.leased("ann", Part::Text, &key));
 
         assert!(w.moved_parts("ann").is_empty(), "nothing moved until the user says so");
-        w.set_moved("ann", &[Part::Sensitive, Part::Search]).unwrap();
+        w.set_moved("ann", &["sensitive".to_string(), "search".to_string()]).unwrap();
         assert_eq!(w.moved_parts("ann"), [Part::Search, Part::Sensitive]);
         assert!(w.moved("ann", Part::Search) && !w.moved("ann", Part::Text) && !w.moved("bob", Part::Search));
+        assert!(!w.previews_moved("ann"));
+        w.set_moved("ann", &["previews".to_string()]).unwrap();
+        assert!(w.previews_moved("ann") && !w.previews_moved("bob") && w.moved_parts("ann").is_empty());
+        w.set_moved("ann", &["sensitive".to_string(), "search".to_string()]).unwrap();
+        w.lease_previews("ann", key);
+        assert!(w.previews_leased("ann", &key) && !w.previews_leased("bob", &key));
+        w.release_previews("ann", key);
+        assert!(!w.previews_leased("ann", &key));
         std::fs::write(accounts::user_dir(&dir, "ann").join(FILE), b"{damaged").unwrap();
         assert!(w.moved_parts("ann").is_empty(), "a damaged file means nothing moved");
         let _ = std::fs::remove_dir_all(&dir);
@@ -258,7 +337,7 @@ mod tests {
 
     #[test]
     fn the_parts_of_a_setting_are_checked() {
-        assert_eq!(parts_of(&json!(["faces", "faces", "text"])).unwrap(), [Part::Faces, Part::Text]);
+        assert_eq!(parts_of(&json!(["faces", "faces", "text", "previews"])).unwrap(), ["faces", "text", "previews"]);
         assert!(parts_of(&json!(["video"])).is_err() && parts_of(&json!("faces")).is_err());
     }
 }

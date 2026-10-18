@@ -213,7 +213,32 @@ pub const DEPTH: ModelSpec = ModelSpec {
     restricted: false,
 };
 
-/// Every enhancement model, for listings.
+/// Depth Anything V2 Small on the GPU: the same network from the original weights, several times faster than the CPU
+/// file where there is a GPU for it (a Mac, an iPhone). A model of its own, beside the CPU one.
+pub const DEPTH_GPU: ModelSpec = ModelSpec {
+    id: lightcraft_depth::GPU_ID,
+    label: lightcraft_depth::GPU_LABEL,
+    purpose: "Lens Blur and Depth Range masks on the graphics processor: faster and a little more exact than the CPU model",
+    files: &[FileSpec {
+        name: lightcraft_depth::GPU_FILE,
+        size: Some(lightcraft_depth::GPU_FILE_SIZE),
+        sha256: Some(lightcraft_depth::GPU_FILE_SHA256),
+        max: lightcraft_depth::GPU_FILE_SIZE,
+    }],
+    mirrors_env: "LIGHTCRAFT_DEPTH_GPU_MIRRORS",
+    default_mirrors: &[lightcraft_depth::GPU_BASE_URL],
+    licence: lightcraft_depth::LICENCE,
+    licence_url: lightcraft_depth::LICENCE_URL,
+    credit: lightcraft_depth::CREDIT,
+    home_url: lightcraft_depth::HOME_URL,
+    diffusion: None,
+    restricted: false,
+};
+
+/// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's).
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH, &DEPTH_GPU, &SD15, &KANDINSKY, &SDXL];
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH, &SD15, &KANDINSKY, &SDXL];
 
 /// The enhancement model with this id.

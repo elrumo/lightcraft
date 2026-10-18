@@ -73,6 +73,22 @@ impl CropHandle {
 /// - with `aspect`, the frame keeps that shape on every handle (when `start` had it);
 /// - the drag stops at the image edge instead of pushing the frame around, and slides along it.
 pub fn drag_crop(start: CropGeometry, handle: CropHandle, grab: Point, pointer: Point, w: f64, h: f64, aspect: Option<f64>) -> CropGeometry {
+    drag_crop_with(start, handle, grab, pointer, w, h, aspect, false)
+}
+
+/// [`drag_crop`], or with `centred` (Alt held) a corner or an edge that grows the frame about its centre: the
+/// opposite side moves the same distance the other way, so the centre stays where it was. `Move` is unchanged.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_crop_with(
+    start: CropGeometry,
+    handle: CropHandle,
+    grab: Point,
+    pointer: Point,
+    w: f64,
+    h: f64,
+    aspect: Option<f64>,
+    centred: bool,
+) -> CropGeometry {
     let sane = |v: f64| v.is_finite();
     let r0 = start.rect;
     if ![w, h, grab.x, grab.y, pointer.x, pointer.y, start.angle, r0.x0, r0.y0, r0.x1, r0.y1].iter().copied().all(sane)
@@ -114,6 +130,38 @@ pub fn drag_crop(start: CropGeometry, handle: CropHandle, grab: Point, pointer: 
             };
             let cur = slide(sr, dx, 0.0);
             slide(cur, 0.0, dy)
+        }
+        (hd, None) if centred => {
+            let (mx0, mx1, my0, my1) = sides(hd);
+            let c = sr.center();
+            // the half sizes the pointer asks for; a side the handle doesn't touch keeps its own
+            let half = |lo: bool, hi: bool, c: f64, a: f64, b: f64, d: f64, own: f64| {
+                (if lo { c - (a + d) } else if hi { b + d - c } else { own }).max(min_side / 2.0)
+            };
+            let hx = half(mx0, mx1, c.x, sr.x0, sr.x1, dx, sr.width() / 2.0);
+            let hy = half(my0, my1, c.y, sr.y0, sr.y1, dy, sr.height() / 2.0);
+            let grow = |cur: Rect, hx: f64, hy: f64| {
+                let target = Rect::new(c.x - hx, c.y - hy, c.x + hx, c.y + hy);
+                let at = |t: f64| lerp_rect(cur, target, t);
+                at(bisect(0.0, 1.0, |t| feasible(at(t))))
+            };
+            let cur = grow(sr, hx, sr.height() / 2.0);
+            grow(cur, cur.width() / 2.0, hy)
+        }
+        (hd, Some(a)) if centred => {
+            let (mx0, mx1, my0, my1) = sides(hd);
+            let c = sr.center();
+            let min_w = min_side.max(min_side * a);
+            let hx = if mx0 { c.x - (sr.x0 + dx) } else if mx1 { sr.x1 + dx - c.x } else { 0.0 };
+            let hy = if my0 { c.y - (sr.y0 + dy) } else if my1 { sr.y1 + dy - c.y } else { 0.0 };
+            let target_w = match hd {
+                CropHandle::Top | CropHandle::Bottom => 2.0 * hy * a,
+                CropHandle::Left | CropHandle::Right => 2.0 * hx,
+                _ => hx + hy * a,
+            };
+            let target_w = target_w.max(min_w).min(2.0 * w.max(h * a));
+            let at = |n: f64| Rect::from_center(c, n, n / a);
+            if feasible(at(min_w)) { at(bisect_range(min_w, target_w, |n| feasible(at(n)))) } else { sr }
         }
         (hd, None) => {
             let (mx0, mx1, my0, my1) = sides(hd);
@@ -214,14 +262,15 @@ pub fn drag_crop_in(
     h: f64,
     aspect: Option<f64>,
     expand: bool,
+    centred: bool,
 ) -> CropGeometry {
     if !expand {
-        return drag_crop(start, handle, grab, pointer, w, h, aspect);
+        return drag_crop_with(start, handle, grab, pointer, w, h, aspect, centred);
     }
     let e = crate::EXPAND_MAX;
     let k = 1.0 + 2.0 * e;
     let g = |p: Point| Point::new((p.x + e) / k, (p.y + e) / k);
-    drag_crop(start.grown(e), handle, g(grab), g(pointer), w * k, h * k, aspect).shrunk(e)
+    drag_crop_with(start.grown(e), handle, g(grab), g(pointer), w * k, h * k, aspect, centred).shrunk(e)
 }
 
 /// Which sides a handle moves: (left, right, top, bottom).
@@ -288,17 +337,17 @@ mod tests {
     fn with_expand_a_corner_drags_past_the_photo_and_stops_at_the_limit() {
         let start = CropGeometry::default();
         let (w, h) = (600.0, 400.0);
-        let out = drag_crop_in(start, CropHandle::TopLeft, Point::new(0.0, 0.0), Point::new(-0.3, -0.2), w, h, None, true);
+        let out = drag_crop_in(start, CropHandle::TopLeft, Point::new(0.0, 0.0), Point::new(-0.3, -0.2), w, h, None, true, false);
         assert!((out.rect.x0 + 0.3).abs() < 1e-6 && (out.rect.y0 + 0.2).abs() < 1e-6, "{out:?}");
         assert!((out.rect.x1 - 1.0).abs() < 1e-9 && (out.rect.y1 - 1.0).abs() < 1e-9);
         // without expand it stops at the photo's edge
-        let plain = drag_crop_in(start, CropHandle::TopLeft, Point::new(0.0, 0.0), Point::new(-0.3, -0.2), w, h, None, false);
+        let plain = drag_crop_in(start, CropHandle::TopLeft, Point::new(0.0, 0.0), Point::new(-0.3, -0.2), w, h, None, false, false);
         assert_eq!(plain.rect, start.rect);
         // far past the limit: at the limit
-        let far = drag_crop_in(start, CropHandle::Right, Point::new(1.0, 0.5), Point::new(9.0, 0.5), w, h, None, true);
+        let far = drag_crop_in(start, CropHandle::Right, Point::new(1.0, 0.5), Point::new(9.0, 0.5), w, h, None, true, false);
         assert!((far.rect.x1 - (1.0 + crate::EXPAND_MAX)).abs() < 1e-6, "{far:?}");
         // a locked aspect holds past the edge too
-        let locked = drag_crop_in(start, CropHandle::BottomRight, Point::new(1.0, 1.0), Point::new(1.2, 1.2), w, h, Some(1.5), true);
+        let locked = drag_crop_in(start, CropHandle::BottomRight, Point::new(1.0, 1.0), Point::new(1.2, 1.2), w, h, Some(1.5), true, false);
         let r = locked.rect_px(w, h);
         assert!((r.width() / r.height() - 1.5).abs() < 1e-6 && locked.reaches_past(w, h), "{locked:?}");
     }
@@ -426,6 +475,26 @@ mod tests {
         let start = crate::crop_fit_angle(W, H, 20.0, Some(1.5));
         let g = drag(start, Right, p(0.9, 0.5), p(1.5, 0.5), Some(1.5));
         assert!(g.is_within_image(W, H) && near(px_aspect(&g), 1.5));
+    }
+
+    //   Scenario: Alt held, the frame grows about its centre
+    #[test]
+    fn given_centred_drag_then_the_opposite_side_mirrors_and_the_centre_stays() {
+        let start = geo(0.3, 0.3, 0.7, 0.7);
+        let c = start.rect.center();
+        let g = drag_crop_with(start, BottomRight, p(0.7, 0.7), p(0.8, 0.75), W, H, None, true);
+        assert!(near(g.rect.center().x, c.x) && near(g.rect.center().y, c.y), "{:?}", g.rect);
+        assert!(near(g.rect.x1, 0.8) && near(g.rect.x0, 0.2) && near(g.rect.y1, 0.75) && near(g.rect.y0, 0.25), "{:?}", g.rect);
+        let a = 1.5;
+        let start = geo(0.3, 0.3, 0.7, 0.3 + 0.4 * W / (a * H));
+        let c = start.rect.center();
+        for hd in [TopLeft, BottomRight, Left, Bottom] {
+            let g = drag_crop_with(start, hd, p(0.5, 0.5), p(0.95, 0.95), W, H, Some(a), true);
+            assert!(near(g.rect.center().x, c.x) && near(g.rect.center().y, c.y) && near(px_aspect(&g), a), "{hd:?} {:?}", g.rect);
+        }
+        // it stops where the nearest edge stops it
+        let g = drag_crop_with(geo(0.6, 0.4, 0.8, 0.6), Right, p(0.8, 0.5), p(3.0, 0.5), W, H, None, true);
+        assert!(near(g.rect.x1, 1.0) && near(g.rect.x0, 0.4), "{:?}", g.rect);
     }
 
     //   Scenario: extreme or hostile magnitudes

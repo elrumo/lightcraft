@@ -14,6 +14,9 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+pub mod gpu;
+
 use lightcraft_raster::resample::{Filter, resize};
 use lightcraft_raster::{Plane, Rgb32f};
 use rten::{Model, ModelOptions, NodeId, ValueView};
@@ -50,6 +53,15 @@ pub const LICENCE_URL: &str = "https://huggingface.co/depth-anything/Depth-Anyth
 pub const CREDIT: &str = "Depth Anything V2 Small by Lihe Yang, Bingyi Kang, Zilong Huang, Zhen Zhao, Xiaogang Xu, Jiashi Feng and Hengshuang Zhao; ONNX export by onnx-community";
 pub const HOME_URL: &str = "https://github.com/DepthAnything/Depth-Anything-V2";
 
+/// The same network on the GPU (candle on Metal), from the authors' original weights: a model of its own, in a folder of its
+/// own. Where it comes from: a community conversion of the Apache-2.0 `depth_anything_v2_vits.pth` to safetensors.
+pub const GPU_ID: &str = "depth-anything-v2-small-gpu";
+pub const GPU_LABEL: &str = "Depth Anything V2 Small (GPU)";
+pub const GPU_FILE: &str = "depth_anything_v2_vits.safetensors";
+pub const GPU_FILE_SIZE: u64 = 99_165_428;
+pub const GPU_FILE_SHA256: &str = "07635472183d063a80e6b2d78645ab944a9210fd973b1c88e4b7e3ba23981f75";
+pub const GPU_BASE_URL: &str = "https://huggingface.co/jeroenvlek/depth-anything-v2-safetensors/resolve/a8cd5eb93485537f612b31b78864b41f659b245d";
+
 /// ImageNet statistics the network was trained with.
 const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const STD: [f32; 3] = [0.229, 0.224, 0.225];
@@ -73,6 +85,11 @@ pub fn verify(bytes: &[u8]) -> bool {
     bytes.len() as u64 == FILE_SIZE && hex(&Sha256::digest(bytes)) == FILE_SHA256
 }
 
+/// Whether `bytes` is exactly the pinned GPU weights file (size and SHA-256).
+pub fn verify_gpu(bytes: &[u8]) -> bool {
+    bytes.len() as u64 == GPU_FILE_SIZE && hex(&Sha256::digest(bytes)) == GPU_FILE_SHA256
+}
+
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -88,9 +105,17 @@ pub fn net_size(w: usize, h: usize) -> (usize, usize) {
 
 /// Depth Anything V2 Small, loaded.
 pub struct Estimator {
-    model: Model,
-    input: NodeId,
-    output: NodeId,
+    backend: Backend,
+}
+
+enum Backend {
+    Onnx {
+        model: Box<Model>,
+        input: NodeId,
+        output: NodeId,
+    },
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    Gpu(Box<gpu::Gpu>),
 }
 
 impl Estimator {
@@ -103,7 +128,22 @@ impl Estimator {
         let model = ModelOptions::with_all_ops().load(fixed).map_err(|e| bad(&e))?;
         let input = model.input_ids().first().copied().ok_or_else(|| bad(&"the model has no input"))?;
         let output = model.output_ids().first().copied().ok_or_else(|| bad(&"the model has no output"))?;
-        Ok(Estimator { model, input, output })
+        Ok(Estimator { backend: Backend::Onnx { model: Box::new(model), input, output } })
+    }
+
+    /// The model on the GPU, from the original weights (`gpu::WEIGHTS_FILE`); `None` when the machine has no GPU.
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    pub fn load_gpu(file: &std::path::Path) -> Result<Option<Estimator>> {
+        Ok(gpu::Gpu::load(file)?.map(|g| Estimator { backend: Backend::Gpu(Box::new(g)) }))
+    }
+
+    /// What it runs on: `cpu` or `gpu`.
+    pub fn backend(&self) -> &'static str {
+        match self.backend {
+            Backend::Onnx { .. } => "cpu",
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+            Backend::Gpu(_) => "gpu",
+        }
     }
 
     /// The relative inverse depth of `img` (display-encoded, sRGB-like 0..=1, at most
@@ -126,10 +166,16 @@ impl Estimator {
             }
         }
         let bad = |e: &dyn std::fmt::Display| Error::Model(e.to_string());
-        let input = ValueView::from_shape([1, 3, nh, nw], &pixels[..]).map_err(|e| bad(&e))?;
-        let out = self.model.run(vec![(self.input, input.into())], &[self.output], None).map_err(|e| bad(&e))?;
-        let t = out.first().and_then(|v| v.as_tensor_view::<f32>()).ok_or_else(|| bad(&"its answer isn't numbers"))?;
-        let v = t.to_vec();
+        let v = match &self.backend {
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+            Backend::Gpu(g) => g.run(&pixels, nw, nh)?,
+            Backend::Onnx { model, input, output } => {
+                let value = ValueView::from_shape([1, 3, nh, nw], &pixels[..]).map_err(|e| bad(&e))?;
+                let out = model.run(vec![(*input, value.into())], &[*output], None).map_err(|e| bad(&e))?;
+                let t = out.first().and_then(|v| v.as_tensor_view::<f32>()).ok_or_else(|| bad(&"its answer isn't numbers"))?;
+                t.to_vec()
+            }
+        };
         if v.len() != n {
             return Err(bad(&format!("its answer has {} numbers, not {n}", v.len())));
         }

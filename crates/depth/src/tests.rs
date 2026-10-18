@@ -93,3 +93,62 @@ fn write_pgm(p: &Plane, path: &str) {
     out.extend(p.data.iter().map(|v| ((v - lo) / (hi - lo).max(1e-6) * 255.0) as u8));
     std::fs::write(path, out).unwrap();
 }
+
+/// With `LIGHTCRAFT_DEPTH_MODEL` (the int8 file) and `LIGHTCRAFT_DEPTH_GPU` (the original weights): the GPU gives the same
+/// depth as the CPU (correlation above 0.85 with the quantized file on a scene and on a real photo, `LIGHTCRAFT_DEPTH_IMAGE`; with the fp32 export in
+/// `LIGHTCRAFT_DEPTH_MODEL_FP32`, above 0.99 against it) and is faster.
+#[cfg(feature = "gpu")]
+#[test]
+fn the_gpu_and_the_cpu_see_the_same_depth() {
+    let (Ok(onnx), Ok(weights)) = (std::env::var("LIGHTCRAFT_DEPTH_MODEL"), std::env::var("LIGHTCRAFT_DEPTH_GPU")) else { return };
+    let cpu = Estimator::load(&std::fs::read(onnx).unwrap()).unwrap();
+    let Some(gpu) = Estimator::load_gpu(std::path::Path::new(&weights)).unwrap() else { return };
+    let pictures: Vec<Rgb32f> = match std::env::var("LIGHTCRAFT_DEPTH_IMAGE") {
+        Ok(p) => vec![{
+            let d = lightcraft_codecs::decode(&std::fs::read(p).unwrap(), lightcraft_codecs::DecodeOptions::fit(1600, 1600)).unwrap();
+            let lin = d.to_working();
+            Rgb32f::from_fn(lin.width, lin.height, |x, y| lin.data[y * lin.width + x].map(|v| v.max(0.0).powf(1.0 / 2.2)))
+        }],
+        Err(_) => vec![Rgb32f::from_fn(800, 600, |x, y| {
+            let (fx, fy) = (x as f32 / 800.0, y as f32 / 600.0);
+            if (fx - 0.5).powi(2) + (fy - 0.55).powi(2) < 0.02 {
+                return [0.9, 0.3, 0.2];
+            }
+            let check = ((x / 40 + y / 40) % 2) as f32;
+            [0.3 + 0.3 * check * fy, 0.35, 0.4]
+        })],
+    };
+    // (the fp32 export, when given: the truth that both the int8 export and the GPU are measured by)
+    let truth = std::env::var("LIGHTCRAFT_DEPTH_MODEL_FP32").ok().map(|p| Estimator::load(&std::fs::read(p).unwrap()).unwrap());
+    let correlation = |a: &Plane, b: &Plane| {
+        let n = a.data.len() as f64;
+        let (ma, mb) = (a.data.iter().map(|&v| f64::from(v)).sum::<f64>() / n, b.data.iter().map(|&v| f64::from(v)).sum::<f64>() / n);
+        let (mut sab, mut saa, mut sbb) = (0.0, 0.0, 0.0);
+        for (&x, &y) in a.data.iter().zip(&b.data) {
+            let (x, y) = (f64::from(x) - ma, f64::from(y) - mb);
+            (sab, saa, sbb) = (sab + x * y, saa + x * x, sbb + y * y);
+        }
+        sab / (saa.sqrt() * sbb.sqrt())
+    };
+    for img in pictures {
+        // (twice: the first one with a new size compiles the GPU's kernels)
+        gpu.estimate(&img).unwrap();
+        let t = web_time();
+        let a = cpu.estimate(&img).unwrap();
+        let ct = t.elapsed();
+        let t = web_time();
+        let b = gpu.estimate(&img).unwrap();
+        let gt = t.elapsed();
+        if let Some(truth) = &truth {
+            let f = truth.estimate(&img).unwrap();
+            let (ci, cg) = (correlation(&f, &a), correlation(&f, &b));
+            eprintln!("against fp32: int8 {ci:.4}, GPU {cg:.4}");
+            // (the GPU runs the original weights: closer to the truth than the quantized file is)
+            assert!(cg > 0.99, "the GPU's depth differs from the full-precision model's: correlation {cg}");
+        }
+        assert_eq!((a.width, a.height), (b.width, b.height));
+        let r = correlation(&a, &b);
+        eprintln!("{} × {}: CPU {ct:?}, GPU {gt:?}, correlation {r:.4}", img.width, img.height);
+        assert!(r > 0.85, "the GPU's depth differs from the CPU's: correlation {r}");
+    }
+}

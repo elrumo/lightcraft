@@ -22,7 +22,7 @@ use lightcraft_raster::resample::{Filter, resize};
 use crate::Session;
 use crate::media::SourceLevel;
 
-pub use lightcraft_depth::{BASE_URL, CREDIT, FILE, FILE_SIZE, ID, LICENCE, verify};
+pub use lightcraft_depth::{BASE_URL, CREDIT, FILE, FILE_SIZE, GPU_FILE, GPU_FILE_SIZE, GPU_ID, ID, LICENCE, verify};
 
 /// The start of the error when the model isn't here: the apps offer the download on it.
 pub const NOT_INSTALLED: &str = "The depth model (Depth Anything V2 Small) is not downloaded";
@@ -34,6 +34,8 @@ const INPUT_EDGE: usize = 1036;
 #[derive(Default)]
 pub struct DepthModel {
     loaded: Mutex<Option<Arc<Estimator>>>,
+    /// Which weights estimate: `auto` (the GPU's when there are any and a GPU; the default, also when empty), `cpu` or `gpu`.
+    choice: Mutex<String>,
 }
 
 /// Where a photo's depth comes from.
@@ -84,12 +86,59 @@ impl Session {
         self.enhancer.model_dir(ID).map(|d| d.join(FILE))
     }
 
-    /// Whether depth can be estimated now: the model is loaded, or its file is in place, and the
+    /// The GPU weights' file (a model of its own, in a folder of its own).
+    fn depth_gpu_file(&self) -> Option<std::path::PathBuf> {
+        self.enhancer.model_dir(GPU_ID).map(|d| d.join(GPU_FILE))
+    }
+
+    /// This device has a GPU the depth model can run on (its weights are offered as a model).
+    pub fn depth_gpu_available(&self) -> bool {
+        cfg!(feature = "vision") && cfg!(any(target_os = "macos", target_os = "ios"))
+    }
+
+    fn depth_cpu_installed(&self) -> bool {
+        self.depth_model_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == FILE_SIZE))
+    }
+
+    fn depth_gpu_installed(&self) -> bool {
+        self.depth_gpu_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == GPU_FILE_SIZE))
+    }
+
+    /// Whether depth can be estimated now: the model is loaded, or a file of it is in place, and the
     /// user hasn't turned it off.
     pub fn depth_model_ready(&self) -> bool {
         !self.enhancer.disabled.contains(ID)
             && (self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner).is_some()
-                || self.depth_model_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == FILE_SIZE)))
+                || self.depth_cpu_installed()
+                || (self.depth_gpu_available() && self.depth_gpu_installed()))
+    }
+
+    /// Which weights estimate: `auto`, `cpu` or `gpu`.
+    pub fn depth_backend(&self) -> String {
+        let c = self.depth_model.choice.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if c.is_empty() { "auto".to_string() } else { c }
+    }
+
+    /// Choose the weights that estimate: the loaded model is let go, so the next estimate loads the chosen one.
+    pub fn set_depth_backend(&self, choice: &str) -> Result<(), String> {
+        if !matches!(choice, "auto" | "cpu" | "gpu") {
+            return Err(format!("`{choice}` is not a choice: auto, cpu or gpu"));
+        }
+        *self.depth_model.choice.lock().unwrap_or_else(PoisonError::into_inner) = choice.to_string();
+        *self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        Ok(())
+    }
+
+    /// The choice, what is installed and what runs now (`cpu`, `gpu`, or null before the model loads).
+    pub fn depth_backend_status(&self) -> serde_json::Value {
+        let using = self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map(|e| e.backend());
+        serde_json::json!({
+            "choice": self.depth_backend(),
+            "using": using,
+            "cpuInstalled": self.depth_cpu_installed(),
+            "gpuInstalled": self.depth_gpu_installed(),
+            "gpuAvailable": self.depth_gpu_available(),
+        })
     }
 
     /// Use the model in `bytes` (the browser build's copy). They must be exactly the pinned file.
@@ -116,6 +165,43 @@ impl Session {
                 "{NOT_INSTALLED}. Download it (about 27 MB, Apache-2.0 licence) when LightCraft offers it, or with `models.download {{\"id\": \"{ID}\", \"acknowledged\": true}}`."
             )
         };
+        // the GPU's weights, when chosen (or when automatic and they are here)
+        #[cfg(feature = "vision")]
+        {
+            let choice = self.depth_backend();
+            let gpu = self.depth_gpu_file().filter(|f| choice != "cpu" && f.is_file());
+            match gpu {
+                Some(file) => {
+                    let loaded = std::fs::read(&file).map_err(|e| e.to_string()).and_then(|bytes| {
+                        if lightcraft_depth::verify_gpu(&bytes) {
+                            Estimator::load_gpu(&file).map_err(|e| e.to_string())
+                        } else {
+                            Err(format!(
+                                "{} is damaged or not the expected file: delete the GPU model in Settings → AI Models and download it again",
+                                file.display()
+                            ))
+                        }
+                    });
+                    match loaded {
+                        Ok(Some(e)) => {
+                            let e = Arc::new(e);
+                            *slot = Some(e.clone());
+                            return Ok(e);
+                        }
+                        Ok(None) if choice == "gpu" => {
+                            return Err("This device has no GPU to run the depth model on: choose Automatic or CPU in Settings → AI Models.".into());
+                        }
+                        Err(e) if choice == "gpu" => return Err(e),
+                        // (automatic: the CPU model goes on)
+                        _ => {}
+                    }
+                }
+                None if choice == "gpu" => {
+                    return Err("The depth model's GPU weights are not downloaded: download them in Settings → AI Models.".into());
+                }
+                None => {}
+            }
+        }
         let file = self.depth_model_file().ok_or_else(missing)?;
         let bytes = std::fs::read(&file).map_err(|_| missing())?;
         if !verify(&bytes) {
@@ -177,6 +263,25 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_weights_that_estimate_depth_are_a_choice() {
+        let s = Session::new();
+        assert_eq!(s.depth_backend(), "auto");
+        assert!(s.set_depth_backend("tpu").is_err());
+        s.set_depth_backend("gpu").unwrap();
+        let st = s.depth_backend_status();
+        assert_eq!(
+            (st["choice"].as_str(), st["using"].is_null(), st["cpuInstalled"].as_bool(), st["gpuInstalled"].as_bool()),
+            (Some("gpu"), true, Some(false), Some(false)),
+            "{st}"
+        );
+        // asking for the GPU without its weights says so, rather than quietly using the CPU
+        let e = s.depth_model().err().unwrap_or_default();
+        assert!(!e.is_empty(), "no model is installed");
+        s.set_depth_backend("auto").unwrap();
+        assert_eq!(s.depth_backend(), "auto");
+    }
 
     #[test]
     fn the_model_input_is_display_encoded_and_bounded() {

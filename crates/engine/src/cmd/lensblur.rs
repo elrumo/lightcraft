@@ -7,7 +7,7 @@ use lightcraft_develop::{Bokeh, BrushStroke, LensBlur};
 use lightcraft_geom::Point;
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, bool_or, cmd, f64_or, has_active, str_param};
+use super::{CommandSpec, always, bad, bool_or, cmd, f64_or, has_active, str_param};
 use crate::{Result, Session};
 
 /// Change the active photo's Lens Blur with `f` as one undo step labelled `label`.
@@ -87,6 +87,22 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
             }
         ),
+        cmd!(
+            "depth.setBackend",
+            "Choose What Estimates Depth",
+            [],
+            None,
+            "{backend: auto|cpu|gpu} — which weights of the depth model estimate depth for Lens Blur: auto (the GPU's when this device has a GPU and the GPU weights are downloaded, else the CPU model), cpu (the compact model, on the processor) or gpu (the original weights on the graphics processor; an error when they aren't downloaded). Saved with the library → depth.backend",
+            always,
+            |s, p| {
+                const C: &str = "depth.setBackend";
+                let b = p.get("backend").and_then(Value::as_str).ok_or_else(|| bad(C, "missing `backend`"))?;
+                s.set_depth_backend(b).map_err(|e| bad(C, e))?;
+                s.save_prefs()?;
+                Ok(s.depth_backend_status())
+            }
+        ),
+        cmd!(query "depth.backend", "What Estimates Depth", [], None, "{} → {choice: auto|cpu|gpu, using: cpu|gpu|null (what runs now; null until the model loads), cpuInstalled, gpuInstalled, gpuAvailable}", always, |s, _| Ok(s.depth_backend_status())),
         cmd!(
             "lensBlur.estimate",
             "Estimate Depth",

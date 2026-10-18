@@ -176,6 +176,7 @@
   "Cancel": "キャンセル",
   "Cancel AI Mask Model Download": "AIマスクモデルのダウンロードをキャンセル",
   "Cancel Download": "ダウンロードをキャンセル",
+  "Previews: build photo previews on this device instead of my server": "プレビュー: 写真のプレビュー作成をサーバーではなくこのデバイスで行う",
   "The download continues if you close this, and resumes if interrupted.": "閉じてもダウンロードは続き、中断しても再開します。",
   "Cancel Interaction": "操作をキャンセル",
   "Cancel Preview Build": "プレビュー作成をキャンセル",

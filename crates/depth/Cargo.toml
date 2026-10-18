@@ -8,6 +8,10 @@ description = "LightCraft depth estimation: Depth Anything V2 Small on rten, pur
 [lints]
 workspace = true
 
+[features]
+# Depth Anything V2 on the GPU (candle on Metal): from the original weights, much faster than rten's CPU. Native only.
+gpu = ["dep:candle-core", "dep:candle-nn", "lightcraft-vision/siglip"]
+
 [dependencies]
 lightcraft-raster = { workspace = true }
 # `onnxfix` only: it checks the protobuf's structure before rten reads it (builds for the web)
@@ -17,6 +21,14 @@ sha2 = { workspace = true }
 # pure Rust ONNX runtime, as in lightcraft-erase; it builds for wasm32 too
 rten = { version = "0.24", default-features = false, features = ["onnx_format"] }
 rten-tensor = "0.24"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["metal"], optional = true }
+candle-nn = { workspace = true, features = ["metal"], optional = true }
 
 [dev-dependencies]
 lightcraft-codecs = { workspace = true }

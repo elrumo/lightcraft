@@ -32,8 +32,9 @@ pub mod sensitive;
 pub mod siglip;
 pub mod store;
 pub mod textindex;
+// (safetensors read on demand, with no memory map: the other candle models of the workspace read theirs through it)
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
-mod weights;
+pub mod weights;
 
 pub use embedder::Embedder;
 pub use faces::FaceEngine;
