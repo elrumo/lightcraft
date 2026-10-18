@@ -613,9 +613,8 @@ impl Search {
 }
 
 /// Up to `max` of `user`'s photos that have a preview and no result for `part`, are not failed and are not
-/// with a device already: what a device may be given to process, and how far the part is: photos with
-/// a result, of those it can be done for (the failed ones are left out).
-pub(crate) fn pending(st: &State, user: &str, part: Part, max: usize) -> Result<(Vec<Pending>, (usize, usize)), String> {
+/// with a device already: what a device may be given to process.
+pub(crate) fn pending(st: &State, user: &str, part: Part, max: usize) -> Result<Vec<Pending>, String> {
     let v = &st.vision;
     let lib = api::lib(st, user)?;
     let (photos, blobs) = {
@@ -642,18 +641,11 @@ pub(crate) fn pending(st: &State, user: &str, part: Part, max: usize) -> Result<
     };
     let kind = if part == Part::Search { "mini" } else { "smart" };
     let mut out = Vec::new();
-    let (mut done, mut total) = (0, 0);
     for (key, photo) in photos {
-        let has = have.contains(&key);
-        if !has && failed.contains(&(user.to_string(), key)) {
-            continue;
-        }
-        total += 1;
-        done += usize::from(has);
         if out.len() >= max {
-            continue;
+            break;
         }
-        if has || v.work.leased(user, part, &key) {
+        if have.contains(&key) || failed.contains(&(user.to_string(), key)) || v.work.leased(user, part, &key) {
             continue;
         }
         let there = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, kind, h)).is_some_and(|p| p.is_file());
@@ -661,7 +653,7 @@ pub(crate) fn pending(st: &State, user: &str, part: Part, max: usize) -> Result<
             out.push(Pending { key, photo, kind });
         }
     }
-    Ok((out, (done, total)))
+    Ok(out)
 }
 
 pub(crate) fn hashed(lib: &UserLib) -> Vec<(Key, Arc<Photo>)> {

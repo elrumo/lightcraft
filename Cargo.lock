@@ -855,8 +855,6 @@ dependencies = [
 [[package]]
 name = "candle-core"
 version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c15b675b80d994b2eadb20a4bbe434eabeb454eac3ee5e2b4cf6f147ee9be091"
 dependencies = [
  "byteorder",
  "candle-metal-kernels",

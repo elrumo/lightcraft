@@ -210,3 +210,5 @@ egui-wgpu = { path = "third_party/egui-wgpu" }
 wgpu-hal = { path = "third_party/wgpu-hal" }
 # rten-simd with the generic (no AVX2 / NEON) narrowing fixed: third_party/rten-simd/LIGHTCRAFT.md
 rten-simd = { path = "third_party/rten-simd" }
+# candle-core with the Metal random seed buffer 8 bytes, not 4: third_party/candle-core/LIGHTCRAFT.md
+candle-core = { path = "third_party/candle-core" }
