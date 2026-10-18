@@ -11,7 +11,7 @@
 //! upkeep restarts it after a failure or a sign-in) and a row in the activity stack for its whole run.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -125,6 +125,12 @@ pub struct HelperJob {
     pub(super) server: String,
     pub(super) token: String,
     done: [AtomicUsize; 4],
+    /// Per part, as the server last said: photos it can be done for, and how many had a result before this
+    /// helper's own `done` (so the live count is `base + done`).
+    total: [AtomicUsize; 4],
+    base: [AtomicUsize; 4],
+    /// Per part, the milliseconds spent working on it (the rate the time left goes by).
+    worked_ms: [AtomicU64; 4],
     failed: AtomicUsize,
     state: Mutex<&'static str>,
     error: Mutex<Option<String>>,
@@ -157,6 +163,26 @@ impl HelperJob {
         self.done[part.slot()].load(Ordering::Relaxed)
     }
 
+    /// What the server said at a claim: `done` of `total` photos have a result for `part`.
+    fn set_progress(&self, part: HelperPart, done: usize, total: usize) {
+        self.total[part.slot()].store(total, Ordering::Relaxed);
+        self.base[part.slot()].store(done.saturating_sub(self.done(part)), Ordering::Relaxed);
+    }
+
+    /// How far `part` is now, and the seconds left at this device's rate (once it has one); `None` before the
+    /// server has said.
+    pub fn progress(&self, part: HelperPart) -> Option<(usize, usize, Option<u64>)> {
+        let total = self.total[part.slot()].load(Ordering::Relaxed);
+        if total == 0 {
+            return None;
+        }
+        let mine = self.done(part);
+        let done = self.base[part.slot()].load(Ordering::Relaxed).saturating_add(mine).min(total);
+        let worked = self.worked_ms[part.slot()].load(Ordering::Relaxed) as f64 / 1000.0;
+        let eta = (mine >= 3 && worked >= 3.0).then(|| (worked / mine as f64 * (total - done) as f64).round() as u64);
+        Some((done, total, eta))
+    }
+
     pub fn json(&self) -> Value {
         let done: serde_json::Map<String, Value> = HelperPart::ALL.iter().map(|p| (p.key().to_string(), json!(self.done(*p)))).collect();
         let pairs = |v: &[(String, String)]| Value::Object(v.iter().map(|(k, e)| (k.clone(), json!(e))).collect());
@@ -166,6 +192,10 @@ impl HelperJob {
             "active": self.parts.iter().map(|p| p.key()).collect::<Vec<_>>(),
             "state": *lock(&self.state),
             "done": done,
+            "progress": self.parts.iter().filter_map(|p| {
+                let (done, total, eta) = self.progress(*p)?;
+                Some((p.key().to_string(), json!({"done": done, "total": total, "etaSecs": eta})))
+            }).collect::<serde_json::Map<String, Value>>(),
             "failed": self.failed.load(Ordering::Relaxed),
             "error": self.error(),
             "unavailable": pairs(&self.unavailable),
@@ -218,7 +248,7 @@ fn parse_items(reply: &Value) -> Vec<Item> {
 }
 
 /// The helper thread: claims photos until it is cancelled or the server turns it away.
-pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guard: TaskGuard) {
+pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guards: Vec<(HelperPart, TaskGuard)>) {
     let scratch = job.scratch.clone();
     let _ = std::fs::remove_dir_all(&scratch);
     if let Err(e) = std::fs::create_dir_all(&scratch) {
@@ -245,11 +275,17 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guard: 
             .as_object()
             .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
             .unwrap_or_default();
+        for (part, _) in &guards {
+            let p = &reply["progress"][part.key()];
+            if let (Some(done), Some(total)) = (p["done"].as_u64(), p["total"].as_u64()) {
+                job.set_progress(*part, usize::try_from(done).unwrap_or(usize::MAX), usize::try_from(total).unwrap_or(usize::MAX));
+            }
+        }
+        publish(&job, &guards);
         let items = parse_items(&reply);
         if items.is_empty() {
             job.set_error(None);
             job.set_state("waiting");
-            guard.detail("");
             nap(&job, IDLE);
             continue;
         }
@@ -259,8 +295,11 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guard: 
             if mine.is_empty() || job.cancel.load(Ordering::Relaxed) {
                 continue;
             }
-            guard.detail(runner.part().key());
-            match work_part(&shared, &cfg, &job, &scratch, runner, &mine) {
+            let began = web_time::Instant::now();
+            let worked = work_part(&shared, &cfg, &job, &scratch, runner, &mine);
+            job.worked_ms[runner.part().slot()].fetch_add(u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX), Ordering::Relaxed);
+            publish(&job, &guards);
+            match worked {
                 Ok(()) => job.set_error(None),
                 Err(e) => {
                     job.set_error(Some(e));
@@ -272,7 +311,16 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guard: 
     let _ = std::fs::remove_dir_all(&scratch);
     job.set_state("stopped");
     job.finished.store(true, Ordering::Relaxed);
-    drop(guard);
+    drop(guards);
+}
+
+/// Shows each part's progress in its activity row (the row works out the rate and the time left).
+fn publish(job: &HelperJob, guards: &[(HelperPart, TaskGuard)]) {
+    for (part, guard) in guards {
+        if let Some((done, total, _)) = job.progress(*part) {
+            guard.progress(done as u64, total as u64);
+        }
+    }
 }
 
 /// Fetches one preview into the scratch folder, renders it and deletes the file.
@@ -517,7 +565,19 @@ impl crate::Session {
         }
         let parts: Vec<HelperPart> = runners.iter().map(Runner::part).collect();
         let cancel = Arc::new(AtomicBool::new(false));
-        let guard = self.activity.start("helper", "Processing photos for your server", crate::activity::Cancel::Flag(cancel.clone()));
+        // (a row for each part, so each shows its own count and time left; any Cancel stops the helper)
+        let guards: Vec<(HelperPart, TaskGuard)> = parts
+            .iter()
+            .map(|p| {
+                let label = match p {
+                    HelperPart::Search => "Describing photos for your server",
+                    HelperPart::Text => "Reading text in photos for your server",
+                    HelperPart::Faces => "Finding people for your server",
+                    HelperPart::Sensitive => "Checking sensitive content for your server",
+                };
+                (*p, self.activity.start("helper", label, crate::activity::Cancel::Flag(cancel.clone())))
+            })
+            .collect();
         let scratch = std::env::temp_dir().join(format!("lightcraft-helper-{}-{}", std::process::id(), next_id()));
         let job = Arc::new(HelperJob {
             cancel,
@@ -532,7 +592,7 @@ impl crate::Session {
         let (shared, thread_job) = (self.vision.shared.clone(), job.clone());
         std::thread::Builder::new()
             .name("lc-vision-helper".into())
-            .spawn(move || run(shared, cfg, thread_job, guard))
+            .spawn(move || run(shared, cfg, thread_job, guards))
             .map_err(|e| format!("can't start the helper: {e}"))?;
         self.vision.helper = Some(job);
         // (the server leaves these parts to this device from now on)

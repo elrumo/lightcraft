@@ -1,5 +1,16 @@
 # What's new in LightCraft
 
+## 2026-10-18
+
+### HSL edits look like Lightroom's
+- The colour mixer (HSL) now works the way Lightroom's does: lowering a colour's Saturation keeps its brightest
+  channel, and a Hue shift keeps its value. A blue sky with Blue and Aqua desaturated used to turn out darker and
+  bluer than in Lightroom; it now turns paler and lighter. On an iPhone ProRAW edited in Lightroom and brought over
+  with its XMP, the sky was 11 L\* darker and the whole picture's colour difference from Lightroom's was 12.2; it is
+  now about 8.
+- Photos with HSL edits look different (lighter where blues and aqua were desaturated); the slider values are unchanged.
+  Thumbnails and previews are redrawn once.
+
 ## 2026-10-17
 
 ### One rendering for every photo

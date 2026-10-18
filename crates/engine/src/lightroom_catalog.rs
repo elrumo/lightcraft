@@ -740,7 +740,13 @@ pub fn inspect(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &Ato
 
 /// [`inspect`], saying in `at` what a Lightroom (cloud) catalog's reader is doing
 /// ([`crate::lightroom_cloud::stage`]; a Classic catalog has no stages).
-pub fn inspect_staged(path: &Path, cancel: &AtomicBool, total: &AtomicUsize, done: &AtomicUsize, at: &std::sync::atomic::AtomicU8) -> Result<Value, String> {
+pub fn inspect_staged(
+    path: &Path,
+    cancel: &AtomicBool,
+    total: &AtomicUsize,
+    done: &AtomicUsize,
+    at: &std::sync::atomic::AtomicU8,
+) -> Result<Value, String> {
     if crate::lightroom_cloud::is_cloud(path) {
         return crate::lightroom_cloud::inspect_staged(path, cancel, total, done, at);
     }

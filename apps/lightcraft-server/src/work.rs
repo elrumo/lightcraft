@@ -5,7 +5,7 @@
 //! exactly as it keeps its own ([`crate::vision`]); editing never moves, it stays on the device.
 //!
 //! ```text
-//! POST /api/work/claim      {parts: {search|text|faces|sensitive: engine}, max?} → {items: [{part, key, kind, photo}], refused: {part: why}, ttl}
+//! POST /api/work/claim      {parts: {search|text|faces|sensitive: engine}, max?} → {items: [{part, key, kind, photo}], refused: {part: why}, progress: {part: {done, total}}, ttl}
 //! POST /api/work/release    {items: [{part, key, failed?}]}   photos the device can't do (failed: don't offer them again)
 //! GET  /api/work/settings   {moved: [part], helperSeen: seconds | null}
 //! PUT  /api/work/settings   {moved: [part]} | {add?: [part], remove?: [part]}   the parts this server leaves to the user's devices
@@ -151,14 +151,15 @@ pub(crate) fn claim(st: &State, req: &mut Request, user: &str) -> Resp {
     let max = body["max"].as_u64().map_or(DEFAULT_CLAIM, |n| usize::try_from(n).unwrap_or(MAX_CLAIM)).clamp(1, MAX_CLAIM);
     let wanted: Vec<(Part, &str)> = asked.iter().filter_map(|(k, e)| Some((Part::from_key(k)?, e.as_str()?))).collect();
     let per = max.div_ceil(wanted.len().max(1));
-    let (mut items, mut refused) = (Vec::new(), serde_json::Map::new());
+    let (mut items, mut refused, mut progress) = (Vec::new(), serde_json::Map::new(), serde_json::Map::new());
     for (part, engine) in wanted {
         if let Some(why) = refusal(st, user, part, engine) {
             refused.insert(part.key().into(), json!(why));
             continue;
         }
         match crate::vision::pending(st, user, part, per) {
-            Ok(list) => {
+            Ok((list, (done, total))) => {
+                progress.insert(part.key().into(), json!({"done": done, "total": total}));
                 for p in list {
                     let Ok(photo) = serde_json::to_value(&*p.photo) else { continue };
                     st.vision.work.lease(user, part, p.key);
@@ -171,7 +172,7 @@ pub(crate) fn claim(st: &State, req: &mut Request, user: &str) -> Resp {
         }
     }
     lock(&st.vision.work.seen).insert(user.to_string(), Instant::now());
-    api::json(200, &json!({"items": items, "refused": refused, "ttl": TTL.as_secs()}))
+    api::json(200, &json!({"items": items, "refused": refused, "progress": progress, "ttl": TTL.as_secs()}))
 }
 
 /// `POST /api/work/release`

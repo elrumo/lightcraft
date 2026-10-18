@@ -1,11 +1,12 @@
 //! Colour tools in OkLCh on display-linear Rec.2020 values: vibrance, saturation, the 8-band colour
-//! mixer, B&W mix, and 3-way colour grading; plus the camera-calibration matrix (scene linear).
+//! mixer (its Saturation / Hue / Luminance as HSV operations, [`mix_hsv`]), B&W mix, and 3-way colour
+//! grading; plus the camera-calibration matrix (scene linear).
 
 use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
 use lightcraft_color::Map3;
-use lightcraft_color::perceptual::{hsv_to_rgb, lab_to_lch, lch_to_lab, oklab_from_2020, oklab_to_2020};
+use lightcraft_color::perceptual::{hsv_to_rgb, lab_to_lch, lch_to_lab, oklab_from_2020, oklab_to_2020, rgb_to_hsv};
 use lightcraft_color::{Mat3, REC2020, SRGB};
 use lightcraft_develop::{Calibration, DevelopSettings, MIXER_HUES, PointColor};
 
@@ -47,6 +48,34 @@ pub fn band_weights(h: f32) -> [f32; 8] {
         }
     }
     w
+}
+
+/// Hue rotation (radians) of a colour-mixer band at ±100.
+pub const MIXER_HUE: f32 = 1.0;
+/// Gain on the encoded colour of a colour-mixer band at Luminance ±100 (`1 ± MIXER_LUM`).
+pub const MIXER_LUM: f32 = 0.4;
+/// Encoding the mixer works in (display-linear → gamma, as the HSL panel's own model).
+const MIXER_GAMMA: f32 = 2.2;
+
+/// The colour mixer's step on a display-linear colour: Saturation, Hue and Luminance as HSV
+/// operations on the gamma-encoded colour, not as OkLCh ones. Lightroom's HSL panel behaves this
+/// way: lowering a band's Saturation keeps its brightest channel, so a blue sky turns paler *and
+/// lighter* (an OkLab chroma change at constant lightness leaves it as dark as it was), and a Hue
+/// shift keeps the colour's value, so blue towards aqua gets lighter. `dh` is the hue rotation in
+/// radians, `ds` the saturation change (−1…), `dl` the gain − 1 (all already weighted by the bands).
+#[inline]
+pub fn mix_hsv(rgb: [f32; 3], dh: f32, ds: f32, dl: f32) -> [f32; 3] {
+    let g = rgb.map(|v| v.max(0.0).powf(1.0 / MIXER_GAMMA));
+    let vmax = g[0].max(g[1]).max(g[2]);
+    let mut g = g.map(|x| (vmax + (x - vmax) * (1.0 + ds)).max(0.0));
+    if dh != 0.0 {
+        let [h, s, v] = rgb_to_hsv(g);
+        if s > 1e-6 {
+            g = hsv_to_rgb(h + dh.to_degrees(), s, v);
+        }
+    }
+    let gain = (1.0 + dl).max(0.0);
+    g.map(|x| (x * gain).powf(MIXER_GAMMA))
 }
 
 /// A colour-grading wheel as an OkLab offset (a, b) and a lightness shift.
@@ -160,9 +189,9 @@ impl ColorOps {
         ColorOps {
             vibrance: (s.color.vibrance / 100.0) as f32,
             saturation: (s.color.saturation / 100.0) as f32,
-            hue: bands.map(|b| (b.hue / 100.0) as f32 * 0.5),
+            hue: bands.map(|b| (b.hue / 100.0) as f32 * MIXER_HUE),
             sat: bands.map(|b| (b.sat / 100.0) as f32),
-            lum: bands.map(|b| (b.lum / 100.0) as f32 * 0.18),
+            lum: bands.map(|b| (b.lum / 100.0) as f32 * MIXER_LUM),
             mixer: !s.mixer.is_neutral(),
             points: if crate::is_bw(s) {
                 Vec::new()
@@ -223,9 +252,7 @@ impl ColorOps {
                 dl += w[i] * self.lum[i];
             }
             let chroma_w = (c / 0.12).min(1.0);
-            h += dh * chroma_w;
-            c *= (1.0 + ds).max(0.0);
-            l += dl * chroma_w * l.max(0.05).sqrt();
+            [l, c, h] = lab_to_lch(oklab_from_2020(mix_hsv(rgb, dh * chroma_w, ds, dl * chroma_w)));
         }
         for p in &self.points {
             [l, c, h] = p.apply([l, c, h]);
@@ -377,6 +404,35 @@ mod tests {
         let cr = lab_to_lch(oklab_from_2020(ops.apply(red, 0.0, 0.0)))[1];
         assert!(cb < 0.02, "{cb}");
         assert!((cr - cr0).abs() < 0.01);
+    }
+
+    #[test]
+    fn mixer_works_on_the_encoded_value_like_lightroom() {
+        // a sky: paler blue sits between the aqua and blue bands
+        let sky = [0.12, 0.28, 0.55];
+        let y = lightcraft_color::luminance_2020;
+        let enc = |c: [f32; 3]| c.map(|v| v.powf(1.0 / MIXER_GAMMA));
+        // lowering Saturation keeps the brightest channel, so the sky gets lighter, not darker
+        let mut s = DevelopSettings::default();
+        s.mixer.blue.sat = -60.0;
+        s.mixer.aqua.sat = -60.0;
+        let out = ColorOps::new(&s).apply(sky, 0.0, 0.0);
+        assert!((enc(out)[2] - enc(sky)[2]).abs() < 0.01, "{out:?}");
+        assert!(y(out) > y(sky) * 1.15, "{} -> {}", y(sky), y(out));
+        // Hue towards aqua keeps the value and lowers the OkLCh hue (blue → cyan)
+        let mut s = DevelopSettings::default();
+        s.mixer.blue.hue = -60.0;
+        s.mixer.aqua.hue = -60.0;
+        let out = ColorOps::new(&s).apply(sky, 0.0, 0.0);
+        let value = |c: [f32; 3]| enc(c).into_iter().fold(0.0, f32::max);
+        assert!((value(out) - value(sky)).abs() < 0.01, "{out:?}");
+        let h = |c: [f32; 3]| lab_to_lch(oklab_from_2020(c))[2];
+        assert!(h(out) < h(sky) - 0.1, "{} -> {}", h(sky), h(out));
+        // Luminance is a gain on the encoded colour
+        let mut s = DevelopSettings::default();
+        s.mixer.blue.lum = -50.0;
+        s.mixer.aqua.lum = -50.0;
+        assert!(y(ColorOps::new(&s).apply(sky, 0.0, 0.0)) < y(sky) * 0.8);
     }
 
     #[test]

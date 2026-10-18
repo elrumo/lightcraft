@@ -67,6 +67,50 @@ fn band_weights(h: f32) -> array<f32, 8> {
     return w;
 }
 
+// `lightcraft_color::perceptual::hsv_to_rgb` (hue in degrees).
+fn hsv_to_rgb_(h: f32, s: f32, v: f32) -> vec3<f32> {
+    let c = v * s;
+    let hp = rem_euclid(h, 360.0) / 60.0;
+    let x = c * (1.0 - abs(hp % 2.0 - 1.0));
+    var rgb: vec3<f32>;
+    switch u32(hp) {
+        case 0u: { rgb = vec3<f32>(c, x, 0.0); }
+        case 1u: { rgb = vec3<f32>(x, c, 0.0); }
+        case 2u: { rgb = vec3<f32>(0.0, c, x); }
+        case 3u: { rgb = vec3<f32>(0.0, x, c); }
+        case 4u: { rgb = vec3<f32>(x, 0.0, c); }
+        default: { rgb = vec3<f32>(c, 0.0, x); }
+    }
+    return rgb + vec3<f32>(v - c);
+}
+
+// `colorops::mix_hsv`: the colour mixer's Saturation / Hue / Luminance as HSV operations on the
+// gamma-encoded colour.
+fn mix_hsv(rgb: vec3<f32>, dh: f32, ds: f32, dl: f32) -> vec3<f32> {
+    var g = pow(max(rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+    let vmax = max(g.x, max(g.y, g.z));
+    g = max(vec3<f32>(vmax) + (g - vec3<f32>(vmax)) * (1.0 + ds), vec3<f32>(0.0));
+    if (dh != 0.0) {
+        let mx = max(g.x, max(g.y, g.z));
+        let mn = min(g.x, min(g.y, g.z));
+        let d = mx - mn;
+        let s = select(0.0, d / mx, mx > 0.0);
+        if (s > 1e-6) {
+            var hh = 0.0;
+            if (mx == g.x) {
+                hh = rem_euclid((g.y - g.z) / d, 6.0);
+            } else if (mx == g.y) {
+                hh = (g.z - g.x) / d + 2.0;
+            } else {
+                hh = (g.x - g.y) / d + 4.0;
+            }
+            g = hsv_to_rgb_(hh * 60.0 + degrees(dh), s, mx);
+        }
+    }
+    let gain = max(1.0 + dl, 0.0);
+    return pow(g * gain, vec3<f32>(2.2));
+}
+
 // `PointK::apply` for Point Color sample `k` (OkLCh in, OkLCh out).
 fn point_color(k: u32, lch: vec3<f32>) -> vec3<f32> {
     let o = F_PC + k * POINT_WORDS;
@@ -120,9 +164,10 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
             dl += w[i] * pf(F_MIX_LUM + i);
         }
         let chroma_w = min(c / 0.12, 1.0);
-        h += dh * chroma_w;
-        c *= max(1.0 + ds, 0.0);
-        l += dl * chroma_w * sqrt(max(l, 0.05));
+        let m = oklab(mix_hsv(rgb, dh * chroma_w, ds, dl * chroma_w));
+        l = m.x;
+        c = sqrt(m.y * m.y + m.z * m.z);
+        h = atan2(m.z, m.y);
     }
     for (var k = 0u; k < pu(F_NPC); k++) {
         let r = point_color(k, vec3<f32>(l, c, h));

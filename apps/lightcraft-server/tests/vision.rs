@@ -1122,6 +1122,8 @@ fn photos_are_handed_out_once_and_only_for_what_the_server_keeps() {
     let item = &first["items"][0];
     assert_eq!((item["part"].as_str(), item["kind"].as_str()), (Some("sensitive"), Some("smart")), "{item}");
     assert!(item["photo"]["content_hash"].is_string(), "the device gets what it needs to render: {item}");
+    // how far the part is: photos with a result of the four, none yet
+    assert_eq!(first["progress"]["sensitive"], json!({"done": 0, "total": 4}), "{first}");
     let (_, second) = claim(&f.ann, json!({"sensitive": fake}), 10);
     let b = keys_of(&second);
     assert_eq!(b.len(), 2, "{second}");
@@ -1175,6 +1177,8 @@ fn a_device_does_the_models_work_and_the_photos_never_stay_on_it() {
     }
     assert_eq!(last["error"], Value::Null, "{last}");
     assert!(["search", "text", "faces", "sensitive"].iter().all(|p| last["done"][p] == 4), "{last}");
+    // each part says how far it is (the server's count, plus what this device did since)
+    assert!(["search", "text", "faces", "sensitive"].iter().all(|p| last["progress"][p]["done"] == 4 && last["progress"][p]["total"] == 4), "{last}");
 
     // the server has all four results, from a device, with its own models idle
     assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 4);
