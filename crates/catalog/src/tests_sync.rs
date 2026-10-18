@@ -557,6 +557,31 @@ fn server_folder_photos_sync_and_filter() {
     assert!(!only("Photos/2024") && !only("Photos/202") && !only("Phot"));
 }
 
+/// An album order set by hand on one device reaches the server and another device, which lists
+/// the albums the same way.
+#[test]
+fn album_order_syncs() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let ids: Vec<AlbumId> = ["A", "B", "C"]
+        .iter()
+        .map(|n| {
+            let id = a.cat.alloc_album_id();
+            a.local(Op::AddAlbum { album: Album::new(id, *n) });
+            id
+        })
+        .collect();
+    a.sync(&mut s);
+    let mut b = Replica::join(&s, 2);
+    a.local(Op::Batch { ops: vec![Op::SetAlbumOrder { id: ids[2], order: Some(0) }, Op::SetAlbumOrder { id: ids[0], order: Some(1) }] });
+    a.sync(&mut s);
+    b.sync(&mut s);
+    let names = |c: &Catalog| c.album_children(None).iter().map(|x| x.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(&a.cat), ["C", "A", "B"]);
+    assert_eq!(names(&b.cat), ["C", "A", "B"]);
+    assert_eq!(names(s.catalog()), ["C", "A", "B"]);
+}
+
 #[test]
 fn concurrent_edits_merge() {
     let mut s = server();
