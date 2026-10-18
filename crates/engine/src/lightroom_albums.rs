@@ -354,6 +354,45 @@ pub struct AlbumPlan {
     pub(crate) members: HashMap<String, Vec<PhotoId>>,
     pub(crate) counts: MatchCounts,
     pub(crate) warnings: Vec<String>,
+    /// The photos albums hold that the library lacks (or has twice over), by name.
+    pub(crate) missing: Vec<Value>,
+}
+
+/// The most photos the result lists by name.
+const MAX_LISTED: usize = 20_000;
+
+/// The photos of `source`'s albums that `matches` lacks: name, size, capture time, the albums
+/// holding them (first three), and whether several library photos fit (`ambiguous`).
+fn missing_photos(source: &AlbumSource, matches: &HashMap<String, PhotoId>, library: &[LibraryPhoto]) -> Vec<Value> {
+    let names: HashMap<&str, &str> = source.albums.iter().map(|a| (a.key.as_str(), a.name.as_str())).collect();
+    let mut albums: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (album, keys) in &source.members {
+        for key in keys {
+            if !matches.contains_key(key) {
+                albums.entry(key).or_default().push(names.get(album.as_str()).copied().unwrap_or(""));
+            }
+        }
+    }
+    let matcher = Matcher::new(library);
+    let mut out: Vec<(String, Value)> = albums
+        .into_iter()
+        .map(|(key, mut in_albums)| {
+            in_albums.sort_unstable();
+            let photo = source.photos.get(key);
+            let name = photo.map_or("", |p| p.name.as_str()).to_string();
+            let ambiguous = photo.is_some_and(|p| matches!(matcher.find(p), Found::Ambiguous));
+            let value = json!({
+                "name": name,
+                "size": photo.and_then(|p| p.size),
+                "captured": photo.and_then(|p| p.captured.clone()),
+                "albums": in_albums.iter().take(3).collect::<Vec<_>>(),
+                "ambiguous": ambiguous,
+            });
+            (name.to_lowercase(), value)
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.into_iter().map(|(_, v)| v).collect()
 }
 
 impl AlbumPlan {
@@ -365,7 +404,8 @@ impl AlbumPlan {
             .iter()
             .map(|(album, photos)| (album.clone(), photos.iter().filter_map(|key| matches.get(key).copied()).collect()))
             .collect();
-        AlbumPlan { source: source.source, albums: source.albums, members, counts, warnings: source.warnings }
+        let missing = missing_photos(&source, &matches, library);
+        AlbumPlan { source: source.source, albums: source.albums, members, counts, warnings: source.warnings, missing }
     }
 
     /// Make the albums in one undo step and report what was done.
@@ -391,6 +431,8 @@ impl AlbumPlan {
             "matched": self.counts.matched,
             "ambiguous": self.counts.ambiguous,
             "unmatched": self.counts.unmatched,
+            "missing": self.missing.iter().take(MAX_LISTED).collect::<Vec<_>>(),
+            "missingTotal": self.missing.len(),
             "warnings": self.warnings,
         }))
     }

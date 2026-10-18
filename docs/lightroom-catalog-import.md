@@ -160,6 +160,14 @@ Capture times are compared to the second without zone or fraction. When more tha
 none is **not in the library**. The result says how many albums and folders were made, how many photos went
 into albums, and how many were matched, ambiguous or not in the library.
 
+The photos the library lacks are listed by name (with the albums holding them; at most 20,000, the report's
+`missing` and `missingTotal`), in the SwiftUI app's result sheet, with those several library photos fit equally
+marked. A Lightroom (cloud) catalog keeps no edits on the computer: each photo's develop settings are a separate
+document named by hash (`develop.xmpCameraRaw.sha256`) that is not in the catalog or its folder, so only albums
+come from it; edits come with a Classic `.lrcat` (the full import, with Update Photos Already in the Library).
+The catalog is read page by page, never whole, so its size is not bounded by memory; the limits are 16 GiB of
+catalog, 4 GiB scanned in one table and a million rows (a catalog of 41,000 photos is 1.7 GB, read in 7 s).
+
 An album imported before is found again (the import index in `Interop/lightroom-index.json`), else an
 album or folder of the same kind with the same name in the same folder (a smart collection's album among
 the smart albums, any other among the regular ones), so importing twice, or on a second device, merges
