@@ -130,6 +130,7 @@ language_table! {
     Cs, "cs", "Čeština", "Latn", include_str!("../locales/cs.json");
     It, "it", "Italiano", "Latn", include_str!("../locales/it.json");
     Ka, "ka", "ქართული", "Geor", include_str!("../locales/ka.json");
+    Ca, "ca", "Català", "Latn", include_str!("../locales/ca.json");
 }
 
 // The settings file stores the BCP-47 code (`"zh-hans"`), never the Rust variant name, so a
@@ -341,7 +342,7 @@ pub fn date_group_label(key: &str, short: bool) -> String {
 /// A count with its thousands grouped as the UI language writes them (41,721; 41.721; 41 721).
 pub fn grouped(n: usize) -> String {
     let sep = match language() {
-        Locale::De | Locale::Es | Locale::PtBr | Locale::It => '.',
+        Locale::De | Locale::Es | Locale::PtBr | Locale::It | Locale::Ca => '.',
         Locale::Fr | Locale::Ru | Locale::Uk | Locale::Pl | Locale::Cs | Locale::Ka => '\u{a0}',
         Locale::En | Locale::Ja | Locale::ZhHans | Locale::ZhHant => ',',
     };
@@ -822,6 +823,7 @@ mod tests {
             ("app.language.czech", Locale::Cs),
             ("app.language.italian", Locale::It),
             ("app.language.georgian", Locale::Ka),
+            ("app.language.catalan", Locale::Ca),
         ];
         // One command per language, and every command reachable from the menu table.
         assert_eq!(commands.len(), Locale::ALL.len());
