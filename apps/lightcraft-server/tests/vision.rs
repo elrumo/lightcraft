@@ -1056,3 +1056,178 @@ fn an_admin_deletes_a_downloaded_model_and_only_its_files() {
     // only an admin may
     assert_eq!(delete(&f.ann, "/api/admin/search/models/sensitive").0, 401);
 }
+
+// ---------------------------------------------------------------- a device as the processing unit
+
+/// A classifier that counts the photos it was asked about (the server's own work).
+struct Counting(Arc<std::sync::atomic::AtomicUsize>);
+
+impl lightcraft_vision::Classifier for Counting {
+    fn engine(&self) -> &str {
+        lightcraft_vision::fake::FAKE_CLASSIFIER_ID
+    }
+    fn score(&self, img: &lightcraft_raster::Rgba8) -> Result<f32, VisionError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        lightcraft_vision::fake::FakeClassifier.score(img)
+    }
+}
+
+/// A server with no search or text model, a sensitive-content classifier that counts its calls, and `ann`'s
+/// faces on, whose `ann` had already moved `moved` off it before it started.
+fn helper_fixture(tag: &str, moved: &[&str]) -> (Fixture, Arc<std::sync::atomic::AtomicUsize>) {
+    let root = temp(tag);
+    let nas = root.join("nas");
+    for (name, rgb) in [("red", [220, 20, 20]), ("green", [20, 200, 40]), ("blue", [20, 40, 220]), ("grey", [128, 128, 128])] {
+        write_flat(&nas.join(format!("{name}.png")), rgb);
+    }
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::set_faces(&data, "ann", true).unwrap();
+    accounts::add_folder(&data, "ann", &nas.to_string_lossy(), Some("Photos")).unwrap();
+    let mine = accounts::user_dir(&data, "ann");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("offload.json"), json!({"moved": moved}).to_string()).unwrap();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    cfg.classifier = Some(Arc::new(Counting(calls.clone())));
+    cfg.vision_dir = Some(data.join("no-model-here"));
+    let server = Server::start(cfg).unwrap();
+    let ann = login(&server, "ann", "correct horse");
+    let f = Fixture { server, ann, data, nas };
+    wait_scan(&f);
+    (f, calls)
+}
+
+fn claim(w: &Who, parts: Value, max: u64) -> (u16, Value) {
+    post(w, "/api/work/claim", json!({"parts": parts, "max": max}).to_string().as_bytes())
+}
+
+fn keys_of(r: &Value) -> Vec<String> {
+    r["items"].as_array().unwrap().iter().map(|i| i["key"].as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn photos_are_handed_out_once_and_only_for_what_the_server_keeps() {
+    let (f, calls) = helper_fixture("work-claim", &["sensitive"]);
+    let fake = lightcraft_vision::fake::FAKE_CLASSIFIER_ID;
+    assert_eq!(post(&Who { url: f.ann.url.clone(), token: "nope".into() }, "/api/work/claim", b"{}").0, 401);
+
+    // two photos, then the other two, then none: a photo is with one device at a time
+    let (status, first) = claim(&f.ann, json!({"sensitive": fake}), 2);
+    assert_eq!(status, 200, "{first}");
+    let a = keys_of(&first);
+    assert_eq!(a.len(), 2, "{first}");
+    let item = &first["items"][0];
+    assert_eq!((item["part"].as_str(), item["kind"].as_str()), (Some("sensitive"), Some("smart")), "{item}");
+    assert!(item["photo"]["content_hash"].is_string(), "the device gets what it needs to render: {item}");
+    let (_, second) = claim(&f.ann, json!({"sensitive": fake}), 10);
+    let b = keys_of(&second);
+    assert_eq!(b.len(), 2, "{second}");
+    assert!(a.iter().all(|k| !b.contains(k)), "handed out twice: {a:?} {b:?}");
+    assert!(keys_of(&claim(&f.ann, json!({"sensitive": fake}), 10).1).is_empty());
+
+    // one is given back, one can't be done by that device: only the first is offered again
+    let release = json!({"items": [{"part": "sensitive", "key": a[0]}, {"part": "sensitive", "key": a[1], "failed": true}]});
+    assert_eq!(post(&f.ann, "/api/work/release", release.to_string().as_bytes()).0, 200);
+    assert_eq!(keys_of(&claim(&f.ann, json!({"sensitive": fake}), 10).1), [a[0].clone()]);
+
+    // the engine must be the server's, faces need the admin's yes, and a part that is off says so
+    let (_, r) = claim(&f.ann, json!({"sensitive": "another-model", "faces": lightcraft_vision::faces::ENGINE}), 4);
+    assert!(r["refused"]["sensitive"].as_str().unwrap().contains(fake), "{r}");
+    assert!(r["items"].as_array().unwrap().iter().all(|i| i["part"] == "faces"), "{r}");
+    accounts::set_faces(&f.data, "ann", false).unwrap();
+    let (_, r) = claim(&f.ann, json!({"faces": lightcraft_vision::faces::ENGINE}), 4);
+    assert!(r["refused"]["faces"].as_str().unwrap().contains("off for this user"), "{r}");
+
+    // what a user moved is theirs to change, and only parts are accepted
+    let (_, s) = get(&f.ann, "/api/work/settings");
+    assert_eq!(s["moved"], json!(["sensitive"]), "{s}");
+    assert_eq!(put(&f.ann, "/api/work/settings", json!({"add": ["text"], "remove": ["sensitive"]})).1["moved"], json!(["text"]));
+    assert_eq!(put(&f.ann, "/api/work/settings", json!({"moved": ["video"]})).0, 400);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0, "the server did none of it itself");
+}
+
+#[test]
+fn a_device_does_the_models_work_and_the_photos_never_stay_on_it() {
+    let (f, calls) = helper_fixture("work-device", &["sensitive"]);
+    let mut s = device(&f, "helper", Some(Arc::new(Padded)));
+    s.vision.set_text_reader(Arc::new(Ocrish));
+    s.vision.set_face_finder(Arc::new(Yunetish));
+    s.vision.set_classifier(Arc::new(lightcraft_vision::fake::FakeClassifier));
+    // (the server's own worker has nothing to do for these: no search model, no reader, a moved classifier)
+    assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 0);
+
+    let r = s.execute("vision.setHelper", &json!({"parts": ["search", "text", "faces", "sensitive"]})).unwrap();
+    assert_eq!(r["parts"], json!(["search", "text", "faces", "sensitive"]), "{r}");
+    let scratch = std::path::PathBuf::from(r["scratch"].as_str().unwrap());
+    let mut last = Value::Null;
+    for _ in 0..600 {
+        s.vision_poll();
+        sync(&mut s);
+        last = s.execute("vision.helper", &json!({})).unwrap();
+        let d = &last["done"];
+        if ["search", "text", "faces", "sensitive"].iter().all(|p| d[p] == 4) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(last["error"], Value::Null, "{last}");
+    assert!(["search", "text", "faces", "sensitive"].iter().all(|p| last["done"][p] == 4), "{last}");
+
+    // the server has all four results, from a device, with its own models idle
+    assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 4);
+    assert_eq!(get(&f.ann, "/api/index/text/keys").1["keys"].as_array().unwrap().len(), 4);
+    assert_eq!(get(&f.ann, "/api/people/status").1["photos"], 4);
+    let (_, flagged) = get(&f.ann, "/api/sensitive");
+    assert_eq!((flagged["checked"].clone(), flagged["keys"].as_array().unwrap().len()), (json!(4), 1), "only the red photo: {flagged}");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0, "the server's classifier never ran");
+    assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!(["search", "text", "faces", "sensitive"]), "the server was told");
+
+    // asking the server to do it again hands out nothing: all of it is done
+    assert!(keys_of(&claim(&f.ann, json!({"sensitive": "fake-nsfw"}), 10).1).is_empty());
+
+    // giving the work back stops the helper, removes its scratch folder and tells the server
+    s.execute("vision.setHelper", &json!({"parts": []})).unwrap();
+    for _ in 0..200 {
+        s.vision_poll();
+        if s.execute("vision.helper", &json!({})).unwrap()["running"] == false {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    sync(&mut s);
+    assert_eq!(s.execute("vision.helper", &json!({})).unwrap()["running"], false);
+    assert!(!scratch.exists(), "the previews were deleted with their folder: {}", scratch.display());
+    assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!([]));
+}
+
+#[test]
+fn the_choice_is_kept_with_the_library_and_a_missing_model_is_said() {
+    let (f, _) = helper_fixture("work-prefs", &[]);
+    let dir = temp("work-prefs-device").join("device");
+    let mut s = device_in(&f, &dir, Some(Arc::new(Padded)));
+    assert!(s.execute("vision.setHelper", &json!({"parts": ["video"]})).is_err());
+    // no reader on this device: it says so, and the server is not told to leave text to it
+    let r = s.execute("vision.setHelper", &json!({"parts": ["search", "text"]})).unwrap();
+    assert_eq!(r["parts"], json!(["search", "text"]));
+    let mut r = r;
+    for _ in 0..100 {
+        s.vision_poll();
+        r = s.execute("vision.helper", &json!({})).unwrap();
+        if r["active"].is_array() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(r["active"], json!(["search"]), "{r}");
+    assert!(!r["unavailable"]["text"].as_str().unwrap_or("").is_empty(), "{r}");
+    sync(&mut s);
+    assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!(["search"]));
+    s.close_library().unwrap();
+    drop(s);
+    let mut again = Session::new().with_fs();
+    again.open_library(&dir, false).unwrap();
+    assert_eq!(again.vision_helper_parts(), ["search", "text"]);
+}

@@ -258,6 +258,22 @@ fn the_choice_to_send_search_data_to_the_server_is_a_checkbox_where_it_applies()
     assert!(!h.app.session.vision.share_with_server);
 }
 
+#[test]
+fn the_server_work_a_device_takes_over_is_chosen_one_part_at_a_time() {
+    let mut h = window(true);
+    h.app.session.vision.set_server_status(Some(json!({"available": true, "installed": true, "indexed": 4, "total": 4})));
+    click(&mut h, "button:describeSearch");
+    until(&mut h, "the index", indexed);
+    h.settle(Duration::from_secs(5));
+    assert!(has(&h, "check:describeHelper:search"), "this device has the search model and the server can search");
+    assert!(!has(&h, "check:describeHelper:faces"), "no face models here: nothing to offer");
+    assert!(h.app.session.vision_helper_parts().is_empty(), "off until the user turns it on");
+    click(&mut h, "check:describeHelper:search");
+    assert_eq!(h.app.session.vision_helper_parts(), ["search"]);
+    click(&mut h, "check:describeHelper:search");
+    assert!(h.app.session.vision_helper_parts().is_empty());
+}
+
 /// A window whose search model and text reader are the stand-ins (both "installed").
 fn window_with_reader() -> Headless {
     let mut session = Session::with_demo();

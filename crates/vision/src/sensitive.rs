@@ -7,7 +7,8 @@ use std::path::Path;
 
 use lightcraft_raster::Rgba8;
 
-use crate::store::{Error, KEY_LEN, Key, RecordFile, Spec};
+use crate::index::Import;
+use crate::store::{Error, HEADER_LEN, KEY_LEN, Key, RecordFile, Spec};
 
 /// The model that tells sensitive photos apart, whatever runs it.
 pub trait Classifier: Send + Sync {
@@ -32,6 +33,8 @@ pub struct SensitiveIndex {
     scores: HashMap<Key, f32>,
     /// Bumped by every change (callers cache what they derive from the scores).
     revision: u64,
+    /// The model of the scores (empty: an index from [`SensitiveIndex::memory`], which has none to send).
+    engine: String,
 }
 
 impl SensitiveIndex {
@@ -51,7 +54,12 @@ impl SensitiveIndex {
                 scores.insert(key, score.clamp(0.0, 1.0));
             }
         })?;
-        Ok(SensitiveIndex { file: Some(file), scores, revision: 0 })
+        Ok(SensitiveIndex { file: Some(file), scores, revision: 0, engine: engine.to_string() })
+    }
+
+    /// In memory only, for scores of model `engine` (what a device packs to send a server).
+    pub fn in_memory(engine: &str) -> SensitiveIndex {
+        SensitiveIndex { engine: engine.to_string(), ..SensitiveIndex::default() }
     }
 
     pub fn len(&self) -> usize {
@@ -98,6 +106,51 @@ impl SensitiveIndex {
         out
     }
 
+    /// A file's worth of records (header first) for the photos `skip` doesn't name, at most `max` of
+    /// them: what a device sends a server that lacks them. [`SensitiveIndex::import`] reads it back.
+    pub fn export(&self, skip: impl Fn(&Key) -> bool, max: usize) -> Vec<u8> {
+        let mut out = spec(&self.engine).header().to_vec();
+        let mut keys: Vec<&Key> = self.scores.keys().filter(|k| !skip(k)).collect();
+        keys.sort_by_key(|k| k.0);
+        for key in keys.into_iter().take(max) {
+            out.extend_from_slice(&key.0);
+            out.extend_from_slice(&self.scores.get(key).copied().unwrap_or(0.0).to_le_bytes());
+        }
+        out
+    }
+
+    /// Adds the records of a [`SensitiveIndex::export`] for the photos `allow` accepts, skipping those
+    /// already scored. All or nothing: another model's header, a truncated body or one score that is not a
+    /// number from 0 to 1 rejects the whole thing.
+    pub fn import(&mut self, bytes: &[u8], allow: impl Fn(&Key) -> bool) -> Result<Import, Error> {
+        spec(&self.engine).check_header(bytes)?;
+        let body = bytes.get(HEADER_LEN..).ok_or(Error::Format("short header"))?;
+        if !body.len().is_multiple_of(REC_LEN) {
+            return Err(Error::Format("truncated record"));
+        }
+        let mut fresh: Vec<(Key, f32)> = Vec::new();
+        let mut out = Import::default();
+        for rec in body.as_chunks::<REC_LEN>().0 {
+            let (Some(key), Some(raw)) = (Key::read(rec), rec.get(KEY_LEN..REC_LEN).and_then(|b| <[u8; 4]>::try_from(b).ok())) else {
+                return Err(Error::Format("truncated record"));
+            };
+            let score = f32::from_le_bytes(raw);
+            if !(0.0..=1.0).contains(&score) {
+                return Err(Error::Invalid("score"));
+            }
+            if self.scores.contains_key(&key) || !allow(&key) || fresh.iter().any(|(k, _)| *k == key) {
+                out.skipped += 1;
+            } else {
+                fresh.push((key, score));
+            }
+        }
+        for (key, score) in fresh {
+            self.insert(key, score)?;
+            out.added += 1;
+        }
+        Ok(out)
+    }
+
     /// Forget every score.
     pub fn clear(&mut self) -> Result<(), Error> {
         if let Some(file) = self.file.as_mut() {
@@ -115,6 +168,28 @@ mod tests {
 
     fn key(n: u8) -> Key {
         Key([n; KEY_LEN])
+    }
+
+    #[test]
+    fn scores_travel_between_devices_whole_or_not_at_all() {
+        let mut sent = SensitiveIndex::in_memory("m");
+        sent.insert(key(1), 0.9).unwrap();
+        sent.insert(key(2), 0.1).unwrap();
+        let bytes = sent.export(|_| false, 10);
+        let mut got = SensitiveIndex::in_memory("m");
+        got.insert(key(2), 0.5).unwrap();
+        assert_eq!(got.import(&bytes, |_| true).unwrap(), Import { added: 1, skipped: 1 }, "a score already there stays");
+        assert_eq!(got.score(&key(2)), Some(0.5));
+        assert_eq!(SensitiveIndex::in_memory("m").import(&bytes, |k| k.0[0] == 1).unwrap().added, 1, "only photos allowed");
+        assert!(SensitiveIndex::in_memory("other").import(&bytes, |_| true).is_err(), "another model");
+        let mut cut = bytes.clone();
+        cut.pop();
+        assert!(SensitiveIndex::in_memory("m").import(&cut, |_| true).is_err(), "truncated");
+        let mut bad = bytes;
+        let at = bad.len() - 1;
+        bad[at] = 0x7f; // a score of 3.4e38
+        let mut none = SensitiveIndex::in_memory("m");
+        assert!(none.import(&bad, |_| true).is_err() && none.is_empty(), "one bad score refuses the lot");
     }
 
     #[test]

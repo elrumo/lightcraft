@@ -33,9 +33,13 @@ use serde_json::{Value, json};
 use crate::media::{RenderJob, SourceLevel, content_key};
 use crate::{Session, guard, memory};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod helper;
 mod people;
 mod sensitive;
 mod server;
+#[cfg(not(target_arch = "wasm32"))]
+pub use helper::{HelperJob, HelperPart};
 pub use people::{Cluster, FaceRef, clusters_of};
 use sensitive::{ClassSpec, ClassifierProvider};
 pub use sensitive::{SENSITIVE_BYTES, SENSITIVE_DIR, SENSITIVE_LICENSE_NAME, SENSITIVE_LICENSE_URL, SENSITIVE_MIN, SENSITIVE_NOT_INSTALLED};
@@ -48,9 +52,11 @@ pub(crate) fn next_id() -> u64 {
 }
 
 /// Long edge of the rendering a photo is embedded from.
-const THUMB_EDGE: usize = 512;
+pub const THUMB_EDGE: usize = 512;
 /// Long edge of the rendering the text in a photo is read from (small print needs the pixels).
 pub const TEXT_EDGE: usize = 1280;
+/// Long edge of the rendering a photo is checked for sensitive content from (the model reads 224×224).
+pub const SENSITIVE_EDGE: usize = 512;
 /// Photos that fail to be read one after the other before the text reader is given up on.
 const READ_FAILURES: usize = 8;
 pub use lightcraft_vision::textindex::TEXT_SCORE_BASE;
@@ -286,6 +292,9 @@ pub struct Vision {
     /// Check photos for sensitive content (nudity and the like). Off until the user turns it on
     /// (persisted in the library's prefs.json): it needs its own download and the user's yes.
     pub sensitive: bool,
+    /// The work this device does for the sync server it is signed in to, which it claims photos for
+    /// (`vision.setHelper`; persisted in the library's prefs.json). Empty: none.
+    pub helper_parts: Vec<String>,
     /// This device runs none of the models even if this build could (a thin client; tests of one):
     /// it searches and lists people through the sync server.
     #[doc(hidden)]
@@ -297,6 +306,12 @@ pub struct Vision {
     injected_reader: Option<Arc<dyn TextReader>>,
     injected_finder: Option<Arc<dyn FaceEngine>>,
     injected_classifier: Option<Arc<dyn Classifier>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    helper: Option<Arc<HelperJob>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    helper_error: Option<String>,
+    #[cfg(not(target_arch = "wasm32"))]
+    helper_retry: Option<Instant>,
     /// The possibly sensitive photos, best first, and what they were worked out from.
     sensitive_list: Option<(sensitive::ListKey, Arc<Vec<(PhotoId, f32)>>, Arc<HashSet<PhotoId>>)>,
     people: people::Cache,
@@ -331,12 +346,19 @@ impl Default for Vision {
             text: false,
             faces: false,
             sensitive: false,
+            helper_parts: Vec::new(),
             thin: false,
             text_edge: TEXT_EDGE,
             injected: None,
             injected_reader: None,
             injected_finder: None,
             injected_classifier: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            helper: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            helper_error: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            helper_retry: None,
             sensitive_list: None,
             people: people::Cache::default(),
             remote: server::Remote::default(),

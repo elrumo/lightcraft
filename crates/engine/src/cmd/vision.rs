@@ -107,6 +107,33 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            query "vision.helper",
+            "Processing for the Server",
+            [],
+            None,
+            "{} — how this device is doing as the sync server's processing unit (vision.setHelper) → {parts, supported, running, state (working|waiting|stopped), done: {search, text, faces, sensitive}, failed, error, unavailable: {part: why}, refused: {part: why}}",
+            always,
+            |s, _| Ok(s.vision_helper_status())
+        ),
+        cmd!(
+            "vision.setHelper",
+            "Process Photos for the Server",
+            [],
+            None,
+            "{parts: [search|text|faces|sensitive]} — the model work this device does for the sync server it is signed in to, instead of the server: the server stops doing those parts for this user, and this device claims a few photos at a time, fetches only their previews, processes them in memory (it needs those models: vision.model.download and the like), sends the results back and forgets the photos. Nothing else leaves the server and editing stays on the device. Saved with the library; [] gives the work back to the server → vision.helper",
+            always,
+            |s, p| {
+                let parts: Vec<String> = p
+                    .get("parts")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| bad("vision.setHelper", "missing `parts`"))?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect();
+                s.vision_helper_set(&parts).map_err(|e| bad("vision.setHelper", e))
+            }
+        ),
+        cmd!(
             "vision.setLocalOnly",
             "Search on This Device Only",
             [],

@@ -322,6 +322,8 @@ struct PrefsFile {
     hidden_password: Option<String>,
     /// Check photos for sensitive content (`vision.setSensitive`).
     search_sensitive: bool,
+    /// The work this device does for its sync server (`vision.setHelper`).
+    search_helper: Vec<String>,
     /// Blur the possibly sensitive photos in the grid (`library.setBlurSensitive`; missing = on).
     blur_sensitive: Option<bool>,
     /// Slideshow playback settings.
@@ -622,6 +624,7 @@ impl Session {
         self.vision.local_only = prefs.search_local_only;
         self.vision.text = prefs.search_text;
         self.vision.faces = prefs.search_faces;
+        self.vision.helper_parts = prefs.search_helper;
         self.vision.sensitive = prefs.search_sensitive;
         self.blur_sensitive = prefs.blur_sensitive.unwrap_or(true);
         // (locked, whatever the last library was)
@@ -1039,6 +1042,7 @@ impl Session {
             search_faces: self.vision.faces,
             hidden_password: self.hidden.password.clone(),
             search_sensitive: self.vision.sensitive,
+            search_helper: self.vision.helper_parts.clone(),
             blur_sensitive: Some(self.blur_sensitive),
             slideshow: self.slideshow.clone(),
             slide_layout: self.slide_layout.clone(),

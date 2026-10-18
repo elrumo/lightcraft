@@ -178,7 +178,7 @@ impl Vision {
 }
 
 /// The classifier, loading it first if needed.
-fn acquire_classifier(shared: &Shared, provider: &ClassifierProvider) -> Result<Arc<dyn Classifier>, String> {
+pub(super) fn acquire_classifier(shared: &Shared, provider: &ClassifierProvider) -> Result<Arc<dyn Classifier>, String> {
     if let Some(c) = &provider.injected {
         shared.touch();
         return Ok(c.clone());

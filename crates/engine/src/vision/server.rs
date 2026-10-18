@@ -55,6 +55,9 @@ pub(crate) enum Aux {
     FacesDelete,
     /// `GET /api/sensitive`: the photos the server flagged as possibly sensitive.
     Sensitive,
+    /// `PUT /api/work/settings`: which work this device takes from the server (a browser takes none).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Work,
 }
 
 /// A search the server answered, on its way to the view.
@@ -316,6 +319,11 @@ impl Session {
             Aux::FaceKeys => self.share_face_keys(st, d),
             Aux::People => self.people_arrived(d),
             Aux::Sensitive => self.sensitive_arrived(d),
+            Aux::Work => {
+                if !d.ok() {
+                    log::warn!("telling the server which work this device takes: {}", why(d));
+                }
+            }
             Aux::FacesDelete => {
                 if !d.ok() {
                     log::warn!("asking the server to forget the faces: {}", why(d));
@@ -616,6 +624,7 @@ impl Session {
             self.vision_probe_server();
             self.vision_fetch_sensitive(false);
         }
+        self.vision_helper_upkeep();
         for done in std::mem::take(&mut self.vision.remote.arrived) {
             // only the newest search counts: an older one is already out of date
             if done.seq != self.vision.search_seq {
@@ -689,4 +698,18 @@ mod tests {
         r.status = Some(json!({"available": false}));
         assert!(!r.supported() && !r.ready());
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Session {
+    /// A browser can't be a processing unit.
+    pub fn vision_helper_set(&mut self, _parts: &[String]) -> Result<Value, String> {
+        Err("a browser can't process photos for the server".into())
+    }
+
+    pub fn vision_helper_status(&self) -> Value {
+        json!({"parts": [], "running": false, "supported": false})
+    }
+
+    pub(super) fn vision_helper_upkeep(&mut self) {}
 }

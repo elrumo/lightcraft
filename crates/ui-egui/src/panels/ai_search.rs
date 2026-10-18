@@ -289,6 +289,42 @@ fn share_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
 }
 
+/// For a device with models installed, signed in to a server that can search: which of the server's model
+/// work this device does for it instead (`vision.setHelper`): the photos' previews are sent here one batch
+/// at a time, processed, sent back and deleted, so the server's processor stays free.
+fn helper_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let v = &app.session.vision;
+    if !v.server_status().is_some_and(|s| s["available"].as_bool() == Some(true)) {
+        return;
+    }
+    let rows = [
+        ("search", v.installed(), "Search: describe photos on this device instead of my server"),
+        ("text", v.text_installed(), "Text: read the words in photos on this device instead of my server"),
+        ("faces", v.faces_installed(), "People: find faces on this device instead of my server"),
+        ("sensitive", v.sensitive_installed(), "Sensitive content: check photos on this device instead of my server"),
+    ];
+    let chosen: Vec<String> = app.session.vision_helper_parts().to_vec();
+    let mut next = chosen.clone();
+    for (part, installed, label) in rows {
+        let mut on = chosen.iter().any(|p| p == part);
+        // (a part chosen earlier stays visible so it can be given back, even if its model went away)
+        if !installed && !on {
+            continue;
+        }
+        let r = crate::widgets::check(ui, &mut on, crate::i18n::tr(label));
+        register(ui.ctx(), format!("check:describeHelper:{part}"), r.rect);
+        if r.changed() {
+            next.retain(|p| p != part);
+            if on {
+                next.push(part.to_string());
+            }
+        }
+    }
+    if next != chosen {
+        let _ = app.run("vision.setHelper", json!({"parts": next}));
+    }
+}
+
 /// For a device that could run the model next to a server that can search: where searches run.
 /// Ticked, the model is downloaded here and the server is never asked; unticked (the default), the
 /// server's model answers and nothing is downloaded.
@@ -421,6 +457,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             ui.label(crate::i18n::tr_format!("{indexed} of {total} photos can be searched.", indexed = indexed, total = total));
             text_row(app, ui);
             share_row(app, ui);
+            helper_rows(app, ui);
             source_row(app, ui);
             let r = ui.button(crate::i18n::tr("Prepare the Rest"));
             register(ui.ctx(), "button:describeIndex", r.rect);
@@ -522,6 +559,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
         Panel::Hint => {
             text_row(app, ui);
             share_row(app, ui);
+            helper_rows(app, ui);
             source_row(app, ui);
             let v = &app.session.vision;
             if !v.installed() && v.use_server() && v.server_status().is_some_and(|s| s["installed"].as_bool() == Some(true)) {

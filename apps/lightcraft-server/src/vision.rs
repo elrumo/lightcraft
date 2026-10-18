@@ -57,7 +57,7 @@ use crate::api::{self, Resp, UserLib, error};
 use crate::switch::{Part, Switch};
 
 /// Long edge of the rendering a photo is embedded from.
-const THUMB_EDGE: usize = 512;
+const THUMB_EDGE: usize = lightcraft_engine::vision::THUMB_EDGE;
 /// Long edge of the rendering the text in a photo is read from.
 const TEXT_EDGE: usize = lightcraft_engine::vision::TEXT_EDGE;
 /// Photos whose text is read in one pass over a user (then the worker looks at the others'
@@ -116,6 +116,8 @@ pub struct Search {
     pub(crate) switch: Switch,
     /// Checking the photos for sensitive content ([`crate::sensitive`]).
     pub(crate) sensitive: crate::sensitive::Sensitive,
+    /// Photos handed to devices to process, and the work users moved off this server ([`crate::work`]).
+    pub(crate) work: crate::work::Work,
 }
 
 impl Search {
@@ -143,12 +145,14 @@ impl Search {
             failed_faces: Mutex::new(HashSet::new()),
             problems: Mutex::new(HashMap::new()),
             switch: Switch::default(),
+            work: crate::work::Work::default(),
         }
     }
 
     /// Keeps the on/off setting in `data` (without it search is always on).
     pub fn with_data(mut self, data: &Path) -> Search {
         self.switch = Switch::new(data);
+        self.work = crate::work::Work::new(data);
         self
     }
 
@@ -577,6 +581,81 @@ impl Search {
 }
 
 /// Distinct photos of `lib` that have a content hash, by key.
+/// A photo a device may be given to process.
+pub(crate) struct Pending {
+    pub key: Key,
+    pub photo: Arc<Photo>,
+    /// Which preview the device fetches (`mini` or `smart`).
+    pub kind: &'static str,
+}
+
+impl Search {
+    /// The engine whose results for `part` this server keeps.
+    pub(crate) fn engine_of(&self, part: Part) -> String {
+        match part {
+            Part::Search => self.spec().0,
+            Part::Text => self.engine(),
+            Part::Faces => self.faces_engine(),
+            Part::Sensitive => self.sensitive.engine(),
+        }
+    }
+
+    /// Remember that `part` can't be done for this photo (the worker would not try it again either).
+    pub(crate) fn mark_failed(&self, user: &str, part: Part, key: Key) {
+        let set = match part {
+            Part::Search => &self.failed,
+            Part::Text => &self.failed_text,
+            Part::Faces => &self.failed_faces,
+            Part::Sensitive => self.sensitive.failed(),
+        };
+        lock(set).insert((user.to_string(), key));
+    }
+}
+
+/// Up to `max` of `user`'s photos that have a preview and no result for `part`, are not failed and are not
+/// with a device already: what a device may be given to process.
+pub(crate) fn pending(st: &State, user: &str, part: Part, max: usize) -> Result<Vec<Pending>, String> {
+    let v = &st.vision;
+    let lib = api::lib(st, user)?;
+    let (photos, blobs) = {
+        let l = lock(&lib);
+        (hashed(&l), l.dir.join("blobs"))
+    };
+    let (have, failed): (HashSet<Key>, HashSet<(String, Key)>) = match part {
+        Part::Search => {
+            let ix = v.index(&st.data, user)?;
+            (lock(&ix).keys().copied().collect(), lock(&v.failed).clone())
+        }
+        Part::Text => {
+            let ix = v.text_index(&st.data, user, true)?.ok_or("the text index is unavailable")?;
+            (lock(&ix).keys().copied().collect(), lock(&v.failed_text).clone())
+        }
+        Part::Faces => {
+            let ix = v.face_index(&st.data, user, true)?.ok_or("the face index is unavailable")?;
+            (lock(&ix).keys().copied().collect(), lock(&v.failed_faces).clone())
+        }
+        Part::Sensitive => {
+            let ix = v.sensitive.index(&st.data, user, true)?.ok_or("the sensitive-content scores are unavailable")?;
+            (lock(&ix).keys().collect(), lock(v.sensitive.failed()).clone())
+        }
+    };
+    let kind = if part == Part::Search { "mini" } else { "smart" };
+    let mut out = Vec::new();
+    for (key, photo) in photos {
+        if out.len() >= max {
+            break;
+        }
+        if have.contains(&key) || failed.contains(&(user.to_string(), key)) || v.work.leased(user, part, &key) {
+            continue;
+        }
+        let there = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, kind, h)).is_some_and(|p| p.is_file());
+        if there {
+            out.push(Pending { key, photo, kind });
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn hashed(lib: &UserLib) -> Vec<(Key, Arc<Photo>)> {
     let mut seen = HashSet::new();
     lib.core
@@ -614,7 +693,7 @@ pub(crate) fn run(st: &Arc<State>) {
             }
         };
         for user in accounts::read_users(&st.data).map(|f| f.users.into_keys().collect::<Vec<_>>()).unwrap_or_default() {
-            if v.installed() && v.switch.may_run(Part::Search) {
+            if v.installed() && v.switch.may_run(Part::Search) && !v.work.moved(&user, Part::Search) {
                 v.switch.working(Some((Part::Search, &user)));
                 let r = index_user(st, &user);
                 if r == Ok(true) {
@@ -624,6 +703,7 @@ pub(crate) fn run(st: &Arc<State>) {
             }
             if v.faces_installed()
                 && v.switch.may_run(Part::Faces)
+                && !v.work.moved(&user, Part::Faces)
                 && !v.stop.load(Ordering::SeqCst)
                 && accounts::read_users(&st.data).is_ok_and(|f| f.users.get(&user).is_some_and(|u| u.faces))
             {
@@ -638,7 +718,7 @@ pub(crate) fn run(st: &Arc<State>) {
                     Err(e) => report(format!("{user}:faces"), "face index", Err(e)),
                 }
             }
-            if v.text_installed() && v.switch.may_run(Part::Text) && !v.stop.load(Ordering::SeqCst) {
+            if v.text_installed() && v.switch.may_run(Part::Text) && !v.work.moved(&user, Part::Text) && !v.stop.load(Ordering::SeqCst) {
                 v.switch.working(Some((Part::Text, &user)));
                 match read_user(st, &user) {
                     // (more to read: come back after looking at new photos)
@@ -651,7 +731,8 @@ pub(crate) fn run(st: &Arc<State>) {
                     Err(e) => report(format!("{user}:text"), "text index", Err(e)),
                 }
             }
-            if v.sensitive_installed() && v.switch.may_run(Part::Sensitive) && !v.stop.load(Ordering::SeqCst) {
+            if v.sensitive_installed() && v.switch.may_run(Part::Sensitive) && !v.work.moved(&user, Part::Sensitive) && !v.stop.load(Ordering::SeqCst)
+            {
                 v.switch.working(Some((Part::Sensitive, &user)));
                 match crate::sensitive::check_user(st, &user) {
                     Ok(more) => {
@@ -688,7 +769,7 @@ fn scan_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     {
         let ix = lock(&index);
         for (key, photo) in photos {
-            if ix.scanned(&key) || failed.contains(&(user.to_string(), key)) {
+            if ix.scanned(&key) || failed.contains(&(user.to_string(), key)) || v.work.leased(user, Part::Faces, &key) {
                 continue;
             }
             let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else {
@@ -760,7 +841,7 @@ fn read_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     let mut work: Vec<(Key, Arc<Photo>, PathBuf)> = Vec::new();
     let mut waiting = 0;
     for (key, photo) in photos {
-        if have.contains(&key) || failed.contains(&(user.to_string(), key)) {
+        if have.contains(&key) || failed.contains(&(user.to_string(), key)) || v.work.leased(user, Part::Text, &key) {
             continue;
         }
         let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else {
@@ -830,7 +911,7 @@ fn index_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     let mut work: Vec<(Key, Arc<Photo>, PathBuf)> = Vec::new();
     let mut waiting = 0;
     for (key, photo) in photos {
-        if have.contains(&key) || failed.contains(&(user.to_string(), key)) {
+        if have.contains(&key) || failed.contains(&(user.to_string(), key)) || v.work.leased(user, Part::Search, &key) {
             continue;
         }
         let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "mini", h)).filter(|p| p.is_file()) else {

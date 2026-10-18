@@ -23,12 +23,15 @@ use serde_json::json;
 use crate::State;
 use crate::accounts;
 use crate::api::{self, Resp, UserLib, error};
+use crate::http::Request;
 use crate::switch::Part;
 
 /// Photos checked in one pass over a user.
 const CHUNK: usize = 25;
+/// Largest upload of scores (a device sends them in pieces).
+const UPLOAD_MAX: u64 = 16 << 20;
 /// Long edge of the rendering a photo is checked from (the model reads 224×224).
-const EDGE: usize = 512;
+const EDGE: usize = lightcraft_engine::vision::SENSITIVE_EDGE;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -165,7 +168,7 @@ pub(crate) fn check_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     {
         let ix = lock(&index);
         for (key, photo) in photos {
-            if ix.contains(&key) || failed.contains(&(user.to_string(), key)) {
+            if ix.contains(&key) || failed.contains(&(user.to_string(), key)) || v.work.leased(user, Part::Sensitive, &key) {
                 continue;
             }
             let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else {
@@ -216,6 +219,34 @@ pub(crate) fn check_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     log::info!("{user}: {done} of {} photo(s) checked for sensitive content in {:.1} s", work.len(), started.elapsed().as_secs_f64());
     lightcraft_engine::memory::release();
     Ok(more)
+}
+
+/// `POST /api/index/sensitive`: scores a device computed. Only photos in the user's library are kept; the
+/// whole upload is refused when it is from another model or damaged.
+pub(crate) fn upload(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &str) -> Resp {
+    let v = &st.vision;
+    if !v.switch.sensitive_enabled() {
+        return api::json(403, &json!({"error": "this server doesn't check photos for sensitive content", "installed": false}));
+    }
+    let body = match api::read_body(req, UPLOAD_MAX) {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    let index = match v.sensitive.index(&st.data, user, true) {
+        Ok(Some(i)) => i,
+        Ok(None) => return error(500, "the sensitive-content scores are unavailable"),
+        Err(e) => return error(500, e),
+    };
+    let mine: HashSet<Key> = crate::vision::hashed(&lock(l)).into_iter().map(|(k, _)| k).collect();
+    let r = lock(&index).import(&body, |k| mine.contains(k));
+    match r {
+        Ok(done) => {
+            v.touch();
+            api::json(200, &json!({"added": done.added, "skipped": done.skipped}))
+        }
+        Err(e @ VisionError::Mismatch { .. }) => error(409, e),
+        Err(e) => error(422, e),
+    }
 }
 
 /// `GET /api/sensitive`: the user's photos scored at least the engine's cut-off, as content hashes.

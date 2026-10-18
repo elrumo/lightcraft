@@ -55,6 +55,7 @@ pub mod switch;
 pub mod throttle;
 pub mod usage;
 pub mod vision;
+pub mod work;
 pub mod writeback;
 pub mod zip;
 

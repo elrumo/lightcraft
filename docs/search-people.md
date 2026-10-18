@@ -33,6 +33,7 @@ to its licence, and everything else works without it.
   | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's; always this device's when `vision.setLocalOnly` is on). A one-word query that is part of a file name (`IMG_4008`, `img_4008.dng`) lists those photos first (`name: true`), on every device and source; the plain search field (`library.filter {text}`) matches file names too |
   | `vision.setLocalOnly {on}` | search on this device only, never through the sync server (saved with the library; no effect on a device that can't run the model) |
   | `vision.share {wait?}` / `vision.setShare {on}` | send this device's vectors (and text) to the server, once or whenever new photos are indexed |
+  | `vision.setHelper {parts}` / `vision.helper` | the work this device does for its server instead of the server (`search`, `text`, `faces`, `sensitive`), and how it is going; see *A device as the server's processing unit* |
   | `vision.setText {on}` | also read and search the text printed in photos (off until turned on; saved with the library) |
   | `vision.setFaces {on}` / `vision.faces.download {acknowledged: true}` / `vision.faces.cancel` | find the people in photos (off until turned on and the user agreed to the models), and download or stop the face models |
   | `people.list {all?, limit?, wait?}` / `people.name {cluster, name}` / `people.show {cluster}` / `people.deleteData` | the people found (unnamed ones, and named ones with faces to confirm), name one, show their photos, forget every face |
@@ -221,6 +222,41 @@ saved with the library). The server keeps only vectors for photos that are in th
 and refuses a whole upload that is for another model (`409`), damaged, truncated, or not finite (`422`). Vectors are rescaled
 to unit length, so an upload can't skew rankings. Vectors describe what is in your photos: keep the server private (TLS
 reverse proxy or Tailscale, see `sync.md`).
+
+## A device as the server's processing unit
+
+A server on a NAS has a slow processor and little memory; the Mac next to it has a fast one, a GPU and more RAM. Per
+task, you can move the server's model work onto a device, without moving the photos: tick **Search / Text / People /
+Sensitive content: … on this device instead of my server** in the Describe panel (`vision.setHelper {parts}`; a task
+shows only when its models are installed on that device). Then:
+
+1. the device **claims** a few photos from the server (`POST /api/work/claim`, 16 at a time, with the engine ids of its
+   models, so only results the server would keep are asked for). A claimed photo is the device's for ten minutes and
+   no other device, nor the server's own worker, is given it meanwhile;
+2. it **fetches only their previews** (`GET /api/blobs/smart|mini/<hash>`) into a private scratch folder, renders each
+   unedited, processes it in memory, and **deletes the preview** at once (the folder goes when the helper stops);
+3. it **sends the results** through the routes devices already use (`POST /api/index/embeddings|text|faces|sensitive`:
+   checked whole, only photos of that user's library are kept), **releases** the photos (`POST /api/work/release`; one
+   it can't process is marked failed so it isn't offered again) and takes the next batch. Nothing of the library stays
+   on the device and it needs no copy of it. Editing never moves: it is always on the device.
+
+While a part is moved, the server's worker **skips it for that user** (`GET/PUT /api/work/settings`, kept in
+`<data>/users/<name>/offload.json`; a device adds and removes only its own parts), so a part with no device online
+waits instead of loading the NAS. Admin switches still rule: a part the admin turned off, or faces for a user who
+isn't allowed them, is refused (`refused` in the claim's answer). The helper is one thread, a row in the activity
+stack, started again after a sign-in or a failure, and ends on sign-out. `lightcraft-server` needs no model for a part
+that is moved.
+
+```text
+POST /api/work/claim      {parts: {search|text|faces|sensitive: engine}, max?} → {items: [{part, key, kind, photo}], refused, ttl}
+POST /api/work/release    {items: [{part, key, failed?}]}
+GET  /api/work/settings   {moved: [part], helperSeen: seconds | null}
+PUT  /api/work/settings   {moved: [part]} | {add?: [part], remove?: [part]}
+POST /api/index/sensitive scores a device computed (checked whole, like the others)
+```
+
+Not done yet: the SwiftUI app has no switch for it (the commands work there), and other work that could move the same
+way (building previews from the originals, Lens Blur depth) does not: the originals would have to travel.
 
 ## Limits (honest)
 

@@ -29,7 +29,7 @@ pub const FILE: &str = "search.json";
 const PACE_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 /// The models an admin can fetch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
     /// SigLIP 2: search by description.
     Search,

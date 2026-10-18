@@ -295,6 +295,12 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["index", "faces", "keys"]) => crate::vision::face_keys(st, &who.user),
         (Method::Post, ["index", "faces"]) => crate::vision::face_upload(st, req, &l, &who.user),
         (Method::Delete, ["index", "faces"]) => crate::vision::face_delete(st, &who.user),
+        (Method::Post, ["index", "sensitive"]) => crate::sensitive::upload(st, req, &l, &who.user),
+        // devices as processing units (see `work`)
+        (Method::Post, ["work", "claim"]) => crate::work::claim(st, req, &who.user),
+        (Method::Post, ["work", "release"]) => crate::work::release(st, req, &who.user),
+        (Method::Get, ["work", "settings"]) => crate::work::settings(st, &who.user),
+        (Method::Put, ["work", "settings"]) => crate::work::set_settings(st, req, &who.user),
         (Method::Post, ["render"]) => render(st, req, &l, &who.user),
         _ => error(404, format!("no route {method} {path}")),
     };
