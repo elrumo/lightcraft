@@ -381,7 +381,7 @@ fn merge_dialog_remembers_the_last_settings_per_kind() {
     crate::merge::start_final(&mut h.app, &opts).unwrap();
     let row = h.app.session.activity.list()[0].id;
     h.app.session.activity.cancel(row).unwrap();
-    assert!(h.step_until(T, |h| h.app.merge.final_task.is_none()));
+    assert!(h.step_until(T, |h| h.app.merge.runner.merging.is_none()));
     crate::merge::open(&mut h.app, "merge.hdr").unwrap();
     let Some(crate::state::Dialog::Merge { opts: shown }) = &h.app.ui.dialog else { panic!("no merge dialog") };
     assert_eq!(shown, &opts);

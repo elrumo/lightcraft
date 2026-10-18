@@ -1967,7 +1967,7 @@ pub(crate) mod tests {
                 calls.fetch_add(1, Ordering::Relaxed);
                 Err("a refused original must not be probed".into())
             }));
-            let report = import(&mut s, &source, false).unwrap();
+            let report = import(&mut s, &source, false, false).unwrap();
             assert_eq!(probes.load(Ordering::Relaxed), 0, "{root}");
             assert_eq!(report["missing"].as_array().map(Vec::len), Some(1), "{root}: {report}");
             assert!(s.catalog.is_empty(), "{root}");
