@@ -314,7 +314,7 @@ pub fn write(pages: &[PdfPage], info: &PdfInfo) -> Result<Vec<u8>, String> {
     };
     w.object(catalog, &format!("<< /Type /Catalog /Pages {pages_id} 0 R{intents} >>"), None);
     let title = info.title.as_deref().map(|t| format!(" /Title {}", text(t))).unwrap_or_default();
-    w.object(info_id, &format!("<< /Producer (LightCraft){title} >>"), None);
+    w.object(info_id, &format!("<< /Producer {}{title} >>", text(crate::about::app_name())), None);
 
     let xref = w.out.len();
     let mut table = format!("xref\n0 {}\n0000000000 65535 f \n", w.offsets.len() + 1);

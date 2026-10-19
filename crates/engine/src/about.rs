@@ -38,6 +38,31 @@ pub fn url_of(cmd: &str) -> Option<&'static str> {
 pub const WHATS_NEW: &str = include_str!("../../../docs/whats-new.md");
 
 static COMMIT: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+static APP_NAME: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// A host that is another product built on the engine sets, once at start, the name its files are signed with.
+pub fn set_app_name(name: &'static str) {
+    let _ = APP_NAME.set(name);
+}
+
+/// The name this program signs the files it writes with: the EXIF Software tag, the XMP creator tool, the PDF
+/// producer. `LightCraft` unless the host set its own.
+pub fn app_name() -> &'static str {
+    APP_NAME.get().copied().unwrap_or("LightCraft")
+}
+
+static APP_URL: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// A host that is another product sets, once at start, the page that says what it is (the contact in the
+/// User-Agent of the requests it makes, which map-tile servers require).
+pub fn set_app_url(url: &'static str) {
+    let _ = APP_URL.set(url);
+}
+
+/// The page that says what this program is: [`GITHUB`] unless the host set its own.
+pub fn app_url() -> &'static str {
+    APP_URL.get().copied().unwrap_or(GITHUB)
+}
 
 /// The commit this app was built from, for System Info. The app sets it once (its build script
 /// stamps it: one in the engine would recompile the engine on every commit).
@@ -107,5 +132,12 @@ mod tests {
         set_commit("ffae40d8ab");
         let rows = system_rows(&Session::with_demo());
         assert_eq!(rows[1], ("Commit".to_string(), "ffae40d8ab".to_string()));
+    }
+
+    #[test]
+    fn files_are_signed_as_lightcraft_unless_the_host_names_itself() {
+        // (no test sets the name: it can be set once per process)
+        assert_eq!(app_name(), "LightCraft");
+        assert_eq!(app_url(), GITHUB);
     }
 }

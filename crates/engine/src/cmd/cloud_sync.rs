@@ -143,7 +143,7 @@ fn sign_in(s: &mut Session, p: &Value) -> Result<Value> {
 /// name), else the computer's name.
 fn default_device_name() -> String {
     let named = ["LIGHTCRAFT_DEVICE", "HOSTNAME", "COMPUTERNAME"].iter().find_map(|v| std::env::var(v).ok().filter(|h| !h.trim().is_empty()));
-    named.or_else(computer_name).unwrap_or_else(|| format!("LightCraft ({})", std::env::consts::OS))
+    named.or_else(computer_name).unwrap_or_else(|| format!("{} ({})", crate::about::app_name(), std::env::consts::OS))
 }
 
 /// The computer's name as its system shows it (macOS: "Ann's MacBook Pro"; elsewhere the host

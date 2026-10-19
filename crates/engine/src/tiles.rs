@@ -16,7 +16,9 @@ pub const DEFAULT_ATTRIBUTION: &str = "© OpenStreetMap contributors";
 pub const ATTRIBUTION_URL: &str = "https://www.openstreetmap.org/copyright";
 
 /// Tile servers ask to be told who is calling.
-pub const USER_AGENT: &str = concat!("LightCraft/", env!("CARGO_PKG_VERSION"), " (photo library; +https://github.com/elrumo/lightcraft)");
+pub fn user_agent() -> String {
+    format!("{}/{} (photo library; +{})", crate::about::app_name(), env!("CARGO_PKG_VERSION"), crate::about::app_url())
+}
 
 /// Tiles older than this are fetched again (when the network allows; otherwise they still show).
 pub const MAX_AGE_SECS: u64 = 14 * 24 * 3600;
@@ -118,7 +120,7 @@ fn load_inner(req: &TileRequest) -> Result<Tile, String> {
 #[cfg(not(target_arch = "wasm32"))]
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let mut resp = crate::cloud_sync::http_agent().get(url).header("User-Agent", USER_AGENT).call().map_err(|e| e.to_string())?;
+    let mut resp = crate::cloud_sync::http_agent().get(url).header("User-Agent", user_agent()).call().map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     if status != 200 {
         return Err(format!("tile server answered {status}"));
