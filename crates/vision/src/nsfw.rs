@@ -60,6 +60,34 @@ impl Prefer {
     }
 }
 
+/// Which of the two models to run: the user's choice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Variant {
+    /// The large one when it is downloaded, else the compact one.
+    #[default]
+    Auto,
+    /// Falconsai's (an error when none of its files are here).
+    Compact,
+    /// AdamCodd's (an error when none of its files are here).
+    Large,
+}
+
+impl Variant {
+    pub fn from_name(name: &str) -> Option<Variant> {
+        match name {
+            "auto" => Some(Variant::Auto),
+            "compact" => Some(Variant::Compact),
+            "large" => Some(Variant::Large),
+            _ => None,
+        }
+    }
+
+    /// Whether this is the large one, for the files in `dir`.
+    fn is_large(self, dir: &Path) -> bool {
+        self == Variant::Large || (self == Variant::Auto && large_installed(dir))
+    }
+}
+
 /// The classifier, loaded.
 pub struct Nsfw {
     backend: Backend,
@@ -98,9 +126,14 @@ pub fn is_model_dir(dir: &Path) -> bool {
     dir.join(MODEL_FILE).is_file() || dir.join(GPU_WEIGHTS_FILE).is_file() || large_installed(dir)
 }
 
-/// The id [`Nsfw::load_with`] gives its scores for `dir` and `prefer`, known without loading it.
-pub fn engine_for(dir: &Path, prefer: Prefer) -> &'static str {
-    if prefer == Prefer::Auto && large_installed(dir) { LARGE_ENGINE } else { ENGINE }
+/// Whether the compact model's files (either) are in `dir`.
+pub fn compact_installed(dir: &Path) -> bool {
+    dir.join(MODEL_FILE).is_file() || dir.join(GPU_WEIGHTS_FILE).is_file()
+}
+
+/// The id [`Nsfw::load_with`] gives its scores for `dir` and `model`, known without loading it.
+pub fn engine_for(dir: &Path, model: Variant) -> &'static str {
+    if model.is_large(dir) { LARGE_ENGINE } else { ENGINE }
 }
 
 /// The ViT on the GPU.
@@ -148,36 +181,33 @@ mod gpu {
 
 impl Nsfw {
     pub fn load(dir: &Path) -> Result<Nsfw, Error> {
-        Self::load_with(dir, Prefer::Auto)
+        Self::load_with(dir, Variant::Auto, Prefer::Auto)
     }
 
-    /// Loads the weights `prefer` names (see [`Prefer`]).
-    pub fn load_with(dir: &Path, prefer: Prefer) -> Result<Nsfw, Error> {
+    /// Loads the `model` named (see [`Model`]) with the weights `prefer` names (see [`Prefer`]).
+    pub fn load_with(dir: &Path, model: Variant, prefer: Prefer) -> Result<Nsfw, Error> {
         if !is_model_dir(dir) {
             return Err(Error::Missing(dir.to_path_buf()));
         }
-        if prefer == Prefer::Auto && large_installed(dir) {
-            let large = dir.join(LARGE_DIR);
-            #[cfg(feature = "siglip")]
-            if let Some(vit) = gpu::Vit::load(&large, LARGE_SIDE)? {
-                return Ok(Nsfw { backend: Backend::Gpu(vit), side: LARGE_SIDE, engine: LARGE_ENGINE });
-            }
-            return Self::load_onnx(&large, LARGE_SIDE, LARGE_ENGINE);
+        let (own, side, engine, which) =
+            if model.is_large(dir) { (dir.join(LARGE_DIR), LARGE_SIDE, LARGE_ENGINE, "large") } else { (dir.to_path_buf(), SIDE, ENGINE, "compact") };
+        if (which == "large" && !large_installed(dir)) || (which == "compact" && !compact_installed(dir)) {
+            return Err(Error::Model(format!("sensitive-content model: the {which} model is not downloaded")));
         }
         if prefer != Prefer::Cpu {
             #[cfg(feature = "siglip")]
-            if let Some(vit) = gpu::Vit::load(dir, SIDE)? {
-                return Ok(Nsfw { backend: Backend::Gpu(vit), side: SIDE, engine: ENGINE });
+            if let Some(vit) = gpu::Vit::load(&own, side)? {
+                return Ok(Nsfw { backend: Backend::Gpu(vit), side, engine });
             }
             if prefer == Prefer::Gpu {
-                return Err(Error::Model(if dir.join(GPU_WEIGHTS_FILE).is_file() {
+                return Err(Error::Model(if own.join(GPU_WEIGHTS_FILE).is_file() {
                     "sensitive-content model: this machine has no GPU to run the GPU weights on".into()
                 } else {
                     "sensitive-content model: the GPU weights are not downloaded".into()
                 }));
             }
         }
-        Self::load_onnx(dir, SIDE, ENGINE)
+        Self::load_onnx(&own, side, engine)
     }
 
     /// The int8 export in `dir` on `rten`, whatever the machine has.
@@ -285,27 +315,43 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(MODEL_FILE), b"not a model").unwrap();
         // only the CPU file is here: asking for the GPU says so (Automatic would go on to the CPU)
-        let e = Nsfw::load_with(&dir, Prefer::Gpu).err().map(|e| e.to_string()).unwrap_or_default();
+        let e = Nsfw::load_with(&dir, Variant::Auto, Prefer::Gpu).err().map(|e| e.to_string()).unwrap_or_default();
         assert!(e.contains("GPU weights are not downloaded"), "{e}");
-        assert!(Nsfw::load_with(&dir, Prefer::Auto).is_err(), "the file isn't a model");
+        assert!(Nsfw::load_with(&dir, Variant::Auto, Prefer::Auto).is_err(), "the file isn't a model");
         // an empty folder is missing, whatever is chosen
         let empty = dir.join("none");
-        assert!(matches!(Nsfw::load_with(&empty, Prefer::Cpu), Err(Error::Missing(_))));
+        assert!(matches!(Nsfw::load_with(&empty, Variant::Auto, Prefer::Cpu), Err(Error::Missing(_))));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn the_large_model_replaces_the_compact_one_on_auto_only() {
+    fn the_model_is_a_choice_and_auto_runs_the_large_one_when_it_is_here() {
+        assert_eq!(
+            (Variant::from_name("auto"), Variant::from_name("compact"), Variant::from_name("large"), Variant::from_name("x")),
+            (Some(Variant::Auto), Some(Variant::Compact), Some(Variant::Large), None)
+        );
         let dir = std::env::temp_dir().join(format!("lc-nsfw-large-{}", std::process::id()));
         std::fs::create_dir_all(dir.join(LARGE_DIR)).unwrap();
         assert!(!is_model_dir(&dir) && !large_installed(&dir));
-        assert_eq!(engine_for(&dir, Prefer::Auto), ENGINE);
+        assert_eq!(engine_for(&dir, Variant::Auto), ENGINE);
         std::fs::write(dir.join(LARGE_DIR).join(MODEL_FILE), b"not a model").unwrap();
         assert!(is_model_dir(&dir) && large_installed(&dir));
-        assert_eq!((engine_for(&dir, Prefer::Auto), engine_for(&dir, Prefer::Cpu), engine_for(&dir, Prefer::Gpu)), (LARGE_ENGINE, ENGINE, ENGINE));
-        // Auto tries the large file (which isn't a model here); the CPU choice wants the compact one, which isn't here
-        assert!(Nsfw::load_with(&dir, Prefer::Auto).err().is_some_and(|e| e.to_string().contains("sensitive-content model")));
-        assert!(Nsfw::load_with(&dir, Prefer::Cpu).err().is_some_and(|e| e.to_string().contains("CPU model is not downloaded")));
+        assert_eq!(
+            (engine_for(&dir, Variant::Auto), engine_for(&dir, Variant::Compact), engine_for(&dir, Variant::Large)),
+            (LARGE_ENGINE, ENGINE, LARGE_ENGINE)
+        );
+        // Auto and Large try the large file (which isn't a model here); Compact wants its own files, which aren't here
+        for m in [Variant::Auto, Variant::Large] {
+            assert!(Nsfw::load_with(&dir, m, Prefer::Auto).err().is_some_and(|e| !e.to_string().contains("not downloaded")), "{m:?}");
+        }
+        assert!(
+            Nsfw::load_with(&dir, Variant::Compact, Prefer::Cpu).err().is_some_and(|e| e.to_string().contains("compact model is not downloaded"))
+        );
+        // and a folder with only the compact model has no large one to choose
+        let only = dir.join("only");
+        std::fs::create_dir_all(&only).unwrap();
+        std::fs::write(only.join(MODEL_FILE), b"x").unwrap();
+        assert!(Nsfw::load_with(&only, Variant::Large, Prefer::Auto).err().is_some_and(|e| e.to_string().contains("large model is not downloaded")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -333,7 +379,7 @@ mod tests {
             lightcraft_testkit::skip!(Gpu, "no GPU, or no model.safetensors in the folder");
             return;
         }
-        let gpu = Nsfw::load(&dir).unwrap();
+        let gpu = Nsfw::load_with(&dir, Variant::Compact, Prefer::Auto).unwrap();
         assert!(matches!(gpu.backend, Backend::Gpu(_)), "the GPU was not used");
         let cpu = Nsfw::load_onnx(&dir, SIDE, ENGINE).unwrap();
         // (varied pictures: gradients, stripes, noise and skin tones)
@@ -367,11 +413,11 @@ mod tests {
     /// everyday picture isn't flagged. (How well it finds sensitive photos isn't tested here.)
     #[test]
     fn the_real_model_loads_and_passes_an_everyday_picture() {
-        let Some(dir) = std::env::var_os("LIGHTCRAFT_NSFW").map(std::path::PathBuf::from) else {
+        let Some(dir) = std::env::var_os("LIGHTCRAFT_NSFW").map(std::path::PathBuf::from).filter(|d| compact_installed(d)) else {
             lightcraft_testkit::skip!(Model, "LIGHTCRAFT_NSFW not set (the folder with Falconsai's model_int8.onnx)");
             return;
         };
-        let n = Nsfw::load(&dir).unwrap();
+        let n = Nsfw::load_with(&dir, Variant::Compact, Prefer::Auto).unwrap();
         let sky = Rgba8::from_fn(320, 240, |x, y| [(80 + x / 8) as u8, (140 + y / 6) as u8, 220, 255]);
         let s = n.score(&sky).unwrap();
         assert!(s < 0.5, "a blue gradient scored {s}");

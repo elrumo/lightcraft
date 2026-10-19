@@ -82,7 +82,7 @@ impl Sensitive {
     pub fn engine(&self) -> String {
         match &self.injected {
             Some(c) => c.engine().to_string(),
-            None => lightcraft_vision::nsfw::engine_for(&self.dir, lightcraft_vision::nsfw::Prefer::Auto).to_string(),
+            None => lightcraft_vision::nsfw::engine_for(&self.dir, lightcraft_vision::nsfw::Variant::Auto).to_string(),
         }
     }
 

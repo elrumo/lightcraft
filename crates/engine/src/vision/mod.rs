@@ -349,6 +349,8 @@ pub struct Vision {
     sensitive_large_gpu_download: crate::download::Downloader,
     /// Which weights check photos: `auto` (the GPU's when there are any and a GPU), `cpu` or `gpu` (saved with the library).
     pub sensitive_backend: String,
+    /// Which model checks photos: `auto` (the large one when it is downloaded), `compact` or `large`.
+    pub sensitive_model: String,
 }
 
 impl Default for Vision {
@@ -403,6 +405,7 @@ impl Default for Vision {
             #[cfg(feature = "vision")]
             sensitive_large_gpu_download: crate::download::Downloader::default(),
             sensitive_backend: "auto".to_string(),
+            sensitive_model: "auto".to_string(),
         }
     }
 }

@@ -76,6 +76,13 @@ file; `nsfw-large-gpu`), which `Auto` runs instead; its scores are kept apart (`
 checked again. Removing it goes back to the compact model. Not yet: an admin-page button (the server uses the command
 line).
 
+**Choosing the model and the processor.** Two choices, saved with the library: the model (`vision.setSensitiveModel
+{model: auto|compact|large}`; Automatic is the large one once it is downloaded) and, for that model, where it runs
+(`vision.setSensitiveBackend {backend: auto|cpu|gpu}`); Settings ▸ AI Models ▸ Sensitive Content has a **Model** and a
+**Run On** picker. A device doing the server's work (`vision.setHelper`) uses the same two choices, and the server only
+accepts results of the model it keeps (`GET /api/sensitive` says which): when the two differ the server refuses the
+device's claim ("this server keeps results of …"), so pick the server's model on the device to help it.
+
 The scores are derived data, like the search vectors: `<library>/search/sensitive-falconsai-nsfw.bin` (server:
 `<data>/users/<name>/search/`), keyed by content, never in the catalog, never sent anywhere by a device. A photo scored
 0.7 or more is flagged.

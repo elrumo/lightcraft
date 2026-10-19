@@ -326,6 +326,8 @@ struct PrefsFile {
     search_sensitive: bool,
     /// Which weights check photos: `auto`, `cpu` or `gpu` (`vision.setSensitiveBackend`; missing = auto).
     search_sensitive_backend: Option<String>,
+    /// Which model checks photos: `auto`, `compact` or `large` (`vision.setSensitiveModel`; missing = auto).
+    search_sensitive_model: Option<String>,
     /// Which weights estimate depth for Lens Blur: `auto`, `cpu` or `gpu` (`depth.setBackend`; missing = auto).
     depth_backend: Option<String>,
     /// The work this device does for its sync server (`vision.setHelper`).
@@ -637,6 +639,8 @@ impl Session {
         self.vision.sensitive = prefs.search_sensitive;
         self.vision.sensitive_backend =
             prefs.search_sensitive_backend.filter(|b| matches!(b.as_str(), "auto" | "cpu" | "gpu")).unwrap_or_else(|| "auto".into());
+        self.vision.sensitive_model =
+            prefs.search_sensitive_model.filter(|m| matches!(m.as_str(), "auto" | "compact" | "large")).unwrap_or_else(|| "auto".into());
         let _ = self.set_depth_backend(prefs.depth_backend.as_deref().unwrap_or("auto"));
         self.blur_sensitive = prefs.blur_sensitive.unwrap_or(true);
         self.vision.set_sensitive_marks(prefs.sensitive_marks);
@@ -1057,6 +1061,7 @@ impl Session {
             hidden_password: self.hidden.password.clone(),
             search_sensitive: self.vision.sensitive,
             search_sensitive_backend: Some(self.vision.sensitive_backend.clone()),
+            search_sensitive_model: Some(self.vision.sensitive_model.clone()),
             depth_backend: Some(self.depth_backend()),
             search_helper: self.vision.helper_parts.clone(),
             blur_sensitive: Some(self.blur_sensitive),
