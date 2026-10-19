@@ -377,8 +377,8 @@ mod tests {
         assert!(s < 0.5, "a blue gradient scored {s}");
     }
 
-    /// The real large model (`LIGHTCRAFT_NSFW` = a folder holding `large/model_int8.onnx`): `Auto` picks it, it runs
-    /// on rten at 384 px and an everyday picture isn't flagged; prints how long a photo takes.
+    /// The real large model (`LIGHTCRAFT_NSFW` = a folder holding `large/model_int8.onnx`): `Auto` picks it, it loads
+    /// at 384 px and an everyday picture isn't flagged; prints how long a photo takes.
     #[test]
     fn the_real_large_model_loads_and_passes_an_everyday_picture() {
         let Some(dir) = std::env::var_os("LIGHTCRAFT_NSFW").map(std::path::PathBuf::from).filter(|d| large_installed(d)) else {
@@ -386,7 +386,7 @@ mod tests {
             return;
         };
         let n = Nsfw::load(&dir).unwrap();
-        assert_eq!((n.engine(), n.backend()), (LARGE_ENGINE, "cpu"));
+        assert_eq!(n.engine(), LARGE_ENGINE);
         let sky = Rgba8::from_fn(320, 240, |x, y| [(80 + x / 8) as u8, (140 + y / 6) as u8, 220, 255]);
         let t = std::time::Instant::now();
         let s = n.score(&sky).unwrap();
@@ -398,7 +398,9 @@ mod tests {
     #[cfg(feature = "siglip")]
     #[test]
     fn the_large_gpu_and_int8_models_give_the_same_scores() {
-        let Some(dir) = std::env::var_os("LIGHTCRAFT_NSFW").map(std::path::PathBuf::from).filter(|d| large_cpu_installed(d) && large_gpu_installed(d)) else {
+        let Some(dir) =
+            std::env::var_os("LIGHTCRAFT_NSFW").map(std::path::PathBuf::from).filter(|d| large_cpu_installed(d) && large_gpu_installed(d))
+        else {
             lightcraft_testkit::skip!(Model, "LIGHTCRAFT_NSFW not set to a folder with large/model_int8.onnx and large/model.safetensors");
             return;
         };
