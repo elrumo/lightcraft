@@ -36,9 +36,9 @@ pub fn library_dir_for(profile: Profile, library: Option<OsString>, home: Option
 }
 
 /// The library at `dir` (a new one starts with the demo photos), or why it can't be opened.
-fn open_dir(dir: &Path) -> Result<Session, String> {
+fn open_dir(dir: &Path, seed_demo: bool) -> Result<Session, String> {
     let mut s = Session::new().with_fs().with_system_clock();
-    match s.open_library(dir, true) {
+    match s.open_library(dir, seed_demo) {
         Ok(r) => {
             let replayed = r.replayed;
             log::info!("library {}: {} photos, {replayed} log records replayed", dir.display(), s.catalog.len());
@@ -52,7 +52,12 @@ fn open_dir(dir: &Path) -> Result<Session, String> {
 /// in-memory demo library (nothing saved, no sync) with the reason in the log. The second value
 /// says why the fallback was taken.
 pub fn open_session(dir: Option<&Path>) -> (Session, Option<String>) {
-    let why = match dir.map(open_dir) {
+    open_session_seeded(dir, true)
+}
+
+/// [`open_session`] where `seed_demo` says whether a new library starts with the demo photos.
+pub fn open_session_seeded(dir: Option<&Path>, seed_demo: bool) -> (Session, Option<String>) {
+    let why = match dir.map(|d| open_dir(d, seed_demo)) {
         Some(Ok(s)) => return (s, None),
         Some(Err(why)) => why,
         None => "no home folder for the library".to_string(),
@@ -63,8 +68,9 @@ pub fn open_session(dir: Option<&Path>) -> (Session, Option<String>) {
 
 /// [`open_session`] for a desktop host: a library that won't open is the user's to fix (it is open
 /// in another LightCraft, its folder can't be read), so the reason is an error, not a demo.
-pub fn open_session_or_err(dir: Option<&Path>) -> Result<Session, String> {
-    let opened = dir.ok_or_else(|| "there is no home folder to keep the library in: choose a folder for it".to_string()).and_then(open_dir);
+pub fn open_session_or_err(dir: Option<&Path>, seed_demo: bool) -> Result<Session, String> {
+    let opened =
+        dir.ok_or_else(|| "there is no home folder to keep the library in: choose a folder for it".to_string()).and_then(|d| open_dir(d, seed_demo));
     if let Err(why) = &opened {
         log::error!("{why}");
     }
@@ -211,11 +217,23 @@ mod tests {
         assert!(why.is_none() && dir.is_dir());
         let (_demo, why) = open_session(Some(&dir));
         assert!(why.is_some_and(|w| w.contains("already open")), "the phone falls back to the demo library");
-        let err = open_session_or_err(Some(&dir)).err().unwrap_or_default();
+        let err = open_session_or_err(Some(&dir), true).err().unwrap_or_default();
         assert!(err.contains("already open") && err.contains("can't open the library"), "{err}");
-        assert!(open_session_or_err(None).is_err());
+        assert!(open_session_or_err(None, true).is_err());
         drop(holder);
-        assert!(open_session_or_err(Some(&dir)).is_ok(), "closed elsewhere: it opens");
+        assert!(open_session_or_err(Some(&dir), true).is_ok(), "closed elsewhere: it opens");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A new library starts with the demo photos, or empty when the host asks (an app with its own empty screen).
+    #[test]
+    fn a_new_library_is_empty_when_the_host_asks() {
+        let root = std::env::temp_dir().join(format!("lc-apphost-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (seeded, _) = open_session_seeded(Some(&root.join("a")), true);
+        assert!(seeded.catalog.len() > 0);
+        let (empty, why) = open_session_seeded(Some(&root.join("b")), false);
+        assert!(why.is_none() && empty.catalog.len() == 0);
         let _ = std::fs::remove_dir_all(&root);
     }
 

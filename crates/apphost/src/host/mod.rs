@@ -404,9 +404,9 @@ impl Engine {
             let dir = crate::startup::library_dir_for(config.profile, config.library.clone().map(Into::into), config.home.clone().map(Into::into));
             if desktop {
                 // never a demo in the library's place: the user closes the other LightCraft or chooses another library
-                (crate::startup::open_session_or_err(dir.as_deref())?, false)
+                (crate::startup::open_session_or_err(dir.as_deref(), !config.empty)?, false)
             } else {
-                let (session, fallback) = crate::startup::open_session(dir.as_deref());
+                let (session, fallback) = crate::startup::open_session_seeded(dir.as_deref(), !config.empty);
                 let demo = fallback.is_some();
                 warnings.extend(fallback);
                 (session, demo)

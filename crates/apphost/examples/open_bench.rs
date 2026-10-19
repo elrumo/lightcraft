@@ -35,7 +35,7 @@ fn main() {
 
     if std::env::var_os("OPEN_BENCH_SESSION").is_some() {
         let t = Instant::now();
-        let s = lightcraft_apphost::startup::open_session_or_err(Some(std::path::Path::new(library)));
+        let s = lightcraft_apphost::startup::open_session_or_err(Some(std::path::Path::new(library)), true);
         println!("session only       {:7.0} ms  ({})", t.elapsed().as_secs_f64() * 1e3, s.as_ref().map_or(0, |s| s.catalog.len()));
         if let Ok(mut s) = s {
             for _ in 0..3 {

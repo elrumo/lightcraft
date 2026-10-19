@@ -52,6 +52,9 @@ pub struct OpenConfig {
     /// Whose rules start the engine: a phone's (default) or a Mac's ([`Profile`]).
     #[serde(default)]
     pub profile: Profile,
+    /// A new library starts empty, without the demo photos (an app that shows its own empty screen).
+    #[serde(default)]
+    pub empty: bool,
 }
 
 /// An error answer: `code` is the kind (the engine's error variants in camelCase —
