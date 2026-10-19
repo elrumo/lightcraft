@@ -34,7 +34,7 @@ pub(crate) fn background_pace(app: &LightcraftApp, ctx: &egui::Context, now: f64
     pace_for(focused, minimized, now - app.caches.last_input, now - app.caches.last_move, false)
 }
 
-/// The pace for a window ([`lightcraft_apphost::faces::pace_for`], shared with the SwiftUI app's host).
+/// The pace for a window ([`lightcraft_apphost::faces::pace_for`], shared with the engine host).
 fn pace_for(focused: bool, minimized: bool, worked: f64, moved: f64, watching: bool) -> &'static str {
     lightcraft_apphost::faces::pace_for(focused, minimized, worked, moved, watching)
 }

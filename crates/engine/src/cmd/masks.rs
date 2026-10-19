@@ -81,7 +81,7 @@ fn seg_param(p: &Value, c: &str) -> Result<Option<lightcraft_develop::SegMask>> 
 
 /// `bitmap: {width, height, data}`: coverage (base64 of `width × height` bytes, 0 = out … 255 =
 /// in) over the whole uncropped photo as `mask.inputImage` shows it. It is what a system segmenter
-/// (Apple Vision in the SwiftUI app) answers with.
+/// (Apple Vision in a native frontend) answers with.
 fn bitmap_param(p: &Value, c: &str) -> Result<Option<(usize, usize, Vec<u8>)>> {
     let Some(b) = p.get("bitmap") else { return Ok(None) };
     let dim = |k: &str| {
@@ -614,7 +614,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Selection Input Image",
             [],
             None,
-            "{maxEdge?: 1008} → {photo, width, height, png: base64}. The active photo as a selection model sees it (uncropped, oriented, without masks), for a system segmenter (Apple Vision in the SwiftUI app); its answer goes back as `bitmap` to `mask.add` / `mask.setObject`",
+            "{maxEdge?: 1008} → {photo, width, height, png: base64}. The active photo as a selection model sees it (uncropped, oriented, without masks), for a system segmenter (Apple Vision in a native frontend); its answer goes back as `bitmap` to `mask.add` / `mask.setObject`",
             has_active,
             |s, p| {
                 let c = "mask.inputImage";

@@ -7,7 +7,7 @@
 //! - **Sessions:** an admin signs in with their user name and password and gets a session of its own;
 //!   it is not a device and can't sync, and a device token never opens these routes. The page keeps
 //!   its session in an `HttpOnly` cookie (`lc_admin`, `SameSite=Strict`, and every request that changes
-//!   something carries [`CSRF_HEADER`]); the SwiftUI app and scripts get a token to send as a bearer.
+//!   something carries [`CSRF_HEADER`]); native apps and scripts get a token to send as a bearer.
 //!   "Keep me signed in" keeps a session for weeks and across restarts of the server, see
 //!   [`accounts::ADMIN_REMEMBER_IDLE`]; any other ends after [`accounts::ADMIN_IDLE`] without a request.
 //!   A new password for the admin ends their sessions.
@@ -205,7 +205,7 @@ const COOKIE: &str = "lc_admin";
 /// another site can't send it (and `/api/admin` answers no cross-origin preflight), so it can't use the cookie.
 const CSRF_HEADER: &str = "X-LightCraft-Admin";
 
-/// The session token a request signs in with: a bearer token (the SwiftUI app, scripts) or else the page's
+/// The session token a request signs in with: a bearer token (native apps, scripts) or else the page's
 /// cookie; and whether it came in the cookie.
 fn credential(req: &Request) -> (String, bool) {
     let bearer = token(req);
@@ -251,7 +251,7 @@ struct Setup {
 }
 
 /// `POST /api/admin/login`. The admin page asks for `cookie`: the session goes in an `HttpOnly` cookie and
-/// the answer holds no token; `remember` keeps it for weeks and across restarts. Anything else (the SwiftUI
+/// the answer holds no token; `remember` keeps it for weeks and across restarts. Anything else (a native
 /// app, scripts) gets a token to send as a bearer.
 #[derive(Deserialize)]
 struct Login {

@@ -42,7 +42,7 @@ impl Pixels {
     }
 
     /// Where the pixels are, for the C side: the bytes of a half-float picture as they are (little
-    /// endian on every target the SwiftUI app runs on).
+    /// endian on every target a native frontend runs on).
     fn image_ref(&self) -> ImageRef {
         let to32 = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         match self {

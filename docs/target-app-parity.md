@@ -1,6 +1,6 @@
 # Target-app parity: LightCraft vs Adobe Lightroom
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (browser export off the page's thread: new row LR-BEHAV-WEB-EXPORT 🟡, 550 rows; Lens Blur and Depth Range masks: AI table row ⬜ → 🟡; upstream merged up to 0da998f2: checklist 84.3% of 549 rows with the fork's rows counted; RAW: 83% of Adobe's models decode, 38% verified after the camera-coverage sweep #1327) · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (a native app moved to its own repository, so its mentions are removed; browser export off the page's thread: new row LR-BEHAV-WEB-EXPORT 🟡, 550 rows; Lens Blur and Depth Range masks: AI table row ⬜ → 🟡; upstream merged up to 0da998f2: checklist 84.3% of 549 rows with the fork's rows counted; RAW: 83% of Adobe's models decode, 38% verified after the camera-coverage sweep #1327) · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop)
 
 The authoritative assessment of how close LightCraft is to Lightroom. The row-by-row checklist is
 [parity-checklist.md](parity-checklist.md); the ranked work list is [gaps.md](gaps.md); deep areas
@@ -75,7 +75,7 @@ from the checklist sections and the deep-dive documents.
 | Remove, heal, Enhance (denoise, Raw Details, Super Resolution, Lens Blur) | 7% | 45% | 30% | 70–130 h | checklist I 75%, P 0%; Lens Blur 🟡 (2026-10-14, not yet re-weighed) |
 | Presets, profiles, versions, history, sync | 5% | 95% | 85% | 8–15 h | |
 | Export | 6% | 89% | 75% | 15–30 h | checklist S 88.9% |
-| Merge and HDR | 3% | 85% | 60% | 20–35 h | merge 88% (HDR merge 🟡: AI Denoise on merged DNGs, JPEG response, memory; gap 29), HDR 80% (HDR display on macOS and iOS; not on Windows and Linux; the hours are those of the last review) |
+| Merge and HDR | 3% | 85% | 60% | 20–35 h | merge 88% (HDR merge 🟡: AI Denoise on merged DNGs, JPEG response, memory; gap 29), HDR 80% (HDR display on macOS; not on Windows and Linux; the hours are those of the last review) |
 | Views, compare, zoom, culling | 5% | 90% | 70% | 15–30 h | zoom detail P0 gap |
 | Classic output modules (Map, Book, Slideshow, Print, Web, publish, tethering) | 4% | 15% | 10% | 90–150 h | Classic extras 48% counts many small keys; the modules themselves are mostly ⬜ |
 | Video | 1% | 0% | 0% | 25–45 h | catalogued only |
@@ -306,6 +306,7 @@ P2 items 12–25 h; look tuning, performance, packaging, hardening 25–45 h.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | minor | Removed the mentions of a native app that moved to its own repository (the HDR row no longer lists iOS display); percentages unchanged |
 | 2026-10-16 | minor | Browser export off the page's thread: new checklist row LR-BEHAV-WEB-EXPORT 🟡 (549 → 550 rows, P1 94.8% → 94.5%); other numbers unchanged |
 | 2026-10-14 | minor | Localization ~52% → ~55% (mean of the 12 key languages): de, es, fr, ja and uk catalogs filled |
 | 2026-10-14 | minor | Merge and HDR: merge 100% → 88% (LR-MERGE-HDR ✅ → 🟡 after testing on real 67 MP brackets; gap 29); area percentages unchanged |

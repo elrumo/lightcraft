@@ -1,5 +1,5 @@
-//! Object selections that come from outside the engine as a coverage picture (Apple Vision in the
-//! SwiftUI app): `mask.inputImage` shows the photo as a selection model sees it, `mask.add` /
+//! Object selections that come from outside the engine as a coverage picture (Apple Vision in a
+//! native frontend): `mask.inputImage` shows the photo as a selection model sees it, `mask.add` /
 //! `mask.setObject` take the answer. None of it needs the SAM 3 model.
 
 use base64::Engine as _;

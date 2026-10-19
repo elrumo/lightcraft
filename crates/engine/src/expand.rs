@@ -24,8 +24,8 @@
 //! best model for this device ([`Session::recommended_expand_model`]). The diffusion models run on
 //! the GPU (Metal) when there is one, else on the CPU, where they take minutes.
 //
-//! One more way lives outside the engine: **Apple Image Playground** (`appleCloud`), in the SwiftUI
-//! app on devices with Apple Intelligence. It is not on the lists above: it runs in Apple's cloud (the
+//! One more way lives outside the engine: **Apple Image Playground** (`appleCloud`), in a native
+//! frontend on devices with Apple Intelligence. It is not on the lists above: it runs in Apple's cloud (the
 //! app asks every time), through a sheet the user works in, so it is never the default. The engine
 //! gives the app the canvas as a picture ([`Session::expand_canvas`], `crop.expandCanvas`) and takes
 //! the picture the sheet made ([`Session::apply_expand_picture`], `crop.applyExpandPicture`): the

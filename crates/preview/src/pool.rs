@@ -12,7 +12,7 @@
 //! driver while the process exits crashes there): [`JobPool::shutdown`] and dropping the pool
 //! discard the queued jobs and wait, bounded, for the running ones.
 //!
-//! A host that sleeps between frames (the SwiftUI app's engine thread) learns that a job finished
+//! A host that sleeps between frames (a native frontend's engine thread) learns that a job finished
 //! from [`JobPool::set_notify`] instead of polling. A job that panics takes only itself down: the
 //! worker logs it and carries on (owners that need an answer for every job, like the render
 //! scheduler, turn panics into failed results inside the job).

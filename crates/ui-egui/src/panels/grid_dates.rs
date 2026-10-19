@@ -43,7 +43,7 @@ pub struct Block {
 }
 
 /// The photos in `ids` grouped by month (`key_len` 7) or year (4) ([`lightcraft_catalog::Catalog::date_blocks`],
-/// shared with the SwiftUI app's `library.blocks`).
+/// shared with native frontends through `library.blocks`).
 pub fn blocks(app: &LightcraftApp, ids: &[PhotoId], key_len: usize, show: usize) -> Vec<Block> {
     app.session
         .catalog

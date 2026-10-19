@@ -1,6 +1,6 @@
 //! Masks on the photo: where a component's handles and pin are, what a press takes and the shape a
 //! drag leaves. Shared by the egui loupe and the engine's `mask.handles` / `mask.grab` /
-//! `mask.drag` (the SwiftUI app). Points are normalized image coordinates; a radial mask's radii are
+//! `mask.drag` (native frontends). Points are normalized image coordinates; a radial mask's radii are
 //! in long-edge units, so the functions take `long`: normalized units per long-edge unit in x and y
 //! ([`long_units`]).
 

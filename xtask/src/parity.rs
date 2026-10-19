@@ -310,19 +310,12 @@ fn registry(what: &str) -> Result<BTreeSet<String>, String> {
     Ok(v.as_array().into_iter().flatten().filter_map(|c| c["id"].as_str().map(str::to_string)).collect())
 }
 
-/// The Lightroom tracker, then the SwiftUI app's parity manifest ([`crate::parity_ios`]), with
-/// `--ios-gate <phase>` when given.
-pub fn run(root: &Path, write: bool, ios_gate: Option<&str>) -> Result<(), String> {
-    let lightroom = run_lightroom(root, write);
-    let ios = crate::parity_ios::run(root, write, ios_gate);
-    lightroom.and(ios)
-}
-
-fn run_lightroom(root: &Path, write: bool) -> Result<(), String> {
+/// The Lightroom tracker: reference check, gaps check and summary.
+pub fn run(root: &Path, write: bool) -> Result<(), String> {
     let path = root.join(DOC);
     let md = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let doc = parse(&md);
-    // (the UI commands' table lives in apphost, shared with the SwiftUI app; the language ones in egui)
+    // (the UI commands' table lives in apphost, shared by the frontends; the language ones in egui)
     let menus = ["crates/ui-egui/src/menus.rs", "crates/apphost/src/ui_commands.rs"]
         .iter()
         .map(|f| std::fs::read_to_string(root.join(f)).map_err(|e| format!("{f}: {e}")))

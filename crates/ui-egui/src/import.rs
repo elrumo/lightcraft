@@ -352,7 +352,7 @@ pub struct ImportTask {
     pub total: usize,
     pub done: usize,
     params: Value,
-    /// What the batches added so far (shared with the SwiftUI app's host).
+    /// What the batches added so far (shared with the engine host).
     pub tally: lightcraft_apphost::import::Tally,
     undo0: usize,
     /// Reading a folder for the Local view: the photos stay out of the library, and nothing is

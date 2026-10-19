@@ -44,7 +44,7 @@ pub(crate) fn control(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSet
 }
 
 /// Relative temperature scale for rendered (non-raw) files: −100..100 ↔ Kelvin via mired shift
-/// (shared with the SwiftUI app through `develop.controls`).
+/// (shared with native frontends through `develop.controls`).
 const REL_TEMP: ControlSpec = controls::WB_TEMP_REL;
 const REL_TINT: ControlSpec = controls::WB_TINT_REL;
 

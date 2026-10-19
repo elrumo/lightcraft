@@ -1,5 +1,5 @@
 //! `app.export` without a window: Export Now with the desktop app's parameters, for frontends that
-//! have no export dialog of their own yet (the MCP server's headless backend, the SwiftUI iOS app).
+//! have no export dialog of their own yet (the MCP server's headless backend, native frontends).
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};

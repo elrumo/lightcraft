@@ -344,7 +344,7 @@ fn unb64(text: &str) -> Vec<u8> {
     base64::engine::general_purpose::STANDARD.decode(text).unwrap()
 }
 
-/// A painter outside the engine (Apple Image Playground in the SwiftUI app) is given the canvas as a
+/// A painter outside the engine (Apple Image Playground in a native frontend) is given the canvas as a
 /// picture and its answer becomes the fill, stored like any model's: one undo step, the photo as it is.
 #[test]
 fn an_outside_painter_gets_the_canvas_and_its_picture_becomes_the_fill() {

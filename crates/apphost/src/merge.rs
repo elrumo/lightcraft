@@ -1,7 +1,7 @@
 //! Photo Merge (HDR, Panorama, HDR Panorama) off the UI thread, for both apps: a preview for the
 //! open dialog, replaced when its options change, and the full merge, which keeps going after the
 //! dialog closes (a row in the activity stack) and adds its result to the library
-//! ([`lightcraft_engine::Session::finish_merge`]). egui's merge dialog and the SwiftUI app
+//! ([`lightcraft_engine::Session::finish_merge`]). egui's merge dialog and native frontends
 //! (`host.merge.*`) drive the same [`Runner`].
 
 use std::sync::atomic::{AtomicBool, Ordering};

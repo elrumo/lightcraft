@@ -9,12 +9,11 @@ exported when asked) and nothing about the file changes.
 - **Hide / Unhide:** Photo ▸ Hide Photo (⌘L), the photo's right-click or "…" menu, or the select bar's More menu.
   `photo.hide {ids?}` / `photo.unhide {ids?}`, one undo step.
 - **See them:** the **Hidden** row in My Photos (a padlock while locked) shows only the hidden photos;
-  **Show Hidden** (the filter bar, the phone's grid "…" and filter page, the SwiftUI app's Filter sheet) mixes them
+  **Show Hidden** (the filter bar, the phone's grid "…" and filter page) mixes them
   back into whatever is shown, with an eye-slash badge.
 - **The lock:** both need Hidden unlocked. The egui apps (desktop, web, egui iPhone) ask for the library's Hidden
-  password, set the first time (Settings ▸ General ▸ Hidden to change it). The SwiftUI app (iPhone, iPad, Mac) uses
-  Face ID, Touch ID or the device passcode; a device with none of those asks for the password, and with no password
-  either Hidden simply opens, as Apple's does.
+  password, set the first time (Settings ▸ General ▸ Hidden to change it). A native (non-Rust) frontend can unlock with
+  its platform's own check (Face ID, Touch ID or the device passcode) instead.
 - **It locks again** when nothing shows hidden photos any more (Hidden left with Show Hidden off, or Show Hidden turned
   off), when the app goes to the background on a phone or tablet, when another library opens, and at every launch
   (a relaunch never opens on Hidden).
@@ -29,14 +28,14 @@ The lock is the engine's (`crates/engine/src/hidden.rs`), so the control channel
 | `hidden.lock` | lock now |
 | `library.source {kind: "hidden"}`, `library.showHidden {on}` | refused with kind `locked` while locked |
 
-The SwiftUI host unlocks after Face ID with `host.hidden.unlock`, which only that app's host answers. Password
-commands are queries: no password is kept in the command journal.
+A native frontend unlocks after the platform's own check (Face ID) with `host.hidden.unlock`, which only the engine host
+answers ([engine-host.md](engine-host.md)). Password commands are queries: no password is kept in the command journal.
 
 **What it is not.** It keeps photos out of sight, like Apple's. It is not encryption: the catalog and the files are as
 readable as before by anyone with the library folder, and the password's argon2id hash is in its `prefs.json`.
 
-**Forgot the password?** Reset it in the SwiftUI app (Settings ▸ General ▸ Reset Hidden Password, after Face ID), or
-on the computer that has the library:
+**Forgot the password?** A native frontend that unlocks with Face ID can reset it (`host.hidden.resetPassword`), or
+reset it on the computer that has the library:
 
 ```sh
 lightcraft-cli hidden reset-password --library ~/Pictures/LightCraft
@@ -61,8 +60,7 @@ hidden. It only suggests: nothing is hidden or changed until the person chooses.
   describes them (`vision.index`), from a neutral 512 px rendering.
 - **Review:** the **Possibly Sensitive** row in My Photos (shown once something is flagged) lists them, most likely
   first, with **Hide All** (`library.hideSensitive`); hide or keep them one by one with the photo menus.
-- **Blur:** **Blur Sensitive Photos** (on by default; the bar above the list, Settings ▸ General, the SwiftUI app's
-  Settings ▸ General) obscures the flagged photos in the grid, the filmstrip and the map. Opening a photo shows it.
+- **Blur:** **Blur Sensitive Photos** (on by default; the bar above the list, Settings ▸ General) obscures the flagged photos in the grid, the filmstrip and the map. Opening a photo shows it.
   `library.setBlurSensitive {on}`; the choice syncs with the library.
 - **On the server:** an admin turns it on for everyone (admin page ▸ Processing ▸ Sensitive content, or
   `lightcraft-server model download --accept-licences --sensitive`). The server checks each user's smart previews and

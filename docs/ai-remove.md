@@ -25,20 +25,19 @@ grass, sand and water but can't continue an edge or a shape it can't find nearby
 textures and large areas better than MI-GAN. It is used once downloaded; until then strokes use MI-GAN. A fill is
 stored with its spot whichever network made it. The choice is saved with the app's settings.
 
-**Ultra** (`quality: "ultra"`, experimental; the SwiftUI app's Remove panel offers it as **Ultra quality (experimental)** under High quality, where the device runs a diffusion model: `crop.expandModels` → `ultra` names it, Stable Diffusion 1.5 on a recent iPhone or iPad, with the same licence offer and download as Fill With; egui has no switch): a diffusion model, Stable Diffusion 1.5 Inpainting (2.1 GB, the
+**Ultra** (`quality: "ultra"`, experimental; a native frontend can offer it as **Ultra quality (experimental)** under High quality, where the device runs a diffusion model: `crop.expandModels` → `ultra` names it, Stable Diffusion 1.5 on a recent iPhone or iPad, with the same licence offer and download as Fill With; egui has no switch): a diffusion model, Stable Diffusion 1.5 Inpainting (2.1 GB, the
 one Generative Expand offers) or whichever of Kandinsky 2.2 and SDXL this device runs, asked for the empty background
 behind the stroke (`sd::Recipe::for_removal`). Tried 2026-10-17 with `remove_eval --removal` (Stable Diffusion 1.5 on an M1
 Max's GPU, about 30 s a stroke): **no better than LaMa**, and it painted a person-shaped blob into one of four holes;
 cropping tighter around the stroke (0.5 and 0.9 box sides of context instead of 1.5) made every network paint more
 objects, SD 1.5 included. Kept as a way to try a diffusion model made for removal, which is what would change this.
 
-**Tap to Remove (SwiftUI iPhone / iPad app).** With Remove selected, **Tap** beside Brush selects by
-tapping: tap an object and Apple Vision's model selects it ([ai-masks.md](ai-masks.md) → On iPhone), and the object's own
-outline, not a stroke, is the spot's area (Generative AI when it is on and downloaded, else filled from around it). One
-undo step; Undo takes it back. The spot stores the object's shape (`Spot.shape`: a segmentation over the object's box, a
-few kilobytes) and its `points` are the object's centre and the corners of its box (the pin sits at the centre); `size`
-is how far past the object's edge the spot reaches: 0.4 % of the long edge, and Tap mode's **Size** slider (1–30 ‰) changes
-it, for the selected tapped spot as you drag (a spot the AI filled is painted again when you let go) and for the next tap. Dragging the pin moves the shape with it. A
+**Tap to Remove (native frontends).** A frontend with a selection model of its own ([ai-masks.md](ai-masks.md) → Native
+frontends) can remove by tapping: the tapped object's own outline, not a stroke, is the spot's area (Generative AI when
+it is on and downloaded, else filled from around it). One undo step; Undo takes it back. The spot stores the object's
+shape (`Spot.shape`: a segmentation over the object's box, a few kilobytes) and its `points` are the object's centre and
+the corners of its box (the pin sits at the centre); `size` is how far past the object's edge the spot reaches: 0.4 % of
+the long edge by default. Dragging the pin moves the shape with it. A
 spot with a shape belongs to its photo: Copy Settings and presets leave it behind. Agents: `spot.add {bitmap: {width,
 height, data}, ai?}` with a selection from outside the engine (`mask.inputImage` shows what the bitmap must line up with).
 

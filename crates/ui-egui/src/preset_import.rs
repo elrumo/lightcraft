@@ -27,7 +27,7 @@ const THUMB: f32 = 52.0;
 /// Entries listed in a list of files or profiles before "and N more".
 const LISTED: usize = 6;
 
-// The review itself (reading, importing) is the engine's, shared with the SwiftUI app.
+// The review itself (reading, importing) is the engine's, shared with native frontends.
 pub use lightcraft_engine::preset_review::{Item, Outcome, Review, lut_paths, preset_paths, short};
 
 /// The dialog has just one button (Close / Done): there is nothing to choose.

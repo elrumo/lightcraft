@@ -1,6 +1,6 @@
 // The version and commit a build reports (the sync server's admin page, System Info, the web
 // bundle's `version.json`). Shared source: `cargo xtask web` uses it as a module, and the build
-// scripts of `lightcraft-server` and `lightcraft-ios-swift` `include!` it.
+// scripts of `lightcraft-server` and of the native apps `include!` it.
 //
 // `LIGHTCRAFT_VERSION` / `LIGHTCRAFT_COMMIT` in the environment win (a Docker build has no `.git`:
 // `make push-server` passes them as build args); otherwise `git rev-parse` in `dir`. No git, or not

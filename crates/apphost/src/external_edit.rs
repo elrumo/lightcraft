@@ -1,4 +1,4 @@
-//! Photo ▸ Edit In, the host half, for the SwiftUI app (egui keeps the same list in `ui.json`). The
+//! Photo ▸ Edit In, the host half, for native frontends (egui keeps the same list in `ui.json`). The
 //! engine makes the copy and brings back what an editor saved (`photo.editExternal`,
 //! `photo.checkExternalEdits`); this keeps the files handed over, watched for two weeks, in a file of
 //! the library's folder so the watch outlives a restart, and checks them when the app is active again.

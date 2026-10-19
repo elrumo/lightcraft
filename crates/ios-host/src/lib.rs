@@ -295,7 +295,7 @@ pub fn install_logger() {
 
 /// One line to the system log (NSLog: the device console, `idevicesyslog` on Linux, Console.app on
 /// a Mac), through the app's host (`lightcraft_host_log`: the Objective-C host's `LightCraftMain.m`
-/// in the egui app, an `@_cdecl` function in the SwiftUI app). Elsewhere: nothing.
+/// in the egui app; a native frontend exports a function of that name). Elsewhere: nothing.
 pub fn console(line: &str) {
     #[cfg(target_os = "ios")]
     ios::console(line);

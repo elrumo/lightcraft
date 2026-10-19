@@ -806,7 +806,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Generative Expand Canvas",
             [],
             None,
-            "{maxEdge?: 1024} → {photo, key, width, height, png: base64}. The area Generative Expand paints as a picture for a painter outside the engine (the SwiftUI app's Apple Image Playground): the photo where it is, a placeholder over the new area. Its answer goes to `crop.applyExpandPicture` with the same `key`. Needs Expand on",
+            "{maxEdge?: 1024} → {photo, key, width, height, png: base64}. The area Generative Expand paints as a picture for a painter outside the engine (Apple Image Playground in a native frontend): the photo where it is, a placeholder over the new area. Its answer goes to `crop.applyExpandPicture` with the same `key`. Needs Expand on",
             has_active,
             |s, p| {
                 let id = active(s, "crop.expandCanvas")?;

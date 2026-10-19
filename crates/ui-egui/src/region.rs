@@ -3,7 +3,7 @@
 //! of the frame that is on screen, at the zoom scale, and draws it over the whole-frame render.
 //!
 //! When a window is needed and which one is planned in [`lightcraft_apphost::region`] (shared with
-//! the SwiftUI app's host); this module adds what is this app's: the record of a window asked for,
+//! the engine host); this module adds what is this app's: the record of a window asked for,
 //! holding the sizes while a pinch runs, and where each side of a Before/After view may be drawn.
 
 use lightcraft_engine::pipeline::PixelWindow;

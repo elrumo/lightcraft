@@ -2937,7 +2937,7 @@ pub(crate) mod tests {
     }
 
     /// A synced raw whose original is on the server only (`web/<hash>/…`) has no embedded preview here: its
-    /// thumbnail is the server's mini, so it must not count as final on the embedded one (the Swift grid left
+    /// thumbnail is the server's mini, so it must not count as final on the embedded one (a native grid left
     /// unedited iPhone DNGs empty until they were edited).
     #[test]
     fn synced_raws_have_no_embedded_preview() {

@@ -206,10 +206,10 @@ says the time left at the pace of the last ten minutes (`perMinute`, counting th
 users), how many photos wait for their previews (`waiting`), how many couldn't be done (`failed`: tried again after a
 restart) and the last problem. A photo the model can't take is set aside on its own: it no longer fails its whole batch
 on every pass, which used to stop describing for good. `ready` is the photos left that have previews and weren't set
-aside; the time left is worked out from it. The SwiftUI app's Settings ▸ Server Administration ▸ Processing shows the
-same, from `host.admin.search` (the host works out what the numbers mean, `crates/apphost/src/host/admin/search.rs`),
+aside; the time left is worked out from it. A native (non-Rust) frontend shows the same, from `host.admin.search` (the
+host works out what the numbers mean, `crates/apphost/src/host/admin/search.rs`, [engine-host.md](engine-host.md)),
 and sets each index's Pause and daily window as the web page does (`PUT search/schedule/<part>`, the times shown and
-picked in the admin's own time, sent in UTC once the picker rests).
+picked in the admin's own time, sent in UTC).
 
 Until it is installed every route says so (`503`) instead of failing, and uploads are still accepted. Old servers answer
 `404`, which clients read as "this server can't search". The routes are additive: old clients and servers keep working.
@@ -255,9 +255,7 @@ PUT  /api/work/settings   {moved: [part]} | {add?: [part], remove?: [part]}
 POST /api/index/sensitive scores a device computed (checked whole, like the others)
 ```
 
-The Mac apps do it (egui: the Describe panel; SwiftUI: Settings ▸ AI Models ▸ Search, People and Sensitive Content, a
-**Server Work** section for a library signed in to a server). The SwiftUI Mac build carries the models' code and keeps
-them in `<config>/models` like the egui app; the iPhone and iPad builds don't (memory), so they show no switch. Other work
+The egui desktop app does it (the Describe panel). Other work
 that could move the same way (building previews from the originals, Lens Blur depth) does not: the originals would have
 to travel.
 

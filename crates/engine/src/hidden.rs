@@ -1,6 +1,6 @@
 //! The Hidden album's lock. Hidden photos ([`lightcraft_catalog::Photo::hidden`]) are left out of every view
 //! until the session is unlocked: with the library's Hidden password (the egui apps, the CLI, MCP) or by the
-//! host itself after Face ID, Touch ID or the device passcode (the SwiftUI app, [`Session::hidden_unlock_by_device`]).
+//! host itself after Face ID, Touch ID or the device passcode (a native frontend, [`Session::hidden_unlock_by_device`]).
 //!
 //! It keeps people from seeing those photos by looking at the screen, like Apple Photos' Hidden album. It is not
 //! encryption: the catalog and the files are as readable as before (docs/hidden.md).
@@ -110,7 +110,7 @@ impl Session {
     }
 
     /// Unlock Hidden because the host checked who the person is itself (Face ID, Touch ID, the device passcode).
-    /// Only the SwiftUI app's host calls this (`host.hidden.unlock`): no command reaches it.
+    /// Only a native frontend's host calls this (`host.hidden.unlock`): no command reaches it.
     pub fn hidden_unlock_by_device(&mut self) {
         self.hidden.unlocked = true;
         self.hidden.misses = 0;
@@ -132,8 +132,8 @@ impl Session {
         Ok(())
     }
 
-    /// Forget the Hidden password, so the next unlock sets a new one. For a forgotten password: the SwiftUI
-    /// app after Face ID (`host.hidden.resetPassword`) and `lightcraft-cli hidden reset-password`.
+    /// Forget the Hidden password, so the next unlock sets a new one. For a forgotten password: a native
+    /// frontend after Face ID (`host.hidden.resetPassword`) and `lightcraft-cli hidden reset-password`.
     pub fn hidden_reset_password(&mut self) -> Result<()> {
         self.hidden.password = None;
         self.hidden.lock();

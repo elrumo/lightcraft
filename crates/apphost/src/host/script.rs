@@ -1,8 +1,8 @@
 //! Development aid: `LIGHTCRAFT_SCRIPT=<file>` runs the control-protocol requests in it, one JSON
 //! object per line (`{"method": …, "params": …}`, `docs/control-protocol.md`; `{"sleep": ms}`
 //! waits), and appends each reply to `<file>.out`. This is how a Mac drives the app on a device
-//! without touching it (`docs/ios-swift.md` → *Driving the app*). The file lives in the app's own
-//! sandbox, so nothing is exposed on the network.
+//! without touching it. The file lives in the app's own sandbox, so nothing is exposed on the
+//! network.
 //!
 //! Requests the engine answers itself (`engine.*`, `render.*`, `host.*`) are answered on its
 //! thread; `ui.*` ones go to the frontend as `uiRequest` events.

@@ -375,7 +375,7 @@ LightCraft is young and moving fast: **alpha**. **Where we honestly stand** (det
 | Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise 🚧 (Bayer, user-installed weights; [setup](docs/denoise.md)), Super Resolution 🚧 (2×, optional model download; [docs/super-resolution.md](docs/super-resolution.md)) |
 | Remove (content-aware fill) / Heal / Clone spots (auto source, editable pins), Visualize Spots, Red Eye and Pet Eye (auto pupil detection, catchlight) | ✅ |
 | Export: JPEG / PNG / TIFF / flat PSD / WebP / AVIF / JPEG XL / raw or rendered DNG / original, sizing, file-size limit, output sharpening, naming templates, batch, metadata policy, text or image watermark | ✅ |
-| HDR: HDR editing with a headroom limit, SDR rendition, Visualize HDR; gain map JPEG, PQ/HLG AVIF, PQ PNG/JPEG XL and float TIFF export | ✅ · HDR display ✅ on macOS and in the SwiftUI app, ⬜ on Windows and Linux |
+| HDR: HDR editing with a headroom limit, SDR rendition, Visualize HDR; gain map JPEG, PQ/HLG AVIF, PQ PNG/JPEG XL and float TIFF export | ✅ · HDR display ✅ on macOS, ⬜ on Windows and Linux |
 | Library persistence (crash-safe op log + snapshots, background compaction, failed saves reported), disk thumbnail cache | ✅ |
 | Import: Add in place / Copy / Move, rename and folder templates, devices, duplicate detection, watched folders; Local folder browsing | ✅ |
 | MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |

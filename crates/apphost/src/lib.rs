@@ -1,7 +1,7 @@
 //! The frontend runtime every LightCraft UI shares (L4, above the engine).
 //!
 //! The engine is the document and its commands; this crate is what a frontend runs around it so
-//! that two UIs (egui on desktop, web and today's iOS app; SwiftUI in the native iOS app) behave the
+//! that two UIs (egui on desktop, web and iOS; a native frontend through the engine host) behave the
 //! same without writing anything twice:
 //!
 //! - [`region`]: sharp zoomed views: the whole-frame render's size, and the window of the frame on
@@ -10,7 +10,7 @@
 //!   stage caches for slider drags, draft sizing, and what each slot shows (in the frontend's own
 //!   form, through [`render::Present`]).
 //! - [`export`]: Export Now with the desktop app's parameters, for frontends without an export
-//!   dialog of their own (the MCP server's headless backend, the SwiftUI app).
+//!   dialog of their own (the MCP server's headless backend, native frontends).
 //! - [`startup`]: how a mobile app opens its library, sizes its memory budget and keeps its
 //!   staging folders (both iOS apps).
 //! - [`import`]: importing in the background: the scan the review shows, files readied on a
@@ -20,8 +20,7 @@
 //! - [`sync`]: self-hosted sync driven from the frontend's loop (requests on worker threads, answers
 //!   applied between frames or ticks).
 //! - `host` (native only): the engine on a thread of its own, driven by JSON requests and
-//!   answering with events and leased pictures, for a frontend that isn't Rust (the SwiftUI app,
-//!   through the C ABI in `apps/lightcraft-ios-swift`).
+//!   answering with events and leased pictures, for a frontend that isn't Rust (`docs/engine-host.md`).
 //!
 //! The rule (`CLAUDE.md`, *Non-negotiables*): when a second UI first needs logic that sits in
 //! `ui-egui`, it moves here (threads, scheduling, background pumps, post-command policy), to the

@@ -1,6 +1,6 @@
 //! What the numbers of `GET /api/admin/search` mean for the Processing screen, worked out as the
 //! web console does (`apps/lightcraft-server/admin/admin.js`: `liveState`, `showSched`, `userLines`), so
-//! the SwiftUI app only words and draws them. `host.admin.search` adds it to the server's answer as
+//! a native frontend only words and draws them. `host.admin.search` adds it to the server's answer as
 //! `progress`:
 //!
 //! ```text

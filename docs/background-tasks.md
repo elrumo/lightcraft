@@ -68,7 +68,7 @@ guard.detail(&file_name);
 | Face scan, AI Denoise | `crates/engine/src/cmd/face_recognize.rs`, `crates/engine/src/denoise.rs` | a continuous job with no ✕, kept in session state |
 | Find Missing Photos | `crates/ui-egui/src/tasks.rs` | a generic background task with a row (`kind: Some(..)`) |
 | Sign out (the wait, the clean-up) | `crates/engine/src/cloud_sync/leave.rs` | a row made by a state machine that has no job of its own (held in `SyncState`, created when the wait is first seen, also after a relaunch); ✕ until the point of no return, then `set_cancellable(false)` and the flag read again; a second row, `Cancel::No`, for the thread that removes the files |
-| Work the app does itself (the SwiftUI app's Apple model download) | `crates/engine/src/cmd/activity.rs` (`activity.external`) | the app starts a `download` row, reports `done` of 100, watches `cancelling` for its id and ends the row |
+| Work a native frontend does itself (a platform model download) | `crates/engine/src/cmd/activity.rs` (`activity.external`) | the frontend starts a `download` row, reports `done` of 100, watches `cancelling` for its id and ends the row |
 | Reading focus points | `crates/engine/src/focus_scan.rs` | a worker paced by the UI's per-frame pump (`focus.pump {pace}`); `Cancel::Flag`; commits in batches without undo steps |
 
 ## Testing

@@ -1,5 +1,5 @@
 //! The engine on a thread of its own, driven by messages: what a frontend that isn't written in
-//! Rust (the SwiftUI iOS app, through `apps/lightcraft-ios-swift`) talks to.
+//! Rust (a native iOS or Mac app) talks to.
 //!
 //! One thread (`lc-engine`) owns the [`Session`] (it is `Send`, not `Sync`), as the egui app's UI
 //! thread does: it answers [`Request`]s in order, runs the render [`Scheduler`], saves, and turns
@@ -8,7 +8,7 @@
 //! answers that cross a C ABI are [`Leases`]. The thread sleeps while nothing happens: requests,
 //! finished renders (the job pool's notify) and [`Host::wake`] wake it.
 //!
-//! Methods (`docs/ios-swift.md` → *Protocol*):
+//! Methods (`docs/engine-host.md` → *Protocol*):
 //! - `engine.execute {command, params}` — any engine command (`Session::execute`), and `app.export`
 //!   ([`crate::export`]); `engine.commands` — every command, with whether it is enabled.
 //! - `host.state` — the [`HostState`] (also sent as a `state` event when it changes);
@@ -24,7 +24,7 @@
 //!   thumbnail (slot `import:<index>`); `import.start {paths | indexes, …library.import params,
 //!   albumName?}` — import in the background (answered when it ends: what it added).
 //! - `host.admin.signIn | call | search | signOut | session` — the sync server's admin API, on worker threads
-//!   ([`admin`]: the SwiftUI app's Server Administration screens).
+//!   ([`admin`]: a native frontend's Server Administration screens).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
 //!
 //! Between requests the thread drives what the egui app's frame loop drives: renders, saving, the
@@ -154,7 +154,7 @@ impl Host {
     }
 
     /// [`Self::open`], handing pictures out through `leases` (one registry for every engine of a
-    /// process, so a token alone names its buffer: the C ABI's `lc_release`).
+    /// process, so a token alone names its buffer: a frontend releases it by token).
     pub fn open_with(config: OpenConfig, leases: Arc<Leases>) -> Result<(Host, Value), String> {
         let (tx, rx) = channel();
         let (opened_tx, opened_rx) = channel();
@@ -380,7 +380,7 @@ struct RegionShown {
     window: lightcraft_engine::pipeline::PixelWindow,
 }
 
-/// The largest picture the SwiftUI app draws in one piece (a window is at most this wide).
+/// The largest picture a native frontend draws in one piece (a window is at most this wide).
 const TEXTURE_SIDE: usize = 8192;
 
 /// Super Resolution under way, answered when it ends.

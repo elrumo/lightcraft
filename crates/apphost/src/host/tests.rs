@@ -101,7 +101,7 @@ fn a_thumbnail_arrives_as_a_leased_image() {
 }
 
 // A frontend that lets thumbnails go says so (`render.retain` with `max`): asked for again, they come again. Without
-// it the host takes them for still shown and sends nothing (the SwiftUI grid's cells stayed blank zoomed out)
+// it the host takes them for still shown and sends nothing (a native grid's cells stayed blank zoomed out)
 #[test]
 fn thumbnails_let_go_come_again_when_asked() {
     let h = demo();
@@ -117,7 +117,7 @@ fn thumbnails_let_go_come_again_when_asked() {
     h.wait_for(|e| e["kind"] == "image" && e["slot"] == format!("thumb:{}", ids[0]));
 }
 
-// A SwiftUI cell asks for its thumbnail once, when it appears. The host keeps asking while the cell is
+// A native grid cell asks for its thumbnail once, when it appears. The host keeps asking while the cell is
 // on screen (the engine downloads a synced photo's preview only while asked), and the render that
 // failed for want of the preview runs again by itself once the preview has landed
 #[test]
@@ -166,7 +166,7 @@ fn a_thumbnail_asked_once_renders_when_its_preview_lands() {
     assert!(e.thumbs_wanted.is_empty());
 }
 
-// Against a live sync server, as the SwiftUI grid asks: each thumbnail once, when its cell appears. Not run in
+// Against a live sync server, as a native grid asks: each thumbnail once, when its cell appears. Not run in
 // CI: `LC_LIVE_LIBRARY=<a library signed in to the server> [LC_LIVE_THUMBS=120] cargo test -p lightcraft-apphost
 // --release -- --ignored --nocapture live_thumbs` (the library's photos must not have their originals here)
 #[test]
@@ -236,7 +236,7 @@ fn a_drag_renders_drafts_then_a_final_view() {
 }
 
 // `render.view` names the render it asked for: the loupe's picture is that one once its key is the reply's (the
-// SwiftUI app says Lens Blur is still rendering until then), and an edit asks for another
+// native frontend says Lens Blur is still rendering until then), and an edit asks for another
 #[test]
 fn render_view_names_the_render_it_asked_for() {
     let h = demo();
@@ -413,7 +413,7 @@ fn photos_are_scanned_reviewed_and_imported_in_the_background() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-// The state's `presetsGeneration` moves when the preset list changes (the Swift app's Presets panel
+// The state's `presetsGeneration` moves when the preset list changes (a native frontend's Presets panel
 // reads the list again then: presets the sync brings show without reopening it), and not otherwise
 #[test]
 fn the_state_says_when_the_presets_change() {
@@ -645,7 +645,7 @@ fn merges_preview_and_run_in_the_background() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// The UI commands' table, for the SwiftUI app's menu bar and keys: egui's own, shortcuts included
+// The UI commands' table, for a native frontend's menu bar and keys: egui's own, shortcuts included
 #[test]
 fn the_ui_commands_are_listed_with_their_keys() {
     let h = demo();
@@ -656,7 +656,7 @@ fn the_ui_commands_are_listed_with_their_keys() {
     assert_eq!((grid["shortcut"].as_str(), grid["label"].as_str()), (Some("G"), Some("Grid")), "{grid}");
 }
 
-// The keys no command declares itself, for the SwiftUI app's key map: the rating digits among them
+// The keys no command declares itself, for a native frontend's key map: the rating digits among them
 #[test]
 fn the_fixed_keys_are_listed_for_a_hosts_key_map() {
     let h = demo();
@@ -887,7 +887,7 @@ fn the_admin_api_is_called_on_a_worker() {
     assert!(seen.lock().unwrap().iter().any(|r| r.starts_with("POST /api/admin/logout")), "the server was told");
 }
 
-// Signing out through the host, as the SwiftUI app does it: the sync loop sends what is left, the device logs out on the
+// Signing out through the host, as a native frontend does it: the sync loop sends what is left, the device logs out on the
 // server, and the state event after that says it is another library (a new generation) with no server
 #[test]
 fn signing_out_ends_in_an_empty_library_and_a_state_event_that_says_so() {

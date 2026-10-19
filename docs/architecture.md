@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-15 · **Change:** minor (`cargo xtask ci` reports the machine and skipped tests; `testkit`; the `apphost` layer and the SwiftUI iOS app's C ABI) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-19 · **Change:** minor (the engine host is documented for any native frontend, [engine-host.md](engine-host.md); `cargo xtask ci` reports the machine and skipped tests; `testkit`; the `apphost` layer) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 How LightCraft is built today. The longer design document (`plan/architecture.md`) is local-only
 (`plan/` is gitignored); this page is the committed, current summary. Sizes are Rust lines counted
@@ -17,12 +17,12 @@ L5 depends on egui, eframe, winit or rfd, and that each crate only uses lower la
 | L1 | `raw` (22.3k), `codecs` (7.3k), `meta` (4.3k), `develop` (2.5k), `denoise-core` (2.2k), `denoise` (2.7k), `faces` (5.3k), `scenes` (1.0k), `heif` (2.1k, optional) | Raw decoders and demosaic, DNG colour model; standard codecs and encoders; EXIF/XMP/IPTC; the non-destructive edit model and control specs; AI denoise; face detection and recognition; procedural demo photos; HEIC |
 | L2 | `pipeline` (9.8k) | The develop pipeline: scene-referred float, resolution independent; the CPU reference (oracle) for everything else |
 | L3 | `catalog` (11.0k), `gpu` (5.1k), `preview` (1.3k), `merge` (3.8k), `segment` (2.3k) | Library model and persistence; wgpu compute twin of the pipeline; thumbnail/preview cache and job pool; HDR and panorama merge; SAM 3 segmentation |
-| L4 | `engine` (53.2k), then `apphost` | Session, command registry (everything is a command), history, render and export jobs, import, Lightroom catalog and preset import, faces index, view-models; `apphost` is the frontend runtime every UI shares (render scheduling, background pumps, and the engine thread the SwiftUI app talks to) |
+| L4 | `engine` (53.2k), then `apphost` | Session, command registry (everything is a command), history, render and export jobs, import, Lightroom catalog and preset import, faces index, view-models; `apphost` is the frontend runtime every UI shares (render scheduling, background pumps, and the engine host a native frontend talks to, [engine-host.md](engine-host.md)) |
 | L5 | `ui-egui` (46.9k), `mcp` (2.3k) | The Lightroom-style egui interface (swappable); the MCP server |
-| L6 | `apps/lightcraft` (2.8k), `apps/lightcraft-cli` (1.5k), `apps/lightcraft-web` (3.4k), `apps/lightcraft-ios`, `apps/lightcraft-ios-swift`, `xtask` (3.4k), `testkit` (0.2k, dev-dependency only) | Desktop app (eframe + wgpu, native menus, control server), CLI (render, commands, calibrate, snapshot, MCP), WASM build, the iOS app on egui, the SwiftUI iOS app's C ABI (no Rust UI allowed: `HeadlessApp` in `layers.rs`), tooling; test helpers (skips the CI report lists) |
+| L6 | `apps/lightcraft` (2.8k), `apps/lightcraft-cli` (1.5k), `apps/lightcraft-web` (3.4k), `apps/lightcraft-ios`, `xtask` (3.4k), `testkit` (0.2k, dev-dependency only) | Desktop app (eframe + wgpu, native menus, control server), CLI (render, commands, calibrate, snapshot, MCP), WASM build, the iOS app on egui, tooling; test helpers (skips the CI report lists) |
 
-**Frontends.** egui (desktop, web, the current iOS app) and SwiftUI (the native iOS app, [ios-swift.md](ios-swift.md))
-drive the same engine. Logic a second UI needs moves below the UIs rather than being written twice: geometry and edit
+**Frontends.** egui (desktop, web, the iOS app) drives the engine directly; a native (non-Rust) frontend drives the same
+engine through the engine host ([engine-host.md](engine-host.md)). Logic a second UI needs moves below the UIs rather than being written twice: geometry and edit
 math into `geom` / `develop` / `color`, session behaviour into engine commands, and threads, scheduling and
 post-command policy into `apphost` (the extraction rule in `CLAUDE.md`).
 
@@ -42,7 +42,7 @@ post-command policy into `apphost` (the extraction rule in `CLAUDE.md`).
   thread and peaked at 1.8 GB; it opens in about 0.9 s and peaks at 0.9 GB. The grid's list is built with a
   fixed-size sort key per photo, sorted on all cores (`Sort::sort_photos`, `par.rs`), stack lookups use the catalog's own index, and
   `cargo run --release -p lightcraft-apphost --example open_bench -- <library copy>` times the open and the
-  first screen's requests the way the SwiftUI app asks for them.
+  first screen's requests the way a native frontend asks for them.
 - **Edits** are a `develop::Settings` value (every slider is a control spec with id, range and
   default), normalized to image coordinates so previews and exports match. There is one rendering:
   a retune changes how existing edits look (`docs/whats-new.md` says so).
@@ -91,6 +91,7 @@ the `lightcraft-gpu` tests once per backend with a hardware adapter (`LIGHTCRAFT
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | `apphost` (L4, after `engine`) and the SwiftUI iOS app's C ABI (`apps/lightcraft-ios-swift`); the extraction rule |
+| 2026-10-19 | minor | The engine host is documented for any native frontend ([engine-host.md](engine-host.md)) |
+| 2026-10-13 | minor | `apphost` (L4, after `engine`); the extraction rule |
 | 2026-10-11 | minor | Quality gates: the CI machine probe, visible skips (`testkit`) and `target/ci/report.json` |
 | 2026-10-10 | major | Created from the code (crate sizes, layers, data model, rendering, control, gates) |

@@ -42,36 +42,16 @@ The result is stored with the mask: the model's 288 × 288 mask logits over the 
 need the model, so masks survive moving the library to a machine without it, and the web build
 renders them. Editing the photo's look later does not recompute a mask (click again to update).
 
-## On iPhone: Apple Vision
+## Native frontends: a model of the platform's own
 
-The SwiftUI iPhone and iPad app (`apps/lightcraft-ios-swift`) is built without SAM 3, and selects with
-Apple's own models through the Vision framework instead. They run on the device; nothing is sent
-anywhere and nothing needs downloading by LightCraft.
-
-- **Select Subject** (Masking ▸ +): Vision's foreground model (iOS 18 and later) lifts what stands
-  out, as Photos does. A photo with no foreground, or Selection set to Classic, makes the heuristic
-  Subject mask as before.
-- **Select Object** (Masking ▸ + ▸ Select Object, or ± ▸ Object for a part of a mask): tap an object
-  and it is selected; tap more to add more; **Subtract** (under the photo) and a tap takes the
-  object under it out. Taps show as green (in) and red (out) dots. On iOS 27 this is Vision's
-  tap-to-segment model (`GenerateIterativeSegmentationRequest`: any object, include and exclude
-  taps); iOS downloads that model on request (Settings ▸ AI Models ▸ Selection). On iOS 26 a tap
-  picks the foreground instance under it.
-- Settings ▸ AI Models ▸ **Selection**: Automatic (Apple's models where the device has them),
-  Apple, or Classic (LightCraft's own guess, no model).
-
-The result is stored exactly like a SAM 3 selection: an Object mask whose `seg` holds the answer
-(512 × 512 logits, a few kilobytes) and whose `hint` / `exclude` hold the taps, so renders, exports,
+A native (non-Rust) frontend can select with a model its platform provides instead of SAM 3
+([engine-host.md](engine-host.md)). The result is stored exactly like a SAM 3 selection: an Object mask whose `seg`
+holds the answer (512 × 512 logits, a few kilobytes) and whose `hint` / `exclude` hold the taps, so renders, exports,
 Undo and sync never run a model. How it gets there: the engine renders the photo as a model sees it
-(`mask.inputImage`: uncropped, oriented, no masks, at most 1008 px, a PNG), Swift hands that to
-Vision and sends the coverage picture back (`mask.add` / `mask.addComponent` / `mask.setObject` with a
-`bitmap {width, height, data}`); the engine resamples it onto the stored grid. Swift does no
+(`mask.inputImage`: uncropped, oriented, no masks, at most 1008 px, a PNG), the frontend hands that to its model and
+sends the coverage picture back (`mask.add` / `mask.addComponent` / `mask.setObject` with a
+`bitmap {width, height, data}`); the engine resamples it onto the stored grid. The frontend does no
 coordinate or image math.
-
-Not available: Describe (SAM 3's text prompts), Sky (Apple has no sky model), People. The
-simulator has no inference engine for Vision's models (the request fails with "Could not create
-inference context"): try this on a device. `LIGHTCRAFT_FAKE_SEGMENTER=1` makes tours and tests use a
-stand-in that selects an ellipse around each tap.
 
 ## Remote Metal inference
 

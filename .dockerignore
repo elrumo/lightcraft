@@ -6,7 +6,7 @@ dist
 log
 .git
 .claude
-# the SwiftUI app's build output (gigabytes; gitignored, so REF= builds never had it)
+# SwiftPM / xtool build output of the native apps (gigabytes; gitignored, so REF= builds never had it)
 **/.build
 **/.rust
 **/.swiftpm

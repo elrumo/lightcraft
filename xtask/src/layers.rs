@@ -3,6 +3,9 @@
 //! The rule engine works on a small, metadata-independent model so it can be
 //! unit-tested; `from_metadata` builds that model from `cargo metadata`.
 
+use std::collections::HashSet;
+use std::path::Path;
+
 use serde_json::Value;
 
 /// Where a workspace crate sits.
@@ -17,10 +20,6 @@ pub enum Class {
     Testkit,
     /// Binaries and build tooling: exempt from the rules.
     Exempt,
-    /// An app with a non-Rust UI (the SwiftUI iOS app's bridge): exempt from the layer order like
-    /// an app, but it may not pull in a Rust UI toolkit or `ui-egui` (its UI is native; shared
-    /// frontend logic lives in `apphost`).
-    HeadlessApp,
 }
 
 impl Class {
@@ -29,7 +28,7 @@ impl Class {
             Class::Layer(l) => Some(l),
             Class::Standalone => Some(0),
             Class::Testkit => Some(5),
-            Class::Exempt | Class::HeadlessApp => None,
+            Class::Exempt => None,
         }
     }
 }
@@ -73,7 +72,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("vision", Class::Layer(3)),
     ("engine", Class::Layer(4)),
     // the frontend runtime shared by every UI (render scheduling, background pumps, the engine
-    // thread the SwiftUI app talks to); above `engine` in the L4 chain below
+    // thread a native frontend talks to); above `engine` in the L4 chain below
     ("apphost", Class::Layer(4)),
     ("ui-egui", Class::Layer(5)),
     ("mcp", Class::Layer(5)),
@@ -84,10 +83,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("web", Class::Exempt),
     ("server", Class::Exempt),
     ("ios", Class::Exempt),
-    // the iOS apps' native glue (UIKit, PhotosUI, ImageIO through objc2); used only by `ios` and `ios-swift`
+    // the iOS apps' native glue (UIKit, PhotosUI, ImageIO through objc2)
     ("ios-host", Class::Exempt),
-    // the SwiftUI iOS app's C ABI over `apphost` (docs/ios-swift.md)
-    ("ios-swift", Class::HeadlessApp),
     ("xtask", Class::Exempt),
 ];
 
@@ -170,7 +167,6 @@ pub enum Violation {
     StandaloneHasWorkspaceDep { krate: String, dep: String },
     TestkitAsNormalDep { krate: String },
     UiBelowL5 { krate: String, dep: String, layer: u8 },
-    UiInHeadlessApp { krate: String, dep: String },
 }
 
 impl std::fmt::Display for Violation {
@@ -191,9 +187,6 @@ impl std::fmt::Display for Violation {
             Violation::UiBelowL5 { krate, dep, layer } => {
                 write!(f, "{krate} (L{layer}) depends on UI crate `{dep}`; UI toolkits are only allowed in L5+")
             }
-            Violation::UiInHeadlessApp { krate, dep } => {
-                write!(f, "{krate} has a native UI and may not depend on `{dep}`; put shared frontend logic in lightcraft-apphost")
-            }
         }
     }
 }
@@ -207,14 +200,6 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
             continue;
         };
         if class == Class::Exempt {
-            continue;
-        }
-        if class == Class::HeadlessApp {
-            for d in &c.deps {
-                if d.kind != DepKind::Dev && (is_ui_crate(&d.name) || short_name(&d.name) == "ui-egui") {
-                    out.push(Violation::UiInHeadlessApp { krate: c.name.clone(), dep: d.name.clone() });
-                }
-            }
             continue;
         }
         let layer = class.layer().unwrap_or(0);
@@ -256,6 +241,17 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
     out
 }
 
+/// Drop the workspace packages whose manifest git does not track (`tracked`: repository-relative paths): a checkout
+/// nested under `apps/` that is not part of this repository is not covered by its rules. A manifest outside `root`
+/// is kept.
+pub fn retain_tracked(meta: &mut Value, root: &Path, tracked: &HashSet<String>) {
+    let Some(pkgs) = meta["packages"].as_array_mut() else { return };
+    pkgs.retain(|p| {
+        let rel = p["manifest_path"].as_str().and_then(|m| Path::new(m).strip_prefix(root).ok());
+        rel.is_none_or(|r| tracked.contains(r.to_string_lossy().as_ref()))
+    });
+}
+
 /// Build the model from `cargo metadata --format-version 1 --no-deps`.
 pub fn from_metadata(meta: &Value) -> Result<Vec<Crate>, String> {
     let pkgs = meta["packages"].as_array().ok_or("metadata: no packages array")?;
@@ -286,7 +282,6 @@ pub fn describe(class: Option<Class>) -> String {
         Some(Class::Standalone) => "L0 standalone".into(),
         Some(Class::Testkit) => "testkit".into(),
         Some(Class::Exempt) => "exempt".into(),
-        Some(Class::HeadlessApp) => "app, no Rust UI".into(),
         None => "UNREGISTERED".into(),
     }
 }
@@ -357,13 +352,17 @@ mod tests {
     }
 
     #[test]
-    fn swift_bridge_has_no_rust_ui() {
-        let ok = c("lightcraft-ios-swift", &[("lightcraft-apphost", Normal, true), ("lightcraft-ios-host", Normal, true)]);
-        assert!(check(&[ok]).is_empty());
-        for dep in ["egui", "eframe", "winit", "lightcraft-ui-egui"] {
-            let v = check(&[c("lightcraft-ios-swift", &[(dep, Normal, dep.starts_with("lightcraft"))])]);
-            assert!(matches!(v[..], [Violation::UiInHeadlessApp { .. }]), "{dep}: {v:?}");
-        }
+    fn untracked_workspace_crates_are_not_covered() {
+        let pkg = |name: &str, path: &str| serde_json::json!({ "name": name, "manifest_path": path, "dependencies": [] });
+        let mut meta = serde_json::json!({ "packages": [
+            pkg("lightcraft-geom", "/repo/crates/geom/Cargo.toml"),
+            pkg("nested-private-app", "/repo/apps/nested/Cargo.toml"),
+            pkg("elsewhere", "/other/place/Cargo.toml"),
+        ] });
+        let tracked: HashSet<String> = ["crates/geom/Cargo.toml".to_string()].into();
+        retain_tracked(&mut meta, Path::new("/repo"), &tracked);
+        let names: Vec<String> = from_metadata(&meta).unwrap().into_iter().map(|c| c.name).collect();
+        assert_eq!(names, ["elsewhere", "lightcraft-geom"]);
     }
 
     #[test]

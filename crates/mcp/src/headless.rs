@@ -57,7 +57,7 @@ impl Headless {
     }
 
     /// The UI command `app.export`, emulated with the same parameters as the desktop app
-    /// (`lightcraft_apphost::export`, shared with the SwiftUI iOS app). The progress hook set
+    /// (`lightcraft_apphost::export`, shared with native frontends). The progress hook set
     /// before it is used once.
     fn export(&mut self, p: &Value) -> Result<Value, String> {
         let mut hook = self.progress.take();

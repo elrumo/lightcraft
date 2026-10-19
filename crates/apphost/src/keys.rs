@@ -2,8 +2,8 @@
 //! one (Space zooms like Z, Shift+X rejects and goes on to the next photo), the digits that rate and
 //! label, and the pairs of commands that share a key and are told apart by the tool that is open.
 //!
-//! egui's shortcut handler and keymap dialog read this table, and the SwiftUI Mac app asks for it
-//! (`host.keyBindings`) to build its own key map, so the two apps' keys agree and nothing is written
+//! egui's shortcut handler and keymap dialog read this table, and a native Mac frontend asks for it
+//! (`host.keyBindings`) to build its own key map, so the apps' keys agree and nothing is written
 //! twice. A shortcut is spelled as in [`crate::ui_commands`]: `Cmd+Shift+K`, `Shift+X`, `Right`,
 //! `Space`, `6`.
 

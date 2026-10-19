@@ -11,9 +11,7 @@ mod geodata;
 mod ico;
 mod layers;
 mod parity;
-mod parity_ios;
 mod stats;
-mod swift_strings;
 mod version;
 mod web;
 
@@ -33,22 +31,13 @@ commands:
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
   layers          enforce the crate dependency layering (plan/architecture.md §3)
-  parity [--write] [--ios-gate S0|S1|S2]
+  parity [--write]
                   check docs/parity-checklist.md (every cmd:/ctl: id and path it cites exists) and print the
-                  Lightroom parity summary; then apps/lightcraft-ios-swift/PARITY.md (every egui UI command
-                  and dialog has a row); --write refreshes both summaries; --ios-gate fails unless every
-                  SwiftUI-app row up to that phase is done or out of scope (docs/ios-swift.md)
-  wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
+                  Lightroom parity summary; --write refreshes the summary
+  wasm           cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
   ios             cargo check --target aarch64-apple-ios for the same crates (+ the iOS app; needs `rustup target add aarch64-apple-ios`;
                   type-checks only: building and running on a device needs macOS + Xcode)
-  swift-test      the SwiftUI app's LightCraftCore tests on this machine: builds the Rust bridge library
-                  (lightcraft-ios-swift) for the host into its Swift package and runs `swift test` there
-                  (needs a Swift 6.2 toolchain: `swift` on PATH or $SWIFT; not part of ci, see docs/ios-swift.md)
-  swift-strings [<derived-data>] [--missing]
-                  the SwiftUI app's Localizable.strings from the egui catalogs and apps/lightcraft-ios-swift/locales;
-                  <derived-data> (an Xcode build with SWIFT_EMIT_LOC_STRINGS=YES) first refreshes the app's key list;
-                  --missing lists what nothing translates yet
-  web [--serve [port]] [--dev]
+  web[--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web-site/;
                   --serve serves it on http://127.0.0.1:<port> (default 8080)
   ci [--hardware] [--summary-md]
@@ -76,14 +65,9 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("assets") => assets::run(&root()),
         Some("bench") => bench::run(&root(), &rest),
-        Some("parity") => {
-            let gate = rest.iter().position(|a| *a == "--ios-gate").map(|i| rest.get(i + 1).copied().unwrap_or(""));
-            parity::run(&root(), rest.contains(&"--write"), gate)
-        }
+        Some("parity") => parity::run(&root(), rest.contains(&"--write")),
         Some("wasm") => cmd_wasm(),
         Some("ios") => cmd_ios(),
-        Some("swift-test") => cmd_swift_test(),
-        Some("swift-strings") => swift_strings::run(&root(), &rest),
         Some("web") => web::run(&rest),
         Some("ci") => cmd_ci(&rest),
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
@@ -214,12 +198,20 @@ pub fn run(mut cmd: Command, what: &str) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("{what}: exited with {status}")) }
 }
 
+/// `cargo metadata` for this repository's own workspace packages: one that git does not track (a private checkout
+/// nested under `apps/`) is left out, so none of the checks cover it. Without git, every package counts.
 pub fn metadata() -> Result<serde_json::Value, String> {
     let out = cargo().args(["metadata", "--format-version", "1", "--no-deps"]).output().map_err(|e| format!("cargo metadata: {e}"))?;
     if !out.status.success() {
         return Err(format!("cargo metadata failed:\n{}", String::from_utf8_lossy(&out.stderr)));
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| format!("cargo metadata: bad JSON: {e}"))
+    let mut meta: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("cargo metadata: bad JSON: {e}"))?;
+    let tracked = Command::new("git").current_dir(root()).args(["ls-files", "-z", "--", "*Cargo.toml"]).output().ok().filter(|o| o.status.success());
+    if let Some(tracked) = tracked {
+        let tracked = String::from_utf8_lossy(&tracked.stdout).split('\0').filter(|s| !s.is_empty()).map(str::to_string).collect();
+        layers::retain_tracked(&mut meta, &root(), &tracked);
+    }
+    Ok(meta)
 }
 
 fn cmd_layers() -> Result<(), String> {
@@ -275,10 +267,9 @@ fn wasm_set() -> Result<Vec<String>, String> {
     Ok(portable_set()?.into_iter().chain(std::iter::once("lightcraft-web".to_string())).collect())
 }
 
-/// Workspace packages that must build for iOS: the portable set plus the iOS apps (egui, and the
-/// SwiftUI app's Rust side).
+/// Workspace packages that must build for iOS: the portable set plus the egui iOS app.
 fn ios_set() -> Result<Vec<String>, String> {
-    Ok(portable_set()?.into_iter().chain(["lightcraft-ios".to_string(), "lightcraft-ios-swift".to_string()]).collect())
+    Ok(portable_set()?.into_iter().chain(std::iter::once("lightcraft-ios".to_string())).collect())
 }
 
 /// Also lints the std clock (`xtask/wasm/clippy.toml`): it panics there, and `cargo check` can't see that.
@@ -290,26 +281,6 @@ fn cmd_wasm() -> Result<(), String> {
 /// engine, GPU and egui shell all compile for it), not that an app links and runs; that needs macOS + Xcode.
 fn cmd_ios() -> Result<(), String> {
     check_target("aarch64-apple-ios", &ios_set()?, false)
-}
-
-/// `swift test` for the SwiftUI app's Swift package (`apps/lightcraft-ios-swift/LightCraft`), with the
-/// Rust bridge library built for this machine. On a Mac it runs every test; on Linux the package's
-/// Foundation-only part (LightCraftCore) and its tests.
-fn cmd_swift_test() -> Result<(), String> {
-    let swift = std::env::var("SWIFT").unwrap_or_else(|_| "swift".into());
-    let mut c = cargo();
-    c.args(["build", "-p", "lightcraft-ios-swift"]);
-    run(c, "cargo build -p lightcraft-ios-swift")?;
-    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root().join("target"), PathBuf::from);
-    let package = root().join("apps/lightcraft-ios-swift/LightCraft");
-    // (Package.swift looks for it in .rust/macos on a Mac, in .rust itself on Linux)
-    let rust = if cfg!(target_os = "macos") { package.join(".rust/macos") } else { package.join(".rust") };
-    std::fs::create_dir_all(&rust).map_err(|e| format!("{}: {e}", rust.display()))?;
-    let lib = target.join("debug/liblightcraft_bridge.a");
-    std::fs::copy(&lib, rust.join("liblightcraft_bridge.a")).map_err(|e| format!("{}: {e}", lib.display()))?;
-    let mut s = Command::new(&swift);
-    s.current_dir(&package).arg("test");
-    run(s, &format!("{swift} test (in {})", package.display()))
 }
 
 fn check_target(target: &str, set: &[String], clock_lint: bool) -> Result<(), String> {
@@ -431,7 +402,7 @@ fn cmd_ci(args: &[&str]) -> Result<(), String> {
             }),
         ));
     }
-    steps.push(("parity", Box::new(|| parity::run(&root, false, None))));
+    steps.push(("parity", Box::new(|| parity::run(&root, false))));
     steps.push(("layers", Box::new(cmd_layers)));
     steps.push(("assets", Box::new(|| assets::run(&root))));
     steps.push(("wasm", Box::new(cmd_wasm)));

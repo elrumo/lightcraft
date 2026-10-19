@@ -138,7 +138,7 @@ fn a_cookie_changes_things_only_for_requests_from_the_page() {
     assert_eq!(gc(&[("Cookie", &cookie), ("X-LightCraft-Admin", "1")]), 200);
     // reading needs no header
     assert_eq!(call(&server, "GET", "users", &[("Cookie", &cookie)], None).status, 200);
-    // a bearer token (the SwiftUI app, scripts) is not a cookie: it is not sent by itself, so it needs no header
+    // a bearer token (native apps, scripts) is not a cookie: it is not sent by itself, so it needs no header
     let token =
         call(&server, "POST", "login", &[], Some(json!({"user": "ann", "password": "correct horse"}))).body["token"].as_str().unwrap().to_string();
     let bearer = format!("Bearer {token}");

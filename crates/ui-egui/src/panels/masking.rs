@@ -12,7 +12,7 @@ use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 use crate::widgets::{divider, icon_button, one_line, register, slider, text_button};
 
-/// Local adjustment sliders (key = `LocalAdjustments` field name), shared with the SwiftUI app's
+/// Local adjustment sliders (key = `LocalAdjustments` field name), shared with native frontends through
 /// `mask.controls`.
 pub use lightcraft_develop::controls::LOCAL;
 

@@ -192,7 +192,7 @@ pub fn format(m: Modifiers, k: Key) -> Option<String> {
 }
 
 /// Secondary key bindings for commands that already exist, and the rating and label digits:
-/// `(shortcut, command id, params JSON)`. The table is shared with the SwiftUI app
+/// `(shortcut, command id, params JSON)`. The table is shared with native frontends
 /// (`lightcraft_apphost::keys`); shown in Help, Keyboard Shortcuts.
 pub use lightcraft_apphost::keys::FIXED_KEYS as ALIASES;
 

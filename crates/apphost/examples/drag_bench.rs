@@ -1,5 +1,5 @@
-//! A slider drag on a real photo, driven through the engine host the way the SwiftUI app drives it
-//! (`EditorModel.pump`: `develop.set`, wait for its answer, `render.view {draft}`, again), timed.
+//! A slider drag on a real photo, driven through the engine host the way a native frontend drives it
+//! (`develop.set`, wait for its answer, `render.view {draft}`, again), timed.
 //!
 //! `cargo run --release -p lightcraft-apphost --example drag_bench -- <photo> [WxH] [seconds] [controls…]`
 //! e.g. `… corpus/raw/cr3-canon-r6-raw.cr3 2400x1600 3 light.exposure wb.temp`. Prints, per control:

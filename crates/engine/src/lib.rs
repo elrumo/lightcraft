@@ -421,7 +421,7 @@ pub struct Session {
     /// Background tasks in flight (imports, exports, preview builds…), for the activity stack and
     /// `activity.list` / `activity.cancel`.
     pub activity: activity::Activity,
-    /// Work the app does by itself and reports (`activity.external`: the SwiftUI app's Apple model
+    /// Work the app does by itself and reports (`activity.external`: a native frontend's Apple model
     /// download), by the id of its row; dropping a guard removes the row.
     pub(crate) external_tasks: std::collections::BTreeMap<u64, activity::TaskGuard>,
     /// The last (or running) slideshow export (`slideshow.export`).

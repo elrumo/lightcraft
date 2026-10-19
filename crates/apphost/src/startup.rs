@@ -1,7 +1,7 @@
 //! Starting an app on the engine: where the library lives, opening it (or falling back to the demo
 //! library), the memory budget, and the staging folders the system pickers and the share sheet use.
 //! The functions without a `_for` / `desktop` in their name are a phone's rules, shared by the iOS
-//! apps (egui and SwiftUI), so both start the same way; a [`Profile`] picks a Mac's instead.
+//! apps (egui and native), so both start the same way; a [`Profile`] picks a Mac's instead.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 /// How a host starts the engine (`OpenConfig::profile`). `Mobile` is a phone's rules: the app's
 /// container, the memory the system lets the app use, the demo library when the real one won't
-/// open. `Desktop` is a Mac's (the SwiftUI Mac app, as `apps/lightcraft` starts): the library in
+/// open. `Desktop` is a Mac's (a native Mac frontend, as `apps/lightcraft` starts): the library in
 /// the user's Pictures folder, the machine's RAM sizes the caches, AI models stay in the settings
 /// folder shared with egui and the CLI, and a library that won't open (open in another LightCraft,
 /// unreadable) is an error for the user to act on, never a demo library in its place.

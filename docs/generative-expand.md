@@ -17,11 +17,11 @@ never run a model.
    3 × 2 landscape asked for 1 × 1 gains a strip above and below; Instagram's 4 × 5 or TikTok's
    9 × 16 work the same way). The crop can reach up to the photo's own size past each edge. Area
    with nothing in it yet shows a checkerboard.
-3. Choose what paints the new area (**Fill With**; on a phone, tap the line in the bottom bar; in the
-   SwiftUI iPhone and iPad app, the Fill With button beside Generate), or leave it on **Auto**, the
+3. Choose what paints the new area (**Fill With**; on a phone, tap the line in the bottom bar), or
+   leave it on **Auto**, the
    best model for this device; then press **Generate**. It runs in the background with a row in the
    activity stack; ✕ there (or Cancel in the panel, or a tap on the phone's Generate button) stops
-   it. The result lands as one undo step, "Generative Expand" (in the SwiftUI app the engine host
+   it. The result lands as one undo step, "Generative Expand" (in a native frontend the engine host
    stores it, `apphost` polling the job, and says so).
 4. Every edit after that applies to the new area as to the photo: white balance, tone, colour,
    masks, Remove spots, grain. Moving the crop past what was painted shows the checkerboard again;
@@ -91,31 +91,23 @@ Settings and the crop tool make), and `crop.expandModels` (each model with `avai
 only after the user agreed. `crop.drag`, `crop.set`, `crop.straighten` and `crop.aspect` all honour
 Expand.
 
-## Apple Image Playground (SwiftUI iPhone / iPad app)
+## A painter outside the engine (native frontends)
 
-Where the device has Apple Intelligence on (iOS or macOS 27), **Fill With** also offers **Apple Image Playground**. It is
-the one exception to "nothing leaves the device": Apple's sheet makes the new area in Apple's cloud (Private Cloud
-Compute). So it is never picked by itself (Auto never chooses it), and every Generate asks "Send this photo to
-Apple?" first, naming what goes: the part of the photo inside the crop, as the canvas picture below.
-
-How it works: the engine gives the app the canvas as a picture (`crop.expandCanvas`: the crop's box with a little
+A native (non-Rust) frontend can paint the new area with an image model of its platform ([engine-host.md](engine-host.md)).
+The engine gives it the canvas as a picture (`crop.expandCanvas`: the crop's box with a little
 context at up to 1024 px a side, the photo where it is, the Classic fill as a placeholder over the new area, and a
-`key` naming the crop). The app opens Apple's `imagePlaygroundSheet` on it (`creationStrategy: .editExisting`,
-personalization off, the canvas's size, a prompt asking to continue the scene and keep the photo as it is); the user
-works in the sheet and taps Done; the picture's file goes back (`crop.applyExpandPicture {key, path | png, model:
-"appleCloud"}`). Apple's API takes no mask, so the sheet may re-render the whole picture: the engine uses only what it
+`key` naming the crop); the frontend sends the picture it got back (`crop.applyExpandPicture {key, path | png, model:
+"appleCloud"}`). The platform's model may take no mask and re-render the whole picture: the engine uses only what it
 needs of it:
 - the picture is resized to the canvas (refused when its proportions are more than 8 % off the canvas's);
 - its tones are matched to the photo's (a mean and a spread per channel over the strip of photo along the new
   area), and it is faded in from the photo's own edge colours over 4 % of the canvas, so the join does not show;
 - the photo's pixels never change, and the photo's grain is added over the new area, as for the other painters;
 - the result is stored like any other fill (`ExpandFill.model` is `appleCloud`), one undo step, so renders and exports
-  never contact Apple. Turning Expand off, or moving the crop while the sheet is open, refuses the answer.
+  never contact the platform's service. Turning Expand off, or moving the crop while the frontend's model is working,
+  refuses the answer.
 
-Limits: the sheet needs the user's taps and a device with Apple Intelligence (not the simulator; not scriptable;
-`LIGHTCRAFT_FAKE_PLAYGROUND=1` stands in with a tinted copy of the canvas, for tours and tests, and
-`ui.set {playgroundExpand: true}` runs it); Apple manages its usage limits; the web and desktop apps do not have it.
-**Not yet seen on a device**: how well the sheet's result continues a photo is unknown until it is tried.
+The web and desktop apps do not have this painter.
 
 ## How it works
 

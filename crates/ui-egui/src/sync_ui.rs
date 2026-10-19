@@ -1,5 +1,5 @@
 //! Self-hosted sync on the frame loop (`docs/sync.md`): [`lightcraft_apphost::sync::Driver`] (shared
-//! with the SwiftUI app's engine host) hands the engine's requests to [`crate::Services::sync_exec`]
+//! with the engine host) hands the engine's requests to [`crate::Services::sync_exec`]
 //! (a worker thread on the desktop) and their answers back, so a slow or absent server never holds a
 //! frame. Pulls every few seconds while signed in, and when the window comes back to the front.
 

@@ -1,5 +1,5 @@
-//! The egui side of background rendering. [`Scheduler`] (in `lightcraft-apphost`, shared with the
-//! SwiftUI iOS app) decides what renders when and what each slot shows; this module turns its
+//! The egui side of background rendering. [`Scheduler`] (in `lightcraft-apphost`, shared with native
+//! frontends) decides what renders when and what each slot shows; this module turns its
 //! pictures into egui textures ([`TexView`]) and asks for repaints while renders are in flight.
 //!
 //! [`Renderer`] derefs to the scheduler, so the panels use one object for both.

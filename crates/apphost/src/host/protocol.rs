@@ -1,6 +1,5 @@
-//! The messages between a frontend and the engine thread, as JSON: [`Request`]s in, [`Event`]s out.
-//! The SwiftUI app's `LightCraftCore` decodes the same shapes (`docs/ios-swift.md` → *Protocol*);
-//! `tests::fixtures` writes one of each kind to the Swift tests' fixture file so the two can't drift.
+//! The messages between a frontend and the engine thread, as JSON: [`Request`]s in, [`Event`]s out
+//! (`docs/engine-host.md` → *Protocol*).
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_engine::activity::TaskInfo;

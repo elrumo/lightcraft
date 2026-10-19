@@ -20,8 +20,6 @@ they use the estimate; a ProRAW's person matte, when it has one, is used to focu
 
 ## Using it
 
-The SwiftUI app has the same group: a column of controls on a phone, a section of the Edit panel in a Mac's inspector.
-
 1. Open Lens Blur and press **Apply**. With depth in the file it turns on at once; otherwise
    "Estimating depth…" shows for a second or two (longer in a browser), the first time after the model's
    download is offered (see below).

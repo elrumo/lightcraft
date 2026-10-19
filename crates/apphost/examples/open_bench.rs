@@ -1,5 +1,5 @@
-//! Opening a library through the engine host and asking for the first screen, the way the SwiftUI app
-//! does (`AppModel.start`), timed: the open itself, then each request in the order the app sends them.
+//! Opening a library through the engine host and asking for the first screen, the way a native frontend
+//! does, timed: the open itself, then each request in the order such a frontend sends them.
 //!
 //! `cargo run --release -p lightcraft-apphost --example open_bench -- <library folder> [desktop|mobile]`
 //!
@@ -67,7 +67,7 @@ fn main() {
         println!("{name:<18} {ms:7.1} ms  ({bytes} B){failed}");
     };
     let execute = |c: &str, p: Value| json!({"command": c, "params": p});
-    // the first screen, as AppModel.start asks for it
+    // the first screen, as a native frontend asks for it
     ask("view.stacks", "engine.execute", execute("view.stacks", json!({"on": true})));
     ask("host.state", "host.state", json!({}));
     ask("library.state", "engine.execute", execute("library.state", json!({})));

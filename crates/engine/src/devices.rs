@@ -14,7 +14,7 @@
 //! iOS) are read by the host itself (ImageCaptureCore); their files are [`CameraFile`]s, not paths,
 //! until they are copied off. [`LibraryIndex`] tells which of them the library already has without
 //! reading them; [`review`] (`library.cameraFiles`) lays them out for an import review that a host
-//! draws itself (the SwiftUI app).
+//! draws itself (a native frontend).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

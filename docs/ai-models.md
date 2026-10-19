@@ -39,33 +39,14 @@ stay), **Download…** (asks first, naming the size, the host and the licence), 
 (asks first; removes only the model's own files, never anything else in the folder; it can be downloaded again). A
 model this build can't run (SAM 3 on an iPhone) is listed as not available. The first time a feature needs its model
 it offers the download itself (Object / Describe masks, Super Resolution). The on / off choice is saved with the app
-settings (`models_disabled` in `ui.json`; the SwiftUI app keeps it as `modelsDisabled` in its own settings and gives it back to the engine at launch).
+settings (`models_disabled` in `ui.json`).
 
 Two downloads run at once; a model asked for while two run shows as queued (in Settings and as a row of the activity
 stack, with ✕) and starts by itself when one ends, in the order asked. A running download shows its sizes, speed and
-time left; the SwiftUI app's activity capsule names the model ("Downloading LaMa · 8.3 MB / 208 MB · 2 min left · 2
-queued").
+time left.
 
 Agents get the same through commands: `models.list` (each download's `queued`, `rate` and `etaMs`), `models.download
 {id, acknowledged: true}`, `models.cancel {id}`, `models.delete {id, confirm: true}`, `models.setEnabled {id, enabled}`.
-
-## Apple's models (SwiftUI iOS app)
-
-Apple ships models the app can use without downloading anything of its own: Vision's foreground
-instance mask and, on iOS 27, tap-to-segment (include / exclude taps, a model iOS downloads on
-request). They back Select Subject and Select Object in the SwiftUI app ([ai-masks.md](ai-masks.md)),
-and Settings ▸ AI Models ▸ Selection chooses Automatic, Apple or Classic. They are Apple's models
-under Apple's terms and are never mirrored or bundled by LightCraft.
-
-What Apple does **not** offer (checked in the iOS 27.1 SDK, 2026-10-14): any erase or inpainting
-API (Photos' Clean Up is private), any out-painting API, a sky model. Image Playground's sheet
-(`imagePlaygroundSheet`, `CreationStrategy.editExisting`) runs in Apple's cloud (Private Cloud
-Compute), takes no mask and returns a flat picture; the programmatic `ImageCreator` is removed in
-iOS 27. AI Remove and Generative Expand therefore keep MI-GAN, LaMa and Classic.
-Image Playground's sheet is built as an extra, opt-in Generative Expand engine in the SwiftUI app
-([generative-expand.md](generative-expand.md)): never the default, it asks "Send this photo to Apple?" every time, and
-only the new area of what the sheet returns is used. It needs an Apple Intelligence device and Apple's sheet (not
-scriptable, absent from simulators) and is not yet tried on a device.
 
 ## Core ML spike (2026-10-15)
 
@@ -144,7 +125,7 @@ settled before LightCraft hosts a mirror.
 
 **AI Remove, better models (checked 2026-10-17, `remove_eval`, [ai-remove.md](ai-remove.md)).** MI-GAN stays the fast default;
 **LaMa** is the High quality option (Apache-2.0, already shipped for Expand). **Stable Diffusion 1.5 Inpainting** with a
-removal prompt (`quality: ultra`, experimental, a switch only in the SwiftUI app) was no better than LaMa on four strokes over real people and
+removal prompt (`quality: ultra`, experimental) was no better than LaMa on four strokes over real people and
 painted a person-shaped blob into one hole, and cropping tighter made every network invent more. **PixelHacker**
 (Apache-2.0, 0.8B, best published inpainting scores on Places2 at 512) needs `flash-attn`, `triton` and
 `flash-linear-attention`, all CUDA-only: it can't run on a Mac or convert to Core ML until its gated linear attention is

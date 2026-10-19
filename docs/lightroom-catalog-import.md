@@ -119,7 +119,7 @@ originals stay missing; use LightCraft's missing-photo relinking tools to update
 
 ## Lightroom albums (albums only)
 
-File → Import Lightroom Albums… (and the SwiftUI sheet's **Albums Only** switch) brings a Lightroom
+File → Import Lightroom Albums… brings a Lightroom
 catalog's albums and folders of albums into the open library, holding the photos the library
 **already has**. No photo is added, and no rating, keyword or edit changes: the albums are made in one
 undo step (`library.importLightroom {"path": …, "albumsOnly": true}`). On a library synced with
@@ -161,7 +161,7 @@ none is **not in the library**. The result says how many albums and folders were
 into albums, and how many were matched, ambiguous or not in the library.
 
 The photos the library lacks are listed by name (with the albums holding them; at most 20,000, the report's
-`missing` and `missingTotal`), in the SwiftUI app's result sheet, with those several library photos fit equally
+`missing` and `missingTotal`), with those several library photos fit equally
 marked. A Lightroom (cloud) catalog keeps no edits on the computer: each photo's develop settings are a separate
 document named by hash (`develop.xmpCameraRaw.sha256`) that is not in the catalog or its folder, so only albums
 come from it; edits come with a Classic `.lrcat` (the full import, with Update Photos Already in the Library).

@@ -1,7 +1,7 @@
 //! Photo Merge in the UI: the HDR / Panorama / HDR Panorama dialog (options + live preview).
 //!
-//! The merges themselves run in [`lightcraft_apphost::merge::Runner`] (shared with the SwiftUI
-//! app): a preview for the open dialog, redrawn when its options change, and the full merge,
+//! The merges themselves run in [`lightcraft_apphost::merge::Runner`] (shared with the engine
+//! host): a preview for the open dialog, redrawn when its options change, and the full merge,
 //! which keeps running after the dialog closes (progress in the activity stack) and adds its
 //! result to the library.
 

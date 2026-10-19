@@ -41,7 +41,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Report Background Task",
             [],
             None,
-            "{action: start, label, cancellable?: bool} → {id} | {action: progress, id, done, total?: 100} | {action: end, id}. A row in the activity stack for work the app does by itself (the SwiftUI app's Apple model download: kind `download`); the app watches `activity.list` for `cancelling` on its id and ends the row when it stops",
+            "{action: start, label, cancellable?: bool} → {id} | {action: progress, id, done, total?: 100} | {action: end, id}. A row in the activity stack for work the app does by itself (a native frontend's Apple model download: kind `download`); the app watches `activity.list` for `cancelling` on its id and ends the row when it stops",
             always,
             |s, p| {
                 const C: &str = "activity.external";

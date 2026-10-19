@@ -1,4 +1,4 @@
-//! Local for the SwiftUI Mac app: `library.browse` read on a worker ([`crate::browse`]), Local's places
+//! Local for a native Mac frontend: `library.browse` read on a worker ([`crate::browse`]), Local's places
 //! (`host.local`, [`crate::local`]) and a folder's subfolders (`host.local.subfolders`, on a thread of its own).
 
 use std::sync::mpsc::Sender;

@@ -1,6 +1,6 @@
 //! Background rendering, shared by every frontend: engine [`RenderJob`]s run on a [`JobPool`];
-//! results become whatever the frontend shows ([`Present`]: egui textures, image leases for the
-//! SwiftUI app).
+//! results become whatever the frontend shows ([`Present`]: egui textures, image leases for a
+//! native frontend).
 //!
 //! Each visible thing that needs pixels is a *slot* (a grid thumbnail, the loupe, the "before"
 //! image…). Requests are deduplicated per slot (a newer request replaces a queued older one) and
@@ -1763,7 +1763,7 @@ mod scheduler_tests {
     use super::*;
     use lightcraft_catalog::{Op, Photo, Source};
 
-    /// Keeps the pixels it was given (what the SwiftUI host does with them).
+    /// Keeps the pixels it was given (what the engine host does with them).
     struct Keep;
     impl Present<Arc<Rgba8>> for Keep {
         fn make(&mut self, _: Slot, image: Rgba8) -> Arc<Rgba8> {

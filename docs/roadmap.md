@@ -1,6 +1,6 @@
 # Roadmap: milestones, current focus and what's next
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (current focus re-ranked after merging upstream up to 0da998f2: full-resolution zoom closed, 26 CR3 bodies and 545 models verified, Slideshow and Print started; Next actions added) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-19 · **Change:** minor (fork track C4 removed; current focus re-ranked after merging upstream up to 0da998f2: full-resolution zoom closed, 26 CR3 bodies and 545 models verified, Slideshow and Print started; Next actions added) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 Forward-looking plan. The summary with the headline numbers is [ROADMAP.md](../ROADMAP.md); the
 ranked shortfalls are [gaps.md](gaps.md); the numbers come from [target-app-parity.md](target-app-parity.md).
@@ -53,8 +53,8 @@ Concrete, in the order to take them. Hours are the gap's estimate from [gaps.md]
 5. Camera colour (gap 1): extend `lightcraft-cli calibrate` to chart-based fits, starting with the ten most
    used bodies in `docs/raw/usage-weights.tsv`; this needs chart shots from people who own them.
 6. AI masks (gap 5): the maintainer picks permissively licensed segmentation weights; inference runs on the
-   rten stack the fork already uses for MI-GAN and Depth Anything. Apple Vision selection (iOS, Mac) and Lens
-   Blur depth can feed Subject and Depth Range masks meanwhile.
+   rten stack the fork already uses for MI-GAN and Depth Anything. Lens Blur depth can feed Subject and Depth
+   Range masks meanwhile.
 7. Lens profiles (gap 8): generalise the in-file corrections already read (Sony ILCE-7RM4A / 7RM6, Nikon Z,
    DNG opcodes, RW2) into one profile format; never Adobe LCPs.
 8. Core-path user issues: triage the crash and data-loss ones first (never-crash rule); 40 to 80 h.
@@ -65,8 +65,7 @@ Concrete, in the order to take them. Hours are the gap's estimate from [gaps.md]
 - C2. Triage the branches `git branch --no-merged main` lists: check each with `git cherry main <branch>`
   (some landed through sweep commits), then merge or delete.
 - C3. Depth: land Lens Blur and wire Depth Range into the masking parity rows.
-- C4. SwiftUI app: the Mac app's SM3 / SM4 and a PARITY.md row for every new egui command.
-- C5. Sharing between people: comments, likes and accounts for other people on the sync server.
+- C4. Sharing between people: comments, likes and accounts for other people on the sync server.
 
 ## Alpha gate
 
@@ -149,6 +148,7 @@ calibration: M0–M13 took ≈ 25 active hours against an estimate of ≈ 110–
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | minor | Fork track: C4 removed (that work no longer lives in this repository), C5 became C4; the AI masks item no longer counts a platform selection model |
 | 2026-10-15 | minor | Merged upstream up to 0da998f2: Current focus re-ranked (full-resolution zoom and CR3 plan struck, compressed ORF first), Next actions added, alpha-gate rows 2 and 3 and milestones M7, M8, M11, M12, M15, M16 refreshed; numbers unchanged |
 | 2026-10-10 | minor | Beta hours 340–600; full ready ~59% in the gate note |
 | 2026-10-10 | minor | Added the Alpha gate table (core-workflow gate from the revised standard): passes, stays alpha |

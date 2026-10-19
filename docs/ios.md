@@ -178,7 +178,7 @@ whose portable helpers (safe file names, unique paths, the folder walk) are test
   decoded photos are released; an export in progress asks for background time.
 - **Memory.** The budget is a third of what the app may allocate at launch (`os_proc_available_memory`), between 256 MiB
   and 1 GiB; a memory warning releases decoded photos. The global allocator is `lightcraft_sysmem::ReturningAlloc`,
-  so freed image buffers leave the footprint iOS ends the app by (*Shape* in [ios-swift.md](ios-swift.md)).
+  so freed image buffers leave the footprint iOS ends the app by.
 - **Paths.** A library opened from another folder than last time (iOS gives the container a new path on every app
   update) re-points the photos stored under its old folder (`location.json`).
 
@@ -283,8 +283,7 @@ and `crates/ios-host` (see `CLAUDE.md`, *Never crash*).
 
 - **Phase 0, spike:** run the egui app on the simulator (done, through Xcode), an iPhone (done, through Xcode) and an
   iPad (with xtool, from Linux too); log Metal limits; time a preview render and a 24 MP raw decode; record peak
-  memory; check text input, long-press and safe areas. Output: a decision between egui and a native shell over FFI,
-  with a revised estimate. **Measured on an iPhone 17 Pro** (iOS 27.2, release build, `LIGHTCRAFT_SCRIPT` +
+  memory; check text input, long-press and safe areas. Output: a revised estimate. **Measured on an iPhone 17 Pro** (iOS 27.2, release build, `LIGHTCRAFT_SCRIPT` +
   `LIGHTCRAFT_PROFILE=1` through `devicectl … --console`, 2026-10-08): Metal adapter `Apple A19 Pro GPU`, buffers up
   to 4095 MiB; 3373 MB available to the app at launch (budget 1024 MB); a 24 MP demo photo's preview took 373 ms the
   first time (with the GPU's start-up) and 38–51 ms for the next ones (GPU stages: sampling 25–42 ms, the rest a few
@@ -292,16 +291,6 @@ and `crates/ios-host` (see `CLAUDE.md`, *Never crash*).
   four; frames took under 0.5 ms of layout, the slowest update 28 ms. Not measured yet: a raw decode (no raw on the
   device without importing the user's photos or the CC0 corpus), the storage-buffer limits (A1.12) and the process's
   peak memory (the caches' total is what is known).
-  **Decision (2026-10-13): a native SwiftUI app over a C ABI** ([ios-swift.md](ios-swift.md)), targeting iOS 26 and
-  later, reusing the whole Rust core. Why: the open rows in [ios-gaps.md](ios-gaps.md) that this app can't close without
-  rebuilding UIKit inside egui (`UITextInput` and CJK composition A1.9, scenes A1.10, VoiceOver and Dynamic Type A2.15,
-  drag and drop A2.16, iPad keyboard, pointer and multiwindow A2.17, Apple Pencil A2.18, the system font and real
-  Liquid Glass A2.20 / A2.23) come with the system in a native UI. The engine was built for a second frontend: one
-  JSON entry point (`Session::execute`), controls described as data (`develop.controls`), renders that return plain
-  RGBA. Staged: phone parity first, then the full iPad layout; this egui app stays and keeps building until the Swift
-  app passes its parity gate (`apps/lightcraft-ios-swift/PARITY.md`), then it is removed. Most of the work is the UI
-  itself and moving the logic that still lives in `ui-egui` down to shared crates so both UIs use it; the order of
-  work is in [ios-swift.md](ios-swift.md) → *Plan*.
 - **Phase 1, platform glue (written; run it):** host crate, pickers, sandbox paths, memory budget, GPU pause/resume,
   HEIC via ImageIO, JPEG/DNG/ProRAW verified on real files.
 - **Phase 2, mobile UI:** grid, loupe with gestures, bottom-sheet edit tools, presets, crop, masks, export; adaptive

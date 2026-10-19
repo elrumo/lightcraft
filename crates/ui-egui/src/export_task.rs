@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::LightcraftApp;
 use crate::control::SendTo;
 
-/// A background export ([`Batch`], shared with the SwiftUI app's engine host) and where its files
+/// A background export ([`Batch`], shared with the engine host) and where its files
 /// go once they are written.
 pub struct ExportTask {
     pub batch: Batch,

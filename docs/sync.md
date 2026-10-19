@@ -186,19 +186,17 @@ session ends with the browser, after two hours without use, or when the server r
 once; a new password for the admin (from the page or `user passwd`), or no longer being an admin, ends all of theirs
 (the browser that changed its own password stays signed in), and an admin keeps at most 20 kept sessions (signing
 in on a 21st browser ends the one used longest ago). A request that changes something must carry the header
-`X-LightCraft-Admin` when it signs in by cookie, which a form on another site can't send. The SwiftUI app and scripts
-send the token `POST /api/admin/login` answers with as a bearer instead, and need no header.
+`X-LightCraft-Admin` when it signs in by cookie, which a form on another site can't send. Scripts and native
+(non-Rust) frontends send the token `POST /api/admin/login` answers with as a bearer instead, and need no header.
 An admin is also an ordinary user with a library of their own.
 
 The data folder, the listen address and the domain are deployment settings, so the page shows them but doesn't change
 them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
 
-The SwiftUI iPhone / iPad app has the same console as screens: **Settings ▸ Server Administration** (sign-in or first-run
-setup, Overview, Users with their devices, shared links and library folders, Presets, Processing, Limits, Storage &
-Clean Up). It
-calls the same API through the app's engine (`host.admin.*`, [ios-swift.md](ios-swift.md)) and asks for the admin
-password itself, since the Sync sign-in is a device's.
+A native (non-Rust) frontend can offer the same console as screens. It calls the same API through the engine host
+(`host.admin.*`, [engine-host.md](engine-host.md)) and asks for the admin password itself, since the Sync sign-in is a
+device's.
 
 ### Storage limits
 
@@ -437,8 +435,6 @@ before then finishes it first, so one account's photos are never sent to another
 
 - **Desktop, the iOS app (egui) and the browser:** the question is inline in Settings ▸ Sync (on a phone, on its page);
   the browser also deletes the account's preview files from its storage (the originals it holds stay, as imports do).
-- **SwiftUI app:** an alert first, the cloud button and status page say *Signing out…*, and a capsule over the grid shows
-  the progress with ✕. iOS suspends an app in the background, so the wait goes on while LightCraft is open.
 - **Command line, MCP, control channel:** `sync.signOut confirm=true` returns at once with `state: "signingOut"`;
   in the command line `wait=true` keeps the process running until it is done, or until nothing more can be sent (the
   server away or refusing: the reply says `signingOut` and the status says why; run it again to go on)
@@ -478,9 +474,7 @@ behind each of them, a page at a time (100, at most 500): `total` of them in all
 themselves, `pending` in `sync.status`) and `items` of `{kind, id, name, what, running}`. A change is listed by the record
 it is about, with every value of it that is waiting (a photo's `rating` and `develop`, an album's `add`), in the order
 they will be sent; a transfer by the photo and the file moving (`original`, `smart preview`, `preview`, `building
-previews`), the ones moving now first. The SwiftUI app (iPhone, iPad and Mac) makes the three rows of **This Device**
-in its Sync sheet links to these lists: a picture, the name and what is waiting for each photo, a spinner on the file
-moving, rows that are done leaving as the queue empties, more loaded as the list is scrolled.
+previews`), the ones moving now first.
 
 The same numbers are the `sync.activity` command (`lightcraft-cli run --library DIR sync.activity refresh=true`, MCP,
 control channel) and part of `sync.status`; `ui.inspect` and `ui.widgets` list the popover and its parts (`icon:cloud`,
@@ -515,7 +509,7 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 - A downloaded original (`<library>/sync/originals/<hash>/<name>`) becomes the photo's file on this device only. It is
   checked against the photo's content hash before it is used, and a download that breaks off is continued, not started
   again (`<name>.part`); an upload that breaks off is continued from what the server kept.
-- The SwiftUI app's photo screen says where the open photo's original stands, in a pill at the photo's top right: *Loading original* with how much has arrived, *Original loaded* for a few seconds once it is here, or *Smart preview* while it can't come (paused, offline, a failed download). The state is the host's `sync.original` (`Session::original_status`).
+- A native frontend can say where the open photo's original stands: *Loading original* with how much has arrived, *Original loaded* once it is here, or *Smart preview* while it can't come (paused, offline, a failed download). The state is the host's `sync.original` (`Session::original_status`).
 - Photos whose original is on the server are not *Missing Photos*; Info says “Original on the sync server”.
 - Photos you import on any desktop device are uploaded with their previews in the background.
 

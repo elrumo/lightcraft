@@ -3,7 +3,7 @@
 //! Reading a catalog, probing its originals and staging its archive can take minutes on a
 //! removable or network drive. A [`Runner`] keeps that work off the owner thread, commits prepared
 //! data only on the owner thread ([`Runner::poll`]), then finishes the archive index on a worker.
-//! egui's `library.inspectLightroom` / `library.importLightroom` and the SwiftUI app's (through the
+//! egui's `library.inspectLightroom` / `library.importLightroom` and a native frontend's (through the
 //! engine host) drive the same runner; each app words the outcome itself.
 
 use std::path::{Path, PathBuf};

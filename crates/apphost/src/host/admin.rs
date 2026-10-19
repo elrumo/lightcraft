@@ -1,4 +1,4 @@
-//! Server administration for the SwiftUI app: `host.admin.*` calls the sync server's `/api/admin/*`,
+//! Server administration for native frontends: `host.admin.*` calls the sync server's `/api/admin/*`,
 //! what its web console at `/admin` does (`apps/lightcraft-server/src/admin.rs`).
 //!
 //! - `host.admin.signIn {server, user, password}` — `POST /api/admin/login`; keeps the server, the

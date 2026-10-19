@@ -1,7 +1,7 @@
 //! The egui app's UI-only commands (views, panels, tools, dialogs): id, label, default shortcut and
-//! menu path. egui's menu bar, shortcut handler and control channel use them, and the SwiftUI app
-//! builds its iPad menu bar and keyboard shortcuts from the same table (`host.uiCommands`), so the
-//! two apps' keys agree. (The language entries stay in egui: they name its i18n languages.)
+//! menu path. egui's menu bar, shortcut handler and control channel use them, and a native frontend
+//! builds its menu bar and keyboard shortcuts from the same table (`host.uiCommands`), so the
+//! apps' keys agree. (The language entries stay in egui: they name its i18n languages.)
 
 /// (id, label, shortcut, menu path)
 pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static str);

@@ -39,15 +39,13 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   fallback (`unwrap_or…`) only where it can't silently corrupt a document. An unfinished feature returns an
   "unsupported" error or is disabled. Sole exception: a provably infallible literal, as `#[allow(clippy::expect_used)]`
   + `.expect("why it can't fail")`.
-- **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture` and `apps/lightcraft-ios-swift/src/abi.rs`.** `sysmem`: three libSystem calls,
+- **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture`.** `sysmem`: three libSystem calls,
   `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes),
   `os_proc_available_memory` (the iOS app's memory limit) and `fsync` (for volumes that refuse std's `F_FULLFSYNC`). `ios-host`: the iOS app's Objective-C calls through `objc2`
   (Photos and Files pickers, share sheet, pasteboard, lifecycle notifications, ImageIO decoding, status-bar taps), compiled for iOS only. (The iOS
   app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]` there.) `capture`: ImageCaptureCore through
   `objc2` (cameras, phones and card readers: listing, thumbnails, copying files off them), compiled for iOS and macOS
-  only and used by `ui-egui`'s `camera_import::system_cameras`. `abi.rs`: the C ABI the SwiftUI iOS
-  app calls (`lc_*`, `docs/ios-swift.md`): one helper reads a caller's byte slice, handles are registry keys (never
-  pointers), outputs are leases freed by token, and every entry runs under `catch_unwind`. Every other production crate root has
+  only and used by `ui-egui`'s `camera_import::system_cameras`. Every other production crate root has
   `#![forbid(unsafe_code)]`. A new unsafe need goes in an isolated, well-tested helper crate like them: `// SAFETY:` on
   every block, a safe API, a safe fallback where possible, and a line here naming it.
 - **Input-derived numbers are hostile:** `get()` instead of `[i]`/`[a..b]` for offsets from files, users, agents or
@@ -65,26 +63,22 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 
 ## Non-negotiables
 - **Clean-room.** Never read/disassemble anything inside Adobe app bundles (names/listings only). Never copy Adobe icons, presets, profiles (DCP), lens profiles (LCP), camera matrices, fonts. Observation of the installed Lightroom is read-only (it syncs the user's personal library: never import/edit/rate/delete there). Never copy GPL/LGPL/AGPL code (darktable, RawTherapee, ART, LibRaw, rawspeed, rawloader, rawler, lensfun, dcraw-derived GPL code…).
-- **Pure Rust** in the product. No C/C++ dependencies. One exception: the SwiftUI iOS app's UI layer
-  (`apps/lightcraft-ios-swift/LightCraft/`, [`docs/ios-swift.md`](docs/ios-swift.md)) is Swift over the `lc_*` C ABI. It
-  holds presentation only: no document logic, no edit geometry, no image math, no C/C++/Objective-C sources, no
-  third-party packages (system frameworks only).
-- **Shared frontend logic lives below the UIs** (extraction rule): when the Swift app first needs logic that sits in
-  `ui-egui`, move it down in the same commit and switch egui to it; never write it twice. Geometry and edit math go to
+- **Pure Rust** in the product. No C/C++ dependencies.
+- **Shared frontend logic lives below the UIs** (extraction rule, [`docs/engine-host.md`](docs/engine-host.md)): when
+  another frontend first needs logic that sits in `ui-egui`, move it down in the same commit and switch egui to it;
+  never write it twice. Geometry and edit math go to
   `geom` / `develop` / `color`; session behaviour becomes an engine command; threads, render scheduling, background
   pumps and post-command policy go to `crates/apphost`.
 - **Layering** (`plan/architecture.md` §3, enforced by `cargo xtask layers`): nothing below L5 depends on egui/eframe/winit/rfd.
 - **Everything is a command** (`crates/engine`): id, label, menu path, shortcut, params, enabled(), run(). UI, CLI, control channel and MCP all dispatch by id. Every slider is a `develop` control spec.
 - **Resolution independence:** settings use normalized image coordinates and relative radii; previews and exports must match.
-- **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, layers, assets, wasm, ios). The `ios` step is a type-check for `aarch64-apple-ios` (`rustup target add aarch64-apple-ios`); see `docs/ios.md`. The SwiftUI app's Swift code can't be built on Linux: `.github/workflows/ios-swift.yml` builds and tests it on
-  macOS (`apps/lightcraft-ios-swift/run.sh --test` on a Mac); say so in a commit that touches it without a Mac.
+- **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, layers, assets, wasm, ios). The `ios` step is a type-check for `aarch64-apple-ios` (`rustup target add aarch64-apple-ios`); see `docs/ios.md`.
 - **Commits:** one task id per commit (`M2.3: local Laplacian highlights/shadows`). Only green states. End messages with the attribution line required by the environment.
 
 ## Assets: icons, images, fonts (ABSOLUTE RULE — never violate)
 - **Never use any iconography, image, artwork, font, sound or other asset from Adobe products** (no Lightroom/Creative Cloud icons, no screenshots, no presets/profiles/LUTs, no UI bitmaps — not even as a temporary placeholder or "reference copy"). Observing Adobe's UI to imitate *layout and behaviour* is allowed; copying or tracing its assets is not.
 - **This includes Adobe's open-licensed assets**: no Source Sans/Serif/Code or Source Han fonts, no Adobe Fonts, no
-  Adobe-published icon sets, sample photos, colour profiles or LUTs — even when OFL/MIT. The Rust UIs' font is Inter (OFL;
-  the SwiftUI iOS app uses the system font, never bundled, and SF Symbols by system name only, never exported into the repo);
+  Adobe-published icon sets, sample photos, colour profiles or LUTs — even when OFL/MIT. The Rust UIs' font is Inter (OFL);
   Japanese and Chinese fonts come from craft-fonts (below). **One exception (maintainer decision, 2026-10-07): Noto
   Sans/Serif CJK** (Google-branded, OFL, co-developed with Adobe as Source Han) is allowed via craft-fonts for Chinese
   text, because nearly every OFL Chinese face derives from it. Use it unmodified under its OFL; this does not open the
@@ -149,9 +143,8 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 `geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
 → `apphost` (L4: the frontend runtime shared by the UIs) → `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop),
 `lightcraft-cli` (render/commands/MCP), `lightcraft-server` (optional self-hosted sync, `docs/sync.md`), `lightcraft-ios`
-(iPhone/iPad on egui, `docs/ios.md`), `lightcraft-ios-swift` (the native SwiftUI iPhone/iPad app over a C ABI, replacing
-`lightcraft-ios` once it passes its parity gate, `docs/ios-swift.md`). `scenes` generates demo
-photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `ios`, `corpus`, `geodata`, `stats`); `testkit` =
+(iPhone/iPad on egui, `docs/ios.md`). `apphost`'s engine host (`docs/engine-host.md`) serves a frontend that isn't
+Rust. `scenes` generates demo photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `ios`, `corpus`, `geodata`, `stats`); `testkit` =
 test helpers (dev-dependency only). `flake.nix` +
 `nix/package.nix` = the Nix package (`nix build` builds both binaries with the craft-fonts input, installs the
 desktop file/icons/AppStream metadata and runs `cargo test --workspace`; `nix develop` = dev shell). Community-maintained; CI only

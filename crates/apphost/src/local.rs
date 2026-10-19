@@ -1,5 +1,5 @@
 //! Local: the folders on this computer the sidebar offers to browse without adding them to the
-//! library (Lightroom's Local tab), shared by the egui app and the SwiftUI Mac app. No drawing
+//! library (Lightroom's Local tab), shared by the egui app and a native Mac frontend. No drawing
 //! here: which places are listed and in what order, the kept roots and hidden places (the app
 //! keeps both with its own UI state and passes them in), and a folder's subfolders.
 
