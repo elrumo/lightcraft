@@ -674,6 +674,7 @@ impl crate::Session {
         }
         chosen.sort_by_key(|p| p.slot());
         let old = std::mem::replace(&mut self.vision.helper_parts, chosen.iter().map(|p| p.key().to_string()).collect());
+        self.vision.helper_paused.retain(|p| self.vision.helper_parts.contains(p));
         self.save_prefs().map_err(|e| e.to_string())?;
         let dropped: Vec<&String> = old.iter().filter(|o| !self.vision.helper_parts.contains(o)).collect();
         if !dropped.is_empty() && self.vision_signed_in() {
@@ -689,8 +690,35 @@ impl crate::Session {
         Ok(self.vision_helper_status())
     }
 
+    /// Hold back (or take up again) some of the work this device does for its server (`vision.setHelperPaused`): a paused
+    /// part is still this device's, but no photos are claimed for it until it is resumed.
+    pub fn vision_helper_set_paused(&mut self, paused: &[String]) -> Result<Value, String> {
+        for name in paused {
+            HelperPart::from_key(name).ok_or_else(|| format!("`{name}` is not work a device can take (search, text, faces, sensitive, previews)"))?;
+        }
+        self.vision.helper_paused = paused.iter().filter(|p| self.vision.helper_parts.contains(p)).cloned().collect();
+        self.vision.helper_paused.dedup();
+        self.save_prefs().map_err(|e| e.to_string())?;
+        if let Some(job) = &self.vision.helper {
+            // (the running helper has the old choice: it ends, and the upkeep starts one with the new)
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+        self.vision.helper_retry = None;
+        self.vision_helper_upkeep();
+        Ok(self.vision_helper_status())
+    }
+
+    /// Whether every part this device does for its server is held back.
+    fn vision_helper_all_paused(&self) -> bool {
+        !self.vision.helper_parts.is_empty() && self.vision.helper_parts.iter().all(|p| self.vision.helper_paused.contains(p))
+    }
+
     pub fn vision_helper_status(&self) -> Value {
         let mut v = self.vision.helper.as_ref().map_or_else(|| json!({"running": false, "state": "stopped"}), |j| j.json());
+        v["paused"] = json!(self.vision.helper_paused);
+        if self.vision_helper_all_paused() {
+            v["state"] = json!("paused");
+        }
         v["parts"] = json!(self.vision.helper_parts);
         v["supported"] = json!(true);
         // what this device can run now: true, or why not (no model code in this build, or not downloaded yet)
@@ -706,7 +734,7 @@ impl crate::Session {
     pub(super) fn vision_helper_upkeep(&mut self) {
         let signed_in = self.vision_signed_in();
         let (server, token) = self.sync.as_ref().map(|st| (st.config.server.clone(), st.config.token.clone())).unwrap_or_default();
-        let wanted = signed_in && !self.vision.helper_parts.is_empty();
+        let wanted = signed_in && !self.vision.helper_parts.is_empty() && !self.vision_helper_all_paused();
         if let Some(job) = self.vision.helper.clone() {
             if job.finished.load(Ordering::Relaxed) {
                 self.vision.helper_error = job.error();
@@ -733,6 +761,9 @@ impl crate::Session {
         let (mut runners, mut unavailable) = (Vec::new(), Vec::new());
         for name in &v.helper_parts {
             let Some(part) = HelperPart::from_key(name) else { continue };
+            if v.helper_paused.contains(name) {
+                continue;
+            }
             let made = match part {
                 HelperPart::Search => v.provider().map(|(p, model, dim)| Runner::Search(p, model, dim)),
                 HelperPart::Text => v.reader_provider().map(|(p, e)| Runner::Text(p, e)),

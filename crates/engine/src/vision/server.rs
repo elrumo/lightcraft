@@ -53,6 +53,8 @@ pub(crate) enum Aux {
     People,
     /// `DELETE /api/index/faces`: forget the faces the server found.
     FacesDelete,
+    /// `DELETE /api/index/{embeddings|text|sensitive}`: forget what the server found for this user (`vision.reprocess`).
+    Forget,
     /// `GET /api/sensitive`: the photos the server flagged as possibly sensitive.
     Sensitive,
     /// `PUT /api/work/settings`: which work this device takes from the server (a browser takes none).
@@ -323,6 +325,13 @@ impl Session {
                 if !d.ok() {
                     log::warn!("telling the server which work this device takes: {}", why(d));
                 }
+            }
+            Aux::Forget => {
+                if !d.ok() {
+                    log::warn!("asking the server to forget what it found: {}", why(d));
+                }
+                // (its counts are asked for again at once)
+                self.vision.remote.status_at = None;
             }
             Aux::FacesDelete => {
                 if !d.ok() {
@@ -704,6 +713,10 @@ mod tests {
 impl Session {
     /// A browser can't be a processing unit.
     pub fn vision_helper_set(&mut self, _parts: &[String]) -> Result<Value, String> {
+        Err("a browser can't process photos for the server".into())
+    }
+
+    pub fn vision_helper_set_paused(&mut self, _paused: &[String]) -> Result<Value, String> {
         Err("a browser can't process photos for the server".into())
     }
 

@@ -555,6 +555,17 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
                 search(st)
             }),
         },
+        // Forget what a part found for every user: the worker then does all their photos again
+        (Method::Delete, ["search", "results", kind]) => match Part::from_key(kind) {
+            None => Err(Ok((404, "no such part".to_string()))),
+            Some(part) => accounts::read_users(&st.data)
+                .and_then(|f| f.users.keys().try_for_each(|name| st.vision.reset_results(&st.data, name, part).map(drop)))
+                .map_err(|e| Ok((500, e)))
+                .map(|()| {
+                    log::info!("admin {me}: the {kind} results of every user are forgotten: processing them again");
+                    search(st)
+                }),
+        },
         (Method::Delete, ["search", "download"]) => {
             st.vision.switch.cancel(Part::Search);
             Ok(search(st))
@@ -858,6 +869,8 @@ fn search(st: &State) -> Value {
                     "waiting": v.switch.waiting(part, &name),
                     "failed": crate::vision::failed(st, part, &name),
                     "problem": crate::vision::problem(st, part, &name),
+                    // (a device does this one for them: the worker here leaves it be)
+                    "device": v.work.moved(&name, part).then(|| json!({"seenSecs": v.work.helper_seen(&name).map(|d| d.as_secs())})),
                 })
             };
             let work = json!({"search": work(Part::Search), "text": work(Part::Text), "faces": work(Part::Faces), "sensitive": work(Part::Sensitive)});
@@ -884,6 +897,8 @@ fn search(st: &State) -> Value {
             "ready": left.saturating_sub(stuck),
             "perMinute": v.switch.per_minute(part, None),
             "lastSecs": v.switch.last(part).map(|d| d.as_secs()),
+            // (how long ago the most recent device that does this part for a user claimed photos)
+            "deviceSecs": users.iter().filter_map(|u| u["work"][part.key()]["device"]["seenSecs"].as_u64()).min(),
             "now": now.as_ref().filter(|n| n.0 == part).map(|(_, user, since)| json!({"user": user, "secs": since.as_secs()})),
         })
     };

@@ -36,6 +36,7 @@ use crate::{Session, guard, memory};
 #[cfg(not(target_arch = "wasm32"))]
 mod helper;
 mod people;
+mod reprocess;
 mod sensitive;
 mod server;
 #[cfg(not(target_arch = "wasm32"))]
@@ -295,6 +296,9 @@ pub struct Vision {
     /// The work this device does for the sync server it is signed in to, which it claims photos for
     /// (`vision.setHelper`; persisted in the library's prefs.json). Empty: none.
     pub helper_parts: Vec<String>,
+    /// Of those, the parts this device holds back for now (`vision.setHelperPaused`; persisted likewise): the server
+    /// still leaves them to this device, which claims no photos for them.
+    pub helper_paused: Vec<String>,
     /// This device runs none of the models even if this build could (a thin client; tests of one):
     /// it searches and lists people through the sync server.
     #[doc(hidden)]
@@ -365,6 +369,7 @@ impl Default for Vision {
             faces: false,
             sensitive: false,
             helper_parts: Vec::new(),
+            helper_paused: Vec::new(),
             thin: false,
             text_edge: TEXT_EDGE,
             injected: None,

@@ -466,6 +466,57 @@ impl Search {
         Ok((files, bytes))
     }
 
+    /// Forget what `part` found for `user`: its results file goes, memory lets go of it and the photos it couldn't do are
+    /// tried again; the worker then does every photo again. The models stay. → whether there was a results file.
+    pub fn reset_results(&self, data: &Path, user: &str, part: Part) -> Result<bool, String> {
+        let dir = accounts::user_dir(data, user).join("search");
+        // (a worker holding the old index writes into a file nobody reads: its photos come up again as missing)
+        let name = match part {
+            Part::Search => {
+                lock(&self.indexes).remove(user);
+                format!("{}.bin", self.spec().0)
+            }
+            Part::Text => {
+                lock(&self.texts).remove(user);
+                format!("text-{}.bin", self.engine())
+            }
+            Part::Faces => {
+                lock(&self.faces).remove(user);
+                lock(&self.people).remove(user);
+                format!("faces-{}.bin", self.faces_engine())
+            }
+            Part::Sensitive => {
+                self.sensitive.forget(user);
+                format!("sensitive-{}.bin", self.sensitive.engine())
+            }
+        };
+        self.mark_retry(user, part);
+        let path = dir.join(name);
+        let existed = path.is_file();
+        if existed {
+            std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+        log::info!("{user}: {} results forgotten", part.what());
+        self.wake();
+        Ok(existed)
+    }
+
+    /// Let the worker try `user`'s photos that `part` couldn't do again.
+    fn mark_retry(&self, user: &str, part: Part) {
+        lock(self.failed_set(part)).retain(|(u, _)| u != user);
+        lock(&self.problems).remove(&problem_key(user, part));
+    }
+
+    /// The photos `part` couldn't do, by user.
+    fn failed_set(&self, part: Part) -> &Mutex<HashSet<(String, Key)>> {
+        match part {
+            Part::Search => &self.failed,
+            Part::Text => &self.failed_text,
+            Part::Faces => &self.failed_faces,
+            Part::Sensitive => self.sensitive.failed(),
+        }
+    }
+
     /// The model's id and vector length (known without loading it).
     pub(crate) fn spec(&self) -> (String, usize) {
         match &self.injected {
@@ -602,13 +653,7 @@ impl Search {
 
     /// Remember that `part` can't be done for this photo (the worker would not try it again either).
     pub(crate) fn mark_failed(&self, user: &str, part: Part, key: Key) {
-        let set = match part {
-            Part::Search => &self.failed,
-            Part::Text => &self.failed_text,
-            Part::Faces => &self.failed_faces,
-            Part::Sensitive => self.sensitive.failed(),
-        };
-        lock(set).insert((user.to_string(), key));
+        lock(self.failed_set(part)).insert((user.to_string(), key));
     }
 }
 
@@ -1015,25 +1060,22 @@ fn index_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
 
 /// The last problem the worker had with `user`'s photos for `part`.
 pub(crate) fn problem(st: &State, part: Part, user: &str) -> Option<String> {
-    let key = match part {
+    lock(&st.vision.problems).get(&problem_key(user, part)).cloned()
+}
+
+/// What the worker files `user`'s last problem with `part` under.
+fn problem_key(user: &str, part: Part) -> String {
+    match part {
         Part::Search => user.to_string(),
         Part::Text => format!("{user}:text"),
         Part::Faces => format!("{user}:faces"),
         Part::Sensitive => format!("{user}:sensitive"),
-    };
-    lock(&st.vision.problems).get(&key).cloned()
+    }
 }
 
 /// `user`'s photos that `part` could not do (tried again when the server restarts).
 pub(crate) fn failed(st: &State, part: Part, user: &str) -> usize {
-    let v = &st.vision;
-    let set = match part {
-        Part::Search => &v.failed,
-        Part::Text => &v.failed_text,
-        Part::Faces => &v.failed_faces,
-        Part::Sensitive => v.sensitive.failed(),
-    };
-    lock(set).iter().filter(|(u, _)| u == user).count()
+    lock(st.vision.failed_set(part)).iter().filter(|(u, _)| u == user).count()
 }
 
 /// `%xx` and `+` decoded (a query string value).
@@ -1212,11 +1254,19 @@ pub(crate) fn upload(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &s
     match r {
         Ok(done) => {
             v.touch();
+            device_added(st, user, Part::Search, done.added);
             api::json(200, &json!({"added": done.added, "skipped": done.skipped}))
         }
         Err(e @ VisionError::Mismatch { .. }) => error(409, e),
         Err(e) => error(422, e),
     }
+}
+
+/// A device sent results for `photos` of `user`'s photos: they count in the pace and the last-done time the admin page
+/// shows, as the worker's own do (the time they took is the time since the device last claimed).
+pub(crate) fn device_added(st: &State, user: &str, part: Part, photos: usize) {
+    let secs = st.vision.work.helper_seen(user).map_or(1.0, |d| d.as_secs_f64().clamp(1.0, 600.0));
+    st.vision.switch.record(part, user, photos, secs);
 }
 
 /// `GET /api/index/text/keys`
@@ -1248,6 +1298,7 @@ pub(crate) fn text_upload(st: &State, req: &mut Request, l: &Mutex<UserLib>, use
     match r {
         Ok(done) => {
             v.touch();
+            device_added(st, user, Part::Text, done.added);
             api::json(200, &json!({"added": done.added, "skipped": done.skipped}))
         }
         Err(e @ VisionError::Mismatch { .. }) => error(409, e),
@@ -1370,6 +1421,7 @@ pub(crate) fn face_upload(st: &State, req: &mut Request, l: &Mutex<UserLib>, use
     match r {
         Ok(done) => {
             v.touch();
+            device_added(st, user, Part::Faces, done.added);
             api::json(200, &json!({"added": done.added, "skipped": done.skipped}))
         }
         Err(e @ VisionError::Mismatch { .. }) => error(409, e),

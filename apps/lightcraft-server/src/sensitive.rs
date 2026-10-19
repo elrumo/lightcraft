@@ -154,6 +154,11 @@ impl Sensitive {
         Ok(Some(ix))
     }
 
+    /// Let go of `user`'s scores in memory (their file was deleted).
+    pub(crate) fn forget(&self, user: &str) {
+        lock(&self.indexes).remove(user);
+    }
+
     /// The photos that could not be checked, by user.
     pub(crate) fn failed(&self) -> &Mutex<HashSet<(String, Key)>> {
         &self.failed
@@ -262,6 +267,7 @@ pub(crate) fn upload(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &s
     match r {
         Ok(done) => {
             v.touch();
+            crate::vision::device_added(st, user, Part::Sensitive, done.added);
             api::json(200, &json!({"added": done.added, "skipped": done.skipped}))
         }
         Err(e @ VisionError::Mismatch { .. }) => error(409, e),

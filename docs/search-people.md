@@ -168,7 +168,7 @@ POST /api/index/embeddings         vectors a device computed (checked whole; see
 
 An admin turns search on for everyone from the admin page (**Processing**): the switch shows the model's size and licence,
 downloads it onto the server after the admin agrees (resumable, SHA-256-checked, it keeps going if the page is closed)
-and turns search on. The page's **AI Models** list shows every model (description, words, people, sensitive content) with Download, Cancel and, once installed, Remove: it asks, then deletes only that model's files (`DELETE /api/admin/search/models/<search|text|faces|sensitive>`); what the model found stays, and downloading again resumes. Standalone clients remove theirs in Settings ▸ AI Models (`models.delete`). The same from a shell (never without the flag; Docker: `docker compose exec lightcraft-server …`):
+and turns search on. The page's **AI Models** list shows every model (description, words, people, sensitive content) with Download, Cancel and, once installed, Remove: it asks, then deletes only that model's files (`DELETE /api/admin/search/models/<search|text|faces|sensitive>`); what the model found stays, and downloading again resumes. **Reprocess** forgets what a model found for every user (`DELETE /api/admin/search/results/<part>`) and has every photo done again, by the server or by the devices that do it for their users; the model stays. A signed-in user can do the same for their own results (`DELETE /api/index/<embeddings|text|faces|sensitive>`, `vision.reprocess` with `scope` `server`, `device` or `both`; Settings ▸ AI Models ▸ Server Data). Standalone clients remove theirs in Settings ▸ AI Models (`models.delete`). The same from a shell (never without the flag; Docker: `docker compose exec lightcraft-server …`):
 
 ```sh
 lightcraft-server model status
@@ -243,7 +243,7 @@ shows only when its models are installed on that device). Then:
 While a part is moved, the server's worker **skips it for that user** (`GET/PUT /api/work/settings`, kept in
 `<data>/users/<name>/offload.json`; a device adds and removes only its own parts), so a part with no device online
 waits instead of loading the NAS. Admin switches still rule: a part the admin turned off, or faces for a user who
-isn't allowed them, is refused (`refused` in the claim's answer). The helper is one thread, a row in the activity
+isn't allowed them, is refused (`refused` in the claim's answer), and so is a part the admin **paused** (or limited to hours): Pause on the admin page holds back the devices too. A device can pause its own part (`vision.setHelperPaused`, kept with the library: the part stays its, nothing is claimed) from Settings ▸ AI Models ▸ Server Work. What devices send counts in the admin page's pace and last-done time, and a user's row says a device does that part (`work.<part>.device.seenSecs`, `deviceSecs`). The helper is one thread, a row in the activity
 stack, started again after a sign-in or a failure, and ends on sign-out. `lightcraft-server` needs no model for a part
 that is moved.
 

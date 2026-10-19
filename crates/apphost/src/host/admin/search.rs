@@ -8,7 +8,7 @@
 //!   paused, window: null | {from, to},
 //!   live:  null | {state: "on" | "stuck" | "idle", why, user, secs, lastSecs},
 //!   left:  {state: "done" | "paused" | "window" | "estimate" | "counting", photos, secs, perMinute, from, to},
-//!   users: {<name>: {secs, perMinute, estimating, waiting, failed, problem}}}}
+//!   users: {<name>: {secs, perMinute, estimating, waiting, failed, problem, device: null | {seenSecs}}}}}
 //! ```
 //!
 //! - `paused` and `window` (minutes of the day in UTC) are the schedule as it is, what Pause sends back
@@ -16,7 +16,9 @@
 //! - `live` is the line with the dot: what the worker is on now (`why`: `hung` on `user`'s photos for
 //!   `secs` without finishing one, `now` on `user`'s photos, `turns` working in turn with the other
 //!   indexes, `previews` nothing to do until the photos left have previews, `quiet` nothing done for
-//!   `lastSecs`, `waiting` for its turn); `lastSecs` is how long ago it last finished a photo. `null`
+//!   `lastSecs`, `waiting` for its turn, `device` a device does it for their users and last asked for more `secs`
+//!   ago, `deviceQuiet` the same but not for ten minutes: open the app); `lastSecs` is how long ago it last
+//!   finished a photo (a device's results count). `null`
 //!   while there is nothing to do, it is paused, or it waits for its daily window.
 //! - `left` is the time left of the whole part: up to date, paused, waiting for the window `from`–`to`
 //!   (minutes of the day in UTC), `estimate` (about `secs` left for `photos` at `perMinute`) or only a
@@ -69,6 +71,8 @@ struct Schedule {
     last: Option<u64>,
     now: Option<(String, u64)>,
     window: Option<(u64, u64)>,
+    /// How long ago the latest device that does this part for a user last asked for more photos.
+    device: Option<u64>,
 }
 
 impl Schedule {
@@ -86,6 +90,7 @@ impl Schedule {
             last: c["lastSecs"].as_u64(),
             now,
             window: c["from"].as_u64().zip(c["to"].as_u64()),
+            device: c["deviceSecs"].as_u64(),
         })
     }
 
@@ -107,6 +112,10 @@ impl Schedule {
             } else {
                 line("on", "now", Some(user.as_str()), None)
             });
+        }
+        // (a device does it for its users: the worker here leaves those photos to it)
+        if let Some(seen) = self.device {
+            return Some(if seen > HUNG_SECS { line("idle", "deviceQuiet", None, Some(seen)) } else { line("on", "device", None, Some(seen)) });
         }
         // (the three take turns, a few minutes each on a slow server)
         Some(if self.per_minute.is_some() {
@@ -177,6 +186,7 @@ fn user(c: &Schedule, live: Option<&Value>, u: &Value, done: u64, w: &Value) -> 
         "waiting": waiting,
         "failed": failed,
         "problem": problem.filter(|_| left > 0).map(sentence),
+        "device": w["device"].is_object().then(|| json!({"seenSecs": w["device"]["seenSecs"].as_u64()})),
     }))
 }
 
@@ -252,6 +262,12 @@ mod tests {
         assert_eq!(live(sched(json!({"lastSecs": 3600})))["why"], "quiet");
         assert_eq!(live(sched(json!({"lastSecs": 3600})))["state"], "stuck");
         assert_eq!(live(sched(json!({"lastSecs": 60})))["why"], "waiting");
+        // a part a device does for its users says so, and when the device last asked for more
+        assert_eq!(
+            live(sched(json!({"deviceSecs": 12, "lastSecs": 12}))),
+            json!({"state": "on", "why": "device", "user": null, "secs": 12, "lastSecs": 12})
+        );
+        assert_eq!(live(sched(json!({"deviceSecs": 3600})))["why"], "deviceQuiet");
         // no line while there's nothing to do, it's paused, or it waits for its window
         assert_eq!(live(sched(json!({"left": 0}))), Value::Null);
         assert_eq!(live(sched(json!({"paused": true, "now": {"user": "ann", "secs": 3}}))), Value::Null);
@@ -283,7 +299,7 @@ mod tests {
         let r = row(c.clone(), work(json!(90.0), 100, 50, json!("the model can't read this photo")));
         assert_eq!(
             r,
-            json!({"secs": 300, "perMinute": 90.0, "estimating": false, "waiting": 100, "failed": 50, "problem": "The model can't read this photo"})
+            json!({"secs": 300, "perMinute": 90.0, "estimating": false, "waiting": 100, "failed": 50, "problem": "The model can't read this photo", "device": null})
         );
         // no pace of their own yet while the worker is on: the time left is being worked out
         let r = row(c.clone(), work(json!(null), 0, 0, json!(null)));
@@ -314,7 +330,7 @@ mod tests {
         }
         assert_eq!(
             progress(&s)["faces"]["users"],
-            json!({"bob": {"secs": null, "perMinute": null, "estimating": false, "waiting": 0, "failed": 0, "problem": null}})
+            json!({"bob": {"secs": null, "perMinute": null, "estimating": false, "waiting": 0, "failed": 0, "problem": null, "device": null}})
         );
         s["users"][0]["faces"] = json!(true);
         assert_eq!(progress(&s)["faces"]["users"]["ann"]["waiting"], json!(0));

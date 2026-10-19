@@ -1499,6 +1499,11 @@ function liveState(p, c) {
     return { kind: 'stuck', text: what + ' for ' + dur(c.now.secs) + ' without finishing one. It may be stuck: restarting the server starts it again.' };
   }
   if (c.now) return { kind: 'on', text: what + lastly };
+  // (devices that do a part for their users: the worker here leaves those photos to them)
+  if (c.deviceSecs !== null && c.deviceSecs !== undefined) {
+    const seen = c.deviceSecs < 5 ? 'just now' : dur(c.deviceSecs) + ' ago';
+    return c.deviceSecs < 600 ? { kind: 'on', text: 'A device is processing photos for this · last asked for more ' + seen + lastly } : { kind: 'idle', text: 'Devices do this for their users, and none has asked for more since ' + seen + '. Open the app.' };
+  }
   // (the three take turns, a few minutes each on a slow server)
   if (c.perMinute) return { kind: 'on', text: 'Working, in turn with the others' + lastly };
   if (!c.ready) return { kind: 'idle', text: 'Nothing to do until the photos left have their previews.' };
@@ -1565,6 +1570,7 @@ function userLines(p, w, done, total, c) {
   const left = Math.max(0, total - done);
   const ready = Math.max(0, left - w.waiting - w.failed);
   const going = !c.paused && c.runsNow;
+  if (w.device) bits.push('A device is doing this' + (w.device.seenSecs === null ? '' : ', last asked for more ' + (w.device.seenSecs < 5 ? 'just now' : dur(w.device.seenSecs) + ' ago')));
   if (ready && going && w.perMinute) bits.push(etaOf(ready, w.perMinute) + ' (' + pace(w.perMinute) + ')');
   else if (ready && !w.problem && liveState(p, c)?.kind === 'on') bits.push('Working out the time left…');
   if (w.waiting) bits.push(n(w.waiting) + ' waiting for previews');
@@ -1720,7 +1726,7 @@ function showModels(s) {
       const btn = d.running
         ? el('button', { type: 'button', class: 'btn secondary', onclick: () => cancelDownload(p) }, 'Cancel')
         : f.installed
-          ? el('span', { class: 'ok' }, el('span', {}, 'Installed'), el('button', { type: 'button', class: 'btn quiet', onclick: () => removeModel(p, what) }, 'Remove'))
+          ? el('span', { class: 'ok' }, el('span', {}, 'Installed'), el('button', { type: 'button', class: 'btn quiet', onclick: () => reprocessModel(p, what) }, 'Reprocess'), el('button', { type: 'button', class: 'btn quiet', onclick: () => removeModel(p, what) }, 'Remove'))
           : el('button', { type: 'button', class: 'btn accent', onclick: get }, 'Download');
       const meter = d.running ? el('div', { class: 'meter' }, el('div', {})) : null;
       const li = el('li', {}, el('span', { class: 'what' }, el('b', {}, what), el('span', { class: 'muted' }, model + ' · ' + bytes(f.sizeBytes))), btn, ...(meter ? [meter] : []));
@@ -1743,6 +1749,22 @@ function removeModel(p, what) {
     action: () => api('DELETE', 'search/models/' + PART_KEY[p]),
   }).then(async (ok) => {
     if (ok) toast('Deleted the ' + what.toLowerCase() + ' model.', 'info');
+    await route();
+  });
+}
+
+/** Forget what a model found for every user, and have it done again, after asking. */
+function reprocessModel(p, what) {
+  return ask({
+    title: 'Process every photo again with the ' + what.toLowerCase() + ' model?',
+    text:
+      'This deletes what the model found for all your users, then processes every photo again, on this server and on the devices that do it for their users. ' +
+      'Until that is done, searching and the lists that use it find less. The model itself stays.',
+    ok: 'Process again',
+    danger: true,
+    action: () => api('DELETE', 'search/results/' + PART_KEY[p]),
+  }).then(async (ok) => {
+    if (ok) toast('Processing every photo again with the ' + what.toLowerCase() + ' model.', 'info');
     await route();
   });
 }

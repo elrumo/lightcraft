@@ -296,6 +296,18 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Post, ["index", "faces"]) => crate::vision::face_upload(st, req, &l, &who.user),
         (Method::Delete, ["index", "faces"]) => crate::vision::face_delete(st, &who.user),
         (Method::Post, ["index", "sensitive"]) => crate::sensitive::upload(st, req, &l, &who.user),
+        // Forget what a part found for this user, to have it done again (faces have their own, above)
+        (Method::Delete, ["index", kind @ ("embeddings" | "text" | "sensitive")]) => {
+            let part = match *kind {
+                "embeddings" => crate::switch::Part::Search,
+                "text" => crate::switch::Part::Text,
+                _ => crate::switch::Part::Sensitive,
+            };
+            match st.vision.reset_results(&st.data, &who.user, part) {
+                Ok(_) => json(200, &serde_json::json!({})),
+                Err(e) => error(500, e),
+            }
+        }
         // devices as processing units (see `work`)
         (Method::Post, ["work", "claim"]) => crate::work::claim(st, req, &who.user),
         (Method::Post, ["work", "release"]) => crate::work::release(st, req, &who.user),

@@ -162,6 +162,10 @@ fn refusal(st: &State, user: &str, part: Part, engine: &str) -> Option<String> {
     if !allowed {
         return Some(format!("{} is off for this user on this server", part.key()));
     }
+    // (an admin who paused a part, or limited it to hours, paused it for the devices that do it too)
+    if !v.switch.may_run(part) {
+        return Some(format!("{} is paused on this server", part.key()));
+    }
     let ours = v.engine_of(part);
     (ours != engine).then(|| format!("this server keeps results of {ours}, not {engine}"))
 }

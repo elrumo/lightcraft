@@ -454,6 +454,50 @@ fn a_desktop_sends_the_server_the_vectors_it_computed() {
     assert!(s4.execute("vision.share", &json!({"wait": true})).is_err());
 }
 
+/// An embedder that counts the photos it was given.
+struct CountedEmbedder(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Embedder for CountedEmbedder {
+    fn model_id(&self) -> &str {
+        Padded.model_id()
+    }
+    fn dim(&self) -> usize {
+        SIGLIP_DIM
+    }
+    fn encode_text(&self, t: &str) -> Result<Vec<f32>, VisionError> {
+        Padded.encode_text(t)
+    }
+    fn encode_images(&self, i: &[&lightcraft_raster::Rgba8]) -> Result<Vec<Vec<f32>>, VisionError> {
+        self.0.fetch_add(i.len(), std::sync::atomic::Ordering::SeqCst);
+        Padded.encode_images(i)
+    }
+}
+
+/// A device forgets what its own model found and indexes again, and can ask the server to forget this user's too.
+#[test]
+fn a_device_processes_its_photos_again_and_can_have_the_server_forget() {
+    let f = fixture("reprocess-device", None);
+    let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut s = device(&f, "reprocess-dev", Some(Arc::new(CountedEmbedder(seen.clone()))));
+    s.execute("vision.index", &json!({"wait": true})).unwrap();
+    assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 4);
+    s.vision_probe_server();
+    s.execute("vision.share", &json!({"wait": true})).unwrap();
+    assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 4);
+
+    assert!(s.execute("vision.reprocess", &json!({"part": "nonsense"})).is_err());
+    let r = s.execute("vision.reprocess", &json!({"part": "search", "scope": "device"})).unwrap();
+    assert_eq!((&r["device"], &r["server"], &r["indexing"]), (&json!(true), &json!(false), &json!(true)), "{r}");
+    assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 8, "every photo was embedded again");
+    assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 4, "the server's was left alone");
+
+    // the server's forgets too (nothing of its own to do it with here: it stays empty)
+    let r = s.execute("vision.reprocess", &json!({"part": "search", "scope": "server"})).unwrap();
+    assert_eq!(r["server"], true, "{r}");
+    sync(&mut s);
+    assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 0);
+}
+
 #[test]
 fn a_device_that_turned_sharing_on_sends_by_itself_and_remembers_the_choice() {
     let f = fixture("auto-share", None);
@@ -1057,6 +1101,41 @@ fn an_admin_deletes_a_downloaded_model_and_only_its_files() {
     assert_eq!(delete(&f.ann, "/api/admin/search/models/sensitive").0, 401);
 }
 
+/// What a part found is forgotten, for one user (by the user) or for everyone (by an admin), and the worker does
+/// every photo again. The classifier counts its calls: four photos, then four more after each reset.
+#[test]
+fn forgetting_what_a_part_found_has_the_server_do_it_again() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let f = fixture_classified("reprocess", None, None, Some(Arc::new(Counting(calls.clone()))));
+    let wait_calls = |want: usize| {
+        for _ in 0..1200 {
+            f.server.index_for_search();
+            if calls.load(std::sync::atomic::Ordering::SeqCst) >= want {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("the photos were not checked again: {} calls, wanted {want}", calls.load(std::sync::atomic::Ordering::SeqCst));
+    };
+    wait_calls(4);
+    assert_eq!(get(&f.ann, "/api/sensitive").1["checked"].as_u64(), Some(4));
+
+    // the user's own
+    assert_eq!(delete(&f.ann, "/api/index/sensitive").0, 200);
+    wait_calls(8);
+    assert_eq!(get(&f.ann, "/api/sensitive").1["checked"].as_u64(), Some(4));
+
+    // an admin's, for every user
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+    assert_eq!(delete(&admin, "/api/admin/search/results/nonsense").0, 404);
+    assert_eq!(delete(&admin, "/api/admin/search/results/sensitive").0, 200);
+    wait_calls(12);
+    assert_eq!(get(&f.ann, "/api/sensitive").1["checked"].as_u64(), Some(4));
+    // (only an admin may)
+    assert_eq!(delete(&f.ann, "/api/admin/search/results/sensitive").0, 401);
+}
+
 // ---------------------------------------------------------------- a device as the processing unit
 
 /// A classifier that counts the photos it was asked about (the server's own work).
@@ -1141,6 +1220,21 @@ fn photos_are_handed_out_once_and_only_for_what_the_server_keeps() {
     let (_, r) = claim(&f.ann, json!({"faces": lightcraft_vision::faces::ENGINE}), 4);
     assert!(r["refused"]["faces"].as_str().unwrap().contains("off for this user"), "{r}");
 
+    // an admin who paused a part paused it for the devices that do it too
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+    let off = json!({"paused": true, "from": null, "to": null});
+    assert_eq!(put(&admin, "/api/admin/search/schedule/sensitive", off).0, 200);
+    let (_, r) = claim(&f.ann, json!({"sensitive": fake}), 4);
+    assert!(r["refused"]["sensitive"].as_str().unwrap().contains("paused"), "{r}");
+    assert!(keys_of(&r).is_empty(), "{r}");
+    let on = json!({"paused": false, "from": null, "to": null});
+    assert_eq!(put(&admin, "/api/admin/search/schedule/sensitive", on).0, 200);
+    assert!(claim(&f.ann, json!({"sensitive": fake}), 4).1["refused"]["sensitive"].is_null());
+    // (and the admin page says a device does it, and when it last asked)
+    let s = get(&admin, "/api/admin/search").1;
+    assert!(s["users"][0]["work"]["sensitive"]["device"]["seenSecs"].is_u64(), "{s}");
+
     // what a user moved is theirs to change, and only parts are accepted
     let (_, s) = get(&f.ann, "/api/work/settings");
     assert_eq!(s["moved"], json!(["sensitive"]), "{s}");
@@ -1189,6 +1283,29 @@ fn a_device_does_the_models_work_and_the_photos_never_stay_on_it() {
 
     // asking the server to do it again hands out nothing: all of it is done
     assert!(keys_of(&claim(&f.ann, json!({"sensitive": "fake-nsfw"}), 10).1).is_empty());
+
+    // pausing it all holds the device back: the server is asked to forget what it has, and nothing is claimed
+    let parts = json!(["search", "text", "faces", "sensitive"]);
+    let r = s.execute("vision.setHelperPaused", &json!({"parts": parts})).unwrap();
+    assert_eq!((&r["paused"], &r["state"]), (&parts, &json!("paused")), "{r}");
+    let r = s.execute("vision.reprocess", &json!({"part": "sensitive", "scope": "server"})).unwrap();
+    assert_eq!((&r["server"], &r["device"]), (&json!(true), &json!(false)), "{r}");
+    sync(&mut s);
+    std::thread::sleep(Duration::from_millis(1500));
+    s.vision_poll();
+    assert_eq!(get(&f.ann, "/api/sensitive").1["checked"], 0, "forgotten, and not redone while paused");
+    assert_eq!(s.execute("vision.helper", &json!({})).unwrap()["running"], false);
+    // resuming has the device check all four again
+    s.execute("vision.setHelperPaused", &json!({"parts": []})).unwrap();
+    for _ in 0..600 {
+        s.vision_poll();
+        if get(&f.ann, "/api/sensitive").1["checked"] == 4 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(get(&f.ann, "/api/sensitive").1["checked"], 4);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0, "still not the server's classifier");
 
     // giving the work back stops the helper, removes its scratch folder and tells the server
     s.execute("vision.setHelper", &json!({"parts": []})).unwrap();

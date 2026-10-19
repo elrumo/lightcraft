@@ -111,7 +111,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Processing for the Server",
             [],
             None,
-            "{} — how this device is doing as the sync server's processing unit (vision.setHelper) → {parts, supported, available: {part: true | why not here}, running, state (working|waiting|stopped), done: {search, text, faces, sensitive}, failed, error, unavailable: {part: why}, refused: {part: why}}",
+            "{} — how this device is doing as the sync server's processing unit (vision.setHelper) → {parts, paused: [part] (vision.setHelperPaused), supported, available: {part: true | why not here}, running, state (working|waiting|paused|stopped), done: {search, text, faces, sensitive}, failed, error, unavailable: {part: why}, refused: {part: why}}",
             always,
             |s, _| Ok(s.vision_helper_status())
         ),
@@ -131,6 +131,24 @@ pub fn specs() -> Vec<CommandSpec> {
                     .filter_map(|v| v.as_str().map(str::to_string))
                     .collect();
                 s.vision_helper_set(&parts).map_err(|e| bad("vision.setHelper", e))
+            }
+        ),
+        cmd!(
+            "vision.setHelperPaused",
+            "Pause Processing for the Server",
+            [],
+            None,
+            "{parts: [search|text|faces|sensitive]} — which of the work this device does for its server (vision.setHelper) is paused: those parts stay this device's, so the server doesn't take them back, but it claims no photos for them until they are left out of the list again. [] resumes everything. Saved with the library → vision.helper",
+            always,
+            |s, p| {
+                let parts: Vec<String> = p
+                    .get("parts")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| bad("vision.setHelperPaused", "missing `parts`"))?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect();
+                s.vision_helper_set_paused(&parts).map_err(|e| bad("vision.setHelperPaused", e))
             }
         ),
         cmd!(
@@ -453,6 +471,20 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
                 s.people_delete_data(wait).map_err(|e| bad("people.deleteData", e))
+            }
+        ),
+        cmd!(
+            "vision.reprocess",
+            "Process Photos Again",
+            [],
+            None,
+            "{part: search|text|faces|sensitive, scope?: device|server|both (both)} — forget what one kind of processing found and do it again: `device` deletes this library's results (names written to photos stay) and starts indexing, `server` deletes this user's results on the sync server (which then does every photo again, or has the device that does it for it do so), `both` does both when this library is signed in. The models stay → {part, device, server, indexing}",
+            always,
+            |s, p| {
+                let c = "vision.reprocess";
+                let part = p.get("part").and_then(Value::as_str).ok_or_else(|| bad(c, "missing `part`"))?;
+                let scope = p.get("scope").and_then(Value::as_str).unwrap_or("both");
+                s.vision_reprocess(part, scope).map_err(|e| bad(c, e))
             }
         ),
         cmd!(query "vision.indexCancel", "Cancel Search Indexing", [], None, "{}", always, |s, _| {
