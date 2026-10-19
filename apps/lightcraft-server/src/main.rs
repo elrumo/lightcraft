@@ -56,7 +56,7 @@ const USAGE: &str = "usage:
   lightcraft-server scan [NAME]                (read the library folders now)
   lightcraft-server check [NAME]               (look for photo files cut short, such as copies that stopped part-way; changes nothing)
   lightcraft-server model enable|disable [--text|--sensitive]   (search by description, or with --text reading the text in photos, or with --sensitive checking photos for sensitive content, for every device that signs in; on once the models are installed, off keeps the files)
-  lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--sensitive] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0; --sensitive adds the model that flags photos that might be sensitive: about 87 MB, Falcons.ai's Apache License 2.0)
+  lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--sensitive] [--sensitive-large] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0; --sensitive adds the model that flags photos that might be sensitive: about 87 MB, Falcons.ai's Apache License 2.0; --sensitive-large adds a larger, more accurate one that replaces it once installed: about 89 MB, AdamCodd's Apache License 2.0, but several times slower)
   lightcraft-server gc [--dry-run]
   lightcraft-server health                     (is the server answering? exit status)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
@@ -378,7 +378,9 @@ fn run(args: &[String]) -> Result<(), String> {
             let faces_missing = faces && !lightcraft_vision::faces::model::is_model_dir(&dir.join(lightcraft_engine::vision::FACES_DIR));
             let sensitive_missing = args.iter().any(|a| a == "--sensitive")
                 && !lightcraft_vision::nsfw::is_model_dir(&dir.join(lightcraft_engine::vision::SENSITIVE_DIR));
-            if !search_missing && !text_missing && !faces_missing && !sensitive_missing {
+            let large_missing = args.iter().any(|a| a == "--sensitive-large")
+                && !lightcraft_vision::nsfw::large_installed(&dir.join(lightcraft_engine::vision::SENSITIVE_DIR));
+            if !search_missing && !text_missing && !faces_missing && !sensitive_missing && !large_missing {
                 println!("the model{} installed in {}", if text { "s are" } else { " is" }, dir.display());
                 return Ok(());
             }
@@ -401,8 +403,15 @@ fn run(args: &[String]) -> Result<(), String> {
                 println!("the text-reading models are installed in {}", dir.join(lightcraft_engine::vision::TEXT_DIR).display());
             }
             if sensitive_missing {
-                lightcraft_server::vision::download_sensitive_model(&dir, mirrors.as_deref())?;
+                lightcraft_server::vision::download_sensitive_model(&dir, mirrors.as_deref(), false)?;
                 println!("the sensitive-content model is installed in {}", dir.join(lightcraft_engine::vision::SENSITIVE_DIR).display());
+            }
+            if large_missing {
+                lightcraft_server::vision::download_sensitive_model(&dir, mirrors.as_deref(), true)?;
+                println!(
+                    "the large sensitive-content model is installed in {}: it checks photos instead of the compact one, and every photo is checked again",
+                    dir.join(lightcraft_engine::vision::SENSITIVE_DIR).display()
+                );
             }
             println!("the running server finds them within a minute");
             Ok(())

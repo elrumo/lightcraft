@@ -44,6 +44,8 @@ pub struct Sensitive {
     /// A classifier supplied by the host (tests) instead of the model from `dir`.
     injected: Option<Arc<dyn Classifier>>,
     classifier: Mutex<Option<Arc<dyn Classifier>>>,
+    /// The engine the loaded classifier and the opened scores are of (the large model, once installed, is another one).
+    engine_seen: Mutex<String>,
     indexes: Mutex<HashMap<String, Arc<Mutex<SensitiveIndex>>>>,
     /// Photos that could not be checked (not retried until the server restarts).
     failed: Mutex<HashSet<(String, Key)>>,
@@ -55,6 +57,7 @@ impl Sensitive {
             dir: models.join(lightcraft_engine::vision::SENSITIVE_DIR),
             injected: None,
             classifier: Mutex::new(None),
+            engine_seen: Mutex::new(String::new()),
             indexes: Mutex::new(HashMap::new()),
             failed: Mutex::new(HashSet::new()),
         }
@@ -79,7 +82,22 @@ impl Sensitive {
     pub fn engine(&self) -> String {
         match &self.injected {
             Some(c) => c.engine().to_string(),
-            None => lightcraft_vision::nsfw::ENGINE.to_string(),
+            None => lightcraft_vision::nsfw::engine_for(&self.dir, lightcraft_vision::nsfw::Prefer::Auto).to_string(),
+        }
+    }
+
+    /// Lets go of the classifier and the opened scores when the model that checks photos changed since (the large one
+    /// was installed or removed): the next use loads the new one and opens its scores.
+    fn refresh(&self) {
+        let engine = self.engine();
+        let mut seen = lock(&self.engine_seen);
+        if *seen != engine {
+            if !seen.is_empty() {
+                log::info!("the sensitive-content model is now {engine}");
+                lock(&self.classifier).take();
+                lock(&self.indexes).clear();
+            }
+            *seen = engine;
         }
     }
 
@@ -88,6 +106,7 @@ impl Sensitive {
         if let Some(c) = &self.injected {
             return Ok(c.clone());
         }
+        self.refresh();
         let mut slot = lock(&self.classifier);
         if let Some(c) = slot.as_ref() {
             return Ok(c.clone());
@@ -109,6 +128,7 @@ impl Sensitive {
     /// A user's scores, opened if needed (another model's, or damaged, are derived data: replaced). Without
     /// `create`, a user who has none yet gets `None` and no file is made.
     pub(crate) fn index(&self, data: &Path, user: &str, create: bool) -> Result<Option<Arc<Mutex<SensitiveIndex>>>, String> {
+        self.refresh();
         let mut all = lock(&self.indexes);
         if let Some(ix) = all.get(user) {
             return Ok(Some(ix.clone()));

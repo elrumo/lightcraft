@@ -71,6 +71,10 @@ pub const FACES: &str = "faces";
 pub const NSFW: &str = "nsfw";
 /// The classifier's GPU weights.
 pub const NSFW_GPU: &str = "nsfw-gpu";
+/// The large classifier.
+pub const NSFW_LARGE: &str = "nsfw-large";
+/// The large classifier's GPU weights.
+pub const NSFW_LARGE_GPU: &str = "nsfw-large-gpu";
 
 /// The host of a download location ("https://user:pw@huggingface.co/a/b?x" → "huggingface.co").
 pub fn host_of(url: &str) -> String {
@@ -376,6 +380,86 @@ impl Session {
         .entry()
     }
 
+    /// The large classifier: a better, slower model that checks photos instead of the compact one once it is installed.
+    fn sensitive_large_entry(&self) -> Entry {
+        let v = &self.vision;
+        let dir = v.sensitive_dir();
+        #[cfg(feature = "vision")]
+        let parts = dir.as_deref().map(|d| {
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            lightcraft_vision::models::nsfw_large_downloads(d, env.as_deref(), v.mirrors_file.as_deref())
+        });
+        #[cfg(feature = "vision")]
+        let (files, mirrors) = parts.map_or((Vec::new(), Vec::new()), |p| (files_of(&p), p.into_iter().flat_map(|(_, m, _)| m).collect()));
+        #[cfg(not(feature = "vision"))]
+        let (files, mirrors): (Files, Vec<String>) = (Vec::new(), Vec::new());
+        #[cfg(feature = "vision")]
+        let (bytes, (licence, licence_url)) = (lightcraft_vision::models::NSFW_LARGE_BYTES, lightcraft_vision::models::NSFW_LARGE_LICENCE);
+        #[cfg(not(feature = "vision"))]
+        let (bytes, (licence, licence_url)) = (0, ("", ""));
+        Facts {
+            id: NSFW_LARGE,
+            label: "NSFW Image Detection (Large)",
+            purpose: "A larger, more accurate model for flagging sensitive photos, with fewer false alarms: it reads each photo at 384 px, so it takes several times longer, and it replaces the compact model once installed",
+            credit: "vit-base-nsfw-detector by AdamCodd",
+            home_url: licence_url,
+            licence,
+            licence_url,
+            restricted: false,
+            download_bytes: bytes,
+            available: v.sensitive_available(),
+            installed: v.sensitive_large_installed(),
+            // (turned on and off with the compact model's switch)
+            enabled: v.sensitive,
+            can_disable: false,
+            dir,
+            files,
+            mirrors,
+            download: shown(&v.sensitive_large_download_status()),
+        }
+        .entry()
+    }
+
+    /// The large classifier's GPU weights: a model of their own, run instead of the large CPU one where there is a GPU.
+    fn sensitive_large_gpu_entry(&self) -> Entry {
+        let v = &self.vision;
+        let dir = v.sensitive_dir();
+        #[cfg(feature = "vision")]
+        let parts = dir.as_deref().map(|d| {
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            lightcraft_vision::models::nsfw_large_gpu_downloads(d, env.as_deref(), v.mirrors_file.as_deref())
+        });
+        #[cfg(feature = "vision")]
+        let (files, mirrors) = parts.map_or((Vec::new(), Vec::new()), |p| (files_of(&p), p.into_iter().flat_map(|(_, m, _)| m).collect()));
+        #[cfg(not(feature = "vision"))]
+        let (files, mirrors): (Files, Vec<String>) = (Vec::new(), Vec::new());
+        #[cfg(feature = "vision")]
+        let (bytes, (licence, licence_url)) = (lightcraft_vision::models::NSFW_LARGE_GPU_BYTES, lightcraft_vision::models::NSFW_LARGE_LICENCE);
+        #[cfg(not(feature = "vision"))]
+        let (bytes, (licence, licence_url)) = (0, ("", ""));
+        Facts {
+            id: NSFW_LARGE_GPU,
+            label: "NSFW Image Detection (Large, GPU)",
+            purpose: "The large model at full precision, on the graphics processor: about as fast as the compact model on the CPU",
+            credit: "vit-base-nsfw-detector by AdamCodd",
+            home_url: licence_url,
+            licence,
+            licence_url,
+            restricted: false,
+            download_bytes: bytes,
+            available: v.sensitive_gpu_available(),
+            installed: v.sensitive_large_gpu_installed(),
+            // (turned on and off with the compact model's switch)
+            enabled: v.sensitive,
+            can_disable: false,
+            dir,
+            files,
+            mirrors,
+            download: shown(&v.sensitive_large_gpu_download_status()),
+        }
+        .entry()
+    }
+
     /// The enhancement models (Super Resolution), when this build has them.
     #[cfg(feature = "enhance")]
     fn enhance_entries(&self) -> Vec<Entry> {
@@ -421,9 +505,11 @@ impl Session {
 
     fn model_entries(&self) -> Vec<Entry> {
         #[allow(unused_mut)]
-        let mut v = vec![self.sam3_entry(), self.search_entry(), self.text_entry(), self.faces_entry(), self.sensitive_entry()];
+        let mut v =
+            vec![self.sam3_entry(), self.search_entry(), self.text_entry(), self.faces_entry(), self.sensitive_entry(), self.sensitive_large_entry()];
         if self.vision.sensitive_gpu_available() {
             v.push(self.sensitive_gpu_entry());
+            v.push(self.sensitive_large_gpu_entry());
         }
         #[cfg(feature = "enhance")]
         v.extend(self.enhance_entries());
@@ -455,6 +541,8 @@ impl Session {
             FACES => self.vision.start_faces_download(&self.activity),
             NSFW => self.vision.start_sensitive_download(&self.activity),
             NSFW_GPU => self.vision.start_sensitive_gpu_download(&self.activity),
+            NSFW_LARGE => self.vision.start_sensitive_large_download(&self.activity),
+            NSFW_LARGE_GPU => self.vision.start_sensitive_large_gpu_download(&self.activity),
             other => self.enhancer.start_download(other, &self.activity),
         }
     }
@@ -468,6 +556,8 @@ impl Session {
             FACES => self.vision.cancel_faces_download(),
             NSFW => self.vision.cancel_sensitive_download(),
             NSFW_GPU => self.vision.cancel_sensitive_gpu_download(),
+            NSFW_LARGE => self.vision.cancel_sensitive_large_download(),
+            NSFW_LARGE_GPU => self.vision.cancel_sensitive_large_gpu_download(),
             other => self.enhancer.cancel_download(Some(other)),
         }
     }

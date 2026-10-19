@@ -158,6 +158,44 @@ pub const NSFW_GPU_PARTS: &[OcrPart] = &[OcrPart {
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub const NSFW_GPU_PARTS: &[OcrPart] = &[];
 
+/// The large sensitive-content classifier (AdamCodd's ViT-B/16 at 384 px, Apache-2.0): its int8 ONNX export, pinned
+/// to a commit, in the `large` folder beside the compact model's file (which has the same name).
+pub const NSFW_LARGE_PARTS: &[OcrPart] = &[OcrPart {
+    dir: "large",
+    files: &[FileSpec {
+        name: "model_int8.onnx",
+        size: Some(88_500_985),
+        sha256: Some("d25aa73fe1eec78459e35ff911e2af98f652ee919b48d9c54316c86d5ff435fa"),
+        max: 88_500_985,
+    }],
+    default_mirror: "https://huggingface.co/AdamCodd/vit-base-nsfw-detector/resolve/8587de998f441aac03fdd57a85d2e4cb808c7d64/onnx",
+}];
+
+/// The large classifier for a GPU (a Mac, an iPhone): the original weights, pinned to the same commit; a download of
+/// its own, beside the large CPU one in the same folder; none where there is no GPU to run it.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub const NSFW_LARGE_GPU_PARTS: &[OcrPart] = &[OcrPart {
+    dir: "large",
+    files: &[FileSpec {
+        name: "model.safetensors",
+        size: Some(344_391_328),
+        sha256: Some("266efb8bf67c1e865a577222fbbd6ddb149b9e00ba0d2b50466a034837f026a4"),
+        max: 344_391_328,
+    }],
+    default_mirror: "https://huggingface.co/AdamCodd/vit-base-nsfw-detector/resolve/8587de998f441aac03fdd57a85d2e4cb808c7d64",
+}];
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+pub const NSFW_LARGE_GPU_PARTS: &[OcrPart] = &[];
+
+/// Download size of the large classifier.
+pub const NSFW_LARGE_BYTES: u64 = 88_500_985;
+/// Download size of the large classifier's GPU weights.
+pub const NSFW_LARGE_GPU_BYTES: u64 = 344_391_328;
+
+/// The licence the user is shown before downloading the large sensitive-content classifier.
+pub const NSFW_LARGE_LICENCE: (&str, &str) =
+    ("Apache License 2.0 (AdamCodd, vit-base-nsfw-detector)", "https://huggingface.co/AdamCodd/vit-base-nsfw-detector");
+
 /// Download size of the CPU classifier.
 pub const NSFW_BYTES: u64 = 87_333_629;
 /// Download size of the GPU weights.
@@ -194,6 +232,16 @@ pub fn ocr_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<
 /// What to download for the sensitive-content classifier into `dir` (see [`part_downloads`]; folder `nsfw`).
 pub fn nsfw_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
     part_downloads(NSFW_PARTS, "nsfw", dir, env, file)
+}
+
+/// What to download for the large sensitive-content classifier into `dir` (the same folder as [`nsfw_downloads`]).
+pub fn nsfw_large_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
+    part_downloads(NSFW_LARGE_PARTS, "nsfw", dir, env, file)
+}
+
+/// What to download for the large classifier's GPU weights into `dir` (same folder; nothing where there is no GPU).
+pub fn nsfw_large_gpu_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
+    part_downloads(NSFW_LARGE_GPU_PARTS, "nsfw", dir, env, file)
 }
 
 /// What to download for the sensitive-content classifier's GPU weights into `dir` (same folder; nothing where there is no GPU).
@@ -290,6 +338,34 @@ mod tests {
             assert!(gpu.iter().flat_map(|(f, _, _)| f.iter()).all(|f| f.size == Some(f.max) && f.sha256.map(str::len) == Some(64)));
             #[cfg(feature = "onnx")]
             assert!(gpu.iter().flat_map(|(f, _, _)| f.iter()).any(|f| f.name == crate::nsfw::GPU_WEIGHTS_FILE));
+        }
+    }
+
+    #[test]
+    fn the_large_sensitive_content_model_goes_in_its_own_folder_where_the_classifier_looks() {
+        let parts = nsfw_large_downloads(Path::new("/m/nsfw"), Some("https://mirror.example/models"), None);
+        assert_eq!(parts.len(), 1);
+        let (files, mirrors, dir) = &parts[0];
+        assert_eq!(dir, &Path::new("/m/nsfw").join("large"));
+        #[cfg(feature = "onnx")]
+        assert_eq!(files[0].name, crate::nsfw::MODEL_FILE);
+        assert_eq!(mirrors[0], "https://mirror.example/models/nsfw/large");
+        assert!(mirrors[1].contains("/resolve/") && !mirrors[1].contains("/main"));
+        assert_eq!((files[0].size, files[0].sha256.map(str::len)), (Some(NSFW_LARGE_BYTES), Some(64)));
+    }
+
+    #[test]
+    fn the_large_models_gpu_weights_are_pinned_into_the_same_folder() {
+        let gpu = nsfw_large_gpu_downloads(Path::new("/m/nsfw"), None, None);
+        assert_eq!(gpu.len(), NSFW_LARGE_GPU_PARTS.len());
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            let (files, mirrors, dir) = &gpu[0];
+            assert_eq!(dir, &Path::new("/m/nsfw").join("large"));
+            assert_eq!((files[0].size, files[0].sha256.map(str::len)), (Some(NSFW_LARGE_GPU_BYTES), Some(64)));
+            assert!(mirrors[0].contains("/resolve/") && !mirrors[0].contains("/main"));
+            #[cfg(feature = "onnx")]
+            assert_eq!(files[0].name, crate::nsfw::GPU_WEIGHTS_FILE);
         }
     }
 

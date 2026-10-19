@@ -117,6 +117,24 @@ impl Vision {
         false
     }
 
+    /// Whether the large model's CPU file is in place.
+    pub fn sensitive_large_installed(&self) -> bool {
+        #[cfg(feature = "vision")]
+        if let Some(dir) = self.sensitive_dir() {
+            return lightcraft_vision::nsfw::large_cpu_installed(&dir);
+        }
+        false
+    }
+
+    /// Whether the large model's GPU weights are in place.
+    pub fn sensitive_large_gpu_installed(&self) -> bool {
+        #[cfg(feature = "vision")]
+        if let Some(dir) = self.sensitive_dir() {
+            return lightcraft_vision::nsfw::large_gpu_installed(&dir);
+        }
+        false
+    }
+
     /// This device has a GPU the classifier can run on (its weights are offered as a download).
     pub fn sensitive_gpu_available(&self) -> bool {
         cfg!(feature = "vision") && !self.thin && cfg!(any(target_os = "macos", target_os = "ios"))
@@ -240,6 +258,100 @@ impl Vision {
         false
     }
 
+    /// The large model's download state.
+    pub fn sensitive_large_download_status(&self) -> Value {
+        #[cfg(feature = "vision")]
+        {
+            let s = self.sensitive_large_download.status();
+            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
+        }
+        #[cfg(not(feature = "vision"))]
+        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})
+    }
+
+    /// Start downloading the large model. `Ok(false)` when it is here or downloading already.
+    pub fn start_sensitive_large_download(&self, activity: &crate::activity::Activity) -> Result<bool, String> {
+        if !self.sensitive_available() {
+            return Err("checking photos for sensitive content is not available in this build".into());
+        }
+        if self.sensitive_large_installed() {
+            return Ok(false);
+        }
+        #[cfg(feature = "vision")]
+        {
+            let dir = self.sensitive_dir().ok_or("no folder is set for the search models")?;
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            let parts = lightcraft_vision::models::nsfw_large_downloads(&dir, env.as_deref(), self.mirrors_file.as_deref());
+            self.sensitive_large_download.start_parts(
+                "nsfw-large",
+                parts,
+                lightcraft_vision::models::Options::default(),
+                activity,
+                "Sensitive-content model (large)",
+            )
+        }
+        #[cfg(not(feature = "vision"))]
+        {
+            let _ = activity;
+            Ok(false)
+        }
+    }
+
+    /// Stop the large model's download. False when none runs.
+    pub fn cancel_sensitive_large_download(&self) -> bool {
+        #[cfg(feature = "vision")]
+        return self.sensitive_large_download.cancel();
+        #[cfg(not(feature = "vision"))]
+        false
+    }
+
+    /// The large model's GPU weights' download state.
+    pub fn sensitive_large_gpu_download_status(&self) -> Value {
+        #[cfg(feature = "vision")]
+        {
+            let s = self.sensitive_large_gpu_download.status();
+            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
+        }
+        #[cfg(not(feature = "vision"))]
+        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})
+    }
+
+    /// Start downloading the large model's GPU weights. `Ok(false)` when they are here or downloading already.
+    pub fn start_sensitive_large_gpu_download(&self, activity: &crate::activity::Activity) -> Result<bool, String> {
+        if !self.sensitive_gpu_available() {
+            return Err("this device has no GPU the sensitive-content model can run on".into());
+        }
+        if self.sensitive_large_gpu_installed() {
+            return Ok(false);
+        }
+        #[cfg(feature = "vision")]
+        {
+            let dir = self.sensitive_dir().ok_or("no folder is set for the search models")?;
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            let parts = lightcraft_vision::models::nsfw_large_gpu_downloads(&dir, env.as_deref(), self.mirrors_file.as_deref());
+            self.sensitive_large_gpu_download.start_parts(
+                "nsfw-large-gpu",
+                parts,
+                lightcraft_vision::models::Options::default(),
+                activity,
+                "Sensitive-content model (large, GPU)",
+            )
+        }
+        #[cfg(not(feature = "vision"))]
+        {
+            let _ = activity;
+            Ok(false)
+        }
+    }
+
+    /// Stop the large model's GPU weights' download. False when none runs.
+    pub fn cancel_sensitive_large_gpu_download(&self) -> bool {
+        #[cfg(feature = "vision")]
+        return self.sensitive_large_gpu_download.cancel();
+        #[cfg(not(feature = "vision"))]
+        false
+    }
+
     /// Which weights check photos: the choice, what is installed and what runs now (`cpu`, `gpu`, or null before the model loads).
     pub fn sensitive_backend_status(&self) -> Value {
         let using = self.shared.classifier.try_lock().ok().and_then(|c| c.as_ref().map(|c| c.backend()));
@@ -249,6 +361,8 @@ impl Vision {
             "cpuInstalled": self.sensitive_cpu_installed(),
             "gpuInstalled": self.sensitive_gpu_installed(),
             "gpuAvailable": self.sensitive_gpu_available(),
+            "largeInstalled": self.sensitive_large_installed() || self.sensitive_large_gpu_installed(),
+            "largeGpuInstalled": self.sensitive_large_gpu_installed(),
         })
     }
 
@@ -278,10 +392,9 @@ impl Vision {
                     SENSITIVE_BYTES as f64 / 1e6
                 ));
             }
-            Ok((
-                ClassifierProvider { injected: None, dir: self.sensitive_dir(), backend: self.sensitive_backend.clone() },
-                lightcraft_vision::nsfw::ENGINE.to_string(),
-            ))
+            let prefer = lightcraft_vision::nsfw::Prefer::from_name(&self.sensitive_backend).unwrap_or_default();
+            let engine = self.sensitive_dir().map_or(lightcraft_vision::nsfw::ENGINE, |d| lightcraft_vision::nsfw::engine_for(&d, prefer));
+            Ok((ClassifierProvider { injected: None, dir: self.sensitive_dir(), backend: self.sensitive_backend.clone() }, engine.to_string()))
         }
         #[cfg(not(feature = "vision"))]
         Err("checking photos for sensitive content is not available in this build".into())
@@ -295,6 +408,14 @@ pub(super) fn acquire_classifier(shared: &Shared, provider: &ClassifierProvider)
         return Ok(c.clone());
     }
     let mut slot = shared.classifier.lock().unwrap_or_else(PoisonError::into_inner);
+    // (a model downloaded or deleted since it was loaded changes which one `Auto` runs)
+    #[cfg(feature = "vision")]
+    if let (Some(c), Some(dir)) = (slot.as_ref(), provider.dir.as_deref()) {
+        let prefer = lightcraft_vision::nsfw::Prefer::from_name(&provider.backend).unwrap_or_default();
+        if c.engine() != lightcraft_vision::nsfw::engine_for(dir, prefer) {
+            *slot = None;
+        }
+    }
     if let Some(c) = slot.as_ref() {
         shared.touch();
         return Ok(c.clone());
@@ -576,5 +697,8 @@ mod backend_tests {
         let ids: Vec<String> = s.models().into_iter().map(|m| m.id).collect();
         assert_eq!(ids.iter().any(|i| i == "nsfw-gpu"), s.vision.sensitive_gpu_available(), "{ids:?}");
         assert!(ids.iter().any(|i| i == "nsfw"), "the CPU model is always listed: {ids:?}");
+        assert!(ids.iter().any(|i| i == "nsfw-large"), "the large model is always listed: {ids:?}");
+        assert_eq!((st["largeInstalled"].as_bool(), st["largeGpuInstalled"].as_bool()), (Some(false), Some(false)));
+        assert_eq!(ids.iter().any(|i| i == "nsfw-large-gpu"), s.vision.sensitive_gpu_available(), "{ids:?}");
     }
 }

@@ -68,6 +68,14 @@ hidden. It only suggests: nothing is hidden or changed until the person chooses.
   `lightcraft-server model download --accept-licences --sensitive`). The server checks each user's smart previews and
   devices without the model (iOS, the web) list its flags (`GET /api/sensitive`).
 
+**Large model.** Settings ▸ AI Models ▸ NSFW Image Detection (Large) (about 89 MB, AdamCodd's `vit-base-nsfw-detector`,
+Apache License 2.0; `models.download {id: "nsfw-large"}`; on a server `lightcraft-server model download
+--accept-licences --sensitive-large`) is a larger-input model (384 px instead of 224) with fewer false alarms. Once it is
+installed it checks photos instead of the compact one (a **Run On** choice of CPU or GPU keeps the compact one), on the
+CPU, about four times slower per photo; its scores are kept apart (`sensitive-adamcodd-nsfw-384.bin`), so every photo is
+checked again. Removing it goes back to the compact model. Not yet: GPU weights for it, an admin-page button (the server
+uses the command line).
+
 The scores are derived data, like the search vectors: `<library>/search/sensitive-falconsai-nsfw.bin` (server:
 `<data>/users/<name>/search/`), keyed by content, never in the catalog, never sent anywhere by a device. A photo scored
 0.7 or more is flagged.

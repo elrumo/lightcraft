@@ -341,6 +341,12 @@ pub struct Vision {
     /// The GPU weights' own download.
     #[cfg(feature = "vision")]
     sensitive_gpu_download: crate::download::Downloader,
+    /// The large classifier's download.
+    #[cfg(feature = "vision")]
+    sensitive_large_download: crate::download::Downloader,
+    /// The large classifier's GPU weights' download.
+    #[cfg(feature = "vision")]
+    sensitive_large_gpu_download: crate::download::Downloader,
     /// Which weights check photos: `auto` (the GPU's when there are any and a GPU), `cpu` or `gpu` (saved with the library).
     pub sensitive_backend: String,
 }
@@ -392,6 +398,10 @@ impl Default for Vision {
             sensitive_download: crate::download::Downloader::default(),
             #[cfg(feature = "vision")]
             sensitive_gpu_download: crate::download::Downloader::default(),
+            #[cfg(feature = "vision")]
+            sensitive_large_download: crate::download::Downloader::default(),
+            #[cfg(feature = "vision")]
+            sensitive_large_gpu_download: crate::download::Downloader::default(),
             sensitive_backend: "auto".to_string(),
         }
     }

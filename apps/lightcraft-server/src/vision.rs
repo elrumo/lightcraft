@@ -1415,8 +1415,9 @@ pub fn download_face_models(dir: &Path, mirrors_file: Option<&Path>) -> Result<(
     Ok(())
 }
 
-/// `lightcraft-server model download --sensitive`: fetches the sensitive-content model into `<dir>/nsfw`.
-pub fn download_sensitive_model(dir: &Path, mirrors_file: Option<&Path>) -> Result<(), String> {
+/// `lightcraft-server model download --sensitive[-large]`: fetches the sensitive-content model (the `large` one,
+/// when asked) into `<dir>/nsfw`.
+pub fn download_sensitive_model(dir: &Path, mirrors_file: Option<&Path>, large: bool) -> Result<(), String> {
     use lightcraft_vision::models::{self, Options, Progress};
     let env = std::env::var(models::MIRRORS_ENV).ok();
     let cancel = AtomicBool::new(false);
@@ -1427,7 +1428,13 @@ pub fn download_sensitive_model(dir: &Path, mirrors_file: Option<&Path>) -> Resu
             eprintln!("{}: {:.1} / {:.1} MB", p.file, p.done as f64 / 1e6, p.total as f64 / 1e6);
         }
     };
-    for (files, mirrors, to) in models::nsfw_downloads(&dir.join(lightcraft_engine::vision::SENSITIVE_DIR), env.as_deref(), mirrors_file) {
+    let nsfw = dir.join(lightcraft_engine::vision::SENSITIVE_DIR);
+    let sets = if large {
+        models::nsfw_large_downloads(&nsfw, env.as_deref(), mirrors_file)
+    } else {
+        models::nsfw_downloads(&nsfw, env.as_deref(), mirrors_file)
+    };
+    for (files, mirrors, to) in sets {
         models::download(files, &mirrors, &to, &Options::default(), &cancel, &mut report).map_err(|e| e.to_string())?;
     }
     Ok(())
