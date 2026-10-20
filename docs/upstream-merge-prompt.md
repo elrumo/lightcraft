@@ -9,7 +9,6 @@ Bring the latest changes from the upstream repository https://github.com/storyto
 
 ## Ground rules
 
-- **Never push.** Not main, not a branch, not a tag. Commit locally only. Never force anything.
 - **Read first:** `CLAUDE.md`, `plan/STATUS.md`, `ROADMAP.md`, and my memory notes `upstream-merge.md`,
   `upstream-batches-2026-10-17.md`, `shared-main-checkout.md`, `one-rendering-no-process-versions.md`,
   `disk-space-builds.md`. They record merge policies and traps from earlier merges.
