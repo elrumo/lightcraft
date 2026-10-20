@@ -310,10 +310,13 @@ pub(crate) fn with_starting_colour(raw: &mut RawImage, bytes: &[u8]) {
     let lens = crate::lens_profiles::for_raw(&raw.info(), || lightcraft_meta::extract(bytes));
     let list3 = raw.opcodes.list3.clone();
     raw.opcodes.list3.retain(|op| !op.is_lens_correction());
-    let tags = starting_colour_tags(raw, bytes);
-    // (the transform the photo opens with: `starting_colour_tags` filled in any measured matrices)
-    let t = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
-    let vignette = if lens.is_none() { jpeg_vignetting(raw, bytes, &t).and_then(|l| vignette_opcode(raw, l.vignette.as_ref()?)) } else { None };
+    let (tags, vignette) = sharing_proxies(|| {
+        let tags = starting_colour_tags(raw, bytes);
+        // (the transform the photo opens with: `starting_colour_tags` filled in any measured matrices)
+        let t = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
+        let vignette = if lens.is_none() { jpeg_vignetting(raw, bytes, &t).and_then(|l| vignette_opcode(raw, l.vignette.as_ref()?)) } else { None };
+        (tags, vignette)
+    });
     raw.opcodes.list3 = list3;
     raw.opcodes.list3.extend(vignette);
     if let Some(tags) = tags {
@@ -1114,25 +1117,99 @@ fn proxies(
     lens: Option<&LensGeometry>,
 ) -> Option<(Rgb32f, Rgb32f, Vec<bool>)> {
     let edge = (2 * size).max(384) as u32;
+    let base = proxy_base(raw, bytes, edge)?;
+    let crop = raw.crop.clipped(raw.active_area.width, raw.active_area.height);
+    // a preview below `min_fraction` of the crop's long edge (or under 384 px) is refused; 0 = any
+    if min_fraction > 0.0 && (base.source_long as f64) < (min_fraction * crop.width.max(crop.height) as f64).max(384.0) {
+        return None;
+    }
+    proxies_with(raw, base.reference.clone(), base.sensor.as_ref().map(|(k, s, c)| (*k, s.clone(), c.clone())), transform, size, lens)
+}
+
+/// What [`proxies`] pairs before any colour transform: the camera JPEG decoded to fit `edge` (working space), its
+/// long edge as stored, and the sensor's binned proxy at `edge` with its clip mask (and the binning factor).
+struct ProxyBase {
+    key: (usize, usize, u32, usize, usize),
+    reference: Rgb32f,
+    source_long: usize,
+    sensor: Option<(usize, Rgb32f, Rgb32f)>,
+}
+
+thread_local! {
+    /// The [`ProxyBase`] of the decode in a [`sharing_proxies`] scope on this thread.
+    static PROXY_BASE: std::cell::RefCell<Option<std::rc::Rc<ProxyBase>>> = const { std::cell::RefCell::new(None) };
+    static SHARING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run one decode's colour fits (`f`: the starting colour, the JPEG vignetting) with the part of [`proxies`] that no
+/// colour transform touches built once among them: they decode the same camera JPEG and bin the same sensor, each
+/// then through its own transform, and building it twice was a quarter of a CR3's preview decode (~250 ms of 1.1 s on
+/// an M1 Max). The fits come out as they did; outside a scope nothing is kept.
+pub(crate) fn sharing_proxies<T>(f: impl FnOnce() -> T) -> T {
+    struct End(bool);
+    impl Drop for End {
+        fn drop(&mut self) {
+            SHARING.with(|s| s.set(self.0));
+            if !self.0 {
+                PROXY_BASE.with(|b| b.borrow_mut().take());
+            }
+        }
+    }
+    let _end = End(SHARING.with(|s| s.replace(true)));
+    f()
+}
+
+/// [`proxies`]' transform-free part for `raw` and its file `bytes` (see [`ProxyBase`]); shared within a
+/// [`sharing_proxies`] scope.
+fn proxy_base(raw: &RawImage, bytes: &[u8], edge: u32) -> Option<std::rc::Rc<ProxyBase>> {
+    // (one decode's raw and bytes: the scope ends with the decode, so an address can't stand for another file)
+    let key = (bytes.as_ptr() as usize, bytes.len(), edge, raw.width, raw.height);
+    let sharing = SHARING.with(std::cell::Cell::get);
+    if sharing && let Some(b) = PROXY_BASE.with(|b| b.borrow().clone()).filter(|b| b.key == key) {
+        return Some(b);
+    }
     let decoded = crate::files::decode_raw_preview(
         bytes,
         lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: FIT_PREVIEW_MAX_PIXELS },
         None,
     )?;
+    let source_long = decoded.source_width.max(decoded.source_height) as usize;
     let crop = raw.crop.clipped(raw.active_area.width, raw.active_area.height);
-    // a preview below `min_fraction` of the crop's long edge (or under 384 px) is refused; 0 = any
-    if min_fraction > 0.0 && (decoded.source_width.max(decoded.source_height) as f64) < (min_fraction * crop.width.max(crop.height) as f64).max(384.0)
-    {
-        return None;
+    let k = proxy_bin(&crop, edge);
+    let sensor = sensor_proxy(raw, k, edge as usize).map(|s| {
+        let clipped = clip_mask(&s);
+        (k, s, clipped)
+    });
+    let base = std::rc::Rc::new(ProxyBase { key, reference: decoded.to_working(), source_long, sensor });
+    if sharing {
+        PROXY_BASE.with(|b| *b.borrow_mut() = Some(base.clone()));
     }
-    proxies_from(raw, decoded.to_working(), transform, size, lens)
+    Some(base)
+}
+
+/// The binning factor of the sensor proxy for a crop of `crop` at `edge` px: fixed and bounded, so the selected
+/// look cannot depend on thumbnail/export resolution.
+fn proxy_bin(crop: &lightcraft_raw::Rect, edge: u32) -> usize {
+    (crop.width.max(crop.height).div_ceil(edge as usize).max(2)).div_ceil(2) * 2
 }
 
 /// [`proxies`] against `reference`, the camera JPEG or another render of the photo in the sensor's orientation (linear
 /// Rec.2020).
 fn proxies_from(
     raw: &RawImage,
+    reference: Rgb32f,
+    transform: &CameraTransform,
+    size: usize,
+    lens: Option<&LensGeometry>,
+) -> Option<(Rgb32f, Rgb32f, Vec<bool>)> {
+    proxies_with(raw, reference, None, transform, size, lens)
+}
+
+/// [`proxies_from`], with the sensor proxy, its clip mask and binning factor already made when `sensor` has them.
+fn proxies_with(
+    raw: &RawImage,
     mut reference: Rgb32f,
+    sensor: Option<(usize, Rgb32f, Rgb32f)>,
     transform: &CameraTransform,
     size: usize,
     lens: Option<&LensGeometry>,
@@ -1157,9 +1234,15 @@ fn proxies_from(
         reference = reference.into_crop(x, y, w, h);
     }
     // Fixed, bounded proxy: the selected look cannot depend on thumbnail/export resolution.
-    let k = (crop.width.max(crop.height).div_ceil(edge as usize).max(2)).div_ceil(2) * 2;
-    let mut sensor = sensor_proxy(raw, k, edge as usize)?;
-    let mut clipped = clip_mask(&sensor);
+    let (k, mut sensor, mut clipped) = match sensor {
+        Some(made) => made,
+        None => {
+            let k = proxy_bin(&crop, edge);
+            let s = sensor_proxy(raw, k, edge as usize)?;
+            let c = clip_mask(&s);
+            (k, s, c)
+        }
+    };
     // The camera may have corrected its JPEG with the lens warp the file carries (Nikon Z lenses always, at up to 9 %
     // zoom; other cameras when their correction setting is on): the sensor moved into that geometry is a candidate,
     // kept below when it lines up with the JPEG better than the uncorrected one.
@@ -3292,6 +3375,35 @@ mod tests {
     }
 
     /// A render of the photo stands in for its camera JPEG: the public EOS R6 sample against its own embedded JPEG,
+    /// One decode's fits share the proxies' transform-free part (`sharing_proxies`) and come out exactly as when each
+    /// builds its own: the starting colour, the look, Camera Matching and the JPEG vignetting of a real CR3 (skipped
+    /// without the corpus).
+    #[test]
+    fn corpus_cr3_fits_alike_with_shared_proxies() {
+        let path = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw/cr3-canon-r6-raw.cr3");
+        let Ok(bytes) = std::fs::read(&path) else {
+            lightcraft_testkit::skip!(Corpus, "{} absent", path.display());
+            return;
+        };
+        let fits = |share: bool| {
+            let mut raw = lightcraft_raw::decode(&bytes).unwrap();
+            let mut run = || {
+                let (xy, t, look, matched) = starting_colour(&mut raw, &bytes, None, None);
+                let vignetting = jpeg_vignetting(&raw, &bytes, &t);
+                format!("{xy:?} {t:?} {look:?} {matched:?} {vignetting:?}")
+            };
+            if share { sharing_proxies(run) } else { run() }
+        };
+        let (alone, shared) = (fits(false), fits(true));
+        assert!(alone.contains("Some("), "the CR3 has a look and a vignetting to compare: {alone}");
+        assert_eq!(alone, shared);
+        // (and nothing stays shared once the scope is over)
+        assert!(PROXY_BASE.with(|b| b.borrow().is_none()));
+    }
+
     /// taken out and turned upright as an export would be, gives pairs and a table (skipped without the corpus).
     #[test]
     fn corpus_cr3_gives_neutral_pairs_against_an_upright_render() {

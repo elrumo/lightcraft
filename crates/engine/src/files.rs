@@ -499,10 +499,13 @@ fn load_bytes_now(
         // the source's segmentation mattes (DNG semantic masks), read while the starting colour is fitted
         let ((xy, t, camera_look, camera_match, lens), mattes) = rayon::join(
             || {
-                let (xy, t, look, camera_match) = crate::camera_preview::starting_colour(&mut raw, &bytes, lens_geometry.as_ref(), lens.as_ref());
-                // a raw without lens data of its own: the vignetting its camera corrected in its JPEG
-                let lens = lens.or_else(|| crate::camera_preview::jpeg_vignetting(&raw, &bytes, &t));
-                (xy, t, look, camera_match, lens)
+                // (the fits below pair the same camera JPEG and sensor proxy: built once)
+                crate::camera_preview::sharing_proxies(|| {
+                    let (xy, t, look, camera_match) = crate::camera_preview::starting_colour(&mut raw, &bytes, lens_geometry.as_ref(), lens.as_ref());
+                    // a raw without lens data of its own: the vignetting its camera corrected in its JPEG
+                    let lens = lens.or_else(|| crate::camera_preview::jpeg_vignetting(&raw, &bytes, &t));
+                    (xy, t, look, camera_match, lens)
+                })
             },
             || dng_mattes(&bytes, &info),
         );
