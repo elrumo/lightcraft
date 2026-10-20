@@ -188,10 +188,23 @@ A CR3 of a model with measured spectral matrices (EOS R, RP, R5, R5 Mark II, R6,
 therefore no longer fits its JPEG: it starts from those matrices and LightCraft's neutral tone (`neutral_look` in
 `crates/engine/src/camera_preview.rs`). The curve raises scene luminance to a contrast power about grey and rolls it off
 to white, `t = 0.18 · (x · 2^e / 0.18)^c`, display `t / (1 + t)` with a soft black point (a smooth knee 0.004 wide), with
-exposure `e` = 1.494 EV and contrast `c` = 1.65.
-These two numbers were set by least squares against the median Lightroom brightness of the 19 photos per quarter stop
-of scene luminance: from 6 stops under grey to 3 over the curve stays within 1.9 L\* of it (a four-parameter form with
-a white point and a toe did no better than 1.7). Applied to luminance alone, a curve that steep leaves highlights too
+exposure `e` = 1.30 EV and contrast `c` = 1.80.
+These two numbers were first set (1.494 EV, 1.65) by least squares against the median Lightroom brightness of the 19
+photos per quarter stop of scene luminance, within 1.9 L\* from 6 stops under grey to 3 over (a four-parameter form
+with a white point and a toe did no better than 1.7). That was on frames without the vignetting correction a CR3 now
+takes from its camera JPEG (below): with it, the same curve rendered the 19 photos 2.7 L\* too bright, near-neutral
+pixels +3 to +6 L\* between Lightroom's L\* 10 and 40. Refitted on whole renders against the same exports (2026-10-21;
+aligned to Lightroom's lens-corrected framing at 240 px, near-neutral pixels by band of Lightroom's L\*):
+
+| Neutral tone | ΔL\* | near-neutral ΔL\* by Lightroom L\* 0–10 / 10–20 / 20–30 / 30–40 / 40–60 / 60–80 / 80–100 | ΔE00 |
+|---|---|---|---|
+| 1.494 EV, 1.65 (before) | +2.66 | +3.3 / +5.9 / +4.8 / +4.7 / +3.1 / +1.6 / +0.9 | 3.96 |
+| 1.30 EV, 1.80 | −0.04 | +0.8 / +1.3 / +0.2 / +0.3 / −0.4 / +0.1 / +1.0 | 3.34 (3.30 with the R6 table refitted on it) |
+
+15 of the 19 photos come closer; the 4 that were already as dark as Lightroom's or darker go a little further
+(largest 2V2A5338, 3.19 → 4.42). Two later R6 photos exported with Lightroom's Camera Standard profile instead of
+Adobe Color, not part of the fit, read 2.7 L\* darker than Lightroom's (Camera Standard renders brighter): ΔE00 2.84 /
+2.70 → 3.15 / 3.49. Applied to luminance alone, a curve that steep leaves highlights too
 colourful (chroma against Lightroom ×1.76 above L\* 75) and midtones too dull (×0.76); applied per channel
 (`tone::channel_chroma`) it over-colours the shadows (×1.34). The chroma curve is therefore `0.926 · k^0.765` of the
 per-channel one `k`, which lands within 10% of Lightroom at each of the curve's eight nodes. Nothing of Adobe's was
@@ -230,8 +243,9 @@ file's camera JPEG, per-file fit → neutral look, and ΔL\*): EOS R6 Standard 2
 Unchanged: CR2s and CR3s of models without measured matrices keep the per-file fit (no Lightroom references for them
 yet); a monochrome picture style now renders in colour on these models, as in Lightroom; white balance is in Kelvin
 through the matrices as before. The look is a property of the decoded source;
-`LOOK_VERSION` 11 (12 with the EOS R6 table, 13 refitted in a fixed order) rebuilds the smart previews of raws and
-`RENDER_CACHE_VERSION` 67 (68, 69) redraws renders. A sync server needs the new build and Rebuild all previews.
+`LOOK_VERSION` 11 (12 with the EOS R6 table, 13 refitted in a fixed order, 17 with the tone refitted on
+vignetting-corrected frames) rebuilds the smart previews of raws and `RENDER_CACHE_VERSION` 67 (68, 69, 75) redraws
+renders. A sync server needs the new build and Rebuild all previews.
 
 ### The camera's look as a profile: Camera Look
 

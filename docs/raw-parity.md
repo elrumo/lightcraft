@@ -1,6 +1,6 @@
 # RAW parity: cameras, formats, demosaic, colour and lens profiles
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-17 · **Change:** minor (Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (the EOS R6 neutral tone refitted on vignetting-corrected frames, ΔE00 against Lightroom 3.96 → 3.30; Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
 
 Raw processing is the deepest single dimension of Lightroom parity: a photographer whose camera
 does not decode, or decodes with the wrong colour, cannot switch. This document measures it model by
@@ -230,7 +230,8 @@ sample files. A pointer for contributors, not legal advice.
 - Against Lightroom itself (few): Canon EOS R6 CR3s with custom picture styles and Auto Lighting Optimizer (19
   photos, Lightroom for iOS default exports): mean ΔE00 5.59 → 4.63, ΔL\* −1.8 → −0.7, chroma ×0.91 → ×1.04
   (neutral look, `camera-preview-colour.md`), 4.13 with the R6's hue/saturation table fitted to those exports
-  (held out by scene 5.72 → 5.40); Sony DRO median ΔE76 7.5 → 3.3; Olympus E-1 vs Lightroom Classic
+  (held out by scene 5.72 → 5.40); the neutral tone refitted once CR3s took their camera's vignetting correction
+  (it had rendered them 2.7 L\* too bright): ΔL\* +2.7 → −0.0, ΔE00 3.96 → 3.30 (aligned at 240 px, 2026-10-21); Sony DRO median ΔE76 7.5 → 3.3; Olympus E-1 vs Lightroom Classic
   ΔE00 11.25 → 8.30; ProRAW with its gain map ΔE00 19 (the map is on by default anyway: without it, backlit iPhone 17 Pro ProRAWs render far darker than the iPhone shows them). No measurement against
   Adobe Standard across models exists.
 - User evidence: 33 open issues about raw colour or rendering (wrong colours, dark, flat, green,
@@ -301,6 +302,7 @@ Beyond decoding:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | Canon CR3 neutral tone refitted (1.494 EV / 1.65 → 1.30 EV / 1.80) on frames with the camera's vignetting correction, which had made the 19 EOS R6 photos 2.7 L\* brighter than Lightroom: ΔL\* −0.0, ΔE00 3.96 → 3.30; the R6 table refitted on it |
 | 2026-10-18 | patch | X-T30, X-T30 II, X-Pro3, X100V, X-S10 and X-E4 take the X-T3's spectral matrices (same 26.1 MP X-Trans CMOS 4 sensor): an X-T30 raw with a black-and-white (Acros) camera JPEG no longer opens in the muted neutral fallback |
 | 2026-10-15 | minor | Hasselblad 3FR / FFF embedded previews: the uncompressed 8-bit RGB image, handed on as a baseline TIFF (checked on the CC0 H4D-40 FFF, 1217 × 913, and CFV 3FR, 218 × 218, upright through the file's orientation); counts unchanged |
 | 2026-10-15 | minor | Hasselblad 3FR / FFF get their own reader (`crates/raw/src/vendor/hasselblad.rs`): an FFF takes its colour matrix from the original 3FR header in tag `0xC51B` instead of developing with the neutral matrix; RGGB checked against the camera preview on the CC0 H4D-40 FFF and CFV 3FR; counts unchanged |

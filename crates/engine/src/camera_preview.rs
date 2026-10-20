@@ -44,7 +44,8 @@ use lightcraft_raw::{
 /// 15: a CR3's look is fitted to the sensor with the vignetting correction its camera applied to the JPEG
 /// (`jpeg_vignetting`, which the render applies too).
 /// 16: the median Canon tone for a CR3 without an embedded JPEG (`previewless_tone`).
-pub const LOOK_VERSION: u32 = 16;
+/// 17: the neutral tone refitted on frames with that vignetting correction ([`NEUTRAL_TONE`]), the EOS R6 table with it.
+pub const LOOK_VERSION: u32 = 17;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {
@@ -531,10 +532,11 @@ fn clip_mask(camera: &Rgb32f) -> Rgb32f {
 /// LightCraft's neutral raw tone, for a camera JPEG that is no neutral reference ([`neutral_look`]): scene luminance
 /// `x` raised to a contrast power about grey, `t = grey · (x · 2^e / grey)^c`, rolled off to white as `o = t / (1 + t)`
 /// and given a soft black point ([`NEUTRAL_TOE`]). Exposure `e` (EV) and contrast `c` are the curve's two parameters, set so that on 19 Canon EOS R6
-/// photos (custom picture styles, Auto Lighting Optimizer on) the render matches the median brightness of Lightroom's
-/// default export within 2 L* in every quarter stop from 6 stops under grey to 3 over
-/// (`docs/camera-preview-colour.md`). Lightroom's output was measured, nothing of Adobe's read.
-const NEUTRAL_TONE: (f32, f32) = (1.494, 1.65);
+/// photos (custom picture styles, Auto Lighting Optimizer on) the whole render, vignetting correction included, matches
+/// Lightroom's default export: near-neutral pixels within 1.3 L* of it in every band of Lightroom's lightness
+/// (`docs/camera-preview-colour.md`; first set to 1.494 / 1.65 on frames without the correction, which then rendered
+/// 2.7 L* too bright). Lightroom's output was measured, nothing of Adobe's read.
+const NEUTRAL_TONE: (f32, f32) = (1.30, 1.80);
 /// Width of the neutral tone's soft black point: `o` becomes `soft(o)`, `soft(v) = (v + √(v² + w²)) / 2` renormalised
 /// so 0 and 1 stay put (`ToneMap::hdr`'s toe at its zero offset), which darkens the deepest shadows a little.
 const NEUTRAL_TOE: f32 = 0.004;
@@ -3374,17 +3376,17 @@ mod tests {
         assert!(n == 5400 && off * 100 < n, "{n} {off} {worst}");
     }
 
-    /// The neutral tone keeps the brightness it was set to (the median of Lightroom's default exports of 19 EOS R6
-    /// photos, within 2 L*), and its colour follows a per-channel curve softened: more colour in the shadows, less
-    /// toward white.
+    /// The neutral tone keeps the brightness it was refitted to (whole renders of 19 EOS R6 photos against Lightroom's
+    /// default exports, within 1.3 L* in every lightness band), and its colour follows a per-channel curve softened:
+    /// more colour in the shadows, less toward white.
     #[test]
     fn neutral_look_keeps_its_measured_brightness() {
         let look = neutral_look(None).expect("the built-in neutral curve is valid");
         let lstar = |y: f32| if y > 0.008856 { 116.0 * y.cbrt() - 16.0 } else { 903.3 * y };
-        // (EV over grey, Lightroom's median L*)
-        for (ev, want) in [(-5.0, 1.9), (-4.0, 6.4), (-3.0, 19.6), (-2.0, 36.2), (-1.0, 57.8), (0.0, 75.2), (1.0, 88.5), (2.0, 95.9), (3.0, 98.2)] {
+        // (EV over grey, L* of the refitted curve)
+        for (ev, want) in [(-5.0, 1.0), (-4.0, 4.3), (-3.0, 15.1), (-2.0, 31.4), (-1.0, 52.5), (0.0, 74.6), (1.0, 89.9), (2.0, 96.7), (3.0, 99.0)] {
             let got = lstar(look.tone.apply(0.18 * 2f32.powf(ev)));
-            assert!((got - want).abs() < 2.0, "EV {ev}: L* {got} against {want}");
+            assert!((got - want).abs() < 0.6, "EV {ev}: L* {got} against {want}");
         }
         let k = look.tone.chroma();
         assert!(k[0] > 1.3 && k[1] > 1.1 && k[5] < 0.6 && k[7] < 0.1, "{k:?}");
