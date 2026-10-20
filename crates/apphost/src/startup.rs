@@ -231,9 +231,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("lc-apphost-empty-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (seeded, _) = open_session_seeded(Some(&root.join("a")), true);
-        assert!(seeded.catalog.len() > 0);
+        assert!(!seeded.catalog.is_empty());
         let (empty, why) = open_session_seeded(Some(&root.join("b")), false);
-        assert!(why.is_none() && empty.catalog.len() == 0);
+        assert!(why.is_none() && empty.catalog.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
