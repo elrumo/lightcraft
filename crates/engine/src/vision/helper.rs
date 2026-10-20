@@ -143,6 +143,9 @@ pub struct HelperJob {
     base: [AtomicUsize; HelperPart::ALL.len()],
     /// Per part, the milliseconds spent working on it (the rate the time left goes by).
     worked_ms: [AtomicU64; HelperPart::ALL.len()],
+    /// Per part, when the batch being worked on began (its time counts in the rate before the batch is done, or a
+    /// slow first batch would show no speed or time left until its last photo).
+    batch_began: Mutex<[Option<web_time::Instant>; HelperPart::ALL.len()]>,
     failed: AtomicUsize,
     state: Mutex<&'static str>,
     error: Mutex<Option<String>>,
@@ -196,7 +199,8 @@ impl HelperJob {
 
     /// Photos a second this device does for `part`, over the time it spent working on it (once there are a few to tell by).
     pub fn per_second(&self, part: HelperPart) -> Option<f64> {
-        let worked = self.worked_ms[part.slot()].load(Ordering::Relaxed) as f64 / 1000.0;
+        let running = lock(&self.batch_began)[part.slot()].map_or(0.0, |t| t.elapsed().as_secs_f64());
+        let worked = self.worked_ms[part.slot()].load(Ordering::Relaxed) as f64 / 1000.0 + running;
         let mine = self.done(part);
         (mine >= 3 && worked >= 3.0).then(|| mine as f64 / worked)
     }
@@ -331,11 +335,16 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guards:
                 let (shared, cfg, job, scratch, guards) = (&shared, &cfg, &job, &scratch, &guards);
                 let task = move || {
                     let began = web_time::Instant::now();
+                    lock(&job.batch_began)[runner.part().slot()] = Some(began);
                     let worked = match runner {
                         Runner::Previews => work_previews(shared, cfg, job, scratch, &mine, &|| publish(job, guards)),
                         _ => work_part(shared, cfg, job, scratch, runner, &mine),
                     };
+                    // (added and cleared together: the rate never counts a batch twice)
+                    let mut began_at = lock(&job.batch_began);
                     job.worked_ms[runner.part().slot()].fetch_add(u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX), Ordering::Relaxed);
+                    began_at[runner.part().slot()] = None;
+                    drop(began_at);
                     publish(job, guards);
                     worked
                 };
@@ -849,5 +858,23 @@ impl crate::Session {
         let names: Vec<&str> = parts.iter().map(|p| p.key()).collect();
         let _ = self.vision_aux("PUT", "/api/work/settings", Body::Json(json!({"add": names}).to_string()), super::Aux::Work);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_rate_counts_the_batch_being_worked_on() {
+        let job = HelperJob::default();
+        let p = HelperPart::Previews;
+        job.set_progress(p, 0, 100);
+        assert_eq!(job.per_second(p), None, "nothing done yet");
+        job.done[p.slot()].store(10, Ordering::Relaxed);
+        lock(&job.batch_began)[p.slot()] = web_time::Instant::now().checked_sub(Duration::from_secs(10));
+        let rate = job.per_second(p).expect("10 photos in 10 s, batch still running");
+        assert!((0.9..1.1).contains(&rate), "{rate}");
+        assert!(job.progress(p).and_then(|(_, _, eta)| eta).is_some_and(|e| (80..100).contains(&e)));
     }
 }
