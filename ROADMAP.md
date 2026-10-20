@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-19 · **Change:** minor (a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-20 · **Change:** minor (checklist recount 84.3% of 554 rows after the colour mixer's fit to Lightroom exports and Calibration ✅ → 🟡; a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -12,7 +12,7 @@ from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are 
 
 | | Value | Kind |
 |---|---:|---|
-| **Feature breadth** (checklist) | **84.3%** of 550 rows (P0 98.3%, P1 94.5%, P2 60.0%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
+| **Feature breadth** (checklist) | **84.3%** of 554 rows (P0 98.0%, P1 93.9%, P2 61.2%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
 | **Feature breadth** (weighted by use) | **~77%** | estimated |
 | **Ready for real work** (full target) | **~61%** (56–66%) | estimated: weighted sum over the dimensions |
 | **Mainstream practitioner** | **~51%** (46–56%) | estimated |
@@ -227,6 +227,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Checklist recount: 84.3% of 554 rows (P0 98.0%, P1 93.9%, P2 61.2%); Calibration ✅ → 🟡 (unlike Lightroom's), the colour mixer fitted to Lightroom single-slider exports |
 | 2026-10-19 | minor | Removed the mentions of a native app that moved to its own repository; headline numbers unchanged |
 | 2026-10-16 | minor | Browser build: Export no longer runs on the page's thread (each rendered photo is made on a Web Worker, ✕ stops it at once): new checklist row LR-BEHAV-WEB-EXPORT 🟡, 549 → 550 rows, P1 94.8% → 94.5%; other numbers unchanged |
 | 2026-10-16 | minor | Fork additions: Lightroom albums import (a Lightroom cloud library's or a Classic catalog's albums, holding the photos already in the library) |

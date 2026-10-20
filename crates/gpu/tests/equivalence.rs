@@ -157,6 +157,12 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.mixer.orange.hue = 30.0;
             s.mixer.green.lum = 40.0;
         }),
+        // Blue's Hue keeps part of the luminance, its Luminance reshapes the channels
+        ("colour mixer: blue", |s| {
+            s.mixer.blue.hue = 50.0;
+            s.mixer.blue.lum = -50.0;
+            s.mixer.aqua.sat = 40.0;
+        }),
         ("point color", |s| {
             use lightcraft_develop::PointColor;
             s.point_colors = vec![

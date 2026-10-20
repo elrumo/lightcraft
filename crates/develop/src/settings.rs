@@ -301,8 +301,9 @@ pub struct Hsl {
 
 /// The 8 colour-mixer bands in Lightroom order.
 pub const MIXER_BANDS: [&str; 8] = ["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"];
-/// Centre hue of each band in degrees (sRGB-ish HSV hue).
-pub const MIXER_HUES: [f64; 8] = [0.0, 30.0, 60.0, 120.0, 180.0, 225.0, 270.0, 315.0];
+/// Centre hue of each band in degrees (sRGB-ish HSV hue). Orange, yellow, aqua and blue are fitted
+/// to where Lightroom's sliders act (`lightcraft_pipeline::colorops`, the mixer constants).
+pub const MIXER_HUES: [f64; 8] = [0.0, 27.0, 49.0, 120.0, 154.0, 231.0, 270.0, 315.0];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

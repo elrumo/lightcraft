@@ -50,32 +50,69 @@ pub fn band_weights(h: f32) -> [f32; 8] {
     w
 }
 
-/// Hue rotation (radians) of a colour-mixer band at ±100.
-pub const MIXER_HUE: f32 = 1.0;
+// The mixer's band centres ([`MIXER_HUES`]) and the constants below are fitted to Lightroom's
+// single-slider exports (Hue +50, Saturation −50, Luminance −50 of Orange, Green and Blue on an
+// iPhone ProRAW and two EOS R6 CR3s, 2026-10-20; `docs/parity-checklist.md` → LR-EDIT-COLOR-MIXER-HSL). Only Orange
+// and Blue had pixels to measure: the other bands keep the earlier values, and the slider halves
+// that weren't exported (Hue −, Saturation +, Luminance +) follow the fitted half.
+
+/// Hue rotation (radians) of each colour-mixer band at ±100.
+pub const MIXER_HUE: [f32; 8] = [1.0, 0.8, 1.0, 1.0, 1.0, 1.26, 1.0, 1.0];
+/// Share of a Hue shift's luminance change that is undone (at the same brightest channel): a sky
+/// keeps its lightness as it turns purple, an orange lightens towards yellow as plain HSV does.
+pub const MIXER_HUE_KEEP_Y: [f32; 8] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0];
 /// Gain on the encoded colour of a colour-mixer band at Luminance ±100 (`1 ± MIXER_LUM`).
-pub const MIXER_LUM: f32 = 0.4;
+pub const MIXER_LUM: [f32; 8] = [0.4, 0.475, 0.4, 0.4, 0.4, 0.725, 0.4, 0.4];
+/// How much Luminance also reshapes the channels under the brightest one at ±100 (exponent
+/// `exp(−k·d)`): darkening a sky deepens its blue, brightening washes it out.
+pub const MIXER_LUM_SHAPE: [f32; 8] = [0.0, 0.31, 0.0, 0.0, 0.0, 1.19, 0.0, 0.0];
+/// Lowering Saturation moves a colour towards a grey this far from its brightest channel towards
+/// its luminance (0 keeps the brightest channel, 1 the luminance).
+pub const MIXER_SAT_GREY: f32 = 0.53;
 /// Encoding the mixer works in (display-linear → gamma, as the HSL panel's own model).
 const MIXER_GAMMA: f32 = 2.2;
 
 /// The colour mixer's step on a display-linear colour: Saturation, Hue and Luminance as HSV
-/// operations on the gamma-encoded colour, not as OkLCh ones. Lightroom's HSL panel behaves this
-/// way: lowering a band's Saturation keeps its brightest channel, so a blue sky turns paler *and
-/// lighter* (an OkLab chroma change at constant lightness leaves it as dark as it was), and a Hue
-/// shift keeps the colour's value, so blue towards aqua gets lighter. `dh` is the hue rotation in
-/// radians, `ds` the saturation change (−1…), `dl` the gain − 1 (all already weighted by the bands).
+/// operations on the gamma-encoded colour, not as OkLCh ones, as Lightroom's HSL panel behaves.
+/// Lowering a band's Saturation moves it halfway from its brightest channel to its luminance, so a
+/// blue sky turns paler and somewhat lighter; a Hue shift keeps the colour's value (blue towards
+/// aqua gets lighter), `keep` of its luminance change undone; Luminance is a gain on the encoded
+/// colour plus a reshaping under its brightest channel (exponent `exp(−dp)`), so a darkened sky is
+/// also a deeper blue. `dh` is the hue rotation in radians, `ds` the saturation change (−1…), `dl`
+/// the gain − 1 (all already weighted by the bands).
 #[inline]
-pub fn mix_hsv(rgb: [f32; 3], dh: f32, ds: f32, dl: f32) -> [f32; 3] {
-    let g = rgb.map(|v| v.max(0.0).powf(1.0 / MIXER_GAMMA));
-    let vmax = g[0].max(g[1]).max(g[2]);
-    let mut g = g.map(|x| (vmax + (x - vmax) * (1.0 + ds)).max(0.0));
+pub fn mix_hsv(rgb: [f32; 3], dh: f32, ds: f32, dl: f32, dp: f32, keep: f32) -> [f32; 3] {
+    let y = lightcraft_color::luminance_2020;
+    let max3 = |c: [f32; 3]| c[0].max(c[1]).max(c[2]);
+    let lin = rgb.map(|v| v.max(0.0));
+    let mut g = lin.map(|v| v.powf(1.0 / MIXER_GAMMA));
+    if ds != 0.0 {
+        let vmax = max3(g);
+        let grey = vmax + (y(lin).max(0.0).powf(1.0 / MIXER_GAMMA) - vmax) * MIXER_SAT_GREY;
+        g = g.map(|x| (grey + (x - grey) * (1.0 + ds)).max(0.0));
+    }
+    let mut lin = g.map(|x| x.powf(MIXER_GAMMA));
     if dh != 0.0 {
         let [h, s, v] = rgb_to_hsv(g);
         if s > 1e-6 {
-            g = hsv_to_rgb(h + dh.to_degrees(), s, v);
+            let y0 = y(lin);
+            let mut out = hsv_to_rgb(h + dh.to_degrees(), s, v).map(|x| x.max(0.0).powf(MIXER_GAMMA));
+            let vmax = max3(out);
+            let den = vmax - y(out);
+            if keep > 0.0 && den > 1e-6 {
+                let k = 1.0 + keep * (((vmax - y0) / den).clamp(0.0, 3.0) - 1.0);
+                out = out.map(|x| (vmax + (x - vmax) * k).max(0.0));
+            }
+            lin = out;
         }
     }
-    let gain = (1.0 + dl).max(0.0);
-    g.map(|x| (x * gain).powf(MIXER_GAMMA))
+    let vmax = max3(lin);
+    if dp != 0.0 && vmax > 1e-9 {
+        let e = (-dp).exp();
+        lin = lin.map(|x| vmax * (x / vmax).powf(e));
+    }
+    let gain = (1.0 + dl).max(0.0).powf(MIXER_GAMMA);
+    lin.map(|x| x * gain)
 }
 
 /// A colour-grading wheel as an OkLab offset (a, b) and a lightness shift.
@@ -166,6 +203,8 @@ pub struct ColorOps {
     pub hue: [f32; 8],
     pub sat: [f32; 8],
     pub lum: [f32; 8],
+    /// Luminance's reshaping per band ([`MIXER_LUM_SHAPE`] × the slider).
+    pub lum_shape: [f32; 8],
     pub mixer: bool,
     /// Point Color samples that change something (applied after the mixer).
     pub points: Vec<PointK>,
@@ -189,9 +228,10 @@ impl ColorOps {
         ColorOps {
             vibrance: (s.color.vibrance / 100.0) as f32,
             saturation: (s.color.saturation / 100.0) as f32,
-            hue: bands.map(|b| (b.hue / 100.0) as f32 * MIXER_HUE),
+            hue: std::array::from_fn(|i| (bands[i].hue / 100.0) as f32 * MIXER_HUE[i]),
             sat: bands.map(|b| (b.sat / 100.0) as f32),
-            lum: bands.map(|b| (b.lum / 100.0) as f32 * MIXER_LUM),
+            lum: std::array::from_fn(|i| (bands[i].lum / 100.0) as f32 * MIXER_LUM[i]),
+            lum_shape: std::array::from_fn(|i| (bands[i].lum / 100.0) as f32 * MIXER_LUM_SHAPE[i]),
             mixer: !s.mixer.is_neutral(),
             points: if crate::is_bw(s) {
                 Vec::new()
@@ -245,14 +285,19 @@ impl ColorOps {
         let [mut l, mut c, mut h] = lab_to_lch(lab);
         if self.mixer {
             let w = band_weights(h);
-            let (mut dh, mut ds, mut dl) = (0.0, 0.0, 0.0);
+            let (mut dh, mut ds, mut dl, mut dp, mut kn, mut kd) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
             for i in 0..8 {
                 dh += w[i] * self.hue[i];
                 ds += w[i] * self.sat[i];
                 dl += w[i] * self.lum[i];
+                dp += w[i] * self.lum_shape[i];
+                let turn = (w[i] * self.hue[i]).abs();
+                kn += turn * MIXER_HUE_KEEP_Y[i];
+                kd += turn;
             }
+            let keep = if kd > 0.0 { kn / kd } else { 0.0 };
             let chroma_w = (c / 0.12).min(1.0);
-            [l, c, h] = lab_to_lch(oklab_from_2020(mix_hsv(rgb, dh * chroma_w, ds, dl * chroma_w)));
+            [l, c, h] = lab_to_lch(oklab_from_2020(mix_hsv(rgb, dh * chroma_w, ds, dl * chroma_w, dp * chroma_w, keep)));
         }
         for p in &self.points {
             [l, c, h] = p.apply([l, c, h]);
@@ -412,13 +457,14 @@ mod tests {
         let sky = [0.12, 0.28, 0.55];
         let y = lightcraft_color::luminance_2020;
         let enc = |c: [f32; 3]| c.map(|v| v.powf(1.0 / MIXER_GAMMA));
-        // lowering Saturation keeps the brightest channel, so the sky gets lighter, not darker
+        // lowering Saturation moves towards a grey between the brightest channel and the luminance:
+        // the sky gets lighter, its blue channel a little darker (Lightroom: V × 0.93, L* + 3.7 at −50)
         let mut s = DevelopSettings::default();
         s.mixer.blue.sat = -60.0;
         s.mixer.aqua.sat = -60.0;
         let out = ColorOps::new(&s).apply(sky, 0.0, 0.0);
-        assert!((enc(out)[2] - enc(sky)[2]).abs() < 0.01, "{out:?}");
-        assert!(y(out) > y(sky) * 1.15, "{} -> {}", y(sky), y(out));
+        assert!(enc(out)[2] < enc(sky)[2] - 0.02 && enc(out)[2] > enc(sky)[2] * 0.85, "{out:?}");
+        assert!(y(out) > y(sky) * 1.05, "{} -> {}", y(sky), y(out));
         // Hue towards aqua keeps the value and lowers the OkLCh hue (blue → cyan)
         let mut s = DevelopSettings::default();
         s.mixer.blue.hue = -60.0;
@@ -428,11 +474,54 @@ mod tests {
         assert!((value(out) - value(sky)).abs() < 0.01, "{out:?}");
         let h = |c: [f32; 3]| lab_to_lch(oklab_from_2020(c))[2];
         assert!(h(out) < h(sky) - 0.1, "{} -> {}", h(sky), h(out));
-        // Luminance is a gain on the encoded colour
+        // Luminance darkens a sky and deepens its blue (Lightroom at Blue −50: V × 0.76, S × 1.9)
         let mut s = DevelopSettings::default();
         s.mixer.blue.lum = -50.0;
         s.mixer.aqua.lum = -50.0;
-        assert!(y(ColorOps::new(&s).apply(sky, 0.0, 0.0)) < y(sky) * 0.8);
+        let out = ColorOps::new(&s).apply(sky, 0.0, 0.0);
+        assert!(y(out) < y(sky) * 0.8);
+        let sat = |c: [f32; 3]| rgb_to_hsv(enc(c))[1];
+        assert!(sat(out) > sat(sky) * 1.2, "{} -> {}", sat(sky), sat(out));
+    }
+
+    #[test]
+    fn blue_hue_keeps_the_sky_light_orange_lightens() {
+        let y = lightcraft_color::luminance_2020;
+        let shift = |c: [f32; 3], band: fn(&mut DevelopSettings) -> &mut f64| {
+            let mut s = DevelopSettings::default();
+            *band(&mut s) = 50.0;
+            ColorOps::new(&s).apply(c, 0.0, 0.0)
+        };
+        // Blue towards purple: half the luminance a plain HSV rotation loses comes back
+        let sky: [f32; 3] = [0.1, 0.25, 0.65];
+        let plain = {
+            let enc = sky.map(|v| v.powf(1.0 / MIXER_GAMMA));
+            let [h, s, v] = rgb_to_hsv(enc);
+            let w = band_weights(lab_to_lch(oklab_from_2020(sky))[2])[5];
+            let c = lab_to_lch(oklab_from_2020(sky))[1];
+            hsv_to_rgb(h + (0.5 * MIXER_HUE[5] * w * (c / 0.12).min(1.0)).to_degrees(), s, v).map(|x| x.powf(MIXER_GAMMA))
+        };
+        let out = shift(sky, |s| &mut s.mixer.blue.hue);
+        assert!(y(plain) < y(sky) * 0.95, "the plain rotation darkens: {} -> {}", y(sky), y(plain));
+        assert!((y(out) - y(sky)).abs() < (y(plain) - y(sky)).abs() * 0.7, "{} -> {} (plain {})", y(sky), y(out), y(plain));
+        // Orange towards yellow lightens, as plain HSV does
+        let brick = [0.45, 0.16, 0.06];
+        assert!(y(shift(brick, |s| &mut s.mixer.orange.hue)) > y(brick) * 1.03);
+    }
+
+    #[test]
+    fn mixer_stays_finite_and_bounded_on_hdr_values() {
+        // Luminance's reshaping works under the brightest channel, so values over 1 don't run away
+        for rgb in [[4.0, 2.0, 1.0], [0.0, 0.0, 6.0], [1e-9, 0.0, 0.0], [0.0; 3]] {
+            for (dh, ds, dl, dp, keep) in [(1.3, -1.0, -0.7, -1.2, 0.5), (-1.3, 1.0, 0.7, 1.2, 0.0), (0.6, 0.0, 0.0, 3.0, 1.0)] {
+                let out = mix_hsv(rgb, dh, ds, dl, dp, keep);
+                assert!(out.iter().all(|v| v.is_finite() && *v >= 0.0), "{rgb:?} {dh} {ds} {dl} {dp} -> {out:?}");
+                // (raising Saturation may lift the brightest channel: its grey sits below it)
+                let gain = (1.0f32 + dl).max(0.0).powf(MIXER_GAMMA);
+                let top = rgb[0].max(rgb[1]).max(rgb[2]) * gain * 1.001 + 1e-6;
+                assert!(ds > 0.0 || out.iter().all(|v| *v <= top), "{rgb:?} {dh} {ds} {dl} {dp} -> {out:?}");
+            }
+        }
     }
 
     #[test]

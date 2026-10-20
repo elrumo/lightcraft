@@ -43,6 +43,9 @@ const FIELDS: &[(&str, usize)] = &[
     ("MIX_HUE", 8),
     ("MIX_SAT", 8),
     ("MIX_LUM", 8),
+    ("MIX_LSHAPE", 8),
+    ("MIX_KEEP", 8),
+    ("MIX_SAT_GREY", 1),
     ("NPC", 1),
     ("PC", 8 * POINT_WORDS),
     ("BW", 1),
@@ -205,6 +208,9 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     p.fs("MIX_HUE", &ops.hue);
     p.fs("MIX_SAT", &ops.sat);
     p.fs("MIX_LUM", &ops.lum);
+    p.fs("MIX_LSHAPE", &ops.lum_shape);
+    p.fs("MIX_KEEP", &lightcraft_pipeline::colorops::MIXER_HUE_KEEP_Y);
+    p.f("MIX_SAT_GREY", lightcraft_pipeline::colorops::MIXER_SAT_GREY);
     p.u("NPC", ops.points.len().min(8) as u32);
     let pc: Vec<f32> = ops.points.iter().take(8).flat_map(|k| k.words()).collect();
     p.fs("PC", &pc);

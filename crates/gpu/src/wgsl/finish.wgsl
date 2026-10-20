@@ -86,10 +86,15 @@ fn hsv_to_rgb_(h: f32, s: f32, v: f32) -> vec3<f32> {
 
 // `colorops::mix_hsv`: the colour mixer's Saturation / Hue / Luminance as HSV operations on the
 // gamma-encoded colour.
-fn mix_hsv(rgb: vec3<f32>, dh: f32, ds: f32, dl: f32) -> vec3<f32> {
-    var g = pow(max(rgb, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
-    let vmax = max(g.x, max(g.y, g.z));
-    g = max(vec3<f32>(vmax) + (g - vec3<f32>(vmax)) * (1.0 + ds), vec3<f32>(0.0));
+fn mix_hsv(rgb: vec3<f32>, dh: f32, ds: f32, dl: f32, dp: f32, keep: f32) -> vec3<f32> {
+    let lin0 = max(rgb, vec3<f32>(0.0));
+    var g = pow(lin0, vec3<f32>(1.0 / 2.2));
+    if (ds != 0.0) {
+        let vmax = max(g.x, max(g.y, g.z));
+        let grey = vmax + (pow(max(lum2020(lin0), 0.0), 1.0 / 2.2) - vmax) * pf(F_MIX_SAT_GREY);
+        g = max(vec3<f32>(grey) + (g - vec3<f32>(grey)) * (1.0 + ds), vec3<f32>(0.0));
+    }
+    var lin = pow(g, vec3<f32>(2.2));
     if (dh != 0.0) {
         let mx = max(g.x, max(g.y, g.z));
         let mn = min(g.x, min(g.y, g.z));
@@ -104,11 +109,22 @@ fn mix_hsv(rgb: vec3<f32>, dh: f32, ds: f32, dl: f32) -> vec3<f32> {
             } else {
                 hh = (g.x - g.y) / d + 4.0;
             }
-            g = hsv_to_rgb_(hh * 60.0 + degrees(dh), s, mx);
+            let y0 = lum2020(lin);
+            var o = pow(max(hsv_to_rgb_(hh * 60.0 + degrees(dh), s, mx), vec3<f32>(0.0)), vec3<f32>(2.2));
+            let ov = max(o.x, max(o.y, o.z));
+            let den = ov - lum2020(o);
+            if (keep > 0.0 && den > 1e-6) {
+                let k = 1.0 + keep * (clamp((ov - y0) / den, 0.0, 3.0) - 1.0);
+                o = max(vec3<f32>(ov) + (o - vec3<f32>(ov)) * k, vec3<f32>(0.0));
+            }
+            lin = o;
         }
     }
-    let gain = max(1.0 + dl, 0.0);
-    return pow(g * gain, vec3<f32>(2.2));
+    let vmax = max(lin.x, max(lin.y, lin.z));
+    if (dp != 0.0 && vmax > 1e-9) {
+        lin = vmax * pow(lin / vmax, vec3<f32>(exp(-dp)));
+    }
+    return lin * pow(max(1.0 + dl, 0.0), 2.2);
 }
 
 // `PointK::apply` for Point Color sample `k` (OkLCh in, OkLCh out).
@@ -158,13 +174,21 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
         var dh = 0.0;
         var ds = 0.0;
         var dl = 0.0;
+        var dp = 0.0;
+        var kn = 0.0;
+        var kd = 0.0;
         for (var i = 0u; i < 8u; i++) {
             dh += w[i] * pf(F_MIX_HUE + i);
             ds += w[i] * pf(F_MIX_SAT + i);
             dl += w[i] * pf(F_MIX_LUM + i);
+            dp += w[i] * pf(F_MIX_LSHAPE + i);
+            let turn = abs(w[i] * pf(F_MIX_HUE + i));
+            kn += turn * pf(F_MIX_KEEP + i);
+            kd += turn;
         }
+        let keep = select(0.0, kn / kd, kd > 0.0);
         let chroma_w = min(c / 0.12, 1.0);
-        let m = oklab(mix_hsv(rgb, dh * chroma_w, ds, dl * chroma_w));
+        let m = oklab(mix_hsv(rgb, dh * chroma_w, ds, dl * chroma_w, dp * chroma_w, keep));
         l = m.x;
         c = sqrt(m.y * m.y + m.z * m.z);
         h = atan2(m.z, m.y);
