@@ -85,5 +85,10 @@ level}`; `copy {text}` (put it on the clipboard: a share link just made); `ask {
 engine needs an answer from: `syncChoice`); `uiRequest {id, method, params}`; `closed`.
 
 A slider drag: `develop.beginInteraction {label}`, then `develop.set {control, value}` with at most one in flight (the
-newest value wins) and `render.view {draft: true}` after each, then the last value and `develop.endInteraction` (one
-undo step); the full render follows from the `state` event.
+newest value wins) and `render.view {draft: true}` right behind each (requests run in order: the draft renders as soon
+as the engine has the value, without waiting for its answer to come back), then the last value, `render.view` for the
+sharp picture and `develop.endInteraction` (one undo step: the picture renders while it is saved). Send each request
+when it is due, not from a task that may start later: a value that arrives after `develop.endInteraction` is an edit
+of its own, saved to disk on the engine thread while the sharp picture waits. The draft's size is learned per slider
+(its `label`, `apphost::render::DraftBudget`). `LIGHTCRAFT_HOST_TRACE=1` prints every request the engine thread
+handles (with its time) and every picture it sends, to stderr.

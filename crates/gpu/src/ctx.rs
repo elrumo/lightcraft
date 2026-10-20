@@ -29,7 +29,11 @@ const MODULES: &[Module] = &[
         ],
         entries: &["main"],
     },
-    Module { src: include_str!("wgsl/hist.wgsl"), bindings: &[("src", false, "u32"), ("hist", true, "atomic<u32>")], entries: &["hdr_hist"] },
+    Module {
+        src: include_str!("wgsl/hist.wgsl"),
+        bindings: &[("src", false, "u32"), ("hist", true, "atomic<u32>")],
+        entries: &["hdr_hist", "hist8"],
+    },
     Module {
         src: include_str!("wgsl/blur.wgsl"),
         bindings: &[("src", false, "f32"), ("dst", true, "f32")],

@@ -33,6 +33,10 @@ fn pct(v: &mut [f64], p: f64) -> f64 {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `BENCH_NO_REUSE=1`: every freed large block unmapped (no kept blocks for the next picture)
+    if std::env::var("BENCH_NO_REUSE").is_ok_and(|v| v == "1") {
+        lightcraft_sysmem::set_block_reuse(false);
+    }
     let Some(photo) = args.first() else {
         eprintln!("usage: drag_bench <photo> [WxH] [seconds] [controls…]");
         std::process::exit(2);
@@ -55,6 +59,8 @@ fn main() {
         },
         // what an iPhone lets the app use (`os_proc_available_memory`), when asked to act as one
         available_memory: std::env::var("BENCH_MEMORY_MB").ok().and_then(|m| m.parse::<u64>().ok()).map(|m| m << 20),
+        // (only the photo imported below: a new library otherwise starts with the demo photos)
+        empty: true,
         ..Default::default()
     };
     let (host, _) = match Host::open(config) {
@@ -86,7 +92,8 @@ fn main() {
         call("engine.execute", json!({"command": "develop.hdr", "params": {"enabled": true}}));
         call("render.hdrDisplay", json!({"on": true}));
     }
-    println!("gpu: {:?}, view {w}x{h}{}", lightcraft_engine::gpu::adapter_name(), if hdr { ", HDR" } else { "" });
+    let name = q["result"]["photos"][0]["name"].as_str().unwrap_or("?").to_string();
+    println!("{name}: gpu {:?}, view {w}x{h}{}", lightcraft_engine::gpu::adapter_name(), if hdr { ", HDR" } else { "" });
 
     // events: wait for the loupe's sharp picture
     let wait_final = |host: &Host, t0: Instant| -> f64 {
@@ -103,11 +110,18 @@ fn main() {
     };
     let t0 = Instant::now();
     host.submit(&req(1_000_000, "render.view", json!({"photo": pid, "width": w, "height": h}))).ok();
-    println!("open: sharp picture after {:.0} ms", wait_final(&host, t0));
+    // `BENCH_DRAG_AT_ONCE=1`: the first drag starts while the photo is still opening (a slider grabbed at once)
+    if std::env::var("BENCH_DRAG_AT_ONCE").is_ok_and(|v| v == "1") {
+        println!("dragging at once");
+    } else {
+        println!("open: sharp picture after {:.0} ms", wait_final(&host, t0));
+    }
     // the second time is warm (decoded source cached)
-    let t0 = Instant::now();
-    host.submit(&req(1_000_001, "render.view", json!({"photo": pid, "width": w, "height": h - 2}))).ok();
-    println!("same photo, other size: {:.0} ms", wait_final(&host, t0));
+    if !std::env::var("BENCH_DRAG_AT_ONCE").is_ok_and(|v| v == "1") {
+        let t0 = Instant::now();
+        host.submit(&req(1_000_001, "render.view", json!({"photo": pid, "width": w, "height": h - 2}))).ok();
+        println!("same photo, other size: {:.0} ms", wait_final(&host, t0));
+    }
 
     if controls.iter().any(|c| c == "zoom") {
         zoom(&host, pid, w, h);
@@ -118,13 +132,18 @@ fn main() {
     for control in &controls {
         let spec = call("engine.execute", json!({"command": "develop.controls", "params": {}}));
         let s = spec["result"].as_array().and_then(|a| a.iter().find(|c| c["id"] == control.as_str()).cloned()).unwrap_or_default();
+        if s.is_null() {
+            let ids: Vec<&str> = spec["result"].as_array().into_iter().flatten().filter_map(|c| c["id"].as_str()).collect();
+            eprintln!("{control}: not a control of this photo (it has {})", ids.join(", "));
+            continue;
+        }
         let (lo, hi, def) = (s["min"].as_f64().unwrap_or(-1.0), s["max"].as_f64().unwrap_or(1.0), s["default"].as_f64().unwrap_or(0.0));
         call("engine.execute", json!({"command": "develop.beginInteraction", "params": {"label": control}}));
         let (mut sets, mut drafts, mut draft_ms, mut sizes) = (Vec::new(), 0usize, Vec::new(), (0u64, 0u64));
         let mut gaps = Vec::new();
+        let (mut asked_at, mut latency) = (std::collections::HashMap::<String, Instant>::new(), Vec::new());
         let mut last_draft: Option<Instant> = None;
         let start = Instant::now();
-        let mut step = 0u64;
         while start.elapsed().as_secs_f64() < secs {
             // a finger moving: a new value every 8 ms (120 Hz), sent once the last one is answered
             let t = start.elapsed().as_secs_f64();
@@ -136,23 +155,33 @@ fn main() {
                 eprintln!("{control}: {r}");
                 break;
             }
-            step += 1;
-            host.submit(&req(2_000_000 + step, "render.view", json!({"photo": pid, "width": w, "height": h, "draft": true}))).ok();
-            for e in host.poll(Duration::ZERO) {
-                if e["kind"] == "image" && e["slot"] == "main" && e["draft"] == true {
-                    drafts += 1;
-                    draft_ms.push(e["ms"].as_f64().unwrap_or(0.0));
-                    sizes = (e["width"].as_u64().unwrap_or(0), e["height"].as_u64().unwrap_or(0));
-                    let now = Instant::now();
-                    if let Some(l) = last_draft {
-                        gaps.push(now.duration_since(l).as_secs_f64() * 1e3);
-                    }
-                    last_draft = Some(now);
-                }
+            // the reply names the render the picture will be: its age when it lands is the drag's latency
+            let asked = call("render.view", json!({"photo": pid, "width": w, "height": h, "draft": true}));
+            if let Some(key) = asked["result"]["key"].as_str() {
+                asked_at.entry(key.to_string()).or_insert(ts);
             }
+            // the pictures landing until the next step is due, timed as they land
             let next = start + Duration::from_secs_f64((ts - start).as_secs_f64() + 0.008);
-            if let Some(d) = next.checked_duration_since(Instant::now()) {
-                std::thread::sleep(d);
+            loop {
+                let wait = next.checked_duration_since(Instant::now()).unwrap_or_default();
+                for e in host.poll(wait) {
+                    if e["kind"] == "image" && e["slot"] == "main" && e["draft"] == true {
+                        drafts += 1;
+                        draft_ms.push(e["ms"].as_f64().unwrap_or(0.0));
+                        sizes = (e["width"].as_u64().unwrap_or(0), e["height"].as_u64().unwrap_or(0));
+                        let now = Instant::now();
+                        if let Some(at) = e["key"].as_u64().and_then(|k| asked_at.get(&k.to_string())) {
+                            latency.push(now.duration_since(*at).as_secs_f64() * 1e3);
+                        }
+                        if let Some(l) = last_draft {
+                            gaps.push(now.duration_since(l).as_secs_f64() * 1e3);
+                        }
+                        last_draft = Some(now);
+                    }
+                }
+                if Instant::now() >= next {
+                    break;
+                }
             }
         }
         let elapsed = start.elapsed().as_secs_f64();
@@ -161,13 +190,15 @@ fn main() {
         host.submit(&req(3_000_000, "render.view", json!({"photo": pid, "width": w, "height": h}))).ok();
         let settle = wait_final(&host, t0);
         println!(
-            "{control:<20} [{lo}, {hi}] set {:>5.1} ms (p95 {:>5.1}, max {:>6.1}) | {:>5.1} drafts/s, render {:>5.1} ms (p95 {:>5.1}), gap p95 {:>5.1} ms, {}x{} | release→sharp {:>5.0} ms",
+            "{control:<20} [{lo}, {hi}] set {:>5.1} ms (p95 {:>5.1}, max {:>6.1}) | {:>5.1} drafts/s, render {:>5.1} ms (p95 {:>5.1}), step→picture {:>5.1} ms (p95 {:>5.1}), gap p95 {:>5.1} ms, {}x{} | release→sharp {:>5.0} ms",
             pct(&mut sets.clone(), 0.5),
             pct(&mut sets.clone(), 0.95),
             pct(&mut sets, 1.0),
             drafts as f64 / elapsed,
             pct(&mut draft_ms.clone(), 0.5),
             pct(&mut draft_ms, 0.95),
+            pct(&mut latency.clone(), 0.5),
+            pct(&mut latency, 0.95),
             pct(&mut gaps, 0.95),
             sizes.0,
             sizes.1,

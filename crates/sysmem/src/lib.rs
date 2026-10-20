@@ -14,7 +14,8 @@
 //! footprint, and `malloc_zone_pressure_relief` releases none of it: memory freed after every decode
 //! and render piled up (a 12 MP ProRAW opened: 250 MB in use, 1 GB of footprint), and iOS ends an app
 //! by its footprint. [`ReturningAlloc`], the apps' global allocator, gives large blocks pages of their
-//! own that go back to the system the moment they are freed.
+//! own that go back to the system when they are freed, except a few kept for the next allocation of
+//! the same size (a slider drag's pictures), which [`release_free_memory`] gives back.
 //!
 //! [`fsync`] is the plain POSIX `fsync`, which std doesn't offer on macOS: there `File::sync_all`
 //! and `sync_data` are `F_FULLFSYNC`, which SMB shares refuse with ENOTSUP while `fsync` works
@@ -25,13 +26,13 @@
 //! platforms it releases nothing / knows nothing / allocates as the system does.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-/// Return free allocator pages to the system. Returns the number of bytes released (always 0 on
-/// platforms where freed large blocks are already unmapped). Safe to call at any time, from any
-/// thread.
+/// Return free allocator pages to the system, the large blocks [`ReturningAlloc`] keeps for reuse
+/// among them. Returns the number of bytes released (always 0 on platforms where freed large blocks
+/// are already unmapped). Safe to call at any time, from any thread.
 pub fn release_free_memory() -> usize {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        apple::release()
+        returning::release() + apple::release()
     }
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
@@ -76,11 +77,25 @@ pub struct ReturningAlloc;
 /// Bytes from which a block gets pages of its own.
 pub const LARGE: usize = 1 << 20;
 
+/// Whether [`ReturningAlloc`] keeps a few freed large blocks for the next allocation of the same size (on by
+/// default; off, every large block is unmapped when freed). For A/B measurements.
+pub fn set_block_reuse(on: bool) {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        returning::set_reuse(on);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        let _ = on;
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unsafe_code)]
 mod returning {
     use super::{LARGE, ReturningAlloc};
     use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
     /// Mapped pages are aligned to at least this (4 KiB on Intel, 16 KiB on Apple silicon).
     const PAGE: usize = 4096;
@@ -89,14 +104,109 @@ mod returning {
         layout.size() >= LARGE && layout.align() <= PAGE
     }
 
+    // Freed large blocks kept for the next allocation of exactly their size. A slider drag allocates the
+    // same buffers for every picture (the GPU readback, the picture handed to the frontend, a CPU render's
+    // planes), and fresh pages fault in as they are first written: filling a new 15 MB picture took 2.5 ms
+    // on an M1 Max against 0.56 ms for a block written before. A few blocks and bytes at most, so the
+    // footprint stays what the blocks in use need; [`release`] (idle trims, memory warnings, after decodes)
+    // unmaps them.
+    const KEPT_BLOCKS: usize = 8;
+    /// The largest block kept: a picture or a plane, not a decode's buffers.
+    const KEPT_BLOCK_MAX: usize = 64 << 20;
+    #[cfg(target_os = "ios")]
+    const KEPT_MAX: usize = 64 << 20;
+    #[cfg(not(target_os = "ios"))]
+    const KEPT_MAX: usize = 256 << 20;
+    const EMPTY: u8 = 0;
+    const BUSY: u8 = 1;
+    const FULL: u8 = 2;
+
+    struct Kept {
+        state: AtomicU8,
+        ptr: AtomicPtr<u8>,
+        len: AtomicUsize,
+    }
+
+    #[allow(clippy::declare_interior_mutable_const)]
+    const NONE: Kept = Kept { state: AtomicU8::new(EMPTY), ptr: AtomicPtr::new(std::ptr::null_mut()), len: AtomicUsize::new(0) };
+    static KEPT: [Kept; KEPT_BLOCKS] = [NONE; KEPT_BLOCKS];
+    static KEPT_BYTES: AtomicUsize = AtomicUsize::new(0);
+    static REUSE: AtomicBool = AtomicBool::new(true);
+
+    pub fn set_reuse(on: bool) {
+        REUSE.store(on, Ordering::Relaxed);
+        if !on {
+            release();
+        }
+    }
+
+    /// A kept block of exactly `len` bytes, or null.
+    fn take(len: usize) -> *mut u8 {
+        if KEPT_BYTES.load(Ordering::Relaxed) == 0 {
+            return std::ptr::null_mut();
+        }
+        for k in &KEPT {
+            // (`len` and `ptr` only change while the slot is BUSY, which its owner alone sets)
+            if k.state.load(Ordering::Acquire) == FULL
+                && k.len.load(Ordering::Relaxed) == len
+                && k.state.compare_exchange(FULL, BUSY, Ordering::Acquire, Ordering::Relaxed).is_ok()
+            {
+                let p = k.ptr.swap(std::ptr::null_mut(), Ordering::Relaxed);
+                KEPT_BYTES.fetch_sub(len, Ordering::Relaxed);
+                k.state.store(EMPTY, Ordering::Release);
+                return p;
+            }
+        }
+        std::ptr::null_mut()
+    }
+
+    /// Keep the freed block `ptr` of `len` bytes for a later [`take`]; false when there is no room.
+    fn keep(ptr: *mut u8, len: usize) -> bool {
+        if len > KEPT_BLOCK_MAX || !REUSE.load(Ordering::Relaxed) {
+            return false;
+        }
+        if KEPT_BYTES.fetch_add(len, Ordering::Relaxed).saturating_add(len) > KEPT_MAX {
+            KEPT_BYTES.fetch_sub(len, Ordering::Relaxed);
+            return false;
+        }
+        for k in &KEPT {
+            if k.state.compare_exchange(EMPTY, BUSY, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                k.len.store(len, Ordering::Relaxed);
+                k.ptr.store(ptr, Ordering::Relaxed);
+                k.state.store(FULL, Ordering::Release);
+                return true;
+            }
+        }
+        KEPT_BYTES.fetch_sub(len, Ordering::Relaxed);
+        false
+    }
+
+    /// Unmap every kept block; the bytes given back.
+    pub fn release() -> usize {
+        let mut freed = 0;
+        for k in &KEPT {
+            if k.state.compare_exchange(FULL, BUSY, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                let (p, len) = (k.ptr.swap(std::ptr::null_mut(), Ordering::Relaxed), k.len.load(Ordering::Relaxed));
+                KEPT_BYTES.fetch_sub(len, Ordering::Relaxed);
+                k.state.store(EMPTY, Ordering::Release);
+                crate::apple::unmap(p, len);
+                freed += len;
+            }
+        }
+        freed
+    }
+
     // SAFETY: every block is either the system allocator's or a mapping of its own, and which one
     // is decided by `own_pages` of its layout alone, which `dealloc` and `realloc` are given exactly
     // as it was allocated (GlobalAlloc's contract): a block always goes back where it came from.
-    // Mappings are page-aligned, which covers every alignment `own_pages` accepts.
+    // Mappings are page-aligned, which covers every alignment `own_pages` accepts. A kept block is a
+    // mapping of exactly the size asked for, no longer used by anyone (it was freed), and handed to
+    // one caller only (the slot's state is claimed with a compare-exchange).
     unsafe impl GlobalAlloc for ReturningAlloc {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             if own_pages(layout) {
-                crate::apple::map(layout.size())
+                let kept = take(layout.size());
+                if kept.is_null() { crate::apple::map(layout.size()) } else { kept }
             } else {
                 // SAFETY: the caller's layout, passed on (GlobalAlloc's contract)
                 unsafe { System.alloc(layout) }
@@ -105,8 +215,14 @@ mod returning {
 
         unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
             if own_pages(layout) {
-                // (fresh anonymous pages are zero)
-                crate::apple::map(layout.size())
+                let kept = take(layout.size());
+                if kept.is_null() {
+                    // (fresh anonymous pages are zero)
+                    return crate::apple::map(layout.size());
+                }
+                // SAFETY: a kept block is `layout.size()` writable bytes nobody else holds
+                unsafe { std::ptr::write_bytes(kept, 0, layout.size()) };
+                kept
             } else {
                 // SAFETY: as in `alloc`
                 unsafe { System.alloc_zeroed(layout) }
@@ -115,7 +231,9 @@ mod returning {
 
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             if own_pages(layout) {
-                crate::apple::unmap(ptr, layout.size());
+                if !keep(ptr, layout.size()) {
+                    crate::apple::unmap(ptr, layout.size());
+                }
             } else {
                 // SAFETY: `ptr` came from `System` with this layout (`own_pages` was false then too)
                 unsafe { System.dealloc(ptr, layout) }
@@ -255,8 +373,16 @@ mod apple {
 mod tests {
     use super::release_free_memory;
 
+    /// Held by the tests that give kept blocks back or switch reuse: the kept blocks are the process's.
+    static KEPT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn releasing_with_nothing_freed_is_harmless() {
+        let _serial = serial();
         // Twice in a row: the second call usually has nothing left to release.
         let _ = release_free_memory();
         let _ = release_free_memory();
@@ -264,6 +390,7 @@ mod tests {
 
     #[test]
     fn freed_large_blocks_can_be_released_and_memory_stays_usable() {
+        let _serial = serial();
         // Allocate and free well over the allocator's large-block threshold, then release.
         let blocks: Vec<Vec<u8>> = (0..8).map(|i| vec![i as u8; 16 << 20]).collect();
         let sum: u64 = blocks.iter().map(|b| u64::from(b[b.len() - 1])).sum();
@@ -293,6 +420,7 @@ mod tests {
     #[test]
     #[allow(unsafe_code)]
     fn large_blocks_keep_their_contents_and_alignment() {
+        let _serial = serial();
         use super::{LARGE, ReturningAlloc};
         use std::alloc::{GlobalAlloc, Layout};
         let a = ReturningAlloc;
@@ -349,6 +477,54 @@ mod tests {
         }
     }
 
+    // A freed large block comes back for the next block of its size (no fresh pages to fault in),
+    // zeroed when asked, and release gives the kept ones back
+    #[test]
+    #[allow(unsafe_code)]
+    fn freed_large_blocks_are_reused_for_the_same_size_and_released() {
+        let _serial = serial();
+        use super::{LARGE, ReturningAlloc};
+        use std::alloc::{GlobalAlloc, Layout};
+        // (a size no other test asks for: the kept blocks are the whole process's)
+        let layout = Layout::from_size_align(LARGE * 7 + 4099, 16).unwrap();
+        let _ = release_free_memory();
+        // SAFETY: valid layouts; each block is freed once, with the layout it was allocated with
+        unsafe {
+            let p = ReturningAlloc.alloc(layout);
+            assert!(!p.is_null());
+            std::ptr::write_bytes(p, 9, layout.size());
+            ReturningAlloc.dealloc(p, layout);
+            // (the same pages, still written: fresh ones would be zero)
+            let q = ReturningAlloc.alloc(layout);
+            assert!(!q.is_null());
+            if cfg!(any(target_os = "macos", target_os = "ios")) {
+                assert!(
+                    p == q && std::slice::from_raw_parts(q, layout.size()).iter().all(|&b| b == 9),
+                    "the freed block is the next one of its size"
+                );
+            }
+            ReturningAlloc.dealloc(q, layout);
+            let q = ReturningAlloc.alloc_zeroed(layout);
+            assert!(!q.is_null());
+            assert!(std::slice::from_raw_parts(q, layout.size()).iter().all(|&b| b == 0), "zeroed when asked");
+            ReturningAlloc.dealloc(q, layout);
+            // another size does not take it
+            let other = Layout::from_size_align(LARGE * 7 + 8195, 16).unwrap();
+            let r = ReturningAlloc.alloc(other);
+            assert!(!r.is_null() && r != q);
+            ReturningAlloc.dealloc(r, other);
+        }
+        if cfg!(any(target_os = "macos", target_os = "ios")) {
+            assert!(super::release_free_memory() >= layout.size(), "the kept blocks are given back");
+        }
+        // with reuse off nothing is kept, and the allocator still works
+        super::set_block_reuse(false);
+        let v = vec![3u8; LARGE * 2];
+        assert_eq!(v[v.len() - 1], 3);
+        drop(v);
+        super::set_block_reuse(true);
+    }
+
     #[test]
     fn fsync_flushes_an_open_file_and_reports_errors() {
         use std::io::Write;
@@ -366,6 +542,7 @@ mod tests {
 
     #[test]
     fn concurrent_calls_are_safe() {
+        let _serial = serial();
         let handles: Vec<_> = (0..4).map(|_| std::thread::spawn(release_free_memory)).collect();
         for h in handles {
             assert!(h.join().is_ok());

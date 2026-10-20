@@ -628,7 +628,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // slower this host renders
     let full_edge = app.ui.settings.loupe_edge(drawn_long.min(canvas.width().max(canvas.height()) * ppp), native_long, texture_side) as f64;
     let long_over_short = f64::from(aspect).max(1e-3).max(1.0 / f64::from(aspect).max(1e-3));
-    let budget = app.renderer.draft_scale(drafting.is_some(), full_edge * full_edge / long_over_short);
+    // (each slider learns its own draft size: `DraftBudget`)
+    let budget = app.renderer.draft_scale(drafting.map(|_| drag.map_or("", |(_, label)| label)), full_edge * full_edge / long_over_short);
     let draft = drafting.map(|s| if s >= 1.0 { s } else { s.min(budget) });
     // Diagnostic views that need whole-frame context, or reads too far for one window, still
     // render the whole frame at the size it is drawn. Per-pixel ones (a mask, clipping) and soft

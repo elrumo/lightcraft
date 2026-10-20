@@ -129,10 +129,15 @@ impl Histogram {
         over(&self.r).max(over(&self.g)).max(over(&self.b)) as f32 / self.total as f32
     }
 
+    /// The pixel step [`Self::of_srgb8`] samples a picture of `pixels` pixels with, along rows and columns: at most
+    /// ~1 MP are counted (the GPU's histogram counts the same pixels).
+    pub fn srgb8_step(pixels: usize) -> usize {
+        ((pixels as f64 / 1_000_000.0).sqrt().ceil() as usize).max(1)
+    }
+
     pub fn of_srgb8(img: &Rgba8) -> Histogram {
         let mut h = Self::empty(None);
-        // Sample at most ~1 MP for speed.
-        let step = ((img.len() as f64 / 1_000_000.0).sqrt().ceil() as usize).max(1);
+        let step = Self::srgb8_step(img.len());
         for y in (0..img.height).step_by(step) {
             for x in (0..img.width).step_by(step) {
                 let p = img.get(x, y);

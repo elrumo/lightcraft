@@ -500,8 +500,12 @@ impl Engine {
                 self.shutdown();
                 return;
             }
+            let t0 = Instant::now();
             if let Err(e) = lightcraft_engine::guard::catch("the engine's tick", || self.tick()) {
                 self.events.push(Event::Message { text: e, level: "error".into() }.to_value());
+            }
+            if trace::on() && t0.elapsed() >= Duration::from_millis(1) {
+                trace::line(&format!("tick {:.2} ms", t0.elapsed().as_secs_f64() * 1e3));
             }
         }
         self.shutdown();
@@ -509,6 +513,18 @@ impl Engine {
 
     /// Handle one message; true when the engine should stop.
     fn handle(&mut self, msg: Msg) -> bool {
+        let traced = match &msg {
+            Msg::Request(req) | Msg::Call(req, _) if trace::on() => Some((trace::name(req), Instant::now())),
+            _ => None,
+        };
+        let stop = self.handle_msg(msg);
+        if let Some((name, t0)) = traced {
+            trace::line(&format!("{name} {:.2} ms", t0.elapsed().as_secs_f64() * 1e3));
+        }
+        stop
+    }
+
+    fn handle_msg(&mut self, msg: Msg) -> bool {
         match msg {
             Msg::Wake => false,
             Msg::Close => true,
@@ -794,7 +810,9 @@ impl Engine {
                     Slot::Before
                 } else {
                     // a drag renders a draft: smaller the slower this host renders (as egui's loupe)
-                    let scale = f64::from(self.sched.draft_scale(draft, w as f64 * h as f64));
+                    // (each slider learns its own: `DraftBudget`)
+                    let drag = draft.then(|| self.session.interaction.as_ref().map_or("", |i| i.label.as_str()));
+                    let scale = f64::from(self.sched.draft_scale(drag, w as f64 * h as f64));
                     let (dw, dh) = ((w as f64 * scale).round().max(8.0) as usize, (h as f64 * scale).round().max(8.0) as usize);
                     let job = self.session.loupe_job(id, dw, dh, apply_crop).ok_or_else(|| bad("no such photo"))?;
                     let shown = overlay(p.get("overlay"));
@@ -981,6 +999,17 @@ impl Engine {
                 window,
                 hdr,
             };
+            if trace::on() {
+                trace::line(&format!(
+                    "image {} {}x{} draft {} final {} render {:.1} ms",
+                    slot.name(),
+                    width,
+                    height,
+                    shown.draft,
+                    !shown.draft && shown.quick.is_none(),
+                    shown.ms
+                ));
+            }
             self.events.push(event.to_value());
         }
         for (slot, photo, key, error) in polled.failed {
@@ -1693,3 +1722,37 @@ fn presets_generation(s: &Session) -> u64 {
 
 #[cfg(test)]
 mod tests;
+
+/// `LIGHTCRAFT_HOST_TRACE=1`: the engine thread prints every request it handles (with how long it took) and every
+/// picture it sends, timed from the first line, to stderr: where a slider step's time goes.
+mod trace {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+
+    pub fn on() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("LIGHTCRAFT_HOST_TRACE").is_ok_and(|v| v == "1"))
+    }
+
+    /// A request's method, with the command it runs.
+    pub fn name(req: &super::Request) -> String {
+        let p = &req.params;
+        match p.get("command").and_then(serde_json::Value::as_str) {
+            Some(c) => format!("{} {c}", req.method),
+            // (a render's size, and whether it is a draft or zoomed in)
+            None if req.method == "render.view" => format!(
+                "render.view {}x{}{}{}",
+                p.get("width").unwrap_or(&serde_json::Value::Null),
+                p.get("height").unwrap_or(&serde_json::Value::Null),
+                if p.get("draft").and_then(serde_json::Value::as_bool) == Some(true) { " draft" } else { "" },
+                if p.get("zoom").is_some_and(|z| !z.is_null()) { " zoom" } else { "" }
+            ),
+            None => req.method.clone(),
+        }
+    }
+
+    pub fn line(what: &str) {
+        static START: OnceLock<Instant> = OnceLock::new();
+        eprintln!("host {:>9.1} {what}", START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1e3);
+    }
+}

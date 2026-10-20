@@ -178,6 +178,10 @@ walks the drive.
   sliders, evaluates no mask; a cached alpha is the buffer a fresh evaluation produced, so warm and
   fresh renders stay bit-identical. Both caches' `bytes()` count the alphas and the blurred
   chromaticity.
+- The picture's histogram is counted on the GPU too, and its counts are copied in after the picture to come back
+  with it: an SDR picture's by `hist8` (the pixels `Histogram::of_srgb8` samples, bin for bin, and the picture's
+  unwritten pixels, in the picture's own readback, so no CPU pass reads the picture: ~1–2 ms a draft before), an
+  HDR one's by `hdr_hist` (with its half floats, in a second readback).
 - One command encoder per render; the only mid-render readback is the airlight samples (dehaze, when
   the dark channel is recomputed). Dropped buffers are recycled (exact size, ≤ 2 GB pool) once the
   thread that dropped them has submitted — allocating and zero-filling fresh 100–300 MB buffers
@@ -213,8 +217,9 @@ cannot vouch for:
   base radius, dehaze dark channel) and some need global values (airlight percentile), so tiles
   would need wide overlaps and a two-pass plan — the CPU renders those exports instead.
 - **Sanity checks on the result.** The output buffer is cleared before the per-pixel stage, which
-  writes alpha 255 everywhere: any pixel without it means work did not run, and the GPU is not used
-  again (`incomplete image`). An entirely black result (n ≥ 4096 pixels) is re-rendered on the CPU
+  writes alpha 255 everywhere: any pixel without it (counted by `hist8` for an SDR picture) means work
+  did not run, and the GPU is not used again (`incomplete image`); so does a histogram that did not
+  count every pixel it samples. An entirely black result (n ≥ 4096 pixels) is re-rendered on the CPU
   for that render only — a really black photo costs one extra CPU render, nothing else; there are
   no false positives because the CPU result is what is returned.
 
@@ -330,7 +335,12 @@ the drafts that finish (the median of the latest five, so one draft held up by o
 drag) and picks the scale once per drag (lowering it mid-drag only when drafts take about three times the target:
 a draft of a new size starts from a cold stage cache): natively between 0.2 and 1 (the view's own size), aiming at 20 ms a draft
 (one renders at a time, so that is about 50 pictures a second), and in the browser between 0.2 and 0.6 at 40 ms.
-A session's first drag starts at 0.6. A GPU renders most drags at full size in time (an M1 Max: 3–5 ms for a 24 MP
+Each slider learns its own cost (the drag's interaction label): a slow one (Noise Reduction) shrinks its own
+drafts, not the next slider's, which would otherwise start at a new size, from a cold stage cache (0.8–1.6 s for a
+Vibrance drag's first picture after a Noise Reduction one, in a native app at 4.5 MP). A slider not dragged yet
+drafts at the view's own size when a GPU renders (the sharp picture before it left the stage cache warm at that
+size); without a GPU it starts from what drafts of any slider cost, and a session's first drag at 0.6 (0.35 in the
+browser). A GPU renders most drags at full size in time (an M1 Max: 3–5 ms for a 24 MP
 raw's Retina loupe, `crates/apphost/examples/drag_bench.rs`), so the photo stays sharp while it moves and nothing
 jumps when the slider is let go. The ones that shrink: the browser, whose CPU
 pipeline costs 100–500 ns a pixel (docs/web.md), and the sliders that rebuild every spatial plane, White Balance
@@ -355,6 +365,17 @@ single-thread bench puts ~75 % of the time in the per-pixel closure itself and ~
 unchanged), which took the learned cost from 362 to 286 ms per megapixel and the sharp render after a release from
 ~1040 to ~780 ms in that browser (alternating runs on a loaded Mac). Drafts also skip the filmstrip thumbnail of the
 photo being dragged (`grid::request_thumb`): a render per tick of a picture nobody is looking at.
+
+Measured 2026-10-21 in a native frontend on an M1 Max (load average 70–350 from other builds), a 30 MP CR3 in a
+2584 × 1723 loupe (4.5 MP drafts, the slider stepping at 120 Hz): Exposure and Clarity held 117–120 pictures a
+second at 6–10 ms a draft, White Balance 48–57 at 18–20 ms, Noise Reduction 31–38 at 29–35 ms; the sharp picture
+was sent 10 ms after the slider was let go. `crates/apphost/examples/drag_bench.rs` (engine only) now also prints
+each draft's age when it lands (`step→picture`: 3–7 ms for most sliders at 1.7–4.5 MP), and
+`LIGHTCRAFT_HOST_TRACE=1` makes the engine host print every request it handles and every picture it sends, timed.
+What helped there besides the above: the allocator keeps a few freed large blocks for the next allocation of the same
+size (`lightcraft_sysmem::ReturningAlloc`: a fresh 15 MB picture's pages faulted in for ~2.5 ms against 0.56 ms to
+write a kept block), and the frontend asks for each draft right behind its value instead of after the value's answer
+came back.
 
 ## Opening a photo (M5.4)
 - The loupe shows a stand-in at once (`media::QuickJob`): the photo's cached view render for its
@@ -408,5 +429,6 @@ A zoom window never uploads the whole original. `Frame::source_cut` bounds what 
   faster path for exports.
 - Large-radius blurs at full size (dehaze dark channel at 24 MP) dominate the export: a summed-area
   table or a downsampled dark channel would cut them further.
-- GPU histogram (atomics) for SDR renders too, as the HDR picture has (`hdr_hist`): the CPU pass over the
-  8-bit readback is ~1.5 ms of a 0.6 MP draft.
+- Noise Reduction drafts reuse the wide planes of the image before the change (as on the CPU) but redo the
+  denoise itself every tick: ~5 ms a 2 MP draft on an M1 Max, the slowest slider. A draft could denoise at a
+  lower resolution.

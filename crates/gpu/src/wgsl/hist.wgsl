@@ -52,3 +52,52 @@ fn hdr_hist(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invoca
         }
     }
 }
+
+// The 8-bit picture's histogram as `Histogram::of_srgb8` counts it (R, G, B, then luma, 256 bins each, of every
+// STEP-th pixel of every STEP-th row of the part kept), and in bin 1024 its pixels whose alpha is not 255 (work
+// that did not run: `finish` writes 255 everywhere) over the whole picture, so no CPU pass reads the picture.
+// Bindings: src (`finish`'s `out`: packed RGBA8), hist (1025 counts, cleared). P: W, H, X0, Y0, KW, KH (the part
+// counted), STEP. Each invocation reads HIST8_ROWS rows of a column.
+const HIST8_ROWS: u32 = 4u;
+
+var<workgroup> wg8: array<atomic<u32>, 1025>;
+
+@compute @workgroup_size(16, 16)
+fn hist8(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+    for (var k = li; k < 1025u; k += 256u) {
+        atomicStore(&wg8[k], 0u);
+    }
+    workgroupBarrier();
+    let x = gid.x;
+    if (x < pu(0u)) {
+        for (var r = 0u; r < HIST8_ROWS; r++) {
+            let y = gid.y * HIST8_ROWS + r;
+            if (y >= pu(1u)) {
+                break;
+            }
+            let p = src[y * pu(0u) + x];
+            if ((p >> 24u) != 255u) {
+                atomicAdd(&wg8[1024u], 1u);
+            }
+            // (left of or above the part kept, the differences wrap round and fail the bounds)
+            let kx = x - pu(2u);
+            let ky = y - pu(3u);
+            if (kx < pu(4u) && ky < pu(5u) && kx % pu(6u) == 0u && ky % pu(6u) == 0u) {
+                let cr = p & 255u;
+                let cg = (p >> 8u) & 255u;
+                let cb = (p >> 16u) & 255u;
+                atomicAdd(&wg8[cr], 1u);
+                atomicAdd(&wg8[256u + cg], 1u);
+                atomicAdd(&wg8[512u + cb], 1u);
+                atomicAdd(&wg8[768u + min((cr * 54u + cg * 183u + cb * 19u) >> 8u, 255u)], 1u);
+            }
+        }
+    }
+    workgroupBarrier();
+    for (var k = li; k < 1025u; k += 256u) {
+        let n = atomicLoad(&wg8[k]);
+        if (n != 0u) {
+            atomicAdd(&hist[k], n);
+        }
+    }
+}

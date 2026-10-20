@@ -1097,3 +1097,50 @@ fn windows_cut_from_a_big_original_match() {
     }
     assert_eq!(lightcraft_gpu::source_uploads(), before, "(from their cuts)");
 }
+
+// An SDR picture's histogram is counted on the GPU (`hist8`): bin for bin what the CPU counts in the same picture,
+// at sizes that sample every pixel and every 2nd and 3rd one
+#[test]
+fn the_gpu_histogram_counts_what_the_cpu_would() {
+    if !gpu() {
+        return;
+    }
+    let src = scene(1, 3200, 2400);
+    let mut s = DevelopSettings::default();
+    s.light.exposure = 0.4;
+    s.light.contrast = 30.0;
+    for (w, h) in [(320, 240), (1600, 1200), (2600, 1950)] {
+        let gpu = lightcraft_gpu::render(&src, &SourceInfo::default(), &s, &RenderRequest::fit(w, h), None).expect("gpu render");
+        let want = lightcraft_raster::Histogram::of_srgb8(&gpu.image);
+        let got = &gpu.histogram;
+        assert!(want.total > 0 && got.hdr.is_none(), "{w}x{h}");
+        assert_eq!((&got.r, &got.g, &got.b, &got.luma, got.total), (&want.r, &want.g, &want.b, &want.luma, want.total), "{w}x{h}");
+    }
+}
+
+// A noise reduction drag: drafts take the wide planes of the image before the change on the GPU as on the CPU (so
+// the two still match), and the full render after the drag takes none of them (it equals a fresh one)
+#[test]
+fn noise_reduction_drafts_reuse_the_wide_planes_as_on_the_cpu() {
+    if !gpu() {
+        return;
+    }
+    let src = scene(1, 900, 600);
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let (on_gpu, on_cpu) = (StageCache::default(), StageCache::default());
+    let mut s = DevelopSettings::default();
+    typical(&mut s);
+    let draft = RenderRequest { quality: Quality::Draft, ..RenderRequest::fit(640, 640) };
+    for nr in [0.0, 30.0, 60.0] {
+        s.detail.nr_luminance = nr;
+        let g = lightcraft_gpu::render(&src, &info, &s, &draft, Some(&on_gpu)).expect("gpu render");
+        let c = lightcraft_pipeline::render_cached(&src, &info, &s, &draft, &on_cpu).image;
+        let (mean, max, _) = diff(&c, &g.image);
+        eprintln!("NR {nr} draft, warm: mean {mean:.4} max {max}");
+        assert!(mean < MEAN_LSB && max <= MAX_LSB, "NR {nr}: mean {mean:.4} LSB, max {max} LSB");
+    }
+    let full = RenderRequest::fit(640, 640);
+    let warm = lightcraft_gpu::render(&src, &info, &s, &full, Some(&on_gpu)).expect("gpu render");
+    let fresh = lightcraft_gpu::render(&src, &info, &s, &full, None).expect("gpu render");
+    assert_eq!(warm.image, fresh.image, "the full render after the drag is exact");
+}

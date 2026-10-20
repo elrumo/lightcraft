@@ -44,6 +44,8 @@ struct Entry {
 #[derive(Clone, Default)]
 struct Planes {
     key: u64,
+    /// The image's `pre_nr_key`: what it is before noise reduction (see [`Planes::for_other_nr`]).
+    pre_nr: u64,
     log_l: Option<Arc<Buf>>,
     base: Option<(local::BaseKey, Arc<Buf>)>,
     clarity: Option<(u32, Arc<Buf>)>,
@@ -52,6 +54,15 @@ struct Planes {
     sharpen: Option<(u32, Arc<Buf>)>,
     dark: Option<(u64, Arc<Buf>, f32)>,
     chroma: Option<(u32, Arc<Buf>)>,
+}
+
+impl Planes {
+    /// The planes that still fit an image differing from this one only in noise reduction, close enough for a draft,
+    /// as the CPU's (`local::Planes::for_other_nr`): the wide blurs (base, clarity, dehaze, chromaticity). Its `key`
+    /// matches no image, so only another draft takes them.
+    fn for_other_nr(self) -> Planes {
+        Planes { key: 0, log_l: None, texture: None, sharpen: None, ..self }
+    }
 }
 
 impl GpuStages {
@@ -680,7 +691,10 @@ pub fn render(
     let mut alphas = cached.as_ref().map(|e| e.masks.clone()).unwrap_or_default();
     let mut planes = match cached.map(|e| e.planes) {
         Some(p) if p.key == plan.lin_key => p,
-        _ => Planes { key: plan.lin_key, ..Default::default() },
+        // a draft while noise reduction changes (a slider drag): the wide planes of the image before the change stand
+        // in, as on the CPU (noise reduction barely moves a blur that wide); the rest is redone
+        Some(p) if req.quality == lightcraft_pipeline::Quality::Draft && p.pre_nr == plan.pre_nr_key => p.for_other_nr(),
+        _ => Planes { key: plan.lin_key, pre_nr: plan.pre_nr_key, ..Default::default() },
     };
     let mut prep = prepare(&mut cx, &lin, &plan, req, &mut planes);
     // a window dehazes with the whole frame's airlight
@@ -724,8 +738,11 @@ pub fn render(
     };
     // an HDR render writes its HDR picture too: two words of half floats a pixel after the 8-bit image
     let hdr_out = req.depth == lightcraft_pipeline::OutputDepth::F32Hdr;
-    // cleared, so that work which never ran cannot pass for an image (see the check below)
-    let out = cx.zeroed(if hdr_out { 3 * n } else { n });
+    // cleared, so that work which never ran cannot pass for an image (see the check below); the histogram's counts
+    // are copied in after the picture (`tail`), to come back with it
+    let tail = if hdr_out { 3 * n } else { n };
+    let counted = if hdr_out { 4 * Histogram::BINS } else { HIST8_WORDS };
+    let out = cx.zeroed(tail + counted);
     if fault == Some(crate::Fault::Validation) {
         // a dispatch the device rejects (too many workgroups)
         cx.run("box_h", &[0; 5], &[Some(&aux), Some(&out)], [gpu.device.limits().max_compute_workgroups_per_dimension + 1, 1, 1]);
@@ -785,16 +802,32 @@ pub fn render(
     } else {
         None
     };
-    // an HDR render's histogram is its picture's HDR one, counted on the GPU (what the request keeps of it)
+    // The histogram of what the request keeps, counted on the GPU: an HDR render's is its picture's HDR one; an SDR
+    // one's samples the pixels `Histogram::of_srgb8` does and counts the picture's unwritten pixels too. Its counts
+    // come back with the picture (an SDR one in the same readback).
     let (kx, ky, kw, kh) = plan.keep.map_or((0, 0, w, h), |k| (k.x, k.y, k.w, k.h));
-    let hdr_hist = hdr_out.then(|| {
-        let hist = cx.zeroed(4 * Histogram::BINS);
+    let step = Histogram::srgb8_step(kw * kh);
+    let hist = cx.zeroed(counted);
+    if hdr_out {
         cx.run("hdr_hist", &[w, kx, ky, kw, kh, n].map(|v| v as u32), &[Some(&out), Some(&hist)], groups2(kw, kh, [16, 16]));
-        hist
-    });
-    let data: Vec<[u8; 4]> = cx.read(&out, n);
-    let halves: Option<Vec<u16>> = hdr_out.then(|| cx.read_at(&out, n, 2 * n));
-    let hdr_counts: Option<Vec<u32>> = hdr_hist.map(|b| cx.read(&b, 4 * Histogram::BINS));
+    } else {
+        let p = [w, h, kx, ky, kw, kh, step].map(|v| v as u32);
+        cx.run("hist8", &p, &[Some(&out), Some(&hist)], groups2(w, h.div_ceil(HIST8_ROWS), [16, 16]));
+    }
+    cx.copy_into(&hist, &out, tail);
+    let (data, halves, counts): (Vec<[u8; 4]>, Option<Vec<u16>>, Vec<u32>) = if hdr_out {
+        // (its half floats, four a pixel, and the counts after them come in a second readback: the 8-bit picture's
+        // buffer holds only its own bytes)
+        let data = cx.read(&out, n);
+        let mut halves: Vec<u16> = cx.read_at(&out, n, 2 * n + counted);
+        let counts =
+            halves.split_off((4 * n).min(halves.len())).as_chunks::<2>().0.iter().map(|&[lo, hi]| u32::from(lo) | (u32::from(hi) << 16)).collect();
+        (data, Some(halves), counts)
+    } else {
+        let mut data: Vec<[u8; 4]> = cx.read(&out, n + counted);
+        let counts = data.drain(n.min(data.len())..).map(u32::from_le_bytes).collect();
+        (data, None, counts)
+    };
     let image = Rgba8 { width: w, height: h, data };
     lap("finish + readback", &mut t, &mut cx);
     if crate::ctx::failed() {
@@ -803,20 +836,17 @@ pub fn render(
     // The per-pixel kernel writes alpha 255 everywhere and `out` was cleared: a pixel with any
     // other alpha means work silently did not run (a driver that reset or dropped a submission
     // without reporting it — issue #78's all-black exports).
-    let unwritten = unwritten(&image.data);
+    let unwritten = if hdr_out { unwritten(&image.data) } else { counts.get(4 * Histogram::BINS).map_or(n, |c| *c as usize) };
     if unwritten > 0 {
         fail(FailKind::Fatal, format!("the GPU returned an incomplete image ({unwritten} of {n} pixels unwritten)"));
         return None;
     }
-    let histogram = match (hdr_counts, plan.keep) {
-        (Some(c), _) => hdr_histogram(&c, kw * kh),
-        (None, Some(k)) => Histogram::of_srgb8(&image.crop(k.x, k.y, k.w, k.h)),
-        (None, None) => Histogram::of_srgb8(&image),
-    };
+    let histogram =
+        if hdr_out { counted_histogram(&counts, kw * kh, true) } else { counted_histogram(&counts, kw.div_ceil(step) * kh.div_ceil(step), false) };
     lap("histogram", &mut t, &mut cx);
     // (every pixel counted once: a histogram kernel that did not run is no histogram)
-    if histogram.hdr.is_some() && histogram.luma.iter().map(|c| u64::from(*c)).sum::<u64>() != u64::from(histogram.total) {
-        fail(FailKind::Fatal, "the GPU returned an incomplete HDR histogram".into());
+    if histogram.luma.iter().map(|c| u64::from(*c)).sum::<u64>() != u64::from(histogram.total) {
+        fail(FailKind::Fatal, "the GPU returned an incomplete histogram".into());
         return None;
     }
     // An entirely black result (upstream work that did not run would give that too): redo it on
@@ -858,9 +888,9 @@ pub fn render(
     Some((Rendered { image, histogram, deep: None }, halves))
 }
 
-/// The HDR histogram the `hdr_hist` kernel counted (R, G, B and luma, [`Histogram::BINS`] each) over
-/// `total` pixels, with an HDR edit's bins (as `lightcraft_engine`'s HDR histograms).
-fn hdr_histogram(counts: &[u32], total: usize) -> Histogram {
+/// The histogram the `hdr_hist` or `hist8` kernel counted (R, G, B and luma, [`Histogram::BINS`] each) over `total`
+/// pixels; `hdr`: with an HDR edit's bins (as `lightcraft_engine`'s HDR histograms).
+fn counted_histogram(counts: &[u32], total: usize, hdr: bool) -> Histogram {
     let n = Histogram::BINS;
     let ch = |k: usize| counts.get(k * n..(k + 1) * n).map_or_else(|| vec![0; n], <[u32]>::to_vec);
     Histogram {
@@ -869,9 +899,14 @@ fn hdr_histogram(counts: &[u32], total: usize) -> Histogram {
         b: ch(2),
         luma: ch(3),
         total: u32::try_from(total).unwrap_or(u32::MAX),
-        hdr: Some(lightcraft_raster::HdrBins { from: Histogram::HDR_FROM, stops: lightcraft_develop::Hdr::MAX_EV_LIMIT as f32 }),
+        hdr: hdr.then_some(lightcraft_raster::HdrBins { from: Histogram::HDR_FROM, stops: lightcraft_develop::Hdr::MAX_EV_LIMIT as f32 }),
     }
 }
+
+/// The `hist8` kernel's counts: the four histograms, then the unwritten pixels.
+const HIST8_WORDS: usize = 4 * Histogram::BINS + 1;
+/// Rows each `hist8` invocation reads (`HIST8_ROWS` in hist.wgsl).
+const HIST8_ROWS: usize = 4;
 
 /// Pixels whose alpha is not 255 (cheap: no early exit, so it vectorizes).
 fn unwritten(data: &[[u8; 4]]) -> usize {
