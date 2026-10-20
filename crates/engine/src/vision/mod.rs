@@ -299,6 +299,9 @@ pub struct Vision {
     /// Of those, the parts this device holds back for now (`vision.setHelperPaused`; persisted likewise): the server
     /// still leaves them to this device, which claims no photos for them.
     pub helper_paused: Vec<String>,
+    /// Of the parts in `helper_parts`, those given back to the server by themselves when the helper finds nothing
+    /// left to claim for them (`vision.helperOnce`; persisted likewise).
+    pub helper_once: Vec<String>,
     /// This device runs none of the models even if this build could (a thin client; tests of one):
     /// it searches and lists people through the sync server.
     #[doc(hidden)]
@@ -370,6 +373,7 @@ impl Default for Vision {
             sensitive: false,
             helper_parts: Vec::new(),
             helper_paused: Vec::new(),
+            helper_once: Vec::new(),
             thin: false,
             text_edge: TEXT_EDGE,
             injected: None,

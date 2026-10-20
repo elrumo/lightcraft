@@ -131,6 +131,8 @@ pub(super) struct Config {
 pub struct HelperJob {
     pub(super) cancel: Arc<AtomicBool>,
     pub(super) finished: AtomicBool,
+    /// The last claim came back with no photos and no part refused: nothing is left for this helper to do now.
+    idle: AtomicBool,
     /// The server and token this helper works for (a change of either ends it).
     pub(super) server: String,
     pub(super) token: String,
@@ -309,6 +311,7 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guards:
         }
         publish(&job, &guards);
         let items = parse_items(&reply);
+        job.idle.store(items.is_empty() && lock(&job.refused).is_empty(), Ordering::Relaxed);
         if items.is_empty() {
             job.set_error(None);
             job.set_state("waiting");
@@ -675,6 +678,7 @@ impl crate::Session {
         chosen.sort_by_key(|p| p.slot());
         let old = std::mem::replace(&mut self.vision.helper_parts, chosen.iter().map(|p| p.key().to_string()).collect());
         self.vision.helper_paused.retain(|p| self.vision.helper_parts.contains(p));
+        self.vision.helper_once.retain(|p| self.vision.helper_parts.contains(p));
         self.save_prefs().map_err(|e| e.to_string())?;
         let dropped: Vec<&String> = old.iter().filter(|o| !self.vision.helper_parts.contains(o)).collect();
         if !dropped.is_empty() && self.vision_signed_in() {
@@ -688,6 +692,33 @@ impl crate::Session {
         self.vision.helper_retry = None;
         self.vision_helper_upkeep();
         Ok(self.vision_helper_status())
+    }
+
+    /// Do `part` for the server until nothing is left to claim, then give it back (`vision.helperOnce`).
+    pub fn vision_helper_once(&mut self, part: &str) -> Result<Value, String> {
+        HelperPart::from_key(part).ok_or_else(|| format!("`{part}` is not work a device can take (search, text, faces, sensitive, previews)"))?;
+        let mut parts = self.vision.helper_parts.clone();
+        if !parts.iter().any(|p| p == part) {
+            parts.push(part.to_string());
+        }
+        // (taking it up again from a pause too: asking for it is asking for it to run)
+        self.vision.helper_paused.retain(|p| p != part);
+        if !self.vision.helper_once.iter().any(|p| p == part) {
+            self.vision.helper_once.push(part.to_string());
+        }
+        // (one change of the choice: each ends the running helper, and a second one right after would leave the new
+        // helper waiting out the retry delay)
+        self.vision_helper_set(&parts)
+    }
+
+    /// Gives back the `once` parts when the helper has found nothing left for them.
+    fn vision_helper_finish_once(&mut self) {
+        if self.vision.helper_once.is_empty() || !self.vision.helper.as_ref().is_some_and(|j| j.idle.load(Ordering::Relaxed) && !j.cancel.load(Ordering::Relaxed)) {
+            return;
+        }
+        let once = std::mem::take(&mut self.vision.helper_once);
+        let rest: Vec<String> = self.vision.helper_parts.iter().filter(|p| !once.contains(p)).cloned().collect();
+        let _ = self.vision_helper_set(&rest);
     }
 
     /// Hold back (or take up again) some of the work this device does for its server (`vision.setHelperPaused`): a paused
@@ -716,6 +747,7 @@ impl crate::Session {
     pub fn vision_helper_status(&self) -> Value {
         let mut v = self.vision.helper.as_ref().map_or_else(|| json!({"running": false, "state": "stopped"}), |j| j.json());
         v["paused"] = json!(self.vision.helper_paused);
+        v["once"] = json!(self.vision.helper_once);
         if self.vision_helper_all_paused() {
             v["state"] = json!("paused");
         }
@@ -732,6 +764,7 @@ impl crate::Session {
     /// Frame-loop upkeep: ends a helper that has nothing to work for, reports one that stopped, and
     /// starts one when parts are chosen and this library is signed in to a server.
     pub(super) fn vision_helper_upkeep(&mut self) {
+        self.vision_helper_finish_once();
         let signed_in = self.vision_signed_in();
         let (server, token) = self.sync.as_ref().map(|st| (st.config.server.clone(), st.config.token.clone())).unwrap_or_default();
         let wanted = signed_in && !self.vision.helper_parts.is_empty() && !self.vision_helper_all_paused();

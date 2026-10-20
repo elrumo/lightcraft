@@ -134,6 +134,18 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "vision.helperOnce",
+            "Process Photos for the Server Once",
+            [],
+            None,
+            "{part: search|text|faces|sensitive|previews} — as vision.setHelper for this one part, but only until nothing is left to claim for it: then it is given back to the server by itself (a server that is behind on previews gets them built here, once). Taking it up again from a pause. Saved with the library → vision.helper (`once` lists the parts that end by themselves)",
+            always,
+            |s, p| {
+                let part = p.get("part").and_then(Value::as_str).ok_or_else(|| bad("vision.helperOnce", "missing `part`"))?;
+                s.vision_helper_once(part).map_err(|e| bad("vision.helperOnce", e))
+            }
+        ),
+        cmd!(
             "vision.setHelperPaused",
             "Pause Processing for the Server",
             [],

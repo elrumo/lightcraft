@@ -716,6 +716,10 @@ impl Session {
         Err("a browser can't process photos for the server".into())
     }
 
+    pub fn vision_helper_once(&mut self, _part: &str) -> Result<Value, String> {
+        Err("a browser can't process photos for the server".into())
+    }
+
     pub fn vision_helper_set_paused(&mut self, _paused: &[String]) -> Result<Value, String> {
         Err("a browser can't process photos for the server".into())
     }

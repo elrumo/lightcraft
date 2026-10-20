@@ -1376,6 +1376,31 @@ fn a_device_builds_the_previews_the_server_left_to_it() {
 }
 
 #[test]
+fn a_device_builds_the_previews_once_and_gives_the_work_back() {
+    let (f, _) = helper_fixture("work-previews-once", &["previews"]);
+    let blobs = accounts::user_dir(&f.data, "ann").join("blobs");
+    let mut s = device(&f, "work-previews-once-device", Some(Arc::new(Padded)));
+    let r = s.execute("vision.helperOnce", &json!({"part": "previews"})).unwrap();
+    assert_eq!((&r["parts"], &r["once"]), (&json!(["previews"]), &json!(["previews"])), "{r}");
+    assert!(s.execute("vision.helperOnce", &json!({"part": "video"})).is_err());
+    // it builds them, finds nothing more to claim, and hands the work back to the server by itself
+    let mut last = Value::Null;
+    for _ in 0..600 {
+        s.vision_poll();
+        sync(&mut s);
+        last = s.execute("vision.helper", &json!({})).unwrap();
+        if last["parts"] == json!([]) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(last["parts"], json!([]), "given back: {last}");
+    assert_eq!(last["once"], json!([]), "{last}");
+    assert_eq!((files_under(&blobs.join("smart")), files_under(&blobs.join("mini"))), (4, 4), "{last}");
+    assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!([]), "the server was told");
+}
+
+#[test]
 fn the_choice_is_kept_with_the_library_and_a_missing_model_is_said() {
     let (f, _) = helper_fixture("work-prefs", &[]);
     let dir = temp("work-prefs-device").join("device");

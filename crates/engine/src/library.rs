@@ -334,6 +334,8 @@ struct PrefsFile {
     search_helper: Vec<String>,
     /// Of those, the parts held back for now (`vision.setHelperPaused`).
     search_helper_paused: Vec<String>,
+    /// Of those, the parts that end by themselves once nothing is left to claim (`vision.helperOnce`).
+    search_helper_once: Vec<String>,
     /// Blur the possibly sensitive photos in the grid (`library.setBlurSensitive`; missing = on).
     blur_sensitive: Option<bool>,
     /// Photos the person marked sensitive (`true`) or not (`false`), by content hash (`photo.markSensitive`).
@@ -639,6 +641,7 @@ impl Session {
         self.vision.faces = prefs.search_faces;
         self.vision.helper_parts = prefs.search_helper;
         self.vision.helper_paused = prefs.search_helper_paused;
+        self.vision.helper_once = prefs.search_helper_once;
         self.vision.sensitive = prefs.search_sensitive;
         self.vision.sensitive_backend =
             prefs.search_sensitive_backend.filter(|b| matches!(b.as_str(), "auto" | "cpu" | "gpu")).unwrap_or_else(|| "auto".into());
@@ -1068,6 +1071,7 @@ impl Session {
             depth_backend: Some(self.depth_backend()),
             search_helper: self.vision.helper_parts.clone(),
             search_helper_paused: self.vision.helper_paused.clone(),
+            search_helper_once: self.vision.helper_once.clone(),
             blur_sensitive: Some(self.blur_sensitive),
             sensitive_marks: self.vision.sensitive_marks.clone(),
             slideshow: self.slideshow.clone(),
