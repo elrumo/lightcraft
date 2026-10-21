@@ -13,6 +13,8 @@ pub fn photo_summary(p: &Photo) -> Value {
         "fileName": p.file_name,
         "format": p.format,
         "kind": p.kind,
+        // a video clip's length in seconds (null for a picture)
+        "duration": p.duration,
         "width": p.width,
         "height": p.height,
         "captured": p.captured,

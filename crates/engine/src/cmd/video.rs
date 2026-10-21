@@ -107,8 +107,37 @@ fn frame(_: &mut Session, _: &Value) -> Result<Value> {
     Err(bad("video.frame", "reading a clip needs its file on disk"))
 }
 
+/// Where a clip can be played from: its file on this computer, or (for a synced clip whose original has not come yet)
+/// nothing until `sync.downloadOriginals` brings it. A frontend with a system player plays `path`.
+fn source(s: &mut Session, p: &Value) -> Result<Value> {
+    use lightcraft_catalog::{MediaKind, PhotoId, Source};
+    const C: &str = "video.source";
+    let id = match p.get("id").filter(|v| !v.is_null()) {
+        Some(v) => PhotoId(v.as_u64().ok_or_else(|| bad(C, "`id` must be a photo id"))?),
+        None => s.active().ok_or_else(|| bad(C, "no photo selected: pass `id`"))?,
+    };
+    let photo = s.catalog.photo(id).ok_or_else(|| bad(C, format!("no photo {}", id.0)))?;
+    if photo.kind != MediaKind::Video {
+        return Err(bad(C, format!("photo {} is not a video", id.0)));
+    }
+    let Source::File { path } = &photo.source else { return Err(bad(C, "this clip is not a file")) };
+    // (a synced photo's path names its place on the server until its original is downloaded)
+    let remote = path.starts_with(lightcraft_catalog::sync::PATH_PREFIX);
+    let here = !remote && std::path::Path::new(path).is_file();
+    Ok(json!({"photo": id.0, "path": here.then_some(path), "available": here, "remote": remote, "duration": photo.duration}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(
+            query "video.source",
+            "Video Source",
+            [],
+            None,
+            "{id?} → {photo, path, available, remote, duration} — where a video clip can be played from: `path` is its file on this computer (null when it is not here: `remote` says it is a synced clip whose original is still on the server, which `sync.downloadOriginals` brings)",
+            always,
+            source
+        ),
         cmd!(
             query "video.info",
             "Video Info",

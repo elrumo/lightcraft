@@ -40,6 +40,8 @@ enforces it, and refuses `filmcraft-codecs` and `symphonia` (MPL-2.0)). The H.26
 - **Commands.** `video.info {id?}` (what the file says; `unsupported` names what this version can't decode) and
   `video.frame {id?, time?, maxEdge?, path?}` (the picture at `time`, else the poster; PNG base64, or written to `path`).
   Both read the file in place, so they need the file on this computer. Develop settings are not applied to them yet.
+  `video.source {id?}` says where a system player can play the clip from (`path`, or `remote` for a synced clip whose
+  original `sync.downloadOriginals` has yet to bring), and `catalog.query` photos carry `duration`.
 - **Never crash.** Every call into FilmCraft runs under `catch_unwind`; sizes read from the file are capped before they
   allocate (picture size, sample size, how far a seek may decode); damaged clips are errors the import reports like any
   unreadable file. Tests cut files at every eighth and overwrite their middle.

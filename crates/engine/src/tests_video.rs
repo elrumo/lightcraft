@@ -129,3 +129,20 @@ fn video_frame_returns_the_picture_at_a_time_or_writes_it() {
         assert!(s.execute("video.frame", &bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn a_clips_length_is_in_its_summary_and_its_source_is_its_file() {
+    let (mut s, clip, still, dir) = with_clip("source");
+    let q = s.execute("catalog.query", &json!({"filter": {}})).unwrap();
+    let of = |id: PhotoId| q["photos"].as_array().unwrap().iter().find(|p| p["id"] == json!(id.0)).unwrap().clone();
+    assert!(of(clip)["duration"].as_f64().is_some_and(|d| (d - 2.0).abs() < 0.01), "{q}");
+    assert!(of(still)["duration"].is_null());
+    let r = s.execute("video.source", &json!({"id": clip.0})).unwrap();
+    assert_eq!((r["available"].as_bool(), r["remote"].as_bool()), (Some(true), Some(false)), "{r}");
+    assert_eq!(r["path"], json!(dir.join("IMG_1.MP4").to_string_lossy()), "{r}");
+    assert!(s.execute("video.source", &json!({"id": still.0})).is_err());
+    // the file gone: nothing to play
+    std::fs::remove_file(dir.join("IMG_1.MP4")).unwrap();
+    let r = s.execute("video.source", &json!({"id": clip.0})).unwrap();
+    assert_eq!((r["available"].as_bool(), r["path"].is_null()), (Some(false), true), "{r}");
+}
