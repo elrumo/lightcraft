@@ -17,6 +17,13 @@
 //!   applies it to the same picture when it has it, and otherwise holds it until that picture is
 //!   opened there (`photoLibrary.open`), which then comes in edited.
 //!
+//! - with *Keep Photos in iCloud Drive* on ([`photos`]), the photos themselves: their originals go to a folder of the
+//!   person's iCloud Drive that the host names (`icloud.folder`), which iCloud Drive carries to the other devices, and
+//!   each one's `edit` record says where its file is there, so another device adds it to its library when the file
+//!   has come (`icloud.wanted`, `icloud.adopt`);
+//! - `analysis`: what was found in such a photo (faces, the words in it, the description vector, the sensitive-content
+//!   score), so a device that can't run the models (an iPhone) or hasn't yet has them too ([`analysis`]).
+//!
 //! A library signed in to a server syncs its presets, settings and photos through the server: then only
 //! `server` records travel here, and what this device knew of the others is forgotten, so signing out
 //! of the server later (which removes the account's presets) merges again instead of deleting them.
@@ -35,6 +42,7 @@
 //! times and the host's own state, kept with them so the two never disagree) and `icloud.held`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use lightcraft_catalog::{Op, Photo, PhotoId};
 use serde::{Deserialize, Serialize};
@@ -42,6 +50,9 @@ use serde_json::{Value, json};
 
 use crate::cmd::{CommandSpec, always, bad, cmd};
 use crate::{EngineError, Result, Session};
+
+pub mod analysis;
+pub mod photos;
 
 /// The sync state, in the library.
 pub const STATE: &str = "icloud.json";
@@ -85,6 +96,9 @@ pub struct Known {
     /// This device's rendering of that data, when it stores it differently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     local: Option<String>,
+    /// An `analysis` record's parts ([`analysis`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parts: Option<u8>,
 }
 
 /// A record the cloud has that has no place on this device yet.
@@ -102,6 +116,9 @@ pub struct Held {
 #[serde(default, rename_all = "camelCase")]
 pub struct Saved {
     pub on: bool,
+    /// *Keep Photos in iCloud Drive*: imports go to the host's iCloud Drive folder, and photos other devices keep there
+    /// come into this library ([`photos`]).
+    pub photos: bool,
     /// Changes whenever this device forgets what the cloud has: the host then fetches everything again.
     epoch: u64,
     /// The library was signed in to a server when last looked at (signing out forgets, so it fetches again).
@@ -120,6 +137,8 @@ struct Mine {
     kind: String,
     key: String,
     hash: String,
+    /// An `analysis` record's parts (0 for the other kinds).
+    parts: u8,
 }
 
 /// A record the host fetched (or that a save was refused over).
@@ -189,6 +208,14 @@ pub struct ICloud {
     /// Changes whenever what there is to send may have changed.
     rev: u64,
     clock: Box<dyn Fn() -> i64 + Send>,
+    /// This device's iCloud Drive folder for photos, as the host last said (`icloud.folder`; not kept: the host says
+    /// it at every start).
+    folder: Option<PathBuf>,
+    /// The activity rows of photos coming from iCloud Drive and of originals moving into it, with how many are done.
+    bringing: Option<(crate::activity::TaskGuard, u64)>,
+    moving: Option<(crate::activity::TaskGuard, u64)>,
+    /// What [`analysis`] last saw of the search indexes (their sizes): a change makes it look again.
+    analysis_seen: Option<[usize; 4]>,
 }
 
 impl ICloud {
@@ -206,6 +233,10 @@ impl ICloud {
             scanned: false,
             rev: 1,
             clock: Box::new(now_ms),
+            folder: None,
+            bringing: None,
+            moving: None,
+            analysis_seen: None,
         }
     }
 
@@ -281,6 +312,9 @@ impl ICloud {
     /// Whether this device's version of `name` differs from the cloud's as last agreed.
     fn differs(&self, name: &str, mine: Option<&Mine>) -> bool {
         match (mine, self.saved.known.get(name)) {
+            // (analysis only fills in: sent while this device has a part the cloud lacks)
+            (Some(m), None) if m.kind == analysis::ANALYSIS => m.parts != 0,
+            (Some(m), Some(k)) if m.kind == analysis::ANALYSIS => m.parts & !k.parts.unwrap_or(0) != 0,
             (None, None) => false,
             (Some(_), None) | (None, Some(_)) => true,
             (Some(m), Some(k)) => m.hash != k.hash && k.local.as_deref() != Some(m.hash.as_str()),
@@ -322,7 +356,7 @@ fn hash_of(data: &str) -> String {
 
 /// A kind this engine syncs: the presets, a shared document, a server or an edit.
 fn known_kind(kind: &str) -> bool {
-    matches!(kind, PRESETS | SERVER | EDIT) || crate::cloud_sync::shared_doc_names().any(|n| n == kind)
+    matches!(kind, PRESETS | SERVER | EDIT | analysis::ANALYSIS) || crate::cloud_sync::shared_doc_names().any(|n| n == kind)
 }
 
 /// Kinds a library signed in to a server leaves to it.
@@ -385,7 +419,9 @@ impl Session {
         let lib = self.library.as_ref().map(|l| (l.presets_gen(), l.prefs_gen())).unwrap_or_default();
         let signed = self.sync.as_ref().map(|st| (st.signed_in(), st.config.library.is_empty()));
         let mut h = std::hash::DefaultHasher::new();
-        std::hash::Hash::hash(&(ic.rev, self.presets.generation(), lib, signed, self.photo_library.len()), &mut h);
+        // (what the search indexes hold, coarsely: a few dozen photos more worked out may be worth sending)
+        let found: usize = self.analysis_sizes().iter().sum::<usize>() / 32;
+        std::hash::Hash::hash(&(ic.rev, self.presets.generation(), lib, signed, self.photo_library.len(), found), &mut h);
         Some(std::hash::Hasher::finish(&h))
     }
 
@@ -427,21 +463,35 @@ impl Session {
     }
 
     /// Photo `p`'s edit record (key and data), when it is one this device sends: a library photo opened from
-    /// the photo library, with a content hash.
-    fn edit_record(&self, p: &Photo) -> Option<(String, String)> {
-        if p.local || p.deleted || p.copy_of.is_some() {
+    /// the photo library, or one whose original is in the iCloud Drive folder `folder`, with a content hash. A photo
+    /// in Recently Deleted or Hidden says so.
+    fn edit_record(&self, p: &Photo, folder: Option<&Path>) -> Option<(String, String)> {
+        if p.local || p.copy_of.is_some() {
             return None;
         }
-        let (hash, cloud) = self.photo_library.entry_of(p.id)?;
-        if hash != p.content_hash.as_deref() {
-            return None;
-        }
+        let file = folder.and_then(|f| photos::file_in(p, f));
+        let cloud = match self.photo_library.entry_of(p.id) {
+            Some((hash, cloud)) if hash == p.content_hash.as_deref() => cloud,
+            _ if file.is_some() => None,
+            _ => return None,
+        };
         let key = lightcraft_catalog::sync::content_key(p)?;
-        let data = json!({
+        let mut data = json!({
             "xmp": crate::sidecar::sidecar_packet(p, &self.catalog),
             "name": p.file_name,
             "asset": cloud,
         });
+        if let Some(o) = data.as_object_mut() {
+            if let Some(file) = file {
+                o.insert("file".into(), json!(file));
+            }
+            if p.deleted {
+                o.insert("deleted".into(), json!(true));
+            }
+            if p.hidden {
+                o.insert("hidden".into(), json!(true));
+            }
+        }
         Some((key, data.to_string()))
     }
 
@@ -449,7 +499,7 @@ impl Session {
     fn set_ours(ic: &mut ICloud, kind: &str, records: impl IntoIterator<Item = (String, String)>) {
         ic.ours.retain(|_, m| m.kind != kind);
         for (key, data) in records {
-            ic.ours.insert(record_name(kind, &key), Mine { kind: kind.to_string(), hash: hash_of(&data), key });
+            ic.ours.insert(record_name(kind, &key), Mine { kind: kind.to_string(), hash: hash_of(&data), key, parts: 0 });
         }
     }
 
@@ -512,6 +562,9 @@ impl Session {
                 ic.edits_of.clear();
                 ic.photo_of.clear();
                 ic.dirty = self.photo_library.photo_ids().collect();
+                if let Some(folder) = ic.folder.clone() {
+                    ic.dirty.extend(photos::in_folder(self, &folder));
+                }
                 ic.scanned = true;
             } else {
                 // assets mapped to photos the library already had (no op says so)
@@ -525,14 +578,40 @@ impl Session {
         }
         // what is held counts as this device's own (an edit of a photo it has wins)
         for (name, h) in &ic.held {
-            ic.ours.entry(name.clone()).or_insert_with(|| Mine { kind: h.kind.clone(), key: h.key.clone(), hash: h.hash.clone() });
+            ic.ours.entry(name.clone()).or_insert_with(|| Mine { kind: h.kind.clone(), key: h.key.clone(), hash: h.hash.clone(), parts: 0 });
+        }
+        // what was found in the photos that travel
+        if linked {
+            ic.ours.retain(|_, m| m.kind != analysis::ANALYSIS);
+        } else {
+            analysis::refresh(self, ic);
         }
     }
 
     /// Work out photo `id`'s edit record again.
     fn icloud_refresh_photo(&mut self, ic: &mut ICloud, id: PhotoId) {
-        let now = self.catalog.photo(id).and_then(|p| self.edit_record(p));
+        let folder = ic.folder.clone();
+        let mut now = self.catalog.photo(id).and_then(|p| self.edit_record(p, folder.as_deref()));
         let name = now.as_ref().map(|(key, _)| record_name(EDIT, key));
+        // a photo that has just come (opened, imported, brought from iCloud Drive) takes the edit another device made to
+        // its picture, held until now: the other device's work isn't overwritten by an untouched copy
+        if let Some(n) = name.as_ref().filter(|n| !ic.edits_of.contains_key(&id) && !ic.photo_of.contains_key(*n))
+            && let Some(h) = ic.held.get(n).filter(|h| h.kind == EDIT).cloned()
+        {
+            match self.icloud_apply_edit(id, &h.data) {
+                Ok(()) => {
+                    ic.held.remove(n);
+                    ic.held_dirty = true;
+                    now = self.catalog.photo(id).and_then(|p| self.edit_record(p, folder.as_deref()));
+                    let mine = now.as_ref().map(|(_, d)| hash_of(d));
+                    if let Some(k) = ic.saved.known.get_mut(n) {
+                        k.local = mine.filter(|m| *m != k.hash);
+                        ic.saved_dirty = true;
+                    }
+                }
+                Err(e) => log::warn!("iCloud: photo {}: {e}", id.0),
+            }
+        }
         if let Some(old) = ic.edits_of.get(&id).cloned().filter(|o| Some(o) != name.as_ref()) {
             ic.edits_of.remove(&id);
             if ic.photo_of.get(&old) == Some(&id) {
@@ -553,7 +632,7 @@ impl Session {
             return;
         }
         ic.photo_of.insert(name.clone(), id);
-        ic.ours.insert(name, Mine { kind: EDIT.to_string(), key, hash: hash_of(&data) });
+        ic.ours.insert(name, Mine { kind: EDIT.to_string(), key, hash: hash_of(&data), parts: 0 });
     }
 
     /// What changed here since the cloud last agreed: the records to save and to delete.
@@ -566,8 +645,10 @@ impl Session {
                     out.save.push(name.clone());
                 }
             }
-            for name in ic.saved.known.keys() {
-                if !ic.ours.contains_key(name) {
+            for (name, k) in &ic.saved.known {
+                // (an analysis record goes only with its photo's: one this device has nothing of yet stays for the others)
+                let photo_travels = k.kind == analysis::ANALYSIS && ic.ours.contains_key(&record_name(EDIT, &k.key));
+                if !ic.ours.contains_key(name) && !photo_travels {
                     out.delete.push(name.clone());
                 }
             }
@@ -595,8 +676,11 @@ impl Session {
         self.with_icloud(|s, ic| {
             s.icloud_refresh(ic);
             let now = (ic.clock)();
-            // (a document's items are read once per call)
+            // (a document's items are read once per call, and so are the indexes the analysis records come from)
             let mut docs: HashMap<String, Vec<(String, String)>> = HashMap::new();
+            let analysed: Vec<String> =
+                names.iter().take(BATCH_MAX).filter_map(|n| ic.ours.get(n).filter(|m| m.kind == analysis::ANALYSIS)).map(|m| m.key.clone()).collect();
+            let mut found_in = if analysed.is_empty() { HashMap::new() } else { s.analysis_data(&analysed) };
             names
                 .iter()
                 .take(BATCH_MAX)
@@ -604,9 +688,11 @@ impl Session {
                     let held = || ic.held.get(name).map(|h| (h.kind.clone(), h.key.clone(), h.data.clone()));
                     let found = match ic.ours.get(name) {
                         Some(m) if m.kind == EDIT => {
-                            let photo = ic.photo_of.get(name).and_then(|id| s.catalog.photo(*id)).and_then(|p| s.edit_record(p));
+                            let photo =
+                                ic.photo_of.get(name).and_then(|id| s.catalog.photo(*id)).and_then(|p| s.edit_record(p, ic.folder.as_deref()));
                             photo.map(|(key, data)| (EDIT.to_string(), key, data)).or_else(held)
                         }
+                        Some(m) if m.kind == analysis::ANALYSIS => found_in.remove(&m.key).map(|v| (m.kind.clone(), m.key.clone(), v.to_string())),
                         Some(m) if m.kind == PRESETS || m.kind == SERVER => {
                             s.setting_data(m).map(|d| (m.kind.clone(), m.key.clone(), d)).or_else(held)
                         }
@@ -619,7 +705,7 @@ impl Session {
                     match found {
                         Some((kind, key, data)) => {
                             let hash = hash_of(&data);
-                            if let Some(m) = ic.ours.get_mut(name) {
+                            if let Some(m) = ic.ours.get_mut(name).filter(|m| m.kind != analysis::ANALYSIS) {
                                 m.hash.clone_from(&hash);
                             }
                             let modified = ic.saved.changed.get(name).copied().unwrap_or(now);
@@ -640,8 +726,9 @@ impl Session {
                 if r.name.len() > NAME_MAX || r.name != record_name(&r.kind, &r.key) || !known_kind(&r.kind) {
                     continue;
                 }
-                ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash: r.hash.clone(), local: None });
-                if ic.ours.get(&r.name).is_some_and(|m| m.hash == r.hash) {
+                let parts = ic.ours.get(&r.name).filter(|m| m.kind == analysis::ANALYSIS).map(|m| m.parts);
+                ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash: r.hash.clone(), local: None, parts });
+                if parts.is_some() || ic.ours.get(&r.name).is_some_and(|m| m.hash == r.hash) {
                     ic.saved.changed.remove(&r.name);
                 }
             }
@@ -680,10 +767,21 @@ impl Session {
                 continue;
             }
             let hash = hash_of(&r.data);
+            // what was found in a photo only fills in what this device lacks (its own stays)
+            if r.kind == analysis::ANALYSIS {
+                let parts = serde_json::from_str::<Value>(&r.data).map(|v| crate::vision::analysis_parts_of(&v)).unwrap_or(0);
+                let mine = ic.ours.get(&r.name).map_or(0, |m| m.parts);
+                ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash, local: None, parts: Some(parts) });
+                ic.saved.changed.remove(&r.name);
+                if parts & !mine != 0 {
+                    take.push((r.name.clone(), r.kind.clone(), r.key.clone(), Some(r.data.clone())));
+                }
+                continue;
+            }
             let mine = ic.ours.get(&r.name);
             if mine.is_some_and(|m| m.hash == hash) {
                 // the same as here
-                ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash, local: None });
+                ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash, local: None, parts: None });
                 ic.saved.changed.remove(&r.name);
                 continue;
             }
@@ -696,13 +794,17 @@ impl Session {
             if !changed_here || r.modified > mine_at {
                 take.push((r.name.clone(), r.kind.clone(), r.key.clone(), Some(r.data.clone())));
             }
-            ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash, local: None });
+            ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash, local: None, parts: None });
             if !changed_here {
                 ic.saved.changed.remove(&r.name);
             }
         }
         for name in deleted.iter().take(BATCH_MAX) {
             let Some(k) = ic.saved.known.remove(name) else { continue };
+            // (what was found in a photo stays here: it is this device's now)
+            if k.kind == analysis::ANALYSIS {
+                continue;
+            }
             let mine = ic.ours.get(name);
             let unchanged = mine.is_some_and(|m| m.hash == k.hash || k.local.as_deref() == Some(m.hash.as_str()));
             if unchanged {
@@ -718,7 +820,10 @@ impl Session {
         // what this device now has of each taken record: its own rendering of the cloud's version
         ic.seen = Seen::default();
         self.icloud_refresh(ic);
-        for (name, _, _, _) in &take {
+        for (name, kind, _, _) in &take {
+            if kind == analysis::ANALYSIS {
+                continue;
+            }
             let mine = ic.ours.get(name).map(|m| m.hash.clone());
             if let Some(k) = ic.saved.known.get_mut(name) {
                 k.local = mine.filter(|h| *h != k.hash);
@@ -760,6 +865,15 @@ impl Session {
                 Err(e) => log::warn!("iCloud: {name}: {e}"),
             }
         }
+        // what was found in photos: into this device's indexes
+        for (_, _, key, data) in take.iter().filter(|t| t.1 == analysis::ANALYSIS) {
+            if let Some(v) = data.as_deref().and_then(|d| serde_json::from_str::<Value>(d).ok())
+                && self.analysis_take(key, &v) != 0
+            {
+                applied += 1;
+                ic.analysis_seen = None;
+            }
+        }
         // servers and edits
         for (name, kind, key, data) in take.iter().filter(|t| t.1 == SERVER || t.1 == EDIT) {
             let Some(data) = data else {
@@ -768,9 +882,24 @@ impl Session {
                     ic.ours.remove(name);
                     applied += 1;
                 }
+                // a photo kept in iCloud Drive that another device removed for good goes here too (it is the same file);
+                // a Photos-library picture stays (the Photos library still has it)
+                if kind == EDIT
+                    && let Some(folder) = ic.folder.clone()
+                {
+                    let gone = photos::in_folder_with(self, &folder, key);
+                    if !gone.is_empty() {
+                        let op = self.catalog.delete_photos_permanently_ops(&gone);
+                        match self.apply_system(op) {
+                            Ok(()) => applied += gone.len(),
+                            Err(e) => log::warn!("iCloud: removing {key}: {e}"),
+                        }
+                        ic.dirty.extend(gone);
+                    }
+                }
                 continue;
             };
-            let ids = if kind == EDIT { self.photos_with(key) } else { Vec::new() };
+            let ids = if kind == EDIT { self.traveling_with(key, ic.folder.as_deref()) } else { Vec::new() };
             if !ids.is_empty() {
                 for id in ids {
                     match self.icloud_apply_edit(id, data) {
@@ -833,16 +962,19 @@ impl Session {
         applied
     }
 
-    /// The photo-library photos (still Local ones included) whose picture is `key`.
-    fn photos_with(&self, key: &str) -> Vec<PhotoId> {
-        self.photo_library
-            .photo_ids()
-            .filter(|id| {
-                self.catalog
-                    .photo(*id)
-                    .is_some_and(|p| !p.deleted && p.copy_of.is_none() && lightcraft_catalog::sync::content_key(p).as_deref() == Some(key))
-            })
-            .collect()
+    /// The photos whose picture is `key` and that travel: photo-library photos (still Local ones included) and those
+    /// whose original is in the iCloud Drive folder `folder`.
+    fn traveling_with(&self, key: &str, folder: Option<&Path>) -> Vec<PhotoId> {
+        let same = |p: &Photo| p.copy_of.is_none() && lightcraft_catalog::sync::content_key(p).as_deref() == Some(key);
+        let mut ids: Vec<PhotoId> = self.photo_library.photo_ids().filter(|id| self.catalog.photo(*id).is_some_and(|p| same(p))).collect();
+        if let Some(folder) = folder {
+            for id in photos::in_folder_with(self, folder, key) {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+        ids
     }
 
     /// Apply an edit record's data to photo `id`: what its XMP says (a History step), bringing a photo only looked
@@ -853,6 +985,14 @@ impl Session {
         let p = self.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
         let sc = crate::sidecar::parse_sidecar(xmp, crate::crs::Target::for_photo(p)).map_err(EngineError::Other)?.resolve_label(&self.catalog);
         let mut ops = crate::sidecar::sidecar_ops(p, &sc, &(self.clock)(), LABEL);
+        // (Recently Deleted and Hidden: what the record says, absent = not)
+        let flag = |k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
+        if flag("deleted") != p.deleted {
+            ops.push(Op::SetDeleted { id, deleted: flag("deleted") });
+        }
+        if flag("hidden") != p.hidden {
+            ops.push(Op::SetHidden { id, hidden: flag("hidden") });
+        }
         if ops.is_empty() {
             return Ok(());
         }
@@ -949,7 +1089,18 @@ impl Session {
             "heldEdits": ic.held.values().filter(|h| h.kind == EDIT).count(),
             "servers": servers,
             "known": ic.saved.known.len(),
+            "photos": ic.saved.photos,
+            "folder": ic.folder.is_some(),
+            "analysis": ic.ours.values().filter(|m| m.kind == analysis::ANALYSIS).count(),
         });
+        // Keep Photos in iCloud Drive: how many are there, and how many could move there
+        if let Some(folder) = ic.folder.clone()
+            && let Some(o) = out.as_object_mut()
+        {
+            o.insert("inFolder".into(), json!(photos::in_folder(self, &folder).len()));
+            let (movable, bytes) = self.icloud_movable_count();
+            o.insert("movable".into(), json!({"photos": movable, "bytes": bytes}));
+        }
         if transport && let Some(o) = out.as_object_mut() {
             o.insert("transport".into(), json!(ic.saved.transport));
         }
@@ -1057,11 +1208,43 @@ fn held_assets(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(json!({"assets": s.icloud_held_assets()}))
 }
 
+fn folder(s: &mut Session, p: &Value) -> Result<Value> {
+    let folder = match p.get("path") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(t)) if !t.is_empty() => Some(PathBuf::from(t)),
+        Some(_) => return Err(bad("icloud.folder", "`path` must be a folder's absolute path or null")),
+    };
+    s.icloud_set_folder(folder)?;
+    Ok(s.icloud_status(false))
+}
+
+fn photos_on(s: &mut Session, p: &Value) -> Result<Value> {
+    let want = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("icloud.photos", "missing `on`"))?;
+    s.icloud_set_photos(want)?;
+    Ok(s.icloud_status(false))
+}
+
+fn wanted(s: &mut Session, p: &Value) -> Result<Value> {
+    let limit = p.get("limit").and_then(Value::as_u64).map_or(200, |n| usize::try_from(n).unwrap_or(usize::MAX)).clamp(1, BATCH_MAX);
+    let waiting = p.get("waiting").and_then(Value::as_bool).unwrap_or(true);
+    Ok(s.icloud_wanted(limit, waiting))
+}
+
+fn adopt(s: &mut Session, p: &Value) -> Result<Value> {
+    let files: Vec<String> = list_param(p, "files", "icloud.adopt")?;
+    s.icloud_adopt(&files)
+}
+
+fn move_in(s: &mut Session, p: &Value) -> Result<Value> {
+    let limit = p.get("limit").and_then(Value::as_u64).map_or(16, |n| usize::try_from(n).unwrap_or(usize::MAX));
+    s.icloud_move_in(limit)
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         // (none journaled: they move this device's sync state, which replaying would undo)
         cmd!(query "icloud.status", "iCloud Sync Status", [], None,
-            "{transport?: bool}: {on, epoch (changes when this device forgot what the cloud has: fetch everything again), rev, serverLinked (a server keeps the presets, settings and edits: only the server travels through iCloud), pending (records to send), presets, settings, edits (photo-library photos sent), heldEdits (edits of pictures not opened here yet), servers ([{server, user}] other devices are signed in to), known} or {on: false}; `transport`: also the host's own state as it gave it",
+            "{transport?: bool}: {on, epoch (changes when this device forgot what the cloud has: fetch everything again), rev, serverLinked (a server keeps the presets, settings and edits: only the server travels through iCloud), pending (records to send), presets, settings, edits (photos sent: from the Photos library or kept in iCloud Drive), heldEdits (edits of pictures not here yet), analysis (photos whose faces, text… are sent), servers ([{server, user}] other devices are signed in to), known, photos (Keep Photos in iCloud Drive), folder (the host gave its iCloud Drive folder), inFolder (photos kept there), movable {photos, bytes} (could move there)} or {on: false}; `transport`: also the host's own state as it gave it",
             always, status),
         cmd!(query "icloud.enable", "Sync with iCloud", [], None,
             "{on: bool}: sync this library's presets, settings, sync server and photo-library edits with the person's other devices through the host's iCloud (docs/sync.md → iCloud). Off forgets what the cloud has (it keeps it, and this device keeps its own); on again merges as a new device does. Answers icloud.status",
@@ -1087,5 +1270,20 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "icloud.heldAssets", "Photo Library Photos Edited Elsewhere", [], None,
             "{}: {assets: [cloud id]}: the photo-library assets other devices edited that haven't been opened here",
             always, held_assets),
+        cmd!(query "icloud.folder", "iCloud Drive Folder", [], None,
+            "{path: string | null}: this device's iCloud Drive folder for photos (the host's; null: iCloud Drive isn't available). Answers icloud.status",
+            on, folder),
+        cmd!(query "icloud.photos", "Keep Photos in iCloud Drive", [], None,
+            "{on: bool}: imports put their originals in the iCloud Drive folder, and photos other devices keep there come into this library (icloud.wanted, icloud.adopt). Needs icloud.folder and no sync server. Answers icloud.status",
+            on, photos_on),
+        cmd!(query "icloud.wanted", "iCloud Drive Files Wanted", [], None,
+            "{limit?, waiting?: bool}: {files: [{file, key?, id?}], total}: the files of the iCloud Drive folder this device needs (relative paths): photos other devices keep there that this library doesn't have, and this library's own whose file iCloud Drive took back. Bring each down, then icloud.adopt. An activity row shows while some are wanted; `waiting: false` (the host stopped waiting for them) takes it away",
+            on, wanted),
+        cmd!(query "icloud.adopt", "Add Photos from iCloud Drive", [], None,
+            "{files: [relative path]}: files of the iCloud Drive folder that are on this device now (16 at most a call): another device's photo is added to the library where it is, with that device's edits (not an undo step); one of this library's is shown from its file again. {added, back, missing, refused, left}",
+            on, adopt),
+        cmd!(query "icloud.moveIn", "Move Photos to iCloud Drive", [], None,
+            "{limit?}: move up to `limit` (16; 64 at most) of the originals this library keeps itself into the iCloud Drive folder, in the same folders, each with its sidecars (not an undo step). {moved, failed: [{file, error}], left, bytesLeft}; call again while `left`",
+            on, move_in),
     ]
 }

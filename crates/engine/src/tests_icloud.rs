@@ -489,3 +489,322 @@ fn three_devices_end_up_the_same() {
         assert_eq!(dev.s.icloud_changes(), Default::default());
     }
 }
+
+// ---------------------------------------------------------------- photos kept in iCloud Drive
+
+/// Each device's iCloud Drive folder (a folder of its own, as on a real device: another path, the same files).
+fn drive(d: &Device) -> PathBuf {
+    d.root.join("drive")
+}
+
+/// What iCloud Drive does between the devices: every file one has, the others get.
+fn drive_sync(devices: &[&Device]) {
+    fn walk(dir: &Path, rel: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            let r = rel.join(e.file_name());
+            if p.is_dir() {
+                walk(&p, &r, out);
+            } else {
+                out.push(r);
+            }
+        }
+    }
+    for from in devices {
+        let mut files = Vec::new();
+        walk(&drive(from), Path::new(""), &mut files);
+        for to in devices {
+            for rel in &files {
+                let dst = drive(to).join(rel);
+                if !dst.exists() {
+                    std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+                    std::fs::copy(drive(from).join(rel), &dst).unwrap();
+                }
+            }
+        }
+    }
+}
+
+/// A device with Keep Photos in iCloud Drive on.
+fn with_drive(root: &Path, name: &str) -> Device {
+    let mut d = Device::new(root, name);
+    std::fs::create_dir_all(drive(&d)).unwrap();
+    d.s.execute("icloud.folder", &json!({"path": drive(&d).to_string_lossy()})).unwrap();
+    d.s.execute("icloud.photos", &json!({"on": true})).unwrap();
+    d
+}
+
+/// Import a picture made from `seed` as the app does (copied into the library).
+fn import(d: &mut Device, seed: u8) -> PhotoId {
+    let p = d.root.join("camera").join(format!("IMG_{seed}.png"));
+    png(&p, seed);
+    let r = d.s.execute("library.import", &json!({"paths": [p.to_string_lossy()], "mode": "copy"})).unwrap();
+    PhotoId(r["imported"][0].as_u64().unwrap_or_else(|| panic!("{r}")))
+}
+
+fn rate(d: &mut Device, id: PhotoId, rating: u8) {
+    d.s.selection = crate::Selection::single(id);
+    d.s.execute("photo.rate", &json!({"rating": rating, "ids": [id.0]})).unwrap();
+}
+
+fn path_of(d: &Device, id: PhotoId) -> String {
+    match &d.s.catalog.photo(id).unwrap().source {
+        lightcraft_catalog::Source::File { path } => path.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Bring every wanted file in, as the host does once iCloud Drive has them.
+fn bring(d: &mut Device) -> Value {
+    let wanted = d.s.execute("icloud.wanted", &json!({})).unwrap();
+    let files: Vec<Value> = wanted["files"].as_array().unwrap().iter().map(|f| f["file"].clone()).collect();
+    d.s.execute("icloud.adopt", &json!({"files": files})).unwrap()
+}
+
+#[test]
+fn photos_kept_in_icloud_drive_come_to_the_other_device_with_their_edits() {
+    let root = temp_dir("drive");
+    let mut cloud = Cloud::default();
+    let (mut a, mut b) = (with_drive(&root, "a"), with_drive(&root, "b"));
+    let on_a = import(&mut a, 7);
+    assert!(path_of(&a, on_a).starts_with(&drive(&a).to_string_lossy().to_string()), "imported into iCloud Drive: {}", path_of(&a, on_a));
+    rate(&mut a, on_a, 3);
+    a.sync(&mut cloud);
+
+    // b learns of it before iCloud Drive has brought the file: wanted, but not there yet
+    b.sync(&mut cloud);
+    let w = b.s.execute("icloud.wanted", &json!({})).unwrap();
+    assert_eq!(w["total"], 1, "{w}");
+    let early = bring(&mut b);
+    assert_eq!((early["added"].as_u64(), early["missing"].as_u64()), (Some(0), Some(1)), "{early}");
+    assert!(b.s.activity.list().iter().any(|t| t.kind == "icloud"), "a row while photos are coming");
+
+    // the file came: it joins b's library where iCloud Drive keeps it, with a's rating, and no undo step
+    drive_sync(&[&a, &b]);
+    let r = bring(&mut b);
+    assert_eq!((r["added"].as_u64(), r["left"].as_u64()), (Some(1), Some(0)), "{r}");
+    assert!(!b.s.activity.list().iter().any(|t| t.kind == "icloud"), "the row goes when nothing is left");
+    let on_b = b.s.catalog.photos().find(|p| p.in_library()).map(|p| p.id).unwrap();
+    assert!(path_of(&b, on_b).starts_with(&drive(&b).to_string_lossy().to_string()), "{}", path_of(&b, on_b));
+    assert_eq!(b.s.catalog.photo(on_b).unwrap().rating, 3);
+    assert!(b.s.undo.is_empty(), "no undo step");
+    assert_eq!(b.s.icloud_changes(), Default::default(), "nothing to send back");
+
+    // edits go both ways
+    rate(&mut b, on_b, 5);
+    b.sync(&mut cloud);
+    a.sync(&mut cloud);
+    assert_eq!(a.s.catalog.photo(on_a).unwrap().rating, 5);
+
+    // Recently Deleted on one is Recently Deleted on the other
+    a.s.selection = crate::Selection::single(on_a);
+    a.s.execute("photo.delete", &json!({"ids": [on_a.0]})).unwrap();
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    assert!(b.s.catalog.photo(on_b).unwrap().deleted, "deleted on a: deleted on b");
+
+    // removed for good on one, removed on the other (the file stays)
+    a.s.selection = crate::Selection::single(on_a);
+    a.s.execute("photo.deletePermanently", &json!({"ids": [on_a.0]})).unwrap();
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    assert!(b.s.catalog.photo(on_b).is_none(), "removed for good on a: removed on b");
+    assert!(Path::new(&drive(&b)).read_dir().unwrap().next().is_some(), "files are never deleted");
+    for d in [&mut a, &mut b] {
+        assert_eq!(d.s.icloud_changes(), Default::default());
+        assert_eq!(d.s.execute("icloud.wanted", &json!({})).unwrap()["total"], 0, "and nothing comes back");
+    }
+}
+
+#[test]
+fn originals_the_library_keeps_move_into_icloud_drive() {
+    let root = temp_dir("move-in");
+    let mut a = Device::new(&root, "a");
+    let id = import(&mut a, 3);
+    let other = import(&mut a, 6);
+    let old = path_of(&a, id);
+    assert!(old.contains("Originals"), "{old}");
+    std::fs::write(format!("{old}.xmp"), b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>").unwrap();
+    // turning it on needs the folder
+    assert!(a.s.execute("icloud.photos", &json!({"on": true})).is_err());
+    std::fs::create_dir_all(drive(&a)).unwrap();
+    a.s.execute("icloud.folder", &json!({"path": drive(&a).to_string_lossy()})).unwrap();
+    let st = a.s.execute("icloud.photos", &json!({"on": true})).unwrap();
+    assert_eq!(st["movable"]["photos"], 2, "{st}");
+    let r = a.s.execute("icloud.moveIn", &json!({"limit": 1})).unwrap();
+    assert_eq!((r["moved"].as_u64(), r["left"].as_u64()), (Some(1), Some(1)), "{r}");
+    assert!(a.s.activity.list().iter().any(|t| t.kind == "icloud"), "a row while some are left");
+    let r = a.s.execute("icloud.moveIn", &json!({})).unwrap();
+    assert_eq!((r["moved"].as_u64(), r["left"].as_u64()), (Some(1), Some(0)), "{r}");
+    assert!(!a.s.activity.list().iter().any(|t| t.kind == "icloud"), "and none once all moved");
+    assert!(path_of(&a, other).starts_with(&drive(&a).to_string_lossy().to_string()));
+    let new = path_of(&a, id);
+    assert!(new.starts_with(&drive(&a).to_string_lossy().to_string()) && Path::new(&new).is_file(), "{new}");
+    assert!(!Path::new(&old).exists(), "moved, not copied");
+    assert!(Path::new(&format!("{new}.xmp")).is_file(), "the sidecar went with it");
+    // (the same folders as in Originals/)
+    let rel_old = old.split("Originals").nth(1).unwrap().to_string();
+    assert!(new.ends_with(&rel_old), "{new} keeps {rel_old}");
+    assert!(a.s.undo.iter().all(|u| !u.label.contains("Rename")), "not an undo step");
+    assert_eq!(a.s.execute("icloud.status", &json!({})).unwrap()["inFolder"], 2);
+}
+
+#[test]
+fn a_file_icloud_drive_took_back_is_wanted_until_it_is_here_again() {
+    let root = temp_dir("evicted");
+    let mut a = with_drive(&root, "a");
+    let id = import(&mut a, 4);
+    let path = path_of(&a, id);
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let w = a.s.execute("icloud.wanted", &json!({})).unwrap();
+    assert_eq!(w["files"][0]["id"], id.0, "{w}");
+    let rows = |a: &Device| a.s.activity.list().iter().filter(|t| t.kind == "icloud").count();
+    assert_eq!(rows(&a), 1, "a row while it is coming");
+    // the host stops waiting (a file deleted in iCloud Drive never comes): the row goes, the file is still wanted
+    let w = a.s.execute("icloud.wanted", &json!({"waiting": false})).unwrap();
+    assert_eq!((w["total"].as_u64(), rows(&a)), (Some(1), 0), "{w}");
+    std::fs::write(&path, bytes).unwrap();
+    let r = a.s.execute("icloud.adopt", &json!({"files": [w["files"][0]["file"]]})).unwrap();
+    assert_eq!((r["back"].as_u64(), r["left"].as_u64()), (Some(1), Some(0)), "{r}");
+    // nothing that could leave the folder is taken
+    let r = a.s.execute("icloud.adopt", &json!({"files": ["../lib/catalog.log", "/etc/passwd", "a/./b.png", ""]})).unwrap();
+    assert_eq!(r["refused"], 4, "{r}");
+}
+
+#[test]
+fn photos_stay_out_of_icloud_drive_while_it_is_off() {
+    let root = temp_dir("drive-off");
+    let mut cloud = Cloud::default();
+    let (mut a, mut b) = (with_drive(&root, "a"), Device::new(&root, "b"));
+    let on_a = import(&mut a, 9);
+    rate(&mut a, on_a, 2);
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    // b has no iCloud Drive folder: it holds the record, wants nothing, and its imports stay in its library
+    assert_eq!(b.s.execute("icloud.wanted", &json!({})).unwrap()["total"], 0);
+    let on_b = import(&mut b, 5);
+    assert!(path_of(&b, on_b).contains("Originals"));
+    assert!(b.s.execute("icloud.adopt", &json!({"files": ["x.png"]})).is_err());
+}
+
+// ---------------------------------------------------------------- what was found in the photos
+
+/// Import a picture of one colour (`rgb`), as the app does.
+fn import_colour(d: &mut Device, rgb: [u8; 3], name: &str) -> PhotoId {
+    let p = d.root.join("camera").join(name);
+    let img = lightcraft_raster::Rgba8::from_fn(48, 32, |_, _| [rgb[0], rgb[1], rgb[2], 255]);
+    let b =
+        crate::export::encode_image(&img, &crate::export::ExportOptions { format: crate::export::ExportFormat::Png, ..Default::default() }).unwrap();
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, b).unwrap();
+    let r = d.s.execute("library.import", &json!({"paths": [p.to_string_lossy()], "mode": "copy"})).unwrap();
+    PhotoId(r["imported"][0].as_u64().unwrap_or_else(|| panic!("{r}")))
+}
+
+fn key_of(d: &Device, id: PhotoId) -> String {
+    lightcraft_catalog::sync::content_key(d.s.catalog.photo(id).unwrap()).unwrap()
+}
+
+fn parts(d: &Device, key: &str) -> u8 {
+    d.s.analysis_parts(&[key.to_string()]).get(key).copied().unwrap_or(0)
+}
+
+#[test]
+fn what_a_computer_found_in_a_photo_reaches_a_phone_that_cannot_find_it() {
+    use crate::vision::portable_bits::{FACES, SENSITIVE, TEXT, VECTOR};
+    use lightcraft_vision::fake::{FakeClassifier, FakeEmbedder, FakeFaces, FakeReader};
+    let root = temp_dir("analysis");
+    let mut cloud = Cloud::default();
+    // a computer with the models works a red photo out: its words, its faces, its vector, its score
+    let mut mac = with_drive(&root, "mac");
+    mac.s.vision.set_embedder(Arc::new(FakeEmbedder));
+    mac.s.vision.set_text_reader(Arc::new(FakeReader));
+    mac.s.vision.set_face_finder(Arc::new(FakeFaces));
+    mac.s.vision.set_classifier(Arc::new(FakeClassifier));
+    mac.s.vision.text_edge = 192;
+    let on_mac = import_colour(&mut mac, [230, 20, 20], "IMG_0042.png");
+    for c in ["vision.setText", "vision.setFaces", "vision.setSensitive"] {
+        mac.s.execute(c, &json!({"on": true})).unwrap();
+    }
+    mac.s.execute("vision.index", &json!({"wait": true})).unwrap();
+    let key = key_of(&mac, on_mac);
+    assert_eq!(parts(&mac, &key), FACES | TEXT | VECTOR | SENSITIVE, "all four were worked out");
+    mac.sync(&mut cloud);
+    assert!(cloud.records.values().any(|r| r.kind == "analysis" && r.key == key));
+
+    // a phone that runs none of the models (thin; its face engine the computer's, so their faces group together)
+    let mut phone = with_drive(&root, "phone");
+    phone.s.vision.thin = true;
+    phone.s.vision.set_face_finder(Arc::new(FakeFaces));
+    phone.sync(&mut cloud);
+    drive_sync(&[&mac, &phone]);
+    assert_eq!(bring(&mut phone)["added"], 1);
+    let on_phone = phone.s.catalog.photos().find(|p| p.in_library()).map(|p| p.id).unwrap();
+    assert_eq!(parts(&phone, &key), FACES | TEXT | SENSITIVE, "the vector stays out: a phone can't search by description");
+    // the words in it are found without a reader
+    let r = phone.s.execute("library.search", &json!({"q": "stop", "wait": true})).unwrap();
+    assert!(r["photos"].as_array().unwrap().iter().any(|p| p["id"] == on_phone.0 && p["text"] == true), "{r}");
+    assert_eq!(phone.s.execute("vision.model.status", &json!({})).unwrap()["words"], true);
+    // it is listed as possibly sensitive (blurred) without the classifier
+    assert!(phone.s.sensitive_photos().iter().any(|(id, _)| *id == on_phone));
+    // and nothing goes back and forth
+    assert_eq!(phone.s.icloud_changes(), Default::default());
+    mac.sync(&mut cloud);
+    assert_eq!(mac.s.icloud_changes(), Default::default());
+
+    // another computer with the same search model needn't work the vector out again
+    let mut mac2 = with_drive(&root, "mac2");
+    mac2.s.vision.set_embedder(Arc::new(FakeEmbedder));
+    mac2.sync(&mut cloud);
+    drive_sync(&[&mac, &mac2]);
+    bring(&mut mac2);
+    assert_ne!(parts(&mac2, &key) & VECTOR, 0, "the vector came");
+    assert_eq!(mac2.s.icloud_changes(), Default::default());
+}
+
+#[test]
+fn a_device_that_found_more_fills_the_cloud_in_and_keeps_its_own() {
+    use crate::vision::portable_bits::{SENSITIVE, TEXT, VECTOR};
+    use lightcraft_vision::fake::{FakeClassifier, FakeEmbedder, FakeReader};
+    let root = temp_dir("analysis-more");
+    let mut cloud = Cloud::default();
+    // a computer that only describes
+    let mut a = with_drive(&root, "a");
+    a.s.vision.set_embedder(Arc::new(FakeEmbedder));
+    a.s.vision.text_edge = 192;
+    let on_a = import_colour(&mut a, [20, 20, 230], "hotel.png");
+    a.s.execute("vision.index", &json!({"wait": true})).unwrap();
+    let key = key_of(&a, on_a);
+    a.sync(&mut cloud);
+    // another that also reads words and checks content: it adds what it found, and keeps its own vector
+    let mut b = with_drive(&root, "b");
+    b.s.vision.set_embedder(Arc::new(FakeEmbedder));
+    b.s.vision.set_text_reader(Arc::new(FakeReader));
+    b.s.vision.set_classifier(Arc::new(FakeClassifier));
+    b.s.vision.text_edge = 192;
+    b.sync(&mut cloud);
+    drive_sync(&[&a, &b]);
+    bring(&mut b);
+    for c in ["vision.setText", "vision.setSensitive"] {
+        b.s.execute(c, &json!({"on": true})).unwrap();
+    }
+    b.s.execute("vision.index", &json!({"wait": true})).unwrap();
+    assert_eq!(parts(&b, &key), TEXT | VECTOR | SENSITIVE);
+    b.sync(&mut cloud);
+    a.sync(&mut cloud);
+    assert_eq!(parts(&a, &key) & VECTOR, VECTOR, "a keeps its own vector");
+    assert_eq!(a.s.icloud_changes(), Default::default());
+    assert_eq!(b.s.icloud_changes(), Default::default());
+    // a record another device can't read leaves this one's as it is
+    let name = crate::icloud::record_name("analysis", &key);
+    let junk = Incoming {
+        name,
+        kind: "analysis".into(),
+        key: key.clone(),
+        data: json!({"faces": {"engine": "x", "found": "no"}, "vector": {"model": "fake-colour", "e": "!!"}}).to_string(),
+        modified: 0,
+    };
+    a.s.icloud_fetched(&[junk], &[]);
+    assert_eq!(parts(&a, &key) & VECTOR, VECTOR);
+}

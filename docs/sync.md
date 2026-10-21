@@ -610,8 +610,9 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 | albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
 | | Local records (photos seen while browsing a folder, or opened from the Photos library, until added to the library; which Photos library picture is which photo, `photo-library.json`) |
 
-Without a server, a frontend on Apple devices can share the presets, the settings above and the edits of photos opened
-from the Photos library through iCloud instead ([below](#icloud-apple-devices-without-a-server)).
+Without a server, a frontend on Apple devices can share the presets, the settings above, the edits and analysis results
+of photos opened from the Photos library, and if asked the photos themselves (through iCloud Drive) through iCloud
+instead ([below](#icloud-apple-devices-without-a-server)).
 
 A server from before the Hidden album (catalog format 10 or older) would keep a hidden photo shown on the other
 devices: a device signed in to one refuses Hide and holds back any hidden change ("Update LightCraft Server first"). The
@@ -659,9 +660,10 @@ commands); the frontend only moves records between it and CloudKit, and turns it
 
 | Travels through iCloud | Not |
 |---|---|
-| user develop presets, and the settings a server shares too: export, metadata, filter and curve presets, colour-label and keyword sets, LUT profiles, the import defaults that don't name a place, the order of the preset groups, the hidden presets and groups, the Hidden password's hash and Blur Sensitive Photos | the photos themselves: a library without a server keeps its photos on the device |
+| user develop presets, and the settings a server shares too: export, metadata, filter and curve presets, colour-label and keyword sets, LUT profiles, the import defaults that don't name a place, the order of the preset groups, the hidden presets and groups, the Hidden password's hash and Blur Sensitive Photos | photos imported into the library, unless *Keep Photos in iCloud Drive* is on ([below](#photos-through-icloud-drive)): then they travel through iCloud Drive, not CloudKit |
 | the sync server a library is signed in to (its address and user name, which the person's other devices offer when they sign in) | the password and the device's token: every device signs in itself |
-| **edits of photos opened from the Photos library** (develop settings, rating, flag, colour label, title, caption, keywords and the other metadata an XMP sidecar carries), by the content hash of the picture's original | edits of photos imported into the library from elsewhere, History, versions |
+| **edits of photos opened from the Photos library** (develop settings, rating, flag, colour label, title, caption, keywords and the other metadata an XMP sidecar carries), by the content hash of the picture's original; the same for photos kept in iCloud Drive, with Recently Deleted and Hidden | edits of photos whose original stays on the device, History, versions |
+| **what the analysis found** in those photos: faces (where, and their face vectors), the text read in them, their search vectors and sensitive scores ([below](#analysis-results)) | names given to people, which faces are whose (each device groups them itself) |
 
 The Photos library already syncs the pictures through iCloud Photos; only the edit travels. Another device applies it
 to the same picture as soon as it has it in its library; otherwise it holds the edit until that picture is opened
@@ -683,6 +685,55 @@ same. A record taken from the cloud that this version stores a little differentl
 **Turning it off** forgets what the cloud has (the cloud keeps it for the other devices, and this device keeps its
 presets, settings and edits); turning it on again merges as a new device does: nothing is deleted. Signing out of
 iCloud or switching accounts does the same.
+
+### Photos through iCloud Drive
+
+A library without a server can keep its photos in a folder of the person's iCloud Drive, which carries them to their
+other devices (*Keep Photos in iCloud Drive*, off until turned on: `icloud.photos {on}`; the frontend names the folder
+on each device with `icloud.folder {path}`, its own iCloud Drive container on Apple devices,
+`crates/engine/src/icloud/photos.rs`).
+
+- **Imports** that copy their originals put them in that folder instead of the library's `Originals/` (in the folders
+  an import makes, `YYYY/YYYY-MM-DD/`), unless the import names another place.
+- **Photos already in the library** move there when asked (`icloud.moveIn {limit?}`, up to 64 files a call, each with
+  its sidecars; the frontend repeats it while `left` is above zero and a call moved something). Only originals the
+  library keeps itself move: photos opened from the Photos library stay (iCloud Photos carries them), and so do files
+  referenced where they are. `icloud.status` says how many could (`movable {photos, bytes}`).
+- **A photo whose original is in the folder** has an `edit` record like a Photos library picture, which also says where
+  its file is (`file`, relative to the folder) and whether it is in Recently Deleted or hidden. Another device that has
+  no photo with that picture holds the record and lists the file as wanted (`icloud.wanted {limit?}` → `{files: [{file,
+  key?, id?}], total}`). iCloud Drive may not have brought the file to the device yet, so the frontend asks it to and
+  hands each file over once it is there (`icloud.adopt {files}`, up to 16 a call → `{added, back, missing, refused,
+  left}`). The engine adds it to the library where it is, as an import in place, with the other device's edits. That is
+  not an undo step: undoing it would remove the photo from every device.
+- **A file iCloud Drive took back** to save space (its photo stays in the library, without its original) is wanted
+  again, and `icloud.adopt` shows the photo from it once it has come back.
+- **A photo removed for good** on one device is removed from the others' libraries. Its file stays in iCloud Drive:
+  LightCraft never deletes originals.
+- Paths another device sends are relative and checked: nothing outside the folder is read. Each of the two long jobs
+  has an activity row while there is work left ("Bringing photos from iCloud Drive", "Moving photos to iCloud Drive");
+  a frontend that stops waiting for files that don't come (deleted in iCloud Drive) says so with `icloud.wanted
+  {waiting: false}`, which takes the row away until it asks again.
+
+A library signed in to a server keeps its photos there: *Keep Photos in iCloud Drive* can't be turned on, and an import
+puts its originals in `Originals/` again while signed in.
+
+### Analysis results
+
+A Mac finds faces, reads text, and computes the search vectors and sensitive scores of every photo; a phone may lack
+some of those models, or not have run them yet. So what was found in each photo whose edit travels (Photos library
+pictures and photos kept in iCloud Drive) travels too, in one `analysis` record per picture
+(`crates/engine/src/vision/portable.rs`):
+
+- **Four parts**, each saying which engine made it: `faces` (each face's place, score and face vector), `text` (the
+  words read), `vector` (the search vector and its model) and `sensitive` (the score). A device sends a record when it
+  has a part the cloud's lacks, and takes only the parts it lacks itself; nothing it found is ever replaced. A picture's
+  record is removed only once its edit record is.
+- **A device takes a part it can use**: faces from the face model it would run, a search vector only from the same
+  search model (another model's vectors don't compare), text and sensitive scores always. A device without the models
+  (the iPhone and iPad build has none) then finds people in its photos, searches the text in them (`library.search`
+  words), and blurs sensitive photos with the scores another device worked out.
+- Each device groups the faces it has into people itself, and names stay where they were given.
 
 **Files in the library:** `icloud.json` (on, the versions last agreed with the cloud, the change times and the
 frontend's own CloudKit state, kept together so that they never disagree after a crash) and `icloud.held` (records
