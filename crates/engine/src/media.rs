@@ -2003,10 +2003,13 @@ impl crate::Session {
     /// corrected in its JPEG is measured from the pixels ([`crate::camera_preview::jpeg_vignetting`]), so no import
     /// probe sees it. Then smart previews and synced devices render with it, and a photo still as import left it gets
     /// the correction turned on, as import does for a file's own lens data ([`crate::cmd::convert::lens_ops`]).
-    /// Bookkeeping, not an undo step. Lens data the catalog has is never replaced (devices may measure a hair apart).
+    /// Bookkeeping, not an undo step. Lens data the catalog has is replaced only by a lens database profile that
+    /// supersedes it ([`lightcraft_develop::EmbeddedLens::superseded_by`]: a measured vignette, an older database's
+    /// profile), never by another measurement (devices may measure a hair apart).
     fn learn_lens(&mut self, id: PhotoId, info: &SourceInfo) {
         let Some(p) = self.catalog.photo(id) else { return };
-        if !info.raw || info.lens.is_none() || p.embedded_lens.is_some() || !p.develops_raw() {
+        let Some(lens) = info.lens.as_ref() else { return };
+        if !info.raw || !p.develops_raw() || p.embedded_lens.as_ref().is_some_and(|have| !have.superseded_by(lens)) {
             return;
         }
         for op in crate::cmd::convert::lens_ops(id, p, info.lens) {
