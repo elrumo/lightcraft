@@ -1,6 +1,6 @@
 # Video clips
 
-> **Last updated:** 2026-10-21 · **Change:** minor (import, poster frames, `video.info` / `video.frame`; first revision)
+> **Last updated:** 2026-10-21 · **Change:** minor (Live Photos: a still's motion clip kept with it, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision)
 
 LightCraft lists video clips next to photos: MP4 / M4V / MOV files import as photos of kind **Video** with their length,
 size, recording date and place, and a **poster frame** stands for them in the grid, the filmstrip, the loupe and in the
@@ -45,6 +45,28 @@ enforces it, and refuses `filmcraft-codecs` and `symphonia` (MPL-2.0)). The H.26
 - **Never crash.** Every call into FilmCraft runs under `catch_unwind`; sizes read from the file are capped before they
   allocate (picture size, sample size, how far a seek may decode); damaged clips are errors the import reports like any
   unreadable file. Tests cut files at every eighth and overwrite their middle.
+
+## Live Photos
+
+A Live Photo is a still (HEIC or JPEG) and the few seconds of clip a phone records around it. The still is the photo;
+its clip, the **motion**, is kept with it (`crates/engine/src/live_photo.rs`):
+
+- **Where.** In the library folder's `Motion/` (named by the photo's id), listed in `live-photos.json` with the still's
+  content hash, the clip's length and, when the frontend knows them, the moment the still was taken and Apple's content
+  identifier (what pairs the two in a system photo library). No paths: the app's folder moves with every iOS update.
+- **How it gets there.** A frontend hands it over: `photoLibrary.open {asset, path, motion}` (a photo-library picture
+  opened), `library.import` / `import.start {motions: {still path: clip path}}` (the clips are not imported as videos of
+  their own; a still the library already has gains its motion), or `live.attach {id, path}`. A clip from the app's
+  staging folder is moved, anything else copied. The clip is checked first: a MOV or MP4 whose header reads, up to 60 s
+  and 512 MB.
+- **What a frontend sees.** `live: true` in `catalog.query`'s photos and `catalog.describe`; `live.info {id}` says where
+  the clip is, to play it as recorded (develop settings are not applied to it) or to save the two to a photo library as
+  a Live Photo again. `live.detach` takes the motion away.
+- **This device's own.** The motion is not synced yet: other devices and the sync server have the still alone.
+- **Removed late.** A photo deleted for good keeps its clip until the library next opens (Undo can bring it back until
+  then); a photo-library picture left unchanged takes its clip with it when it is forgotten; a sign-out tidies the
+  account's clips away; files in `Motion/` that no entry names go when the library opens.
+- **Not yet.** A folder import pairing `IMG_0001.HEIC` with `IMG_0001.MOV` by itself, syncing the motion, developing it.
 
 ## FilmCraft pin
 

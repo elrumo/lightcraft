@@ -206,6 +206,8 @@ impl Session {
             self.previous_active = None;
         }
         self.photo_library.remove(asset);
+        // (its Live Photo motion, if the app handed one over)
+        self.detach_motion(id);
         let originals = self.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir());
         let (Some(path), Some(originals)) = (path.filter(|_| e.placed), originals) else { return };
         if !inside(&path, &originals) {
@@ -289,7 +291,8 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
                     drop_staged(s, Path::new(path));
                 }
                 s.show_opened(PhotoId(e.id))?;
-                return Ok(json!({"id": e.id, "local": local, "known": true}));
+                let live = crate::live_photo::open_with_motion(s, PhotoId(e.id), p);
+                return Ok(json!({"id": e.id, "local": local, "known": true, "live": live}));
             }
             None => s.photo_library.remove(asset),
         }
@@ -313,7 +316,8 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         s.save_photo_library();
         drop_staged(s, &src);
         s.show_opened(id)?;
-        return Ok(json!({"id": id.0, "local": false, "known": true}));
+        let live = crate::live_photo::open_with_motion(s, id, p);
+        return Ok(json!({"id": id.0, "local": false, "known": true, "live": live}));
     }
     // filed where an import would put it, then catalogued there in place
     let root = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir()).ok_or_else(|| bad(C, "needs a library saved on disk"))?;
@@ -353,10 +357,11 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     }
     drop_staged(s, &src);
     s.show_opened(id)?;
-    Ok(json!({"id": id.0, "local": true, "known": false}))
+    let live = crate::live_photo::open_with_motion(s, id, p);
+    Ok(json!({"id": id.0, "local": true, "known": false, "live": live}))
 }
 
-fn inside_staging(s: &Session, path: &Path) -> bool {
+pub(crate) fn inside_staging(s: &Session, path: &Path) -> bool {
     s.photo_library_staging.as_deref().is_some_and(|d| inside(path, d))
 }
 
@@ -411,7 +416,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Open from Photo Library",
             [],
             None,
-            "{asset, path?}: the photo-library asset `asset` (its original at `path`; without one, {needsFile: true} unless it is known): shown and edited without joining the library until it is changed; {id, local, known}",
+            "{asset, path?, motion?, contentId?, stillTime?}: the photo-library asset `asset` (its original at `path`; without one, {needsFile: true} unless it is known): shown and edited without joining the library until it is changed; `motion`, a Live Photo's clip, is kept with it when it has none yet (live.attach); {id, local, known, live}",
             always,
             open
         ),
