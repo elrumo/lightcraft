@@ -48,6 +48,31 @@ fn demo() -> Watch {
     Watch::new(Host::open(config).unwrap().0)
 }
 
+// A phone's host keeps the photo-understanding models where Super Resolution's go (caches iOS doesn't back up), laid
+// out as on a computer, so a build with their code can download and run them
+#[test]
+fn a_phone_keeps_the_vision_models_in_its_caches() {
+    let tmp = std::env::temp_dir().join(format!("lc-host-vision-{}-{}", std::process::id(), lightcraft_preview::next_tick()));
+    let home = tmp.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let config = OpenConfig {
+        demo: true,
+        tmp: Some(tmp.to_string_lossy().to_string()),
+        home: Some(home.to_string_lossy().to_string()),
+        render_threads: Some(2),
+        ..Default::default()
+    };
+    let h = Watch::new(Host::open(config).unwrap().0);
+    let list = h.call(&req(1, "engine.execute", json!({"command": "models.list"})), Duration::from_secs(60));
+    let model = |id: &str| list["result"]["models"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    let models = home.join("Library/Caches/LightCraft/models/siglip2");
+    assert_eq!(model("siglip2")["dir"], json!(models.to_string_lossy()), "{list}");
+    assert_eq!(model("ppocr")["dir"], json!(models.join("ocr").to_string_lossy()));
+    assert_eq!(model("nsfw")["dir"], json!(models.join("nsfw").to_string_lossy()));
+    // (whether the search model fits a phone is the engine's to say, from the device: tests_catch_up)
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 fn req(id: u64, method: &str, params: Value) -> Vec<u8> {
     serde_json::to_vec(&json!({"id": id, "method": method, "params": params})).unwrap()
 }
