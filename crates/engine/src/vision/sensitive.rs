@@ -567,11 +567,18 @@ impl Session {
 
     /// The scores of the photos checked here, when the user wants them checked and the model is here.
     fn local_sensitive_scores(&self) -> HashMap<Key, f32> {
-        if !self.vision.sensitive_ready() {
+        let spec = if self.vision.sensitive_ready() {
+            let Ok((_, engine)) = self.vision.classifier_provider() else { return HashMap::new() };
+            ClassSpec { path: self.vision_sensitive_path(&engine), engine }
+        } else if !self.vision.sensitive_available() {
+            // a build that checks nothing uses the scores another device worked out (iCloud: `portable`)
+            match self.portable_sensitive_spec().filter(|s| s.path.as_ref().is_some_and(|p| p.is_file())) {
+                Some(spec) => spec,
+                None => return HashMap::new(),
+            }
+        } else {
             return HashMap::new();
-        }
-        let Ok((_, engine)) = self.vision.classifier_provider() else { return HashMap::new() };
-        let spec = ClassSpec { path: self.vision_sensitive_path(&engine), engine };
+        };
         with_sensitive(&self.vision.shared, &spec, |ix| ix.flagged(SENSITIVE_MIN).into_iter().collect()).unwrap_or_default()
     }
 

@@ -1596,6 +1596,7 @@ impl Engine {
             unsaved: self.session.unsaved().map_or(0, |(n, _)| n),
             sync: crate::sync::summary(&self.session),
             faces: self.faces_scan.clone(),
+            icloud: self.session.icloud_rev().map(|rev| serde_json::json!({"rev": rev, "epoch": self.session.icloud_epoch()})),
         }
     }
 
