@@ -722,7 +722,9 @@ impl crate::Session {
 
     /// Gives back the `once` parts when the helper has found nothing left for them.
     fn vision_helper_finish_once(&mut self) {
-        if self.vision.helper_once.is_empty() || !self.vision.helper.as_ref().is_some_and(|j| j.idle.load(Ordering::Relaxed) && !j.cancel.load(Ordering::Relaxed)) {
+        if self.vision.helper_once.is_empty()
+            || !self.vision.helper.as_ref().is_some_and(|j| j.idle.load(Ordering::Relaxed) && !j.cancel.load(Ordering::Relaxed))
+        {
             return;
         }
         let once = std::mem::take(&mut self.vision.helper_once);
