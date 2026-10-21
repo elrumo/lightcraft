@@ -363,12 +363,8 @@ fn the_control_channel_answers_engine_requests_and_forwards_ui_ones() {
     // a browser's cross-origin POST: the request line is refused and the body never runs
     let mut web = std::net::TcpStream::connect(addr).unwrap();
     web.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
-    write!(
-        web,
-        "POST / HTTP/1.1\r\nHost: x\r\n\r\n{}\n",
-        json!({"id": 1, "method": "engine.execute", "params": {"command": "photo.delete"}})
-    )
-    .unwrap();
+    write!(web, "POST / HTTP/1.1\r\nHost: x\r\n\r\n{}\n", json!({"id": 1, "method": "engine.execute", "params": {"command": "photo.delete"}}))
+        .unwrap();
     let mut first = String::new();
     BufReader::new(web).read_line(&mut first).unwrap();
     let r: Value = serde_json::from_str(&first).unwrap();
@@ -1159,5 +1155,243 @@ fn a_local_folder_is_read_in_the_background_with_its_places() {
     assert_eq!(subs["result"][0]["name"], "Trip", "{subs}");
     let bad = h.call(&req(5, "host.local", json!({"command": "nonsense"})), Duration::from_secs(30));
     assert!(bad["error"].is_object(), "{bad}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An engine on a phone's rules whose home folder is `root/home` (its libraries in `Documents`), the default
+/// library open, and the server it syncs with a fake that has an empty library.
+fn engine_at_home(root: &Path, profile: Profile) -> (Engine, Arc<Events>) {
+    let config = OpenConfig {
+        home: Some(root.join("home").to_string_lossy().to_string()),
+        tmp: Some(root.join("tmp").to_string_lossy().to_string()),
+        render_threads: Some(1),
+        profile,
+        empty: true,
+        ..Default::default()
+    };
+    let (events, (tx, _rx)) = (Arc::new(Events::default()), channel());
+    let mut e = Engine::start(&config, events.clone(), Arc::new(Leases::default()), tx).unwrap();
+    e.sync_exec = Box::new(|task, tx| {
+        let id = task.id();
+        let Task::Http { method, url, .. } = &task else {
+            let _ = tx.send(Done::failed(id, "no previews here"));
+            return;
+        };
+        let path = url.strip_prefix("http://fake").unwrap_or("");
+        let ok = |v: Value| Done { id, status: 200, body: v.to_string() };
+        let done = match (*method, path) {
+            ("POST", "/api/login") => ok(json!({"token": "t1", "device": 1, "space": 1, "library": "lib-1"})),
+            ("GET", p) if p.starts_with("/api/snapshot") => {
+                let catalog: Value = serde_json::from_str(&lightcraft_catalog::Catalog::new().to_snapshot()).unwrap();
+                ok(json!({"library": "lib-1", "seq": 0, "catalog": catalog}))
+            }
+            ("POST", "/api/ops") => ok(json!({"head": 1})),
+            ("GET", p) if p.starts_with("/api/ops") => ok(json!({"head": 1, "ops": [], "presets": 0})),
+            ("GET", "/api/presets") => ok(json!({"version": 0, "presets": []})),
+            _ => Done { id, status: 404, body: json!({"error": "not here"}).to_string() },
+        };
+        let _ = tx.send(done);
+    });
+    (e, events)
+}
+
+fn albums(e: &mut Engine) -> Vec<String> {
+    let r = e.session.execute("albums.list", &json!({})).unwrap();
+    let list = r.get("albums").cloned().unwrap_or(r);
+    list.as_array().into_iter().flatten().filter_map(|a| a["name"].as_str().map(str::to_string)).collect()
+}
+
+/// Libraries side by side without a restart: a new one is made and opened, the one before comes back with what
+/// it had, the list says which is open and which syncs with a server (a synced library and a local one, mixed),
+/// and the paths in the app's home folder are `~/…`.
+#[test]
+fn libraries_are_switched_made_and_listed_without_a_restart() {
+    let root = std::env::temp_dir().join(format!("lc-host-libraries-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (mut e, events) = engine_at_home(&root, Profile::Mobile);
+    let first = "~/Documents/LightCraft Library";
+    let list = e.dispatch("host.libraries", &json!({"recent": []})).unwrap();
+    assert_eq!(list["recent"], json!([first]), "{list}");
+    assert_eq!(list["location"], "~/Documents");
+    assert_eq!((list["libraries"][0]["path"].as_str(), list["libraries"][0]["open"].as_bool()), (Some(first), Some(true)), "{list}");
+    // the first library syncs with a server and has an album
+    e.session.execute("sync.signIn", &json!({"server": "http://fake", "user": "ann", "password": "pw", "device": "test"})).unwrap();
+    let t0 = Instant::now();
+    while !e.session.sync_state().is_some_and(|s| s.signed_in() && s.state() == "idle") {
+        e.tick();
+        assert!(t0.elapsed() < Duration::from_secs(30), "{:?}", e.session.sync_state().map(|s| s.status()));
+    }
+    e.session.execute("album.create", &json!({"name": "Trips"})).unwrap();
+    e.tick();
+    let generation = e.session.library_generation();
+    // a new, local library: opened at once, empty
+    let made = e.dispatch("host.library.new", &json!({"name": "Work", "recent": list["recent"]})).unwrap();
+    assert_eq!((made["path"].as_str(), made["name"].as_str(), made["photos"].as_u64()), (Some("~/Documents/Work"), Some("Work"), Some(0)), "{made}");
+    assert_eq!(made["recent"], json!(["~/Documents/Work", first]), "{made}");
+    assert!(made["library"]["sync"].is_null(), "{made}");
+    assert!(root.join("home/Documents/Work/catalog.snap").is_file() || root.join("home/Documents/Work/catalog.log").is_file());
+    assert_ne!(e.session.library_generation(), generation);
+    assert!(albums(&mut e).is_empty());
+    assert!(e.session.sync_state().is_none(), "the new library has no server");
+    // the state event the frontends reset on
+    e.tick();
+    let states: Vec<Value> = events.poll(Duration::from_millis(5)).into_iter().filter(|ev| ev["kind"] == "state").collect();
+    let last = states.last().expect("a state event");
+    assert_eq!(last["state"]["libraryGeneration"].as_u64(), Some(e.session.library_generation()), "{last}");
+    assert!(last["state"].get("sync").is_none(), "{last}");
+    // both listed: the open one first, the synced one with its server (never its token)
+    let list = e.dispatch("host.libraries", &json!({"recent": made["recent"]})).unwrap();
+    let libs = list["libraries"].as_array().unwrap();
+    assert_eq!(libs.len(), 2, "{list}");
+    assert_eq!((libs[0]["name"].as_str(), libs[0]["open"].as_bool()), (Some("Work"), Some(true)));
+    assert_eq!(libs[1]["path"], first);
+    assert_eq!(libs[1]["sync"]["server"], "http://fake", "{list}");
+    assert_eq!(libs[1]["sync"]["signedIn"], true, "{list}");
+    assert!(!list.to_string().contains("t1"), "{list}");
+    // back to the first: its album, still signed in
+    let back = e.dispatch("host.library.open", &json!({"path": first, "recent": list["recent"]})).unwrap();
+    assert_eq!(back["recent"], json!([first, "~/Documents/Work"]), "{back}");
+    assert_eq!(albums(&mut e), ["Trips"]);
+    assert!(e.session.sync_state().is_some_and(|s| s.signed_in()));
+    assert_eq!(e.opened["library"].as_str().map(|l| l.ends_with("LightCraft Library")), Some(true), "{}", e.opened);
+    // a name taken, one no folder can have, a library that is gone: refused, the open one stays
+    for (params, method) in [
+        (json!({"name": "Work"}), "host.library.new"),
+        (json!({"name": "a/b"}), "host.library.new"),
+        (json!({"path": "~/Documents/Gone"}), "host.library.open"),
+    ] {
+        let err = e.dispatch(method, &params).unwrap_err();
+        assert!(err.code == "badParams" || err.message.contains("no longer there"), "{params}: {err:?}");
+    }
+    assert!(!root.join("home/Documents/Gone").exists(), "no empty library made in its place");
+    assert_eq!(albums(&mut e), ["Trips"]);
+    // a library another program has open: refused before anything is closed
+    let held = lightcraft_catalog::LibraryLock::acquire(&root.join("home/Documents/Work"), "someone else").unwrap();
+    let generation = e.session.library_generation();
+    let err = e.dispatch("host.library.open", &json!({"path": "~/Documents/Work"})).unwrap_err();
+    assert_eq!(err.code, "libraryInUse", "{err:?}");
+    assert_eq!(e.session.library_generation(), generation);
+    drop(held);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Work that adds photos to the open library would land in the next one: switching waits for it.
+#[test]
+fn a_library_is_not_left_while_work_runs_on_it() {
+    let root = std::env::temp_dir().join(format!("lc-host-libraries-busy-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (mut e, _events) = engine_at_home(&root, Profile::Mobile);
+    let task = e.session.activity.start("export", "Exporting", lightcraft_engine::activity::Cancel::No);
+    let err = e.dispatch("host.library.new", &json!({"name": "Later"})).unwrap_err();
+    assert!(err.message.contains("Exporting") && err.message.contains("before switching"), "{err:?}");
+    assert!(!root.join("home/Documents/Later").exists());
+    drop(task);
+    // a model downloading is for no library: it doesn't hold the switch
+    let _download = e.session.activity.start("download", "Downloading a model", lightcraft_engine::activity::Cancel::No);
+    e.dispatch("host.library.new", &json!({"name": "Later"})).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A phone deletes a library it keeps (not the open one, not one elsewhere), saying first what would go; a
+/// computer leaves that to the Finder's Trash.
+#[test]
+fn a_phone_deletes_a_library_that_isnt_open() {
+    let root = std::env::temp_dir().join(format!("lc-host-libraries-delete-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (mut e, _events) = engine_at_home(&root, Profile::Mobile);
+    let made = e.dispatch("host.library.new", &json!({"name": "Old"})).unwrap();
+    let err = e.dispatch("host.library.delete", &json!({"path": "~/Documents/Old"})).unwrap_err();
+    assert!(err.message.contains("is open"), "{err:?}");
+    e.dispatch("host.library.open", &json!({"path": "~/Documents/LightCraft Library"})).unwrap();
+    let check = e.dispatch("host.library.delete", &json!({"path": "~/Documents/Old", "check": true})).unwrap();
+    assert_eq!((check["name"].as_str(), check["unsent"].as_u64(), check["capped"].as_bool()), (Some("Old"), Some(0), Some(false)), "{check}");
+    assert!(check["bytes"].as_u64().is_some_and(|b| b > 0), "{check}");
+    assert!(root.join("home/Documents/Old").is_dir(), "a check deletes nothing");
+    let gone = e.dispatch("host.library.delete", &json!({"path": "~/Documents/Old", "recent": made["recent"]})).unwrap();
+    assert!(!root.join("home/Documents/Old").exists());
+    assert_eq!(gone["recent"], json!(["~/Documents/LightCraft Library"]), "{gone}");
+    // not a library, or not where the app keeps them
+    std::fs::create_dir_all(root.join("home/Documents/Notes")).unwrap();
+    assert!(e.dispatch("host.library.delete", &json!({"path": "~/Documents/Notes"})).is_err());
+    let elsewhere = root.join("elsewhere");
+    let mut s = lightcraft_engine::Session::new().with_fs();
+    s.open_library(&elsewhere, false).unwrap();
+    s.close_library().unwrap();
+    drop(s);
+    let err = e.dispatch("host.library.delete", &json!({"path": elsewhere.to_string_lossy()})).unwrap_err();
+    assert!(err.message.contains("only the libraries"), "{err:?}");
+    assert!(elsewhere.is_dir());
+    // a computer's: the Finder
+    let (mut mac, _events) = engine_at_home(&root.join("mac"), Profile::Desktop);
+    mac.dispatch("host.library.new", &json!({"name": "Old"})).unwrap();
+    mac.dispatch("host.library.open", &json!({"path": "~/Pictures/LightCraft Library"})).unwrap();
+    let err = mac.dispatch("host.library.delete", &json!({"path": "~/Pictures/Old"})).unwrap_err();
+    assert!(err.message.contains("Trash"), "{err:?}");
+    assert!(root.join("mac/home/Pictures/Old").is_dir());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A library on a network share, opened with Open Library… on the share's top folder: the library in it opens, and
+/// its answer carries the library's warnings. With `existing`, or for a library opened before (its share gone, an
+/// empty mount point left), a folder with no library in it is never made one; a new library is never made in a
+/// folder that isn't there (a share that isn't connected).
+#[test]
+fn a_library_on_a_share_opens_from_the_folder_it_is_in_and_none_is_made() {
+    let root = std::env::temp_dir().join(format!("lc-host-libraries-share-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (mut e, _events) = engine_at_home(&root, Profile::Desktop);
+    let share = root.join("Volumes").join("photos");
+    let mut s = lightcraft_engine::Session::new().with_fs();
+    s.open_library(share.join("Studio Library"), false).unwrap();
+    s.close_library().unwrap();
+    drop(s);
+    std::fs::create_dir_all(share.join("2019")).unwrap();
+    let opened = e.dispatch("host.library.open", &json!({"path": share.to_string_lossy()})).unwrap();
+    assert_eq!(opened["name"], "Studio Library", "{opened}");
+    assert!(opened["warnings"].is_array(), "{opened}");
+    let err = e.dispatch("host.library.open", &json!({"path": share.join("2019").to_string_lossy(), "existing": true})).unwrap_err();
+    assert!(err.message.contains("no library here"), "{err:?}");
+    let mount = root.join("mnt").join("nas");
+    std::fs::create_dir_all(&mount).unwrap();
+    let err = e.dispatch("host.library.open", &json!({"path": mount.to_string_lossy(), "recent": [mount.to_string_lossy()]})).unwrap_err();
+    assert!(err.message.contains("no library here"), "{err:?}");
+    for folder in [share.join("2019"), mount] {
+        assert!(!lightcraft_engine::library::is_library(&folder), "{} isn't made a library", folder.display());
+    }
+    let err = e.dispatch("host.library.new", &json!({"name": "New", "location": root.join("Volumes/gone").to_string_lossy()})).unwrap_err();
+    assert!(err.message.contains("isn't there"), "{err:?}");
+    assert!(!root.join("Volumes/gone").exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// A library the user chose, on a share that isn't connected at start: an error that says so and nothing made in
+// its place, also with a phone's rules; one another program has open is an error too, never the demo library
+#[test]
+fn a_chosen_library_that_isnt_there_is_an_error_at_start() {
+    let base = std::env::temp_dir().join(format!("lc-host-chosen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("tmp")).unwrap();
+    let tmp = Some(base.join("tmp").to_string_lossy().to_string());
+    let open = |library: &Path, chosen: bool| {
+        Host::open(OpenConfig { library: Some(library.to_string_lossy().to_string()), tmp: tmp.clone(), chosen, ..Default::default() })
+    };
+    let gone = base.join("share").join("Library");
+    match open(&gone, true) {
+        Ok(_) => panic!("opened a library that isn't there"),
+        Err(e) => assert!(e.contains("isn't connected"), "{e}"),
+    }
+    assert!(!base.join("share").exists(), "nothing made in its place");
+    let held = base.join("Held");
+    std::fs::create_dir_all(&held).unwrap();
+    let lock = lightcraft_catalog::LibraryLock::acquire(&held, "someone else").unwrap();
+    assert!(open(&held, true).is_err(), "a chosen library in use is the user's to act on");
+    // (the default library on a phone still falls back to the demo library, as before)
+    let (h, opened) = open(&held, false).unwrap();
+    assert_eq!(opened["demo"], true, "{opened}");
+    drop(h);
+    drop(lock);
+    let (h, opened) = open(&held, true).unwrap();
+    assert_eq!((opened["demo"].as_bool(), opened["library"].as_str()), (Some(false), held.to_str()), "{opened}");
+    drop(h);
     let _ = std::fs::remove_dir_all(&base);
 }
