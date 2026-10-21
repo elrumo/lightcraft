@@ -501,3 +501,37 @@ fn the_clipboard_tool_cuts_copies_and_pastes_in_the_app() {
     assert!(!r.is_error, "{r:?}");
     assert_eq!(b.0, vec![("ui.clipboard".to_string(), json!({"action": "paste", "text": "travel"}))]);
 }
+
+/// `set_value`, `menu_item` and `click`'s names reach the app's `ui.setValue`, `ui.menuItem` and `ui.clickWidget`.
+#[test]
+fn control_tools_set_values_choose_menu_items_and_click_by_name() {
+    let names: Vec<String> = crate::tools::helper_tools(true).iter().filter_map(|t| t["name"].as_str().map(str::to_string)).collect();
+    for n in ["set_value", "menu_item"] {
+        assert!(names.iter().any(|x| x == n), "{n} in {names:?}");
+        assert!(!crate::tools::helper_tools(false).iter().any(|t| t["name"] == n), "{n}: not without the app");
+    }
+    let mut b = Recorder(vec![]);
+    for (tool, args) in [
+        ("set_value", json!({"label": "Thumbnail Size", "value": 120})),
+        ("set_value", json!({"widget": "0.0.2.9", "value": 0.5})),
+        ("menu_item", json!({"path": ["View", "Show Sidebar"]})),
+        ("click", json!({"label": "Still water", "action": "confirm"})),
+        ("click", json!({"widget": "0.0.2.3"})),
+    ] {
+        let r = call_tool(&mut b, tool, &args);
+        assert!(!r.is_error, "{tool}: {r:?}");
+    }
+    assert_eq!(
+        b.0,
+        vec![
+            ("ui.setValue".to_string(), json!({"value": 120, "label": "Thumbnail Size"})),
+            ("ui.setValue".to_string(), json!({"value": 0.5, "id": "0.0.2.9"})),
+            ("ui.menuItem".to_string(), json!({"path": ["View", "Show Sidebar"]})),
+            ("ui.clickWidget".to_string(), json!({"label": "Still water", "action": "confirm"})),
+            ("ui.clickWidget".to_string(), json!({"id": "0.0.2.3"})),
+        ]
+    );
+    // a value alone names no control; a menu path is needed; unknown keys are refused
+    assert!(call_tool(&mut b, "set_value", &json!({"value": 1})).is_error);
+    assert!(crate::tools::check_args("menu_item", &json!({"path": [], "extra": 1})).is_err());
+}

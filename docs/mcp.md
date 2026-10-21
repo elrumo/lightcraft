@@ -192,6 +192,7 @@ selected photo, and `export` uses the selection for batch export, as above.
 | `inspect_ui` | View, panel, window/image rects, selection, status |
 | `set_ui {state}` | Merge UI state, e.g. `{"view": "detail"}` |
 | `list_widgets {filter?}` / `click {widget \| x,y, count?, button?}` | Widgets by automation id; real egui clicks (`button: "right"` right-clicks) |
+| `click {label, role?, index?, action?}` / `set_value {widget \| label, value}` / `menu_item {path}` | A native (non-Rust) frontend that lists its controls by name (`list_widgets {all?, window?}`: `label`, `role`, `value`, `enabled`) is driven by name: press a control (`action`: `confirm`, `showMenu`, `increment`, `decrement`), set a slider's number or a field's text, choose a menu bar item (`["View", "Show Sidebar"]`). The egui app answers none of these three (it has `ui.menu.invoke` and `ui.text`) |
 | `press_key {key, cmd?, shift?, alt?}` / `type_text {text}` | Keyboard input (shortcuts) |
 | `clipboard {action, text?}` | Cut, copy or paste in the focused text field (⌘X / ⌘C / ⌘V; refused when none has the focus; cut and copy write the system clipboard); `inspect_ui` → `copied` is what was copied |
 | `pointer_gesture {events, touch?}` | Gestures in normalized image coordinates (brush strokes, gradients, crop handles); `touch`: a finger rather than a mouse (held still on the photo, it shows the Before until `up`) |
