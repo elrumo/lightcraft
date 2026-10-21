@@ -610,6 +610,9 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 | albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
 | | Local records (photos seen while browsing a folder, or opened from the Photos library, until added to the library; which Photos library picture is which photo, `photo-library.json`) |
 
+Without a server, a frontend on Apple devices can share the presets, the settings above and the edits of photos opened
+from the Photos library through iCloud instead ([below](#icloud-apple-devices-without-a-server)).
+
 A server from before the Hidden album (catalog format 10 or older) would keep a hidden photo shown on the other
 devices: a device signed in to one refuses Hide and holds back any hidden change ("Update LightCraft Server first"). The
 server says its format with every pull (`format` in the answer to `GET /api/ops`; missing: older).
@@ -646,6 +649,51 @@ Ids never collide: the server gives each device an id space at sign-in, and ids 
 log, and the position in the server's order (`sync.json`) only *after*; a crash in between re-sends or re-pulls, and
 both end up the same. A change the server refuses (it no longer applies there) is dropped and the device reloads the
 server's state, replaying its other pending changes on top.
+
+## iCloud: Apple devices without a server
+
+Without a server, a native frontend on Apple devices can share the smaller things through the person's own iCloud
+(CloudKit's private database: it counts against their iCloud storage, and nobody else, the app's maker included, can
+read it). The engine decides what to send and merges what comes back (`crates/engine/src/icloud.rs`, `icloud.*`
+commands); the frontend only moves records between it and CloudKit, and turns it on per library (`icloud.enable`).
+
+| Travels through iCloud | Not |
+|---|---|
+| user develop presets, and the settings a server shares too: export, metadata, filter and curve presets, colour-label and keyword sets, LUT profiles, the import defaults that don't name a place, the order of the preset groups, the hidden presets and groups, the Hidden password's hash and Blur Sensitive Photos | the photos themselves: a library without a server keeps its photos on the device |
+| the sync server a library is signed in to (its address and user name, which the person's other devices offer when they sign in) | the password and the device's token: every device signs in itself |
+| **edits of photos opened from the Photos library** (develop settings, rating, flag, colour label, title, caption, keywords and the other metadata an XMP sidecar carries), by the content hash of the picture's original | edits of photos imported into the library from elsewhere, History, versions |
+
+The Photos library already syncs the pictures through iCloud Photos; only the edit travels. Another device applies it
+to the same picture as soon as it has it in its library; otherwise it holds the edit until that picture is opened
+there (its original is the same bytes, so it hashes the same), and then the photo comes into the library edited (a
+History step "Synced from iCloud", no undo step). `icloud.heldAssets` lists those pictures by their cloud identifier
+(`photoLibrary.open {cloud}` records it) so the frontend can mark them in the Photos grid.
+
+**A library signed in to a server** syncs its presets, settings and photos through the server, so then only the
+server record travels through iCloud. What the device knew of the rest is forgotten when it signs in, and fetched again
+when it signs out (sign-out removes the account's presets from the device: they come back from iCloud rather than being
+deleted there).
+
+**When two devices change the same thing** (one record per preset, per settings item, per photo): a change made on
+one side only wins; changed on both, the newer change wins (each device notes when it first saw its own change); a
+removal goes everywhere unless another device changed the item meanwhile. CloudKit refuses a save over a version the
+device hasn't seen and hands back its own, which the engine merges like a fetched record, so the devices end up the
+same. A record taken from the cloud that this version stores a little differently is not sent back.
+
+**Turning it off** forgets what the cloud has (the cloud keeps it for the other devices, and this device keeps its
+presets, settings and edits); turning it on again merges as a new device does: nothing is deleted. Signing out of
+iCloud or switching accounts does the same.
+
+**Files in the library:** `icloud.json` (on, the versions last agreed with the cloud, the change times and the
+frontend's own CloudKit state, kept together so that they never disagree after a crash) and `icloud.held` (records
+held for pictures or servers this device doesn't have).
+
+**The frontend's side:** it asks `icloud.changes` when the state's `icloud.rev` changes and tells CloudKit about the
+records to save and delete; when CloudKit wants a batch it reads them with `icloud.records`; it hands every fetched
+record and deletion, and the server's version of every refused save, to `icloud.fetched`, every save CloudKit took to
+`icloud.sent`, and its own state to `icloud.transport`. A new `icloud.epoch` means the engine forgot what the cloud has:
+the frontend drops its state and fetches everything again (`icloud.reset` asks the engine to forget, after an iCloud
+account change).
 
 ## Protocol
 

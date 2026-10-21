@@ -101,6 +101,17 @@ fn key_for(name: &str) -> Option<Key> {
     SPECS.iter().find(|(n, _)| *n == name).map(|(_, k)| *k)
 }
 
+/// The documents a user's devices share (the server's own `server-presets` left out), for a sync that
+/// carries them item by item ([`crate::icloud`]).
+pub(crate) fn shared_doc_names() -> impl Iterator<Item = &'static str> {
+    SPECS.iter().map(|(n, _)| *n).filter(|n| *n != SERVER_PRESETS)
+}
+
+/// What tells item `v` of shared document `name` from the others (a name whatever its case, or an id).
+pub(crate) fn shared_doc_key(name: &str, v: &Value) -> Option<String> {
+    key_of(key_for(name)?, v)
+}
+
 impl SyncState {
     /// Read the bases `sync.docs` holds (by name), and set each document's version from the settings.
     pub(super) fn load_docs_base(&mut self, bytes: Option<&[u8]>) {
@@ -148,7 +159,7 @@ fn list<T: serde::Serialize>(v: &[T]) -> Vec<Value> {
 
 impl Session {
     /// This device's items of document `name`, as synced.
-    pub(super) fn doc_items(&self, name: &str) -> Vec<Value> {
+    pub(crate) fn doc_items(&self, name: &str) -> Vec<Value> {
         match name {
             "export-presets" => list(&self.export_presets),
             "metadata-presets" => list(&self.metadata_presets),
@@ -187,7 +198,7 @@ impl Session {
 
     /// Make `items` this device's document `name`: what doesn't parse, repeats a name, or is too large is
     /// left out. Saves the preferences.
-    pub(super) fn set_doc_items(&mut self, name: &str, items: &[Value]) -> Result<()> {
+    pub(crate) fn set_doc_items(&mut self, name: &str, items: &[Value]) -> Result<()> {
         match name {
             "export-presets" => self.export_presets = parse(items, |p: &crate::export::ExportPreset| p.name.clone()),
             "metadata-presets" => self.metadata_presets = parse(items, |p: &crate::cmd::metadata::MetadataPreset| p.name.clone()),
