@@ -94,9 +94,12 @@ Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, q
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…; `main`'s `histogram` comes with every sharp picture and
 with a draft at most every 33 ms, a drag's ~120 pictures a second each carrying 1,024 numbers: keep the last one); `renderFailed {slot, photo, key, error}`; `state {state:
 {catalogRevision, visibleGen, visibleCount, libraryGeneration, presetsGeneration, active, selectionCount, undo, redo,
-interaction, activeMask, activeSpot, unsaved, sync?, faces?}}` when any of it changes (`presetsGeneration`: changes
+interaction, activeMask, activeSpot, unsaved, sync?, faces?, icloud?}}` when any of it changes (`presetsGeneration`: changes
 with the preset list, including presets the sync brings from another device: the Presets panel reads `presets.list`
-again) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`activeMask` / `activeSpot`: the Masking tool's
+again) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`icloud`: `{rev, epoch}` while
+iCloud sync is on for the library: a new `rev` means there may be records to send, `icloud.changes`; a new `epoch` that the
+engine forgot what the cloud has, so the frontend drops its own sync state and fetches everything again; see
+[sync.md](sync.md#icloud-apple-devices-without-a-server)) (`activeMask` / `activeSpot`: the Masking tool's
 selected mask and the Remove tool's selected spot, wherever they were chosen) (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
 downloads, reading, error}` with `state` one of `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing`, `idle`; absent for a local library, and
 after a sign-out has emptied it, together with a new `libraryGeneration`: a frontend then drops whatever names the old

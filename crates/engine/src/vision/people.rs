@@ -108,7 +108,7 @@ pub fn clusters_of(ix: &FaceIndex) -> Vec<Cluster> {
 
 impl Session {
     /// Where the face index is: the models that made it (known without loading them).
-    fn faces_spec(&self) -> FaceSpec {
+    pub(super) fn faces_spec(&self) -> FaceSpec {
         let engine = match &self.vision.injected_finder {
             Some(f) => f.engine().to_string(),
             None => lightcraft_vision::faces::ENGINE.to_string(),
@@ -119,7 +119,8 @@ impl Session {
     /// The people come from the sync server's faces when this device finds none itself (the web
     /// build, iOS, a computer that didn't turn finding people on) and the server does.
     fn people_from_server(&self) -> bool {
-        let local = self.vision.faces_available() && (self.vision.faces || self.vision.faces_found() > 0);
+        // (faces found here, or that another device found and sent through iCloud: `portable`)
+        let local = (self.vision.faces_available() && self.vision.faces) || self.vision.faces_found() > 0;
         !local && self.vision.remote.faces_enabled()
     }
 
@@ -145,7 +146,8 @@ impl Session {
     /// Which of `faces` (a position, its photo, its box) the face finder found to be one person, here or on the sync
     /// server: the positions of each person's faces, their best face first. Nothing while finding people is off.
     pub(crate) fn people_groups(&mut self, faces: &[(usize, PhotoId, lightcraft_geom::Rect)]) -> Vec<Vec<usize>> {
-        let local = self.vision.faces_available() && (self.vision.faces || self.vision.faces_found() > 0);
+        // (faces found here, or that another device found and sent through iCloud: `portable`)
+        let local = (self.vision.faces_available() && self.vision.faces) || self.vision.faces_found() > 0;
         if faces.is_empty() || !(local || self.people_from_server()) {
             return Vec::new();
         }
