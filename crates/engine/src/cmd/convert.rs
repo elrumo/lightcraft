@@ -578,10 +578,18 @@ fn fill_missing_meta(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::P
 /// photo's correction stayed off. When the photo gains lens data and its develop settings are still
 /// what import gave it, the lens correction is turned on as import would; an edited photo keeps
 /// its settings. A vignette alone that a probe doesn't see is kept: it was measured from the pixels when the photo
-/// was decoded (a CR3's, `camera_preview::jpeg_vignetting`), and a probe reads headers only.
+/// was decoded (a CR3's, `camera_preview::jpeg_vignetting`), and a probe reads headers only. So is a lens database
+/// profile a device without the database (or with an older one) doesn't find, or finds an older version of: synced
+/// devices would otherwise take it away from each other.
 pub(crate) fn lens_ops(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::Photo, lens: Option<lightcraft_develop::EmbeddedLens>) -> Vec<Op> {
-    let measured = |l: &lightcraft_develop::EmbeddedLens| l.vignette.is_some() && l.warp.is_none() && !l.has_stages();
-    if lens == ph.embedded_lens || (lens.is_none() && ph.embedded_lens.as_ref().is_some_and(measured)) {
+    use lightcraft_develop::LensOrigin;
+    let kept = |have: &lightcraft_develop::EmbeddedLens| match &lens {
+        None => have.measured() || matches!(have.origin, LensOrigin::Database { .. }),
+        Some(new) => {
+            matches!(new.origin, LensOrigin::Database { .. }) && matches!(have.origin, LensOrigin::Database { .. }) && !have.superseded_by(new)
+        }
+    };
+    if lens == ph.embedded_lens || ph.embedded_lens.as_ref().is_some_and(kept) {
         return Vec::new();
     }
     let mut ops = vec![Op::SetEmbeddedLens { id, lens: lens.map(Box::new) }];
@@ -857,7 +865,7 @@ mod tests {
         lightcraft_develop::EmbeddedLens {
             warp: Some(lightcraft_develop::EmbeddedWarp { planes: [[1.0, -0.1, 0.03, 0.0, 0.0, 0.0]; 3], ..Default::default() }),
             vignette: None,
-            stages: Default::default(),
+            ..Default::default()
         }
     }
     fn old_rw2() -> lightcraft_catalog::Photo {
@@ -918,6 +926,39 @@ mod tests {
         // a file's own warp that a probe no longer finds is dropped as before
         ph.embedded_lens = Some(lens());
         assert!(matches!(lens_ops(ph.id, &ph, None).as_slice(), [Op::SetEmbeddedLens { lens: None, .. }]));
+    }
+
+    /// Lens database profiles: one replaces a measured vignette and an older database's profile; a device without the
+    /// database, or with an older one, leaves a newer profile alone (synced devices would take it from each other).
+    #[test]
+    fn reload_takes_newer_lens_database_profiles_only() {
+        use lightcraft_develop::{EmbeddedLens, LensOrigin};
+        let from_db = |serial| EmbeddedLens { origin: LensOrigin::Database { serial }, ..lens() };
+        let set = |ops: Vec<Op>| match ops.as_slice() {
+            [Op::SetEmbeddedLens { lens, .. }, ..] => Some(lens.as_deref().copied()),
+            _ => None,
+        };
+        let mut ph = old_rw2();
+        ph.embedded_lens = Some(EmbeddedLens { vignette: Some(Default::default()), origin: LensOrigin::Measured, ..Default::default() });
+        assert_eq!(set(lens_ops(ph.id, &ph, Some(from_db(3)))), Some(Some(from_db(3))), "a profile replaces a measured vignette");
+        ph.embedded_lens = Some(from_db(3));
+        assert_eq!(set(lens_ops(ph.id, &ph, None)), None, "a device without the database keeps it");
+        assert_eq!(set(lens_ops(ph.id, &ph, Some(from_db(2)))), None, "and one with an older database");
+        assert_eq!(set(lens_ops(ph.id, &ph, Some(from_db(3)))), None);
+        assert_eq!(set(lens_ops(ph.id, &ph, Some(from_db(4)))), Some(Some(from_db(4))), "a newer database's profile replaces it");
+        assert_eq!(set(lens_ops(ph.id, &ph, Some(lens()))), Some(Some(lens())), "the file's own correction always wins");
+        // a measured vignette doesn't replace a profile; the file's own correction is never replaced
+        let measured = EmbeddedLens { vignette: Some(Default::default()), origin: LensOrigin::Measured, ..Default::default() };
+        assert!(!from_db(3).superseded_by(&measured) && !lens().superseded_by(&from_db(9)) && !lens().superseded_by(&measured));
+        assert!(measured.superseded_by(&from_db(0)) && from_db(1).superseded_by(&from_db(2)));
+        // a vignette recorded before origins were counts as measured
+        let legacy = EmbeddedLens { vignette: Some(Default::default()), ..Default::default() };
+        assert!(legacy.measured() && legacy.superseded_by(&from_db(1)));
+        // and the origin survives the catalog's JSON, left out for the file's own
+        let json = serde_json::to_value(from_db(7)).unwrap();
+        assert_eq!(json["origin"], json!({"database": {"serial": 7}}));
+        assert_eq!(serde_json::from_value::<EmbeddedLens>(json).unwrap(), from_db(7));
+        assert!(serde_json::to_value(lens()).unwrap().get("origin").is_none());
     }
 
     #[test]

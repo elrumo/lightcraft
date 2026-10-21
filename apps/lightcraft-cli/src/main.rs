@@ -122,6 +122,20 @@ USAGE:
       --references DIR: Canon CR3s of models with measured matrices instead: fit the hue/saturation table
       their neutral look adds, against renders of the same photos in DIR (<raw name>.jpg, .jpeg, .png or
       .tif, upright, sRGB or tagged), written as <model>.neutral.json.
+  lightcraft-cli profile-db build --out DIR [OPTIONS]
+      Write a camera and lens profile database for LightCraft to download (docs/profile-db.md): DIR gets
+      index.json and files/<sha256>; upload DIR to any web server and give the app its https address.
+      Every file is checked with the parsers the app uses. Options:
+        --lensfun DIR            lensfun's data/db folder (CC-BY-SA 3.0, credited in the app)
+        --lensfun-revision REV   the lensfun commit it was taken from (shown with the credit)
+        --cameras DIR            camera profiles (<model>.json, as `calibrate` writes them)
+        --lenses DIR             lens profiles of your own, in lensfun's XML format
+        --title T --licence L --credit C --url U
+                                 how --cameras and --lenses are credited (default licence MIT OR Apache-2.0)
+        --serial N               the database number (default: DIR's plus 1; it must grow)
+        --published DATE         shown in the app (default: now, UTC)
+        --prune                  delete files earlier publications listed (default: kept for devices
+                                 mid-update)
   lightcraft-cli --version | --help
 ";
 
@@ -187,6 +201,7 @@ fn main() -> ExitCode {
         Some("denoise-serve") => denoise_serve(&args[1..]),
         Some("calibrate") => calibrate(&args[1..]),
         Some("hidden") => hidden(&args[1..]),
+        Some("profile-db") => profile_db(&args[1..]),
         Some("--version" | "-V" | "version") => {
             println!("lightcraft-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -576,6 +591,64 @@ fn parse_steps(tokens: &[String]) -> Result<Vec<Step>, String> {
 fn run_step(b: &mut dyn Backend, s: &Step) -> Result<Value, String> {
     let direct = s.id.starts_with("ui.") || s.id.starts_with("engine.") || s.id == "app.quit";
     if direct { b.call(&s.id, s.params.clone()) } else { b.call("engine.execute", json!({"command": s.id, "params": s.params})) }
+}
+
+/// `profile-db build --out DIR …`: write a camera and lens profile database (docs/profile-db.md).
+fn profile_db(args: &[String]) -> Result<(), String> {
+    use lightcraft_engine::profile_db::{self, Input, KIND_CAMERA, KIND_LENS, Source};
+    if args.first().map(String::as_str) != Some("build") {
+        return Err(format!("usage: lightcraft-cli profile-db build --out DIR [OPTIONS]\n\n{USAGE}"));
+    }
+    let (mut out, mut lensfun, mut revision, mut cameras, mut lenses, mut serial, mut published, mut prune) =
+        (None, None, String::new(), None, None, None, None, false);
+    let mut own = Source {
+        id: "own".into(),
+        title: "Camera and lens profiles".into(),
+        licence: "MIT OR Apache-2.0".into(),
+        url: String::new(),
+        credit: String::new(),
+        revision: String::new(),
+    };
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out" => out = Some(std::path::PathBuf::from(take_value(args, &mut i, "--out")?)),
+            "--lensfun" => lensfun = Some(std::path::PathBuf::from(take_value(args, &mut i, "--lensfun")?)),
+            "--lensfun-revision" => revision = take_value(args, &mut i, "--lensfun-revision")?.to_string(),
+            "--cameras" => cameras = Some(std::path::PathBuf::from(take_value(args, &mut i, "--cameras")?)),
+            "--lenses" => lenses = Some(std::path::PathBuf::from(take_value(args, &mut i, "--lenses")?)),
+            "--title" => own.title = take_value(args, &mut i, "--title")?.to_string(),
+            "--licence" | "--license" => own.licence = take_value(args, &mut i, "--licence")?.to_string(),
+            "--credit" => own.credit = take_value(args, &mut i, "--credit")?.to_string(),
+            "--url" => own.url = take_value(args, &mut i, "--url")?.to_string(),
+            "--serial" => serial = Some(take_value(args, &mut i, "--serial")?.parse::<u64>().map_err(|_| "--serial needs a number".to_string())?),
+            "--published" => published = Some(take_value(args, &mut i, "--published")?.to_string()),
+            "--prune" => prune = true,
+            a => return Err(format!("unknown option `{a}`")),
+        }
+        i += 1;
+    }
+    let out = out.ok_or("profile-db build needs --out DIR")?;
+    let mut inputs = Vec::new();
+    if let Some(dir) = lensfun {
+        inputs.push(Input { source: profile_db::lensfun_source(&revision), kind: KIND_LENS, dir });
+    }
+    if let Some(dir) = cameras {
+        inputs.push(Input { source: own.clone(), kind: KIND_CAMERA, dir });
+    }
+    if let Some(dir) = lenses {
+        inputs.push(Input { source: own, kind: KIND_LENS, dir });
+    }
+    if inputs.is_empty() {
+        return Err("profile-db build needs --lensfun, --cameras or --lenses".into());
+    }
+    let published = published.unwrap_or_else(profile_db::now_utc);
+    let built = profile_db::build(&out, &inputs, serial, &published, prune)?;
+    println!("{}", serde_json::to_string(&built).map_err(|e| e.to_string())?);
+    for why in &built.skipped {
+        eprintln!("lightcraft-cli: not published: {why}");
+    }
+    Ok(())
 }
 
 /// `hidden reset-password --library DIR`: forget the Hidden password of a library (docs/hidden.md).
