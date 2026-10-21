@@ -826,6 +826,10 @@ impl MediaCache {
         if let (SourceRef::File { denoise, .. }, Some((spec, loader))) = (&mut r, self.denoise.get(p.id)) {
             *denoise = Some((spec.clone(), loader.clone()));
         }
+        // a clip with a poster frame of its own is loaded at that time (the loader reads it off the path)
+        if let (SourceRef::File { path, .. }, Some(t)) = (&mut r, clip_cover(p)) {
+            *path = crate::files::at_time(path, t);
+        }
         r
     }
 
@@ -1479,11 +1483,24 @@ fn shrink(img: &Rgba8, edge: usize) -> Rgba8 {
 
 /// What identifies a photo's pixels for caching: its content hash, else its source.
 pub fn content_key(p: &Photo) -> String {
-    match (&p.content_hash, &p.source) {
+    let key = match (&p.content_hash, &p.source) {
         (Some(h), _) => h.clone(),
         (None, Source::Demo { scene }) => format!("demo:{scene}"),
         (None, Source::File { path }) => format!("file:{path}:{}", p.file_size),
+    };
+    // a clip's poster frame is part of its pixels: a new one is a new picture for every cache
+    match clip_cover(p) {
+        Some(t) => format!("{key}@{t:.3}"),
+        None => key,
     }
+}
+
+/// The poster frame a video clip was given (seconds), when it was given one.
+pub fn clip_cover(p: &Photo) -> Option<f64> {
+    if p.kind != MediaKind::Video {
+        return None;
+    }
+    p.develop.video.and_then(|v| v.cover).filter(|t| t.is_finite() && *t >= 0.0)
 }
 
 pub fn source_info(p: &Photo) -> SourceInfo {

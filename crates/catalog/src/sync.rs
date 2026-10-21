@@ -988,7 +988,11 @@ pub mod proto {
     #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(default, rename_all = "camelCase")]
     pub struct Usage {
+        /// Photos in the library: not videos, not those in Recently Deleted, not virtual copies. (A server before
+        /// videos counted every photo record here.)
         pub photos: u64,
+        /// Videos in the library, counted the same way. A server that doesn't say (0) is read as none.
+        pub videos: u64,
         pub albums: u64,
         /// Signed-in devices.
         pub devices: u64,
@@ -1010,13 +1014,29 @@ pub mod proto {
         /// The most the server keeps for this user, in bytes ([`Usage::stored`] counts against it; `None`: no
         /// limit). An upload that would go over it is refused with `507`.
         pub quota: Option<u64>,
+        /// What the videos take, and what the lighter copies the server keeps of them saved.
+        pub video: VideoUsage,
+    }
+
+    /// The videos of a library ([`Usage::video`]): the size of the originals (read from the catalog, wherever they
+    /// are: kept here or in a library folder), the lighter copies the server keeps of them (under `blobs/video`, part of
+    /// [`Usage::stored`]) and what those saved.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(default, rename_all = "camelCase")]
+    pub struct VideoUsage {
+        /// The videos' own files: how many have a known size, and those sizes added up.
+        pub originals: Files,
+        /// The lighter copies kept for them.
+        pub encoded: Files,
+        /// Bytes the lighter copies are smaller than the originals they stand for (copies that came out larger save nothing).
+        pub saved: u64,
     }
 
     impl Usage {
-        /// Bytes of the files LightCraft keeps for this user: uploaded originals and the previews
-        /// (not the photos in library folders).
+        /// Bytes of the files LightCraft keeps for this user: uploaded originals, the previews and the lighter
+        /// copies of videos (not the photos in library folders).
         pub fn stored(&self) -> u64 {
-            self.original.bytes.saturating_add(self.smart.bytes).saturating_add(self.mini.bytes)
+            self.original.bytes.saturating_add(self.smart.bytes).saturating_add(self.mini.bytes).saturating_add(self.video.encoded.bytes)
         }
 
         /// Bytes the user's library takes on the server in all: what LightCraft keeps and the
@@ -1097,7 +1117,7 @@ pub mod proto {
 
 #[cfg(test)]
 mod usage_tests {
-    use super::proto::{Disk, Files, Usage};
+    use super::proto::{Disk, Files, Usage, VideoUsage};
 
     fn files(files: u64, bytes: u64) -> Files {
         Files { files, bytes }
@@ -1130,6 +1150,27 @@ mod usage_tests {
         let huge = Usage { original: files(1, u64::MAX), folders: files(1, 7), folders_on_disk: 7, ..Default::default() };
         assert_eq!((huge.total(), huge.on_disk()), (u64::MAX, u64::MAX));
         assert_eq!(files(1, u64::MAX).plus(files(2, 5)), files(3, u64::MAX));
+    }
+
+    /// A server from before videos says nothing of them, and still reads: no videos, no lighter copies, nothing saved.
+    /// The lighter copies are part of what the server keeps, and the new names are camel case.
+    #[test]
+    fn a_server_from_before_videos_still_reads_and_the_video_fields_have_their_names() {
+        let older: Usage = serde_json::from_str(r#"{"photos": 7, "original": {"files": 1, "bytes": 5}, "smart": {"files": 1, "bytes": 3}}"#).unwrap();
+        assert_eq!((older.photos, older.videos, older.video), (7, 0, VideoUsage::default()));
+        assert_eq!(older.stored(), 8);
+        let u = Usage {
+            photos: 4,
+            videos: 2,
+            original: files(1, 100),
+            video: VideoUsage { originals: files(2, 9_000), encoded: files(1, 2_500), saved: 3_000 },
+            ..Default::default()
+        };
+        assert_eq!(u.stored(), 2_600, "the lighter copies are among the files the server keeps");
+        let json = serde_json::to_value(&u).unwrap();
+        assert_eq!((json["videos"].clone(), json["video"]["originals"]["bytes"].clone()), (2.into(), 9_000.into()));
+        assert_eq!((json["video"]["encoded"]["files"].clone(), json["video"]["saved"].clone()), (1.into(), 3_000.into()));
+        assert_eq!(serde_json::from_value::<Usage>(json).unwrap(), u);
     }
 
     /// The new field is `foldersOnDisk` on the wire, like the other multi-word names of the protocol.
