@@ -2777,3 +2777,23 @@ fn sensitive_marks_reach_the_other_devices() {
     assert!(!a.sensitive_ids().contains(&ids[0]), "and unmarked back");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A ready model on a device that syncs looks by itself only at the photos whose pixels are here: it never has the
+/// previews of every photo that is only on the server downloaded for it. Asked for (`vision.index`), they come down.
+#[test]
+fn a_ready_model_on_a_synced_device_downloads_no_previews_by_itself() {
+    let mut f = Fake::new();
+    let (_a, root, ids) = first_device("catch-up", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    assert!(ids.iter().all(|id| b.synced_tier(b.catalog.photo(*id).unwrap()) == Some(0)), "nothing of them is here yet");
+    b.vision.set_embedder(std::sync::Arc::new(lightcraft_vision::fake::FakeEmbedder));
+    let minis = |tasks: &[Task]| tasks.iter().filter(|t| matches!(t, Task::Http { url, .. } if url.contains("/api/blobs/mini/"))).count();
+    assert!(b.vision_catch_up());
+    assert_eq!(b.vision.job().map(|j| j.total), Some(0), "nothing to look at on this device");
+    assert_eq!(minis(&b.sync_tasks()), 0, "and nothing downloaded for it");
+    b.execute("vision.index", &json!({})).unwrap();
+    assert_eq!(minis(&b.sync_tasks()), 2, "asked for: the photos' small previews come down to be looked at");
+    let _ = std::fs::remove_dir_all(&root);
+}

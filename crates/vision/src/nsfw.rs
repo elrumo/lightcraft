@@ -158,10 +158,9 @@ mod gpu {
         /// Loads the weights in `dir` (a ViT-B/16 reading `side` pixels) onto the GPU; `None` when there are none or the machine has no GPU.
         pub fn load(dir: &std::path::Path, side: usize) -> Result<Option<Vit>, Error> {
             let file = dir.join(GPU_WEIGHTS_FILE);
-            let device = crate::siglip::best_device();
-            if !file.is_file() || device.is_cpu() {
+            let Some(device) = file.is_file().then(crate::siglip::gpu_device).flatten() else {
                 return Ok(None);
-            }
+            };
             // (read tensor by tensor, and converted to half precision on the way: the file is 343 MB)
             let vb = VarBuilder::from_backend(Box::new(Backend(Weights::open(&file)?)), DType::F16, device.clone());
             let config = vit::Config { image_size: side, ..vit::Config::vit_base_patch16_224() };
@@ -375,7 +374,7 @@ mod tests {
             lightcraft_testkit::skip!(Model, "LIGHTCRAFT_NSFW not set (the folder with Falconsai's model_int8.onnx and model.safetensors)");
             return;
         };
-        if crate::siglip::best_device().is_cpu() || !dir.join(GPU_WEIGHTS_FILE).is_file() {
+        if crate::siglip::gpu_device().is_none() || !dir.join(GPU_WEIGHTS_FILE).is_file() {
             lightcraft_testkit::skip!(Gpu, "no GPU, or no model.safetensors in the folder");
             return;
         }
@@ -450,7 +449,7 @@ mod tests {
             lightcraft_testkit::skip!(Model, "LIGHTCRAFT_NSFW not set to a folder with large/model_int8.onnx and large/model.safetensors");
             return;
         };
-        if crate::siglip::best_device().is_cpu() {
+        if crate::siglip::gpu_device().is_none() {
             lightcraft_testkit::skip!(Gpu, "no GPU");
             return;
         }

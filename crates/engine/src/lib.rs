@@ -571,7 +571,7 @@ impl Session {
             depth_model: depth::DepthModel::default(),
             expand: expand::ExpandState::default(),
             device: hardware::DeviceProfile::detect(),
-            vision: vision::Vision::default(),
+            vision: vision::Vision::for_device(&hardware::DeviceProfile::detect()),
             active_spot: None,
             library: None,
             library_identity: Arc::new(()),
