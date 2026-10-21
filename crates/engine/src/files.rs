@@ -497,18 +497,9 @@ fn load_bytes_now(
         // the camera's measured matrices (`Photo::relative_wb` decides the same from the catalog's camera)
         let scale = WbScaleOf::new(raw.format, &raw.color, raw.wb_multipliers, &raw.metadata);
         // the source's segmentation mattes (DNG semantic masks), read while the starting colour is fitted
-        let ((xy, t, camera_look, camera_match, lens), mattes) = rayon::join(
-            || {
-                // (the fits below pair the same camera JPEG and sensor proxy: built once)
-                crate::camera_preview::sharing_proxies(|| {
-                    let (xy, t, look, camera_match) = crate::camera_preview::starting_colour(&mut raw, &bytes, lens_geometry.as_ref(), lens.as_ref());
-                    // a raw without lens data of its own: the vignetting its camera corrected in its JPEG
-                    let lens = lens.or_else(|| crate::camera_preview::jpeg_vignetting(&raw, &bytes, &t));
-                    (xy, t, look, camera_match, lens)
-                })
-            },
-            || dng_mattes(&bytes, &info),
-        );
+        // (a raw without lens data of its own gets the vignetting its camera corrected in its JPEG)
+        let ((xy, t, camera_look, camera_match, lens), mattes) =
+            rayon::join(|| crate::camera_preview::decode_fits(&mut raw, &bytes, lens_geometry.as_ref(), lens), || dng_mattes(&bytes, &info));
         let previewless_tone = crate::camera_preview::previewless_tone(&raw, &bytes, scale.own_matrix, &t, &camera_look);
         drop(bytes);
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only

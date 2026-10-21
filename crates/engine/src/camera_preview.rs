@@ -1159,6 +1159,86 @@ pub(crate) fn sharing_proxies<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// What a raw's colour fits gave at its decode ([`decode_fits`]).
+struct Fits {
+    xy: Xy,
+    t: CameraTransform,
+    look: Option<CameraLook>,
+    matched: Option<CameraMatch>,
+    lens: Option<lightcraft_develop::EmbeddedLens>,
+    /// `raw.color` after [`starting_colour`] filled in the model's measured matrices (`None`: it did not).
+    color: Option<ColorData>,
+}
+
+/// Raws' [`Fits`] by file ([`fingerprint`]) and decoded size (a linear raw binned while it is decoded is smaller and
+/// fits on other samples), at most this many.
+const FITS_KEPT: usize = 64;
+
+type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize), std::sync::Arc<Fits>>;
+
+fn fits_cache() -> &'static std::sync::Mutex<FitsCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<FitsCache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(lightcraft_preview::Lru::new(FITS_KEPT)))
+}
+
+/// Forget the kept [`Fits`] (`Session::release_memory`).
+pub(crate) fn forget_fits() {
+    fits_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+}
+
+/// A file told apart from others cheaply: its length, first 64 KiB (the tags) and 64 blocks of 4 KiB spread evenly
+/// to its end (0.1 ms for a 23 MB CR3 on an M1 Max, where hashing it all takes 8 ms).
+fn fingerprint(bytes: &[u8]) -> lightcraft_preview::Hash128 {
+    const BLOCK: usize = 4096;
+    const BLOCKS: usize = 64;
+    let mut h = lightcraft_preview::Hasher128::new();
+    h.u64(bytes.len() as u64).update(bytes.get(..65536).unwrap_or(bytes));
+    let span = bytes.len().saturating_sub(BLOCK) as u128;
+    for i in 0..=BLOCKS as u128 {
+        let at = usize::try_from(span * i / BLOCKS as u128).unwrap_or(0);
+        h.update(bytes.get(at..at.saturating_add(BLOCK).min(bytes.len())).unwrap_or_default());
+    }
+    h.finish()
+}
+
+/// A raw decode's colour fits: [`starting_colour`] (which may fill the model's measured matrices into `raw.color`)
+/// and, for a raw without lens data of its own (`lens`, the file's or the lens database's), [`jpeg_vignetting`], with
+/// their proxies built once ([`sharing_proxies`]). Kept per file: a photo is decoded again at each level (thumbnail,
+/// preview, full size for zoom and export, and after its decoded source is evicted), and these fits were ~45 % of a
+/// CR3's preview decode. They depend only on the file and the decoded raw (the camera and lens profiles are read once
+/// per process), so a kept result is what fitting again gives. Returns the as-shot white, the camera transform, the
+/// look, the Camera Matching profile and the lens correction.
+pub(crate) fn decode_fits(
+    raw: &mut RawImage,
+    bytes: &[u8],
+    lens_geometry: Option<&LensGeometry>,
+    lens: Option<lightcraft_develop::EmbeddedLens>,
+) -> (Xy, CameraTransform, Option<CameraLook>, Option<CameraMatch>, Option<lightcraft_develop::EmbeddedLens>) {
+    let key = (fingerprint(bytes), raw.width, raw.height);
+    let kept = fits_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key).cloned();
+    let fits = match kept {
+        Some(fits) => {
+            if let Some(color) = &fits.color {
+                raw.color = color.clone();
+            }
+            fits
+        }
+        None => {
+            let had_matrix = lightcraft_raw::color::has_matrix(&raw.color);
+            let fits = sharing_proxies(|| {
+                let (xy, t, look, matched) = starting_colour(raw, bytes, lens_geometry, lens.as_ref());
+                let lens = lens.or_else(|| jpeg_vignetting(raw, bytes, &t));
+                let filled = !had_matrix && lightcraft_raw::color::has_matrix(&raw.color);
+                Fits { xy, t, look, matched, lens, color: filled.then(|| raw.color.clone()) }
+            });
+            let fits = std::sync::Arc::new(fits);
+            fits_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key, fits.clone(), 1);
+            fits
+        }
+    };
+    (fits.xy, fits.t, fits.look.clone(), fits.matched.clone(), fits.lens)
+}
+
 /// [`proxies`]' transform-free part for `raw` and its file `bytes` (see [`ProxyBase`]); shared within a
 /// [`sharing_proxies`] scope.
 fn proxy_base(raw: &RawImage, bytes: &[u8], edge: u32) -> Option<std::rc::Rc<ProxyBase>> {
@@ -3402,6 +3482,54 @@ mod tests {
         assert_eq!(alone, shared);
         // (and nothing stays shared once the scope is over)
         assert!(PROXY_BASE.with(|b| b.borrow().is_none()));
+    }
+
+    /// The fits kept per file give what fitting again gives, the measured matrices filled into the raw included
+    /// (skipped without the corpus).
+    #[test]
+    fn corpus_cr3_kept_fits_are_the_fits() {
+        let path = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw/cr3-canon-r6-raw.cr3");
+        let Ok(bytes) = std::fs::read(&path) else {
+            lightcraft_testkit::skip!(Corpus, "{} absent", path.display());
+            return;
+        };
+        let fresh = {
+            let mut raw = lightcraft_raw::decode(&bytes).unwrap();
+            let (xy, t, look, matched) = sharing_proxies(|| starting_colour(&mut raw, &bytes, None, None));
+            let lens = jpeg_vignetting(&raw, &bytes, &t);
+            format!("{xy:?} {t:?} {look:?} {matched:?} {lens:?} {:?}", raw.color)
+        };
+        let kept = || {
+            let mut raw = lightcraft_raw::decode(&bytes).unwrap();
+            let (xy, t, look, matched, lens) = decode_fits(&mut raw, &bytes, None, None);
+            let key = (fingerprint(&bytes), raw.width, raw.height);
+            assert!(fits_cache().lock().unwrap().contains(&key));
+            format!("{xy:?} {t:?} {look:?} {matched:?} {lens:?} {:?}", raw.color)
+        };
+        assert!(fresh.contains("Some(") && fresh.contains("color_matrix: [Some("), "a look and filled matrices: {fresh}");
+        // (the first may already be kept: other tests decode this file too)
+        assert_eq!(kept(), fresh);
+        assert_eq!(kept(), fresh);
+    }
+
+    #[test]
+    fn files_differing_anywhere_sampled_fingerprint_apart() {
+        let file: Vec<u8> = (0..1_000_000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+        assert_eq!(fingerprint(&file), fingerprint(&file.clone()));
+        let changed = |at: usize| {
+            let mut f = file.clone();
+            f[at] ^= 1;
+            fingerprint(&f)
+        };
+        // the tags, the last byte, a byte in a sampled block midway, and the length
+        for at in [100, 65_000, 499_000, file.len() - 1] {
+            assert_ne!(changed(at), fingerprint(&file), "byte {at}");
+        }
+        assert_ne!(fingerprint(&file[..file.len() - 1]), fingerprint(&file));
+        assert_ne!(fingerprint(&[]), fingerprint(&[0]));
     }
 
     /// taken out and turned upright as an export would be, gives pairs and a table (skipped without the corpus).

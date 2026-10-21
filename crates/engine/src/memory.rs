@@ -373,12 +373,13 @@ impl crate::Session {
     }
 
     /// The system is short of memory (an iOS memory warning; the app is ended if it doesn't give
-    /// some back): forget the decoded sources (decoded again when next shown) and the GPU's
-    /// pooled buffers, and hand freed pages back to the system. Returns the bytes freed from the
+    /// some back): forget the decoded sources (decoded again when next shown), the raws' kept colour
+    /// fits and the GPU's pooled buffers, and hand freed pages back to the system. Returns the bytes freed from the
     /// caches. Rendered previews stay: they are small and redrawing the grid without them is slow.
     pub fn release_memory(&mut self) -> usize {
         let held = self.memory_report().engine_bytes;
         self.media.clear_sources();
+        crate::camera_preview::forget_fits();
         lightcraft_gpu::trim_pool(0);
         release();
         held.saturating_sub(self.memory_report().engine_bytes)
