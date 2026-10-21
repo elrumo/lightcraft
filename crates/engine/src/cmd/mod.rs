@@ -42,6 +42,7 @@ mod prefs;
 mod preset_files;
 pub mod previews;
 mod print;
+pub mod profile_db;
 mod query;
 pub mod recheck;
 pub mod reload;
@@ -190,6 +191,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(sync::specs());
         v.extend(metadata::specs());
         v.extend(geocode::specs());
+        v.extend(profile_db::specs());
         v.extend(filters::specs());
         v.extend(cloud_sync::specs());
         v.extend(denoise::specs());

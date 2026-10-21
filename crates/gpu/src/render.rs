@@ -1261,7 +1261,7 @@ mod tests {
                 radius: 0.6,
             }),
             vignette: None,
-            stages: Default::default(),
+            ..Default::default()
         };
         let mut s = DevelopSettings::default();
         s.optics.lens_profile = true;
