@@ -71,6 +71,13 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `render.retain` | `{thumbs, max?}` | the thumbnails on screen (queued renders of others are dropped) |
 | `ui.reply` | `{id, result \| error}` | the app's answer to a `uiRequest` |
 
+**Live control channel.** With `LIGHTCRAFT_CONTROL_PORT=<port>` in the environment the host also listens on `127.0.0.1:<port>`
+(`apphost::host::control`; off otherwise, loopback only, a first line that is not a request closes the connection). It speaks
+the control protocol of [control-protocol.md](control-protocol.md): one `{"id","method","params"}` line in, one
+`{"id","ok","result" | "error","code"?}` line out, so `lightcraft-cli mcp --connect 127.0.0.1:<port>` drives a native frontend
+as it drives the egui app. `engine.*`, `render.*` and `host.*` are answered by the engine; `ui.*` go to the frontend as
+`uiRequest`s, which it answers with `ui.reply` (the same path a script uses).
+
 Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, quick?, ms, histogram?}` (slots
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…); `renderFailed {slot, photo, key, error}`; `state {state:
 {catalogRevision, visibleGen, visibleCount, libraryGeneration, presetsGeneration, active, selectionCount, undo, redo,

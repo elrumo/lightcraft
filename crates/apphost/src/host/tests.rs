@@ -332,6 +332,50 @@ fn a_script_runs_and_writes_its_replies() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+// The live control channel: engine requests are answered with the client's id, a `ui.*` one goes to
+// the frontend as a `uiRequest`, and a web page's HTTP request is refused before anything runs
+#[test]
+fn the_control_channel_answers_engine_requests_and_forwards_ui_ones() {
+    use std::io::{BufRead, BufReader, Write};
+    let (host, _) = Host::open(OpenConfig { demo: true, render_threads: Some(1), ..Default::default() }).unwrap();
+    let addr = control::start(0, host.tx.clone()).unwrap();
+    let h = Watch::new(host);
+
+    let mut conn = std::net::TcpStream::connect(addr).unwrap();
+    conn.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    let mut lines = BufReader::new(conn.try_clone().unwrap()).lines();
+    writeln!(conn, "{}", json!({"id": "a", "method": "host.state"})).unwrap();
+    let r: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+    assert_eq!((r["id"].as_str(), r["ok"].as_bool()), (Some("a"), Some(true)), "{r}");
+    assert!(r["result"]["visibleCount"].is_number(), "{r}");
+
+    writeln!(conn, "{}", json!({"id": 2, "method": "nope.nothing"})).unwrap();
+    let r: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+    assert_eq!((r["id"].as_u64(), r["ok"].as_bool(), r["code"].as_str()), (Some(2), Some(false), Some("unknownMethod")), "{r}");
+
+    writeln!(conn, "{}", json!({"id": 3, "method": "ui.inspect"})).unwrap();
+    let ui = h.wait_for(|e| e["kind"] == "uiRequest");
+    assert_eq!(ui["method"], "ui.inspect");
+    h.submit(&req(1, "ui.reply", json!({"id": ui["id"], "result": {"screen": "grid"}}))).unwrap();
+    let r: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+    assert_eq!((r["id"].as_u64(), r["result"]["screen"].as_str()), (Some(3), Some("grid")), "{r}");
+
+    // a browser's cross-origin POST: the request line is refused and the body never runs
+    let mut web = std::net::TcpStream::connect(addr).unwrap();
+    web.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    write!(
+        web,
+        "POST / HTTP/1.1\r\nHost: x\r\n\r\n{}\n",
+        json!({"id": 1, "method": "engine.execute", "params": {"command": "photo.delete"}})
+    )
+    .unwrap();
+    let mut first = String::new();
+    BufReader::new(web).read_line(&mut first).unwrap();
+    let r: Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(r["ok"], false, "{r}");
+    drop(h);
+}
+
 // Export Now runs on a worker: the engine keeps answering meanwhile, the activity stack shows it,
 // and the files come in the reply when it ends; a second export waits its turn
 #[test]
