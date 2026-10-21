@@ -69,6 +69,7 @@ guard.detail(&file_name);
 | Find Missing Photos | `crates/ui-egui/src/tasks.rs` | a generic background task with a row (`kind: Some(..)`) |
 | Sign out (the wait, the clean-up) | `crates/engine/src/cloud_sync/leave.rs` | a row made by a state machine that has no job of its own (held in `SyncState`, created when the wait is first seen, also after a relaunch); ✕ until the point of no return, then `set_cancellable(false)` and the flag read again; a second row, `Cancel::No`, for the thread that removes the files |
 | Work a native frontend does itself (a platform model download) | `crates/engine/src/cmd/activity.rs` (`activity.external`) | the frontend starts a `download` row, reports `done` of 100, watches `cancelling` for its id and ends the row |
+| Reload from Disk | `crates/ui-egui/src/reload.rs`, `crates/engine/src/cmd/reload.rs` | a command split into plan / probe / apply so the app reads the files on a worker thread (`tasks::spawn_tracked`: progress and `Cancel::Flag`); the result is committed through `Session::execute_fn` (undo step, save, XMP auto-write), and dropped for a photo a later-started reload has already updated; `wait: true` runs it in place |
 | Reading focus points | `crates/engine/src/focus_scan.rs` | a worker paced by the UI's per-frame pump (`focus.pump {pace}`); `Cancel::Flag`; commits in batches without undo steps |
 
 ## Testing

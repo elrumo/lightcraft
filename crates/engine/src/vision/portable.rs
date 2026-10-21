@@ -2,7 +2,8 @@
 //! its faces, the words in it, its description vector and its sensitive-content score, by the photo's content key.
 //! A device keeps what another found in the same files its own indexes are (`search/`), so People, the search for
 //! words in photos and the list of possibly sensitive photos use them as if it had found them itself: a device that
-//! can't run the models (an iPhone) has them from one that can, and a second computer needn't work them out again.
+//! can't run the models (not downloaded, or too little memory) has them from one that can, and a second computer
+//! needn't work them out again.
 //!
 //! What is taken only fills in: a photo this device has a part of keeps its own (the indexes never replace a photo's
 //! entry), so two devices that both worked a photo out never undo each other. A description vector is kept only by a

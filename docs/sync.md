@@ -731,8 +731,9 @@ pictures and photos kept in iCloud Drive) travels too, in one `analysis` record 
   record is removed only once its edit record is.
 - **A device takes a part it can use**: faces from the face model it would run, a search vector only from the same
   search model (another model's vectors don't compare), text and sensitive scores always. A device without the models
-  (the iPhone and iPad build has none) then finds people in its photos, searches the text in them (`library.search`
-  words), and blurs sensitive photos with the scores another device worked out.
+  (not downloaded, or too little memory for the search model on a phone) then finds people in its photos, searches the
+  text in them (`library.search` words), and blurs sensitive photos with the scores another device worked out, and one
+  that has them needn't work out again what another already did.
 - Each device groups the faces it has into people itself, and names stay where they were given.
 
 **Files in the library:** `icloud.json` (on, the versions last agreed with the cloud, the change times and the

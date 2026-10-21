@@ -22,7 +22,7 @@
 //!   each one's `edit` record says where its file is there, so another device adds it to its library when the file
 //!   has come (`icloud.wanted`, `icloud.adopt`);
 //! - `analysis`: what was found in such a photo (faces, the words in it, the description vector, the sensitive-content
-//!   score), so a device that can't run the models (an iPhone) or hasn't yet has them too ([`analysis`]).
+//!   score), so a device that can't run the models or hasn't yet has them too ([`analysis`]).
 //!
 //! A library signed in to a server syncs its presets, settings and photos through the server: then only
 //! `server` records travel here, and what this device knew of the others is forgotten, so signing out
