@@ -711,6 +711,11 @@ mod tests {
 
 #[cfg(target_arch = "wasm32")]
 impl Session {
+    /// A browser processes no parts for its server.
+    pub fn vision_helper_parts(&self) -> &[String] {
+        &[]
+    }
+
     /// A browser can't be a processing unit.
     pub fn vision_helper_set(&mut self, _parts: &[String]) -> Result<Value, String> {
         Err("a browser can't process photos for the server".into())
