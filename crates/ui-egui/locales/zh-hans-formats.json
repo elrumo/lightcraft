@@ -342,7 +342,7 @@
   "Delete the group “{name}” and its {n} presets?": "删除分组“{name}”及其 {n} 个预设？",
   "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "已隐藏“{name}”。使用面板菜单中的“显示隐藏的预设”可将其找回。",
   "Changes found: {n}": "发现的更改：{n}",
-  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}”仍在扫描：请等待完成，或用其所在行的 ✕ 停止",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}”仍在扫描：请等待完成，或用其所在行的 × 停止",
   "Look at the changes found in “{name}” first, or dismiss them": "请先查看在“{name}”中发现的更改，或将其忽略",
   "Rendered {ok} of {total} to DNG": "已将 {total} 张中的 {ok} 张渲染为 DNG",
   "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} 张照片可能敏感。在您选择之前，不会隐藏任何内容。",
