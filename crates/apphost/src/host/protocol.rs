@@ -30,7 +30,8 @@ pub struct OpenConfig {
     /// process's temp dir.
     #[serde(default)]
     pub tmp: Option<String>,
-    /// The library folder (instead of the one in `home`).
+    /// The library folder (instead of the one in `home`); `~/…` is inside `home` (an iOS app's container,
+    /// whose path changes with each update, keeps its libraries' paths that way: `host.libraries`).
     #[serde(default)]
     pub library: Option<String>,
     /// The in-memory demo library: nothing saved (previews, tests).
