@@ -86,6 +86,7 @@ pub mod presets;
 pub mod print;
 pub mod print_color;
 pub mod print_pdf;
+pub mod profile_db;
 pub mod profile_refs;
 pub mod proof;
 pub mod rename;
@@ -298,6 +299,8 @@ pub struct Session {
     pub face_downloads: face_download::Downloads,
     /// Reverse geocoding: the parsed place names and their download (`metadata.*PlaceNames`).
     pub place_names: cmd::geocode::PlaceNames,
+    /// Updates of the camera and lens profile database (`profileDb.*`).
+    pub profile_db: cmd::profile_db::Updates,
     /// The user's own list of models to download (`catalog.json` in the models folder), as last read.
     pub(crate) face_catalog: lightcraft_faces::catalog::Catalog,
     /// The loaded recognition model and the face embeddings made with it.
@@ -534,6 +537,7 @@ impl Session {
             face_models_dir: None,
             face_downloads: Default::default(),
             place_names: Default::default(),
+            profile_db: Default::default(),
             face_catalog: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             faces: Default::default(),

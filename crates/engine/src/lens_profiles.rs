@@ -1,12 +1,13 @@
-//! Lens profile corrections from a lens database the user supplies ([`lightcraft_lensdb`]).
+//! Lens profile corrections from a lens database ([`lightcraft_lensdb`]).
 //!
 //! When a raw carries no lens correction of its own (DNG opcodes, or a camera correction a raw reader converts,
-//! [`crate::files::embedded_lens`]), the lens named in its EXIF is looked up in a lensfun-format database: the
-//! directory in `LIGHTCRAFT_LENSFUN_DIR` (e.g. lensfun's `data/db`, CC-BY-SA, which is never bundled with the app).
-//! The profile is converted to the same [`lightcraft_develop::EmbeddedLens`] form, so "Enable Profile Corrections", its
-//! amount sliders, the GPU path and DNG export treat both alike. Without the variable nothing changes.
+//! [`crate::files::embedded_lens`]), the lens named in its EXIF is looked up in lensfun-format lens databases: the
+//! directory in `LIGHTCRAFT_LENSFUN_DIR` (e.g. lensfun's `data/db`, CC-BY-SA, which is never bundled with the app) and
+//! the profile database downloaded from a server ([`crate::profile_db`]); the folder's profiles come first. The profile
+//! is converted to the same [`lightcraft_develop::EmbeddedLens`] form, so "Enable Profile Corrections", its amount
+//! sliders, the GPU path and DNG export treat both alike. Without either nothing changes.
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use lightcraft_develop::EmbeddedLens;
 use lightcraft_lensdb::{LensDb, Shot};
@@ -14,8 +15,8 @@ use lightcraft_lensdb::{LensDb, Shot};
 /// The environment variable naming the lens database directory.
 pub const ENV: &str = "LIGHTCRAFT_LENSFUN_DIR";
 
-/// The configured database, read once per process; `None` when none is configured or it holds no lenses.
-pub fn database() -> Option<&'static LensDb> {
+/// The database in `LIGHTCRAFT_LENSFUN_DIR`, read once per process.
+fn folder() -> Option<&'static LensDb> {
     static DB: OnceLock<Option<LensDb>> = OnceLock::new();
     DB.get_or_init(|| {
         let dir = PathBuf::from(std::env::var_os(ENV)?);
@@ -33,6 +34,24 @@ pub fn database() -> Option<&'static LensDb> {
         }
     })
     .as_ref()
+}
+
+/// The lens databases in use: the folder's, then the profile database's (read again after it changes). `None` when
+/// neither holds a lens.
+pub fn database() -> Option<Arc<LensDb>> {
+    static MERGED: Mutex<Option<(u64, Option<Arc<LensDb>>)>> = Mutex::new(None);
+    let generation = crate::profile_db::generation();
+    let mut slot = MERGED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((g, db)) = slot.as_ref()
+        && *g == generation
+    {
+        return db.clone();
+    }
+    let mut db = folder().cloned().unwrap_or_default();
+    db.extend(crate::profile_db::installed().lenses.clone());
+    let db = (!db.lenses.is_empty()).then(|| Arc::new(db));
+    *slot = Some((generation, db.clone()));
+    db
 }
 
 /// The database profile for a photo with metadata `m`, for its `w × h` (unoriented, default-cropped) image,
@@ -60,12 +79,14 @@ fn frame_crop_factor(camera: Option<f64>, focal: f64, focal_35mm: Option<f64>) -
     }
 }
 
-/// [`crate::files::embedded_lens`], else the database profile ([`lookup`]) for a raw with metadata `meta`.
+/// [`crate::files::embedded_lens`], else the database profile ([`lookup`]) for a raw with metadata `meta`, marked with
+/// the profile database's number ([`lightcraft_develop::LensOrigin::Database`]).
 pub fn for_raw(raw: &lightcraft_raw::RawInfo, meta: impl FnOnce() -> lightcraft_meta::Metadata) -> Option<EmbeddedLens> {
     crate::files::embedded_lens(raw).or_else(|| {
         let db = database()?;
         let (w, h) = raw.developed_size();
-        lookup(db, &meta(), w as f64, h as f64, raw.orientation)
+        let lens = lookup(&db, &meta(), w as f64, h as f64, raw.orientation)?;
+        Some(EmbeddedLens { origin: lightcraft_develop::LensOrigin::Database { serial: crate::profile_db::installed().serial() }, ..lens })
     })
 }
 
