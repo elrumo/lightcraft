@@ -566,6 +566,10 @@ fn main() -> ExitCode {
     if log::set_logger(&LOGGER).is_ok() {
         log::set_max_level(level);
     }
+    // (a decode's free pages go back to the system: glibc keeps them in its arenas otherwise)
+    lightcraft_engine::memory::set_release_hook(|| {
+        let _ = lightcraft_sysmem::release_free_memory();
+    });
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,

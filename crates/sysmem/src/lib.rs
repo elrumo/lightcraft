@@ -4,7 +4,9 @@
 //! process's memory footprint but stay in its resident size until the system runs short. After a
 //! raw decode (hundreds of MB of temporaries) that made the resident size climb towards the sum of
 //! everything ever decoded. `malloc_zone_pressure_relief` (libSystem) returns those pages now.
-//! Elsewhere (glibc, Windows) blocks this large are unmapped when freed: nothing to do.
+//! Elsewhere (glibc, Windows) blocks this large are unmapped when freed. On glibc the smaller blocks
+//! that fill its arenas are not: a long-running server's resident size stays at its peak, so
+//! [`release_free_memory`] calls `malloc_trim` there.
 //!
 //! On iOS the system ends an app that goes over its memory limit, which depends on the device and
 //! is far below its RAM: [`available_memory`] says how much is left (`os_proc_available_memory`),
@@ -27,14 +29,18 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 /// Return free allocator pages to the system, the large blocks [`ReturningAlloc`] keeps for reuse
-/// among them. Returns the number of bytes released (always 0 on platforms where freed large blocks
-/// are already unmapped). Safe to call at any time, from any thread.
+/// among them. Returns the number of bytes released (0 where the platform doesn't say, or where freed
+/// large blocks are already unmapped). Safe to call at any time, from any thread.
 pub fn release_free_memory() -> usize {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         returning::release() + apple::release()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        glibc::trim()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios", all(target_os = "linux", target_env = "gnu"))))]
     {
         0
     }
@@ -257,6 +263,36 @@ mod returning {
             }
             moved
         }
+    }
+}
+
+/// glibc keeps the free pages inside its arenas; `malloc_trim` hands them back.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[allow(unsafe_code)]
+mod glibc {
+    use std::ffi::c_int;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    /// It walks every arena under its lock: not more often than this (a decode ends several times a second).
+    const EVERY: Duration = Duration::from_secs(2);
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+
+    unsafe extern "C" {
+        fn malloc_trim(pad: usize) -> c_int;
+    }
+
+    pub(super) fn trim() -> usize {
+        {
+            let mut last = LAST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if last.is_some_and(|t| t.elapsed() < EVERY) {
+                return 0;
+            }
+            *last = Some(Instant::now());
+        }
+        // SAFETY: `malloc_trim` takes no pointers and is safe to call from any thread at any time.
+        unsafe { malloc_trim(0) };
+        0
     }
 }
 

@@ -1007,12 +1007,14 @@ impl ImportJob {
             return Err(crate::EngineError::Other("browsing a folder never moves its files".into()));
         }
         let lib_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
-        // where copies go: the chosen folder, else the library's Originals/
+        // where copies go: the chosen folder, else the iCloud Drive folder (Keep Photos in iCloud Drive, `icloud::photos`),
+        // else the library's Originals/
         let copy_root = opts
             .destination
             .as_deref()
             .filter(|d| !d.trim().is_empty())
             .map(std::path::PathBuf::from)
+            .or_else(|| s.icloud_import_root())
             .or_else(|| lib_dir.as_ref().map(|l| l.join("Originals")));
         if matches!(mode, ImportMode::Copy | ImportMode::Move) && copy_root.is_none() {
             return Err(crate::EngineError::Other("copying or moving needs a destination folder or an open library".into()));

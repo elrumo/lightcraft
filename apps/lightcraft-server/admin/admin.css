@@ -680,9 +680,12 @@ main > section { animation: enter 0.18s ease-out; }
 .sched select, .sched input[type=time] { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--heading); }
 
 .models { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
-.models li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; }
-.models .what { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.models li { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
+.models .what { display: flex; flex-direction: column; min-width: min(12rem, 100%); flex: 1 1 12rem; overflow-wrap: anywhere; }
 .models .what b { color: var(--heading); }
 .models .ok { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-weight: 600; }
-.models .meter { grid-column: 1 / -1; }
+.models .meter { flex: 1 0 100%; }
+.models .mem { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 12.5px; }
+.models .mem::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); opacity: .5; }
+.models .mem.on::before { background: var(--positive); opacity: 1; }
 #dash [data-view="processing"] .btn-row { margin-top: 14px; }

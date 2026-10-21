@@ -1,8 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
-# the patched egui-wgpu is a path dependency, not one of ours to lint and test
-exclude = ["third_party"]
+# the patched egui-wgpu is a path dependency, not one of ours to lint and test; apps/lightbites-web is
+# a web project checked out under apps/ (no Cargo.toml), which the `apps/*` glob would otherwise take
+exclude = ["third_party", "apps/lightbites-web"]
 
 [workspace.package]
 version = "0.10.0"

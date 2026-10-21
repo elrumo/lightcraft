@@ -1596,7 +1596,6 @@ function showFeature(p, s) {
     fact(facts, 'Model', s.model + (s.installed ? '' : ' (not downloaded)'));
     fact(facts, 'Licence', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
     fact(facts, 'Kept in', s.dir, true);
-    if (f.active) fact(facts, 'In memory', s.loaded ? 'Yes (it unloads after ten idle minutes)' : 'Not now (it loads on the first search)');
   } else {
     fact(facts, 'Models', F.models + (f.installed ? ' (installed)' : ' (not downloaded)'));
     fact(facts, 'Licence', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
@@ -1710,8 +1709,23 @@ async function previewsAll(action) {
   await route();
 }
 
-/** One row per AI model: what it is for, its size, whether it is here, and a button to get it. */
+/** Whether a model is in the server's memory, how many users' indexes are with it, and when it is let go. */
+function memoryLine(m, key) {
+  const h = m[key];
+  if (!h.loaded) return 'Not in memory · loads when it is needed';
+  const left = m.unloadInSecs === null ? '' : m.unloadInSecs ? ' · let go in about ' + dur(m.unloadInSecs) + ' if not used' : ' · being let go';
+  return 'In memory' + (h.indexes ? ' with ' + plural(h.indexes, "user's index", "users' indexes") : '') + left;
+}
+
+/** One row per AI model: what it is for, its size, whether it is here, whether it is in memory, and a button to get it. */
 function showModels(s) {
+  const m = s.memory;
+  const any = ['search', 'text', 'faces', 'sensitive'].some((k) => m[k].loaded);
+  $('mmMemory').textContent =
+    (m.rss === null ? '' : 'The server holds ' + bytes(m.rss) + ' of memory (read every 30 s). ') +
+    (any
+      ? 'Models are let go after ' + dur(m.unloadAfterSecs) + ' without use' + (m.idleSecs === null ? '.' : '; the last use was ' + dur(m.idleSecs) + ' ago. The check runs every 30 s.')
+      : 'No model is in memory now. Each loads when it has work.');
   const rows = [
     ['sr', 'Search by description', s.model, s, () => downloadFeature('sr', s)],
     ['tx', 'Words in photos', FEATURES.tx.models, s.text, () => downloadFeature('tx', s.text)],
@@ -1729,12 +1743,12 @@ function showModels(s) {
           ? el('span', { class: 'ok' }, el('span', {}, 'Installed'), el('button', { type: 'button', class: 'btn quiet', onclick: () => reprocessModel(p, what) }, 'Reprocess'), el('button', { type: 'button', class: 'btn quiet', onclick: () => removeModel(p, what) }, 'Remove'))
           : el('button', { type: 'button', class: 'btn accent', onclick: get }, 'Download');
       const meter = d.running ? el('div', { class: 'meter' }, el('div', {})) : null;
-      const li = el('li', {}, el('span', { class: 'what' }, el('b', {}, what), el('span', { class: 'muted' }, model + ' · ' + bytes(f.sizeBytes))), btn, ...(meter ? [meter] : []));
+      const li = el('li', {}, el('span', { class: 'what' }, el('b', {}, what), el('span', { class: 'muted' }, model + ' · ' + bytes(f.sizeBytes))), btn, ...(meter ? [meter] : []), ...(f.installed ? [el('span', { class: 'mem' + (m[PART_KEY[p]].loaded ? ' on' : '') }, memoryLine(m, PART_KEY[p]))] : []));
       if (meter) progress(meter, d.total ? d.done / d.total : 0);
       return li;
     }),
   );
-  return going;
+  return going ? 2000 : any ? 5000 : 0;
 }
 
 /** Delete a part's model files from the server (what it found stays), after asking. */
@@ -1770,10 +1784,11 @@ function reprocessModel(p, what) {
 }
 
 function showSearch([s]) {
-  const again = [showPreviewsAll(s.previews), showModels(s), showFeature('sr', s), showFeature('tx', s), showFeature('sn', s), showPeople(s)].some(Boolean);
+  const again = [showPreviewsAll(s.previews), showFeature('sr', s), showFeature('tx', s), showFeature('sn', s), showPeople(s)].some(Boolean);
+  const models = showModels(s);
   clearTimeout(timer);
-  // (downloads and describing run on the server: watch them)
-  if (again) timer = setTimeout(route, 2000);
+  // (downloads and describing run on the server: watch them; so does the countdown to a model leaving memory, less often)
+  if (again || models) timer = setTimeout(route, again ? 2000 : models);
 }
 
 /** Turn a feature on or off; turning it on without its models asks first, then downloads them. */
