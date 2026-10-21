@@ -694,7 +694,7 @@ pub(crate) fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>>
                     let d = std::path::Path::new(r);
                     // a missing library (moved, drive disconnected) is shown greyed out
                     let label =
-                        format!("{} — {}", crate::panels::settings::library_name(d), d.parent().map(|p| p.display().to_string()).unwrap_or_default());
+                        format!("{} — {}", lightcraft_apphost::libraries::name(d), d.parent().map(|p| p.display().to_string()).unwrap_or_default());
                     item("app.openLibrary", json!({"path": r}), label, None, can && d.is_dir(), Some(open.as_deref() == Some(d)))
                 })
                 .collect();

@@ -30,7 +30,8 @@ pub struct OpenConfig {
     /// process's temp dir.
     #[serde(default)]
     pub tmp: Option<String>,
-    /// The library folder (instead of the one in `home`).
+    /// The library folder (instead of the one in `home`); `~/…` is inside `home` (an iOS app's container,
+    /// whose path changes with each update, keeps its libraries' paths that way: `host.libraries`).
     #[serde(default)]
     pub library: Option<String>,
     /// The in-memory demo library: nothing saved (previews, tests).
@@ -55,6 +56,11 @@ pub struct OpenConfig {
     /// A new library starts empty, without the demo photos (an app that shows its own empty screen).
     #[serde(default)]
     pub empty: bool,
+    /// `library` is one the user chose (not the default one): it is never made anew where its folder
+    /// isn't (moved, or on a disk or network share that isn't connected), and one that won't open is an
+    /// error to act on, also on a phone, never the demo library in its place.
+    #[serde(default)]
+    pub chosen: bool,
 }
 
 /// An error answer: `code` is the kind (the engine's error variants in camelCase —

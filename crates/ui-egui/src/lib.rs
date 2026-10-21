@@ -1776,7 +1776,7 @@ impl LightcraftApp {
         }
         if let Some(l) = self.session.library.as_ref().filter(|l| l.on_disk) {
             let path = l.dir.to_string_lossy().into_owned();
-            panels::settings::remember_library(&mut self.ui.settings.recent_libraries, &path);
+            lightcraft_apphost::libraries::remember(&mut self.ui.settings.recent_libraries, &path);
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.window_title()));
     }

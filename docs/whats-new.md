@@ -1,5 +1,17 @@
 # What's new in LightCraft
 
+## 2026-10-21
+
+### Libraries on a network share
+- A library on a drive or a network share that isn't connected is no longer made anew, empty, in its place. File ▸
+  Open Recent Library keeps it (greyed out) until its share is back, instead of forgetting it, and opening it says
+  that its disk or share isn't connected.
+- File ▸ Open Library… on a drive's or a network share's top folder opens the library in it instead of making a new
+  library there; a folder with several libraries asks to choose one.
+- A library on a network share, opened from another computer (or from the same one when the share is mounted under
+  another name, such as `/Volumes/photos-1`), finds the photos kept beside it on the share, not only those imported
+  into it. A folder that is still where it was, or a folder of that name holding other files, keeps its photos' paths.
+
 ## 2026-10-19
 
 ### Hidden Local locations come back one at a time
