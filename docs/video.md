@@ -59,7 +59,7 @@ its clip, the **motion**, is kept with it (`crates/engine/src/live_photo.rs`):
   their own; a still the library already has gains its motion), or `live.attach {id, path}`. A clip from the app's
   staging folder is moved, anything else copied. The clip is checked first: a MOV or MP4 whose header reads, up to 60 s
   and 512 MB.
-- **What a frontend sees.** `live: true` in `catalog.query`'s photos; `live.info {id}` says where
+- **What a frontend sees.** `live: true` in `catalog.query`'s photos and `catalog.describe`; `live.info {id}` says where
   the clip is, to play it as recorded (develop settings are not applied to it) or to save the two to a photo library as
   a Live Photo again. `live.detach` takes the motion away.
 - **This device's own.** The motion is not synced yet: other devices and the sync server have the still alone.
