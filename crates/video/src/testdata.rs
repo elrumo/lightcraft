@@ -23,6 +23,16 @@ pub fn clip(frames: usize, keyint: u32, bframes: u8) -> Vec<u8> {
 
 /// [`clip`] with picture `i` a flat grey of luma `luma(i)`.
 pub fn clip_with(frames: usize, keyint: u32, bframes: u8, luma: impl Fn(usize) -> u8) -> Vec<u8> {
+    build(frames, keyint, bframes, luma, false)
+}
+
+/// [`clip`] with a sound track beside it: 48 kHz AAC "samples" of 1024 frames that are not sound (they are copied, never
+/// decoded), one byte each, `n` where `n` counts from 0.
+pub fn clip_with_sound(frames: usize, keyint: u32, bframes: u8) -> Vec<u8> {
+    build(frames, keyint, bframes, grey, true)
+}
+
+fn build(frames: usize, keyint: u32, bframes: u8, luma: impl Fn(usize) -> u8, sound: bool) -> Vec<u8> {
     let mut cfg = EncoderConfig::new(W as u32, H as u32, 10, 1);
     cfg.profile = if bframes > 0 { Profile::High } else { Profile::Baseline };
     cfg.rate = RateControl::Qp(18);
@@ -48,11 +58,20 @@ pub fn clip_with(frames: usize, keyint: u32, bframes: u8, luma: impl Fn(usize) -
     let mut track = TrackConfig::new(SampleEntry::avc(avcc, W as u16, H as u16), 10 * STEP as u32);
     track.media_start = Some(first_pts - first_dts);
     let Ok(t) = w.add_track(track) else { return Vec::new() };
+    let a = if sound { w.add_track(TrackConfig::new(SampleEntry::aac(vec![0x11, 0x90], 2, 48_000), 48_000)).ok() } else { None };
     for p in &packets {
         if w.write_sample(t, WriteSample { data: &p.data, duration: STEP as u32, composition_offset: (p.pts - p.dts) as i32, is_sync: p.keyframe })
             .is_err()
         {
             return Vec::new();
+        }
+    }
+    if let Some(a) = a {
+        // as long as the pictures: frames / 10 seconds
+        for n in 0..(frames * 48_000 / 10 / 1024 + 1) {
+            if w.write_sample(a, WriteSample { data: &[n as u8], duration: 1024, composition_offset: 0, is_sync: true }).is_err() {
+                return Vec::new();
+            }
         }
     }
     w.finish().map(Cursor::into_inner).unwrap_or_default()

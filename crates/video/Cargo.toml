@@ -12,14 +12,15 @@ filmcraft-isobmff = { workspace = true }
 # Patent-encumbered codecs are features so a distributor can drop them (docs/video.md).
 filmcraft-h264 = { workspace = true, optional = true }
 filmcraft-hevc = { workspace = true, optional = true }
-# `lightcraft_video::testdata`: synthetic H.264 clips for the tests of this crate and of the ones above it.
+# The H.264 encoder: `Mp4Encoder` (video export) and `lightcraft_video::testdata`'s synthetic clips.
 filmcraft-h264enc = { workspace = true, optional = true }
 
 [features]
-default = ["h264", "hevc"]
+default = ["h264", "hevc", "encode"]
 h264 = ["dep:filmcraft-h264"]
 hevc = ["dep:filmcraft-hevc"]
-testdata = ["dep:filmcraft-h264enc"]
+encode = ["dep:filmcraft-h264enc"]
+testdata = ["encode"]
 
 [dev-dependencies]
 filmcraft-h264enc = { workspace = true }

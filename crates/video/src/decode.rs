@@ -47,6 +47,14 @@ impl<S: ByteSource> Clip<S> {
         &self.info
     }
 
+    pub(crate) fn mp4(&self) -> &Mp4File {
+        &self.mp4
+    }
+
+    pub(crate) fn source(&self) -> &S {
+        &self.src
+    }
+
     fn t(&self) -> Result<&Track> {
         self.mp4.tracks.get(self.track).ok_or_else(|| Error::Malformed("no video track".into()))
     }
@@ -96,6 +104,51 @@ impl<S: ByteSource> Clip<S> {
             let want = t.samples.get(i).map(|s| s.pts).ok_or_else(|| Error::Malformed("the clip has no pictures".into()))?;
             let frame = self.decode(t.sync_sample_before(i), i, Some(want))?;
             yuv::to_working(&Frame { color: frame.color.or(self.color), ..frame }, max_edge, self.info.rotation)
+        })
+    }
+
+    /// Every picture shown from `start` to `end` seconds, in the order they are shown: `f(seconds, picture)` gets each (linear
+    /// Rec.2020, at most about twice `max_edge` on the long side) and answers whether to go on. The key frame before `start` is
+    /// decoded once and the clip is read forward from it, so a long stretch costs one pass, not a seek a picture.
+    pub fn for_each_frame(&self, start: f64, end: f64, max_edge: usize, mut f: impl FnMut(f64, Rgb32f) -> Result<bool>) -> Result<()> {
+        self.supported()?;
+        guarded("decoding pictures", || {
+            let t = self.t()?;
+            let scale = f64::from(t.timescale);
+            let first_ticks = (start.max(0.0) * scale).round() as i64;
+            let first = t.sample_at_presentation_time(first_ticks).ok_or_else(|| Error::Malformed("the clip has no pictures".into()))?;
+            let entry = t.codec().ok_or_else(|| Error::Malformed("the video track has no codec record".into()))?;
+            let mut dec = Decoder::new(entry)?;
+            // (a picture's time is half a frame of slack from the start asked for: 1/1000 s)
+            let from = start - 0.001;
+            let mut emit = |frames: Vec<Frame>| -> Result<bool> {
+                for frame in frames {
+                    let seconds = (frame.pts.saturating_add(t.edit_offset)) as f64 / scale;
+                    if seconds < from {
+                        continue;
+                    }
+                    if seconds >= end {
+                        return Ok(false);
+                    }
+                    let frame = Frame { color: frame.color.or(self.color), ..frame };
+                    if !f(seconds, yuv::to_working(&frame, max_edge, self.info.rotation)?)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            };
+            for i in t.sync_sample_before(first)..t.samples.len() {
+                let s = t.samples.get(i).ok_or_else(|| Error::Malformed("a sample is missing".into()))?;
+                if s.size > MAX_SAMPLE {
+                    return Err(Error::Malformed("a picture claims to be larger than 256 MiB".into()));
+                }
+                let data = self.mp4.read_sample(&self.src, self.track, i)?;
+                if !emit(dec.feed(&data, s.pts)?)? {
+                    return Ok(());
+                }
+            }
+            emit(dec.flush())?;
+            Ok(())
         })
     }
 

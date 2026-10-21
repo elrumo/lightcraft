@@ -122,6 +122,7 @@
       <div class="stats">
         <div class="stat"><span class="stat-label">Users</span><span class="stat-value" id="stUsers">–</span></div>
         <div class="stat"><span class="stat-label">Photos</span><span class="stat-value" id="stPhotos">–</span></div>
+        <div class="stat"><span class="stat-label">Videos</span><span class="stat-value" id="stVideos">–</span></div>
         <div class="stat"><span class="stat-label">Signed-in devices</span><span class="stat-value" id="stDevices">–</span></div>
         <div class="stat"><span class="stat-label">Free disk space</span><span class="stat-value" id="stFree">–</span><div class="meter small" id="stDisk" hidden><div></div></div></div>
       </div>
@@ -194,7 +195,7 @@
       </div>
       <div class="panel flush">
         <table class="table" id="users">
-          <thead><tr><th>Name</th><th class="num">Photos</th><th class="num opt">Albums</th><th class="num opt">Devices</th><th class="num">Storage</th><th class="chev-col"><span class="sr">Open</span></th></tr></thead>
+          <thead><tr><th>Name</th><th class="num">Photos</th><th class="num opt">Videos</th><th class="num opt">Albums</th><th class="num opt">Devices</th><th class="num">Storage</th><th class="chev-col"><span class="sr">Open</span></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -215,6 +216,7 @@
       </div>
       <div class="stats">
         <div class="stat"><span class="stat-label">Photos</span><span class="stat-value" id="uPhotos"></span></div>
+        <div class="stat"><span class="stat-label">Videos</span><span class="stat-value" id="uVideos"></span><span class="stat-note" id="uVideosNote"></span></div>
         <div class="stat"><span class="stat-label">Albums</span><span class="stat-value" id="uAlbums"></span></div>
         <div class="stat"><span class="stat-label">Devices</span><span class="stat-value" id="uDevices"></span></div>
         <div class="stat"><span class="stat-label">Storage used</span><span class="stat-value" id="uBytes"></span><span class="stat-note" id="uBytesNote"></span><span class="stat-note" id="uQuotaText" hidden></span><div class="meter small" id="uQuotaMeter" hidden><div></div></div></div>
@@ -460,6 +462,7 @@
           </div>
           <p class="muted" id="diskNone" hidden>Disk usage isn't available on this system.</p>
           <h3>Storage used by each user</h3>
+          <p class="muted" id="libraryLine"></p>
           <ul class="usage" id="usage"></ul>
         </section>
         <section class="panel">
