@@ -8,7 +8,7 @@
 //! never reaches the UI thread. See `docs/control-protocol.md`.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -22,6 +22,8 @@ use serde_json::{Value, json};
 pub const MAX_LINE: usize = 4 * 1024 * 1024;
 /// Connections served at once; further ones get an error line and are closed.
 pub const MAX_CONNECTIONS: usize = 16;
+/// How long a refused connection waits for more of the peer's input before closing.
+const DRAIN_WAIT: Duration = Duration::from_secs(2);
 
 pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
     let (tx, rx) = channel::<ControlRequest>();
@@ -42,6 +44,8 @@ fn accept_loop(listener: TcpListener, tx: Sender<ControlRequest>, ctx: egui::Con
     for mut stream in listener.incoming().flatten() {
         if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
             open.fetch_sub(1, Ordering::SeqCst);
+            // Not drained like a refused line (`drain`): that would stall the accept loop, and a thread
+            // for it would undo the cap. A peer whose request is already in may get a reset instead.
             let _ = writeln!(stream, "{}", json!({"ok": false, "error": "too many control connections"}));
             continue;
         }
@@ -68,13 +72,27 @@ pub const HIDDEN_WINDOW_ERROR: &str = "the app drew no frame for 5 s, so the req
 
 fn serve(stream: TcpStream, tx: &Sender<ControlRequest>, ctx: &egui::Context) {
     let Ok(read) = stream.try_clone() else { return };
-    serve_lines(read, stream, |method, params| {
+    let refused = serve_lines(read, &stream, |method, params| {
         let (req, rrx) = ControlRequest::new(method, params);
         let state = Arc::clone(&req.state);
         tx.send(req).ok()?;
         ctx.request_repaint();
         Some(await_reply(&rrx, &state, || ctx.cumulative_pass_nr(), || ctx.request_repaint(), NO_FRAMES_AFTER, REPLY_TIMEOUT))
     });
+    if refused {
+        drain(&stream);
+    }
+}
+
+/// After a refusal: end the write side (the peer reads the refusal, then end of stream) and read and
+/// drop what the peer still sends until it closes (up to [`MAX_LINE`] bytes, [`DRAIN_WAIT`] at most
+/// per read). Closing a socket with unread input resets the connection, and the reset throws the
+/// refusal away before the peer reads it (a browser's POST body arrives after its request line).
+fn drain(stream: &TcpStream) {
+    let _ = stream.shutdown(Shutdown::Write);
+    if stream.set_read_timeout(Some(DRAIN_WAIT)).is_ok() {
+        let _ = std::io::copy(&mut Read::take(stream, u64::try_from(MAX_LINE).unwrap_or(u64::MAX)), &mut std::io::sink());
+    }
 }
 
 /// Wait for a request's reply. While the app has not picked the request up and `frames` (its
@@ -177,31 +195,32 @@ fn read_bounded_line(reader: &mut impl BufRead, buf: &mut Vec<u8>, max: usize) -
 
 /// Serve requests from `read`, answering on `out`, until the peer closes, sends something that is
 /// not a request, or `handle` returns `None` (app gone). `handle` gets `(method, params)` and
-/// returns the reply object (the request's `id` is added here).
-fn serve_lines<R: Read, W: Write>(read: R, mut out: W, mut handle: impl FnMut(String, Value) -> Option<Value>) {
+/// returns the reply object (the request's `id` is added here). Returns whether it ended by refusing
+/// a line.
+fn serve_lines<R: Read, W: Write>(read: R, mut out: W, mut handle: impl FnMut(String, Value) -> Option<Value>) -> bool {
     let mut reader = BufReader::new(read);
     let mut buf = Vec::new();
     loop {
         let reject = match read_bounded_line(&mut reader, &mut buf, MAX_LINE) {
-            Ok(false) => return,
+            Ok(false) => return false,
             Err(e) => e,
             Ok(true) => match parse_line(&buf) {
                 Line::Blank => continue,
                 Line::Reject(e) => e,
                 Line::Request { id, method, params } => {
-                    let Some(mut r) = handle(method, params) else { return };
+                    let Some(mut r) = handle(method, params) else { return false };
                     if let Some(o) = r.as_object_mut() {
                         o.insert("id".into(), id);
                     }
                     if writeln!(out, "{r}").and_then(|()| out.flush()).is_err() {
-                        return;
+                        return false;
                     }
                     continue;
                 }
             },
         };
         let _ = writeln!(out, "{}", json!({"ok": false, "error": reject})).and_then(|()| out.flush());
-        return;
+        return true;
     }
 }
 
@@ -357,5 +376,30 @@ mod tests {
         assert_eq!(lines.len(), 2, "{text}");
         assert!(lines[0].contains("\"id\":7"));
         assert!(lines[1].contains("closing the connection"));
+    }
+
+    // The refusal reaches the peer although input it sent after the refused line is still unread
+    // (a POST body bigger than the read buffer): closing over unread input resets the connection,
+    // and the reset throws the refusal away
+    #[test]
+    fn a_refusal_reaches_the_peer_past_input_never_read() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let mut post = b"POST / HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
+        post.resize(32 * 1024, b' '); // more than the server's 8 KiB read buffer takes in
+        client.write_all(&post).unwrap();
+        std::thread::sleep(Duration::from_millis(100)); // it all waits, unread, in the server's socket
+        let (tx, _rx) = channel();
+        let serving = std::thread::spawn(move || serve(server, &tx, &egui::Context::default()));
+        std::thread::sleep(Duration::from_millis(100)); // a reset would have landed by now
+        let mut line = String::new();
+        BufReader::new(&client).read_line(&mut line).unwrap();
+        let r: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().unwrap().contains("closing the connection"), "{r}");
+        drop(client);
+        serving.join().unwrap();
     }
 }
