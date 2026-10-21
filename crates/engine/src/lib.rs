@@ -32,11 +32,11 @@ pub mod denoise;
 pub mod depth;
 pub mod devices;
 pub mod display;
+pub mod doc_path;
 #[cfg(any(feature = "sam", feature = "vision", feature = "enhance"))]
 mod download;
 pub mod enhance;
 pub mod erase;
-pub mod doc_path;
 mod errors;
 pub mod expand;
 pub mod export;

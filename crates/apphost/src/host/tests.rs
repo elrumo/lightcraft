@@ -363,12 +363,8 @@ fn the_control_channel_answers_engine_requests_and_forwards_ui_ones() {
     // a browser's cross-origin POST: the request line is refused and the body never runs
     let mut web = std::net::TcpStream::connect(addr).unwrap();
     web.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
-    write!(
-        web,
-        "POST / HTTP/1.1\r\nHost: x\r\n\r\n{}\n",
-        json!({"id": 1, "method": "engine.execute", "params": {"command": "photo.delete"}})
-    )
-    .unwrap();
+    write!(web, "POST / HTTP/1.1\r\nHost: x\r\n\r\n{}\n", json!({"id": 1, "method": "engine.execute", "params": {"command": "photo.delete"}}))
+        .unwrap();
     let mut first = String::new();
     BufReader::new(web).read_line(&mut first).unwrap();
     let r: Value = serde_json::from_str(&first).unwrap();
