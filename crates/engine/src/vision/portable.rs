@@ -40,7 +40,7 @@ fn floats(text: &str, dim: usize) -> Option<Vec<f32>> {
     if bytes.len() != dim.checked_mul(4)? {
         return None;
     }
-    let v: Vec<f32> = bytes.chunks_exact(4).map(|c| <[u8; 4]>::try_from(c).map(f32::from_le_bytes)).collect::<Result<_, _>>().ok()?;
+    let v: Vec<f32> = bytes.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
     v.iter().all(|x| x.is_finite()).then_some(v)
 }
 

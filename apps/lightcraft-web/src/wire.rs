@@ -245,13 +245,13 @@ impl WorkerCore {
                     // a synced photo's preview standing in for its original (no decoder facts:
                     // the catalog's); kept only when it is the right one for this size
                     (Source::File { .. }, Some(bytes)) if lightcraft_engine::smart::is_smart_preview(bytes) => {
-                        let (mut image, camera_tone, camera_match) = lightcraft_engine::smart::decode(bytes)?;
+                        let (mut image, camera_tone, camera_match, local_tone) = lightcraft_engine::smart::decode(bytes)?;
                         let small = image.width.max(image.height) <= lightcraft_engine::cloud_sync::MINI_EDGE;
                         if image.width.max(image.height) > job.max_edge {
                             use lightcraft_raster::resample::{Filter, fit};
                             image = fit(&image, job.max_edge, job.max_edge, Filter::Mitchell);
                         }
-                        let src = DecodedSource::proxy(image, camera_tone, camera_match);
+                        let src = DecodedSource::proxy(image, camera_tone, camera_match, local_tone);
                         if small && job.max_edge > lightcraft_engine::cloud_sync::MINI_EDGE {
                             // the smart preview is on its way: don't keep the stand-in
                             let (image, info) = src.develop_input(&job.settings, job.info());

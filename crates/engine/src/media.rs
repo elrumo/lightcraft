@@ -213,15 +213,7 @@ pub struct DecodedSource {
 
 impl DecodedSource {
     pub fn new(image: Arc<Rgb32f>, info: Option<SourceInfo>) -> Self {
-        DecodedSource {
-            image,
-            info,
-            camera_tone: None,
-            camera_match: None,
-            local_tone: None,
-            denoised: None,
-            camera_matched: Default::default(),
-        }
+        DecodedSource { image, info, camera_tone: None, camera_match: None, local_tone: None, denoised: None, camera_matched: Default::default() }
     }
 
     /// A smart preview's picture with its stored camera tone curve, camera look and local tone mapping (no decoder

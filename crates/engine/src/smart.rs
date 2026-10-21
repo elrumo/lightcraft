@@ -593,7 +593,8 @@ mod tests {
         };
         let img = lightcraft_scenes::demo_library()[0].render(64, 40);
         let with_tone = SourceInfo { camera_tone: Some(tone), ..Default::default() };
-        let (plain, bytes) = (encode(&img, &with_tone).unwrap(), encode(&img, &SourceInfo { camera_match: Some(Arc::new(m.clone())), ..with_tone.clone() }).unwrap());
+        let (plain, bytes) =
+            (encode(&img, &with_tone).unwrap(), encode(&img, &SourceInfo { camera_match: Some(Arc::new(m.clone())), ..with_tone.clone() }).unwrap());
         eprintln!("camera look: {} bytes in the proxy", bytes.len() - plain.len());
         let (pixels, got_tone, got, _) = decode(&bytes).unwrap();
         assert_eq!((got.as_deref(), got_tone), (Some(&m), Some(tone)));

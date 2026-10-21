@@ -298,7 +298,10 @@ fn load_ultra(dir: &str) -> Option<std::sync::Arc<dyn Painter>> {
     std::fs::create_dir_all(&models).ok()?;
     let link = models.join(lightcraft_engine::expand::ExpandModel::Sd15.id());
     let _ = std::fs::remove_file(&link);
+    #[cfg(unix)]
     std::os::unix::fs::symlink(dir, &link).ok()?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(dir, &link).ok()?;
     let mut s = lightcraft_engine::Session::with_demo();
     s.enhancer.dir = Some(models);
     match s.remove_painter(lightcraft_engine::erase::RemoveQuality::Ultra) {
