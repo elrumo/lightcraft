@@ -73,7 +73,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "AI Models",
             [],
             None,
-            "{} — the optional AI models: what each is for, whether it is available in this build, installed on this device, turned on, its download size, the space it takes, its folder, where it downloads from (hosts), licence, credit, and its download's progress (two run at once: the others are `queued` until one ends; `rate` in bytes a second, `etaMs` the time left) → {models: [{id, label, purpose, available, installed, enabled, downloadBytes, diskBytes, dir, sources, licence, licenceUrl, credit, homeUrl, download?: {running, queued, done, total, rate, etaMs, file, error, finished}}], diskBytes}",
+            "{} — the optional AI models: what each is for, whether it is available in this build, installed on this device, turned on, its download size, the space it takes, its folder, where it downloads from (hosts), licence, credit, and its download's progress (two run at once: the others are `queued` until one ends; `rate` in bytes a second, `etaMs` the time left) → {models: [{id, label, purpose, available, unavailable?: why this device can't use it though the build has it (too little memory), installed, enabled, downloadBytes, diskBytes, dir, sources, licence, licenceUrl, credit, homeUrl, download?: {running, queued, done, total, rate, etaMs, file, error, finished}}], diskBytes}",
             super::always,
             list
         ),

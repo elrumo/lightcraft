@@ -419,13 +419,15 @@ impl Session {
     /// Set this device's profile (a host that knows better than detection, or a test).
     pub fn set_device(&mut self, p: DeviceProfile) {
         self.device = p;
+        self.vision.unfit = crate::vision::search_unfit(&self.device);
     }
 
     /// On a phone: what the system lets the app allocate (`os_proc_available_memory` at launch),
-    /// the memory the profile counts.
+    /// the memory the profile counts (which Generative Expand models run here, and whether the search model does).
     pub fn set_app_memory(&mut self, bytes: Option<usize>) {
         if self.device.class == DeviceClass::Phone {
             self.device.memory_bytes = bytes.map(|b| b as u64);
+            self.vision.unfit = crate::vision::search_unfit(&self.device);
         }
     }
 
