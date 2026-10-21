@@ -26,7 +26,7 @@ rten-tensor = "0.24"
 candle-core = { workspace = true, optional = true }
 candle-nn = { workspace = true, optional = true }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 candle-core = { workspace = true, features = ["metal"], optional = true }
 candle-nn = { workspace = true, features = ["metal"], optional = true }
 

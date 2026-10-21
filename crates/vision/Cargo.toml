@@ -39,7 +39,7 @@ tokenizers = { version = "0.22", default-features = false, features = ["unstable
 rten = { version = "0.24", default-features = false, features = ["onnx_format", "random"], optional = true }
 rten-tensor = { version = "0.24", optional = true }
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 candle-core = { workspace = true, features = ["metal"], optional = true }
 candle-nn = { workspace = true, features = ["metal"], optional = true }
 

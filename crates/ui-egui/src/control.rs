@@ -522,11 +522,8 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     if let Some(o) = options.as_object_mut() {
         o.remove("sendTo");
     }
+    // the format follows `path` (JPEG when it names none), and `bitDepth` is checked against it
     let mut opts = ExportOptions::from_params(&options).map_err(|e| e.to_string())?;
-    if let (Some(path), None) = (p.get("path").and_then(Value::as_str), p.get("format")) {
-        let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
-        opts.format = lightcraft_engine::export::ExportFormat::parse(ext).unwrap_or(opts.format);
-    }
     {
         use lightcraft_engine::export::ExportFormat as F;
         if send == SendTo::Photos && !matches!(opts.format, F::Jpeg | F::Png | F::Tiff | F::Dng) {

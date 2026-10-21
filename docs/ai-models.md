@@ -37,7 +37,8 @@ SHA-256: LightCraft hosts nothing and redistributes nothing. Only a gated model 
 come from), its licence and credit, **Use this model** (turn it off and its feature says so and does nothing; the files
 stay), **Download…** (asks first, naming the size, the host and the licence), **Cancel Download**, and **Delete…**
 (asks first; removes only the model's own files, never anything else in the folder; it can be downloaded again). A
-model this build can't run (SAM 3 on an iPhone) is listed as not available. The first time a feature needs its model
+model this build can't run (SAM 3 on an iPhone) is listed as not available, and so is one the device can't hold (the
+search model on a phone that may use less than about 3.05 GB: `models.list` → `unavailable` says why). The first time a feature needs its model
 it offers the download itself (Object / Describe masks, Super Resolution). The on / off choice is saved with the app
 settings (`models_disabled` in `ui.json`).
 
@@ -86,7 +87,8 @@ timing. Not scheduled.
 ## Runtime
 
 Pure Rust only. The route is **candle 0.9.2 + `candle-transformers` 0.9.2** (already pinned for SAM 3; Metal on
-macOS, CPU elsewhere). `candle-transformers` 0.9.2 adds only pure-Rust crates (`fancy-regex`, `regex-automata`,
+macOS and iOS, CPU elsewhere; SigLIP 2 stays on the CPU on a phone, where copying its tensors to the GPU as they load
+would hold its 786 MB token table twice). `candle-transformers` 0.9.2 adds only pure-Rust crates (`fancy-regex`, `regex-automata`,
 `aho-corasick`, `serde_plain`; checked with `cargo tree`, and it type-checks for `aarch64-apple-ios`) and ships
 `siglip`, `clip`, `dinov2`, `depth_anything_v2`, `hiera`, `segment_anything` (MobileSAM's TinyViT), `mobilenetv4`.
 Do not upgrade candle past 0.9.2 until `tokenizers`/Oniguruma (a C library) is out of its dependency tree.

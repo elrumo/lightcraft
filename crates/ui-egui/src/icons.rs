@@ -37,6 +37,8 @@ pub enum Icon {
     StarFilled,
     Circle,
     FlagPick,
+    /// The Pick flag a photo carries: pennant filled, so a pick reads at a glance (#1013). The
+    /// outlined [`Icon::FlagPick`] stays for buttons and filters.
     FlagPickFilled,
     FlagReject,
     /// A flag with a tick on it: only the picked photos.
@@ -456,9 +458,10 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<
         Circle => pen.circle(10.0, 10.0, 6.0),
         FlagPick | FlagPickFilled => {
             if icon == FlagPickFilled {
-                // Two convex halves retain the flag's notch without filling across it.
-                pen.fill(&[(5.0, 3.5), (15.0, 3.5), (12.5, 7.0), (5.0, 7.0)], color);
-                pen.fill(&[(5.0, 7.0), (12.5, 7.0), (15.0, 10.5), (5.0, 10.5)], color);
+                // the notched pennant is concave: two convex halves meet at the notch, overlapping
+                // along the pole side so their anti-aliased edges leave no seam
+                pen.fill(&[(5.0, 3.5), (15.0, 3.5), (12.5, 7.0), (5.0, 7.5)], color);
+                pen.fill(&[(5.0, 6.5), (12.5, 7.0), (15.0, 10.5), (5.0, 10.5)], color);
             }
             pen.line(&[(5.0, 17.0), (5.0, 3.5)]);
             pen.closed(&[(5.0, 3.5), (15.0, 3.5), (12.5, 7.0), (15.0, 10.5), (5.0, 10.5)]);
