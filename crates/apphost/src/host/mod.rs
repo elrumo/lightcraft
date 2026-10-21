@@ -23,11 +23,10 @@
 //!   ends: `{candidates}`, each with `inTrash`); `render.candidate {index, edge?}` — a candidate's
 //!   thumbnail (slot `import:<index>`); `import.start {paths | indexes, …library.import params,
 //!   albumName?}` — import in the background (answered when it ends: what it added).
-//! - `host.library.open {path, existing?} | new {location, name?} | recent` — another library, a new
-//!   one, the recent list the frontend keeps ([`crate::library`], egui's File ▸ Open Library… and New
-//!   Library…).
 //! - `host.admin.signIn | call | search | signOut | session` — the sync server's admin API, on worker threads
 //!   ([`admin`]: a native frontend's Server Administration screens).
+//! - `host.libraries {recent?}` — the libraries to offer; `host.library.open {path} | new {name} | delete {path}` —
+//!   another library without a restart, a new one, one deleted ([`libraries`]).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
 //!
 //! Between requests the thread drives what the egui app's frame loop drives: renders, saving, the
@@ -288,6 +287,10 @@ struct Engine {
     events: Arc<Events>,
     leases: Arc<Leases>,
     tmp: PathBuf,
+    /// The app's home folder (`OpenConfig::home`): where its libraries are kept, and what `~/` in a path means.
+    home: Option<PathBuf>,
+    /// Whose rules started the engine (where libraries are kept, whether one may be deleted here).
+    profile: Profile,
     demo: bool,
     opened: Value,
     state: Option<HostState>,
@@ -416,10 +419,12 @@ impl Engine {
         let (mut session, demo) = if config.demo {
             (Session::with_demo().with_fs().with_system_clock(), true)
         } else {
-            let dir = crate::startup::library_dir_for(config.profile, config.library.clone().map(Into::into), config.home.clone().map(Into::into));
-            // a library the user chose is never made anew where it was (a disk or share that isn't connected)
+            // (`~/…`: a library kept inside the app's home folder, whose path an iOS container changes with each update)
+            let library = config.library.as_deref().map(|l| crate::libraries::expand(l, config.home.as_deref().map(Path::new)).into_os_string());
+            let dir = crate::startup::library_dir_for(config.profile, library, config.home.clone().map(Into::into));
+            // a library the user chose is never made anew where it was (a disk or network share that isn't connected)
             if config.chosen
-                && let Some(why) = dir.as_deref().and_then(|d| crate::library::missing(d, true))
+                && let Some(why) = dir.as_deref().and_then(|d| crate::libraries::missing(d, true))
             {
                 log::error!("{why}");
                 return Err(why);
@@ -470,6 +475,8 @@ impl Engine {
             events,
             leases,
             tmp,
+            home: config.home.as_deref().filter(|h| !h.is_empty()).map(PathBuf::from),
+            profile: config.profile,
             demo,
             opened,
             state: None,
@@ -657,10 +664,6 @@ impl Engine {
         if req.method == "host.local.subfolders" {
             return self.list_subfolders(id, call, &req.params);
         }
-        // the recent libraries, each looked for on a worker (one on a server that went away can take long)
-        if req.method == "host.library.recent" {
-            return self.recent_libraries(id, call, &req.params);
-        }
         // the server's admin API (`host.admin.*`): on a worker, answered when the server has
         if req.method.starts_with("host.admin.") {
             return lightcraft_engine::guard::catch(&format!("`{}`", req.method), || self.start_admin(id, call, &req.method, &req.params))
@@ -721,8 +724,12 @@ impl Engine {
             // Local's places (`crate::local`) from the roots and hidden places the app keeps: `{roots, hidden,
             // browseRoot?, command?: addRoot | hide | restoreHidden, path?}` → `{roots, hidden, places, owner, browseRoot, current}`
             "host.local" => self.local_places(p).map_err(|e| bad(&e)),
-            // another library, a new one, the recent list (`crate::library`; the app keeps the list)
-            "host.library.open" | "host.library.new" => self.library_request(method, p),
+            // the libraries the app offers, switching to another without a restart, a new one, deleting one
+            // (`libraries`): the recent list is the app's, passed in and given back
+            "host.libraries" => self.libraries(p),
+            "host.library.open" => self.open_library(p),
+            "host.library.new" => self.new_library(p),
+            "host.library.delete" => self.delete_library(p),
             "host.sidebar" => {
                 let mut layout = p.get("layout").cloned().map(crate::sidebar::SidebarLayout::from).unwrap_or_default();
                 if let Some(command) = p.get("command").and_then(Value::as_str) {

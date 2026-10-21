@@ -28,9 +28,9 @@ pub struct LibraryProblem {
 
 /// The problem with a library remembered from the last session that isn't there now (moved, or
 /// on a disk or network share that isn't connected): opening it would make a new, empty library
-/// in its place (`lightcraft_apphost::library::missing`).
+/// in its place (`lightcraft_apphost::libraries::missing`).
 pub fn remembered_missing(dir: &std::path::Path) -> Option<LibraryProblem> {
-    lightcraft_apphost::library::missing(dir, true).map(|why| LibraryProblem::new(dir.to_string_lossy(), why))
+    lightcraft_apphost::libraries::missing(dir, true).map(|why| LibraryProblem::new(dir.to_string_lossy(), why))
 }
 
 impl LibraryProblem {

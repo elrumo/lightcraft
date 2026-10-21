@@ -2593,15 +2593,27 @@ pub fn open_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String>
         app.ui.dialog = Some(crate::state::Dialog::LightroomCatalog { folder: path.clone(), catalog: catalog.clone() });
         return Ok(json!({"opened": false, "lightroomCatalog": catalog, "path": path}));
     }
-    let generation = app.session.library_generation();
-    let opened = lightcraft_apphost::library::open(&mut app.session, &path, &mut app.ui.settings.recent_libraries);
-    library_switched(app, generation, opened)
+    // a remembered library that isn't there (moved, or on a disk or network share that isn't connected) is said
+    // so, never made anew in its place, and stays in Open Recent Library for when its share is back; a new one is
+    // made only in a folder that is there
+    let remembered = app.ui.settings.recent_libraries.contains(&path);
+    if let Some(why) = lightcraft_apphost::libraries::missing(std::path::Path::new(&path), remembered) {
+        return Err(why);
+    }
+    // a drive's or a share's top folder opens the one library in it (several: said so); a folder with none becomes
+    // a library, unless it was one (a share's empty mount point)
+    let dir = std::path::Path::new(&path);
+    let path = if dir.is_dir() { lightcraft_apphost::libraries::find(dir, remembered)?.to_string_lossy().into_owned() } else { path };
+    switch_library(app, &path)
 }
 
-/// After [`lightcraft_apphost::library::open`] or [`lightcraft_apphost::library::new`]: a library
-/// opened (another one, or the previous one again after a failure) leaves nothing of the last
-/// one's on screen, and the one now open is the one to open at launch.
-fn library_switched(app: &mut LightcraftApp, generation: u64, opened: Result<lightcraft_apphost::library::Opened, String>) -> Result<Value, String> {
+/// Close the current library and open the one at `path` ([`lightcraft_apphost::libraries::switch`]:
+/// checked before anything is closed, the previous library opened again if it still fails), then
+/// let go of what the window showed of the old one and keep both in the recent list.
+fn switch_library(app: &mut LightcraftApp, path: &str) -> Result<Value, String> {
+    let generation = app.session.library_generation();
+    let switched = lightcraft_apphost::libraries::switch(&mut app.session, std::path::Path::new(path));
+    // (refused before anything was closed: the window keeps what it shows)
     if app.session.library_generation() != generation {
         app.lightroom.last = None;
         app.lightroom_result = None;
@@ -2611,24 +2623,20 @@ fn library_switched(app: &mut LightcraftApp, generation: u64, opened: Result<lig
         app.renderer.forget_all();
         app.ui.compare = None;
     }
-    let o = opened?;
-    app.ui.settings.library_path = o.path.clone();
-    Ok(json!({"path": o.path, "name": o.name, "photos": o.photos}))
-}
-
-/// Put `path` first in the recent list, without duplicates, capped at [`crate::state::RECENT_LIBRARIES`].
-pub fn remember_library(recent: &mut Vec<String>, path: &str) {
-    lightcraft_apphost::library::remember(recent, path);
-}
-
-/// A library's name as people see it: its folder's name.
-pub fn library_name(dir: &std::path::Path) -> String {
-    lightcraft_apphost::library::name(dir)
+    let switched = switched.map_err(|e| e.to_string())?;
+    let path = switched.dir.to_string_lossy().into_owned();
+    app.ui.settings.library_path = path.clone();
+    let recent = &mut app.ui.settings.recent_libraries;
+    if let Some(prev) = switched.previous.map(|p| p.to_string_lossy().into_owned()).filter(|p| p != &path && !recent.contains(p)) {
+        lightcraft_apphost::libraries::remember(recent, &prev);
+    }
+    lightcraft_apphost::libraries::remember(recent, &path);
+    Ok(json!({"path": path, "name": lightcraft_apphost::libraries::name(&switched.dir), "photos": app.session.catalog.len()}))
 }
 
 /// The open library's name (`None`: in memory, nothing is saved).
 pub fn open_library_name(app: &LightcraftApp) -> Option<String> {
-    lightcraft_apphost::library::open_name(&app.session)
+    lightcraft_apphost::libraries::open_dir(&app.session).map(lightcraft_apphost::libraries::name)
 }
 
 /// `app.newLibrary {path?, name?}`: create a library and switch to it. With `name`, the library
@@ -2639,7 +2647,7 @@ pub fn new_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> 
     can_switch_library(app)?;
     let name = match p.get("name") {
         None | Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(lightcraft_apphost::library::valid_name(s).map_err(|e| format!("app.newLibrary: {e}"))?),
+        Some(Value::String(s)) => Some(lightcraft_apphost::libraries::valid_name(s).map_err(|e| format!("app.newLibrary: {e}"))?),
         Some(_) => return Err("app.newLibrary: name must be a string".into()),
     };
     // from the menu: ask for the name first (default prefilled), then for the location
@@ -2669,20 +2677,20 @@ pub fn new_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> 
             }
         }
     };
-    let generation = app.session.library_generation();
-    let opened = lightcraft_apphost::library::new(&mut app.session, &location, name, picked, &mut app.ui.settings.recent_libraries);
-    library_switched(app, generation, opened)
+    let dir = lightcraft_apphost::libraries::new_dir(&location, name, picked)?;
+    switch_library(app, &dir.to_string_lossy())
 }
 
 /// `app.recentLibraries {clear?: bool}`: the recently opened libraries, newest first, as
-/// `[{path, name, location, exists, open}]` (`exists: false`: moved, or on a disk or network share
-/// that isn't connected; kept for when it is back). `clear` forgets them all.
+/// `[{path, name, exists, open}]` (`exists: false`: moved, or on a disk or network share that isn't
+/// connected, kept for when it is back). `clear`
+/// forgets them all.
 pub fn recent_libraries(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
     if p.get("clear").and_then(Value::as_bool) == Some(true) {
         app.ui.settings.recent_libraries.clear();
     }
-    let open = app.session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
-    serde_json::to_value(lightcraft_apphost::library::recent(&app.ui.settings.recent_libraries, open.as_deref())).map_err(|e| e.to_string())
+    let open = lightcraft_apphost::libraries::open_dir(&app.session);
+    Ok(Value::Array(lightcraft_apphost::libraries::recent_list(&app.ui.settings.recent_libraries, open)))
 }
 
 // ---------------------------------------------------------------------------- Display profile

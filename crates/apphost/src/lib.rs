@@ -13,12 +13,12 @@
 //!   dialog of their own (the MCP server's headless backend, native frontends).
 //! - [`startup`]: how a mobile app opens its library, sizes its memory budget and keeps its
 //!   staging folders (both iOS apps).
+//! - [`libraries`]: switching libraries, making a new one, the recent list, and a library
+//!   described without opening it (egui's File menu, a native frontend's library list).
 //! - [`import`]: importing in the background: the scan the review shows, files readied on a
 //!   worker in batches, each added to the catalog between frames or ticks.
 //! - [`faces`]: how fast face recognition's background scan may work, from what the user is doing.
 //! - [`superres`]: AI Super Resolution on a worker thread, with its activity row.
-//! - [`library`]: opening another library, making a new one, and the recent list (File ▸ Open
-//!   Library…, New Library…, Open Recent Library), never making a library anew where one was.
 //! - [`sync`]: self-hosted sync driven from the frontend's loop (requests on worker threads, answers
 //!   applied between frames or ticks).
 //! - `host` (native only): the engine on a thread of its own, driven by JSON requests and
@@ -40,7 +40,7 @@ pub mod faces;
 pub mod host;
 pub mod import;
 pub mod keys;
-pub mod library;
+pub mod libraries;
 pub mod lightroom;
 pub mod local;
 pub mod merge;

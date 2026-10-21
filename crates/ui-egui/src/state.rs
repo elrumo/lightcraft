@@ -371,7 +371,7 @@ impl LightsOut {
     }
 }
 /// How many libraries File ▸ Open Recent Library remembers.
-pub const RECENT_LIBRARIES: usize = lightcraft_apphost::library::RECENT;
+pub const RECENT_LIBRARIES: usize = lightcraft_apphost::libraries::RECENT;
 
 /// Whether the interface uses the dark or the light theme (Settings ▸ Interface ▸ Appearance).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

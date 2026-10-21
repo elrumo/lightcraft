@@ -295,14 +295,14 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
             tool(
                 "list_widgets",
                 "List widgets",
-                "On-screen widgets by automation id with rects [x, y, w, h] in screen points. The Mac SwiftUI app lists every control of a window by name (`label`, `role`, `value`, `enabled`): `all` adds texts and groups, `window` picks the window (main, settings, sheet).",
+                "On-screen widgets by automation id with rects [x, y, w, h] in screen points. A native (non-Rust) frontend that names its controls lists every control of a window by name (`label`, `role`, `value`, `enabled`): `all` adds texts and groups, `window` picks the window (main, settings, sheet).",
                 json!({"filter": {"type": "string"}, "all": {"type": "boolean"}, "window": {"type": "string"}}),
                 &[],
             ),
             tool(
                 "click",
                 "Click",
-                "Click a widget by automation id (`widget`, see list_widgets) or a screen point (`x`, `y`). `count: 2` double-clicks. In the Mac SwiftUI app a control can be named by its `label` instead (`role` and `index` pick one of several with that name) and `action` is a press (default), `confirm` (open a photo), `showMenu`, `increment` or `decrement` (step a slider).",
+                "Click a widget by automation id (`widget`, see list_widgets) or a screen point (`x`, `y`). `count: 2` double-clicks. In a native frontend that names its controls, a control can be named by its `label` instead (`role` and `index` pick one of several with that name) and `action` is a press (default), `confirm` (open a photo), `showMenu`, `increment` or `decrement` (step a slider).",
                 json!({
                     "widget": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}, "count": {"type": "integer"}, "button": {"type": "string", "enum": ["left", "right"]},
                     "label": {"type": "string"}, "role": {"type": "string"}, "index": {"type": "integer"}, "action": {"type": "string"}, "window": {"type": "string"}
@@ -312,7 +312,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
             tool(
                 "set_value",
                 "Set a control's value",
-                "Set a slider to a number or replace the text in a field (typed as the keyboard would), in the Mac SwiftUI app. Name the control by `widget` (the id from list_widgets) or by `label` (`role` and `index` pick one of several). Develop sliders: get_develop / set_develop are exact; this is for the other controls.",
+                "Set a slider to a number or replace the text in a field (typed as the keyboard would), in a native frontend that names its controls. Name the control by `widget` (the id from list_widgets) or by `label` (`role` and `index` pick one of several). Develop sliders: get_develop / set_develop are exact; this is for the other controls.",
                 json!({
                     "value": {"description": "A number for a slider, text for a field", "type": ["number", "string"]},
                     "widget": {"type": "string"}, "label": {"type": "string"}, "role": {"type": "string"}, "index": {"type": "integer"}, "window": {"type": "string"}
@@ -322,7 +322,7 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
             tool(
                 "menu_item",
                 "Choose a menu bar item",
-                "Choose an item of the menu bar as the menu would, if it is enabled, in the Mac SwiftUI app: `path` is the titles leading to it, e.g. [\"View\", \"Show Sidebar\"].",
+                "Choose an item of the menu bar as the menu would, if it is enabled, in a native frontend that names its controls: `path` is the titles leading to it, e.g. [\"View\", \"Show Sidebar\"].",
                 json!({"path": {"type": "array", "items": {"type": "string"}}}),
                 &["path"],
             ),
