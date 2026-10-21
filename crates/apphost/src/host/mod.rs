@@ -422,7 +422,14 @@ impl Engine {
             // (`~/…`: a library kept inside the app's home folder, whose path an iOS container changes with each update)
             let library = config.library.as_deref().map(|l| crate::libraries::expand(l, config.home.as_deref().map(Path::new)).into_os_string());
             let dir = crate::startup::library_dir_for(config.profile, library, config.home.clone().map(Into::into));
-            if desktop {
+            // a library the user chose is never made anew where it was (a disk or network share that isn't connected)
+            if config.chosen
+                && let Some(why) = dir.as_deref().and_then(|d| crate::libraries::missing(d, true))
+            {
+                log::error!("{why}");
+                return Err(why);
+            }
+            if desktop || config.chosen {
                 // never a demo in the library's place: the user closes the other LightCraft or chooses another library
                 (crate::startup::open_session_or_err(dir.as_deref(), !config.empty)?, false)
             } else {
@@ -458,6 +465,8 @@ impl Engine {
             let _ = sync_wake.send(Msg::Wake);
         }));
         let library = session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.display().to_string());
+        // (a lock the library's disk can't hold, as on some network shares; a thumbnail folder that isn't there)
+        warnings.extend(session.take_library_warnings());
         let edits = crate::external_edit::Watch::load(&session);
         let opened = json!({"library": library, "photos": session.catalog.len(), "demo": demo, "warnings": warnings});
         Ok(Engine {

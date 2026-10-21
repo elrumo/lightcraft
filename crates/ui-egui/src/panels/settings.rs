@@ -2593,11 +2593,17 @@ pub fn open_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String>
         app.ui.dialog = Some(crate::state::Dialog::LightroomCatalog { folder: path.clone(), catalog: catalog.clone() });
         return Ok(json!({"opened": false, "lightroomCatalog": catalog, "path": path}));
     }
-    // a remembered library that is gone: say so (and forget it) instead of creating an empty one there
-    if app.ui.settings.recent_libraries.contains(&path) && !std::path::Path::new(&path).exists() {
-        app.ui.settings.recent_libraries.retain(|r| r != &path);
-        return Err(format!("{path}: the library is no longer there (moved, renamed or on a disconnected drive); removed from Open Recent Library"));
+    // a remembered library that isn't there (moved, or on a disk or network share that isn't connected) is said
+    // so, never made anew in its place, and stays in Open Recent Library for when its share is back; a new one is
+    // made only in a folder that is there
+    let remembered = app.ui.settings.recent_libraries.contains(&path);
+    if let Some(why) = lightcraft_apphost::libraries::missing(std::path::Path::new(&path), remembered) {
+        return Err(why);
     }
+    // a drive's or a share's top folder opens the one library in it (several: said so); a folder with none becomes
+    // a library, unless it was one (a share's empty mount point)
+    let dir = std::path::Path::new(&path);
+    let path = if dir.is_dir() { lightcraft_apphost::libraries::find(dir, remembered)?.to_string_lossy().into_owned() } else { path };
     switch_library(app, &path)
 }
 
@@ -2676,7 +2682,8 @@ pub fn new_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> 
 }
 
 /// `app.recentLibraries {clear?: bool}`: the recently opened libraries, newest first, as
-/// `[{path, name, exists, open}]` (`exists: false`: moved or on a disconnected drive). `clear`
+/// `[{path, name, exists, open}]` (`exists: false`: moved, or on a disk or network share that isn't
+/// connected, kept for when it is back). `clear`
 /// forgets them all.
 pub fn recent_libraries(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
     if p.get("clear").and_then(Value::as_bool) == Some(true) {

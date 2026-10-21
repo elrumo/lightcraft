@@ -122,11 +122,14 @@ impl Engine {
         busy(&format!("“{}”", running.label))
     }
 
-    /// `host.library.open {path, recent?}`: leave the open library for the one at `path` (an existing folder: a
-    /// library is made there when it holds none). → `{path, name, photos, recent, library}`. Refused, with the open
-    /// library left as it was, while work runs on it, when the folder is gone (a library deleted or on a drive
-    /// that isn't there: never an empty one in its place), is a Lightroom catalog (`lightroomCatalog`) or is open
-    /// in another program (`libraryInUse`).
+    /// `host.library.open {path, existing?, recent?}`: leave the open library for the one at `path`, an existing
+    /// folder ([`libraries::find`]): the library it is, or the one folder in it holding one (Open Library… on a
+    /// drive's or a share's top folder); one with none becomes a library, unless `existing` is set or `path` is in
+    /// `recent` (opened before: never made anew). → `{path, name, photos, recent, library, warnings, relocated}`
+    /// (`warnings`: what the person should know of it, such as a lock its disk can't hold, as on some network
+    /// shares). Refused, with the open library left as it was, while work runs on it, when the folder is gone (a
+    /// library deleted, or on a drive or network share that isn't connected: never an empty one in its place), is
+    /// a Lightroom catalog (`lightroomCatalog`) or is open in another program (`libraryInUse`).
     pub(super) fn open_library(&mut self, p: &Value) -> Result<Value, ErrorBody> {
         let bad = |m: &str| ErrorBody::new("badParams", format!("`host.library.open`: {m}"));
         let path = p.get("path").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or_else(|| bad("missing `path`"))?;
@@ -140,7 +143,12 @@ impl Engine {
                 format!("{}: the library is no longer there (deleted, moved, renamed or on a drive that isn't connected)", dir.display()),
             ));
         }
-        self.switch_to(&dir, self.recent_param(p))
+        let recent = self.recent_param(p);
+        // (a library opened before is never made anew: its share's empty mount point may be all that is there)
+        let existing = p.get("existing").and_then(Value::as_bool) == Some(true)
+            || recent.iter().any(|r| libraries::same(&libraries::expand(r, self.home.as_deref()), &dir));
+        let dir = libraries::find(&dir, existing).map_err(|e| ErrorBody::new("other", e))?;
+        self.switch_to(&dir, recent)
     }
 
     /// `host.library.new {name, location?, recent?}`: make an empty library called `name` in `location` (where the
@@ -155,6 +163,13 @@ impl Engine {
         };
         if let Some(e) = self.switch_refused() {
             return Err(e);
+        }
+        // (never at a place that isn't there: a disk or network share that isn't connected, its mount point empty)
+        if !location.is_dir() {
+            return Err(ErrorBody::new(
+                "other",
+                format!("{}: the folder isn't there (a disk or network share that isn't connected?)", location.display()),
+            ));
         }
         let dir = libraries::new_dir(&location, Some(name), false).map_err(|e| ErrorBody::new("badParams", e))?;
         let opened = self.switch_to(&dir, self.recent_param(p));
@@ -189,6 +204,9 @@ impl Engine {
             "photos": self.session.catalog.len(),
             "recent": recent,
             "library": library,
+            "warnings": self.session.take_library_warnings(),
+            // (opened from another place than last time, such as a share mounted elsewhere: where from, photos followed)
+            "relocated": self.session.library.as_ref().and_then(|l| l.relocated.clone()),
         }))
     }
 

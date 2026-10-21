@@ -1330,3 +1330,68 @@ fn a_phone_deletes_a_library_that_isnt_open() {
     assert!(root.join("mac/home/Pictures/Old").is_dir());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A library on a network share, opened with Open Library… on the share's top folder: the library in it opens, and
+/// its answer carries the library's warnings. With `existing`, or for a library opened before (its share gone, an
+/// empty mount point left), a folder with no library in it is never made one; a new library is never made in a
+/// folder that isn't there (a share that isn't connected).
+#[test]
+fn a_library_on_a_share_opens_from_the_folder_it_is_in_and_none_is_made() {
+    let root = std::env::temp_dir().join(format!("lc-host-libraries-share-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (mut e, _events) = engine_at_home(&root, Profile::Desktop);
+    let share = root.join("Volumes").join("photos");
+    let mut s = lightcraft_engine::Session::new().with_fs();
+    s.open_library(share.join("Studio Library"), false).unwrap();
+    s.close_library().unwrap();
+    drop(s);
+    std::fs::create_dir_all(share.join("2019")).unwrap();
+    let opened = e.dispatch("host.library.open", &json!({"path": share.to_string_lossy()})).unwrap();
+    assert_eq!(opened["name"], "Studio Library", "{opened}");
+    assert!(opened["warnings"].is_array(), "{opened}");
+    let err = e.dispatch("host.library.open", &json!({"path": share.join("2019").to_string_lossy(), "existing": true})).unwrap_err();
+    assert!(err.message.contains("no library here"), "{err:?}");
+    let mount = root.join("mnt").join("nas");
+    std::fs::create_dir_all(&mount).unwrap();
+    let err = e.dispatch("host.library.open", &json!({"path": mount.to_string_lossy(), "recent": [mount.to_string_lossy()]})).unwrap_err();
+    assert!(err.message.contains("no library here"), "{err:?}");
+    for folder in [share.join("2019"), mount] {
+        assert!(!lightcraft_engine::library::is_library(&folder), "{} isn't made a library", folder.display());
+    }
+    let err = e.dispatch("host.library.new", &json!({"name": "New", "location": root.join("Volumes/gone").to_string_lossy()})).unwrap_err();
+    assert!(err.message.contains("isn't there"), "{err:?}");
+    assert!(!root.join("Volumes/gone").exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// A library the user chose, on a share that isn't connected at start: an error that says so and nothing made in
+// its place, also with a phone's rules; one another program has open is an error too, never the demo library
+#[test]
+fn a_chosen_library_that_isnt_there_is_an_error_at_start() {
+    let base = std::env::temp_dir().join(format!("lc-host-chosen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("tmp")).unwrap();
+    let tmp = Some(base.join("tmp").to_string_lossy().to_string());
+    let open = |library: &Path, chosen: bool| {
+        Host::open(OpenConfig { library: Some(library.to_string_lossy().to_string()), tmp: tmp.clone(), chosen, ..Default::default() })
+    };
+    let gone = base.join("share").join("Library");
+    match open(&gone, true) {
+        Ok(_) => panic!("opened a library that isn't there"),
+        Err(e) => assert!(e.contains("isn't connected"), "{e}"),
+    }
+    assert!(!base.join("share").exists(), "nothing made in its place");
+    let held = base.join("Held");
+    std::fs::create_dir_all(&held).unwrap();
+    let lock = lightcraft_catalog::LibraryLock::acquire(&held, "someone else").unwrap();
+    assert!(open(&held, true).is_err(), "a chosen library in use is the user's to act on");
+    // (the default library on a phone still falls back to the demo library, as before)
+    let (h, opened) = open(&held, false).unwrap();
+    assert_eq!(opened["demo"], true, "{opened}");
+    drop(h);
+    drop(lock);
+    let (h, opened) = open(&held, true).unwrap();
+    assert_eq!((opened["demo"].as_bool(), opened["library"].as_str()), (Some(false), held.to_str()), "{opened}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&base);
+}
