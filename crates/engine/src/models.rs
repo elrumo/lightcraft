@@ -29,6 +29,9 @@ pub struct ModelInfo {
     pub purpose: String,
     /// This build and device can use the model at all (a phone has no SAM 3).
     pub available: bool,
+    /// Why this device can't, when the build has the model (a phone that may use too little memory for it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
     /// Its files are on this device.
     pub installed: bool,
     /// The user hasn't turned it off.
@@ -130,6 +133,7 @@ struct Facts {
     restricted: bool,
     download_bytes: u64,
     available: bool,
+    unavailable: Option<String>,
     installed: bool,
     enabled: bool,
     can_disable: bool,
@@ -148,6 +152,7 @@ impl Facts {
                 label: self.label.into(),
                 purpose: self.purpose.into(),
                 available: self.available,
+                unavailable: self.unavailable,
                 installed: self.installed,
                 enabled: self.enabled,
                 can_disable: self.can_disable,
@@ -196,6 +201,7 @@ impl Session {
             restricted: false,
             download_bytes: crate::segment::MODEL_BYTES,
             available: Segmenter::AVAILABLE,
+            unavailable: None,
             installed: g.installed(),
             enabled: !g.disabled,
             can_disable: true,
@@ -224,6 +230,7 @@ impl Session {
             restricted: false,
             download_bytes: crate::vision::MODEL_BYTES,
             available: v.local_available(),
+            unavailable: v.unfit().map(str::to_string),
             installed: v.installed(),
             enabled: true,
             can_disable: false,
@@ -258,6 +265,7 @@ impl Session {
             restricted: false,
             download_bytes: crate::vision::TEXT_BYTES,
             available: v.text_available(),
+            unavailable: None,
             installed: v.text_installed(),
             enabled: true,
             can_disable: false,
@@ -294,6 +302,7 @@ impl Session {
             restricted: false,
             download_bytes: crate::vision::FACE_BYTES,
             available: v.faces_available(),
+            unavailable: None,
             installed: v.faces_installed(),
             enabled: true,
             can_disable: false,
@@ -328,6 +337,7 @@ impl Session {
             restricted: false,
             download_bytes: crate::vision::SENSITIVE_BYTES,
             available: v.sensitive_available(),
+            unavailable: None,
             installed: v.sensitive_cpu_installed(),
             // (the library's choice, `vision.setSensitive`)
             enabled: v.sensitive,
@@ -368,6 +378,7 @@ impl Session {
             restricted: false,
             download_bytes: bytes,
             available: v.sensitive_gpu_available(),
+            unavailable: None,
             installed: v.sensitive_gpu_installed(),
             // (turned on and off with the CPU model's switch: which of the two runs is `vision.setSensitiveBackend`)
             enabled: v.sensitive,
@@ -408,6 +419,7 @@ impl Session {
             restricted: false,
             download_bytes: bytes,
             available: v.sensitive_available(),
+            unavailable: None,
             installed: v.sensitive_large_installed(),
             // (turned on and off with the compact model's switch)
             enabled: v.sensitive,
@@ -448,6 +460,7 @@ impl Session {
             restricted: false,
             download_bytes: bytes,
             available: v.sensitive_gpu_available(),
+            unavailable: None,
             installed: v.sensitive_large_gpu_installed(),
             // (turned on and off with the compact model's switch)
             enabled: v.sensitive,
@@ -481,6 +494,7 @@ impl Session {
                     available: Enhancer::AVAILABLE
                         && crate::expand::ExpandModel::from_id(m.id).is_none_or(|x| self.expand_available(x))
                         && (m.id != crate::depth::GPU_ID || self.depth_gpu_available()),
+                    unavailable: None,
                     installed: e.installed(m.id),
                     enabled: !e.disabled.contains(m.id),
                     // (the depth model's GPU weights are chosen between with `depth.setBackend`, not switched off)
@@ -532,7 +546,10 @@ impl Session {
     pub fn start_model_download(&self, id: &str) -> Result<bool, String> {
         let entry = self.model_entry(id)?;
         if !entry.info.available {
-            return Err(format!("{} isn't available on this device", entry.info.label));
+            return Err(match entry.info.unavailable {
+                Some(why) => format!("{} isn't available on this device: {why}", entry.info.label),
+                None => format!("{} isn't available on this device", entry.info.label),
+            });
         }
         match id {
             SAM3 => self.segmenter.start_download(&self.activity),
