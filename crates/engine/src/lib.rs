@@ -67,6 +67,7 @@ pub mod lightroom_folder;
 pub mod lightroom_job;
 mod lightroom_smart;
 mod lightroom_sqlite;
+pub mod live_photo;
 pub mod logging;
 pub mod map;
 pub mod media;
@@ -285,6 +286,8 @@ pub struct Session {
     pub(crate) photo_library: photo_library::PhotoLibraryMap,
     /// Where the app stages photo-library originals ([`Session::set_photo_library_staging`]).
     pub(crate) photo_library_staging: Option<std::path::PathBuf>,
+    /// Live Photos' motion clips (`live-photos.json`; see [`live_photo`]).
+    pub(crate) live_photos: live_photo::LivePhotos,
     /// What was selected before a photo-library photo was opened, to come back to when it is left.
     pub(crate) photo_library_return: Option<Selection>,
     /// Photos whose automatic XMP sidecar write failed (their folder offline, read-only or full), written again by
@@ -528,6 +531,7 @@ impl Session {
             sidecar_times: Default::default(),
             photo_library: Default::default(),
             photo_library_staging: None,
+            live_photos: Default::default(),
             photo_library_return: None,
             unsaved_sidecars: Default::default(),
             denoise: Default::default(),
@@ -1485,6 +1489,8 @@ mod tests_libops;
 mod tests_library;
 #[cfg(test)]
 mod tests_lightroom_folder;
+#[cfg(test)]
+mod tests_live_photo;
 #[cfg(test)]
 mod tests_map;
 #[cfg(test)]

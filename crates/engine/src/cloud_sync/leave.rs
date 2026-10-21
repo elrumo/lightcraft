@@ -285,6 +285,8 @@ impl Session {
             None => self.media.rendered.clear(),
         }
         self.purge_synced_files();
+        // (the account's Live Photos' clips go with their photos; a Local record carried over keeps its own)
+        self.tidy_live_photos();
         if let Err(e) = self.persist() {
             log::error!("sync: {e}");
         }

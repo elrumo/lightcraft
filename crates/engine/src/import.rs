@@ -112,6 +112,10 @@ pub struct ImportOptions {
     pub metadata_preset: Option<String>,
     /// Copy: raws are copied as DNG (Copy as DNG).
     pub convert_dng: bool,
+    /// Live Photos: a still's path (as the import is given it) → its motion clip, kept with the photo the still
+    /// becomes, or with the library photo it turns out to be ([`crate::live_photo`]). The clips themselves are not
+    /// imported as videos.
+    pub motions: std::collections::BTreeMap<String, String>,
 }
 
 /// How copies are filed in the destination. The date is the capture time, else the time of the
@@ -216,6 +220,13 @@ pub struct ImportReport {
     /// Per-photo diagnostics from foreign XMP develop settings that could not be fully carried over.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<ImportWarning>,
+    /// Photos that kept a Live Photo motion clip ([`ImportOptions::motions`]).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub live: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// A structured diagnostic from foreign XMP develop settings.
@@ -1464,6 +1475,8 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
     }
     let mut purge: Vec<PhotoId> = Vec::new();
     let mut purged: std::collections::HashSet<PhotoId> = Default::default();
+    // Live Photos: each still's photo and its clip, kept once the photos are in
+    let mut motions: Vec<(PhotoId, String)> = Vec::new();
     for it in prepared.items {
         match it {
             PreparedItem::Promote(id) => {
@@ -1477,6 +1490,12 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                     let h = hash?;
                     new_hash.get(&h).copied().or_else(|| s.catalog.photos().find(|p| p.content_hash.as_deref() == Some(h.as_str())).map(|p| p.id))
                 });
+                // a Live Photo whose still the library has as a still: it gains its motion
+                if let (Some(id), Some(clip)) = (existing, opts.motions.get(&path))
+                    && s.catalog.photo(id).is_some_and(|p| !s.live_photos.is_live(p))
+                {
+                    motions.push((id, clip.clone()));
+                }
                 let trashed = existing.filter(|id| s.catalog.photo(*id).is_some_and(|p| p.deleted));
                 match trashed {
                     // (browsing a folder in Local only looks: it never restores)
@@ -1506,6 +1525,7 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
             PreparedItem::Kept(k) => report.kept.push(k),
             PreparedItem::Ready(r) => {
                 let ReadyFile { path, stored, info, sidecar, sidecar_file, placed: pl } = *r;
+                let motion = opts.motions.get(&path).cloned();
                 // added in place: a later change to its sidecar is read when its folder is browsed
                 if let Some((f, t)) = sidecar_file.filter(|_| stored == path) {
                     s.sidecar_times.set(&f, t);
@@ -1566,6 +1586,9 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                     p.history.push(lightcraft_catalog::HistoryStep { label, settings: d });
                 }
                 report.imported.push(id.0);
+                if let Some(clip) = motion {
+                    motions.push((id, clip));
+                }
                 p.local = opts.local;
                 if opts.local {
                     // the state as browsed: a later change keeps the record from being forgotten
@@ -1594,6 +1617,10 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
     }
     if !placed.is_empty() {
         finish_moves(s, placed, log0, &mut report);
+    }
+    if !motions.is_empty() {
+        let keep = if opts.mode == ImportMode::Move { crate::live_photo::Keep::Move } else { crate::live_photo::Keep::Copy };
+        report.live = s.attach_imported_motions(&motions, keep);
     }
     s.save_sidecar_times();
     Ok(report)

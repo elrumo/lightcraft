@@ -105,6 +105,10 @@ pub fn specs() -> Vec<CommandSpec> {
                     if sensitive.contains(&p.id) {
                         v["sensitive"] = json!(true);
                     }
+                    // a Live Photo: its motion clip is on this device (`live.info`)
+                    if s.live_photos.is_live(p) {
+                        v["live"] = json!(true);
+                    }
                     if stacked
                         && let Some(st) = s.catalog.stack_of(p.id)
                         && let Some(pos) = st.photos.iter().position(|x| *x == p.id)
