@@ -1,6 +1,6 @@
 //! Import: recursive folders, duplicate detection by content, add vs copy into the library.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -1210,6 +1210,105 @@ fn a_moved_library_finds_its_originals() {
     drop(s);
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&src);
+}
+
+/// A library on a network share, opened from another place the share is mounted at (another Mac's
+/// `/Volumes/photos-1`, an iPad's path to the same share): the photos beside it on the share, added
+/// where they were, follow it as well as its Originals. A folder that isn't on the share any more, a
+/// same-named folder holding other files, and photos on other disks keep their paths.
+#[test]
+fn photos_beside_a_library_on_a_share_follow_it_to_another_mount() {
+    let src = temp_dir("sharesrc");
+    let root = temp_dir("shareroot");
+    let share = root.join("mnt-a").join("photos");
+    let old = share.join("Libraries").join("LightCraft Library");
+    for (dir, name, seed) in [("2019", "a.png", 1), ("2019", "b.png", 2), ("2020", "c.png", 3), ("2021", "e.png", 4)] {
+        write_png(&share.join(dir).join(name), seed);
+    }
+    write_png(&src.join("in.png"), 5);
+    write_png(&src.join("elsewhere.png"), 6);
+    let mut s = Session::new().with_fs();
+    s.open_library(&old, false).unwrap();
+    let on_share: Vec<String> =
+        ["2019/a.png", "2019/b.png", "2020/c.png", "2021/e.png"].iter().map(|f| share.join(f).to_string_lossy().into_owned()).collect();
+    s.execute("library.import", &json!({"paths": on_share})).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("in.png").to_string_lossy()], "mode": "copy"})).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("elsewhere.png").to_string_lossy()]})).unwrap();
+    assert_eq!(s.catalog.len(), 6);
+    drop(s);
+
+    // the share comes back at another place; meanwhile 2020 left it, and 2021 holds another photo of that name
+    std::fs::rename(root.join("mnt-a"), root.join("mnt-b")).unwrap();
+    let share_b = root.join("mnt-b").join("photos");
+    std::fs::remove_dir_all(share_b.join("2020")).unwrap();
+    std::fs::write(share_b.join("2021").join("e.png"), b"another photo").unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(share_b.join("Libraries").join("LightCraft Library"), false).unwrap();
+    let path_of = |s: &Session, name: &str| match &s.catalog.photos().find(|p| p.file_name == name).unwrap().source {
+        lightcraft_catalog::Source::File { path } => PathBuf::from(path),
+        _ => panic!(),
+    };
+    assert_eq!(path_of(&s, "a.png"), share_b.join("2019").join("a.png"));
+    assert_eq!(path_of(&s, "b.png"), share_b.join("2019").join("b.png"));
+    assert!(path_of(&s, "in.png").starts_with(share_b.join("Libraries").join("LightCraft Library").join("Originals")));
+    assert_eq!(path_of(&s, "c.png"), share.join("2020").join("c.png"), "not on the share any more");
+    assert_eq!(path_of(&s, "e.png"), share.join("2021").join("e.png"), "another file of that name isn't this photo");
+    assert_eq!(path_of(&s, "elsewhere.png"), src.join("elsewhere.png"));
+    let info = s.execute("library.info", &json!({})).unwrap();
+    assert_eq!(info["relocated"]["photos"], 3, "{info}");
+    let id = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    assert!(s.render_now(id, 32, 32).is_ok());
+    drop(s);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// A library copied to another place while its photos stay where they were (the old folders are
+/// still there): the photos beside it keep pointing at the files they were added from; only what the
+/// library holds itself (Originals) follows the copy.
+#[test]
+fn photos_still_where_they_were_stay_when_a_library_is_copied() {
+    let root = temp_dir("copyroot");
+    let src = temp_dir("copysrc");
+    let old = root.join("disk-a").join("LightCraft Library");
+    write_png(&root.join("disk-a").join("2019").join("a.png"), 1);
+    write_png(&src.join("in.png"), 2);
+    let mut s = Session::new().with_fs();
+    s.open_library(&old, false).unwrap();
+    s.execute("library.import", &json!({"paths": [root.join("disk-a").join("2019").join("a.png").to_string_lossy()]})).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("in.png").to_string_lossy()], "mode": "copy"})).unwrap();
+    drop(s);
+    // a backup disk with the library and the photo folder copied to it
+    let copy = |from: &Path, to: &Path| {
+        for e in walkdir(from) {
+            let to = to.join(e.strip_prefix(from).unwrap());
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::copy(&e, &to).unwrap();
+        }
+    };
+    copy(&root.join("disk-a"), &root.join("disk-b"));
+    std::fs::remove_file(root.join("disk-b").join("LightCraft Library").join("catalog.lock")).ok();
+    let mut s = Session::new().with_fs();
+    s.open_library(root.join("disk-b").join("LightCraft Library"), false).unwrap();
+    let path_of = |s: &Session, name: &str| match &s.catalog.photos().find(|p| p.file_name == name).unwrap().source {
+        lightcraft_catalog::Source::File { path } => PathBuf::from(path),
+        _ => panic!(),
+    };
+    assert_eq!(path_of(&s, "a.png"), root.join("disk-a").join("2019").join("a.png"));
+    assert!(path_of(&s, "in.png").starts_with(root.join("disk-b").join("LightCraft Library")));
+    drop(s);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// Every file under `dir`.
+fn walkdir(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() { out.extend(walkdir(&p)) } else { out.push(p) }
+    }
+    out
 }
 
 /// The same library reached by another path (a symbolic link) hasn't moved: nothing is relinked

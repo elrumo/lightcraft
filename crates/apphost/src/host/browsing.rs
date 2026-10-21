@@ -57,6 +57,13 @@ impl Engine {
         Self::reply(&self.events, b.reply, event);
     }
 
+    /// Stop reading the folder shown (`why`: another library was opened): its request is answered `cancelled`.
+    pub(super) fn cancel_browse(&mut self, why: &str) {
+        if let Some(b) = self.browse.take() {
+            Self::reply(&self.events, b.reply, Event::err(b.id, ErrorBody::new("cancelled", why)));
+        }
+    }
+
     /// `host.local`: Local's places from the roots and hidden places the app keeps, after an edit of them.
     pub(super) fn local_places(&mut self, p: &Value) -> Result<Value, String> {
         let strings = |k: &str| -> Vec<String> {

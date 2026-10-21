@@ -1161,3 +1161,117 @@ fn a_local_folder_is_read_in_the_background_with_its_places() {
     assert!(bad["error"].is_object(), "{bad}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+fn library_base(tag: &str) -> PathBuf {
+    let base = std::env::temp_dir().join(format!("lc-host-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("tmp")).unwrap();
+    base
+}
+
+/// The names of the libraries in an answer's recent list (paths).
+fn names(r: &Value) -> Vec<String> {
+    r["recent"].as_array().unwrap().iter().map(|l| crate::library::name(Path::new(l.as_str().unwrap()))).collect()
+}
+
+// A native frontend opens another library, makes a new one and keeps the recent list (`host.library.*`): the
+// state says another library is open (its photos, a new `libraryGeneration`), the reply says what opened, and
+// the library left is in the list after it
+#[test]
+fn another_library_is_opened_and_a_new_one_made() {
+    let base = library_base("libraries");
+    let first = base.join("First");
+    let config = OpenConfig {
+        library: Some(first.to_string_lossy().to_string()),
+        tmp: Some(base.join("tmp").to_string_lossy().to_string()),
+        render_threads: Some(2),
+        ..Default::default()
+    };
+    let h = Watch::new(Host::open(config).unwrap().0);
+    let s0 = h.call(&req(1, "host.state", json!({})), Duration::from_secs(30))["result"].clone();
+    assert!(s0["visibleCount"].as_u64().unwrap() > 0, "a new library on a phone starts with the demo photos: {s0}");
+
+    let r = h.call(&req(2, "host.library.new", json!({"location": base.to_string_lossy(), "name": "Second", "recent": []})), Duration::from_secs(30));
+    let r = &r["result"];
+    assert_eq!((r["name"].as_str(), r["photos"].as_u64()), (Some("Second"), Some(0)), "{r}");
+    assert_eq!(names(r), ["Second", "First"]);
+    let s1 = h.call(&req(3, "host.state", json!({})), Duration::from_secs(30))["result"].clone();
+    assert_eq!(s1["visibleCount"], 0, "{s1}");
+    assert_ne!(s1["libraryGeneration"], s0["libraryGeneration"]);
+    h.wait_for(|e| e["kind"] == "state" && e["state"]["libraryGeneration"] == s1["libraryGeneration"]);
+
+    // back to the first one, from the list
+    let r = h.call(&req(4, "host.library.open", json!({"path": first.to_string_lossy(), "recent": r["recent"]})), Duration::from_secs(30));
+    let r = &r["result"];
+    assert!(r["photos"].as_u64().unwrap() > 0, "{r}");
+    assert_eq!(names(r), ["First", "Second"]);
+    assert!(r["warnings"].is_array());
+    let back = h.call(&req(41, "host.state", json!({})), Duration::from_secs(30))["result"]["libraryGeneration"].clone();
+
+    // one from the list on a share that isn't connected: refused, nothing made in its place, the library stays
+    let gone = base.join("share").join("Gone").to_string_lossy().to_string();
+    let r = h.call(&req(5, "host.library.open", json!({"path": gone, "recent": [gone]})), Duration::from_secs(30));
+    assert!(r["error"]["message"].as_str().unwrap().contains("isn't connected"), "{r}");
+    assert!(!base.join("share").exists());
+    let s2 = h.call(&req(6, "host.state", json!({})), Duration::from_secs(30))["result"].clone();
+    assert_eq!(s2["libraryGeneration"], back, "the library open before stays open");
+    assert!(s2["visibleCount"].as_u64().unwrap() > 0);
+
+    let r = h.call(&req(8, "host.library.recent", json!({"recent": [first.to_string_lossy(), gone]})), Duration::from_secs(30));
+    let list = r["result"]["recent"].as_array().unwrap();
+    assert!(list[0]["open"].as_bool().unwrap() && list[0]["exists"].as_bool().unwrap(), "{r}");
+    assert_eq!((list[1]["exists"].as_bool(), list[1]["location"].as_str()), (Some(false), base.join("share").to_str()));
+    let r = h.call(&req(9, "host.library.recent", json!({"recent": [gone], "clear": true})), Duration::from_secs(30));
+    assert_eq!(r["result"]["recent"], json!([]));
+    // at launch: the library open now goes first
+    let r = h.call(&req(11, "host.library.recent", json!({"recent": [gone], "remember": true})), Duration::from_secs(30));
+    let list = r["result"]["recent"].as_array().unwrap();
+    assert_eq!((list.len(), list[0]["name"].as_str(), list[0]["open"].as_bool()), (2, Some("First"), Some(true)), "{r}");
+
+    // Open Library… on the folder a library is in opens that library; on one without a library it makes none
+    let r = h.call(&req(12, "host.library.open", json!({"path": base.to_string_lossy(), "existing": true})), Duration::from_secs(30));
+    assert!(r["error"]["message"].as_str().unwrap().contains("2 libraries here"), "{r}");
+    std::fs::create_dir_all(base.join("Pictures").join("2019")).unwrap();
+    let r =
+        h.call(&req(13, "host.library.open", json!({"path": base.join("Pictures").to_string_lossy(), "existing": true})), Duration::from_secs(30));
+    assert!(r["error"]["message"].as_str().unwrap().contains("no library here"), "{r}");
+    assert!(!lightcraft_engine::library::is_library(&base.join("Pictures")));
+    std::fs::rename(base.join("Second"), base.join("Pictures").join("Second")).unwrap();
+    let r =
+        h.call(&req(14, "host.library.open", json!({"path": base.join("Pictures").to_string_lossy(), "existing": true})), Duration::from_secs(30));
+    assert_eq!(r["result"]["path"].as_str(), base.join("Pictures").join("Second").to_str(), "{r}");
+    let r = h.call(&req(10, "host.library.open", json!({})), Duration::from_secs(30));
+    assert_eq!(r["error"]["code"], "badParams", "{r}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+// A library the user chose, on a share that isn't connected at start: an error that says so and nothing made in
+// its place, also with a phone's rules; one another program has open is an error too, never the demo library
+#[test]
+fn a_chosen_library_that_isnt_there_is_an_error_at_start() {
+    let base = library_base("chosen");
+    let tmp = Some(base.join("tmp").to_string_lossy().to_string());
+    let open = |library: &Path, chosen: bool| {
+        Host::open(OpenConfig { library: Some(library.to_string_lossy().to_string()), tmp: tmp.clone(), chosen, ..Default::default() })
+    };
+    let gone = base.join("share").join("Library");
+    match open(&gone, true) {
+        Ok(_) => panic!("opened a library that isn't there"),
+        Err(e) => assert!(e.contains("isn't connected"), "{e}"),
+    }
+    assert!(!base.join("share").exists(), "nothing made in its place");
+    let held = base.join("Held");
+    std::fs::create_dir_all(&held).unwrap();
+    let lock = lightcraft_catalog::LibraryLock::acquire(&held, "someone else").unwrap();
+    assert!(open(&held, true).is_err(), "a chosen library in use is the user's to act on");
+    // (the default library on a phone still falls back to the demo library, as before)
+    let (h, opened) = open(&held, false).unwrap();
+    assert_eq!(opened["demo"], true, "{opened}");
+    drop(h);
+    drop(lock);
+    let (h, opened) = open(&held, true).unwrap();
+    assert_eq!((opened["demo"].as_bool(), opened["library"].as_str()), (Some(false), held.to_str()), "{opened}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&base);
+}

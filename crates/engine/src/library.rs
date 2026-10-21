@@ -18,7 +18,11 @@
 //! path on every app update) finds its own photos at the new place: when the folder it opens
 //! from differs from `location.json`, photos under the old folder whose file is now under the
 //! new one are pointed there (a logged change outside the undo history; not synced, paths are
-//! per device). See [`Session::open_library`] and [`Library::relocated`].
+//! per device). When the folders around it moved with it (a network share mounted at another
+//! place, `/Volumes/photos-1` for `/Volumes/photos`, or another device's path to that share), the
+//! photos beside it follow too: a folder of them that isn't where it was, but is at the same place
+//! relative to the library's new folder with a photo of it there at its size, is pointed there.
+//! See [`Session::open_library`] and [`Library::relocated`].
 //!
 //! The files live in [`Store`]s: a directory ([`FsStore`]) natively, or any other implementation
 //! via [`Session::open_library_in`] (the browser build keeps them in OPFS or IndexedDB).
@@ -811,12 +815,32 @@ impl Session {
         let moved = old.as_deref().filter(|o| !same_dir(Path::new(o), &dir));
         if let Some(old) = moved {
             let from = Path::new(old);
+            // the folders around the library, when they moved with it (a share mounted at another place, or
+            // another device's path to it): photos beside the library on that share follow too
+            let bases = moved_with(from, &dir);
+            // (per folder: whether it was left behind and is at the new place; asked once, a share is slow)
+            let mut folders: std::collections::HashMap<PathBuf, Option<PathBuf>> = std::collections::HashMap::new();
             let mut ops = Vec::new();
             for p in self.catalog.photos() {
                 let lightcraft_catalog::Source::File { path } = &p.source else { continue };
-                let Ok(rest) = Path::new(path).strip_prefix(from) else { continue };
-                let to = dir.join(rest);
-                if to.is_file() {
+                let path = Path::new(path);
+                let to = if let Ok(rest) = path.strip_prefix(from) {
+                    // in the library (Originals/): wherever its file is under the new folder
+                    Some(dir.join(rest)).filter(|to| to.is_file())
+                } else if let (Some((old_base, new_base)), Some(folder), Some(name)) = (bases.as_ref(), path.parent(), path.file_name()) {
+                    let Ok(rest) = folder.strip_prefix(old_base) else { continue };
+                    let moved = folders.entry(folder.to_path_buf()).or_insert_with(|| {
+                        let there = new_base.join(rest);
+                        // left behind (not reachable at its old place from here), there at the new one, and the
+                        // same folder: this photo's file is there with its size
+                        let same = |f: &Path| f.metadata().is_ok_and(|m| m.is_file() && (p.file_size == 0 || m.len() == p.file_size));
+                        (!folder.is_dir() && same(&there.join(name))).then_some(there)
+                    });
+                    moved.as_ref().map(|f| f.join(name))
+                } else {
+                    None
+                };
+                if let Some(to) = to {
                     let source = lightcraft_catalog::Source::File { path: to.to_string_lossy().to_string() };
                     ops.push(lightcraft_catalog::Op::Relink { id: p.id, file_name: p.file_name.clone(), source, format: None });
                 }
@@ -1156,6 +1180,22 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// Where the folders around a library moved from and to, when they moved with it: `from` and `to` without the
+/// names they end in alike (`/Volumes/photos/Lib` opened as `/Volumes/photos-1/Lib` → `/Volumes/photos` and
+/// `/Volumes/photos-1`; an iPad's path to the same share → `/Volumes` and the iPad's folder the share is in). `None`
+/// when not even the library's own folder name is alike.
+fn moved_with(from: &Path, to: &Path) -> Option<(PathBuf, PathBuf)> {
+    use std::path::Component;
+    let (a, b): (Vec<_>, Vec<_>) = (from.components().collect(), to.components().collect());
+    let same = a.iter().rev().zip(b.iter().rev()).take_while(|(x, y)| x == y && matches!(x, Component::Normal(_))).count();
+    if same == 0 {
+        return None;
+    }
+    let base = |c: &[Component]| c.iter().collect::<PathBuf>();
+    let (old, new) = (base(a.get(..a.len() - same)?), base(b.get(..b.len() - same)?));
+    (!old.as_os_str().is_empty() && !new.as_os_str().is_empty() && old != new).then_some((old, new))
 }
 
 /// The warning for a library opened without its one-program-at-a-time lock (issue #171): its

@@ -26,6 +26,13 @@ pub struct LibraryProblem {
     pub can_retry: bool,
 }
 
+/// The problem with a library remembered from the last session that isn't there now (moved, or
+/// on a disk or network share that isn't connected): opening it would make a new, empty library
+/// in its place (`lightcraft_apphost::library::missing`).
+pub fn remembered_missing(dir: &std::path::Path) -> Option<LibraryProblem> {
+    lightcraft_apphost::library::missing(dir, true).map(|why| LibraryProblem::new(dir.to_string_lossy(), why))
+}
+
 impl LibraryProblem {
     pub fn new(path: impl Into<String>, error: impl Into<String>) -> LibraryProblem {
         LibraryProblem { path: path.into(), error: error.into(), can_retry: true, ..Default::default() }

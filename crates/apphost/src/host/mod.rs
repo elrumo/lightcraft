@@ -23,6 +23,9 @@
 //!   ends: `{candidates}`, each with `inTrash`); `render.candidate {index, edge?}` — a candidate's
 //!   thumbnail (slot `import:<index>`); `import.start {paths | indexes, …library.import params,
 //!   albumName?}` — import in the background (answered when it ends: what it added).
+//! - `host.library.open {path, existing?} | new {location, name?} | recent` — another library, a new
+//!   one, the recent list the frontend keeps ([`crate::library`], egui's File ▸ Open Library… and New
+//!   Library…).
 //! - `host.admin.signIn | call | search | signOut | session` — the sync server's admin API, on worker threads
 //!   ([`admin`]: a native frontend's Server Administration screens).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
@@ -35,6 +38,7 @@ mod admin;
 mod browsing;
 mod control;
 pub mod leases;
+mod libraries;
 pub mod protocol;
 mod script;
 
@@ -413,7 +417,14 @@ impl Engine {
             (Session::with_demo().with_fs().with_system_clock(), true)
         } else {
             let dir = crate::startup::library_dir_for(config.profile, config.library.clone().map(Into::into), config.home.clone().map(Into::into));
-            if desktop {
+            // a library the user chose is never made anew where it was (a disk or share that isn't connected)
+            if config.chosen
+                && let Some(why) = dir.as_deref().and_then(|d| crate::library::missing(d, true))
+            {
+                log::error!("{why}");
+                return Err(why);
+            }
+            if desktop || config.chosen {
                 // never a demo in the library's place: the user closes the other LightCraft or chooses another library
                 (crate::startup::open_session_or_err(dir.as_deref(), !config.empty)?, false)
             } else {
@@ -449,6 +460,8 @@ impl Engine {
             let _ = sync_wake.send(Msg::Wake);
         }));
         let library = session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.display().to_string());
+        // (a lock the library's disk can't hold, as on some network shares; a thumbnail folder that isn't there)
+        warnings.extend(session.take_library_warnings());
         let edits = crate::external_edit::Watch::load(&session);
         let opened = json!({"library": library, "photos": session.catalog.len(), "demo": demo, "warnings": warnings});
         Ok(Engine {
@@ -644,6 +657,10 @@ impl Engine {
         if req.method == "host.local.subfolders" {
             return self.list_subfolders(id, call, &req.params);
         }
+        // the recent libraries, each looked for on a worker (one on a server that went away can take long)
+        if req.method == "host.library.recent" {
+            return self.recent_libraries(id, call, &req.params);
+        }
         // the server's admin API (`host.admin.*`): on a worker, answered when the server has
         if req.method.starts_with("host.admin.") {
             return lightcraft_engine::guard::catch(&format!("`{}`", req.method), || self.start_admin(id, call, &req.method, &req.params))
@@ -704,6 +721,8 @@ impl Engine {
             // Local's places (`crate::local`) from the roots and hidden places the app keeps: `{roots, hidden,
             // browseRoot?, command?: addRoot | hide | restoreHidden, path?}` → `{roots, hidden, places, owner, browseRoot, current}`
             "host.local" => self.local_places(p).map_err(|e| bad(&e)),
+            // another library, a new one, the recent list (`crate::library`; the app keeps the list)
+            "host.library.open" | "host.library.new" => self.library_request(method, p),
             "host.sidebar" => {
                 let mut layout = p.get("layout").cloned().map(crate::sidebar::SidebarLayout::from).unwrap_or_default();
                 if let Some(command) = p.get("command").and_then(Value::as_str) {

@@ -155,10 +155,11 @@ fn new_library_from_the_menu_asks_for_a_name_then_a_location() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A remembered library that's gone is greyed out in the menu; opening it anyway is an error that
-/// keeps the current library open and drops it from the list. The list is capped.
+/// A remembered library that's gone (moved, or on a disk or network share that isn't connected) is
+/// greyed out in the menu; opening it anyway is an error that keeps the current library open and
+/// keeps it in the list, for when its disk is back. The list is capped.
 #[test]
-fn missing_recent_libraries_are_greyed_out_and_pruned_and_the_list_is_capped() {
+fn missing_recent_libraries_are_greyed_out_and_kept_and_the_list_is_capped() {
     let dir = temp("recentlib");
     let mut app = app_in(&dir);
     let gone = dir.join("gone").to_string_lossy().into_owned();
@@ -168,9 +169,9 @@ fn missing_recent_libraries_are_greyed_out_and_pruned_and_the_list_is_capped() {
         .any(|n| matches!(n, crate::menubar::MenuNode::Item { params, enabled: false, .. } if params["path"] == gone.as_str()));
     assert!(disabled, "missing library greyed out");
     let e = app.run("app.openLibrary", json!({"path": gone})).unwrap_err();
-    assert!(e.contains("no longer there"), "{e}");
+    assert!(e.contains("isn't connected"), "{e}");
     assert!(!std::path::Path::new(&gone).exists(), "no empty library created in its place");
-    assert!(app.ui.settings.recent_libraries.is_empty());
+    assert_eq!(app.ui.settings.recent_libraries, std::slice::from_ref(&gone), "kept for when its disk is back");
     assert!(app.session.library.as_ref().unwrap().dir.ends_with("first"));
 
     for i in 0..20 {

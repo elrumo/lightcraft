@@ -685,17 +685,12 @@ pub(crate) fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>>
         "Open Recent Library" => {
             let can = crate::panels::settings::can_switch_library(app).is_ok();
             let open = app.session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
-            let mut v: Vec<MenuNode> = app
-                .ui
-                .settings
-                .recent_libraries
-                .iter()
+            let mut v: Vec<MenuNode> = lightcraft_apphost::library::recent(&app.ui.settings.recent_libraries, open.as_deref())
+                .into_iter()
                 .map(|r| {
-                    let d = std::path::Path::new(r);
-                    // a missing library (moved, drive disconnected) is shown greyed out
-                    let label =
-                        format!("{} — {}", crate::panels::settings::library_name(d), d.parent().map(|p| p.display().to_string()).unwrap_or_default());
-                    item("app.openLibrary", json!({"path": r}), label, None, can && d.is_dir(), Some(open.as_deref() == Some(d)))
+                    // a library that isn't there (moved, a disk or network share not connected) is shown greyed out
+                    let label = format!("{} — {}", r.name, r.location);
+                    item("app.openLibrary", json!({"path": r.path}), label, None, can && r.exists, Some(r.open))
                 })
                 .collect();
             if v.is_empty() {

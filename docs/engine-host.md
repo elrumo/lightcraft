@@ -31,10 +31,18 @@ it; it is never written twice.
 
 A native frontend keeps view state and view-transform math only (fit, pan clamping, zoom anchor). Moved so far: the render
 scheduler (`apphost::render::Scheduler`, egui's `Renderer` is it plus egui textures), the thumbnail request rules
-(`Scheduler::request_thumb`), headless Export Now (`apphost::export`, shared with the MCP server) and the mobile start-up
-(`apphost::startup`, shared with the egui iOS app).
+(`Scheduler::request_thumb`), headless Export Now (`apphost::export`, shared with the MCP server), the mobile start-up
+(`apphost::startup`, shared with the egui iOS app) and opening another library (`apphost::library`, egui's File ▸ Open
+Library…, New Library… and Open Recent Library).
 
 ## Protocol
+
+The frontend starts the engine with an `OpenConfig` (`apphost::host::protocol`): its home and tmp folders, the library
+(`library`, else the default one in `home`), the demo library, the profile (a phone's or a Mac's rules), `empty` (a new
+library starts without the demo photos) and `chosen` (the library is one the user chose, as on a network share: never
+made anew where its folder isn't, and one that won't open is an error, also with a phone's rules, never the demo library
+in its place). What it opened comes back with `warnings` the user should see (the library's own too: a lock its disk
+can't hold, a thumbnail folder that isn't there).
 
 Requests are `{"id", "method", "params"}`; each gets a `reply` event with the same `id` (`result`, or `error: {code,
 message}` where `code` is the engine's error kind — `unknownCommand`, `disabled`, `badParams`, `notSaved`… — or the
@@ -48,6 +56,9 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `engine.commands` | | every command with whether it can run now and why not |
 | `host.state` | | the state below |
 | `host.memory` | | what memory the engine holds: `engine` (its caches, `library.memory`) and `views` (the views' stage caches, CPU and GPU, and the pictures they show); `left`, the bytes iOS still lets the app use before it ends it (`null` elsewhere) |
+| `host.library.open` | `{path, existing?, recent?}` | close the library open now and open another (`apphost::library`, the rules egui's File menu follows): one that won't open leaves this one open, a library in `recent` that isn't there (moved, or on a disk or network share that isn't connected) is refused rather than made anew, as is one whose folder's folder is missing too; `existing`: only a library that is there, the folder `path` or the one folder in it that holds one (Open Library… on a share's top folder), never a folder made a library by opening it. Refused while an import, a Lightroom import, an export, a merge or Super Resolution runs; a merge preview and a Local folder being read are answered `cancelled`. Answers `{path, name, photos, warnings, relocated, recent: [path]}` (`warnings`: a lock the library's disk can't hold, as on some network shares; `relocated`: opened from another place than last time, `{from, photos}`); the state event that follows carries a new `libraryGeneration` |
+| `host.library.new` | `{location, name?, recent?}` | make the library `name` in `location` (no `name`: a new folder named after the default library) and open it, as `host.library.open` does; the folder must be new or empty |
+| `host.library.recent` | `{recent?, remember?, clear?}` | the recent list (the frontend keeps it) as a menu shows it, answered from a thread of its own (a share that went away can take long to say whether a library is there): `{recent: [{path, name, location, exists, open}]}`; `remember`: the library open now goes first (at launch); `clear`: forget them all |
 | `host.uiCommands` | | egui's UI-only commands (`apphost::ui_commands`): `[{id, label, shortcut, menu}]`, for a menu bar and shortcut keys |
 | `host.local` | `{roots, hidden, browseRoot?, command?: addRoot \| hide \| restoreHidden, path?}` | a Mac's Local places (`apphost::local`, shared with egui's sidebar): the built-in ones (Pictures, Desktop, Downloads, Home, the disks in `/Volumes`), the kept folders (`roots`, the app keeps them: Favorites) and the folder browsed; after the edit: `{roots, hidden, places: [{label, path}], owner, browseRoot, current}` |
 | `host.local.subfolders` | `{path}` | a folder's subfolders (not hidden ones), listed on a thread of its own (a network share can take long): `[{name, path}]` |
