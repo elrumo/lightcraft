@@ -31,6 +31,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 flate2 = { workspace = true }
 log = { workspace = true }
+# gives the allocator's free pages back after big decodes (`main`)
+lightcraft-sysmem = { workspace = true }
 # sizing the thread pool decodes and develops run on (`limits`)
 rayon = { workspace = true }
 

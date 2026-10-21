@@ -1431,3 +1431,23 @@ fn the_choice_is_kept_with_the_library_and_a_missing_model_is_said() {
     again.open_library(&dir, false).unwrap();
     assert_eq!(again.vision_helper_parts(), ["search", "text"]);
 }
+
+#[test]
+fn the_admin_page_sees_which_models_are_in_memory_and_when_they_are_let_go() {
+    let f = fixture("memory", Some(Arc::new(FakeEmbedder)));
+    indexed(&f, 4);
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+    let m = get(&admin, "/api/admin/search").1["memory"].clone();
+    assert_eq!(m["unloadAfterSecs"], 180, "{m}");
+    assert_eq!(
+        (&m["search"]["loaded"], &m["text"]["loaded"], &m["faces"]["loaded"], &m["sensitive"]["loaded"]),
+        (&json!(true), &json!(false), &json!(false), &json!(false)),
+        "{m}"
+    );
+    assert_eq!(m["search"]["indexes"], 2, "ann's and bob's vectors are open: {m}");
+    // (it was just used: the whole time is left, less the moment since)
+    let (idle, left) = (m["idleSecs"].as_u64().unwrap(), m["unloadInSecs"].as_u64().unwrap());
+    assert!(idle < 60 && idle + left == 180, "{m}");
+    assert_eq!(get(&f.ann, "/api/admin/search").0, 401);
+}

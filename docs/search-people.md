@@ -51,7 +51,7 @@ Delete the folder and they are computed again. Measured on an M-series laptop: 1
 in about 90 ms and loaded in about 0.4 s; the model embeds a photo in about 40 ms on Metal and a sentence in about 20 ms;
 loading the model takes a few seconds (the first text pass compiles GPU kernels, so loading does that up front).
 
-The model and the index leave memory after ten idle minutes (about 1.9 GB while the server has it loaded).
+The model and the index leave memory after three idle minutes (the admin page's Processing → AI models shows which are loaded and when they go) (about 1.9 GB while the server has it loaded).
 
 ## Text in photos
 

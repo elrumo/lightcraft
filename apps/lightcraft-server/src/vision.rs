@@ -70,8 +70,8 @@ const DESCRIBE_CHUNK: usize = 200;
 const BATCH: usize = 8;
 /// How often the index is checked for photos that need a vector, when nothing woke it.
 const TICK: Duration = Duration::from_secs(30);
-/// The model and the indexes leave memory after this long without use.
-const IDLE_UNLOAD: Duration = Duration::from_secs(10 * 60);
+/// The model and the indexes leave memory after this long without use (loading one again takes seconds).
+pub(crate) const IDLE_UNLOAD: Duration = Duration::from_secs(3 * 60);
 const DEFAULT_LIMIT: usize = 200;
 const MAX_LIMIT: usize = 2000;
 const MAX_QUERY: usize = 512;
@@ -389,6 +389,23 @@ impl Search {
     /// The model is in memory.
     pub fn loaded(&self) -> bool {
         self.injected.is_some() || lock(&self.model).is_some()
+    }
+
+    /// Whether `part`'s model is in memory, and how many users' indexes of it are (they leave with it).
+    pub(crate) fn held(&self, part: Part) -> (bool, usize) {
+        match part {
+            Part::Search => (self.loaded(), lock(&self.indexes).len()),
+            Part::Text => (self.injected_reader.is_some() || lock(&self.reader).is_some(), lock(&self.texts).len()),
+            Part::Faces => (self.injected_finder.is_some() || lock(&self.finder).is_some(), lock(&self.faces).len()),
+            Part::Sensitive => self.sensitive.held(),
+        }
+    }
+
+    /// Seconds since a model was last used, and until the idle check lets go of them (`None`: none has been used since
+    /// they last left memory). The check runs when the worker wakes, at most [`TICK`] later.
+    pub(crate) fn idle_unload(&self) -> Option<(u64, u64)> {
+        let idle = lock(&self.used).map(|t| t.elapsed().as_secs())?;
+        Some((idle, IDLE_UNLOAD.as_secs().saturating_sub(idle)))
     }
 
     /// Turn search by description on or off for every device. Off, the model leaves memory (the
