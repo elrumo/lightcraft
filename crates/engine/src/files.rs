@@ -174,6 +174,9 @@ fn unrecognized(bytes: &[u8]) -> String {
 /// compressed data that is all there: such a file imports and shows as unreadable when rendered).
 pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     let content_hash = Some(lightcraft_preview::hash_bytes(bytes).to_string());
+    if lightcraft_video::is_video(bytes) {
+        return probe_video(name, bytes, bytes.len() as u64, content_hash);
+    }
     let m = lightcraft_meta::extract(bytes);
     let (meta, captured) = meta_of(&m);
     if let Some(found) = lightcraft_raw::probe(bytes) {
@@ -222,6 +225,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             xmp: lightcraft_meta::embedded(bytes).xmp,
             preview_only: None,
             orientation: Some(raw.orientation),
+            duration: None,
         });
     }
     let Some(fmt) = lightcraft_codecs::sniff(bytes) else { return Err(unrecognized(bytes)) };
@@ -256,7 +260,93 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         xmp: None,
         preview_only: None,
         orientation: Some(o),
+        duration: None,
     })
+}
+
+/// Describe a video clip from `src` (its bytes or its file): size, length, recording date and place come from the
+/// header (`moov`), so a clip of any size is never read whole. `content_hash` is the hash of the whole file.
+pub fn probe_video<S: lightcraft_video::ByteSource>(name: &str, src: S, size: u64, content_hash: Option<String>) -> Result<ProbeInfo, String> {
+    let v = lightcraft_video::probe(src).map_err(|e| e.to_string())?;
+    let captured = v.created.as_deref().and_then(lightcraft_meta::DateTime::parse_iso).map(|d| d.to_iso());
+    let meta = Meta {
+        camera: [v.make.clone().unwrap_or_default(), v.model.clone().unwrap_or_default()].join(" ").trim().to_string(),
+        gps: v.gps,
+        ..Meta::default()
+    };
+    let format = match ext_upper(name).as_str() {
+        "" => "MP4".to_string(),
+        e => e.to_string(),
+    };
+    Ok(ProbeInfo {
+        width: v.width,
+        height: v.height,
+        format,
+        kind: MediaKind::Video,
+        file_size: size,
+        captured,
+        meta,
+        content_hash,
+        duration: Some(v.duration),
+        ..Default::default()
+    })
+}
+
+/// Is `path` a video clip (MP4 / MOV)? Reads 12 bytes.
+pub fn is_video_file(path: &std::path::Path) -> bool {
+    head_of(&path.to_string_lossy()).is_some_and(|h| lightcraft_video::is_video(&h))
+}
+
+/// [`probe_video`] for the clip at `path`, read in place (the header only), with a `content_hash` the caller already has.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn probe_video_at(path: &std::path::Path, content_hash: Option<String>) -> Result<ProbeInfo, String> {
+    let f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let size = f.metadata().map_err(|e| format!("{}: {e}", path.display()))?.len();
+    probe_video(&path.to_string_lossy(), f, size, content_hash)
+}
+
+/// The first bytes of a file, for sniffing without reading it.
+fn head_of(path: &str) -> Option<[u8; 12]> {
+    use std::io::Read;
+    let mut head = [0u8; 12];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    Some(head)
+}
+
+/// [`probe_video`] for a file on disk when it is a video clip (`None` when it is not): the file is hashed in chunks and
+/// its header read in place, never held whole.
+#[cfg(not(target_arch = "wasm32"))]
+fn probe_video_path(path: &str) -> Option<Result<ProbeInfo, String>> {
+    use std::io::Read;
+    if !lightcraft_video::is_video(&head_of(path)?) {
+        return None;
+    }
+    Some((|| {
+        let mut f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+        let size = f.metadata().map_err(|e| format!("{path}: {e}"))?.len();
+        let mut hasher = lightcraft_preview::Hasher128::new();
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            match f.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    hasher.update(buf.get(..n).unwrap_or(&[]));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(format!("{path}: {e}")),
+            }
+        }
+        probe_video(path, f, size, Some(hasher.finish().to_string()))
+    })())
+}
+
+/// A video clip's poster frame as a source image (display orientation, at most about twice `max_edge` before the fit).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn load_video(path: &str, max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
+    let clip = lightcraft_video::Clip::open_path(std::path::Path::new(path)).map_err(|e| e.to_string())?;
+    let img = clip.poster(max_edge).map_err(|e| e.to_string())?;
+    let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
+    Ok((img, SourceInfo::default()))
 }
 
 /// Why a raw that failed to decode should show its embedded preview instead (`Ok`), or the error
@@ -1260,6 +1350,20 @@ fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
 /// yields to them.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize| {
+        // a clip is never read whole: its poster frame is decoded from the file in place (a frame's worth of memory)
+        if head_of(path).is_some_and(|h| lightcraft_video::is_video(&h)) {
+            let hold = |weight| {
+                if crate::memory::is_background() {
+                    crate::memory::work_gate().acquire(weight)
+                } else {
+                    crate::memory::work_gate().acquire_urgent(weight)
+                }
+            };
+            let _permit = hold(VIDEO_WEIGHT);
+            let r = load_video(path, max_edge);
+            crate::memory::release();
+            return r;
+        }
         let len = std::fs::metadata(path).map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX)).unwrap_or(0);
         let gate = crate::memory::work_gate();
         let hold = |weight| if crate::memory::is_background() { gate.acquire(weight) } else { gate.acquire_urgent(weight) };
@@ -1277,6 +1381,11 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
         r
     });
     let probe: FileProbe = Arc::new(|path: &str| {
+        if let Some(r) = probe_video_path(path) {
+            let mut info = r?;
+            info.file_modified = file_modified(path);
+            return Ok(info);
+        }
         let len = std::fs::metadata(path).map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX)).unwrap_or(0);
         let _permit = crate::memory::work_gate().acquire(len);
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
@@ -1286,6 +1395,19 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
     });
     (loader, probe)
 }
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn load_video(_: &str, _: usize) -> Result<(Rgb32f, SourceInfo), String> {
+    Err("video clips need their file on disk".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn probe_video_path(_: &str) -> Option<Result<ProbeInfo, String>> {
+    None
+}
+
+/// What decoding one clip picture counts against the memory gate: the decoder's reference pictures at 4K, and a margin.
+const VIDEO_WEIGHT: usize = 192 << 20;
 
 /// `path`'s modification time as ISO 8601 (see [`ProbeInfo::file_modified`]); `None` when the
 /// filesystem doesn't say or the time is before 1970.

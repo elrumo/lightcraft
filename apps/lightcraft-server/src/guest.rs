@@ -299,6 +299,7 @@ fn describe(f: &Received, bytes: &[u8], now: &str, who: &str) -> Result<Photo, S
     let info = lightcraft_engine::files::probe_bytes(&f.name, bytes)?;
     let mut p = Photo::new(PhotoId(0), Source::File { path: original_path(&f.hash, &f.name) }, &f.name, &info.format, info.width, info.height, now);
     p.kind = info.kind;
+    p.duration = info.duration;
     p.file_size = info.file_size;
     p.captured = info.captured;
     p.meta = info.meta;

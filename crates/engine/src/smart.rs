@@ -169,6 +169,15 @@ pub fn encode_pair(original: &[u8], mini_edge: usize) -> Result<(Vec<u8>, Vec<u8
     Ok((smart, encode(&small, tone, camera_match)?))
 }
 
+/// [`encode_pair`] for a video clip: both previews show its poster frame, decoded from the file in place.
+pub fn encode_pair_video(path: &str, mini_edge: usize) -> Result<(Vec<u8>, Vec<u8>), String> {
+    use lightcraft_raster::resample::{Filter, fit};
+    let (img, _) = crate::files::load_video(path, crate::media::SourceLevel::Preview.max_edge())?;
+    let smart = encode(&img, None, None)?;
+    let small = if img.width.max(img.height) > mini_edge { fit(&img, mini_edge, mini_edge, Filter::Mitchell) } else { img };
+    Ok((smart, encode(&small, None, None)?))
+}
+
 /// Is this a smart preview's bytes (by its header)?
 pub fn is_smart_preview(bytes: &[u8]) -> bool {
     bytes.starts_with(MAGIC)

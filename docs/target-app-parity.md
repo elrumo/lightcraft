@@ -1,6 +1,6 @@
 # Target-app parity: LightCraft vs Adobe Lightroom
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (checklist recount 84.3% of 554 rows: Calibration ✅ → 🟡, the colour mixer fitted to Lightroom exports; a native app moved to its own repository, so its mentions are removed; browser export off the page's thread: new row LR-BEHAV-WEB-EXPORT 🟡, 550 rows; Lens Blur and Depth Range masks: AI table row ⬜ → 🟡; upstream merged up to 0da998f2: checklist 84.3% of 549 rows with the fork's rows counted; RAW: 83% of Adobe's models decode, 38% verified after the camera-coverage sweep #1327) · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (Video: clips import with a poster frame (LR-VID-IMPORT 🟡); no player yet; checklist recount 84.3% of 554 rows: Calibration ✅ → 🟡, the colour mixer fitted to Lightroom exports; a native app moved to its own repository, so its mentions are removed; browser export off the page's thread: new row LR-BEHAV-WEB-EXPORT 🟡, 550 rows; Lens Blur and Depth Range masks: AI table row ⬜ → 🟡; upstream merged up to 0da998f2: checklist 84.3% of 549 rows with the fork's rows counted; RAW: 83% of Adobe's models decode, 38% verified after the camera-coverage sweep #1327) · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop)
 
 The authoritative assessment of how close LightCraft is to Lightroom. The row-by-row checklist is
 [parity-checklist.md](parity-checklist.md); the ranked work list is [gaps.md](gaps.md); deep areas
@@ -78,7 +78,7 @@ from the checklist sections and the deep-dive documents.
 | Merge and HDR | 3% | 85% | 60% | 20–35 h | merge 88% (HDR merge 🟡: AI Denoise on merged DNGs, JPEG response, memory; gap 29), HDR 80% (HDR display on macOS; not on Windows and Linux; the hours are those of the last review) |
 | Views, compare, zoom, culling | 5% | 90% | 70% | 15–30 h | zoom detail P0 gap |
 | Classic output modules (Map, Book, Slideshow, Print, Web, publish, tethering) | 4% | 15% | 10% | 90–150 h | Classic extras 48% counts many small keys; the modules themselves are mostly ⬜ |
-| Video | 1% | 0% | 0% | 25–45 h | catalogued only |
+| Video | 1% | 0% | 0% | 25–45 h | clips import with a poster frame (H.264 / HEVC); no player, trim, edits or export |
 | **Weighted** | 100% | **~77%** | **~61%** (61.5%) | **600–1,100 h** | |
 
 ## AI

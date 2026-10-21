@@ -35,6 +35,7 @@ log = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
+lightcraft-video = { workspace = true, features = ["testdata"] }
 lightcraft-codecs = { workspace = true }
 lightcraft-vision = { workspace = true, features = ["siglip", "onnx", "testing"] }
 lightcraft-raster = { workspace = true }

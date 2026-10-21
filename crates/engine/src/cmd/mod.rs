@@ -46,6 +46,7 @@ mod query;
 pub mod recheck;
 mod slideshow;
 mod sync;
+mod video;
 mod vision;
 mod xmp;
 
@@ -171,6 +172,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(merge::specs());
         v.extend(query::specs());
         v.extend(map::specs());
+        v.extend(video::specs());
         v.extend(vision::specs());
         v.extend(xmp::specs());
         v.extend(preset_files::specs());

@@ -47,6 +47,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("denoise-core", Class::Layer(1)),
     ("denoise", Class::Layer(1)),
     ("heif", Class::Layer(0)),
+    // MP4 / MOV clips: probe and poster frames over FilmCraft's demuxer and decoders (the only crate that may use them)
+    ("video", Class::Layer(1)),
     ("raw", Class::Layer(1)),
     ("codecs", Class::Layer(1)),
     ("meta", Class::Layer(1)),
@@ -123,6 +125,13 @@ pub const UI_CRATES: &[&str] = &["craft-ui", "egui", "eframe", "winit", "egui_ki
 /// First layer allowed to use UI crates.
 pub const UI_MIN_LAYER: u8 = 5;
 
+/// Only this crate may depend on FilmCraft's crates (`filmcraft-*`, one git pin for all of them, docs/video.md): their API
+/// churn stays in one place.
+pub const FILMCRAFT_USERS: &[&str] = &["video"];
+
+/// FilmCraft crates that must not be used at all: `filmcraft-codecs` pulls symphonia (MPL-2.0).
+pub const FILMCRAFT_BANNED: &[&str] = &["filmcraft-codecs"];
+
 pub fn short_name(pkg: &str) -> &str {
     pkg.strip_prefix("lightcraft-").unwrap_or(pkg)
 }
@@ -167,6 +176,8 @@ pub enum Violation {
     StandaloneHasWorkspaceDep { krate: String, dep: String },
     TestkitAsNormalDep { krate: String },
     UiBelowL5 { krate: String, dep: String, layer: u8 },
+    FilmcraftOutsideVideo { krate: String, dep: String },
+    FilmcraftBanned { krate: String, dep: String },
 }
 
 impl std::fmt::Display for Violation {
@@ -187,6 +198,12 @@ impl std::fmt::Display for Violation {
             Violation::UiBelowL5 { krate, dep, layer } => {
                 write!(f, "{krate} (L{layer}) depends on UI crate `{dep}`; UI toolkits are only allowed in L5+")
             }
+            Violation::FilmcraftOutsideVideo { krate, dep } => {
+                write!(f, "{krate}: depends on FilmCraft's `{dep}`; only lightcraft-video may (docs/video.md)")
+            }
+            Violation::FilmcraftBanned { krate, dep } => {
+                write!(f, "{krate}: `{dep}` is not allowed (it pulls symphonia, MPL-2.0; docs/video.md)")
+            }
         }
     }
 }
@@ -195,6 +212,14 @@ impl std::fmt::Display for Violation {
 pub fn check(crates: &[Crate]) -> Vec<Violation> {
     let mut out = Vec::new();
     for c in crates {
+        // (apps and tooling too)
+        for d in c.deps.iter().filter(|d| d.name.starts_with("filmcraft-")) {
+            if FILMCRAFT_BANNED.contains(&d.name.as_str()) {
+                out.push(Violation::FilmcraftBanned { krate: c.name.clone(), dep: d.name.clone() });
+            } else if !FILMCRAFT_USERS.contains(&short_name(&c.name)) {
+                out.push(Violation::FilmcraftOutsideVideo { krate: c.name.clone(), dep: d.name.clone() });
+            }
+        }
         let Some(class) = classify(&c.name) else {
             out.push(Violation::Unregistered { krate: c.name.clone() });
             continue;
@@ -363,6 +388,17 @@ mod tests {
         retain_tracked(&mut meta, Path::new("/repo"), &tracked);
         let names: Vec<String> = from_metadata(&meta).unwrap().into_iter().map(|c| c.name).collect();
         assert_eq!(names, ["elsewhere", "lightcraft-geom"]);
+    }
+
+    #[test]
+    fn filmcraft_is_for_the_video_crate_alone() {
+        assert!(check(&[c("lightcraft-video", &[("filmcraft-h264", Normal, false), ("filmcraft-h264enc", Dev, false)])]).is_empty());
+        let v = check(&[c("lightcraft-engine", &[("filmcraft-isobmff", Normal, false)])]);
+        assert!(matches!(v[..], [Violation::FilmcraftOutsideVideo { .. }]), "{v:?}");
+        let v = check(&[c("lightcraft-server", &[("filmcraft-h264", Normal, false)])]);
+        assert!(matches!(v[..], [Violation::FilmcraftOutsideVideo { .. }]), "apps too: {v:?}");
+        let v = check(&[c("lightcraft-video", &[("filmcraft-codecs", Normal, false)])]);
+        assert!(matches!(v[..], [Violation::FilmcraftBanned { .. }]), "{v:?}");
     }
 
     #[test]

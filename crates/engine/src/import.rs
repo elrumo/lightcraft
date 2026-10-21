@@ -41,6 +41,8 @@ pub const EXTENSIONS: &[&str] = &[
     // failed with the reason ("HEIC/HEIF support isn't included in this build").
     "heic", "heif", "avif", // no AV1 decoder yet: reported as failed, like a HEIC without the feature
     "iiq", "crw", "mrw", "x3f", "kdc", "mos", "erf", "3fr", "fff", "mef",
+    // Video clips: listed, played and given a poster frame by `lightcraft-video` (H.264 and HEVC in MP4 / MOV).
+    "mp4", "m4v", "mov",
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1523,6 +1525,7 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 let name = Path::new(&stored).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
                 let mut p = Photo::new(id, Source::File { path: stored }, &name, &info.format, info.width, info.height, &now);
                 p.kind = info.kind;
+                p.duration = info.duration;
                 p.file_size = info.file_size;
                 // no date in the file or its sidecar: the file's own date, as Lightroom does
                 let dated = info.captured.is_some();

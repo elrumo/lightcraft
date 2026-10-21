@@ -1,0 +1,28 @@
+[package]
+name = "lightcraft-video"
+description = "Video clips for LightCraft: probe and poster-frame decode of MP4 / MOV (FilmCraft's pure-Rust demuxer and H.264 / HEVC decoders, panic-guarded)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lightcraft-raster = { workspace = true }
+lightcraft-color = { workspace = true }
+filmcraft-isobmff = { workspace = true }
+# Patent-encumbered codecs are features so a distributor can drop them (docs/video.md).
+filmcraft-h264 = { workspace = true, optional = true }
+filmcraft-hevc = { workspace = true, optional = true }
+# `lightcraft_video::testdata`: synthetic H.264 clips for the tests of this crate and of the ones above it.
+filmcraft-h264enc = { workspace = true, optional = true }
+
+[features]
+default = ["h264", "hevc"]
+h264 = ["dep:filmcraft-h264"]
+hevc = ["dep:filmcraft-hevc"]
+testdata = ["dep:filmcraft-h264enc"]
+
+[dev-dependencies]
+filmcraft-h264enc = { workspace = true }
+
+[lints]
+workspace = true

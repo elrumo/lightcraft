@@ -364,8 +364,15 @@ fn hash_file(path: &Path) -> Result<String, String> {
 fn describe(file: &Found, hash: &str, bytes: &[u8], now: &str) -> Result<(Photo, Option<SidecarData>), String> {
     let name = file.key.rsplit('/').next().unwrap_or(&file.key).to_string();
     let info = lightcraft_engine::guard::catch("reading a photo", || lightcraft_engine::files::probe_bytes(&name, bytes))??;
+    describe_info(file, hash, info, now)
+}
+
+/// A photo for a new file whose header has been read (`info`).
+fn describe_info(file: &Found, hash: &str, info: lightcraft_engine::media::ProbeInfo, now: &str) -> Result<(Photo, Option<SidecarData>), String> {
+    let name = file.key.rsplit('/').next().unwrap_or(&file.key).to_string();
     let mut p = Photo::new(PhotoId(0), Source::File { path: original_path(hash, &name) }, &name, &info.format, info.width, info.height, now);
     p.kind = info.kind;
+    p.duration = info.duration;
     p.file_size = info.file_size;
     p.captured = info.captured;
     p.meta = info.meta;
@@ -431,6 +438,12 @@ fn read(file: Found, known: &Known, found: &HashSet<String>, now: &str) -> FileR
         None => (hash_file(&file.path), None),
     };
     let probed = match &hash {
+        // a clip is described from its header in place, whatever its size: it is never read whole
+        Ok(h) if known.needs_description(&file.key, h, found) && lightcraft_engine::files::is_video_file(&file.path) => Some(
+            lightcraft_engine::guard::catch("reading a video", || lightcraft_engine::files::probe_video_at(&file.path, Some(h.clone())))
+                .and_then(|r| r)
+                .and_then(|info| describe_info(&file, h, info, now)),
+        ),
         Ok(h) if known.needs_description(&file.key, h, found) => {
             // a big file is read (whole, or a TIFF in part) one at a time: they take the memory
             let _one = bytes.is_none().then(|| lock(&BIG));

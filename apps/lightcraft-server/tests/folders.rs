@@ -793,3 +793,64 @@ fn check_files_finds_a_photo_file_cut_short() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Clips in a library folder are photos of kind Video with their length, shown by a poster frame the server builds
+/// (it never reads a clip whole), and a clip nobody can decode is still catalogued instead of being dropped.
+#[test]
+fn video_clips_in_a_library_folder_are_listed_with_posters() {
+    let root = temp("video");
+    let photos = root.join("nas/phone");
+    std::fs::create_dir_all(&photos).unwrap();
+    let clip = lightcraft_video::testdata::clip(20, 10, 2);
+    std::fs::write(photos.join("IMG_0001.MP4"), &clip).unwrap();
+    std::fs::write(photos.join("IMG_0002.MOV"), &clip).unwrap();
+    write_png(&photos.join("pic.png"), 1);
+    // a damaged clip: reported as a failure, the scan goes on
+    std::fs::write(photos.join("cut.mp4"), &clip[..clip.len() / 3]).unwrap();
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Phone")).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    let server = Server::start(cfg).unwrap();
+    let url = format!("http://{}", server.addr());
+    let st = scanned(&server, 0);
+    assert_eq!((st.files, st.added, st.failed), (4, 3, 1), "{st:?}");
+
+    let mut dev = Session::new().with_fs();
+    dev.open_library(root.join("device"), false).unwrap();
+    dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
+    sync(&mut dev);
+    assert_eq!(dev.catalog.len(), 3);
+    let mp4 = by_place(&dev, "Phone/IMG_0001.MP4").expect("the clip is a photo");
+    assert_eq!(mp4.kind, lightcraft_engine::catalog::MediaKind::Video);
+    assert_eq!((mp4.width, mp4.height, mp4.format.as_str()), (128, 96, "MP4"));
+    assert!(mp4.duration.is_some_and(|d| (d - 2.0).abs() < 0.01), "{:?}", mp4.duration);
+    let mov = by_place(&dev, "Phone/IMG_0002.MOV").expect("the .mov too");
+    assert_eq!(mov.kind, lightcraft_engine::catalog::MediaKind::Video);
+    assert_eq!(by_place(&dev, "Phone/pic.png").unwrap().kind, lightcraft_engine::catalog::MediaKind::Image);
+
+    // the server built both previews of the clips from their poster frames, and copied nothing
+    let blobs = data.join("users/ann/blobs");
+    assert_eq!((files_in(&blobs.join("original")), files_in(&blobs.join("smart")), files_in(&blobs.join("mini"))), (0, 2, 2));
+    let id = mp4.id;
+    dev.thumb_job(id, 256);
+    sync(&mut dev);
+    assert!(dev.render_now(id, 64, 64).is_ok(), "renders from the poster the server built");
+    // the clip is served from its folder, a range at a time
+    let hash = dev.catalog.photo(id).unwrap().content_hash.clone().unwrap();
+    let token =
+        serde_json::from_slice::<Value>(&std::fs::read(root.join("device/sync.json")).unwrap()).unwrap()["token"].as_str().unwrap().to_string();
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let mut r = agent
+        .get(format!("{url}/api/blobs/original/{hash}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Range", "bytes=0-99")
+        .call()
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 206);
+    assert_eq!(r.body_mut().read_to_vec().unwrap(), clip[..100].to_vec());
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}

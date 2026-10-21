@@ -2969,9 +2969,14 @@ pub fn render_on_server(target: &RenderTarget, request: &proto::Render, wait: &R
 /// Build a photo's smart and mini previews from its original (decodes it).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_proxies(original: &str, smart: &str, mini: &str) -> std::result::Result<(), String> {
-    // (a TIFF of several GB, mostly layers, is read in part)
-    let bytes = crate::files::read_file(Path::new(original))?;
-    let (s, m) = crate::smart::encode_pair(&bytes, MINI_EDGE)?;
+    // (a clip is never read whole: its poster frame is decoded from the file in place)
+    let (s, m) = if crate::files::is_video_file(Path::new(original)) {
+        crate::smart::encode_pair_video(original, MINI_EDGE)?
+    } else {
+        // (a TIFF of several GB, mostly layers, is read in part)
+        let bytes = crate::files::read_file(Path::new(original))?;
+        crate::smart::encode_pair(&bytes, MINI_EDGE)?
+    };
     let write = |path: &str, b: Vec<u8>| lightcraft_catalog::safe_file::write_atomic(Path::new(path), &b).map_err(|e| format!("{path}: {e}"));
     if let Some(dir) = Path::new(smart).parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;

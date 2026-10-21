@@ -2117,6 +2117,8 @@ pub struct ProbeInfo {
     /// file's EXIF orientation, as the decoder applies it); `None` when not known. Lightroom's
     /// saved Upright matrices are in the stored frame ([`crate::crs::SavedUpright`]).
     pub orientation: Option<lightcraft_geom::Orientation>,
+    /// A video clip's length in seconds (`None` for a picture).
+    pub duration: Option<f64>,
 }
 
 impl ProbeInfo {
