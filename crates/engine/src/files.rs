@@ -292,6 +292,21 @@ pub fn probe_video<S: lightcraft_video::ByteSource>(name: &str, src: S, size: u6
     })
 }
 
+/// `path` with a time in the clip after it: a source path that names one picture of a clip rather than its poster frame
+/// (`media::source_ref` makes it for a clip with a poster frame of its own, the loader reads it). A NUL separates them: no
+/// file name has one.
+pub fn at_time(path: &str, seconds: f64) -> String {
+    format!("{path}\0{seconds}")
+}
+
+/// A source path split into the file and the time in it, if it has one ([`at_time`]).
+pub fn split_time(path: &str) -> (&str, Option<f64>) {
+    match path.split_once('\0') {
+        Some((file, t)) => (file, t.parse::<f64>().ok().filter(|t| t.is_finite() && *t >= 0.0)),
+        None => (path, None),
+    }
+}
+
 /// Is `path` a video clip (MP4 / MOV)? Reads 12 bytes.
 pub fn is_video_file(path: &std::path::Path) -> bool {
     head_of(&path.to_string_lossy()).is_some_and(|h| lightcraft_video::is_video(&h))
@@ -342,9 +357,13 @@ fn probe_video_path(path: &str) -> Option<Result<ProbeInfo, String>> {
 
 /// A video clip's poster frame as a source image (display orientation, at most about twice `max_edge` before the fit).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn load_video(path: &str, max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
+pub(crate) fn load_video(path: &str, max_edge: usize, time: Option<f64>) -> Result<(Rgb32f, SourceInfo), String> {
     let clip = lightcraft_video::Clip::open_path(std::path::Path::new(path)).map_err(|e| e.to_string())?;
-    let img = clip.poster(max_edge).map_err(|e| e.to_string())?;
+    let img = match time {
+        Some(t) => clip.frame_at(t, max_edge),
+        None => clip.poster(max_edge),
+    }
+    .map_err(|e| e.to_string())?;
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
     Ok((img, SourceInfo::default()))
 }
@@ -1351,6 +1370,7 @@ fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize| {
         // a clip is never read whole: its poster frame is decoded from the file in place (a frame's worth of memory)
+        let (path, time) = split_time(path);
         if head_of(path).is_some_and(|h| lightcraft_video::is_video(&h)) {
             let hold = |weight| {
                 if crate::memory::is_background() {
@@ -1360,7 +1380,7 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
                 }
             };
             let _permit = hold(VIDEO_WEIGHT);
-            let r = load_video(path, max_edge);
+            let r = load_video(path, max_edge, time);
             crate::memory::release();
             return r;
         }
@@ -1397,7 +1417,7 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn load_video(_: &str, _: usize) -> Result<(Rgb32f, SourceInfo), String> {
+pub(crate) fn load_video(_: &str, _: usize, _: Option<f64>) -> Result<(Rgb32f, SourceInfo), String> {
     Err("video clips need their file on disk".to_string())
 }
 

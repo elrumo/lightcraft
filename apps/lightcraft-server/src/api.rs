@@ -6,6 +6,7 @@
 //! uploaded original is hashed while it streams to a temporary file and only kept when the hash is
 //! the one its URL names. Nothing here panics on what a client sends.
 
+use std::cell::Cell;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -92,6 +93,11 @@ pub struct UserLib {
     pub(crate) index: crate::folders::Index,
     /// The last `GET /api/usage` answer and when it was made.
     usage: Option<(Instant, proto::Usage)>,
+    /// The library counted by kind, and the [`Catalog::library_revision`] it was counted at (a pass over every photo,
+    /// so it is redone only when the library changed).
+    tally: Cell<Option<(u64, crate::stats::Tally)>>,
+    /// The lighter copies of videos on disk and when they were listed.
+    copies: Option<(Instant, Arc<Vec<(String, u64)>>)>,
     _lock: LibraryLock,
 }
 
@@ -109,13 +115,20 @@ impl UserLib {
         };
         let docs = crate::docs::Docs::load(&dir).map_err(|e| format!("{user}'s documents: {e}"))?;
         let index = crate::folders::Index::load(&dir);
-        Ok(UserLib { core, presets, docs, dir, index, usage: None, _lock: lock })
+        Ok(UserLib { core, presets, docs, dir, index, usage: None, tally: Cell::new(None), copies: None, _lock: lock })
     }
 
-    /// (photos, albums) in the library.
-    pub(crate) fn counts(&self) -> (usize, usize) {
+    /// What the library holds by kind: photos, videos (neither counts Recently Deleted or virtual copies) and albums.
+    pub(crate) fn tally(&self) -> crate::stats::Tally {
         let c = self.core.catalog();
-        (c.len(), c.albums().count())
+        match self.tally.get() {
+            Some((at, t)) if at == c.library_revision => t,
+            _ => {
+                let t = crate::stats::tally(c);
+                self.tally.set(Some((c.library_revision, t)));
+                t
+            }
+        }
     }
 
     /// The library's catalog.
@@ -396,15 +409,16 @@ fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
         {
             return json(200, &json!(u));
         }
-        let (photos, albums) = l.counts();
         let by_folder = l.index.folder_files();
         let folders = by_folder.values().fold(proto::Files::default(), |all, f| all.plus(*f));
         // where each library folder is on the server, with the bytes it holds
         let places: Vec<(PathBuf, u64)> =
             by_folder.iter().filter_map(|(name, f)| Some((PathBuf::from(l.index.roots.get(*name)?), f.bytes))).collect();
-        (l.dir.clone(), proto::Usage { photos: photos as u64, albums: albums as u64, folders, ..Default::default() }, places)
+        (l.dir.clone(), proto::Usage { folders, ..Default::default() }, places)
     };
     // (the folders are walked without the library locked: pushes and pulls go on meanwhile)
+    let (tally, video) = library_stats(st, &who.user, l);
+    (u.photos, u.videos, u.albums, u.video) = (tally.photos as u64, tally.videos as u64, tally.albums as u64, video);
     let blobs = dir.join("blobs");
     u.original = blob_usage(&blobs, "original");
     u.smart = blob_usage(&blobs, "smart");
@@ -422,6 +436,20 @@ fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
     u.devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(&who.user).len() as u64;
     l.lock().unwrap_or_else(PoisonError::into_inner).usage = Some((Instant::now(), u.clone()));
     json(200, &json!(u))
+}
+
+/// A user's library by kind, and what their videos take with the lighter copies the server keeps of them. The copies
+/// are listed without the library locked (pushes and pulls go on meanwhile) and reused for [`USAGE_TTL`].
+pub(crate) fn library_stats(st: &State, user: &str, l: &Mutex<UserLib>) -> (crate::stats::Tally, proto::VideoUsage) {
+    let cached = l.lock().unwrap_or_else(PoisonError::into_inner).copies.as_ref().filter(|(at, _)| at.elapsed() < USAGE_TTL).map(|(_, c)| c.clone());
+    let copies = cached.unwrap_or_else(|| {
+        let found = Arc::new(crate::stats::copies(&accounts::user_dir(&st.data, user).join("blobs")));
+        l.lock().unwrap_or_else(PoisonError::into_inner).copies = Some((Instant::now(), found.clone()));
+        found
+    });
+    let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+    let tally = l.tally();
+    (tally, crate::stats::video_usage(l.catalog(), &tally, &copies))
 }
 
 /// What the server is doing for this user right now: scanning their library folders, building previews

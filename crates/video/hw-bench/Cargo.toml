@@ -1,0 +1,23 @@
+[package]
+name = "lightcraft-video-hw-bench"
+description = "Measurement only (docs/video.md, Hardware video): software versus VideoToolbox decode and encode of procedural clips. Not part of the workspace."
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Its own workspace root, on purpose: `filmcraft-platform` pulls `filmcraft-codecs` (symphonia, MPL-2.0), `filmcraft-export` and
+# `unsafe` FFI, none of which may enter the product's Cargo.lock (`cargo xtask layers`). Building this crate leaves the
+# product's lock and dependency tree untouched. Run it with `cargo run --release --example hw_agent_bench` from this folder.
+[workspace]
+
+[dependencies]
+lightcraft-video = { path = ".." }
+# The same rev as the product's pin (the root Cargo.toml, FILMCRAFT_REV): the bench measures what the product would decode with.
+filmcraft-platform = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
+filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
+filmcraft-frame = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
+filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
+filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
+# Process CPU time (user + system, every thread) next to the wall clock: it collapses when the media engine does the work.
+cpu-time = "1"

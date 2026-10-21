@@ -187,3 +187,114 @@ fn a_picture_with_short_planes_is_refused() {
     h.bit_depth = 31;
     assert!(to_working(&h, 64, 0).is_err());
 }
+
+#[cfg(feature = "encode")]
+mod encode {
+    use std::io::Cursor;
+
+    use super::*;
+    use crate::testdata::clip_with_sound;
+    use crate::{EncodeOptions, Mp4Encoder};
+
+    /// 8-bit sRGB of a decoded picture (the working space is linear Rec.2020; a grey is the same grey in any of them).
+    fn srgb(img: &lightcraft_raster::Rgb32f) -> lightcraft_raster::Rgba8 {
+        let m = lightcraft_color::WORKING.to_space(&lightcraft_color::SRGB).to_f32();
+        let mut out = lightcraft_raster::Rgba8::new(img.width, img.height);
+        for (o, px) in out.data.iter_mut().zip(&img.data) {
+            let q = [0, 1, 2].map(|r| m[r][0] * px[0] + m[r][1] * px[1] + m[r][2] * px[2]);
+            let e = lightcraft_color::transfer::encode_srgb8;
+            *o = [e(q[0]), e(q[1]), e(q[2]), 255];
+        }
+        out
+    }
+
+    fn opts() -> EncodeOptions {
+        EncodeOptions { width: W, height: H, fps: 10.0, crf: 20.0, bframes: 2 }
+    }
+
+    #[test]
+    fn pictures_in_a_range_come_in_the_order_they_are_shown() {
+        let c = Clip::open(clip(20, 10, 2)).unwrap();
+        let mut seen = Vec::new();
+        c.for_each_frame(0.35, 1.25, 64, |t, img| {
+            seen.push((t, mean_red(&img)));
+            Ok(true)
+        })
+        .unwrap();
+        // pictures 4 to 12 (0.4 s to 1.2 s)
+        assert_eq!(seen.len(), 9, "{seen:?}");
+        assert!(seen.windows(2).all(|w| w[0].0 < w[1].0 && w[0].1 < w[1].1), "{seen:?}");
+        assert!((seen[0].0 - 0.4).abs() < 0.01 && (seen[8].0 - 1.2).abs() < 0.01, "{seen:?}");
+        // the caller can stop it
+        let mut n = 0;
+        c.for_each_frame(0.0, 2.0, 64, |_, _| {
+            n += 1;
+            Ok(n < 3)
+        })
+        .unwrap();
+        assert_eq!(n, 3);
+        // an error from the caller comes back
+        assert!(c.for_each_frame(0.0, 2.0, 64, |_, _| Err(Error::Unsupported("no".into()))).is_err());
+    }
+
+    #[test]
+    fn a_clip_written_again_has_the_same_pictures_and_length() {
+        let c = Clip::open(clip(20, 10, 2)).unwrap();
+        let mut enc = Mp4Encoder::new(Cursor::new(Vec::new()), opts(), None).unwrap();
+        c.for_each_frame(0.0, 2.0, 512, |t, img| enc.push(&srgb(&img), t).map(|()| true)).unwrap();
+        let bytes = enc.finish().unwrap().into_inner();
+        let info = probe(bytes.clone()).unwrap();
+        assert_eq!((info.width, info.height, info.codec, info.frames), (W as u32, H as u32, "h264", 20), "{info:?}");
+        assert!((info.duration - 2.0).abs() < 0.05, "{}", info.duration);
+        // and the pictures are the same ones, in the same order
+        let (a, b) = (Clip::open(bytes).unwrap(), Clip::open(clip(20, 10, 2)).unwrap());
+        for t in [0.0, 0.5, 1.0, 1.5, 1.9] {
+            let (x, y) = (mean_red(&a.frame_at(t, 64).unwrap()), mean_red(&b.frame_at(t, 64).unwrap()));
+            assert!((x - y).abs() < 0.02, "{t}: {x} vs {y}");
+        }
+    }
+
+    #[test]
+    fn a_trimmed_clip_keeps_its_part_and_its_sound() {
+        let c = Clip::open(clip_with_sound(20, 10, 2)).unwrap();
+        assert!(c.info().has_audio);
+        let sound = c.audio_track().expect("a sound track");
+        let mut enc = Mp4Encoder::new(Cursor::new(Vec::new()), opts(), Some(&sound)).unwrap();
+        c.for_each_frame(0.5, 1.5, 512, |t, img| enc.push(&srgb(&img), t - 0.5).map(|()| true)).unwrap();
+        let copied = enc.copy_audio(&c, &sound, 0.5, 1.5).unwrap();
+        // a second of 48 kHz in 1024-frame samples
+        assert!((45..=48).contains(&copied), "{copied}");
+        let bytes = enc.finish().unwrap().into_inner();
+        let out = Clip::open(bytes).unwrap();
+        let i = out.info();
+        assert_eq!(i.frames, 10, "{i:?}");
+        assert!((i.duration - 1.0).abs() < 0.06, "{}", i.duration);
+        assert!(i.has_audio);
+        // it starts at the 5th picture of the original
+        let first = mean_red(&out.frame_at(0.0, 64).unwrap());
+        let original = mean_red(&c.frame_at(0.5, 64).unwrap());
+        assert!((first - original).abs() < 0.02, "{first} vs {original}");
+    }
+
+    #[test]
+    fn the_encoder_refuses_what_it_cannot_write() {
+        for bad in [EncodeOptions { width: 127, ..opts() }, EncodeOptions { height: 0, ..opts() }, EncodeOptions { fps: 0.0, ..opts() }, EncodeOptions { fps: f64::NAN, ..opts() }] {
+            assert!(Mp4Encoder::new(Cursor::new(Vec::new()), bad, None).is_err(), "{bad:?}");
+        }
+        let mut enc = Mp4Encoder::new(Cursor::new(Vec::new()), opts(), None).unwrap();
+        // a picture of another size, a time that is not one
+        assert!(enc.push(&lightcraft_raster::Rgba8::new(64, 48), 0.0).is_err());
+        assert!(enc.push(&lightcraft_raster::Rgba8::new(W, H), f64::NAN).is_err());
+        assert!(enc.push(&lightcraft_raster::Rgba8::new(W, H), -1.0).is_err());
+        // nothing pushed: nothing to finish
+        assert!(enc.finish().is_err());
+    }
+
+    #[test]
+    fn one_picture_is_a_clip() {
+        let mut enc = Mp4Encoder::new(Cursor::new(Vec::new()), EncodeOptions { bframes: 0, ..opts() }, None).unwrap();
+        enc.push(&lightcraft_raster::Rgba8::from_fn(W, H, |_, _| [200, 100, 50, 255]), 0.0).unwrap();
+        let info = probe(enc.finish().unwrap().into_inner()).unwrap();
+        assert_eq!(info.frames, 1);
+    }
+}

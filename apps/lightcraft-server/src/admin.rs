@@ -1006,20 +1006,24 @@ fn users(st: &State) -> AdminResult {
     let mut out = Vec::new();
     for (name, u) in &f.users {
         let devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(name).len();
-        let (photos, albums, in_folders) = match crate::api::lib(st, name) {
+        let (tally, video, in_folders) = match crate::api::lib(st, name) {
             Ok(l) => {
-                let l = l.lock().unwrap_or_else(PoisonError::into_inner);
-                let (photos, albums) = l.counts();
-                (photos, albums, l.index.folder_total().bytes)
+                let (tally, video) = crate::api::library_stats(st, name, &l);
+                let in_folders = l.lock().unwrap_or_else(PoisonError::into_inner).index.folder_total().bytes;
+                (tally, video, in_folders)
             }
             Err(e) => {
                 log::error!("{e}");
-                (0, 0, 0)
+                Default::default()
             }
         };
         let folders: Vec<Value> = u.folders.iter().map(|f| json!({"name": f.name, "path": f.path})).collect();
         out.push(json!({
-            "name": name, "admin": u.admin, "photos": photos, "albums": albums, "devices": devices,
+            "name": name, "admin": u.admin, "photos": tally.photos, "albums": tally.albums, "devices": devices,
+            // the videos (not in "photos"): how many, their files by the sizes the library knows, the lighter copies the server
+            // keeps of them (these are among "bytes") and what those saved
+            "videos": tally.videos, "videoBytes": video.originals.bytes, "videoFiles": video.originals.files,
+            "videoCopies": video.encoded.files, "videoCopyBytes": video.encoded.bytes, "videoSaved": video.saved,
             // what their photos take on the server in all: the files kept for them (counted in the background:
             // null until they are) and the photos in their library folders, which are only read
             "bytes": st.sizes.get(name).map(|kept| kept.saturating_add(in_folders)), "folderBytes": in_folders,

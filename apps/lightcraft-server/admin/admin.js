@@ -143,6 +143,18 @@ function storageParts(u) {
   return fixed(u.bytes - u.folderBytes) + ' kept by LightCraft · ' + fixed(u.folderBytes) + ' in library folders';
 }
 
+/**
+ * What a user's videos take: how many, their own files by the sizes the library knows, and, once the server keeps lighter
+ * copies of them, those copies and the room they saved. Videos are not counted among the photos.
+ */
+function videoParts(u) {
+  if (!u.videos) return '';
+  const fixed = (x) => bytes(x).replace(' ', '\u00a0');
+  const parts = [fixed(u.videoBytes || 0) + ' of originals'];
+  if (u.videoCopies) parts.push(plural(u.videoCopies, 'lighter copy', 'lighter copies') + ' (' + fixed(u.videoCopyBytes) + ')', fixed(u.videoSaved) + ' saved');
+  return parts.join(' · ');
+}
+
 function ago(secs) {
   const d = secs - Date.now() / 1000;
   for (const [u, s] of [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]]) {
@@ -705,6 +717,7 @@ function showOverview([s, users, limits]) {
   setMe(s.me);
   $('stUsers').textContent = n(users.length);
   $('stPhotos').textContent = n(users.reduce((a, u) => a + u.photos, 0));
+  $('stVideos').textContent = n(users.reduce((a, u) => a + (u.videos || 0), 0));
   $('stDevices').textContent = n(users.reduce((a, u) => a + u.devices, 0));
   $('stFree').textContent = s.disk ? bytes(s.disk.free) : '—';
   $('stDisk').hidden = !s.disk;
@@ -749,7 +762,7 @@ function showUsers([users]) {
   recount(users);
   const body = $('users').querySelector('tbody');
   body.replaceChildren();
-  if (!users.length) body.append(emptyRow(6, 'users', 'No users yet. Add the people who use this server.'));
+  if (!users.length) body.append(emptyRow(7, 'users', 'No users yet. Add the people who use this server.'));
   for (const u of users) {
     const href = '#/users/' + enc(u.name);
     const sub = [u.admin && 'Administrator', u.name === me && 'You'].filter(Boolean).join(' · ');
@@ -760,6 +773,7 @@ function showUsers([users]) {
         { class: 'link', onclick: (e) => e.target.closest('a') || (location.hash = href) },
         el('td', {}, who),
         el('td', { class: 'num' }, n(u.photos)),
+        el('td', { class: 'num opt', title: videoParts(u) }, n(u.videos)),
         el('td', { class: 'num opt' }, n(u.albums)),
         el('td', { class: 'num opt' }, n(u.devices)),
         el('td', { class: 'num', title: storageParts(u) }, size(u.bytes)),
@@ -832,6 +846,8 @@ function showUser(name, users) {
   if (name === me) role.append(badge('You'));
   $('uRole').replaceChildren(role);
   $('uPhotos').textContent = n(u.photos);
+  $('uVideos').textContent = n(u.videos);
+  $('uVideosNote').textContent = videoParts(u);
   $('uAlbums').textContent = n(u.albums);
   $('uDevices').textContent = n(u.devices);
   $('uBytes').textContent = size(u.bytes);
@@ -1378,6 +1394,11 @@ function showStorage([s, users]) {
     fill($('diskUsed').parentElement, f);
     $('diskFree').textContent = bytes(s.disk.free) + ' free of ' + bytes(s.disk.total) + ', on the disk that holds ' + s.data + '.';
   }
+  const total = (key) => users.reduce((a, u) => a + (u[key] || 0), 0);
+  $('libraryLine').textContent = users.length
+    ? [plural(total('photos'), 'photo', 'photos'), plural(total('videos'), 'video', 'videos')].join(' · ') +
+      (total('videos') ? ' · ' + videoParts({ videos: 1, videoBytes: total('videoBytes'), videoCopies: total('videoCopies'), videoCopyBytes: total('videoCopyBytes'), videoSaved: total('videoSaved') }) : '')
+    : '';
   const list = $('usage');
   const sorted = users.slice().sort((a, b) => (b.bytes || 0) - (a.bytes || 0));
   const top = sorted.length ? sorted[0].bytes : 0;
@@ -1385,7 +1406,7 @@ function showStorage([s, users]) {
   if (!sorted.length) list.append(el('li', { class: 'muted' }, 'No users yet.'));
   for (const u of sorted) {
     const meter = el('div', { class: 'meter' }, el('div', {}));
-    list.append(el('li', { title: storageParts(u) }, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, size(u.bytes))));
+    list.append(el('li', { title: [storageParts(u), videoParts(u)].filter(Boolean).join(' · ') }, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, size(u.bytes))));
     meter.firstElementChild.style.width = (top ? (100 * (u.bytes || 0)) / top : 0).toFixed(1) + '%';
   }
 }

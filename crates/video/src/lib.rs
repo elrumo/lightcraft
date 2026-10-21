@@ -18,6 +18,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod decode;
+#[cfg(feature = "encode")]
+mod encode;
 mod info;
 /// Synthetic clips, for the tests of this crate and the ones above it (feature `testdata`).
 #[cfg(any(test, feature = "testdata"))]
@@ -26,6 +28,8 @@ pub mod testdata;
 mod yuv;
 
 pub use decode::Clip;
+#[cfg(feature = "encode")]
+pub use encode::{EncodeOptions, Mp4Encoder};
 pub use filmcraft_isobmff::ByteSource;
 #[cfg(not(target_arch = "wasm32"))]
 pub use info::probe_path;

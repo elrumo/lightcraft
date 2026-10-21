@@ -1,5 +1,14 @@
 # What's new in LightCraft
 
+## 2026-10-22
+
+### iPhone ProRAW previews as bright as the original
+- An iPhone ProRAW shown from its smart preview (its original offline, or on a device that only has the sync server's
+  previews) no longer looks darker than the photo itself: the preview now keeps the photo's local tone mapping. On a
+  backlit iPhone 17 Pro ProRAW the preview rendered at a mean level of 81 against 99 for the original. Previews built
+  before this keep the old look until they are built again (Build Smart Previews after discarding them, or Rebuild
+  all previews on the server's Processing page).
+
 ## 2026-10-21
 
 ### Libraries on a network share

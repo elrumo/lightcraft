@@ -51,6 +51,7 @@ pub mod render;
 pub mod sensitive;
 pub mod server_presets;
 pub mod shares;
+mod stats;
 pub mod switch;
 pub mod throttle;
 pub mod usage;

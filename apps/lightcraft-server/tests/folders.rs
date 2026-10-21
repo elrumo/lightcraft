@@ -809,6 +809,7 @@ fn video_clips_in_a_library_folder_are_listed_with_posters() {
     std::fs::write(photos.join("cut.mp4"), &clip[..clip.len() / 3]).unwrap();
     let data = root.join("data");
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::set_admin(&data, "ann", true).unwrap();
     accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Phone")).unwrap();
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
@@ -830,11 +831,35 @@ fn video_clips_in_a_library_folder_are_listed_with_posters() {
     let mov = by_place(&dev, "Phone/IMG_0002.MOV").expect("the .mov too");
     assert_eq!(mov.kind, lightcraft_engine::catalog::MediaKind::Video);
     assert_eq!(by_place(&dev, "Phone/pic.png").unwrap().kind, lightcraft_engine::catalog::MediaKind::Image);
+    let (id, hash) = (mp4.id, mp4.content_hash.clone().unwrap());
+
+    // the library counted by kind: the clips are not among the photos, their own files add up, and the server's lighter copy
+    // of one (made up here: 1000 bytes under blobs/video) is among what it keeps and shows what it saved
+    let copy_dir = data.join("users/ann/blobs/video").join(&hash[..2]);
+    std::fs::create_dir_all(&copy_dir).unwrap();
+    std::fs::write(copy_dir.join(&hash), vec![0u8; 1000]).unwrap();
+    let u = dev.execute("sync.usage", &json!({"refresh": true})).unwrap();
+    let server_says = &u["server"];
+    assert_eq!((server_says["photos"].as_u64(), server_says["videos"].as_u64()), (Some(1), Some(2)), "{u}");
+    assert_eq!(server_says["video"]["originals"], json!({"files": 2, "bytes": 2 * clip.len()}), "{u}");
+    assert_eq!(server_says["video"]["encoded"], json!({"files": 1, "bytes": 1000}), "{u}");
+    // (both clips are the same bytes: one copy stands for them, and saves what it is smaller than the clip once)
+    assert_eq!(server_says["video"]["saved"].as_u64(), Some(clip.len() as u64 - 1000), "{u}");
+    let usage: Usage = serde_json::from_value(server_says.clone()).unwrap();
+    assert!(usage.stored() >= 1000, "the lighter copy is among the files the server keeps: {u}");
+    // the admin page's Users list says the same
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let mut r = agent.get(format!("{url}/api/admin/users")).header("Authorization", format!("Bearer {}", admin_token(&url))).call().unwrap();
+    let users: Value = serde_json::from_slice(&r.body_mut().read_to_vec().unwrap()).unwrap();
+    let ann = users.as_array().unwrap().iter().find(|x| x["name"] == "ann").unwrap();
+    assert_eq!((ann["photos"].as_u64(), ann["videos"].as_u64()), (Some(1), Some(2)), "{users}");
+    assert_eq!((ann["videoBytes"].as_u64(), ann["videoFiles"].as_u64()), (Some(2 * clip.len() as u64), Some(2)), "{users}");
+    assert_eq!((ann["videoCopies"].as_u64(), ann["videoCopyBytes"].as_u64()), (Some(1), Some(1000)), "{users}");
+    assert_eq!(ann["videoSaved"].as_u64(), Some(clip.len() as u64 - 1000), "{users}");
 
     // the server built both previews of the clips from their poster frames, and copied nothing
     let blobs = data.join("users/ann/blobs");
     assert_eq!((files_in(&blobs.join("original")), files_in(&blobs.join("smart")), files_in(&blobs.join("mini"))), (0, 2, 2));
-    let id = mp4.id;
     dev.thumb_job(id, 256);
     sync(&mut dev);
     assert!(dev.render_now(id, 64, 64).is_ok(), "renders from the poster the server built");

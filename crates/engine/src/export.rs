@@ -2498,7 +2498,9 @@ impl<'a> Placer<'a> {
         match written {
             Ok((path, files, sidecars)) => {
                 self.taken.extend(files);
-                let mut entry = json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars});
+                // (which photo it is of: a frontend pairs the file with what goes along with it, a Live Photo's motion)
+                let mut entry =
+                    json!({"photo": photo.0, "path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars});
                 if let Some(why) = &e.gpu_fallback {
                     entry["gpuFallback"] = json!(why);
                 }

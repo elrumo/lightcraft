@@ -30,6 +30,7 @@ fn clip_of(s: &Session, c: &str, p: &Value) -> Result<(lightcraft_catalog::Photo
 fn info(s: &mut Session, p: &Value) -> Result<Value> {
     let (id, clip) = clip_of(s, "video.info", p)?;
     let v = clip.info();
+    let edit = s.develop_of(id).and_then(|d| d.video).unwrap_or_default();
     Ok(json!({
         "photo": id.0,
         "duration": v.duration,
@@ -48,6 +49,9 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
         "model": v.model,
         // why this version can't show the clip's pictures (null: it can)
         "unsupported": v.unsupported,
+        "trimStart": edit.trim_start,
+        "trimEnd": edit.trim_end,
+        "cover": edit.cover,
     }))
 }
 
@@ -107,6 +111,77 @@ fn frame(_: &mut Session, _: &Value) -> Result<Value> {
     Err(bad("video.frame", "reading a clip needs its file on disk"))
 }
 
+/// The clip `p` names (`id`, else the active photo), which must be a video: its id and length.
+fn clip_target(s: &Session, c: &str, p: &Value) -> Result<(lightcraft_catalog::PhotoId, f64)> {
+    use lightcraft_catalog::{MediaKind, PhotoId};
+    let id = match p.get("id").filter(|v| !v.is_null()) {
+        Some(v) => PhotoId(v.as_u64().ok_or_else(|| bad(c, "`id` must be a photo id"))?),
+        None => s.active().ok_or_else(|| bad(c, "no photo selected: pass `id`"))?,
+    };
+    let photo = s.catalog.photo(id).ok_or_else(|| bad(c, format!("no photo {}", id.0)))?;
+    if photo.kind != MediaKind::Video {
+        return Err(bad(c, format!("photo {} is not a video", id.0)));
+    }
+    let length = photo.duration.filter(|d| d.is_finite() && *d > 0.0).ok_or_else(|| bad(c, "the length of this clip is not known"))?;
+    Ok((id, length))
+}
+
+/// A time in the clip from `p[key]`: `Ok(None)` for `null`, an error for anything but a number of seconds in `0..=length`.
+fn seconds(p: &Value, key: &str, c: &str, length: f64) -> Result<Option<f64>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => {
+            let t = v.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad(c, format!("`{key}` must be a number of seconds")))?;
+            if !(0.0..=length).contains(&t) {
+                return Err(bad(c, format!("`{key}` {t} is outside the clip (0 to {length:.2} seconds)")));
+            }
+            Ok(Some(t))
+        }
+    }
+}
+
+/// The shortest part of a clip a trim may keep.
+const MIN_KEPT: f64 = 0.1;
+
+fn set_trim(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "video.setTrim";
+    let (id, length) = clip_target(s, C, p)?;
+    if p.get("start").is_none() && p.get("end").is_none() {
+        return Err(bad(C, "pass `start` and / or `end` (seconds; null puts that end back)"));
+    }
+    let mut d = (*s.develop_of(id).ok_or_else(|| bad(C, "no photo"))?).clone();
+    let mut v = d.video.unwrap_or_default();
+    if p.get("start").is_some() {
+        v.trim_start = seconds(p, "start", C, length)?.filter(|t| *t > 0.0);
+    }
+    if p.get("end").is_some() {
+        v.trim_end = seconds(p, "end", C, length)?.filter(|t| *t < length);
+    }
+    if v.trim_end.unwrap_or(length) - v.trim_start.unwrap_or(0.0) < MIN_KEPT {
+        return Err(bad(C, format!("the kept part must be at least {MIN_KEPT} seconds long")));
+    }
+    d.video = Some(v).filter(|v| !v.is_empty());
+    s.set_develop(id, d, "Trim Video")?;
+    Ok(json!({"photo": id.0, "start": v.trim_start, "end": v.trim_end, "length": v.trim_end.unwrap_or(length) - v.trim_start.unwrap_or(0.0)}))
+}
+
+fn set_cover(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "video.setCover";
+    let (id, length) = clip_target(s, C, p)?;
+    if p.get("time").is_none() {
+        return Err(bad(C, "pass `time` (seconds; null puts the library's own pick back)"));
+    }
+    let time = seconds(p, "time", C, length)?;
+    let mut d = (*s.develop_of(id).ok_or_else(|| bad(C, "no photo"))?).clone();
+    let mut v = d.video.unwrap_or_default();
+    v.cover = time;
+    d.video = Some(v).filter(|v| !v.is_empty());
+    s.set_develop(id, d, "Set Poster Frame")?;
+    // (the pictures decoded for the old frame are of no use)
+    s.media.forget(id);
+    Ok(json!({"photo": id.0, "cover": time}))
+}
+
 /// Where a clip can be played from: its file on this computer, or (for a synced clip whose original has not come yet)
 /// nothing until `sync.downloadOriginals` brings it. A frontend with a system player plays `path`.
 fn source(s: &mut Session, p: &Value) -> Result<Value> {
@@ -130,6 +205,24 @@ fn source(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
+            "video.setTrim",
+            "Trim Video",
+            [],
+            None,
+            "{id?, start?: seconds | null, end?: seconds | null} → {photo, start, end, length} — keep only the part of a video clip between `start` and `end` (a missing key is left as it is, null puts that end back); at least 0.1 s must stay. One undo step; the file is not touched, playback and export honour it",
+            always,
+            set_trim
+        ),
+        cmd!(
+            "video.setCover",
+            "Set Poster Frame",
+            [],
+            None,
+            "{id?, time: seconds | null} → {photo, cover} — the picture that stands for a video clip in the grid and the loupe, as the clip shows at `time`; null puts the library's own pick back. One undo step",
+            always,
+            set_cover
+        ),
+        cmd!(
             query "video.source",
             "Video Source",
             [],
@@ -143,7 +236,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Video Info",
             [],
             None,
-            "{id?} → {photo, duration, width, height, rotation, fps, codec, bitDepth, hdr, hasAudio, frames, created, gps, make, model, unsupported} — what a video clip's file says about itself, read in place (the active photo when `id` is left out). `unsupported` says why this version can't show its pictures (a codec that isn't built in), else null",
+            "{id?} → {photo, duration, width, height, rotation, fps, codec, bitDepth, hdr, hasAudio, frames, created, gps, make, model, unsupported, trimStart, trimEnd, cover} — what a video clip's file says about itself, read in place (the active photo when `id` is left out). `unsupported` says why this version can't show its pictures (a codec that isn't built in), else null",
             always,
             info
         ),

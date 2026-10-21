@@ -146,3 +146,82 @@ fn a_clips_length_is_in_its_summary_and_its_source_is_its_file() {
     let r = s.execute("video.source", &json!({"id": clip.0})).unwrap();
     assert_eq!((r["available"].as_bool(), r["path"].is_null()), (Some(false), true), "{r}");
 }
+
+fn mean(img: &lightcraft_raster::Rgba8) -> f64 {
+    img.data.iter().map(|p| f64::from(p[0])).sum::<f64>() / img.data.len() as f64
+}
+
+#[test]
+fn a_clip_is_trimmed_in_one_undo_step() {
+    let (mut s, clip, still, _) = with_clip("trim");
+    let r = s.execute("video.setTrim", &json!({"id": clip.0, "start": 0.5, "end": 1.5})).unwrap();
+    assert_eq!((r["start"].as_f64(), r["end"].as_f64()), (Some(0.5), Some(1.5)), "{r}");
+    assert!(r["length"].as_f64().is_some_and(|l| (l - 1.0).abs() < 1e-9), "{r}");
+    let i = s.execute("video.info", &json!({"id": clip.0})).unwrap();
+    assert_eq!((i["trimStart"].as_f64(), i["trimEnd"].as_f64(), i["cover"].is_null()), (Some(0.5), Some(1.5), true), "{i}");
+    assert!(s.catalog.photo(clip).unwrap().is_edited());
+    assert_eq!(s.catalog.photo(clip).unwrap().history.last().map(|h| h.label.as_str()), Some("Trim Video"));
+    // one end at a time: a key left out stays, null puts that end back
+    s.execute("video.setTrim", &json!({"id": clip.0, "end": null})).unwrap();
+    let i = s.execute("video.info", &json!({"id": clip.0})).unwrap();
+    assert_eq!((i["trimStart"].as_f64(), i["trimEnd"].is_null()), (Some(0.5), true), "{i}");
+    s.execute("video.setTrim", &json!({"id": clip.0, "start": null})).unwrap();
+    assert!(s.develop_of(clip).unwrap().video.is_none(), "an untrimmed clip has no video edit");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(s.develop_of(clip).unwrap().video.is_none());
+    // refused
+    for bad in [
+        json!({"id": clip.0}),
+        json!({"id": clip.0, "start": -1.0}),
+        json!({"id": clip.0, "end": 5.0}),
+        json!({"id": clip.0, "start": 1.0, "end": 1.0}),
+        json!({"id": clip.0, "start": 1.95}),
+        json!({"id": clip.0, "start": "soon"}),
+        json!({"id": still.0, "start": 0.5}),
+    ] {
+        assert!(s.execute("video.setTrim", &bad).is_err(), "{bad}");
+    }
+    assert!(s.develop_of(clip).unwrap().video.is_none());
+}
+
+#[test]
+fn a_poster_frame_chosen_replaces_the_librarys_pick_everywhere() {
+    let (mut s, clip, still, _) = with_clip("cover");
+    let before = mean(&s.render_job(clip, 64, 64, false, true).unwrap().run().rendered.unwrap().image);
+    let key_before = crate::media::content_key(s.catalog.photo(clip).unwrap());
+    let r = s.execute("video.setCover", &json!({"id": clip.0, "time": 1.9})).unwrap();
+    assert_eq!(r["cover"].as_f64(), Some(1.9), "{r}");
+    // the clip brightens, so a later frame is a brighter picture; the cache key moved with it
+    let after = mean(&s.render_job(clip, 64, 64, false, true).unwrap().run().rendered.unwrap().image);
+    assert!(after > before + 30.0, "{before} -> {after}");
+    assert_ne!(crate::media::content_key(s.catalog.photo(clip).unwrap()), key_before);
+    assert_eq!(s.catalog.photo(clip).unwrap().history.last().map(|h| h.label.as_str()), Some("Set Poster Frame"));
+    // it is the clip's own: Copy Settings leaves it behind
+    let d = s.develop_of(clip).unwrap();
+    assert!(lightcraft_develop::extract_groups(&d, &lightcraft_develop::SettingsGroup::ALL).get("video").is_none());
+    // undone, the library's pick is back
+    s.execute("edit.undo", &json!({})).unwrap();
+    let back = mean(&s.render_job(clip, 64, 64, false, true).unwrap().run().rendered.unwrap().image);
+    assert!((back - before).abs() < 1.0, "{before} -> {back}");
+    // refused
+    for bad in [json!({"id": clip.0}), json!({"id": clip.0, "time": 9.0}), json!({"id": clip.0, "time": -0.1}), json!({"id": still.0, "time": 0.5})] {
+        assert!(s.execute("video.setCover", &bad).is_err(), "{bad}");
+    }
+    s.execute("video.setCover", &json!({"id": clip.0, "time": null})).unwrap();
+    assert!(s.develop_of(clip).unwrap().video.is_none());
+}
+
+#[test]
+fn a_trim_and_a_poster_frame_survive_a_reopen_and_a_peers_older_data() {
+    let mut d = lightcraft_develop::DevelopSettings::default();
+    // settings without a clip's edits write nothing for them (so every older settings hash stays)
+    assert!(!serde_json::to_string(&d).unwrap().contains("video"));
+    d.video = Some(lightcraft_develop::VideoEdit { trim_start: Some(1.0), trim_end: None, cover: Some(2.5) });
+    let json = serde_json::to_string(&d).unwrap();
+    assert!(json.contains(r#""video":{"trim_start":1.0,"cover":2.5}"#), "{json}");
+    assert_eq!(serde_json::from_str::<lightcraft_develop::DevelopSettings>(&json).unwrap(), d);
+    // older data has no such field
+    let older = serde_json::to_string(&lightcraft_develop::DevelopSettings::default()).unwrap();
+    assert_eq!(serde_json::from_str::<lightcraft_develop::DevelopSettings>(&older).unwrap().video, None);
+}
