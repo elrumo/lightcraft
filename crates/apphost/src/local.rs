@@ -69,7 +69,8 @@ pub struct LocalPlaces {
     pub browse_root: Option<String>,
 }
 
-fn folder_label(path: &str) -> String {
+/// A folder's name for a list of places: its last path component, else the path as given.
+pub fn folder_label(path: &str) -> String {
     std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string())
 }
 
