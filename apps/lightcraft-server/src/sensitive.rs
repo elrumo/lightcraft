@@ -164,6 +164,11 @@ impl Sensitive {
         &self.failed
     }
 
+    /// Whether the classifier is in memory, and how many users' scores are.
+    pub(crate) fn held(&self) -> (bool, usize) {
+        (self.injected.is_some() || lock(&self.classifier).is_some(), lock(&self.indexes).len())
+    }
+
     /// Drop the model and the scores from memory (they come back on the next use).
     pub(crate) fn unload(&self) {
         if lock(&self.classifier).take().is_some() {

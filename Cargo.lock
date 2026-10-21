@@ -3778,6 +3778,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-ios-swift"
+version = "0.9.1"
+dependencies = [
+ "lightcraft-apphost",
+ "lightcraft-engine",
+ "lightcraft-ios-host",
+ "lightcraft-sysmem",
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "lightcraft-lensdb"
 version = "0.10.0"
 dependencies = [
@@ -3933,6 +3945,7 @@ dependencies = [
  "lightcraft-engine",
  "lightcraft-preview",
  "lightcraft-raster",
+ "lightcraft-sysmem",
  "lightcraft-video",
  "lightcraft-vision",
  "log",

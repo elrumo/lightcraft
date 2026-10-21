@@ -395,7 +395,6 @@ impl Server {
     pub fn bind(listen: &str, limits: Limits) -> Result<Bound, String> {
         let listener = TcpListener::bind(listen).map_err(|e| e.to_string())?;
         let addr = listener.local_addr().map_err(|e| e.to_string())?;
-        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
         Ok(Bound { listener, addr, limits })
     }
 
@@ -416,7 +415,16 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::SeqCst);
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            // (the accept thread sleeps in `accept`: a connection to ourselves wakes it, and it sees `stop`)
+            let me = match self.addr.ip() {
+                ip if ip.is_unspecified() && ip.is_ipv6() => SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, self.addr.port())),
+                ip if ip.is_unspecified() => SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, self.addr.port())),
+                _ => self.addr,
+            };
+            // (when nothing can wake it the thread is left to end with the process rather than waited for)
+            if TcpStream::connect_timeout(&me, Duration::from_secs(1)).is_ok() {
+                let _ = t.join();
+            }
         }
         let until = Instant::now() + Duration::from_secs(5);
         while self.shared.conns.load(Ordering::SeqCst) > 0 && Instant::now() < until {
@@ -429,6 +437,9 @@ fn accept(listener: &TcpListener, shared: &Arc<Shared>) {
     while !shared.stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, remote)) => {
+                if shared.stop.load(Ordering::Relaxed) {
+                    break;
+                }
                 let Some(seat) = Seat::take(shared, remote.ip()) else {
                     refuse(stream);
                     continue;
@@ -445,7 +456,6 @@ fn accept(listener: &TcpListener, shared: &Arc<Shared>) {
                     log::error!("can't start a connection thread: {e}");
                 }
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
             Err(e) => {
                 log::warn!("accepting a connection: {e}");
                 std::thread::sleep(Duration::from_millis(100));

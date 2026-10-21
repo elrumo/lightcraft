@@ -909,6 +909,7 @@ fn search(st: &State) -> Value {
         "installed": v.files_installed(),
         "active": v.installed(),
         "loaded": v.loaded(),
+        "memory": memory(st),
         "model": model,
         "dim": dim,
         "dir": v.model_dir().to_string_lossy(),
@@ -944,6 +945,25 @@ fn search(st: &State) -> Value {
             "schedule": schedule(Part::Sensitive, |u| u["checked"].as_u64()),
         },
         "users": users,
+    })
+}
+
+/// What the AI models hold in memory, for the Processing page: per part whether its model is loaded and how many users'
+/// indexes come with it, how long since any was used and how long until the idle check lets go of them all, and the
+/// server's memory at its last sample.
+fn memory(st: &State) -> Value {
+    let v = &st.vision;
+    let part = |p: Part| {
+        let (loaded, indexes) = v.held(p);
+        json!({"loaded": loaded, "indexes": indexes})
+    };
+    let idle = v.idle_unload();
+    json!({
+        "unloadAfterSecs": crate::vision::IDLE_UNLOAD.as_secs(),
+        "idleSecs": idle.map(|i| i.0),
+        "unloadInSecs": idle.map(|i| i.1),
+        "rss": st.usage.history().last().and_then(|s| s.rss),
+        "search": part(Part::Search), "text": part(Part::Text), "faces": part(Part::Faces), "sensitive": part(Part::Sensitive),
     })
 }
 

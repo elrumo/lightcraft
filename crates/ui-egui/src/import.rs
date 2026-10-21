@@ -2164,7 +2164,7 @@ mod tests {
         d.set_camera_files(vec![file("A.JPG", "2026-08-03"), file("B.JPG", "2026-08-03")], |_| None);
         d.click(0, false);
         assert_eq!(d.selected_paths(), ["id-B.JPG"]);
-        let all = vec![file("A.JPG", "2026-08-03"), file("B.JPG", "2026-08-03"), file("C.CR3", "2026-10-03"), file("clip.MOV", "2026-10-03")];
+        let all = vec![file("A.JPG", "2026-08-03"), file("B.JPG", "2026-08-03"), file("C.CR3", "2026-10-03"), file("MVI_0001.THM", "2026-10-03")];
         d.set_camera_files(all, |f| (f.name == "B.JPG").then_some(7));
         let names: Vec<&str> = d.candidates.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["C.CR3", "A.JPG", "B.JPG"]);

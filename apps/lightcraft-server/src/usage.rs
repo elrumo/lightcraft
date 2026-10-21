@@ -156,6 +156,8 @@ impl Usage {
                 std::thread::sleep(Duration::from_millis(250));
             }
             self.sample();
+            // (decodes give memory back as they end, at most every few seconds: this catches the last one's)
+            lightcraft_engine::memory::release();
         }
     }
 }

@@ -8,6 +8,7 @@
 //!   prefs.json     (library preferences: XMP sidecars, import defaults, cache size, last export)
 //!   location.json  (the folder the library was last opened from: see below)
 //!   sidecars.json  (when each XMP sidecar was last read or written: see `sidecar::SidecarTimes`)
+//!   icloud.json  icloud.held  (iCloud sync, when it is on: see `icloud`)
 //!   thumbs/        (rendered thumbnail cache, safe to delete; prefs.json may name another folder)
 //!   map-tiles/     (map tiles seen in the Map view, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
@@ -681,6 +682,8 @@ impl Session {
             files.read(crate::live_photo::LivePhotos::FILE).ok().flatten().map(|b| crate::live_photo::LivePhotos::from_json(&b)).unwrap_or_default();
         // sync: its state, and the id space this device allocates new ids in
         self.sync = crate::cloud_sync::SyncState::load(files.as_mut());
+        // iCloud sync (on for this library, or not)
+        self.icloud = crate::icloud::ICloud::load(files.as_mut());
         if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
             self.catalog.set_id_space(st.config.space);
         }
@@ -949,6 +952,9 @@ impl Session {
             {
                 log::error!("library: {}: {e}", crate::cloud_sync::CONFIG);
             }
+        }
+        if let Some(ic) = self.icloud.as_mut() {
+            ic.save(lib.files.as_mut());
         }
         let due = self.library.as_ref().is_some_and(|l| l.presets_saved.differs(self) && !l.blocked.contains(&"presets.json"));
         if !due {

@@ -36,6 +36,13 @@ use crate::{Session, guard, memory};
 #[cfg(not(target_arch = "wasm32"))]
 mod helper;
 mod people;
+mod portable;
+
+pub(crate) use portable::parts_of as analysis_parts_of;
+#[cfg(test)]
+pub(crate) mod portable_bits {
+    pub(crate) use super::portable::{FACES, SENSITIVE, TEXT, VECTOR};
+}
 mod reprocess;
 mod sensitive;
 mod server;
@@ -1429,11 +1436,15 @@ impl Session {
     /// Where to look for words in photos: when the user wants that, the models are installed and
     /// something has been read.
     fn vision_text_where(&self) -> Option<TextSpec> {
-        if !self.vision.text_ready() {
+        let spec = if self.vision.text_ready() {
+            let (_, engine) = self.vision.reader_provider().ok()?;
+            TextSpec { path: self.vision_text_path(&engine), engine }
+        } else if !self.vision.text_available() {
+            // a build that reads no text searches the words another device found (iCloud: `portable`)
+            self.portable_text_spec()?
+        } else {
             return None;
-        }
-        let (_, engine) = self.vision.reader_provider().ok()?;
-        let spec = TextSpec { path: self.vision_text_path(&engine), engine };
+        };
         (with_text(&self.vision.shared, &spec, |ix| ix.len()).ok()? > 0).then_some(spec)
     }
 
@@ -1467,6 +1478,9 @@ impl Session {
         let photos = self.catalog.photos().filter(|p| p.in_library()).count();
         json!({
             "available": v.available(),
+            // the words in photos can be searched here, read here or by another device (iCloud): `library.search` finds them
+            // even without a description model
+            "words": v.text_indexed() > 0,
             "localAvailable": v.local_available(),
             // (why this device can't run the model though the build has it: too little memory)
             "unfit": v.unfit(),
@@ -1910,15 +1924,22 @@ impl Session {
             .flatten()
             .map(|(_, model, dim)| IndexSpec { path: self.vision_index_path(&model), model, dim })
             .filter(|s| s.path.as_ref().is_some_and(|p| p.is_file()));
-        let text = (!sh.text_opened.load(Ordering::Relaxed) && self.vision.text_ready())
-            .then(|| self.vision.reader_provider().ok())
+        // (a build without the models opens the words and faces another device found, so search and People use them)
+        let text = (!sh.text_opened.load(Ordering::Relaxed))
+            .then(|| match self.vision.text_ready() {
+                true => self.vision.reader_provider().ok().map(|(_, engine)| TextSpec { path: self.vision_text_path(&engine), engine }),
+                false if !self.vision.text_available() => self.portable_text_spec(),
+                false => None,
+            })
             .flatten()
-            .map(|(_, engine)| TextSpec { path: self.vision_text_path(&engine), engine })
             .filter(|s| s.path.as_ref().is_some_and(|p| p.is_file()));
-        let faces = (!sh.faces_opened.load(Ordering::Relaxed) && self.vision.faces_ready())
-            .then(|| self.vision.finder_provider().ok())
+        let faces = (!sh.faces_opened.load(Ordering::Relaxed))
+            .then(|| match self.vision.faces_ready() {
+                true => self.vision.finder_provider().ok().map(|(_, engine)| FaceSpec { path: self.vision_faces_path(&engine), engine }),
+                false if !self.vision.faces_available() => Some(self.faces_spec()),
+                false => None,
+            })
             .flatten()
-            .map(|(_, engine)| FaceSpec { path: self.vision_faces_path(&engine), engine })
             .filter(|s| s.path.as_ref().is_some_and(|p| p.is_file()));
         if semantic.is_none() && text.is_none() && faces.is_none() {
             return;

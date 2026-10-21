@@ -9,10 +9,11 @@
 //! request (an HTTP verb from a web page) closes the connection before anything runs.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Sender, channel};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -22,6 +23,8 @@ use super::{Event, Msg, Request, SCRIPT_TIMEOUT};
 const MAX_LINE: usize = 4 * 1024 * 1024;
 /// Connections served at once; further ones get an error line and are closed.
 const MAX_CONNECTIONS: usize = 16;
+/// How long a refused connection waits for more of the peer's input before closing.
+const DRAIN_WAIT: Duration = Duration::from_secs(2);
 
 /// Listen on `127.0.0.1:port` (`0`: any free port) and serve connections on threads of their own.
 /// Returns the address bound.
@@ -85,8 +88,21 @@ fn serve(stream: &TcpStream, tx: &Sender<Msg>, ids: &AtomicU64) {
                 }
             },
         };
-        let _ = writeln!(out, "{}", json!({"ok": false, "error": reject})).and_then(|()| out.flush());
+        refuse(stream, &reject);
         return;
+    }
+}
+
+/// Send `error` as the connection's last line and close it. What the peer sent after the refused line
+/// is read and dropped first (until it closes, up to [`MAX_LINE`] bytes, [`DRAIN_WAIT`] at most per
+/// read): closing a socket with unread input resets the connection, and the reset throws the refusal
+/// away before the peer reads it (a browser's POST body arrives just after its request line).
+fn refuse(stream: &TcpStream, error: &str) {
+    let mut out = stream;
+    let _ = writeln!(out, "{}", json!({"ok": false, "error": error})).and_then(|()| out.flush());
+    let _ = stream.shutdown(Shutdown::Write);
+    if stream.set_read_timeout(Some(DRAIN_WAIT)).is_ok() {
+        let _ = std::io::copy(&mut Read::take(stream, u64::try_from(MAX_LINE).unwrap_or(u64::MAX)), &mut std::io::sink());
     }
 }
 
@@ -147,5 +163,34 @@ pub(super) fn port_from_env() -> Option<u16> {
             log::error!("LIGHTCRAFT_CONTROL_PORT={v:?} is not a port number; the control channel stays off");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+
+    use serde_json::Value;
+
+    // The refusal reaches the peer although input it sent after the refused line is still unread:
+    // closing over unread input resets the connection, and the reset throws the refusal away
+    #[test]
+    fn a_refusal_reaches_the_peer_past_input_never_read() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        client.write_all(b"POST / HTTP/1.1\r\nHost: x\r\n\r\n{\"method\": \"engine.execute\"}\n").unwrap();
+        std::thread::sleep(Duration::from_millis(100)); // it all waits, unread, in the server's socket
+        let refusing = std::thread::spawn(move || super::refuse(&server, "not a control request"));
+        std::thread::sleep(Duration::from_millis(100)); // a reset would have landed by now
+        let mut line = String::new();
+        BufReader::new(&client).read_line(&mut line).unwrap();
+        let r: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!((r["ok"].as_bool(), r["error"].as_str()), (Some(false), Some("not a control request")), "{r}");
+        drop(client);
+        refusing.join().unwrap();
     }
 }

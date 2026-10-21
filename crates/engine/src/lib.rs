@@ -54,6 +54,7 @@ pub mod guard;
 pub mod hardware;
 pub mod hdr_view;
 pub mod hidden;
+pub mod icloud;
 pub mod import;
 mod import_move;
 pub mod inline_files;
@@ -472,6 +473,9 @@ pub struct Session {
     pub forget_local_days: u32,
     /// Sharing this library with other devices through a server (see [`cloud_sync`]).
     sync: Option<cloud_sync::SyncState>,
+    /// Sharing this library's presets, settings and photo-library edits through the host's iCloud (see [`icloud`]):
+    /// `None` while it is off.
+    pub(crate) icloud: Option<icloud::ICloud>,
     /// Set by a host that keeps synced photo files in its own storage instead of a previews folder
     /// (the browser).
     pub sync_store: Option<cloud_sync::BrowserStore>,
@@ -620,6 +624,7 @@ impl Session {
             thumbs_dir: None,
             forget_local_days: lightcraft_catalog::DEFAULT_FORGET_DAYS,
             sync: None,
+            icloud: None,
             sync_store: None,
             sync_purge: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1529,6 +1534,8 @@ mod tests_hidden;
 mod tests_history_cursor;
 #[cfg(test)]
 mod tests_hold_view;
+#[cfg(test)]
+mod tests_icloud;
 #[cfg(test)]
 mod tests_import;
 #[cfg(test)]

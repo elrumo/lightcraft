@@ -256,8 +256,13 @@ fn a_drag_renders_drafts_then_a_final_view() {
     h.submit(&req(7, "render.view", json!({"width": 160, "height": 120}))).unwrap();
     let full = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false);
     assert_eq!(full["final"], true, "{full}");
-    // drafts are smaller, as egui's loupe draws them (`DraftBudget`): a full-size one per tick lags on a phone
-    assert!(draft["width"].as_u64() < full["width"].as_u64(), "draft {draft} vs full {full}");
+    // drafts are never larger, and smaller on the CPU, as egui's loupe draws them (`DraftBudget`): a full-size one
+    // per tick lags on a phone. A GPU drafts a first drag at the view's own size, so once the device is up (other
+    // tests in this process may have brought it up) only a device still being created proves a CPU draft
+    assert!(draft["width"].as_u64() <= full["width"].as_u64(), "draft {draft} vs full {full}");
+    if !lightcraft_engine::gpu::ready() {
+        assert!(draft["width"].as_u64() < full["width"].as_u64(), "a CPU draft is smaller: draft {draft} vs full {full}");
+    }
 }
 
 // `render.view` names the render it asked for: the loupe's picture is that one once its key is the reply's (the
