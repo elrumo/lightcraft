@@ -343,7 +343,7 @@
   "Delete the group “{name}” and its {n} presets?": "Удалить группу «{name}» и её пресеты ({n})?",
   "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Скрыто: «{name}». Вернуть можно командой «Показывать скрытые пресеты» в меню панели.",
   "Changes found: {n}": "Найдено изменений: {n}",
-  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "«{name}» ещё просматривается: дождитесь окончания или остановите поиск кнопкой ✕ в его строке",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "«{name}» ещё просматривается: дождитесь окончания или остановите поиск кнопкой × в его строке",
   "Look at the changes found in “{name}” first, or dismiss them": "Сначала просмотрите изменения, найденные в «{name}», или скройте их",
   "Rendered {ok} of {total} to DNG": "В DNG отрисовано {ok} из {total}",
   "{n} photos might be sensitive. Nothing is hidden until you choose.": "Фото, которые могут быть деликатными: {n}. Ничего не будет скрыто без вашего решения.",

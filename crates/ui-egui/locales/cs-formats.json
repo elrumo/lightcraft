@@ -345,7 +345,7 @@
   "Changes found: {n}": "Changes found: {n}",
   "Look at the changes found in “{name}” first, or dismiss them": "Look at the changes found in “{name}” first, or dismiss them",
   "Rendered {ok} of {total} to DNG": "Rendered {ok} of {total} to DNG",
-  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with × on its row",
   "{n} photos might be sensitive. Nothing is hidden until you choose.": "Fotografie, které mohou být citlivé: {n}. Nic se neskryje, dokud se nerozhodnete.",
   "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Alba z Lightroom byla importována: vytvořených alb: {albums}, složek: {folders}, fotografií vložených do alb: {added}",
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Katalog Lightroom byl prozkoumán: alb: {albums}, složek: {folders}, fotografií v albech: {photos}",

@@ -345,7 +345,7 @@
   "Changes found: {n}": "Changes found: {n}",
   "Look at the changes found in “{name}” first, or dismiss them": "Look at the changes found in “{name}” first, or dismiss them",
   "Rendered {ok} of {total} to DNG": "Rendered {ok} of {total} to DNG",
-  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with × on its row",
   "{n} photos might be sensitive. Nothing is hidden until you choose.": "Zdjęcia, które mogą być wrażliwe: {n}. Nic nie zostanie ukryte bez Twojej decyzji.",
   "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Zaimportowano albumy Lightroom: utworzono {albums} albumów i {folders} folderów, dodano {added} zdjęć do albumów",
   "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Sprawdzono katalog Lightroom: {albums} albumów, {folders} folderów, {photos} zdjęć w albumach",

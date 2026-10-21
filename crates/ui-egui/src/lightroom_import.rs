@@ -149,15 +149,6 @@ fn result_dialog(value: &Value, summary: &str) -> crate::state::Dialog {
             skipped = skipped
         ));
     }
-    // images whose catalog records are incomplete come as data (`skipped`), said here in the UI
-    // language; their ids are in the report for the CLI and agents
-    let skipped = report["skipped"].as_array().map_or(0, Vec::len);
-    if skipped > 0 {
-        details.push(crate::i18n::tr_format!(
-            "{skipped} catalog images were not imported because their records in the catalog are incomplete.",
-            skipped = skipped
-        ));
-    }
     if let Some(warning) = value.get("indexWarning").and_then(Value::as_str) {
         details.push(warning.to_string());
     }

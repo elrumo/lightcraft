@@ -343,7 +343,7 @@
   "Delete the group “{name}” and its {n} presets?": "Excluir o grupo “{name}” e suas {n} predefinições?",
   "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Você ocultou “{name}”. A opção Mostrar predefinições ocultas, no menu do painel, traz de volta.",
   "Changes found: {n}": "Alterações encontradas: {n}",
-  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” ainda está sendo verificada: aguarde ou interrompa com ✕ na linha dela",
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” ainda está sendo verificada: aguarde ou interrompa com × na linha dela",
   "Look at the changes found in “{name}” first, or dismiss them": "Revise primeiro as alterações encontradas em “{name}” ou dispense-as",
   "Rendered {ok} of {total} to DNG": "{ok} de {total} renderizadas em DNG",
   "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} fotos podem ser sensíveis. Nada é ocultado até você decidir.",
