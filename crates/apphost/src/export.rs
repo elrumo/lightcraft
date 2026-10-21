@@ -323,6 +323,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(out["files"].as_array().map(Vec::len), Some(1), "{out}");
+        assert_eq!(out["files"][0]["photo"].as_u64(), Some(first.0), "each file says which photo it is of");
         assert!(Path::new(out["path"].as_str().unwrap()).is_file());
         assert_eq!(calls.last(), Some(&(1, 1)));
         assert!(command_info(&s)["enabled"].as_bool().unwrap());

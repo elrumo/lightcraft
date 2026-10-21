@@ -230,6 +230,8 @@ impl Session {
             self.previous_active = None;
         }
         self.photo_library.remove(asset);
+        // (its Live Photo motion, if the app handed one over)
+        self.detach_motion(id);
         let originals = self.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir());
         let (Some(path), Some(originals)) = (path.filter(|_| e.placed), originals) else { return };
         if !inside(&path, &originals) {
@@ -318,7 +320,8 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
                     s.save_photo_library();
                 }
                 s.show_opened(PhotoId(e.id))?;
-                return Ok(json!({"id": e.id, "local": local, "known": true}));
+                let live = crate::live_photo::open_with_motion(s, PhotoId(e.id), p);
+                return Ok(json!({"id": e.id, "local": local, "known": true, "live": live}));
             }
             None => s.photo_library.remove(asset),
         }
@@ -344,7 +347,8 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         // (an edit another device made to this picture, held until it was opened here, is taken)
         let synced = s.icloud_take_held(id);
         s.show_opened(id)?;
-        return Ok(json!({"id": id.0, "local": false, "known": true, "synced": synced}));
+        let live = crate::live_photo::open_with_motion(s, id, p);
+        return Ok(json!({"id": id.0, "local": false, "known": true, "synced": synced, "live": live}));
     }
     // filed where an import would put it, then catalogued there in place
     let root = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir()).ok_or_else(|| bad(C, "needs a library saved on disk"))?;
@@ -386,11 +390,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     // an edit another device made to this picture brings it into the library edited
     let synced = s.icloud_take_held(id);
     s.show_opened(id)?;
+    let live = crate::live_photo::open_with_motion(s, id, p);
     let local = s.catalog.photo(id).is_some_and(|p| p.local);
-    Ok(json!({"id": id.0, "local": local, "known": false, "synced": synced}))
+    Ok(json!({"id": id.0, "local": local, "known": false, "synced": synced, "live": live}))
 }
 
-fn inside_staging(s: &Session, path: &Path) -> bool {
+pub(crate) fn inside_staging(s: &Session, path: &Path) -> bool {
     s.photo_library_staging.as_deref().is_some_and(|d| inside(path, d))
 }
 
@@ -445,7 +450,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Open from Photo Library",
             [],
             None,
-            "{asset, path?, cloud?}: the photo-library asset `asset` (its original at `path`; without one, {needsFile: true} unless it is known; `cloud`: its id on the person's other devices, which an edit synced through iCloud carries): shown and edited without joining the library until it is changed, or until an edit another device made to it is taken (`synced`); {id, local, known, synced}",
+            "{asset, path?, cloud?, motion?, contentId?, stillTime?}: the photo-library asset `asset` (its original at `path`; without one, {needsFile: true} unless it is known; `cloud`: its id on the person's other devices, which an edit synced through iCloud carries): shown and edited without joining the library until it is changed, or until an edit another device made to it is taken (`synced`); `motion`, a Live Photo's clip, is kept with it when it has none yet (live.attach); {id, local, known, synced, live}",
             always,
             open
         ),

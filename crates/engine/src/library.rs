@@ -674,6 +674,9 @@ impl Session {
             .map(|b| crate::photo_library::PhotoLibraryMap::from_json(&b))
             .unwrap_or_default();
         self.photo_library_return = None;
+        // which photos have a Live Photo motion clip (this device's own)
+        self.live_photos =
+            files.read(crate::live_photo::LivePhotos::FILE).ok().flatten().map(|b| crate::live_photo::LivePhotos::from_json(&b)).unwrap_or_default();
         // sync: its state, and the id space this device allocates new ids in
         self.sync = crate::cloud_sync::SyncState::load(files.as_mut());
         // iCloud sync (on for this library, or not)
@@ -787,6 +790,8 @@ impl Session {
         }
         // photo-library photos left open and unchanged when the app last quit
         self.tidy_photo_library();
+        // motion clips of photos deleted for good (or forgotten) since
+        self.tidy_live_photos();
         // smart previews written by an older camera-look fit are brought up to date in the background
         #[cfg(not(target_arch = "wasm32"))]
         if on_disk {
