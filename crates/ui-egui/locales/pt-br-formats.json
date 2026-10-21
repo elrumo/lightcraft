@@ -312,6 +312,7 @@
   "Update “{name}” with Current Settings": "Atualizar “{name}” com as configurações atuais",
   "{n} preset{}": "{n} predefinição(ões){:.0}",
   "{count} more warnings.": "Mais {count} avisos.",
+  "{skipped} catalog images were not imported because their records in the catalog are incomplete.": "{skipped} imagens do catálogo não foram importadas porque seus registros no catálogo estão incompletos.",
   "{photos} catalog records processed; {collections} collections.": "{photos} registros do catálogo processados; {collections} coleções.",
   "{missing} originals are missing. Their catalog records are available; use Find Missing Photos to relink them.": "{missing} originais estão ausentes. Seus registros no catálogo estão disponíveis; use Encontrar fotos ausentes para vinculá-los novamente.",
   "Applied {name}": "{name} aplicado",
