@@ -73,6 +73,83 @@ fn photo_arg(s: &Session, p: &Value, c: &str) -> crate::Result<PhotoId> {
     }
 }
 
+/// The most photos `catalog.describe` answers at once.
+const DESCRIBE_MAX: usize = 1000;
+
+/// A photo as a system index shows it (`catalog.describe`): words to find it by, and where and when it was taken.
+fn describe_photo(s: &Session, p: &Photo, sensitive: &std::collections::HashSet<PhotoId>) -> Value {
+    let m = &p.meta;
+    let text = |t: &str| if t.trim().is_empty() { Value::Null } else { json!(t) };
+    json!({
+        "id": p.id.0,
+        "fileName": p.file_name,
+        "kind": p.kind,
+        "format": p.format,
+        "width": p.width,
+        "height": p.height,
+        "duration": p.duration,
+        "captured": p.captured,
+        "imported": p.imported,
+        "rating": p.rating,
+        "flag": p.flag,
+        "label": p.label,
+        "edited": p.is_edited(),
+        "live": s.live_photos.is_live(p),
+        // the sensitive-content model flagged it: a frontend shows no picture of it where the person didn't ask to see it
+        "sensitive": sensitive.contains(&p.id),
+        "title": text(&m.title),
+        "caption": text(&m.caption),
+        "altText": text(&m.alt_text),
+        "keywords": m.keywords,
+        "people": p.people(),
+        "camera": text(&m.camera),
+        "lens": text(&m.lens),
+        "location": text(&m.location),
+        "city": text(&m.city),
+        "state": text(&m.state),
+        "country": text(&m.country),
+        "gps": m.gps.filter(|(la, lo)| la.is_finite() && lo.is_finite()).map(|(la, lo)| json!([la, lo])),
+    })
+}
+
+/// What a system index may show: library photos (not Local), not deleted, never hidden.
+fn describable(p: &Photo) -> bool {
+    p.visible()
+}
+
+fn describe(s: &mut Session, p: &Value) -> crate::Result<Value> {
+    const C: &str = "catalog.describe";
+    let limit = match p.get("limit").filter(|v| !v.is_null()) {
+        Some(v) => v
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .filter(|n| (1..=DESCRIBE_MAX).contains(n))
+            .ok_or_else(|| bad(C, "`limit` must be 1 to 1000"))?,
+        None => 200,
+    };
+    let revision = s.catalog.library_revision;
+    let sensitive = s.sensitive_ids();
+    if let Some(ids) = p.get("ids").filter(|v| !v.is_null()) {
+        let ids = ids.as_array().ok_or_else(|| bad(C, "`ids` must be a list of photo ids"))?;
+        if ids.len() > DESCRIBE_MAX {
+            return Err(bad(C, "at most 1000 `ids` at once"));
+        }
+        let photos: Vec<Value> = ids
+            .iter()
+            .filter_map(Value::as_u64)
+            .filter_map(|id| s.catalog.photo(PhotoId(id)))
+            .filter(|ph| describable(ph))
+            .map(|ph| describe_photo(s, ph, &sensitive))
+            .collect();
+        return Ok(json!({"total": photos.len(), "revision": revision, "photos": photos}));
+    }
+    let offset = pagination_usize(p.get("offset").and_then(Value::as_u64).unwrap_or(0));
+    let total = s.catalog.photos().filter(|ph| describable(ph)).count();
+    let photos: Vec<Value> =
+        s.catalog.photos().filter(|ph| describable(ph)).skip(offset).take(limit).map(|ph| describe_photo(s, ph, &sensitive)).collect();
+    Ok(json!({"total": total, "revision": revision, "photos": photos}))
+}
+
 // Catalog queries also run in the 32-bit web build. A narrowing cast wraps
 // an out-of-range offset to zero, returning the first page instead of no photos.
 fn pagination_usize(value: u64) -> usize {
@@ -105,6 +182,10 @@ pub fn specs() -> Vec<CommandSpec> {
                     if sensitive.contains(&p.id) {
                         v["sensitive"] = json!(true);
                     }
+                    // a Live Photo: its motion clip is on this device (`live.info`)
+                    if s.live_photos.is_live(p) {
+                        v["live"] = json!(true);
+                    }
                     if stacked
                         && let Some(st) = s.catalog.stack_of(p.id)
                         && let Some(pos) = st.photos.iter().position(|x| *x == p.id)
@@ -116,6 +197,15 @@ pub fn specs() -> Vec<CommandSpec> {
                 .collect();
             Ok(json!({"total": ids.len(), "photos": items}))
         }),
+        cmd!(
+            query "catalog.describe",
+            "Describe Photos",
+            [],
+            None,
+            "{ids?: [photoId] (at most 1000), offset?, limit?: 1..1000 (200)} → {total, revision, photos: [{id, fileName, kind, format, width, height, duration, captured, imported, rating, flag, label, edited, live, sensitive, title, caption, altText, keywords, people, camera, lens, location, city, state, country, gps}]}: what a system index (Spotlight, Shortcuts) shows of each photo of the library, in id order (`ids`: those, in their order). Never a hidden, deleted or Local photo, whether or not Hidden is unlocked; `revision` changes when any photo, album or keyword does (develop edits aside)",
+            always,
+            describe
+        ),
         cmd!(
             query "catalog.stats",
             "Catalog Statistics",
