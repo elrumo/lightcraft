@@ -41,10 +41,22 @@ const MAX_QUERY_CHARS: usize = 512;
 /// Largest image accepted, in pixels: callers pass thumbnails, not originals.
 const MAX_PIXELS: usize = 64 << 20;
 
-/// The best device here: Metal on macOS (when a GPU is available), else the CPU.
+/// The GPU, when there is one: Metal on macOS and iOS. The sensitive-content classifier's and the depth model's GPU
+/// weights run on it.
+pub fn gpu_device() -> Option<Device> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    if let Ok(d) = Device::new_metal(0) {
+        return Some(d);
+    }
+    None
+}
+
+/// Where SigLIP 2 runs: Metal on macOS (when a GPU is available), else the CPU. A phone keeps it on the CPU so that
+/// loading takes no more than the model's own 1.5 GB: each tensor is read on the CPU and copied to the GPU, and the text
+/// tower's token table alone is 786 MB.
 pub fn best_device() -> Device {
     #[cfg(target_os = "macos")]
-    if let Ok(d) = Device::new_metal(0) {
+    if let Some(d) = gpu_device() {
         return d;
     }
     Device::Cpu

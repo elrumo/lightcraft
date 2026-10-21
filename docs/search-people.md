@@ -14,7 +14,8 @@ to its licence, and everything else works without it.
   ×, or turn the switch off to leave. The first time, the panel under the field shows what the model is, its size
   (about 1.5 GB), where it is kept and its licence, and downloads it only when you click **Download and Turn On**. Your photos
   are then indexed in the background (you can search the ones that are ready meanwhile).
-- **A device with no model** (the web build, iOS, or a desktop that didn't download it) searches through the sync server when
+- **A device with no model** (the web build, the egui iOS app, a phone that may use too little memory for it, or a desktop
+  that didn't download it) searches through the sync server when
   the server can: the switch appears once the server says so, and the panel says how many photos the server has ready.
   An administrator turns that on once for everyone from the server's admin page (**Processing**), so no device downloads the
   model. If it is off or still downloading, the panel says so instead of offering a download it can't use (on a device
@@ -269,5 +270,11 @@ to travel.
 - Reading text is slow (see above) and only as good as the print: a photo of a crowded street won't give up its shop signs.
 - Brute-force search (exact, one thread): fine to several hundred thousand photos; an approximate index would be needed
   beyond about a million.
-- iOS runs no model on the device (memory budget); it searches through the server.
+- The egui iOS app's build has no models; it searches through the server. A native (non-Rust) frontend's phone build can
+  have them (the engine's `vision` feature): the text, face and sensitive-content models are a few tens of MB and run on
+  any phone, the sensitive-content classifier's GPU weights on the phone's GPU; the search model only where the app may
+  use about 3.05 GB (`vision::SEARCH_PHONE_MEMORY`, from `os_proc_available_memory` at launch; an iPhone 17 Pro's 3.3 GB
+  is enough), because it takes 1.5 GB while loaded (on the CPU there), next to the caches' 1 GB. Elsewhere it is listed as not available, with why
+  (`models.list` → `unavailable`, `vision.model.status` → `unfit`), and the phone searches through the server. Not yet
+  measured on a device: the peak memory of an indexing run, and how long a library takes on a phone's CPU.
 - The model's training data is the model vendor's: the weights are Apache-2.0 and downloaded by the user, never committed.

@@ -102,7 +102,8 @@ fn show_result(app: &mut LightcraftApp) {
     }
 }
 
-/// The dialog that keeps an import's outcome readable after its toast is gone.
+/// The dialog that keeps an import's outcome readable after its toast is gone: counts, failures,
+/// missing originals, the skipped images (one line, in the UI language) and at most eight warnings.
 fn result_dialog(value: &Value, summary: &str) -> crate::state::Dialog {
     let report = value.get("report").unwrap_or(value);
     let mut details = Vec::new();
@@ -137,6 +138,15 @@ fn result_dialog(value: &Value, summary: &str) -> crate::state::Dialog {
         details.push(crate::i18n::tr_format!(
             "{missing} originals are missing. Their catalog records are available; use Find Missing Photos to relink them.",
             missing = missing
+        ));
+    }
+    // images whose catalog records are incomplete come as data (`skipped`), said here in the UI
+    // language; their ids are in the report for the CLI and agents
+    let skipped = report["skipped"].as_array().map_or(0, Vec::len);
+    if skipped > 0 {
+        details.push(crate::i18n::tr_format!(
+            "{skipped} catalog images were not imported because their records in the catalog are incomplete.",
+            skipped = skipped
         ));
     }
     if let Some(warning) = value.get("indexWarning").and_then(Value::as_str) {
@@ -291,5 +301,39 @@ mod tests {
         tick(&mut h.app, &h.view.ctx);
         assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::LightroomResult { .. })));
         assert!(h.app.lightroom_result.is_none());
+    }
+
+    #[test]
+    fn skipped_images_are_one_line_in_the_ui_language() {
+        let value = json!({"report": {"photos": 3, "collections": 0, "warnings": ["w1", "w2"], "skipped": [
+            {"image": 7, "reason": "missingFile"},
+            {"image": 8, "reason": "missingRoot"},
+            {"image": 9, "reason": "masterSkipped"},
+        ]}});
+        let details = |locale| {
+            crate::i18n::set_language(locale);
+            let dialog = result_dialog(&value, "done");
+            crate::i18n::set_language(crate::i18n::Locale::En);
+            let crate::state::Dialog::LightroomResult { details, .. } = dialog else { panic!("not a Lightroom result") };
+            details
+        };
+        let en = details(crate::i18n::Locale::En);
+        assert_eq!(en.len(), 4, "{en:?}");
+        assert_eq!(en[1], "3 catalog images were not imported because their records in the catalog are incomplete.");
+        assert_eq!(&en[2..], ["w1", "w2"]);
+        let es = details(crate::i18n::Locale::Es);
+        assert_eq!(es[1], "No se importaron 3 imágenes del catálogo porque sus registros en el catálogo están incompletos.");
+    }
+
+    #[test]
+    fn skipped_images_do_not_take_the_warning_slots() {
+        let warnings: Vec<_> = (0..10).map(|i| format!("w{i}")).collect();
+        let skipped: Vec<_> = (0..500).map(|i| json!({"image": i, "reason": "missingFile"})).collect();
+        let value = json!({"report": {"warnings": warnings, "skipped": skipped}});
+        let crate::state::Dialog::LightroomResult { details, .. } = result_dialog(&value, "done") else { panic!("not a Lightroom result") };
+        // one line for the skipped images, then the usual eight warnings and the rest counted
+        assert_eq!(details.len(), 10, "{details:?}");
+        assert!(details[0].starts_with("500 catalog images were not imported"));
+        assert_eq!(details[9], "2 more warnings.");
     }
 }

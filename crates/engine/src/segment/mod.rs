@@ -73,6 +73,7 @@ pub(crate) struct Input {
 }
 
 /// What a detail pass re-runs.
+#[derive(Clone)]
 #[cfg_attr(not(feature = "sam"), allow(dead_code))]
 pub(crate) enum Prompt {
     Clicks(Vec<Click>),
@@ -449,7 +450,11 @@ impl Session {
         let job = self.segment_job(id, kind, Tag::Wait, tx, region)?;
         self.segmenter.worker.submit(job)?;
         match rx.recv_timeout(WAIT) {
-            Ok(o) => o.result,
+            Ok(o) => {
+                // (shown by the next poll in an app; logged anyway)
+                self.segmenter.messages.extend(o.notice);
+                o.result
+            }
             Err(_) => Err("the AI model took too long; try again".into()),
         }
     }
@@ -589,7 +594,7 @@ impl Session {
             } else {
                 let patch = self.segment_wait(id, kind, Some(region))?;
                 let source_key = self.segment_key(id).ok_or("no such photo")?.0;
-                let outcome = worker::Outcome { tag, source_key, result: Ok(patch), superseded: false };
+                let outcome = worker::Outcome { tag, source_key, result: Ok(patch), superseded: false, notice: None };
                 let mut polled = Polled::default();
                 self.apply_outcome(outcome, &mut polled);
             }
@@ -628,6 +633,7 @@ impl Session {
         if o.superseded {
             return;
         }
+        polled.messages.extend(o.notice);
         let photo = match &o.tag {
             Tag::Clicks { photo, .. } | Tag::NewPrompt { photo, .. } | Tag::Detail { photo, .. } => Some(*photo),
             _ => None,
@@ -737,6 +743,18 @@ impl Session {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "sam")]
+    #[test]
+    fn a_worker_notice_reaches_the_user_with_the_result() {
+        // the job after which the model runs on the CPU (the GPU failed) says so
+        let mut s = Session::with_demo();
+        let notice = Some(worker::GPU_FAILED.to_string());
+        s.segmenter.results.0.send(worker::Outcome { tag: Tag::Prepare, source_key: 0, result: Ok(None), superseded: false, notice }).unwrap();
+        let polled = s.segment_poll();
+        assert_eq!(polled.messages, vec![worker::GPU_FAILED.to_string()]);
+        assert!(s.segment_poll().messages.is_empty(), "once");
+    }
+
     fn seg_box(side: usize, x0: usize, y0: usize, x1: usize, y1: usize) -> SegMask {
         let l: Vec<f32> =
             (0..side * side).map(|i| if (x0..x1).contains(&(i % side)) && (y0..y1).contains(&(i / side)) { 8.0 } else { -8.0 }).collect();
@@ -754,6 +772,7 @@ mod tests {
             tag: Tag::NewPrompt { photo, mask: None, op: "add".into(), name: None, text: "sky".into() },
             result: Ok(Some(seg_box(16, 0, 0, 16, 8))),
             superseded: false,
+            notice: None,
         };
         let mut d = (*s.develop_of(photo).unwrap()).clone();
         d.geometry.horizontal = 30.0;
@@ -776,6 +795,7 @@ mod tests {
             tag: Tag::NewPrompt { photo, mask: None, op: "add".into(), name: None, text: "sky".into() },
             result: Ok(Some(seg_box(16, 0, 0, 16, 8))),
             superseded: false,
+            notice: None,
         };
         let mut polled = Polled::default();
         s.apply_outcome(outcome, &mut polled);
@@ -801,6 +821,7 @@ mod tests {
             tag: Tag::Detail { photo, mask, comp: 0, shape },
             result: Ok(Some(seg_box(16, 5, 5, 7, 7))),
             superseded: false,
+            notice: None,
         };
         let mut polled = Polled::default();
         s.apply_outcome(outcome, &mut polled);

@@ -196,12 +196,8 @@ pub fn frame(app: &mut LightcraftApp, ctx: &egui::Context) {
     let v = &app.session.vision;
     let idle = v.job().is_none_or(|j| j.finished.load(std::sync::atomic::Ordering::Relaxed));
     // checking for sensitive content: the photos not checked yet, once a session and again when photos come
-    if v.sensitive_ready() && idle && !v.busy() {
-        let total = total_photos(app);
-        if app.ui.sensitive_checked_for != Some(total) {
-            app.ui.sensitive_checked_for = Some(total);
-            let _ = app.run("vision.index", json!({}));
-        }
+    if v.sensitive_ready() {
+        app.session.vision_catch_up();
     }
     let v = &app.session.vision;
     if app.ui.ai_search && !app.ui.ai_search_autostarted && v.installed() && idle && !downloading {
