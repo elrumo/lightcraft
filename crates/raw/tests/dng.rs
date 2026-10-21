@@ -851,12 +851,21 @@ fn jxl_codes_under_a_linearization_table_are_not_rescaled_by_the_white_level() {
 }
 
 #[test]
-fn jxl_lossy_tile_in_a_non_linear_encoding_is_unsupported() {
-    // `LOSSY` declares sRGB (cjxl's default for a PPM): its raw values can't be restored, so the file stays
-    // preview-only rather than decoding to something else
+fn jxl_lossy_tile_in_a_non_linear_encoding_decodes_to_its_samples() {
+    // `LOSSY` declares sRGB (cjxl's default for a PPM): the declared curve is restored, so the tile decodes to
+    // the samples it was coded from, as libjxl's own decoder gives them (PQ / HLG tiles stay unsupported:
+    // `jxl::tests::lossy_data_that_cannot_be_restored_is_unsupported`)
     let mut raw = jxl_ifd(32, 32, 32, 3, false, vec![jxl_data::LOSSY.to_vec()]);
     raw.set(t::WHITE_LEVEL, Value::Long(vec![65535]));
-    assert!(matches!(decode(&dng(raw, ByteOrder::Little)), Err(lightcraft_raw::RawError::Unsupported(_))));
+    let img = decode(&dng(raw, ByteOrder::Little)).unwrap();
+    let RawData::U16(v) = &img.data else { panic!("integer samples") };
+    for &(x, y, want) in jxl_data::LOSSY_REFERENCE {
+        for (c, want) in want.into_iter().enumerate() {
+            let got = v[(y * 32 + x) * 3 + c];
+            // lossy (-d 1): within 3 % of full scale of libjxl's decode
+            assert!((f64::from(got) - f64::from(want)).abs() < 0.03 * 65535.0, "({x}, {y}) channel {c}: {got}, libjxl {want}");
+        }
+    }
 }
 
 #[test]

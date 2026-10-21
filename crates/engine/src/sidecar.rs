@@ -17,7 +17,10 @@
 //! **Shared names** (Stem naming): `IMG_0001.CR3` and `IMG_0001.JPG` would share `IMG_0001.xmp`.
 //! When two catalogued files map to one stem sidecar, it belongs to one of them (a raw first, then
 //! the first by file name — [`Session::sidecar_naming`]); the others use `<file>.xmp`
-//! (`IMG_0001.JPG.xmp`) for writing and reading, so neither overwrites the other.
+//! (`IMG_0001.JPG.xmp`) for writing and reading, so neither overwrites the other. An import ranks
+//! the files it is adding against the library the same way ([`ImportStems`]): a JPEG or a TIFF
+//! arriving beside its raw's `IMG_0001.xmp` reads its own `<file>.xmp`, never the raw's packet
+//! (issue #1905).
 //!
 //! **Read** (on import, and `photo.readMetadataFromFile`): the sidecar wins for metadata, except
 //! the capture time: a time embedded in the file wins, and the sidecar's (`exif:DateTimeOriginal`,
@@ -29,7 +32,7 @@
 //! time when it reads or writes it. Browsing a folder again reads every sidecar whose time
 //! changed since (Lightroom edited the photo meanwhile), the sidecar winning as above.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -75,6 +78,18 @@ pub fn find_sidecar(original: &str, naming: SidecarNaming) -> Option<PathBuf> {
     sidecar_candidates(original, naming).find(|p| p.is_file())
 }
 
+/// Find the sidecar for a file an import is adding, by the ownership [`ImportStems`] worked out
+/// (issue #1905): [`find_sidecar`] with the library's naming, except that a file which does not
+/// own its stem sidecar reads its own `<file>.xmp` (the name it writes) and never the packet of
+/// the sibling that owns the stem one.
+pub(crate) fn find_sidecar_for_import(stems: &ImportStems, naming: SidecarNaming, original: &str) -> Option<PathBuf> {
+    if stems.owns(original) {
+        return find_sidecar(original, naming);
+    }
+    let shared = xmp_cases(sidecar_path(original, SidecarNaming::Stem));
+    sidecar_candidates(original, SidecarNaming::Full).filter(|p| !shared.contains(p)).find(|p| p.is_file())
+}
+
 /// The names `original`'s sidecar can have, in the order they are looked for: under `naming`,
 /// then under the other naming (the full name also with the photo extension in the other case),
 /// each as `.xmp`, `.XMP` and `.Xmp`.
@@ -93,7 +108,12 @@ pub(crate) fn sidecar_candidates(original: &str, naming: SidecarNaming) -> impl 
             }
             v
         })
-        .flat_map(|p| [p.clone(), p.with_extension("XMP"), p.with_extension("Xmp")])
+        .flat_map(xmp_cases)
+}
+
+/// The three ways one sidecar name can be written: `.xmp`, `.XMP` and `.Xmp`.
+fn xmp_cases(p: PathBuf) -> [PathBuf; 3] {
+    [p.clone(), p.with_extension("XMP"), p.with_extension("Xmp")]
 }
 
 /// A file's modification time in nanoseconds since 1970 (`None` when it can't be read).
@@ -710,6 +730,16 @@ pub(crate) fn op_photos(op: &Op, out: &mut Vec<PhotoId>) {
     }
 }
 
+/// Where a file stands in the order a shared stem sidecar is owned by: a raw first, then the file
+/// name in lower case, then the catalog id (a file an import is adding has no id yet, and ranks
+/// last among files of its kind and name: see [`ImportStems`]).
+type Rank = (bool, String, u64);
+
+/// The rank of the file at `path`, of kind `kind`, catalogued as `id`.
+fn rank_of(path: &str, kind: MediaKind, id: u64) -> Rank {
+    (kind != MediaKind::Raw, path.to_lowercase(), id)
+}
+
 /// Which photo owns each stem sidecar that several catalogued files map to (see
 /// [`Session::sidecar_naming`]).
 pub(crate) struct StemOwners(HashMap<String, PhotoId>);
@@ -720,10 +750,10 @@ impl StemOwners {
     /// owners were worked out before, for every write).
     #[cfg(test)]
     pub(crate) fn of(cat: &lightcraft_catalog::Catalog) -> StemOwners {
-        let mut best: HashMap<String, ((bool, String, u64), PhotoId, usize)> = HashMap::new();
+        let mut best: HashMap<String, (Rank, PhotoId, usize)> = HashMap::new();
         for p in cat.photos().filter(|p| p.copy_of.is_none()) {
             let Some(path) = file_path(p) else { continue };
-            let rank = (p.kind != MediaKind::Raw, path.to_lowercase(), p.id.0);
+            let rank = rank_of(path, p.kind, p.id.0);
             let e = best.entry(stem_key(path)).or_insert_with(|| (rank.clone(), p.id, 0));
             e.2 += 1;
             if rank < e.0 {
@@ -748,7 +778,7 @@ impl StemOwners {
     /// The owners of the shared stems in `wanted`.
     fn where_wanted(cat: &lightcraft_catalog::Catalog, wanted: &std::collections::HashSet<String>) -> StemOwners {
         // per stem: (raw first, then file name, then id) of the best candidate; and how many
-        let mut best: HashMap<String, ((bool, String, u64), PhotoId, usize)> = HashMap::new();
+        let mut best: HashMap<String, (Rank, PhotoId, usize)> = HashMap::new();
         let mut key = String::new();
         for p in cat.photos().filter(|p| p.copy_of.is_none()) {
             let Some(path) = file_path(p) else { continue };
@@ -756,7 +786,7 @@ impl StemOwners {
             if !wanted.contains(key.as_str()) {
                 continue;
             }
-            let rank = (p.kind != MediaKind::Raw, path.to_lowercase(), p.id.0);
+            let rank = rank_of(path, p.kind, p.id.0);
             let e = best.entry(key.clone()).or_insert_with(|| (rank.clone(), p.id, 0));
             e.2 += 1;
             if rank < e.0 {
@@ -772,6 +802,66 @@ impl StemOwners {
             (SidecarNaming::Stem, Some(path)) if self.0.get(&stem_key(path)).is_some_and(|owner| *owner != p.id) => SidecarNaming::Full,
             _ => naming,
         }
+    }
+}
+
+/// Which of the files an import is adding may read the shared stem sidecar (`IMG_0001.xmp`) of
+/// their stem, and which read their own `<file>.xmp` (`IMG_0001.TIF.xmp`) instead (issue #1905:
+/// before, a JPEG or a TIFF imported beside its raw read the raw's packet and took its rating,
+/// metadata and develop settings). The order is the one [`StemOwners`] applies to writing, with
+/// the arriving files ranked against the library and against each other: a raw first, then the
+/// file name in lower case. A file that is not catalogued yet has no id, and the id it draws when
+/// the import commits is above every id in the library, so it loses a tie against a catalogued
+/// file; between arriving files the order they arrive in stands for it.
+pub(crate) struct ImportStems {
+    /// The arriving files that own the stem sidecar of their stem, by path as it arrives.
+    owners: HashSet<String>,
+}
+
+impl ImportStems {
+    /// Work out [`ImportStems`] for the files `incoming`, in the order they arrive. `None` for a
+    /// library already looked over (a job prepared twice): there is nothing to rank against, so
+    /// every arriving file reads as it did before. The library is passed over once, and only the
+    /// stems the arriving files map to are looked at closer.
+    pub(crate) fn for_import<'a>(cat: Option<&lightcraft_catalog::Catalog>, incoming: impl Iterator<Item = (&'a str, MediaKind)>) -> ImportStems {
+        // per stem: the best of the library's files, and the best arriving file with its path
+        let mut best: HashMap<String, (Option<Rank>, Option<(Rank, &'a str)>)> = HashMap::new();
+        let mut arriving_paths = HashSet::new();
+        for (arriving, (path, kind)) in incoming.enumerate() {
+            arriving_paths.insert(path);
+            let e = best.entry(stem_key(path)).or_default();
+            let rank = rank_of(path, kind, arriving as u64);
+            if e.1.as_ref().is_none_or(|(b, _)| rank < *b) {
+                e.1 = Some((rank, path));
+            }
+        }
+        if let Some(cat) = cat {
+            let mut key = String::new();
+            for p in cat.photos().filter(|p| p.copy_of.is_none()) {
+                // the arriving file's own record (a trashed photo imported again) is not a rival
+                let Some(path) = file_path(p).filter(|path| !arriving_paths.contains(*path)) else { continue };
+                stem_key_into(&mut key, path);
+                let Some(e) = best.get_mut(key.as_str()) else { continue };
+                let rank = rank_of(path, p.kind, p.id.0);
+                if e.0.as_ref().is_none_or(|b| rank < *b) {
+                    e.0 = Some(rank);
+                }
+            }
+        }
+        let owners = best
+            .into_values()
+            .filter_map(|(in_library, arriving)| {
+                let (rank, path) = arriving?;
+                let wins = in_library.as_ref().is_none_or(|b| (rank.0, rank.1.as_str()) < (b.0, b.1.as_str()));
+                wins.then(|| path.to_string())
+            })
+            .collect();
+        ImportStems { owners }
+    }
+
+    /// Whether the arriving file at `original` owns the stem sidecar of its stem.
+    pub(crate) fn owns(&self, original: &str) -> bool {
+        self.owners.contains(original)
     }
 }
 

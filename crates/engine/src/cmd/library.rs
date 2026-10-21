@@ -1876,7 +1876,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         // ---- import
         cmd!(query "library.inspectLightroom", "Inspect Lightroom Catalog", [], None,
-        "{path: .lrcat | .mcat} → Classic {kind: classic, photos, collections, missing, warnings} or Lightroom (cloud) {kind: cloud, albums, folders, photos, warnings}; read-only, no Lightroom required",
+        "{path: .lrcat | .mcat} → Classic {kind: classic, photos, collections, missing, warnings, skipped: [{image, reason}]} or Lightroom (cloud) {kind: cloud, albums, folders, photos, warnings}; read-only, no Lightroom required",
         always, |_, p| {
             let path = str_param(p,"path").ok_or_else(|| bad("library.inspectLightroom","missing path"))?;
             let (cancel, total, done) = Default::default();

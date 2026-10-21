@@ -535,11 +535,13 @@ mod tests {
             collection_content: Vec::new(),
             stacks: Vec::new(),
             warnings: vec!["warning".into()],
+            skipped: Vec::new(),
         });
         assert_eq!(report["photos"], 0);
         assert_eq!(report["collections"], 0);
         assert_eq!(report["missing"], json!([]));
         assert_eq!(report["warnings"], json!(["warning"]));
+        assert_eq!(report["skipped"], json!([]));
     }
 
     // A catalog is found from its file, its folder, or the folder holding its folder

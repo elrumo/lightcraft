@@ -168,14 +168,15 @@ fn phone_crop_is_a_screen_of_its_own() {
     click(&mut h, "button:cropRatios");
     assert!(has(&h, "button:cropAspect-4x5"), "the ratios are listed");
     click(&mut h, "button:cropAspect-4x5");
-    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((400, 500)), "4 × 5 is locked");
+    // (a named ratio is stored turned to the crop's orientation, landscape here: issue #2253)
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((500, 400)), "4 × 5 is locked");
     // the lock frees it again
     click(&mut h, "icon:cropLock");
     assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, None, "unlocked: free");
     // Instagram's formats are in a menu of their own
     click(&mut h, "button:cropInstagram");
     click(&mut h, "button:cropAspect-100x191");
-    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((10000, 19100)), "Landscape is 1.91 : 1");
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((19100, 10000)), "Landscape is 1.91 : 1");
 }
 
 /// Dragging the dial straightens the photo (one undo step); the round buttons rotate and flip.
