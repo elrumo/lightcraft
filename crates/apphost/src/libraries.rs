@@ -75,6 +75,57 @@ pub fn new_dir(location: &Path, name: Option<&str>, picked: bool) -> Result<Path
     Ok(dir)
 }
 
+/// Why a library at `dir` can't be opened without making something where nothing should be (`None`: go
+/// ahead): a `remembered` one (in the recent list, or the one opened last) that isn't there — moved,
+/// or on a disk or network share that isn't connected, whose empty mount point may still be there —
+/// or, for a new one, a folder it would be made in that isn't there either.
+pub fn missing(dir: &Path, remembered: bool) -> Option<String> {
+    if dir.exists() {
+        return None;
+    }
+    if remembered {
+        return Some(format!(
+            "{}: the library isn't there: it was moved or renamed, or the disk or network share it is on isn't connected",
+            dir.display()
+        ));
+    }
+    let parent = dir.parent().filter(|p| !p.as_os_str().is_empty())?;
+    (!parent.is_dir())
+        .then(|| format!("{}: the folder it would be made in isn't there (a disk or network share that isn't connected?)", dir.display()))
+}
+
+/// The library to open for a folder picked for Open Library…: the folder itself, or the one folder in
+/// it that is a library (the drive's or the server's folder a library sits in was picked). A folder
+/// with several is an error that says so. One with none becomes a library only when it may be a new
+/// one (`existing` false); otherwise (a library opened before, its share's empty mount point left)
+/// that is an error too. A Lightroom catalog comes back as it is, for opening it to say what it is.
+pub fn find(dir: &Path, existing: bool) -> Result<PathBuf, String> {
+    use lightcraft_engine::library::is_library;
+    if is_library(dir) || lightcraft_engine::lightroom_folder::lightroom_catalog_at(dir).is_some() {
+        return Ok(dir.to_path_buf());
+    }
+    if let Some(why) = missing(dir, true) {
+        return Err(why);
+    }
+    std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // ([`found_in`] looks only at folders, and at so many of them: a share's top folder can hold thousands)
+    let inside = found_in(dir);
+    match inside.as_slice() {
+        [one] => Ok(one.clone()),
+        [] if !existing => Ok(dir.to_path_buf()),
+        [] => Err(format!(
+            "{}: there is no library here: choose a library's folder (or the folder it is in), or make one with New Library…",
+            dir.display()
+        )),
+        many => Err(format!(
+            "{}: there are {} libraries here ({}): choose the one to open",
+            dir.display(),
+            many.len(),
+            many.iter().take(8).map(|p| name(p)).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
 /// What [`switch`] did.
 #[derive(Debug)]
 pub struct Switched {
@@ -279,6 +330,46 @@ mod tests {
         assert_eq!(recent[0], "/x/15");
         assert_eq!(recent[1], "/x/19");
         assert_eq!(recent.iter().filter(|r| *r == "/x/15").count(), 1);
+    }
+
+    /// A library on a share that isn't connected: its folder is gone, and so is the folder it was in (or
+    /// only an empty mount point is left). Remembered, it is never made anew there; a new one is made only
+    /// in a folder that is there.
+    #[test]
+    fn missing_tells_a_share_that_isnt_connected_from_a_new_folder() {
+        let dir = temp("missing");
+        assert_eq!(missing(&dir, true), None);
+        assert_eq!(missing(&dir.join("new"), false), None);
+        assert!(missing(&dir.join("new"), true).is_some_and(|e| e.contains("isn't connected")));
+        assert!(missing(&dir.join("gone").join("new"), false).is_some());
+        assert_eq!(missing(Path::new("relative-new-library"), false), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Open Library… on a drive or a server: the library's folder, or the folder it is in (a share's top
+    /// folder), opens it; a folder with several says so. One with none starts a library only when it may
+    /// be a new one, never for a library opened before.
+    #[test]
+    fn find_opens_a_library_or_the_one_in_a_folder() {
+        let dir = temp("find");
+        drop(session_in(&dir.join("share").join("LightCraft Library")));
+        std::fs::create_dir_all(dir.join("share").join("2019")).unwrap();
+        let lib = dir.join("share").join("LightCraft Library");
+        for existing in [false, true] {
+            assert_eq!(find(&lib, existing), Ok(lib.clone()));
+            assert_eq!(find(&dir.join("share"), existing), Ok(lib.clone()));
+        }
+        let e = find(&dir.join("share").join("2019"), true).unwrap_err();
+        assert!(e.contains("no library here"), "{e}");
+        assert!(!lightcraft_engine::library::is_library(&dir.join("share").join("2019")));
+        assert_eq!(find(&dir.join("share").join("2019"), false), Ok(dir.join("share").join("2019")));
+        drop(session_in(&dir.join("share").join("Archive")));
+        for existing in [false, true] {
+            let e = find(&dir.join("share"), existing).unwrap_err();
+            assert!(e.contains("2 libraries here (Archive, LightCraft Library)"), "{e}");
+        }
+        assert!(find(&dir.join("gone"), false).unwrap_err().contains("isn't connected"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
