@@ -83,6 +83,12 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `render.retain` | `{thumbs, max?}` | the thumbnails on screen (queued renders of others are dropped) |
 | `ui.reply` | `{id, result \| error}` | the app's answer to a `uiRequest` |
 
+**For the system's own features** (a native frontend's search index, shortcuts, Handoff, Live Photos), engine commands
+answer what they need: `catalog.describe {ids? | offset, limit}` is what a system index is told of each photo (words to
+find it by, where and when it was taken; never a hidden, deleted or Local photo, and a `revision` to skip a pass when
+nothing changed), `sync.status`'s `library` names the synced library a photo id belongs to on every device, and
+`live.*` keeps a Live Photo's motion clip ([video.md](video.md#live-photos)).
+
 **Live control channel.** With `LIGHTCRAFT_CONTROL_PORT=<port>` in the environment the host also listens on `127.0.0.1:<port>`
 (`apphost::host::control`; off otherwise, loopback only, a first line that is not a request closes the connection). It speaks
 the control protocol of [control-protocol.md](control-protocol.md): one `{"id","method","params"}` line in, one
