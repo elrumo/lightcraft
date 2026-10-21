@@ -81,6 +81,24 @@ pub const LICENSE_NAME: &str = "Apache License 2.0 (Google, SigLIP 2)";
 pub const LICENSE_URL: &str = "https://huggingface.co/google/siglip2-base-patch16-224";
 /// Download size of the model.
 pub const MODEL_BYTES: u64 = 1_500_800_904 + 34_363_039;
+/// What a phone must let the app use for the search model to run there, as sizes are counted
+/// (`DeviceProfile::has_memory`: 3.05 GB will do): the model takes 1.5 GB while it is loaded (on the CPU there,
+/// `lightcraft_vision::siglip::best_device`), the caches up to 1 GB more, and the photo in hand and the app half a GB
+/// besides. The other models (text, faces, sensitive content) are a few tens of MB and run on any phone.
+pub const SEARCH_PHONE_MEMORY: u64 = 13 * crate::hardware::GB / 4;
+
+/// Why the search model can't run on a device with profile `p` (a phone that may use less than
+/// [`SEARCH_PHONE_MEMORY`], or doesn't say), or `None` when it can.
+pub fn search_unfit(p: &crate::hardware::DeviceProfile) -> Option<String> {
+    let phone = p.class == crate::hardware::DeviceClass::Phone;
+    (phone && !p.has_memory(SEARCH_PHONE_MEMORY, false)).then(|| {
+        format!(
+            "search by description needs a device that lets the app use {:.2} GB of memory; this is {}",
+            SEARCH_PHONE_MEMORY as f64 / crate::hardware::GB as f64,
+            p.describe()
+        )
+    })
+}
 /// The text-reading models' licence (not LightCraft's): shown before downloading.
 pub const TEXT_LICENSE_NAME: &str = "Apache License 2.0 (Baidu, PaddleOCR PP-OCRv6)";
 pub const TEXT_LICENSE_URL: &str = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx";
@@ -202,13 +220,25 @@ impl Drop for Busy {
     }
 }
 
+/// What [`Session::vision_catch_up`] last looked at: when, and the photo count and the ready models (bits, see
+/// [`Session::vision_ready_parts`]) it last started a run for.
+#[derive(Clone, Copy, Debug, Default)]
+struct CatchUp {
+    checked: Option<Instant>,
+    started: Option<(usize, u8)>,
+}
+
+/// How often [`Session::vision_catch_up`] looks (it checks the models' files on disk).
+const CATCH_UP_EVERY: Duration = Duration::from_secs(5);
+
 /// An indexing run.
 #[derive(Debug, Default)]
 pub struct IndexJob {
     pub total: usize,
     pub done: AtomicUsize,
     pub failed: AtomicUsize,
-    pub cancel: AtomicBool,
+    /// Set to stop the run after the photo in hand (also by its activity row's ✕).
+    pub cancel: Arc<AtomicBool>,
     pub finished: AtomicBool,
     /// The run is reading the text in photos (after describing them).
     pub reading: AtomicBool,
@@ -309,6 +339,9 @@ pub struct Vision {
     /// it searches and lists people through the sync server.
     #[doc(hidden)]
     pub thin: bool,
+    /// Why this device can't run the search model though the build has it ([`search_unfit`] of the session's device,
+    /// kept by `Session::set_device` and `Session::set_app_memory`): it searches through the sync server instead.
+    pub(crate) unfit: Option<String>,
     /// Long edge of the renderings text and faces are read from ([`TEXT_EDGE`]; smaller in tests).
     #[doc(hidden)]
     pub text_edge: usize,
@@ -334,6 +367,10 @@ pub struct Vision {
     shared: Arc<Shared>,
     job: Option<Arc<IndexJob>>,
     job_reported: bool,
+    /// The activity row of a run in the background, held while it runs ([`Session::vision_poll`] ends it).
+    index_task: Option<crate::activity::TaskGuard>,
+    /// What [`Session::vision_catch_up`] last looked at and started a run for.
+    catch_up: CatchUp,
     search_seq: u64,
     searching: Arc<AtomicUsize>,
     results: (Sender<Searched>, Receiver<Searched>),
@@ -381,6 +418,7 @@ impl Default for Vision {
             helper_paused: Vec::new(),
             helper_once: Vec::new(),
             thin: false,
+            unfit: None,
             text_edge: TEXT_EDGE,
             injected: None,
             injected_reader: None,
@@ -400,6 +438,8 @@ impl Default for Vision {
             shared: Arc::new(Shared::default()),
             job: None,
             job_reported: true,
+            index_task: None,
+            catch_up: CatchUp::default(),
             search_seq: 0,
             searching: Arc::new(AtomicUsize::new(0)),
             results: mpsc::channel(),
@@ -427,9 +467,20 @@ impl Default for Vision {
 }
 
 impl Vision {
-    /// Whether this device can run the search model (this build has it, or a host supplied one).
+    /// The search state for a device with profile `p` (a phone that may use too little can't run the model).
+    pub fn for_device(p: &crate::hardware::DeviceProfile) -> Vision {
+        Vision { unfit: search_unfit(p), ..Vision::default() }
+    }
+
+    /// Whether this device can run the search model (this build has it and the device has the memory, or a host
+    /// supplied one).
     pub fn local_available(&self) -> bool {
-        (cfg!(feature = "vision") && !self.thin) || self.injected.is_some()
+        (cfg!(feature = "vision") && !self.thin && self.unfit.is_none()) || self.injected.is_some()
+    }
+
+    /// Why this device can't run the search model though the build has it (too little memory), if so.
+    pub fn unfit(&self) -> Option<&str> {
+        self.unfit.as_deref().filter(|_| cfg!(feature = "vision") && !self.thin && self.injected.is_none())
     }
 
     /// Whether searching by description is possible here: with the model on this device, or
@@ -534,6 +585,8 @@ impl Vision {
             job.cancel.store(true, Ordering::Relaxed);
         }
         self.job_reported = true;
+        self.index_task = None;
+        self.catch_up = CatchUp::default();
         // (a search still out for the old library is told apart by this number, and dropped)
         self.search_seq += 1;
         self.people = people::Cache::default();
@@ -589,7 +642,7 @@ impl Vision {
     /// downloading already.
     pub fn start_download(&self, activity: &crate::activity::Activity) -> Result<bool, String> {
         if !self.local_available() {
-            return Err("natural-language search is not available in this build".into());
+            return Err(self.unfit().unwrap_or("natural-language search is not available in this build").to_string());
         }
         if self.installed() {
             return Ok(false);
@@ -871,6 +924,10 @@ impl Vision {
         }
         #[cfg(feature = "vision")]
         {
+            // (a model put in place by hand on a phone that can't hold it is never loaded)
+            if let Some(why) = &self.unfit {
+                return Err(why.clone());
+            }
             if !self.installed() {
                 return Err(self.not_installed());
             }
@@ -894,6 +951,11 @@ impl Vision {
             MODEL_BYTES as f64 / 1e9
         )
     }
+}
+
+/// How long the models have gone unused.
+fn idle_for(shared: &Shared) -> Duration {
+    shared.used.try_lock().ok().and_then(|u| u.map(|t| t.elapsed())).unwrap_or_default()
 }
 
 /// The model, loading it first if needed (seconds; the model lock is held meanwhile, so
@@ -1406,6 +1468,8 @@ impl Session {
         json!({
             "available": v.available(),
             "localAvailable": v.local_available(),
+            // (why this device can't run the model though the build has it: too little memory)
+            "unfit": v.unfit(),
             "server": {"supported": v.remote.supported(), "ready": v.remote.ready(), "status": v.remote.status},
             "localOnly": v.local_only,
             "share": {"enabled": v.share_with_server, "running": v.remote.share.running, "sent": v.remote.share.sent, "error": v.remote.share.error},
@@ -1563,10 +1627,17 @@ impl Session {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            // (a row while there is work: its ✕ stops the run; vision_poll moves its bar and ends it)
+            self.vision.index_task = (job.total > 0).then(|| {
+                let task = self.activity.start("index", "Indexing photos", crate::activity::Cancel::Flag(job.cancel.clone()));
+                task.progress(failed as u64, job.total as u64);
+                task
+            });
             let j = job.clone();
             let started = std::thread::Builder::new().name("lc-vision-index".into()).spawn(move || run_index(&shared, plan, &j));
             if let Err(e) = started {
                 job.finished.store(true, Ordering::Relaxed);
+                self.vision.index_task = None;
                 return Err(format!("could not start indexing: {e}"));
             }
         }
@@ -1612,9 +1683,13 @@ impl Session {
             Err(match (self.vision.local_available(), self.vision_signed_in()) {
                 (true, _) => self.vision.provider().err().unwrap_or_default(),
                 (false, true) => "this server can't search by description yet: its search model isn't installed".into(),
-                (false, false) => {
-                    "search by description needs a LightCraft server with the search model installed, and this library isn't signed in to one".into()
-                }
+                (false, false) => match self.vision.unfit() {
+                    Some(why) => format!("{why}: a LightCraft server with the search model can search for it once this library is signed in to one"),
+                    None => {
+                        "search by description needs a LightCraft server with the search model installed, and this library isn't signed in to one"
+                            .into()
+                    }
+                },
             })
         } else {
             self.vision.provider().and_then(|(provider, model, dim)| {
@@ -1718,6 +1793,21 @@ impl Session {
                 Err(e) => out.messages.push(e),
             }
         }
+        let running = self.vision.job.clone().filter(|j| !j.finished.load(Ordering::Relaxed));
+        match (running, &self.vision.index_task) {
+            (Some(job), Some(task)) => {
+                task.progress(job.done.load(Ordering::Relaxed) as u64, job.total as u64);
+                // (which model is at work: a name)
+                task.detail(match job.phase() {
+                    "reading" => "PP-OCRv6",
+                    "finding" => "YuNet + SFace",
+                    "checking" => "NSFW Image Detection",
+                    _ => "SigLIP 2",
+                });
+            }
+            (None, Some(_)) => self.vision.index_task = None,
+            _ => {}
+        }
         if let Some(job) = self.vision.job.clone()
             && job.finished.load(Ordering::Relaxed)
             && !self.vision.job_reported
@@ -1736,6 +1826,67 @@ impl Session {
         self.vision_open_in_background();
         self.vision_unload_if_idle();
         out
+    }
+
+    /// The models this device has ready to look at photos with, as bits: describing them (1: the search model, where
+    /// it can run), their text (2), their faces (4) and sensitive content (8), each of the last three once the user
+    /// turned it on.
+    pub fn vision_ready_parts(&self) -> u8 {
+        let v = &self.vision;
+        u8::from(v.local_available() && v.installed())
+            | (u8::from(v.text_available() && v.text_ready()) << 1)
+            | (u8::from(v.faces_available() && v.faces_ready()) << 2)
+            | (u8::from(v.sensitive_available() && v.sensitive_ready()) << 3)
+    }
+
+    /// Has the ready models look at the photos they haven't yet (`vision.index`, in the background): once, and again
+    /// whenever the library's photo count or the ready models change, while no run is going. A frontend calls it on its
+    /// tick: the native host does, so a model downloaded there gets to work by itself; egui does for sensitive
+    /// content (its search and People panels start the other runs). It looks at most every few seconds (the models'
+    /// files are on disk). A run stopped by the user is not started again until something changes. Only the photos with
+    /// pixels here: a synced photo whose previews haven't come down is the server's to look at, or an explicit
+    /// `vision.index`'s (which fetches them), so a phone never downloads a whole library's previews by itself. Whether a
+    /// run was started.
+    pub fn vision_catch_up(&mut self) -> bool {
+        let v = &self.vision;
+        if v.job.as_ref().is_some_and(|j| !j.finished.load(Ordering::Relaxed)) || v.busy() {
+            return false;
+        }
+        if v.catch_up.checked.is_some_and(|t| t.elapsed() < CATCH_UP_EVERY) {
+            return false;
+        }
+        self.vision.catch_up.checked = Some(Instant::now());
+        let ready = self.vision_ready_parts();
+        let photos = self.catalog.photos().filter(|p| p.in_library()).count();
+        if ready == 0 || photos == 0 || self.vision.catch_up.started == Some((photos, ready)) {
+            return false;
+        }
+        self.vision.catch_up.started = Some((photos, ready));
+        let here: Vec<PhotoId> = self.catalog.photos().filter(|p| p.in_library() && self.synced_tier(p) != Some(0)).map(|p| p.id).collect();
+        match self.vision_index(Some(here), false) {
+            Ok(_) => {
+                // (nothing was missing: no "Indexed 0 photos" to say)
+                if self.vision.job.as_ref().is_some_and(|j| j.total == 0) {
+                    self.vision.job_reported = true;
+                }
+                true
+            }
+            Err(e) => {
+                log::info!("vision: no run started: {e}");
+                false
+            }
+        }
+    }
+
+    /// The app is leaving the screen (an iOS app may not use the GPU in the background, and is soon suspended): the run
+    /// going stops after the photo in hand, without a message, and [`Session::vision_catch_up`] starts it again from
+    /// where it got to once it is called again. Whether a run was stopped.
+    pub fn vision_pause(&mut self) -> bool {
+        let Some(job) = self.vision.job.as_ref().filter(|j| !j.finished.load(Ordering::Relaxed)) else { return false };
+        job.cancel.store(true, Ordering::Relaxed);
+        self.vision.job_reported = true;
+        self.vision.catch_up = CatchUp::default();
+        true
     }
 
     /// Opens the library's index on a thread when it hasn't been, so its size is known without
@@ -1797,13 +1948,20 @@ impl Session {
     /// Drops the model and the index from memory after [`IDLE_UNLOAD`] without use (the model is
     /// ~1.5 GB, the index ~150 MB per 100k photos). Both reload on the next request.
     fn vision_unload_if_idle(&mut self) {
+        self.vision_unload_idle(IDLE_UNLOAD);
+    }
+
+    /// Drops the models (search, text, faces, sensitive content) and the indexes from memory when nothing is using
+    /// them and nothing has for `idle` (zero: the system is short of memory, [`Session::release_memory`]). They reload
+    /// on the next request. Whether they were dropped.
+    pub(crate) fn vision_unload_idle(&mut self, idle: Duration) -> bool {
         let sh = &self.vision.shared;
         if sh.busy.load(Ordering::SeqCst) > 0 || !sh.loaded.load(Ordering::SeqCst) {
-            return;
+            return false;
         }
-        let idle = sh.used.try_lock().ok().and_then(|u| u.map(|t| t.elapsed())).is_some_and(|d| d >= IDLE_UNLOAD);
-        if !idle {
-            return;
+        let unused = sh.used.try_lock().ok().and_then(|u| u.map(|t| t.elapsed())).is_some_and(|d| d >= idle);
+        if !unused {
+            return false;
         }
         if let (Ok(mut m), Ok(mut ix), Ok(mut r), Ok(mut tx), Ok(mut fd), Ok(mut fx)) =
             (sh.model.try_lock(), sh.index.try_lock(), sh.reader.try_lock(), sh.text.try_lock(), sh.finder.try_lock(), sh.face_ix.try_lock())
@@ -1821,13 +1979,17 @@ impl Session {
             sh.loaded.store(false, Ordering::SeqCst);
             sh.opened.store(false, Ordering::Relaxed);
             sh.text_opened.store(false, Ordering::Relaxed);
-            log::info!("the search model was unloaded after {} minutes without use", IDLE_UNLOAD.as_secs() / 60);
+            log::info!("the search models were unloaded after {} s without use", idle_for(sh).as_secs());
+            return true;
         }
+        false
     }
 }
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_catch_up;
 #[cfg(test)]
 mod tests_people;
 #[cfg(test)]
