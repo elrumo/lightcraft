@@ -30,7 +30,8 @@ pub struct OpenConfig {
     /// process's temp dir.
     #[serde(default)]
     pub tmp: Option<String>,
-    /// The library folder (instead of the one in `home`).
+    /// The library folder (instead of the one in `home`); `~/…` is inside `home` (an iOS app's container,
+    /// whose path changes with each update, keeps its libraries' paths that way: `host.libraries`).
     #[serde(default)]
     pub library: Option<String>,
     /// The in-memory demo library: nothing saved (previews, tests).
@@ -55,6 +56,11 @@ pub struct OpenConfig {
     /// A new library starts empty, without the demo photos (an app that shows its own empty screen).
     #[serde(default)]
     pub empty: bool,
+    /// `library` is one the user chose (not the default one): it is never made anew where its folder
+    /// isn't (moved, or on a disk or network share that isn't connected), and one that won't open is an
+    /// error to act on, also on a phone, never the demo library in its place.
+    #[serde(default)]
+    pub chosen: bool,
 }
 
 /// An error answer: `code` is the kind (the engine's error variants in camelCase —
@@ -131,6 +137,11 @@ pub struct HostState {
     /// Face recognition's background scan while it is on: `{pendingPhotos, indexedFaces}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub faces: Option<Value>,
+    /// iCloud sync while it is on for this library (`lightcraft_engine::icloud`): `{rev, epoch}`. A new `rev`: there
+    /// may be records to send (`icloud.changes`); a new `epoch`: the engine forgot what the cloud has, so the host's
+    /// own sync state goes too and it fetches everything again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icloud: Option<Value>,
 }
 
 /// An event, `{"kind": "...", ...}`.

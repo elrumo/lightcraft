@@ -1,7 +1,7 @@
 //! A live control channel for a native frontend (`LIGHTCRAFT_CONTROL_PORT=<port>`): the egui app's
 //! `--control` protocol (`docs/control-protocol.md`) on `127.0.0.1`, one JSON request per line in,
 //! one reply line out (`{"id", "ok", "result" | "error", "code"?}`), so `lightcraft-cli mcp --connect`
-//! and plain `nc` drive the SwiftUI app as they drive the egui one.
+//! and plain `nc` drive a native frontend as they drive the egui app.
 //!
 //! It is the socket twin of [`super::script`]: requests go to the engine thread as `Msg::Call`, which
 //! answers `engine.*`, `render.*` and `host.*` itself and forwards `ui.*` to the frontend as

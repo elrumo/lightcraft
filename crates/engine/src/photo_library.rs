@@ -43,6 +43,10 @@ struct Entry {
     /// The engine filed the file itself (so it goes with a forgotten record); `false` for an asset
     /// that turned out to be a photo the library already had.
     placed: bool,
+    /// The asset's id on the person's other devices (PhotoKit's cloud identifier), when the app gave it: an
+    /// edit sent through iCloud names it ([`crate::icloud`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cloud: Option<String>,
 }
 
 /// Asset id → photo, saved as `photo-library.json`.
@@ -79,6 +83,21 @@ impl PhotoLibraryMap {
             self.dirty = true;
         }
     }
+
+    /// The photos of the assets the engine knows.
+    pub(crate) fn photo_ids(&self) -> impl Iterator<Item = PhotoId> + '_ {
+        self.assets.values().map(|e| PhotoId(e.id))
+    }
+
+    /// How many assets the engine knows.
+    pub(crate) fn len(&self) -> usize {
+        self.assets.len()
+    }
+
+    /// Photo `id`'s content hash when it was opened, and its asset's cloud identifier.
+    pub(crate) fn entry_of(&self, id: PhotoId) -> Option<(Option<&str>, Option<&str>)> {
+        self.by_photo(id).map(|(_, e)| (e.hash.as_deref(), e.cloud.as_deref()))
+    }
 }
 
 /// The entry's photo, when it is still the one the asset was opened as.
@@ -92,6 +111,11 @@ fn asset_param<'a>(p: &'a Value, c: &str) -> Result<&'a str> {
         return Err(bad(c, "`asset` must be 1 to 512 printable characters"));
     }
     Ok(a)
+}
+
+/// The optional `cloud` parameter: the asset's cloud identifier (the same rules as `asset`).
+fn cloud_param(p: &Value) -> Option<String> {
+    str_param(p, "cloud").filter(|a| !a.is_empty() && a.len() <= MAX_ASSET && !a.chars().any(char::is_control)).map(str::to_string)
 }
 
 fn id_param(p: &Value, c: &str) -> Result<PhotoId> {
@@ -281,12 +305,17 @@ fn user_changed(op: &Op, out: &mut Vec<PhotoId>, depth: usize) {
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photoLibrary.open";
     let asset = asset_param(p, C)?;
+    let cloud = cloud_param(p);
     // opened before, and still the same photo: no file needed
     if let Some(e) = s.photo_library.assets.get(asset).cloned() {
         match live(s, &e).map(|p| p.local) {
             Some(local) => {
                 if let Some(path) = str_param(p, "path") {
                     drop_staged(s, Path::new(path));
+                }
+                if cloud.is_some() && e.cloud != cloud {
+                    s.photo_library.insert(asset, Entry { cloud, ..e.clone() });
+                    s.save_photo_library();
                 }
                 s.show_opened(PhotoId(e.id))?;
                 return Ok(json!({"id": e.id, "local": local, "known": true}));
@@ -309,11 +338,13 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let existing =
         hash.as_deref().and_then(|h| s.catalog.photos().find(|p| !p.local && !p.deleted && p.content_hash.as_deref() == Some(h)).map(|p| p.id));
     if let Some(id) = existing {
-        s.photo_library.insert(asset, Entry { id: id.0, hash, placed: false });
+        s.photo_library.insert(asset, Entry { id: id.0, hash, placed: false, cloud });
         s.save_photo_library();
         drop_staged(s, &src);
+        // (an edit another device made to this picture, held until it was opened here, is taken)
+        let synced = s.icloud_take_held(id);
         s.show_opened(id)?;
-        return Ok(json!({"id": id.0, "local": false, "known": true}));
+        return Ok(json!({"id": id.0, "local": false, "known": true, "synced": synced}));
     }
     // filed where an import would put it, then catalogued there in place
     let root = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir()).ok_or_else(|| bad(C, "needs a library saved on disk"))?;
@@ -344,7 +375,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let hash = s.catalog.photo(id).and_then(|p| p.content_hash.clone());
-    s.photo_library.insert(asset, Entry { id: id.0, hash, placed: true });
+    s.photo_library.insert(asset, Entry { id: id.0, hash, placed: true, cloud });
     s.save_photo_library();
     if inside_staging(s, &src) {
         for sc in &placed.sidecars {
@@ -352,8 +383,11 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     drop_staged(s, &src);
+    // an edit another device made to this picture brings it into the library edited
+    let synced = s.icloud_take_held(id);
     s.show_opened(id)?;
-    Ok(json!({"id": id.0, "local": true, "known": false}))
+    let local = s.catalog.photo(id).is_some_and(|p| p.local);
+    Ok(json!({"id": id.0, "local": local, "known": false, "synced": synced}))
 }
 
 fn inside_staging(s: &Session, path: &Path) -> bool {
@@ -411,7 +445,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Open from Photo Library",
             [],
             None,
-            "{asset, path?}: the photo-library asset `asset` (its original at `path`; without one, {needsFile: true} unless it is known): shown and edited without joining the library until it is changed; {id, local, known}",
+            "{asset, path?, cloud?}: the photo-library asset `asset` (its original at `path`; without one, {needsFile: true} unless it is known; `cloud`: its id on the person's other devices, which an edit synced through iCloud carries): shown and edited without joining the library until it is changed, or until an edit another device made to it is taken (`synced`); {id, local, known, synced}",
             always,
             open
         ),

@@ -217,6 +217,11 @@ impl FaceIndex {
         &self.faces
     }
 
+    /// Whether photo `key` was looked at (faces found in it or not).
+    pub fn has(&self, key: &Key) -> bool {
+        self.scanned.contains(key)
+    }
+
     /// Keeps the faces found in a photo (none: the photo is marked as looked at). `Ok(false)` when
     /// the photo already is. Faces that aren't usable (not finite, no length) are left out.
     pub fn insert_photo(&mut self, key: Key, found: &[FaceFound]) -> Result<bool, Error> {

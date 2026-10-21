@@ -554,8 +554,8 @@ fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::path::Path>
 
 /// The library session with the folders face models (`<config>/models`) and slideshow templates
 /// (`<config>/slideshow-templates`) are kept in.
-fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
-    let (mut s, problem) = open_library_session(in_memory, dir, seed_demo);
+fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, remembered: bool, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
+    let (mut s, problem) = open_library_session(in_memory, dir, remembered, seed_demo);
     s.face_models_dir = lightcraft_engine::config::default_face_models_dir();
     s.slide_templates_dir = lightcraft_engine::config::config_dir().map(|d| d.join(lightcraft_engine::slide_template::DIR_NAME));
     // Control requests are answered on the UI thread: Add to Apple Photos must not wait there
@@ -568,7 +568,9 @@ fn open_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: boo
 /// If the library can't be opened the session is empty and in memory — never seeded with the
 /// demo photos, never written anywhere — and the problem is returned: the window then says so
 /// and offers Try Again / Choose Another Library… / Continue Without Saving / Quit (issue #100).
-fn open_library_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
+/// So is a `remembered` library (the one last opened from Settings) that isn't there: on a disk
+/// or network share that isn't connected, opening it would make a new, empty library in its place.
+fn open_library_session(in_memory: bool, dir: Option<std::path::PathBuf>, remembered: bool, seed_demo: bool) -> (Session, Option<LibraryProblem>) {
     if in_memory {
         return (if seed_demo { Session::with_demo() } else { Session::new() }.with_fs().with_default_denoise_models().with_system_clock(), None);
     }
@@ -577,6 +579,10 @@ fn open_library_session(in_memory: bool, dir: Option<std::path::PathBuf>, seed_d
         log::warn!("no library location (set --library or LIGHTCRAFT_LIBRARY)");
         return (unopened(), Some(LibraryProblem::new("", "There is no home folder to keep the library in. Choose a folder for it.")));
     };
+    if remembered && let Some(p) = lightcraft_ui_egui::panels::library_problem::remembered_missing(&dir) {
+        log::error!("{}", p.error);
+        return (unopened(), Some(p));
+    }
     let t0 = std::time::Instant::now();
     let mut s = Session::new().with_fs().with_default_denoise_models().with_system_clock();
     match s.open_library(&dir, seed_demo) {
@@ -740,6 +746,7 @@ fn main() -> eframe::Result {
         lightcraft_ui_egui::i18n::set_language(ui.language);
     }
     // --library, else the library last opened from Settings, else the default location
+    let given = library_dir.is_some();
     let library_dir = library_dir.or_else(|| {
         prefs
             .as_ref()
@@ -747,6 +754,8 @@ fn main() -> eframe::Result {
             .filter(|p| !p.is_empty() && std::env::var_os("LIGHTCRAFT_LIBRARY").is_none())
             .map(Into::into)
     });
+    // (the one from Settings is never made anew where it was: its disk or share may not be connected)
+    let remembered = !given && library_dir.is_some();
     let library_dir = library_dir.or_else(lightcraft_engine::library::default_dir);
     // GPU compute: off if the preference says so, or if the last launch died creating the device
     // (issue #136) — before anything can create it
@@ -802,7 +811,7 @@ fn main() -> eframe::Result {
                 // the window's renderer is up (eframe calls this after creating it)
                 win_files_app.started(window_renderer);
                 came_up_app.store(true, std::sync::atomic::Ordering::Relaxed);
-                let (mut session, problem) = open_session(in_memory, library_dir, seed_demo && files.is_empty());
+                let (mut session, problem) = open_session(in_memory, library_dir, remembered, seed_demo && files.is_empty());
                 // AI masks: the SAM 3 checkpoint (facebook/sam3) in <config>/models/sam3, or LIGHTCRAFT_SAM3_DIR
                 // (never required: without it, AI masks offer to download it; see docs/ai-masks.md)
                 // and the user's own download locations, one base URL per line (LIGHTCRAFT_SAM3_MIRRORS too)
@@ -994,7 +1003,7 @@ mod tests {
     /// adds to Apple Photos on a worker (headless sessions wait instead).
     #[test]
     fn the_desktop_session_adds_to_apple_photos_in_the_background() {
-        let (s, problem) = open_session(true, None, false);
+        let (s, problem) = open_session(true, None, false, false);
         assert!(problem.is_none());
         assert!(s.apple_photos_background);
         assert!(!lightcraft_engine::Session::new().apple_photos_background);

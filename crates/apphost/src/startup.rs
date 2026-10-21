@@ -104,6 +104,15 @@ pub fn configure_enhancer(enhancer: &mut lightcraft_engine::enhance::Enhancer, h
     enhancer.limit_memory(available.map_or(512 << 20, |a| a / 2));
 }
 
+/// The photo-understanding models on a phone (search by description, the text in photos, faces, sensitive content;
+/// each downloaded only when the user agrees): `Library/Caches/LightCraft/models/siglip2`, laid out as on a computer
+/// (`<config>/models/siglip2`, the others in folders inside it). Caches, as Super Resolution's: iOS never backs them up
+/// (the search model alone is 1.5 GB) and may empty them when storage runs low, after which the app offers the
+/// download again. `None` without a home folder (AI Models then says there is nowhere to keep them).
+pub fn vision_models_dir(home: Option<&OsStr>) -> Option<PathBuf> {
+    home.map(|h| PathBuf::from(h).join("Library/Caches/LightCraft/models/siglip2"))
+}
+
 /// Face models on a phone (chosen and downloaded by the user, kept with the app's data so iOS
 /// backs them up and never empties them): `Library/Application Support/LightCraft/face-models`.
 /// Without a home folder there is nowhere to keep them (Settings ▸ Faces says so).
@@ -318,5 +327,11 @@ mod tests {
             Some(Path::new("/var/mobile/Containers/Data/Application/ABC/Library/Application Support/LightCraft/face-models"))
         );
         assert_eq!(face_models_dir(None), None);
+        // the photo-understanding models beside Super Resolution's, in the caches iOS doesn't back up
+        assert_eq!(
+            vision_models_dir(Some(&home)).as_deref(),
+            Some(Path::new("/var/mobile/Containers/Data/Application/ABC/Library/Caches/LightCraft/models/siglip2"))
+        );
+        assert_eq!(vision_models_dir(None), None);
     }
 }

@@ -25,6 +25,8 @@
 //!   albumName?}` — import in the background (answered when it ends: what it added).
 //! - `host.admin.signIn | call | search | signOut | session` — the sync server's admin API, on worker threads
 //!   ([`admin`]: a native frontend's Server Administration screens).
+//! - `host.libraries {recent?}` — the libraries to offer; `host.library.open {path} | new {name} | delete {path}` —
+//!   another library without a restart, a new one, one deleted ([`libraries`]).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
 //!
 //! Between requests the thread drives what the egui app's frame loop drives: renders, saving, the
@@ -35,6 +37,7 @@ mod admin;
 mod browsing;
 mod control;
 pub mod leases;
+mod libraries;
 pub mod protocol;
 mod script;
 
@@ -284,6 +287,10 @@ struct Engine {
     events: Arc<Events>,
     leases: Arc<Leases>,
     tmp: PathBuf,
+    /// The app's home folder (`OpenConfig::home`): where its libraries are kept, and what `~/` in a path means.
+    home: Option<PathBuf>,
+    /// Whose rules started the engine (where libraries are kept, whether one may be deleted here).
+    profile: Profile,
     demo: bool,
     opened: Value,
     state: Option<HostState>,
@@ -297,6 +304,9 @@ struct Engine {
     sync_exec: Box<dyn Fn(Task, Sender<Done>)>,
     /// The app is in front (`host.lifecycle`): coming back pulls from the server at once.
     in_front: bool,
+    /// A phone's or tablet's host (`Profile::Mobile`): the app is suspended out of sight, so the models' runs stop
+    /// when it leaves the screen and start again when it is back.
+    mobile: bool,
     /// When the frontend last asked for something (the user is at work: background scans hold back).
     last_request: Instant,
     /// When the loupe's histogram last went out with a picture (see `DRAFT_HISTOGRAM_EVERY`).
@@ -412,8 +422,17 @@ impl Engine {
         let (mut session, demo) = if config.demo {
             (Session::with_demo().with_fs().with_system_clock(), true)
         } else {
-            let dir = crate::startup::library_dir_for(config.profile, config.library.clone().map(Into::into), config.home.clone().map(Into::into));
-            if desktop {
+            // (`~/…`: a library kept inside the app's home folder, whose path an iOS container changes with each update)
+            let library = config.library.as_deref().map(|l| crate::libraries::expand(l, config.home.as_deref().map(Path::new)).into_os_string());
+            let dir = crate::startup::library_dir_for(config.profile, library, config.home.clone().map(Into::into));
+            // a library the user chose is never made anew where it was (a disk or network share that isn't connected)
+            if config.chosen
+                && let Some(why) = dir.as_deref().and_then(|d| crate::libraries::missing(d, true))
+            {
+                log::error!("{why}");
+                return Err(why);
+            }
+            if desktop || config.chosen {
                 // never a demo in the library's place: the user closes the other LightCraft or chooses another library
                 (crate::startup::open_session_or_err(dir.as_deref(), !config.empty)?, false)
             } else {
@@ -428,9 +447,12 @@ impl Engine {
         } else {
             let home = config.home.as_deref().map(std::ffi::OsStr::new);
             crate::startup::configure_enhancer(&mut session.enhancer, home, available);
-            // (on a phone, what the app may use decides which Generative Expand models it is offered)
+            // (on a phone, what the app may use decides which Generative Expand models it is offered, and whether the
+            // search model runs there)
             session.set_app_memory(available);
             session.face_models_dir = crate::startup::face_models_dir(home);
+            // (a build with the models' code can search, read text, find faces and check photos on the phone)
+            session.vision.dir = crate::startup::vision_models_dir(home);
         }
         // the photo-library originals the app fetches are staged with its picks (moved into the library when opened)
         session.set_photo_library_staging(Some(crate::startup::staging(&tmp).0));
@@ -449,6 +471,8 @@ impl Engine {
             let _ = sync_wake.send(Msg::Wake);
         }));
         let library = session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.display().to_string());
+        // (a lock the library's disk can't hold, as on some network shares; a thumbnail folder that isn't there)
+        warnings.extend(session.take_library_warnings());
         let edits = crate::external_edit::Watch::load(&session);
         let opened = json!({"library": library, "photos": session.catalog.len(), "demo": demo, "warnings": warnings});
         Ok(Engine {
@@ -457,6 +481,8 @@ impl Engine {
             events,
             leases,
             tmp,
+            home: config.home.as_deref().filter(|h| !h.is_empty()).map(PathBuf::from),
+            profile: config.profile,
             demo,
             opened,
             state: None,
@@ -467,6 +493,7 @@ impl Engine {
             sync: crate::sync::Driver::default(),
             sync_exec,
             in_front: true,
+            mobile: !desktop,
             last_request: Instant::now(),
             histogram_sent: None,
             faces_next: Instant::now(),
@@ -704,6 +731,12 @@ impl Engine {
             // Local's places (`crate::local`) from the roots and hidden places the app keeps: `{roots, hidden,
             // browseRoot?, command?: addRoot | hide | restoreHidden, path?}` → `{roots, hidden, places, owner, browseRoot, current}`
             "host.local" => self.local_places(p).map_err(|e| bad(&e)),
+            // the libraries the app offers, switching to another without a restart, a new one, deleting one
+            // (`libraries`): the recent list is the app's, passed in and given back
+            "host.libraries" => self.libraries(p),
+            "host.library.open" => self.open_library(p),
+            "host.library.new" => self.new_library(p),
+            "host.library.delete" => self.delete_library(p),
             "host.sidebar" => {
                 let mut layout = p.get("layout").cloned().map(crate::sidebar::SidebarLayout::from).unwrap_or_default();
                 if let Some(command) = p.get("command").and_then(Value::as_str) {
@@ -1508,6 +1541,10 @@ impl Engine {
         for text in polled.messages {
             self.events.push(Event::Message { text, level: "info".into() }.to_value());
         }
+        // a model that is ready gets to work on the photos it hasn't seen (on a phone, only while the app is in front)
+        if (!self.mobile || self.in_front) && self.session.vision_catch_up() {
+            self.busy = true;
+        }
         if self.session.vision.busy() || self.session.vision.searching() {
             self.busy = true;
         }
@@ -1570,6 +1607,7 @@ impl Engine {
             unsaved: self.session.unsaved().map_or(0, |(n, _)| n),
             sync: crate::sync::summary(&self.session),
             faces: self.faces_scan.clone(),
+            icloud: self.session.icloud_rev().map(|rev| serde_json::json!({"rev": rev, "epoch": self.session.icloud_epoch()})),
         }
     }
 
@@ -1602,9 +1640,16 @@ impl Engine {
             "resignActive" => {
                 self.in_front = false;
                 self.save();
+                // (no GPU work once in the background: the run stops now, while the app is still on screen)
+                if self.mobile && self.session.vision_pause() {
+                    log::info!("lifecycle: indexing paused until the app is back");
+                }
             }
             "background" => {
                 self.in_front = false;
+                if self.mobile {
+                    self.session.vision_pause();
+                }
                 // Hidden locks while nobody can see the app
                 self.session.hidden_lock();
                 self.save();

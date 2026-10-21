@@ -8,6 +8,7 @@
 //!   prefs.json     (library preferences: XMP sidecars, import defaults, cache size, last export)
 //!   location.json  (the folder the library was last opened from: see below)
 //!   sidecars.json  (when each XMP sidecar was last read or written: see `sidecar::SidecarTimes`)
+//!   icloud.json  icloud.held  (iCloud sync, when it is on: see `icloud`)
 //!   thumbs/        (rendered thumbnail cache, safe to delete; prefs.json may name another folder)
 //!   map-tiles/     (map tiles seen in the Map view, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
@@ -18,7 +19,11 @@
 //! path on every app update) finds its own photos at the new place: when the folder it opens
 //! from differs from `location.json`, photos under the old folder whose file is now under the
 //! new one are pointed there (a logged change outside the undo history; not synced, paths are
-//! per device). See [`Session::open_library`] and [`Library::relocated`].
+//! per device). When the folders around it moved with it (a network share mounted at another
+//! place, `/Volumes/photos-1` for `/Volumes/photos`, or another device's path to that share), the
+//! photos beside it follow too: a folder of them that isn't where it was, but is at the same place
+//! relative to the library's new folder with a photo of it there at its size, is pointed there.
+//! See [`Session::open_library`] and [`Library::relocated`].
 //!
 //! The files live in [`Store`]s: a directory ([`FsStore`]) natively, or any other implementation
 //! via [`Session::open_library_in`] (the browser build keeps them in OPFS or IndexedDB).
@@ -104,6 +109,9 @@ pub struct Library {
     /// Why the last append of queued ops failed; `None` once a save succeeds. While set, changes
     /// exist only in memory ([`Session::unsaved`]).
     pub unsaved_error: Option<String>,
+    /// Why the last write of presets.json failed; `None` once it is written. While set, the preset
+    /// changes exist only in memory and count as unsaved ([`Session::unsaved`], issue #2266).
+    presets_error: Option<String>,
     /// When the frame loop may retry a failed append ([`Session::persist_if_dirty`] backs off).
     retry_at: Option<web_time::Instant>,
     /// What forgetting untouched Local records did when the library opened.
@@ -671,6 +679,8 @@ impl Session {
         self.photo_library_return = None;
         // sync: its state, and the id space this device allocates new ids in
         self.sync = crate::cloud_sync::SyncState::load(files.as_mut());
+        // iCloud sync (on for this library, or not)
+        self.icloud = crate::icloud::ICloud::load(files.as_mut());
         if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
             self.catalog.set_id_space(st.config.space);
         }
@@ -744,6 +754,7 @@ impl Session {
             report,
             last_error: None,
             unsaved_error: None,
+            presets_error: None,
             retry_at: None,
             forgot_local: None,
             relocated: None,
@@ -811,12 +822,32 @@ impl Session {
         let moved = old.as_deref().filter(|o| !same_dir(Path::new(o), &dir));
         if let Some(old) = moved {
             let from = Path::new(old);
+            // the folders around the library, when they moved with it (a share mounted at another place, or
+            // another device's path to it): photos beside the library on that share follow too
+            let bases = moved_with(from, &dir);
+            // (per folder: whether it was left behind and is at the new place; asked once, a share is slow)
+            let mut folders: std::collections::HashMap<PathBuf, Option<PathBuf>> = std::collections::HashMap::new();
             let mut ops = Vec::new();
             for p in self.catalog.photos() {
                 let lightcraft_catalog::Source::File { path } = &p.source else { continue };
-                let Ok(rest) = Path::new(path).strip_prefix(from) else { continue };
-                let to = dir.join(rest);
-                if to.is_file() {
+                let path = Path::new(path);
+                let to = if let Ok(rest) = path.strip_prefix(from) {
+                    // in the library (Originals/): wherever its file is under the new folder
+                    Some(dir.join(rest)).filter(|to| to.is_file())
+                } else if let (Some((old_base, new_base)), Some(folder), Some(name)) = (bases.as_ref(), path.parent(), path.file_name()) {
+                    let Ok(rest) = folder.strip_prefix(old_base) else { continue };
+                    let moved = folders.entry(folder.to_path_buf()).or_insert_with(|| {
+                        let there = new_base.join(rest);
+                        // left behind (not reachable at its old place from here), there at the new one, and the
+                        // same folder: this photo's file is there with its size
+                        let same = |f: &Path| f.metadata().is_ok_and(|m| m.is_file() && (p.file_size == 0 || m.len() == p.file_size));
+                        (!folder.is_dir() && same(&there.join(name))).then_some(there)
+                    });
+                    moved.as_ref().map(|f| f.join(name))
+                } else {
+                    None
+                };
+                if let Some(to) = to {
                     let source = lightcraft_catalog::Source::File { path: to.to_string_lossy().to_string() };
                     ops.push(lightcraft_catalog::Op::Relink { id: p.id, file_name: p.file_name.clone(), source, format: None });
                 }
@@ -917,6 +948,9 @@ impl Session {
                 log::error!("library: {}: {e}", crate::cloud_sync::CONFIG);
             }
         }
+        if let Some(ic) = self.icloud.as_mut() {
+            ic.save(lib.files.as_mut());
+        }
         let due = self.library.as_ref().is_some_and(|l| l.presets_saved.differs(self) && !l.blocked.contains(&"presets.json"));
         if !due {
             return Ok(());
@@ -927,10 +961,17 @@ impl Session {
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         if state.hash == lib.presets_saved.hash {
             lib.presets_saved = state;
+            lib.presets_error = None;
         } else if let Err(e) = lib.files.write_atomic("presets.json", presets.as_bytes()) {
-            // the state stays stale: the next save tries again
+            // the state stays stale: retried by the next command and the frame loop (backing off);
+            // meanwhile the presets count as unsaved, so the UI warns and a backup refuses
             log::error!("library: presets: {e}");
+            lib.presets_error = Some(format!("presets: {e}"));
+            lib.retry_at = Some(web_time::Instant::now() + RETRY_BACKOFF);
         } else {
+            if lib.presets_error.take().is_some() {
+                log::info!("library: presets written to disk");
+            }
             lib.presets_saved = state;
             lib.presets_gen += 1;
         }
@@ -941,7 +982,8 @@ impl Session {
     /// changed outside [`Session::execute`]).
     pub fn persist_if_dirty(&mut self) {
         let backing_off = self.library.as_ref().and_then(|l| l.retry_at).is_some_and(|t| web_time::Instant::now() < t);
-        if self.library.is_some() && !self.pending_log.is_empty() && !backing_off {
+        let presets_unsaved = self.library.as_ref().is_some_and(|l| l.presets_error.is_some());
+        if self.library.is_some() && (!self.pending_log.is_empty() || presets_unsaved) && !backing_off {
             let _ = self.persist();
         } else if let Some(lib) = self.library.as_mut() {
             poll_compaction(lib);
@@ -949,11 +991,14 @@ impl Session {
     }
 
     /// Changes applied in memory but not yet written to disk because saving failed: the number of
-    /// queued ops and why (`None` when everything is saved, or no library is open). Retried by
-    /// every command and by [`Session::persist_if_dirty`].
+    /// queued ops (plus one for presets.json) and why (`None` when everything is saved, or no library
+    /// is open). Retried by every command and by [`Session::persist_if_dirty`].
     pub fn unsaved(&self) -> Option<(usize, &str)> {
         let lib = self.library.as_ref()?;
-        lib.unsaved_error.as_deref().filter(|_| !self.pending_log.is_empty()).map(|e| (self.pending_log.len(), e))
+        let ops = lib.unsaved_error.as_deref().filter(|_| !self.pending_log.is_empty());
+        let presets = lib.presets_error.as_deref();
+        let n = ops.map_or(0, |_| self.pending_log.len()) + usize::from(presets.is_some());
+        ops.or(presets).map(|why| (n, why))
     }
 
     /// Flush everything and write a snapshot (on quit). Ends an open interaction first.
@@ -1156,6 +1201,22 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// Where the folders around a library moved from and to, when they moved with it: `from` and `to` without the
+/// names they end in alike (`/Volumes/photos/Lib` opened as `/Volumes/photos-1/Lib` → `/Volumes/photos` and
+/// `/Volumes/photos-1`; an iPad's path to the same share → `/Volumes` and the iPad's folder the share is in). `None`
+/// when not even the library's own folder name is alike.
+fn moved_with(from: &Path, to: &Path) -> Option<(PathBuf, PathBuf)> {
+    use std::path::Component;
+    let (a, b): (Vec<_>, Vec<_>) = (from.components().collect(), to.components().collect());
+    let same = a.iter().rev().zip(b.iter().rev()).take_while(|(x, y)| x == y && matches!(x, Component::Normal(_))).count();
+    if same == 0 {
+        return None;
+    }
+    let base = |c: &[Component]| c.iter().collect::<PathBuf>();
+    let (old, new) = (base(a.get(..a.len() - same)?), base(b.get(..b.len() - same)?));
+    (!old.as_os_str().is_empty() && !new.as_os_str().is_empty() && old != new).then_some((old, new))
 }
 
 /// The warning for a library opened without its one-program-at-a-time lock (issue #171): its

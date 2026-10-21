@@ -371,7 +371,7 @@ impl LightsOut {
     }
 }
 /// How many libraries File ▸ Open Recent Library remembers.
-pub const RECENT_LIBRARIES: usize = 8;
+pub const RECENT_LIBRARIES: usize = lightcraft_apphost::libraries::RECENT;
 
 /// Whether the interface uses the dark or the light theme (Settings ▸ Interface ▸ Appearance).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1062,9 +1062,6 @@ pub struct UiState {
     /// Indexing was started for this switching-on (it is offered, not repeated, after).
     #[serde(skip)]
     pub ai_search_autostarted: bool,
-    /// How many photos the library had when checking them for sensitive content was last started.
-    #[serde(skip)]
-    pub sensitive_checked_for: Option<usize>,
     /// Photos the index can hold, with the catalog revision they were counted at.
     #[serde(skip)]
     pub ai_search_total: (u64, usize),
@@ -1790,7 +1787,6 @@ impl Default for UiState {
             people_found: None,
             people_names: Default::default(),
             ai_search_autostarted: false,
-            sensitive_checked_for: None,
             ai_search_total: (0, 0),
             renaming_component: None,
             quit: false,

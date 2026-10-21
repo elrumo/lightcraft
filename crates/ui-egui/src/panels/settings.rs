@@ -2593,63 +2593,50 @@ pub fn open_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String>
         app.ui.dialog = Some(crate::state::Dialog::LightroomCatalog { folder: path.clone(), catalog: catalog.clone() });
         return Ok(json!({"opened": false, "lightroomCatalog": catalog, "path": path}));
     }
-    // a remembered library that is gone: say so (and forget it) instead of creating an empty one there
-    if app.ui.settings.recent_libraries.contains(&path) && !std::path::Path::new(&path).exists() {
-        app.ui.settings.recent_libraries.retain(|r| r != &path);
-        return Err(format!("{path}: the library is no longer there (moved, renamed or on a disconnected drive); removed from Open Recent Library"));
+    // a remembered library that isn't there (moved, or on a disk or network share that isn't connected) is said
+    // so, never made anew in its place, and stays in Open Recent Library for when its share is back; a new one is
+    // made only in a folder that is there
+    let remembered = app.ui.settings.recent_libraries.contains(&path);
+    if let Some(why) = lightcraft_apphost::libraries::missing(std::path::Path::new(&path), remembered) {
+        return Err(why);
     }
+    // a drive's or a share's top folder opens the one library in it (several: said so); a folder with none becomes
+    // a library, unless it was one (a share's empty mount point)
+    let dir = std::path::Path::new(&path);
+    let path = if dir.is_dir() { lightcraft_apphost::libraries::find(dir, remembered)?.to_string_lossy().into_owned() } else { path };
     switch_library(app, &path)
 }
 
-/// Close the current library and open the one at `path`. If it can't be opened (locked by
-/// another program, unreadable, a file), the error is returned and the current library stays open:
-/// the target is checked before anything is closed, and if opening it still fails the previous
-/// library is opened again (both errors are reported if that fails too).
+/// Close the current library and open the one at `path` ([`lightcraft_apphost::libraries::switch`]:
+/// checked before anything is closed, the previous library opened again if it still fails), then
+/// let go of what the window showed of the old one and keep both in the recent list.
 fn switch_library(app: &mut LightcraftApp, path: &str) -> Result<Value, String> {
-    let dir = app.session.check_library(std::path::Path::new(path)).map_err(|e| format!("{path}: {e}"))?;
-    let path = dir.to_string_lossy().into_owned();
-    // the library being left goes in the list too (also when it was opened at launch)
-    let previous_dir = app.session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
-    let previous = previous_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
-    app.session.close_library().map_err(|e| e.to_string())?;
-    let opened = app.session.open_library(&dir, false).map(|_| ()).map_err(|e| format!("{path}: {e}"));
-    app.lightroom.last = None;
-    app.lightroom_result = None;
-    if matches!(app.ui.dialog.as_ref(), Some(crate::state::Dialog::LightroomResult { .. })) {
-        app.ui.dialog = None;
+    let generation = app.session.library_generation();
+    let switched = lightcraft_apphost::libraries::switch(&mut app.session, std::path::Path::new(path));
+    // (refused before anything was closed: the window keeps what it shows)
+    if app.session.library_generation() != generation {
+        app.lightroom.last = None;
+        app.lightroom_result = None;
+        if matches!(app.ui.dialog.as_ref(), Some(crate::state::Dialog::LightroomResult { .. })) {
+            app.ui.dialog = None;
+        }
+        app.renderer.forget_all();
+        app.ui.compare = None;
     }
-    app.renderer.forget_all();
-    app.ui.compare = None;
-    if let Err(err) = opened {
-        let Some(prev) = previous_dir else { return Err(err) };
-        return match app.session.open_library(&prev, false) {
-            Ok(_) => Err(err),
-            Err(e) => Err(format!("{err}; reopening the previous library {} failed too: {e}", prev.display())),
-        };
-    }
+    let switched = switched.map_err(|e| e.to_string())?;
+    let path = switched.dir.to_string_lossy().into_owned();
     app.ui.settings.library_path = path.clone();
-    if let Some(prev) = previous.filter(|p| p != &path && !app.ui.settings.recent_libraries.contains(p)) {
-        remember_library(&mut app.ui.settings.recent_libraries, &prev);
+    let recent = &mut app.ui.settings.recent_libraries;
+    if let Some(prev) = switched.previous.map(|p| p.to_string_lossy().into_owned()).filter(|p| p != &path && !recent.contains(p)) {
+        lightcraft_apphost::libraries::remember(recent, &prev);
     }
-    remember_library(&mut app.ui.settings.recent_libraries, &path);
-    Ok(json!({"path": path, "name": library_name(&dir), "photos": app.session.catalog.len()}))
-}
-
-/// Put `path` first in the recent list, without duplicates, capped at [`RECENT_LIBRARIES`].
-pub fn remember_library(recent: &mut Vec<String>, path: &str) {
-    recent.retain(|r| r != path);
-    recent.insert(0, path.to_string());
-    recent.truncate(crate::state::RECENT_LIBRARIES);
-}
-
-/// A library's name as people see it: its folder's name.
-pub fn library_name(dir: &std::path::Path) -> String {
-    dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string())
+    lightcraft_apphost::libraries::remember(recent, &path);
+    Ok(json!({"path": path, "name": lightcraft_apphost::libraries::name(&switched.dir), "photos": app.session.catalog.len()}))
 }
 
 /// The open library's name (`None`: in memory, nothing is saved).
 pub fn open_library_name(app: &LightcraftApp) -> Option<String> {
-    app.session.library.as_ref().filter(|l| l.on_disk).map(|l| library_name(&l.dir))
+    lightcraft_apphost::libraries::open_dir(&app.session).map(lightcraft_apphost::libraries::name)
 }
 
 /// `app.newLibrary {path?, name?}`: create a library and switch to it. With `name`, the library
@@ -2660,7 +2647,7 @@ pub fn new_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> 
     can_switch_library(app)?;
     let name = match p.get("name") {
         None | Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(valid_library_name(s)?),
+        Some(Value::String(s)) => Some(lightcraft_apphost::libraries::valid_name(s).map_err(|e| format!("app.newLibrary: {e}"))?),
         Some(_) => return Err("app.newLibrary: name must be a string".into()),
     };
     // from the menu: ask for the name first (default prefilled), then for the location
@@ -2690,70 +2677,20 @@ pub fn new_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> 
             }
         }
     };
-    let dir = match name {
-        Some(n) => location.join(n),
-        // a chosen location gets a new folder in it, named after the default library
-        None if picked => free_name(&location, lightcraft_engine::library::DEFAULT_NAME),
-        None => location,
-    };
-    if lightcraft_engine::library::is_library(&dir) {
-        return Err(format!("{}: there is a library here already; open it with File ▸ Open Library…", dir.display()));
-    }
-    if dir.is_file() {
-        return Err(format!("{}: is a file; a library is a folder", dir.display()));
-    }
-    if std::fs::read_dir(&dir).is_ok_and(|mut d| d.next().is_some()) {
-        return Err(format!("{}: the folder isn't empty; choose an empty folder or a new name", dir.display()));
-    }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: can't create the library folder: {e}", dir.display()))?;
+    let dir = lightcraft_apphost::libraries::new_dir(&location, name, picked)?;
     switch_library(app, &dir.to_string_lossy())
 }
 
-/// Characters a folder name can't hold on Windows (and `/`, which no system allows).
-const RESERVED_NAME_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
-
-fn valid_library_name(s: &str) -> Result<&str, String> {
-    let n = s.trim();
-    // Windows drops trailing dots and spaces from a folder name: refuse them rather than
-    // creating a folder whose name differs from the one asked for (spaces around the name
-    // are trimmed first)
-    let bad = n.is_empty() || n == "." || n == ".." || n.ends_with(['.', ' ']) || n.contains(RESERVED_NAME_CHARS) || n.chars().any(char::is_control);
-    if bad {
-        return Err(format!(
-            "app.newLibrary: {s:?} can't be a library name (a folder name without < > : \" / \\ | ? * and not ending in a dot or space)"
-        ));
-    }
-    Ok(n)
-}
-
-/// `base` inside `location`, or `base 2`, `base 3`… if that is taken.
-fn free_name(location: &std::path::Path, base: &str) -> std::path::PathBuf {
-    let first = location.join(base);
-    if !first.exists() {
-        return first;
-    }
-    (2..1000u32).map(|i| location.join(format!("{base} {i}"))).find(|p| !p.exists()).unwrap_or(first)
-}
-
 /// `app.recentLibraries {clear?: bool}`: the recently opened libraries, newest first, as
-/// `[{path, name, exists, open}]` (`exists: false`: moved or on a disconnected drive). `clear`
+/// `[{path, name, exists, open}]` (`exists: false`: moved, or on a disk or network share that isn't
+/// connected, kept for when it is back). `clear`
 /// forgets them all.
 pub fn recent_libraries(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
     if p.get("clear").and_then(Value::as_bool) == Some(true) {
         app.ui.settings.recent_libraries.clear();
     }
-    let open = app.session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
-    let list: Vec<Value> = app
-        .ui
-        .settings
-        .recent_libraries
-        .iter()
-        .map(|r| {
-            let d = std::path::Path::new(r);
-            json!({"path": r, "name": library_name(d), "exists": d.is_dir(), "open": open.as_deref() == Some(d)})
-        })
-        .collect();
-    Ok(Value::Array(list))
+    let open = lightcraft_apphost::libraries::open_dir(&app.session);
+    Ok(Value::Array(lightcraft_apphost::libraries::recent_list(&app.ui.settings.recent_libraries, open)))
 }
 
 // ---------------------------------------------------------------------------- Display profile

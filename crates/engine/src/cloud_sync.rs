@@ -44,6 +44,7 @@ mod evict;
 mod leave;
 mod shares;
 
+pub(crate) use docs::{shared_doc_key, shared_doc_names};
 pub use shares::{SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, ShareOptions};
 
 pub const CONFIG: &str = "sync.json";
@@ -532,7 +533,7 @@ impl SyncState {
         self.server_format.is_some_and(|f| f < HIDDEN_FORMAT)
     }
 
-    fn new(config: SyncConfig) -> SyncState {
+    pub(crate) fn new(config: SyncConfig) -> SyncState {
         SyncState {
             config,
             outbox: Outbox::default(),
@@ -1213,6 +1214,10 @@ impl Session {
         if let Some(st) = self.sync.as_mut().filter(|st| !st.config.library.is_empty()) {
             st.outbox.record(op, inverse, &self.catalog);
             st.outbox_changed();
+        }
+        // (the photos it touches may have an iCloud edit record to send)
+        if let Some(ic) = self.icloud.as_mut() {
+            ic.note(op);
         }
     }
 

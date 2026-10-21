@@ -8,7 +8,11 @@ frontend that is not Rust. The egui apps call `apphost` directly; a native app r
   background work.
 - **The host drives the background work.** Between requests the engine thread does what the egui app's frame loop does:
   renders, saving, the activity stack, the self-hosted sync (`apphost::sync`), the face scan's pace (`apphost::faces`),
-  exports (`apphost::export::Batch`) and imports (`apphost::import`), all shared with egui.
+  exports (`apphost::export::Batch`) and imports (`apphost::import`), all shared with egui. A photo-understanding model
+  that is ready (search by description, text, faces, sensitive content; downloaded in AI Models and turned on) looks at
+  the photos it hasn't yet by itself (`Session::vision_catch_up`, the rule egui follows for sensitive content), with an
+  `index` row in the activity stack; on a phone only while the app is in front. A phone's host keeps those models in
+  `Library/Caches/LightCraft/models/siglip2` (`apphost::startup::vision_models_dir`), for a build with their code.
 - **Messages, not calls.** The frontend sends JSON requests and reads JSON events from a queue it polls on a thread of
   its own. Commands go through `Session::execute`, the entry point every frontend uses, so a frontend gets every engine
   command without binding code per command.
@@ -32,9 +36,14 @@ it; it is never written twice.
 A native frontend keeps view state and view-transform math only (fit, pan clamping, zoom anchor). Moved so far: the render
 scheduler (`apphost::render::Scheduler`, egui's `Renderer` is it plus egui textures), the thumbnail request rules
 (`Scheduler::request_thumb`), headless Export Now (`apphost::export`, shared with the MCP server) and the mobile start-up
-(`apphost::startup`, shared with the egui iOS app).
+(`apphost::startup`, shared with the egui iOS app), and switching libraries (`apphost::libraries`, shared with egui's File
+menu).
 
 ## Protocol
+
+`OpenConfig.chosen`: the library is one the user chose (as on a network share): it is never made anew where its folder
+isn't, and one that won't open is an error, also with a phone's rules, never the demo library in its place. What the
+start opened comes back with the `warnings` the user should see, the library's own included.
 
 Requests are `{"id", "method", "params"}`; each gets a `reply` event with the same `id` (`result`, or `error: {code,
 message}` where `code` is the engine's error kind — `unknownCommand`, `disabled`, `badParams`, `notSaved`… — or the
@@ -51,8 +60,11 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `host.uiCommands` | | egui's UI-only commands (`apphost::ui_commands`): `[{id, label, shortcut, menu}]`, for a menu bar and shortcut keys |
 | `host.local` | `{roots, hidden, browseRoot?, command?: addRoot \| hide \| restoreHidden, path?}` | a Mac's Local places (`apphost::local`, shared with egui's sidebar): the built-in ones (Pictures, Desktop, Downloads, Home, the disks in `/Volumes`), the kept folders (`roots`, the app keeps them: Favorites) and the folder browsed; after the edit: `{roots, hidden, places: [{label, path}], owner, browseRoot, current}` |
 | `host.local.subfolders` | `{path}` | a folder's subfolders (not hidden ones), listed on a thread of its own (a network share can take long): `[{name, path}]` |
+| `host.libraries` | `{recent, forget?, clear?}` | the libraries to offer (`apphost::libraries`, shared with egui's File ▸ Open Library…, New Library… and Open Recent Library): `{recent, location, demo, libraries: [{path, name, exists, library, open, recent, modified, sync}]}`, the open one first, then the recent ones, then the other libraries in `location` (where the app keeps its libraries: next to its default one); each described without being opened, `sync` the server it syncs with (`{server, user, signedIn, joined}`, never the token) or `null`. The recent list is the frontend's to keep: it is passed in and comes back as it should be kept (the open library first; one that was in `location` and is gone leaves it; `forget` takes one out, `clear` all). Paths inside the app's home folder are written `~/…`, here and in `OpenConfig.library` (an iOS app's container moves with each update) |
+| `host.library.open` / `host.library.new` | `{path, existing?, recent?}` / `{name, location?, recent?}` | another library without restarting the engine: the one at `path` (an existing folder: the library it is, or the one folder in it that holds one, as Open Library… on a drive's or a network share's top folder; several there are refused; one with none becomes a library, unless `existing` is set or `path` is in `recent`: a library opened before is never made anew, as on an empty mount point a share left), or a new empty one called `name` in `location` (default: where the app keeps its libraries; a `location` that isn't there, such as a share that isn't connected, is refused). Checked before the open library is closed, which stays open when the other is refused (gone: never an empty one in its place; `libraryInUse`; `lightroomCatalog`; a name taken or no folder name) and comes back if opening still fails; refused while work runs that would land in it (an import, an export, a merge…: model downloads, the face scan and signing out don't hold it). The host lets go of what it held of the old library (renders, thumbnails asked for, candidates, a merge preview, sync requests in flight, Edit In's files) and the `state` event that follows has a new `libraryGeneration`. → `{path, name, photos, recent, library, warnings, relocated}` (`warnings`: what the person should know of the library, such as a lock its disk can't hold, as on some network shares; `relocated`: opened from another place than last time, `{from, photos}`: its photos, and those beside it on a share mounted elsewhere, followed) |
+| `host.library.delete` | `{path, check?, recent?}` | deletes a library that isn't open, in the folder where the app keeps its libraries, with everything in it (a phone's; on a Mac's `desktop` profile it is refused: the Finder's Trash); `check: true` deletes nothing and answers what would go: `{name, bytes, capped, sync, unsent}` (`unsent`: changes its server hasn't had). → `{recent}` |
 | `host.sidebar` | `{layout?, command?, params?}` | the albums sidebar's sections after one of egui's `view.sidebarSection` / `view.sidebarMoveSection` / `view.sidebarReset` (`apphost::sidebar`) on `layout` (the app keeps it): `{layout: [{id, hidden, collapsed}], shown}` |
-| `host.lifecycle` | `{event}` | `resignActive`, `background` (save, pause the GPU, free memory), `active`, `memoryWarning`, `terminate` |
+| `host.lifecycle` | `{event}` | `resignActive`, `background` (save, pause the GPU, free memory and the idle models; on a phone the models' run stops, to start again when it is back), `active`, `memoryWarning`, `terminate` |
 | `host.merge.preview` | `{command: merge.hdr \| merge.panorama \| merge.hdrPanorama, ids?, options?}` | Photo Merge's preview on a worker (`apphost::merge`, shared with egui's dialog): the picture in slot `merge`, then the answer `{info, slot}`; a newer preview answers the older `cancelled` |
 | `host.merge.start` / `host.merge.last` | `{command, ids?, options?}` | the full merge in the background (activity row, ✕ stops it); answered `{started}` at once, a message when it ends; `last` uses the options last merged with |
 | `host.merge.lastOptions` | `{command}` | the options of the last merge of that kind (kept in the library preferences; the defaults the first time): what the merge dialog opens with |
@@ -82,9 +94,12 @@ Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, q
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…; `main`'s `histogram` comes with every sharp picture and
 with a draft at most every 33 ms, a drag's ~120 pictures a second each carrying 1,024 numbers: keep the last one); `renderFailed {slot, photo, key, error}`; `state {state:
 {catalogRevision, visibleGen, visibleCount, libraryGeneration, presetsGeneration, active, selectionCount, undo, redo,
-interaction, activeMask, activeSpot, unsaved, sync?, faces?}}` when any of it changes (`presetsGeneration`: changes
+interaction, activeMask, activeSpot, unsaved, sync?, faces?, icloud?}}` when any of it changes (`presetsGeneration`: changes
 with the preset list, including presets the sync brings from another device: the Presets panel reads `presets.list`
-again) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`activeMask` / `activeSpot`: the Masking tool's
+again) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`icloud`: `{rev, epoch}` while
+iCloud sync is on for the library: a new `rev` means there may be records to send, `icloud.changes`; a new `epoch` that the
+engine forgot what the cloud has, so the frontend drops its own sync state and fetches everything again; see
+[sync.md](sync.md#icloud-apple-devices-without-a-server)) (`activeMask` / `activeSpot`: the Masking tool's
 selected mask and the Remove tool's selected spot, wherever they were chosen) (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
 downloads, reading, error}` with `state` one of `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing`, `idle`; absent for a local library, and
 after a sign-out has emptied it, together with a new `libraryGeneration`: a frontend then drops whatever names the old
