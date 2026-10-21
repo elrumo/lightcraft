@@ -162,9 +162,9 @@ impl Host {
         let events = Arc::new(Events::default());
         let (ev, ls, wake) = (events.clone(), leases.clone(), tx.clone());
         let script_tx = tx.clone();
+        let control_tx = tx.clone();
         let thread = std::thread::Builder::new()
             .name("lc-engine".into())
-        let control_tx = tx.clone();
             .spawn(move || {
                 let started = lightcraft_engine::guard::catch("starting the engine", || Engine::start(&config, ev, ls, wake)).and_then(|r| r);
                 let mut engine = match started {
@@ -179,13 +179,13 @@ impl Host {
                     let path = engine.tmp.join(script);
                     script::run(path, script_tx);
                 }
-                engine.run(rx);
-            })
                 if let Some(port) = control::port_from_env()
                     && let Err(e) = control::start(port, control_tx)
                 {
                     log::error!("{e}");
                 }
+                engine.run(rx);
+            })
             .map_err(|e| format!("the engine thread could not start: {e}"))?;
         let opened = opened_rx.recv().map_err(|_| "the engine stopped while starting".to_string())??;
         Ok((Host { tx, events, leases, thread: Mutex::new(Some(thread)) }, opened))
