@@ -3779,7 +3779,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-ios-swift"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "lightcraft-apphost",
  "lightcraft-engine",

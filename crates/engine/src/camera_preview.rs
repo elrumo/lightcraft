@@ -553,7 +553,12 @@ const NEUTRAL_CHROMA: (f32, f32) = (0.926, 0.765);
 /// [`neutral_pairs`]); `None` only if the built-in curve were invalid (a test checks it).
 fn neutral_look(model: Option<&str>) -> Option<CameraLook> {
     use lightcraft_pipeline::tone::{GREY, channel_chroma};
-    let (e, c) = NEUTRAL_TONE;
+    let (mut e, mut c) = NEUTRAL_TONE;
+    if let Ok(v) = std::env::var("LC_NEUTRAL_TONE") {
+        let mut it = v.split(',').filter_map(|x| x.parse::<f32>().ok());
+        e = it.next().unwrap_or(e);
+        c = it.next().unwrap_or(c);
+    }
     // 32 knots, evenly spaced in log luminance from 12 stops under grey to 5 over (beyond: the bounded shoulder)
     let knots = std::array::from_fn(|i| {
         let x = GREY * 2f32.powf(-12.0 + 17.0 * i as f32 / 31.0);
@@ -857,7 +862,7 @@ fn vignetting_from_proxies(sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool]
         center: lightcraft_geom::Point::new(0.5, 0.5),
         radius: half_diagonal2.sqrt() / w.max(h) as f64,
     };
-    Some(lightcraft_develop::EmbeddedLens { vignette: Some(vignette), ..Default::default() })
+    Some(lightcraft_develop::EmbeddedLens { vignette: Some(vignette), origin: lightcraft_develop::LensOrigin::Measured, ..Default::default() })
 }
 
 /// A CR3's sensor proxy with the vignetting correction its camera applied to the JPEG proxy it is paired with
@@ -1175,7 +1180,8 @@ struct Fits {
 /// fits on other samples), at most this many.
 const FITS_KEPT: usize = 64;
 
-type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize), std::sync::Arc<Fits>>;
+/// Keyed by the file, the decoded size and the profile database generation (its camera and lens profiles feed the fits).
+type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize, u64), std::sync::Arc<Fits>>;
 
 fn fits_cache() -> &'static std::sync::Mutex<FitsCache> {
     static CACHE: std::sync::OnceLock<std::sync::Mutex<FitsCache>> = std::sync::OnceLock::new();
@@ -1206,8 +1212,9 @@ fn fingerprint(bytes: &[u8]) -> lightcraft_preview::Hash128 {
 /// and, for a raw without lens data of its own (`lens`, the file's or the lens database's), [`jpeg_vignetting`], with
 /// their proxies built once ([`sharing_proxies`]). Kept per file: a photo is decoded again at each level (thumbnail,
 /// preview, full size for zoom and export, and after its decoded source is evicted), and these fits were ~45 % of a
-/// CR3's preview decode. They depend only on the file and the decoded raw (the camera and lens profiles are read once
-/// per process), so a kept result is what fitting again gives. Returns the as-shot white, the camera transform, the
+/// CR3's preview decode. They depend only on the file, the decoded raw and the camera and lens profiles (read once per
+/// process, and again when the profile database changes, which the key follows), so a kept result is what fitting
+/// again gives. Returns the as-shot white, the camera transform, the
 /// look, the Camera Matching profile and the lens correction.
 pub(crate) fn decode_fits(
     raw: &mut RawImage,
@@ -1215,7 +1222,7 @@ pub(crate) fn decode_fits(
     lens_geometry: Option<&LensGeometry>,
     lens: Option<lightcraft_develop::EmbeddedLens>,
 ) -> (Xy, CameraTransform, Option<CameraLook>, Option<CameraMatch>, Option<lightcraft_develop::EmbeddedLens>) {
-    let key = (fingerprint(bytes), raw.width, raw.height);
+    let key = (fingerprint(bytes), raw.width, raw.height, crate::profile_db::generation());
     let kept = fits_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key).cloned();
     let fits = match kept {
         Some(fits) => {
@@ -3506,7 +3513,7 @@ mod tests {
         let kept = || {
             let mut raw = lightcraft_raw::decode(&bytes).unwrap();
             let (xy, t, look, matched, lens) = decode_fits(&mut raw, &bytes, None, None);
-            let key = (fingerprint(&bytes), raw.width, raw.height);
+            let key = (fingerprint(&bytes), raw.width, raw.height, crate::profile_db::generation());
             assert!(fits_cache().lock().unwrap().contains(&key));
             format!("{xy:?} {t:?} {look:?} {matched:?} {lens:?} {:?}", raw.color)
         };

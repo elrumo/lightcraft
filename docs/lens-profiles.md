@@ -7,12 +7,23 @@ stays a separate download. Adobe LCP profiles are never used.
 
 ## Setup
 
-1. Get the lensfun database (the `data/db/*.xml` files of <https://github.com/lensfun/lensfun>, or the copy a Linux
-   distribution installs under `/usr/share/lensfun/version_1/`).
-2. Point `LIGHTCRAFT_LENSFUN_DIR` at that directory and start the app (or the CLI).
+Either:
 
-Files are read once per process. Invalid files are skipped with a warning in the log. Without the variable nothing
-changes.
+- **Download it from a server.** A profile database published as described in [profile-db.md](profile-db.md) is
+  downloaded and kept up to date with `profileDb.update {url}`. lensfun's database can be republished there with its
+  credit, which the app shows. It is read again after each update, without a restart.
+- **Point the app at a folder.**
+  1. Get the lensfun database: the `data/db/*.xml` files of <https://github.com/lensfun/lensfun>, or the copy a Linux
+     distribution installs under `/usr/share/lensfun/version_1/`.
+  2. Point `LIGHTCRAFT_LENSFUN_DIR` at that directory and start the app (or the CLI).
+
+  The folder is read once per process, and its profiles come before the downloaded ones.
+
+Invalid files are skipped with a warning in the log. Without either, nothing changes.
+
+A photo records where its correction comes from (`photo.lensProfile`): its file, a measurement from the camera JPEG,
+or a database profile. A database profile replaces a CR3's measured vignetting and an older database's profile when
+the photo is next decoded. It never replaces a file's own correction ([profile-db.md](profile-db.md)).
 
 ## What is applied
 
@@ -95,7 +106,9 @@ error 0.43 of uncorrected); the 90D at f/6.3, the R at f/11, the R5 with a Sigma
 
 - Only raws: rendered images (JPEG, HEIF, TIFF) are often already corrected in camera.
 - The focus distance is not read from maker notes yet: vignetting uses the farthest calibrated distance.
-- No manual make / model picker yet; matching is automatic.
+- No manual make / model picker yet; matching is automatic. On lensfun's database (revision `b98997f`), EXIF names
+  from Sony, Canon RF / EF-S, Nikon Z / F, Fujifilm XF, OM System, Panasonic, Sigma and Tamron lenses each found their
+  profile (14 names tried).
 - Database profiles are not yet validated against real photos and another renderer; the tests use synthetic profiles
   and grids.
 - The CR3 estimate copies the camera's partial correction (about 0.5 EV short of Lightroom's in the outer corners on

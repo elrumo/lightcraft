@@ -7,9 +7,11 @@
 //! table; photos of that model then only fit their tone and chroma curves.
 //!
 //! Profiles are JSON files (`<model>.json`) in [`dir`]: `LIGHTCRAFT_CAMERA_PROFILES`, else
-//! `<config>/camera-profiles`; a local profile replaces the one built in ([`BUNDLED`], from
-//! `assets/camera-profiles/`). They are read once per process; a damaged or hostile file is
-//! ignored with a warning. They hold aggregate colour statistics only, never image content.
+//! `<config>/camera-profiles`; a local profile replaces one from the profile database
+//! ([`crate::profile_db`], downloaded from a server), which replaces the one built in ([`BUNDLED`], from
+//! `assets/camera-profiles/`). They are read once per process, and again after the profile database
+//! changes; a damaged or hostile file is ignored with a warning. They hold aggregate colour statistics
+//! only, never image content.
 use lightcraft_color::Mat3;
 use lightcraft_raw::profile::HsvTable;
 use serde::{Deserialize, Serialize};
@@ -175,7 +177,7 @@ pub fn load(path: &Path) -> Result<CameraProfile, String> {
 }
 
 /// Parse and validate a profile's JSON (`origin` names it in errors).
-fn parse(json: &[u8], origin: &str) -> Result<CameraProfile, String> {
+pub(crate) fn parse(json: &[u8], origin: &str) -> Result<CameraProfile, String> {
     let profile: CameraProfile = serde_json::from_slice(json).map_err(|e| format!("{origin}: {e}"))?;
     if !profile.valid() {
         return Err(format!("{origin}: not a usable camera profile (version {}, model {:?})", profile.version, profile.model));
@@ -200,19 +202,27 @@ pub fn save(profile: &CameraProfile, dir: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn cache() -> &'static Mutex<HashMap<String, Option<Arc<CameraProfile>>>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Option<Arc<CameraProfile>>>>> = OnceLock::new();
+/// Profiles read so far, and the profile database generation they were read at.
+type Cache = (u64, HashMap<String, Option<Arc<CameraProfile>>>);
+
+fn cache() -> &'static Mutex<Cache> {
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
 }
 
-/// The profile for camera `model`: from [`dir`], else built in; read once per process.
+/// The profile for camera `model`: from [`dir`], else from the profile database, else built in; read once per process
+/// (and again after the profile database changes).
 pub fn get(model: &str) -> Option<Arc<CameraProfile>> {
     let model = model.trim();
     if model.is_empty() {
         return None;
     }
+    let generation = crate::profile_db::generation();
     let mut cache = cache().lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(hit) = cache.get(model) {
+    if cache.0 != generation {
+        *cache = (generation, HashMap::new());
+    }
+    if let Some(hit) = cache.1.get(model) {
         return hit.clone();
     }
     let path = dir().map(|d| d.join(file_name(model)));
@@ -230,16 +240,16 @@ pub fn get(model: &str) -> Option<Arc<CameraProfile>> {
         },
         _ => None,
     };
-    let profile = profile.or_else(|| bundled(model).map(Arc::new));
-    cache.insert(model.to_owned(), profile.clone());
+    let profile = profile.or_else(|| crate::profile_db::installed().cameras.get(model).cloned()).or_else(|| bundled(model).map(Arc::new));
+    cache.1.insert(model.to_owned(), profile.clone());
     profile
 }
 
-/// Changes when the profiles folder's contents change (per process): part of the render cache
-/// keys, so thumbnails rendered before a profile existed are not reused after.
+/// Changes when the profiles folder's contents change (per process) or the profile database's camera profiles do:
+/// part of the render cache keys, so thumbnails rendered before a profile existed are not reused after.
 pub fn cache_key() -> u64 {
     static KEY: OnceLock<u64> = OnceLock::new();
-    *KEY.get_or_init(|| {
+    let local = *KEY.get_or_init(|| {
         let entries = dir().and_then(|d| std::fs::read_dir(d).ok());
         let mut files: Vec<(String, u64, u64)> = entries
             .into_iter()
@@ -261,7 +271,9 @@ pub fn cache_key() -> u64 {
             h.str(model).str(json);
         }
         h.finish().0 as u64
-    })
+    });
+    // (0 without database camera profiles: the key is what it was before the database existed)
+    local ^ crate::profile_db::camera_key()
 }
 
 /// Per camera model: the photos read and their pooled colour pairs.

@@ -40,6 +40,10 @@ pub struct DevelopSettings {
     /// sync) and dropped when Expand is turned off. Not written while there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expand_fill: Option<crate::segmask::ExpandFill>,
+    /// A video clip's own edits (trim, poster frame); `None` for a picture and for a clip left as recorded. Not part of any
+    /// copyable group (Copy Settings, presets, sync-settings leave it): it belongs to this clip. Not written while there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video: Option<VideoEdit>,
     pub orientation: Orientation,
     pub masks: Vec<Mask>,
     pub spots: Vec<Spot>,
@@ -75,6 +79,7 @@ impl Default for DevelopSettings {
             geometry: Geometry::default(),
             crop: Crop::default(),
             expand_fill: None,
+            video: None,
             orientation: Orientation::Normal,
             masks: Vec::new(),
             spots: Vec::new(),
@@ -84,6 +89,29 @@ impl Default for DevelopSettings {
             calibration: Calibration::default(),
             disabled_sections: Vec::new(),
         }
+    }
+}
+
+/// What a video clip is edited with beyond its pictures: the part of it that is kept, and the frame that stands for it.
+/// Seconds into the clip as recorded; a missing end or start is the clip's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoEdit {
+    /// Where the kept part starts (`None`: at the beginning).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_start: Option<f64>,
+    /// Where the kept part ends (`None`: at the end).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_end: Option<f64>,
+    /// The poster frame (`None`: the one the library picks, a key frame about a tenth in).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover: Option<f64>,
+}
+
+impl VideoEdit {
+    /// Nothing is edited.
+    pub fn is_empty(&self) -> bool {
+        self.trim_start.is_none() && self.trim_end.is_none() && self.cover.is_none()
     }
 }
 
@@ -615,6 +643,32 @@ pub struct EmbeddedLens {
     /// A DNG 1.6 `WarpRectilinear2` chain (up to [`WARP_STAGES`] stages, in `OpcodeList3` order; each stage warps
     /// the result of the one before it). When any is set, `warp` is `None`: the chain holds every warp opcode.
     pub stages: [Option<EmbeddedWarpStage>; WARP_STAGES],
+    /// Where the correction comes from (left out of the catalog for the file's own, so older catalogs read the same).
+    #[serde(skip_serializing_if = "LensOrigin::is_file")]
+    pub origin: LensOrigin,
+}
+
+/// Where an [`EmbeddedLens`] comes from, which decides which one a photo keeps when it could have two: the file's own
+/// correction always (a raw with one is never looked up), a lens database profile over a measured vignette, and a
+/// newer database's profile over an older one's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LensOrigin {
+    /// The file's own correction (DNG opcodes, a camera's tables a raw reader converts), and every correction recorded
+    /// before origins were ([`EmbeddedLens::measured`] tells a measured vignette among those).
+    #[default]
+    File,
+    /// The vignetting a camera corrected in its JPEG, measured from that JPEG (Canon CR3s).
+    Measured,
+    /// A lens database profile: `serial` is the number of the downloaded profile database installed when it was looked
+    /// up (0 without one: a folder of the user's).
+    Database { serial: u64 },
+}
+
+impl LensOrigin {
+    pub fn is_file(&self) -> bool {
+        *self == LensOrigin::File
+    }
 }
 
 /// Most warp stages an [`EmbeddedLens`] chain keeps.
@@ -638,6 +692,27 @@ impl EmbeddedLens {
     /// Whether a `WarpRectilinear2` chain is set.
     pub fn has_stages(&self) -> bool {
         self.stages.iter().any(Option::is_some)
+    }
+
+    /// Whether this is a vignette measured from the camera's JPEG: by its origin, or for one recorded before origins
+    /// were, by its shape (a vignette alone).
+    pub fn measured(&self) -> bool {
+        match self.origin {
+            LensOrigin::Measured => true,
+            LensOrigin::File => self.vignette.is_some() && self.warp.is_none() && !self.has_stages(),
+            LensOrigin::Database { .. } => false,
+        }
+    }
+
+    /// Whether a photo that has `self` should take `new` instead, when the file itself has none (a probe or a decode
+    /// found `new` in a lens database, or measured it): a database profile replaces a measured vignette and an older
+    /// database's profile; nothing replaces the file's own correction or a newer database's profile.
+    pub fn superseded_by(&self, new: &EmbeddedLens) -> bool {
+        let LensOrigin::Database { serial: new } = new.origin else { return false };
+        match self.origin {
+            LensOrigin::Database { serial: old } => new > old,
+            _ => self.measured(),
+        }
     }
 }
 
