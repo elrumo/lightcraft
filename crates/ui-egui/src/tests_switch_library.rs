@@ -174,7 +174,7 @@ fn missing_recent_libraries_are_greyed_out_and_pruned_and_the_list_is_capped() {
     assert!(app.session.library.as_ref().unwrap().dir.ends_with("first"));
 
     for i in 0..20 {
-        crate::panels::settings::remember_library(&mut app.ui.settings.recent_libraries, &format!("/x/{i}"));
+        lightcraft_apphost::libraries::remember(&mut app.ui.settings.recent_libraries, &format!("/x/{i}"));
     }
     assert_eq!(app.ui.settings.recent_libraries.len(), crate::state::RECENT_LIBRARIES);
     assert_eq!(app.ui.settings.recent_libraries[0], "/x/19");
