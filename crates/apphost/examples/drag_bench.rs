@@ -139,6 +139,7 @@ fn main() {
         }
         let (lo, hi, def) = (s["min"].as_f64().unwrap_or(-1.0), s["max"].as_f64().unwrap_or(1.0), s["default"].as_f64().unwrap_or(0.0));
         call("engine.execute", json!({"command": "develop.beginInteraction", "params": {"label": control}}));
+        let cpu0 = cpu_seconds();
         let (mut sets, mut drafts, mut draft_ms, mut sizes) = (Vec::new(), 0usize, Vec::new(), (0u64, 0u64));
         let mut gaps = Vec::new();
         let (mut asked_at, mut latency) = (std::collections::HashMap::<String, Instant>::new(), Vec::new());
@@ -185,12 +186,14 @@ fn main() {
             }
         }
         let elapsed = start.elapsed().as_secs_f64();
+        // the process's CPU time over the drag, per draft that landed (all threads: the engine's, the renders')
+        let cpu_per_draft = (cpu_seconds() - cpu0) * 1e3 / drafts.max(1) as f64;
         let t0 = Instant::now();
         call("engine.execute", json!({"command": "develop.endInteraction"}));
         host.submit(&req(3_000_000, "render.view", json!({"photo": pid, "width": w, "height": h}))).ok();
         let settle = wait_final(&host, t0);
         println!(
-            "{control:<20} [{lo}, {hi}] set {:>5.1} ms (p95 {:>5.1}, max {:>6.1}) | {:>5.1} drafts/s, render {:>5.1} ms (p95 {:>5.1}), step→picture {:>5.1} ms (p95 {:>5.1}), gap p95 {:>5.1} ms, {}x{} | release→sharp {:>5.0} ms",
+            "{control:<20} [{lo}, {hi}] set {:>5.1} ms (p95 {:>5.1}, max {:>6.1}) | {:>5.1} drafts/s, render {:>5.1} ms (p95 {:>5.1}), step→picture {:>5.1} ms (p95 {:>5.1}), gap p95 {:>5.1} ms, {}x{} | release→sharp {:>5.0} ms | cpu {:>5.1} ms a draft",
             pct(&mut sets.clone(), 0.5),
             pct(&mut sets.clone(), 0.95),
             pct(&mut sets, 1.0),
@@ -202,12 +205,21 @@ fn main() {
             pct(&mut gaps, 0.95),
             sizes.0,
             sizes.1,
-            settle
+            settle,
+            cpu_per_draft
         );
         call("engine.execute", json!({"command": "develop.set", "params": {"control": control, "value": def}}));
     }
     host.close(Duration::from_secs(30));
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The process's CPU time so far, all threads (s; `ps`, 10 ms steps).
+fn cpu_seconds() -> f64 {
+    let out = std::process::Command::new("/bin/ps").args(["-o", "time=", "-p"]).arg(std::process::id().to_string()).output();
+    let text = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    // "m:ss.cc" or "h:mm:ss.cc"
+    text.split(':').fold(0.0, |acc, part| acc * 60.0 + part.parse::<f64>().unwrap_or(0.0))
 }
 
 /// The process's memory as iOS counts it against the app's limit (`footprint`: dirty memory, the GPU's

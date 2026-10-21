@@ -64,6 +64,8 @@ const BUSY_TICK: Duration = Duration::from_millis(16);
 const IDLE_TICK: Duration = Duration::from_millis(250);
 /// The most `activity` events a second.
 const ACTIVITY_EVERY: Duration = Duration::from_millis(100);
+/// The least time between two of the loupe's histograms sent with drafts (a slider drag).
+const DRAFT_HISTOGRAM_EVERY: Duration = Duration::from_millis(33);
 /// How long an automation script waits for an answer.
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(120);
 /// Priority of preparing the neighbouring photos (as the egui loupe does).
@@ -297,6 +299,8 @@ struct Engine {
     in_front: bool,
     /// When the frontend last asked for something (the user is at work: background scans hold back).
     last_request: Instant,
+    /// When the loupe's histogram last went out with a picture (see `DRAFT_HISTOGRAM_EVERY`).
+    histogram_sent: Option<Instant>,
     /// When face recognition's scan is pumped next ([`crate::faces`]).
     faces_next: Instant,
     /// How far that scan is (`HostState::faces`).
@@ -464,6 +468,7 @@ impl Engine {
             sync_exec,
             in_front: true,
             last_request: Instant::now(),
+            histogram_sent: None,
             faces_next: Instant::now(),
             faces_scan: None,
             export: None,
@@ -974,8 +979,10 @@ impl Engine {
             let token = self.leases.put_image(&name, Arc::new(image));
             // (the HDR rendition of the same render, a lease of its own)
             let hdr = hdr.map(|h| json!({"token": self.leases.put_hdr(&name, h.clone()), "width": h.width, "height": h.height, "peak": h.peak}));
-            // (with the share of pixels clipped to black and to white: the clipping warnings)
-            let histogram = (slot == Slot::Main)
+            // (with the share of pixels clipped to black and to white: the clipping warnings). A draft's at most every
+            // DRAFT_HISTOGRAM_EVERY: a drag sends ~120 pictures a second, each histogram 1,024 numbers to write here and
+            // for the frontend to read (~0.5 ms of its event thread a picture), and the frontend keeps the last one
+            let histogram = (slot == Slot::Main && with_histogram(shown.draft, self.histogram_sent, Instant::now()))
                 .then(|| {
                     shown.histogram.as_ref().map(|h| {
                         let mut v = serde_json::to_value(h).unwrap_or_default();
@@ -985,6 +992,9 @@ impl Engine {
                     })
                 })
                 .flatten();
+            if histogram.is_some() {
+                self.histogram_sent = Some(Instant::now());
+            }
             let quick = shown.quick.map(|q| serde_json::to_value(q).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default());
             // a zoom window: where it goes in the zoomed frame
             let window = (slot == Slot::Region)
@@ -1729,6 +1739,26 @@ fn presets_generation(s: &Session) -> u64 {
 
 #[cfg(test)]
 mod tests;
+
+/// Whether the loupe's picture goes out with its histogram: a sharp one always, a draft at most every
+/// [`DRAFT_HISTOGRAM_EVERY`] after the last one sent (`last`).
+fn with_histogram(draft: bool, last: Option<Instant>, now: Instant) -> bool {
+    !draft || last.is_none_or(|t| now.saturating_duration_since(t) >= DRAFT_HISTOGRAM_EVERY)
+}
+
+#[cfg(test)]
+mod histogram_tests {
+    use super::*;
+
+    #[test]
+    fn drafts_carry_a_histogram_at_most_every_33_ms_and_sharp_pictures_always() {
+        let t = Instant::now();
+        assert!(with_histogram(true, None, t), "the first draft has one");
+        assert!(!with_histogram(true, Some(t), t + Duration::from_millis(10)), "a draft right after does not");
+        assert!(with_histogram(true, Some(t), t + DRAFT_HISTOGRAM_EVERY));
+        assert!(with_histogram(false, Some(t), t), "the sharp picture always");
+    }
+}
 
 /// `LIGHTCRAFT_HOST_TRACE=1`: the engine thread prints every request it handles (with how long it took) and every
 /// picture it sends, timed from the first line, to stderr: where a slider step's time goes.

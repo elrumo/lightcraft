@@ -377,6 +377,15 @@ size (`lightcraft_sysmem::ReturningAlloc`: a fresh 15 MB picture's pages faulted
 write a kept block), and the frontend asks for each draft right behind its value instead of after the value's answer
 came back.
 
+CPU per draft (2026-10-21, `drag_bench`, which prints the process's CPU time per draft that landed; the same CR3 at
+2584 × 1723, ~118 drafts a second): 4.1 ms → 2.0 ms once the readback buffers are kept for the next readback of their
+size (`Gpu::finish_and_read`, three at most, dropped by `trim_pool(0)`): copying the picture out of a new buffer cost
+~1.7 ms, its pages being mapped in as the CPU first read them. What is left is mostly the Metal driver's command-buffer
+submissions (~1 ms a draft, on its own dispatch thread) and the per-render parameter set-up (`FinishParams::new`, the
+camera tone map: ~0.2 ms). An idle loupe, the grid and the seconds after a drag cost ~0.1–0.2 % of a core; the engine
+thread no longer looks for the search index's files on disk at every tick (a dozen `stat`s per tick at a drag's rate)
+but every 2 s.
+
 ## Opening a photo (M5.4)
 - The loupe shows a stand-in at once (`media::QuickJob`): the photo's cached view render for its
   current settings, else (raws with their import look) the embedded camera JPEG, else a

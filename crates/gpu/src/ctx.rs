@@ -235,9 +235,14 @@ pub struct Gpu {
     dummy: wgpu::Buffer,
     /// Recycled buffers (see [`Buf`]).
     free: std::sync::Mutex<Vec<Tracked>>,
+    /// Readback buffers for the next readback of their size ([`Self::finish_and_read`]).
+    staging: std::sync::Mutex<Vec<wgpu::Buffer>>,
     /// Largest storage buffer the device accepts (bytes).
     pub max_buffer: u64,
 }
+
+/// Readback buffers kept for reuse, at most.
+const STAGING_KEPT: usize = 3;
 
 /// WGSL constants shared by every module (generated from the CPU pipeline's values).
 fn constants() -> String {
@@ -383,7 +388,7 @@ impl Gpu {
         });
         let max_buffer = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
         log::info!("gpu: {} ({:?}), buffers ≤ {} MiB", info.name, info.backend, max_buffer >> 20);
-        Ok(Gpu { device, queue, info, kernels, dummy, free: Default::default(), max_buffer })
+        Ok(Gpu { device, queue, info, kernels, dummy, free: Default::default(), staging: Default::default(), max_buffer })
     }
 
     /// A buffer of `len` 32-bit values with undefined contents (a recycled one when possible).
@@ -446,8 +451,12 @@ impl Gpu {
         }
     }
 
-    /// Free pooled buffers (oldest first) until at most `keep` bytes stay pooled.
+    /// Free pooled buffers (oldest first) until at most `keep` bytes stay pooled; with `keep` 0 the readback buffers
+    /// kept for reuse too.
     pub fn trim(&self, keep: u64) {
+        if keep == 0 {
+            self.staging.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        }
         let mut f = self.free.lock().unwrap_or_else(|e| e.into_inner());
         let mut total: u64 = f.iter().map(|b| b.0.size()).sum();
         let mut dropped = Vec::new();
@@ -559,11 +568,19 @@ impl Gpu {
             return zeros();
         }
         let size = (len * 4) as u64;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: size.max(4),
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        // (a readback buffer of this size from an earlier readback: a new one's pages are mapped in as the CPU first
+        // reads them, which made the copy below cost ~1.7 ms for a 4.5 MP picture, every picture of a slider drag)
+        let kept = {
+            let mut k = self.staging.lock().unwrap_or_else(|e| e.into_inner());
+            k.iter().position(|b| b.size() == size.max(4)).map(|i| k.swap_remove(i))
+        };
+        let staging = kept.unwrap_or_else(|| {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("readback"),
+                size: size.max(4),
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         });
         enc.copy_buffer_to_buffer(src.raw(), (offset * 4) as u64, &staging, 0, size);
         self.submit([enc.finish()]);
@@ -594,6 +611,11 @@ impl Gpu {
         let out: Vec<T> = bytemuck::cast_slice(&data).to_vec();
         drop(data);
         staging.unmap();
+        let mut k = self.staging.lock().unwrap_or_else(|e| e.into_inner());
+        if k.len() >= STAGING_KEPT {
+            k.remove(0);
+        }
+        k.push(staging);
         out
     }
 }

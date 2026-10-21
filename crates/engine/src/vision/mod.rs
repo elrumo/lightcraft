@@ -67,6 +67,9 @@ const NAME_SCORE: f64 = 100.0;
 const BATCH: usize = 8;
 /// Unload the model (and the in-memory index) after this long without use.
 pub const IDLE_UNLOAD: Duration = Duration::from_secs(10 * 60);
+/// How often an index that isn't open yet is looked for on disk to open in the background.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+const OPEN_CHECK_EVERY: Duration = Duration::from_secs(2);
 pub const DEFAULT_LIMIT: usize = 200;
 pub const MAX_LIMIT: usize = 5000;
 /// Longest query used, in characters.
@@ -336,6 +339,9 @@ pub struct Vision {
     results: (Sender<Searched>, Receiver<Searched>),
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     opening: Arc<AtomicBool>,
+    /// When [`Session::vision_poll`] last looked for an index to open in the background (its model and files on disk).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    open_checked: Option<Instant>,
     messages: Vec<String>,
     #[cfg(feature = "vision")]
     download: crate::download::Downloader,
@@ -398,6 +404,7 @@ impl Default for Vision {
             searching: Arc::new(AtomicUsize::new(0)),
             results: mpsc::channel(),
             opening: Arc::new(AtomicBool::new(false)),
+            open_checked: None,
             messages: Vec::new(),
             #[cfg(feature = "vision")]
             download: crate::download::Downloader::default(),
@@ -1734,10 +1741,17 @@ impl Session {
     /// the first search or indexing run having to wait for the file.
     #[cfg(not(target_arch = "wasm32"))]
     fn vision_open_in_background(&mut self) {
-        let sh = &self.vision.shared;
         if self.vision.opening.load(Ordering::SeqCst) || !self.vision.background {
             return;
         }
+        // (the models and index files are looked for on disk: every tick, that was a dozen `stat`s at a slider drag's
+        // rate, ~1 % of a core, for a library with no index to open; nothing waits on it, a few seconds is soon enough)
+        let now = Instant::now();
+        if self.vision.open_checked.is_some_and(|t| now.duration_since(t) < OPEN_CHECK_EVERY) {
+            return;
+        }
+        self.vision.open_checked = Some(now);
+        let sh = &self.vision.shared;
         // (an index that has no file yet has nothing to wait for)
         let semantic = (!sh.opened.load(Ordering::Relaxed))
             .then(|| self.vision.provider().ok())
