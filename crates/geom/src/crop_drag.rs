@@ -136,7 +136,14 @@ pub fn drag_crop_with(
             let c = sr.center();
             // the half sizes the pointer asks for; a side the handle doesn't touch keeps its own
             let half = |lo: bool, hi: bool, c: f64, a: f64, b: f64, d: f64, own: f64| {
-                (if lo { c - (a + d) } else if hi { b + d - c } else { own }).max(min_side / 2.0)
+                (if lo {
+                    c - (a + d)
+                } else if hi {
+                    b + d - c
+                } else {
+                    own
+                })
+                .max(min_side / 2.0)
             };
             let hx = half(mx0, mx1, c.x, sr.x0, sr.x1, dx, sr.width() / 2.0);
             let hy = half(my0, my1, c.y, sr.y0, sr.y1, dy, sr.height() / 2.0);
@@ -152,8 +159,20 @@ pub fn drag_crop_with(
             let (mx0, mx1, my0, my1) = sides(hd);
             let c = sr.center();
             let min_w = min_side.max(min_side * a);
-            let hx = if mx0 { c.x - (sr.x0 + dx) } else if mx1 { sr.x1 + dx - c.x } else { 0.0 };
-            let hy = if my0 { c.y - (sr.y0 + dy) } else if my1 { sr.y1 + dy - c.y } else { 0.0 };
+            let hx = if mx0 {
+                c.x - (sr.x0 + dx)
+            } else if mx1 {
+                sr.x1 + dx - c.x
+            } else {
+                0.0
+            };
+            let hy = if my0 {
+                c.y - (sr.y0 + dy)
+            } else if my1 {
+                sr.y1 + dy - c.y
+            } else {
+                0.0
+            };
             let target_w = match hd {
                 CropHandle::Top | CropHandle::Bottom => 2.0 * hy * a,
                 CropHandle::Left | CropHandle::Right => 2.0 * hx,

@@ -880,8 +880,7 @@ impl SyncState {
             "paused"
         } else if self.error.is_some() {
             "error"
-        } else if self.control.is_some() || self.reading().is_some() || !self.outbox.is_empty() || transfers != (0, 0) || self.login.is_some()
-        {
+        } else if self.control.is_some() || self.reading().is_some() || !self.outbox.is_empty() || transfers != (0, 0) || self.login.is_some() {
             "syncing"
         } else {
             "idle"
