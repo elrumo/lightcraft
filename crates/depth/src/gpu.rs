@@ -282,10 +282,9 @@ pub struct Gpu {
 impl Gpu {
     /// Loads `file` onto the best device; `None` when the machine has no GPU.
     pub fn load(file: &std::path::Path) -> Result<Option<Gpu>> {
-        let device = lightcraft_vision::siglip::best_device();
-        if device.is_cpu() {
+        let Some(device) = lightcraft_vision::siglip::gpu_device() else {
             return Ok(None);
-        }
+        };
         let weights = Weights::open(file).map_err(bad)?;
         // (the position embeddings are resampled on the CPU, in full precision)
         let pos = weights.read("pretrained.pos_embed").map_err(bad)?.flatten_all().and_then(|t| t.to_vec1::<f32>()).map_err(bad)?;
