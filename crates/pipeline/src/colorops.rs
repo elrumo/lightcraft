@@ -352,6 +352,9 @@ pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
     if prim.iter().all(|(h, s)| *h == 0.0 && *s == 0.0) {
         return None;
     }
+    if let Ok(spec) = std::env::var("LC_CALIB_EXP") {
+        return calib_exp(&spec, &prim);
+    }
     let mut p = [[0.0f64; 3]; 3];
     for (i, (hue, sat)) in prim.iter().enumerate() {
         let mut e = [0.0f32; 3];
@@ -367,6 +370,65 @@ pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
     let m = Mat3(p);
     let k = m.inverse()?.apply([1.0, 1.0, 1.0]);
     Some(std::array::from_fn(|r| std::array::from_fn(|col| (p[r][col] * k[col]) as f32)))
+}
+
+/// EXPERIMENT (scratch worktree only): `basis,space,khr,khg,khb,ksr,ksg,ksb`.
+fn calib_exp(spec: &str, prim: &[(f64, f64); 3]) -> Option<[[f32; 3]; 3]> {
+    use lightcraft_color::PROPHOTO;
+    let parts: Vec<&str> = spec.split(',').collect();
+    let num = |i: usize| parts.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+    let b2020 = match parts.first().copied().unwrap_or("2020") {
+        "prophoto" => PROPHOTO.to_space(&REC2020),
+        "srgb" => SRGB.to_space(&REC2020),
+        "p3" => lightcraft_color::DISPLAY_P3.to_space(&REC2020),
+        // EOS R6 ForwardMatrix2 (our spectral table): white-balanced camera -> XYZ D50
+        "r6" => {
+            let fm = Mat3([[0.829826, 0.011021, 0.123449], [0.329107, 0.920067, -0.249174], [0.037653, -0.307101, 1.09455]]);
+            REC2020.from_xyz().mul(&lightcraft_color::bradford(PROPHOTO.white, REC2020.white)).mul(&fm)
+        }
+        _ => REC2020.to_space(&REC2020),
+    };
+    let space = parts.get(1).copied().unwrap_or("xy");
+    let to_xyz = REC2020.to_xyz();
+    let from_xyz = to_xyz.inverse()?;
+    let w = REC2020.white;
+    let mut cols = [[0.0f64; 3]; 3];
+    for (i, (hue, sat)) in prim.iter().enumerate() {
+        let mut e = [0.0f64; 3];
+        e[i] = 1.0;
+        let q = b2020.apply(e); // primary in 2020
+        let (kh, ks) = (num(2 + i), num(5 + i));
+        let t = hue.clamp(-100.0, 100.0) / 100.0;
+        let s = sat.clamp(-100.0, 100.0) / 100.0;
+        let out = if space == "oklch" {
+            let qf = [q[0] as f32, q[1] as f32, q[2] as f32];
+            let [l, ch, h] = lab_to_lch(oklab_from_2020(qf));
+            let r = oklab_to_2020(lch_to_lab([l, ch * (1.0 + (s * ks) as f32), h + (t * kh) as f32]));
+            [r[0] as f64, r[1] as f64, r[2] as f64]
+        } else {
+            let xyz = to_xyz.apply(q);
+            let sum = xyz[0] + xyz[1] + xyz[2];
+            if sum.abs() < 1e-12 {
+                return None;
+            }
+            let (x, y) = (xyz[0] / sum, xyz[1] / sum);
+            let (dx, dy) = (x - w.x, y - w.y);
+            let (a, k) = (t * kh, 1.0 + s * ks);
+            let (nx, ny) = (w.x + k * (dx * a.cos() - dy * a.sin()), w.y + k * (dx * a.sin() + dy * a.cos()));
+            if ny.abs() < 1e-9 {
+                return None;
+            }
+            let yy = xyz[1];
+            from_xyz.apply([nx / ny * yy, yy, (1.0 - nx - ny) / ny * yy])
+        };
+        for r in 0..3 {
+            cols[r][i] = out[r];
+        }
+    }
+    let bp = Mat3(cols);
+    let m = bp.mul(&b2020.inverse()?);
+    let k = m.inverse()?.apply([1.0, 1.0, 1.0]);
+    Some(std::array::from_fn(|r| std::array::from_fn(|col| (m.0[r][col] * k[col]) as f32)))
 }
 
 /// Shadows-tint strength at ±100: the green channel's relative change in deep shadows.
