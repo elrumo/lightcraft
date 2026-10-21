@@ -554,6 +554,7 @@
   "Friday": "Sexta-feira",
   "Full": "Completa",
   "Full Screen Preview": "Pré-visualização em tela cheia",
+  "Indexing photos": "Indexando fotos",
   "Lights Out": "Luzes apagadas",
   "Full screen mode": "Modo tela cheia",
   "Full size": "Tamanho completo",
@@ -2364,5 +2365,11 @@
   "Flag photos that might be sensitive, to review and hide (opt-in)": "Marque as fotos que podem ser sensíveis, para revisar e ocultar (opcional)",
   "Import Lightroom Albums": "Importar álbuns do Lightroom",
   "Import Lightroom Albums…": "Importar álbuns do Lightroom…",
-  "Lightroom Catalog": "Catálogo do Lightroom"
+  "Lightroom Catalog": "Catálogo do Lightroom",
+  "Include selected photos": "Incluir fotos selecionadas",
+  "Color Overlay": "Sobreposição de cor",
+  "Color Overlay on B&W": "Sobreposição de cor em P&B",
+  "Image on Black": "Imagem sobre preto",
+  "Image on White": "Imagem sobre branco",
+  "White on Black": "Branco sobre preto"
 }

@@ -46,6 +46,8 @@ Overrides (read once at launch):
 - `LIGHTCRAFT_GPU_ALLOW_SOFTWARE=1`: accept a software adapter (llvmpipe / lavapipe, WARP), which is
   otherwise refused because the CPU pipeline is faster. For tests on machines without a GPU (CI);
   the app never sets it.
+- Both `LIGHTCRAFT_GPU=0` and `LIGHTCRAFT_GPU_BACKEND=off` also keep AI Denoise, the face models
+  and the AI mask model (SAM 3 on Metal) on the CPU.
 
 **DX12 shader compiler (issue #471).** Every instance (window and compute) compiles DX12 shaders with
 FXC (`d3dcompiler_47.dll`, part of Windows; `lightcraft_gpu::backend::backend_options`). wgpu's
