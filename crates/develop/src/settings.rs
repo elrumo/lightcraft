@@ -40,6 +40,10 @@ pub struct DevelopSettings {
     /// sync) and dropped when Expand is turned off. Not written while there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expand_fill: Option<crate::segmask::ExpandFill>,
+    /// A video clip's own edits (trim, poster frame); `None` for a picture and for a clip left as recorded. Not part of any
+    /// copyable group (Copy Settings, presets, sync-settings leave it): it belongs to this clip. Not written while there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video: Option<VideoEdit>,
     pub orientation: Orientation,
     pub masks: Vec<Mask>,
     pub spots: Vec<Spot>,
@@ -75,6 +79,7 @@ impl Default for DevelopSettings {
             geometry: Geometry::default(),
             crop: Crop::default(),
             expand_fill: None,
+            video: None,
             orientation: Orientation::Normal,
             masks: Vec::new(),
             spots: Vec::new(),
@@ -84,6 +89,29 @@ impl Default for DevelopSettings {
             calibration: Calibration::default(),
             disabled_sections: Vec::new(),
         }
+    }
+}
+
+/// What a video clip is edited with beyond its pictures: the part of it that is kept, and the frame that stands for it.
+/// Seconds into the clip as recorded; a missing end or start is the clip's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VideoEdit {
+    /// Where the kept part starts (`None`: at the beginning).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_start: Option<f64>,
+    /// Where the kept part ends (`None`: at the end).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_end: Option<f64>,
+    /// The poster frame (`None`: the one the library picks, a key frame about a tenth in).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover: Option<f64>,
+}
+
+impl VideoEdit {
+    /// Nothing is edited.
+    pub fn is_empty(&self) -> bool {
+        self.trim_start.is_none() && self.trim_end.is_none() && self.cover.is_none()
     }
 }
 

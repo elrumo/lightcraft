@@ -18,8 +18,8 @@ use lightcraft_raw::gaintable::{GainTableMap, SourcePlacement};
 use crate::{Plan, SourceInfo};
 use lightcraft_develop::DevelopSettings;
 
-/// A raw's gain table map and where its developed source sits in the active area.
-#[derive(Clone, Debug, PartialEq)]
+/// A raw's gain table map and where its developed source sits in the active area (a smart preview carries it).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LocalTone {
     pub map: GainTableMap,
     pub placement: SourcePlacement,

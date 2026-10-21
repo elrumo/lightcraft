@@ -4,15 +4,17 @@
 //! 0..1 by a stored factor, sRGB-encoded and saved as a JPEG after a one-line header. The header
 //! also keeps the decoder's file-local camera tone curve (Sony ARW camera look), which is applied
 //! at render time and is not baked into the pixels. A raw's camera look for the Camera Matching profile
-//! ([`CameraMatch`]) rides in a segment of the JPEG ([`MATCH_MARKER`]).
+//! ([`CameraMatch`]) and its local tone mapping ([`LocalTone`], Apple ProRAW) ride in segments of the JPEG
+//! ([`MATCH_MARKER`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use lightcraft_catalog::Photo;
 use lightcraft_color::transfer::linear_to_srgb;
-use lightcraft_pipeline::CameraMatch;
+use lightcraft_pipeline::local_tone::LocalTone;
 use lightcraft_pipeline::tone::CameraTone;
+use lightcraft_pipeline::{CameraMatch, SourceInfo};
 use lightcraft_raster::{Rgb32f, Rgba8};
 
 const MAGIC: &[u8] = b"LCSP1\n";
@@ -85,13 +87,23 @@ pub(crate) const ENCODE_VERSION: u64 = 2;
 /// JPEG reader skips it.
 const MATCH_MARKER: u8 = 0xEB;
 const MATCH_TAG: &[u8] = b"LightCraft camera look\0";
-/// The most a stored camera look may inflate to.
+/// A raw's local tone mapping ([`LocalTone`], its DNG gain table map) rides the same way, in a segment of its own after
+/// the camera look's (Apple's 6 × 8 × 257 gains: about 20 KB). Without it a ProRAW's preview renders as if
+/// the photo's "Camera local tone mapping" were off: a stop or more darker than its original.
+const TONE_TAG: &[u8] = b"LightCraft local tone\0";
+/// The most a stored camera look or local tone mapping may inflate to.
 const MATCH_MAX: usize = 1 << 20;
 
 /// `jpg` with the camera look `m` in its own segment ([`MATCH_MARKER`]); `None` if it doesn't fit one.
 fn with_camera_match(jpg: &[u8], m: &CameraMatch) -> Option<Vec<u8>> {
-    let mut body = MATCH_TAG.to_vec();
-    body.extend(miniz_oxide::deflate::compress_to_vec_zlib(&serde_json::to_vec(m).ok()?, 9));
+    with_segment(jpg, MATCH_TAG, m)
+}
+
+/// `jpg` with `tag` and `value` (JSON, zlib-compressed) in a segment ([`MATCH_MARKER`]) right after its start marker;
+/// `None` if it doesn't fit one.
+fn with_segment<T: serde::Serialize>(jpg: &[u8], tag: &[u8], value: &T) -> Option<Vec<u8>> {
+    let mut body = tag.to_vec();
+    body.extend(miniz_oxide::deflate::compress_to_vec_zlib(&serde_json::to_vec(value).ok()?, 9));
     let len = u16::try_from(body.len() + 2).ok()?;
     let (soi, rest) = jpg.split_at_checked(2)?;
     let mut out = Vec::with_capacity(jpg.len() + body.len() + 4);
@@ -105,14 +117,28 @@ fn with_camera_match(jpg: &[u8], m: &CameraMatch) -> Option<Vec<u8>> {
 
 /// The camera look a proxy's JPEG holds ([`with_camera_match`]); `None` when it holds none or one that can't be used.
 fn camera_match_in(jpg: &[u8]) -> Option<CameraMatch> {
-    let Some((&[0xFF, 0xD8, 0xFF, MATCH_MARKER, hi, lo], rest)) = jpg.split_first_chunk::<6>() else { return None };
-    let body = rest.get(..usize::from(u16::from_be_bytes([hi, lo])).checked_sub(2)?)?;
-    let json = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(body.strip_prefix(MATCH_TAG)?, MATCH_MAX).ok()?;
-    serde_json::from_slice::<CameraMatch>(&json).ok()?.checked()
+    segment::<CameraMatch>(jpg, MATCH_TAG)?.checked()
 }
 
-/// Encode a source image (and the decoder's camera tone curve and camera look, if any) as a smart preview.
-pub fn encode(img: &Rgb32f, tone: Option<&CameraTone>, camera_match: Option<&CameraMatch>) -> Result<Vec<u8>, String> {
+/// What a proxy's JPEG holds under `tag` ([`with_segment`]), among the segments right after its start marker; `None`
+/// when there is none or it can't be read.
+fn segment<T: serde::de::DeserializeOwned>(jpg: &[u8], tag: &[u8]) -> Option<T> {
+    let mut rest = jpg.strip_prefix(&[0xFF, 0xD8])?;
+    while let Some((&[0xFF, MATCH_MARKER, hi, lo], after)) = rest.split_first_chunk::<4>() {
+        let body = after.get(..usize::from(u16::from_be_bytes([hi, lo])).checked_sub(2)?)?;
+        if let Some(z) = body.strip_prefix(tag) {
+            let json = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(z, MATCH_MAX).ok()?;
+            return serde_json::from_slice(&json).ok();
+        }
+        rest = after.get(body.len()..)?;
+    }
+    None
+}
+
+/// Encode a source image as a smart preview, with the decoder facts in `info` its pixels need: the camera tone curve,
+/// camera look and local tone mapping, if any.
+pub fn encode(img: &Rgb32f, info: &SourceInfo) -> Result<Vec<u8>, String> {
+    let tone = info.camera_tone.as_ref();
     // scale so all but the brightest 0.05 % fit into 0..1
     let mut lum: Vec<f32> = img.data.iter().map(|c| c[0].max(c[1]).max(c[2])).filter(|v| v.is_finite()).collect();
     let scale = if lum.is_empty() {
@@ -139,8 +165,10 @@ pub fn encode(img: &Rgb32f, tone: Option<&CameraTone>, camera_match: Option<&Cam
         &Default::default(),
     )
     .map_err(|e| e.to_string())?;
-    // (a look too big for its segment is left out: the photo then renders Camera Matching as Color)
-    let jpg = camera_match.and_then(|m| with_camera_match(&jpg, m)).unwrap_or(jpg);
+    // (a map or look too big for its segment is left out: the photo then renders without the map, or Camera Matching
+    // as Color; the look goes in last so it stays the first segment, where older builds look for it)
+    let jpg = info.local_tone.as_deref().and_then(|t| with_segment(&jpg, TONE_TAG, t)).unwrap_or(jpg);
+    let jpg = info.camera_match.as_deref().and_then(|m| with_camera_match(&jpg, m)).unwrap_or(jpg);
     let mut out = MAGIC.to_vec();
     let mut head = serde_json::json!({
         "w": img.width,
@@ -163,19 +191,18 @@ pub fn encode(img: &Rgb32f, tone: Option<&CameraTone>, camera_match: Option<&Cam
 pub fn encode_pair(original: &[u8], mini_edge: usize) -> Result<(Vec<u8>, Vec<u8>), String> {
     use lightcraft_raster::resample::{Filter, fit};
     let (img, info) = crate::files::load_bytes(original, crate::media::SourceLevel::Preview.max_edge())?;
-    let (tone, camera_match) = (info.camera_tone.as_ref(), info.camera_match.as_deref());
-    let smart = encode(&img, tone, camera_match)?;
+    let smart = encode(&img, &info)?;
     let small = if img.width.max(img.height) > mini_edge { fit(&img, mini_edge, mini_edge, Filter::Mitchell) } else { img };
-    Ok((smart, encode(&small, tone, camera_match)?))
+    Ok((smart, encode(&small, &info)?))
 }
 
 /// [`encode_pair`] for a video clip: both previews show its poster frame, decoded from the file in place.
 pub fn encode_pair_video(path: &str, mini_edge: usize) -> Result<(Vec<u8>, Vec<u8>), String> {
     use lightcraft_raster::resample::{Filter, fit};
     let (img, _) = crate::files::load_video(path, crate::media::SourceLevel::Preview.max_edge())?;
-    let smart = encode(&img, None, None)?;
+    let smart = encode(&img, &SourceInfo::default())?;
     let small = if img.width.max(img.height) > mini_edge { fit(&img, mini_edge, mini_edge, Filter::Mitchell) } else { img };
-    Ok((smart, encode(&small, None, None)?))
+    Ok((smart, encode(&small, &SourceInfo::default())?))
 }
 
 /// Is this a smart preview's bytes (by its header)?
@@ -183,9 +210,12 @@ pub fn is_smart_preview(bytes: &[u8]) -> bool {
     bytes.starts_with(MAGIC)
 }
 
-/// Decode a smart preview back into a source image, its stored camera tone curve and camera look (an invalid
-/// curve or look is ignored, like a missing one).
-pub fn decode(bytes: &[u8]) -> Result<(Rgb32f, Option<CameraTone>, Option<Arc<CameraMatch>>), String> {
+/// A smart preview's picture and the decoder facts stored with it ([`decode`]).
+pub type Decoded = (Rgb32f, Option<CameraTone>, Option<Arc<CameraMatch>>, Option<Arc<LocalTone>>);
+
+/// Decode a smart preview back into a source image, its stored camera tone curve, camera look and local tone mapping
+/// (an invalid one is ignored, like a missing one).
+pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     let rest = bytes.strip_prefix(MAGIC).ok_or("not a smart preview")?;
     let nl = rest.iter().position(|b| *b == b'\n').ok_or("bad smart preview")?;
     let head: serde_json::Value = serde_json::from_slice(&rest[..nl]).map_err(|e| e.to_string())?;
@@ -196,7 +226,7 @@ pub fn decode(bytes: &[u8]) -> Result<(Rgb32f, Option<CameraTone>, Option<Arc<Ca
     // the decoder undoes the sRGB encoding; the values are the source's own primaries
     let mut img = d.image;
     img.data.iter_mut().for_each(|c| *c = c.map(|v| v * scale));
-    Ok((img, tone, camera_match_in(jpg).map(Arc::new)))
+    Ok((img, tone, camera_match_in(jpg).map(Arc::new), segment::<LocalTone>(jpg, TONE_TAG).map(Arc::new)))
 }
 
 /// Where a library keeps its smart previews.
@@ -418,7 +448,7 @@ pub fn mark_look_checked(dir: &Path) -> Result<(), String> {
 /// Load the proxy at `path`.
 pub fn load(path: &Path) -> Result<crate::media::DecodedSource, String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    decode(&b).map(|(image, camera_tone, camera_match)| crate::media::DecodedSource::proxy(image, camera_tone, camera_match))
+    decode(&b).map(|(image, camera_tone, camera_match, local_tone)| crate::media::DecodedSource::proxy(image, camera_tone, camera_match, local_tone))
 }
 
 #[cfg(test)]
@@ -493,7 +523,7 @@ mod tests {
         std::fs::create_dir_all(&a).unwrap();
         std::fs::create_dir_all(&b).unwrap();
         let img = lightcraft_scenes::demo_library()[0].render(64, 40);
-        let good = encode(&img, None, None).unwrap();
+        let good = encode(&img, &SourceInfo::default()).unwrap();
         std::fs::write(a.join("1.lcsp"), &good).unwrap();
         assert!(is_valid(&a.join("1.lcsp")));
         for cut in [good.len() - 1, good.len() / 2, 10, 0] {
@@ -515,7 +545,8 @@ mod tests {
         }))
         .unwrap();
         let img = lightcraft_scenes::demo_library()[0].render(64, 40);
-        let bytes = encode(&img, Some(&tone), None).unwrap();
+        let with_tone = SourceInfo { camera_tone: Some(tone), ..Default::default() };
+        let bytes = encode(&img, &with_tone).unwrap();
         assert_eq!(decode(&bytes).unwrap().1, Some(tone));
         let dir = temp("tone");
         let path = dir.join("t.lcsp");
@@ -535,7 +566,7 @@ mod tests {
         let mut hostile = MAGIC.to_vec();
         hostile.extend_from_slice(head.to_string().as_bytes());
         hostile.extend_from_slice(&bytes[nl..]);
-        let (pixels, tone, _) = decode(&hostile).unwrap();
+        let (pixels, tone, ..) = decode(&hostile).unwrap();
         assert_eq!((pixels.width, tone), (img.width, None));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -561,9 +592,10 @@ mod tests {
             tone: Some(tone),
         };
         let img = lightcraft_scenes::demo_library()[0].render(64, 40);
-        let (plain, bytes) = (encode(&img, Some(&tone), None).unwrap(), encode(&img, Some(&tone), Some(&m)).unwrap());
+        let with_tone = SourceInfo { camera_tone: Some(tone), ..Default::default() };
+        let (plain, bytes) = (encode(&img, &with_tone).unwrap(), encode(&img, &SourceInfo { camera_match: Some(Arc::new(m.clone())), ..with_tone.clone() }).unwrap());
         eprintln!("camera look: {} bytes in the proxy", bytes.len() - plain.len());
-        let (pixels, got_tone, got) = decode(&bytes).unwrap();
+        let (pixels, got_tone, got, _) = decode(&bytes).unwrap();
         assert_eq!((got.as_deref(), got_tone), (Some(&m), Some(tone)));
         assert_eq!(pixels.data, decode(&plain).unwrap().0.data, "the same picture");
         assert!(decode(&plain).unwrap().2.is_none());
@@ -584,7 +616,7 @@ mod tests {
         let jpg = |b: &[u8]| b[MAGIC.len() + b[MAGIC.len()..].iter().position(|c| *c == b'\n').unwrap() + 1..].to_vec();
         let head = &plain[..plain.len() - jpg(&plain).len()];
         for (what, b) in [("flipped", flipped), ("lying", [head, &with_camera_match(&jpg(&plain), &lying).unwrap()[..]].concat())] {
-            let (pixels, _, got) = decode(&b).unwrap_or_else(|e| panic!("{what}: {e}"));
+            let (pixels, _, got, _) = decode(&b).unwrap_or_else(|e| panic!("{what}: {e}"));
             assert_eq!((pixels.width, got), (img.width, None), "{what}");
         }
         let mut long = bytes.clone();
@@ -593,10 +625,51 @@ mod tests {
         let _ = decode(&long);
     }
 
+    /// A ProRAW's local tone mapping (its gain table map) rides in the proxy's JPEG too, next to a camera look, which
+    /// stays the first segment (where older builds look for it); a photo rendered from the proxy gets the map.
+    #[test]
+    fn local_tone_travels_with_the_proxy() {
+        use lightcraft_raw::gaintable::{GainTableMap, SourcePlacement};
+        let map = GainTableMap {
+            points_v: 6,
+            points_h: 8,
+            points_n: 257,
+            spacing_v: 0.2,
+            spacing_h: 1.0 / 7.0,
+            origin_v: 0.0,
+            origin_h: 0.0,
+            weights: [0.25, 0.5, 0.25, 0.0, 0.0],
+            gamma: 0.5,
+            gains: (0..6 * 8 * 257).map(|i| 1.0 + ((i * 37) % 257) as f32 / 97.0).collect(),
+        };
+        let lt = LocalTone { map, placement: SourcePlacement { rect: [0.0, 0.0, 1.0, 1.0], orientation: lightcraft_geom::Orientation::Rotate90 } };
+        let m = CameraMatch { start_hue_sat: None, matrix: lightcraft_color::Mat3::IDENTITY, hue_sat: None, tone: None };
+        let img = lightcraft_scenes::demo_library()[0].render(64, 40);
+        let info = SourceInfo { local_tone: Some(Arc::new(lt.clone())), ..Default::default() };
+        let (plain, bytes) = (encode(&img, &SourceInfo::default()).unwrap(), encode(&img, &info).unwrap());
+        eprintln!("local tone: {} bytes in the proxy", bytes.len() - plain.len());
+        let (pixels, _, _, got) = decode(&bytes).unwrap();
+        assert_eq!(got.as_deref(), Some(&lt));
+        assert_eq!(pixels.data, decode(&plain).unwrap().0.data, "the same picture");
+        assert!(decode(&plain).unwrap().3.is_none());
+        let both = encode(&img, &SourceInfo { camera_match: Some(Arc::new(m.clone())), ..info }).unwrap();
+        let (_, _, got_match, got) = decode(&both).unwrap();
+        assert_eq!((got_match.as_deref(), got.as_deref()), (Some(&m), Some(&lt)));
+        let jpg = &both[MAGIC.len() + both[MAGIC.len()..].iter().position(|c| *c == b'\n').unwrap() + 1..];
+        assert_eq!((&jpg[..4], &jpg[6..6 + MATCH_TAG.len()]), (&[0xFF, 0xD8, 0xFF, MATCH_MARKER][..], MATCH_TAG), "the look comes first");
+        let dir = temp("local-tone");
+        let path = dir.join("t.lcsp");
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(is_valid(&path));
+        let header = SourceInfo { raw: true, ..Default::default() };
+        assert_eq!(load(&path).unwrap().info_or(header).local_tone.as_deref(), Some(&lt));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn roundtrip_keeps_the_picture() {
         let img = lightcraft_scenes::demo_library()[0].render(160, 100);
-        let (back, tone, _) = decode(&encode(&img, None, None).unwrap()).unwrap();
+        let (back, tone, ..) = decode(&encode(&img, &SourceInfo::default()).unwrap()).unwrap();
         assert_eq!((back.width, back.height), (img.width, img.height));
         assert!(tone.is_none());
         let mut err = 0.0f64;
@@ -744,7 +817,7 @@ mod tests {
     #[test]
     fn a_smooth_proxy_keeps_the_scene_closer_than_the_old_quality() {
         let img = smooth_scene(256, 160);
-        let ours = decode(&encode(&img, None, None).unwrap()).unwrap().0;
+        let ours = decode(&encode(&img, &SourceInfo::default()).unwrap()).unwrap().0;
         let before = decode(&encode_at_q92(&img)).unwrap().0;
         let block = (mean_block_delta_e(&img, &ours), mean_block_delta_e(&img, &before));
         let pixel = (mean_delta_e(&img, &ours), mean_delta_e(&img, &before));
@@ -768,7 +841,7 @@ mod tests {
     fn a_proxy_from_an_older_encode_is_stale() {
         let dir = temp("encode-version");
         let img = lightcraft_scenes::demo_library()[0].render(64, 40);
-        let bytes = encode(&img, None, None).unwrap();
+        let bytes = encode(&img, &SourceInfo::default()).unwrap();
         let path = dir.join("p.lcsp");
         std::fs::write(&path, &bytes).unwrap();
         assert!(!is_stale(&path), "this build's own proxy is up to date");

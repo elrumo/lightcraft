@@ -203,6 +203,8 @@ pub struct DecodedSource {
     pub camera_tone: Option<lightcraft_pipeline::tone::CameraTone>,
     /// A smart preview's stored camera look (Camera Matching), like `camera_tone`.
     pub camera_match: Option<Arc<lightcraft_pipeline::CameraMatch>>,
+    /// A smart preview's stored local tone mapping (Apple ProRAW's gain table map), like `camera_tone`.
+    pub local_tone: Option<Arc<lightcraft_pipeline::local_tone::LocalTone>>,
     /// The same picture developed from the AI-denoised mosaic, when the photo has one cached.
     pub denoised: Option<Arc<Twin>>,
     /// The picture last developed in the camera's own look, and the one it was made from ([`Self::develop_input`]).
@@ -211,16 +213,26 @@ pub struct DecodedSource {
 
 impl DecodedSource {
     pub fn new(image: Arc<Rgb32f>, info: Option<SourceInfo>) -> Self {
-        DecodedSource { image, info, camera_tone: None, camera_match: None, denoised: None, camera_matched: Default::default() }
+        DecodedSource {
+            image,
+            info,
+            camera_tone: None,
+            camera_match: None,
+            local_tone: None,
+            denoised: None,
+            camera_matched: Default::default(),
+        }
     }
 
-    /// A smart preview's picture with its stored camera tone curve and camera look (no decoder facts).
+    /// A smart preview's picture with its stored camera tone curve, camera look and local tone mapping (no decoder
+    /// facts).
     pub fn proxy(
         image: Rgb32f,
         camera_tone: Option<lightcraft_pipeline::tone::CameraTone>,
         camera_match: Option<Arc<lightcraft_pipeline::CameraMatch>>,
+        local_tone: Option<Arc<lightcraft_pipeline::local_tone::LocalTone>>,
     ) -> Self {
-        DecodedSource { camera_tone, camera_match, ..DecodedSource::new(Arc::new(image), None) }
+        DecodedSource { camera_tone, camera_match, local_tone, ..DecodedSource::new(Arc::new(image), None) }
     }
 
     /// The picture and facts to develop `s` from: [`Self::image_for`] its Denoise amount and [`Self::info_or`]
@@ -279,20 +291,22 @@ impl DecodedSource {
     /// Cache cost: the picture, its segmentation mattes, its denoised twin and room for the lazy mix.
     pub fn bytes(&self) -> usize {
         let mattes = self.info.as_ref().and_then(|i| i.mattes.as_ref()).map_or(0, |m| m.bytes());
-        let mattes = mattes + self.info.as_ref().and_then(|i| i.local_tone.as_ref()).map_or(0, |t| t.map.gains.len() * 4);
+        let local_tone = self.info.as_ref().and_then(|i| i.local_tone.as_ref()).or(self.local_tone.as_ref());
+        let mattes = mattes + local_tone.map_or(0, |t| t.map.gains.len() * 4);
         let matched = self.camera_matched.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.data.len() * 12);
         self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes()) + matched
     }
 
     /// What to render these pixels against: the decoder's facts, else `header` (the catalog's)
-    /// with any stored camera tone curve. The original's size comes from `header` either way: the
-    /// decoder only sees the level it decoded.
+    /// with any stored camera tone curve, camera look and local tone mapping. The original's size comes from `header`
+    /// either way: the decoder only sees the level it decoded.
     pub fn info_or(&self, header: SourceInfo) -> SourceInfo {
         match &self.info {
             Some(info) => SourceInfo { native_long: info.native_long.or(header.native_long), ..info.clone() },
             None => SourceInfo {
                 camera_tone: self.camera_tone.or(header.camera_tone),
                 camera_match: self.camera_match.clone().or(header.camera_match),
+                local_tone: self.local_tone.clone().or(header.local_tone),
                 ..header
             },
         }
@@ -419,11 +433,11 @@ impl SourceRef {
             SourceRef::Smart { .. } | SourceRef::Synced { .. } => return Err("smart previews are not available here".into()),
             SourceRef::Bytes { bytes, max_edge } => {
                 use lightcraft_raster::resample::{Filter, fit};
-                let (mut image, camera_tone, camera_match) = crate::smart::decode(bytes)?;
+                let (mut image, camera_tone, camera_match, local_tone) = crate::smart::decode(bytes)?;
                 if image.width.max(image.height) > *max_edge {
                     image = fit(&image, *max_edge, *max_edge, Filter::Mitchell);
                 }
-                return Ok(DecodedSource::proxy(image, camera_tone, camera_match));
+                return Ok(DecodedSource::proxy(image, camera_tone, camera_match, local_tone));
             }
         };
         Ok(DecodedSource::new(image, None))
@@ -2433,7 +2447,7 @@ mod tests {
         let (a, b) = (thumb.develop_input(&s, SourceInfo::default()).0, thumb.develop_input(&s, SourceInfo::default()).0);
         assert!(a.data[0] == [0.4, 0.3, 0.2] && !Arc::ptr_eq(&a, &b) && thumb.bytes() == DecodedSource::new(picture(4), None).bytes());
         // a smart preview carries the look too (no decoder facts)
-        let proxy = DecodedSource::proxy((*picture(4)).clone(), Some(neutral), Some(m));
+        let proxy = DecodedSource::proxy((*picture(4)).clone(), Some(neutral), Some(m), None);
         assert_eq!(proxy.develop_input(&s, SourceInfo { raw: true, ..Default::default() }).1.camera_tone, Some(camera));
         // a source without it (a JPEG, a raw that starts from the camera's look): Camera Look is Color
         let other = DecodedSource::new(picture(edge), Some(SourceInfo { camera_tone: Some(neutral), ..Default::default() }));

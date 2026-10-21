@@ -269,8 +269,7 @@ fn smart_run(
                     .ok_or_else(|| "nothing to build from".to_string())
                     .and_then(|s| s.load_source())
                     .and_then(|src| {
-                        let info = src.info_or(Default::default());
-                        crate::smart::encode(&src.image, info.camera_tone.as_ref(), info.camera_match.as_deref())
+                        crate::smart::encode(&src.image, &src.info_or(Default::default()))
                     })
                     .and_then(|b| {
                         let parent = path.parent().ok_or_else(|| format!("{}: no parent folder", path.display()))?;
