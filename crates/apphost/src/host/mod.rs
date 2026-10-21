@@ -25,6 +25,8 @@
 //!   albumName?}` — import in the background (answered when it ends: what it added).
 //! - `host.admin.signIn | call | search | signOut | session` — the sync server's admin API, on worker threads
 //!   ([`admin`]: a native frontend's Server Administration screens).
+//! - `host.libraries {recent?}` — the libraries to offer; `host.library.open {path} | new {name} | delete {path}` —
+//!   another library without a restart, a new one, one deleted ([`libraries`]).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
 //!
 //! Between requests the thread drives what the egui app's frame loop drives: renders, saving, the
@@ -35,6 +37,7 @@ mod admin;
 mod browsing;
 mod control;
 pub mod leases;
+mod libraries;
 pub mod protocol;
 mod script;
 
@@ -284,6 +287,10 @@ struct Engine {
     events: Arc<Events>,
     leases: Arc<Leases>,
     tmp: PathBuf,
+    /// The app's home folder (`OpenConfig::home`): where its libraries are kept, and what `~/` in a path means.
+    home: Option<PathBuf>,
+    /// Whose rules started the engine (where libraries are kept, whether one may be deleted here).
+    profile: Profile,
     demo: bool,
     opened: Value,
     state: Option<HostState>,
@@ -412,7 +419,9 @@ impl Engine {
         let (mut session, demo) = if config.demo {
             (Session::with_demo().with_fs().with_system_clock(), true)
         } else {
-            let dir = crate::startup::library_dir_for(config.profile, config.library.clone().map(Into::into), config.home.clone().map(Into::into));
+            // (`~/…`: a library kept inside the app's home folder, whose path an iOS container changes with each update)
+            let library = config.library.as_deref().map(|l| crate::libraries::expand(l, config.home.as_deref().map(Path::new)).into_os_string());
+            let dir = crate::startup::library_dir_for(config.profile, library, config.home.clone().map(Into::into));
             if desktop {
                 // never a demo in the library's place: the user closes the other LightCraft or chooses another library
                 (crate::startup::open_session_or_err(dir.as_deref(), !config.empty)?, false)
@@ -457,6 +466,8 @@ impl Engine {
             events,
             leases,
             tmp,
+            home: config.home.as_deref().filter(|h| !h.is_empty()).map(PathBuf::from),
+            profile: config.profile,
             demo,
             opened,
             state: None,
@@ -704,6 +715,12 @@ impl Engine {
             // Local's places (`crate::local`) from the roots and hidden places the app keeps: `{roots, hidden,
             // browseRoot?, command?: addRoot | hide | restoreHidden, path?}` → `{roots, hidden, places, owner, browseRoot, current}`
             "host.local" => self.local_places(p).map_err(|e| bad(&e)),
+            // the libraries the app offers, switching to another without a restart, a new one, deleting one
+            // (`libraries`): the recent list is the app's, passed in and given back
+            "host.libraries" => self.libraries(p),
+            "host.library.open" => self.open_library(p),
+            "host.library.new" => self.new_library(p),
+            "host.library.delete" => self.delete_library(p),
             "host.sidebar" => {
                 let mut layout = p.get("layout").cloned().map(crate::sidebar::SidebarLayout::from).unwrap_or_default();
                 if let Some(command) = p.get("command").and_then(Value::as_str) {
