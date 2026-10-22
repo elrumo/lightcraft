@@ -154,6 +154,7 @@ impl Work {
         lock(&self.preview_leases).remove(&(user.to_string(), key));
     }
 
+    #[cfg(test)]
     fn set_moved(&self, user: &str, names: &[String]) -> Result<(), String> {
         let taken = self.taken_back(user);
         self.write(user, names, &taken)

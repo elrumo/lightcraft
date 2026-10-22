@@ -1564,7 +1564,7 @@ function showSched(p, c) {
           return u.work && u.work[PART_KEY[p]].device && done !== null && done !== undefined && done < u.total;
         });
         if (held.length) {
-          toast(held.map((u) => u.name).join(', ') + "'s devices do this for them, so the server leaves their photos alone. Press Continue here under their name to do them on the server.", 'info');
+          toast(held.map((u) => u.name).join(', ') + "'s devices are working on this, so the server leaves their photos to them. Press Continue here under their name to do them on the server.", 'info');
         }
       } catch (x) {
         fail(x);

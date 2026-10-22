@@ -248,11 +248,18 @@ isn't allowed them, is refused (`refused` in the claim's answer), and so is a pa
 stack, started again after a sign-in or a failure, and ends on sign-out. `lightcraft-server` needs no model for a part
 that is moved.
 
+An admin can **take a part back** (Continue here under a user's bar, or Start now for users whose devices haven't claimed
+for ten minutes): the server records it (`takenBack` in `offload.json`), refuses the part in claims ("this server took
+it back") and says so in the claim's answer (`takenBack`). The device drops the part from its own choice
+(`vision.helper` `parts`, kept with the library) and stays off it; only the person choosing the part again
+(`{add, chosen: true}`, sent by `vision.setHelper`) clears it. A device's own automatic `add` when its helper starts
+doesn't.
+
 ```text
-POST /api/work/claim      {parts: {search|text|faces|sensitive: engine}, max?} → {items: [{part, key, kind, photo}], refused, ttl}
+POST /api/work/claim      {parts: {search|text|faces|sensitive: engine}, max?} → {items: [{part, key, kind, photo}], refused, takenBack, ttl}
 POST /api/work/release    {items: [{part, key, failed?}]}
-GET  /api/work/settings   {moved: [part], helperSeen: seconds | null}
-PUT  /api/work/settings   {moved: [part]} | {add?: [part], remove?: [part]}
+GET  /api/work/settings   {moved: [part], takenBack: [part], helperSeen: seconds | null}
+PUT  /api/work/settings   {moved: [part]} | {add?: [part], remove?: [part], chosen?: bool}
 POST /api/index/sensitive scores a device computed (checked whole, like the others)
 ```
 

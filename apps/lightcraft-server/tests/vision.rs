@@ -1272,7 +1272,7 @@ fn start_now_takes_a_part_back_from_idle_devices_and_tells_them() {
 #[test]
 fn a_device_follows_the_server_taking_its_work_back() {
     let (f, _) = helper_fixture("work-device-follows", &[]);
-    let mut s = device(&f, "helper", Some(Arc::new(Padded)));
+    let mut s = device(&f, "helper-follows", Some(Arc::new(Padded)));
     s.vision.set_classifier(Arc::new(lightcraft_vision::fake::FakeClassifier));
     s.execute("vision.setHelper", &json!({"parts": ["sensitive"]})).unwrap();
     for _ in 0..600 {
@@ -1303,7 +1303,17 @@ fn a_device_follows_the_server_taking_its_work_back() {
     assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!([]), "and the server does it");
     // (choosing it again on the device is a choice: it is the device's again)
     s.execute("vision.setHelper", &json!({"parts": ["sensitive"]})).unwrap();
-    assert_eq!(get(&f.ann, "/api/work/settings").1["takenBack"], json!([]));
+    let mut taken = json!(null);
+    for _ in 0..200 {
+        s.vision_poll();
+        sync(&mut s);
+        taken = get(&f.ann, "/api/work/settings").1["takenBack"].clone();
+        if taken == json!([]) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(taken, json!([]), "the choice reached the server");
 }
 
 #[test]
