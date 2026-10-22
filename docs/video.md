@@ -129,7 +129,11 @@ downloads at a fraction of the size. The original is never touched. Admins turn 
   priority (`lightcraft_sysmem::lower_thread_priority`: nice 19 on Linux, background quality of service on macOS), with
   the encoder on a single thread, stopped at once by a pause or a change of setting, and a panic in it is a failed clip,
   not a crash. It makes H.264 only, and refuses HDR clips (the copy would be squeezed into SDR). It is slow (see
-  *Hardware video*: about 5 pictures a second at 1080p), which is why it is opt-in.
+  *Hardware video*: about 5 pictures a second at 1080p with every core; on one background thread a 6 s 720p clip took
+  about 165 s on an M1 Max, a bit over one picture a second), which is why it is opt-in. Checked on a scratch server
+  with ffmpeg-made clips: a 720p H.264 clip with AAC sound came back as a 1.9 MB copy of 3.6 MB (2.49 Mbit/s for the
+  2.5 asked, 6.000 s, BT.709 tags, sound kept, and ffmpeg decodes it cleanly), a 4:2:2 clip is listed as failed with its
+  reason, and an 87 KB clip whose copy would have been 352 KB is marked already efficient.
 - **Not built yet:** the helper (claim routes, a Mac encoding with VideoToolbox when idle), replacing uploaded originals
   with their copies, devices choosing the copy to play or download ("Prefer lighter videos"), serving the copy for a
   device that asks for a video the server holds no original of, and urgent copies for a clip a device is trying to play.
