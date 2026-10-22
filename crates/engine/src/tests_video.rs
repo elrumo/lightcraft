@@ -174,8 +174,11 @@ fn a_clip_is_trimmed_in_one_undo_step() {
     assert_eq!((i["trimStart"].as_f64(), i["trimEnd"].is_null()), (Some(0.5), true), "{i}");
     s.execute("video.setTrim", &json!({"id": clip.0, "start": null})).unwrap();
     assert!(s.develop_of(clip).unwrap().video.is_none(), "an untrimmed clip has no video edit");
-    // three trims, three undo steps
+    // each trim is its own undo step: back through both ends put back, then the trim itself
     s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.develop_of(clip).unwrap().video.and_then(|v| v.trim_start), Some(0.5));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.develop_of(clip).unwrap().video.and_then(|v| v.trim_end), Some(1.5));
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.develop_of(clip).unwrap().video.and_then(|v| v.trim_end), Some(1.5));
     s.execute("edit.undo", &json!({})).unwrap();

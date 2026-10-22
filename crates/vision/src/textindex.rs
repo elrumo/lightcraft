@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use unicode_normalization::UnicodeNormalization;
@@ -237,7 +237,8 @@ impl TextIndex {
     /// off and the records before it are kept.
     pub fn open(path: &Path, engine: &str) -> Result<TextIndex, Error> {
         check_engine(engine)?;
-        let mut file = OpenOptions::new().read(true).append(true).create(true).open(path)?;
+        // (not an append handle: on Windows one may not be cut back; each write goes to the end it keeps, `len`)
+        let mut file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
         let size = file.metadata()?.len();
         if size > MAX_FILE {
             return Err(Error::Format("file too large"));
@@ -245,6 +246,7 @@ impl TextIndex {
         let mut ix = TextIndex { file: None, engine: engine.to_string(), docs: Vec::new(), pos: HashMap::new(), len: HEADER_LEN as u64 };
         if size < HEADER_LEN as u64 {
             file.set_len(0)?;
+            file.seek(SeekFrom::Start(0))?;
             file.write_all(&header(engine))?;
             ix.file = Some(file);
             return Ok(ix);
@@ -316,7 +318,7 @@ impl TextIndex {
 
     fn append(&mut self, bytes: &[u8]) -> Result<(), Error> {
         if let Some(f) = &mut self.file {
-            if let Err(e) = f.write_all(bytes) {
+            if let Err(e) = f.seek(SeekFrom::Start(self.len)).and_then(|_| f.write_all(bytes)) {
                 let _ = f.set_len(self.len);
                 return Err(e.into());
             }

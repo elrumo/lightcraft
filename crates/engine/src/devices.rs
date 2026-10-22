@@ -462,7 +462,9 @@ mod tests {
     }
 
     /// GVfs mounts of a camera (PTP) and a phone (MTP, two storages): each storage with a DCIM
-    /// is a device, named after the camera, its DCIM one folder down.
+    /// is a device, named after the camera, its DCIM one folder down. (GVfs is Linux's and FreeBSD's,
+    /// and a Windows file name can't hold its `:`.)
+    #[cfg(unix)]
     #[test]
     fn gvfs_cameras_and_phones_are_devices() {
         let base = std::env::temp_dir().join(format!("lc-devices-gvfs-{}", std::process::id()));

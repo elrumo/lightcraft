@@ -139,7 +139,11 @@ fn photos_dropped_on_a_folder_move_there_on_disk() {
     assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::MovePhotos { .. })), "{:?}", h.app.ui.dialog);
     assert!(trip.join("beach.png").is_file(), "not before Move");
     h.step();
-    click(&mut h, "button:dialogOk");
+    let ok = widget(&h, "button:dialogOk").expect("the Move button").center();
+    press(&mut h, ok);
+    release(&mut h, ok);
+    // (read as soon as it is there: the app's clock is frames, and settling on a slow machine can outlast the toast)
+    h.step_until(std::time::Duration::from_secs(30), |h| toast(h).starts_with("Moved"));
     // Then the file moved, the photo follows it, and the toast says Undo moves it back
     assert!(home.join("beach.png").is_file() && !trip.join("beach.png").exists(), "moved on disk");
     let photo = h.app.session.catalog.photo(lightcraft_catalog::PhotoId(beach)).unwrap();
