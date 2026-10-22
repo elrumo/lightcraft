@@ -522,7 +522,6 @@ impl AlbumPlan {
         let (mut ops, made) = album_ops(s, &self.source, &self.albums, &self.members, index);
         self.warnings.extend(made.warnings.iter().cloned());
         // the settings only go to photos still without edits, and only what is left of the plan
-        let now = (s.clock)();
         let mut edits = self.edits;
         for (id, packet) in std::mem::take(&mut self.develop) {
             let Some(photo) = s.catalog.photo(id).filter(|p| p.in_library() && p.edited.is_none()) else { continue };
