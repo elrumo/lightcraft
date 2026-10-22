@@ -161,7 +161,10 @@ fn set_trim(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, format!("the kept part must be at least {MIN_KEPT} seconds long")));
     }
     d.video = Some(v).filter(|v| !v.is_empty());
+    // (trims of one clip in a row are one undo step: a frontend's trim bar sends one per drag)
+    let before = (s.commits(), s.undo.len());
     s.set_develop(id, d, "Trim Video")?;
+    s.join_repeated(id, "Trim Video", before);
     Ok(json!({"photo": id.0, "start": v.trim_start, "end": v.trim_end, "length": v.trim_end.unwrap_or(length) - v.trim_start.unwrap_or(0.0)}))
 }
 
@@ -209,7 +212,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Trim Video",
             [],
             None,
-            "{id?, start?: seconds | null, end?: seconds | null} → {photo, start, end, length} — keep only the part of a video clip between `start` and `end` (a missing key is left as it is, null puts that end back); at least 0.1 s must stay. One undo step; the file is not touched, playback and export honour it",
+            "{id?, start?: seconds | null, end?: seconds | null} → {photo, start, end, length} — keep only the part of a video clip between `start` and `end` (a missing key is left as it is, null puts that end back); at least 0.1 s must stay. Trims of one clip in a row, with nothing else between, are one undo step; the file is not touched, playback and export honour it",
             always,
             set_trim
         ),

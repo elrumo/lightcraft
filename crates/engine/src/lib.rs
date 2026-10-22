@@ -279,6 +279,9 @@ pub struct Session {
     /// Undo steps committed in this session, ever (the history drops its oldest past 1000, so
     /// its length can't tell how many steps a command just made; see [`Session::commits`]).
     commits: u64,
+    /// The last step [`Session::join_repeated`] saw: its photo and label, and `commits` and the
+    /// history's length right after it.
+    repeated: Option<(PhotoId, &'static str, u64, usize)>,
     pub redo: Vec<UndoEntry>,
     /// Exact filesystem repairs from discarded history; catalog inverses stay discarded.
     pub(crate) pending_sidecar_repairs: Vec<rename::SidecarMove>,
@@ -537,6 +540,7 @@ impl Session {
             total: None,
             undo: Vec::new(),
             commits: 0,
+            repeated: None,
             redo: Vec::new(),
             pending_sidecar_repairs: Vec::new(),
             interaction: None,
@@ -844,6 +848,35 @@ impl Session {
     /// several steps compares before and after to merge them ([`Session::merge_undo`]).
     pub fn commits(&self) -> u64 {
         self.commits
+    }
+
+    /// Several edits of one kind to one photo in a row are one undo step (trimming a clip): call right
+    /// after the edit, with `before` = ([`Session::commits`], the history's length) from just before it.
+    /// The step it made joins the one before when that was the same `label` on the same photo and
+    /// nothing came between: no other step, undo or redo.
+    pub(crate) fn join_repeated(&mut self, id: PhotoId, label: &'static str, before: (u64, usize)) {
+        let committed = self.commits == before.0.wrapping_add(1) && self.undo.len() == before.1.saturating_add(1);
+        if !committed {
+            self.repeated = None;
+            return;
+        }
+        if self.repeated == Some((id, label, before.0, before.1)) && self.undo.len() >= 2 {
+            let n = self.undo.len();
+            let plain = |e: &UndoEntry| e.folder.is_none() && e.retry_inverse.is_empty() && e.retry_sidecars.is_empty();
+            if self.undo.get(n.saturating_sub(2)..).is_some_and(|both| both.iter().all(plain))
+                && let Some(newer) = self.undo.pop()
+                && let Some(older) = self.undo.last_mut()
+            {
+                // undone together: this edit's inverse first, then the earlier ones (kept flat)
+                let mut ops = vec![newer.op];
+                match std::mem::replace(&mut older.op, Op::Batch { ops: Vec::new() }) {
+                    Op::Batch { ops: earlier } => ops.extend(earlier),
+                    earlier => ops.push(earlier),
+                }
+                older.op = Op::Batch { ops };
+            }
+        }
+        self.repeated = Some((id, label, self.commits, self.undo.len()));
     }
 
     pub fn merge_undo(&mut self, n: usize, label: &str) {
