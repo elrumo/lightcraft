@@ -88,22 +88,34 @@ pub(crate) const ENCODE_VERSION: u64 = 2;
 const MATCH_MARKER: u8 = 0xEB;
 const MATCH_TAG: &[u8] = b"LightCraft camera look\0";
 /// A raw's local tone mapping ([`LocalTone`], its DNG gain table map) rides the same way, in a segment of its own after
-/// the camera look's (Apple's 6 × 8 × 257 gains: about 20 KB). Without it a ProRAW's preview renders as if
-/// the photo's "Camera local tone mapping" were off: a stop or more darker than its original.
+/// the camera look's ([`with_local_tone`]). Without it a ProRAW's preview renders as if the photo's "Camera local tone
+/// mapping" were off: on a backlit iPhone 17 Pro ProRAW, a mean level of 81 of 255 against 99 for the original.
 const TONE_TAG: &[u8] = b"LightCraft local tone\0";
 /// The most a stored camera look or local tone mapping may inflate to.
 const MATCH_MAX: usize = 1 << 20;
 
 /// `jpg` with the camera look `m` in its own segment ([`MATCH_MARKER`]); `None` if it doesn't fit one.
 fn with_camera_match(jpg: &[u8], m: &CameraMatch) -> Option<Vec<u8>> {
-    with_segment(jpg, MATCH_TAG, m)
+    with_segment(jpg, MATCH_TAG, &serde_json::to_vec(m).ok()?)
 }
 
-/// `jpg` with `tag` and `value` (JSON, zlib-compressed) in a segment ([`MATCH_MARKER`]) right after its start marker;
+/// `jpg` with the local tone mapping `t` in its own segment: its JSON without the gains, a newline, then the gains as
+/// little-endian f16. (An iPhone 17 Pro's 12 × 16 × 257 f32 gains take some 226 KB as compressed JSON, past a
+/// segment's 64 KB; as f16, 30 KB, each within 0.03 %: far below what the proxy's 8-bit pixels keep.) `None` if it
+/// doesn't fit.
+fn with_local_tone(jpg: &[u8], t: &LocalTone) -> Option<Vec<u8>> {
+    let map = lightcraft_raw::gaintable::GainTableMap { gains: Vec::new(), ..t.map.clone() };
+    let mut payload = serde_json::to_vec(&LocalTone { map, placement: t.placement }).ok()?;
+    payload.push(b'\n');
+    payload.extend(t.map.gains.iter().flat_map(|g| half::f16::from_f32(*g).to_le_bytes()));
+    with_segment(jpg, TONE_TAG, &payload)
+}
+
+/// `jpg` with `tag` and `payload` (zlib-compressed) in a segment ([`MATCH_MARKER`]) right after its start marker;
 /// `None` if it doesn't fit one.
-fn with_segment<T: serde::Serialize>(jpg: &[u8], tag: &[u8], value: &T) -> Option<Vec<u8>> {
+fn with_segment(jpg: &[u8], tag: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
     let mut body = tag.to_vec();
-    body.extend(miniz_oxide::deflate::compress_to_vec_zlib(&serde_json::to_vec(value).ok()?, 9));
+    body.extend(miniz_oxide::deflate::compress_to_vec_zlib(payload, 9));
     let len = u16::try_from(body.len() + 2).ok()?;
     let (soi, rest) = jpg.split_at_checked(2)?;
     let mut out = Vec::with_capacity(jpg.len() + body.len() + 4);
@@ -117,18 +129,27 @@ fn with_segment<T: serde::Serialize>(jpg: &[u8], tag: &[u8], value: &T) -> Optio
 
 /// The camera look a proxy's JPEG holds ([`with_camera_match`]); `None` when it holds none or one that can't be used.
 fn camera_match_in(jpg: &[u8]) -> Option<CameraMatch> {
-    segment::<CameraMatch>(jpg, MATCH_TAG)?.checked()
+    serde_json::from_slice::<CameraMatch>(&segment(jpg, MATCH_TAG)?).ok()?.checked()
 }
 
-/// What a proxy's JPEG holds under `tag` ([`with_segment`]), among the segments right after its start marker; `None`
-/// when there is none or it can't be read.
-fn segment<T: serde::de::DeserializeOwned>(jpg: &[u8], tag: &[u8]) -> Option<T> {
+/// The local tone mapping a proxy's JPEG holds ([`with_local_tone`]); `None` when it holds none or one that can't be
+/// read. (A map whose gains don't add up is kept: it renders as no map, see `GainTableMap::evaluator`.)
+fn local_tone_in(jpg: &[u8]) -> Option<LocalTone> {
+    let payload = segment(jpg, TONE_TAG)?;
+    let (json, gains) = payload.split_at(payload.iter().position(|b| *b == b'\n')?);
+    let mut t: LocalTone = serde_json::from_slice(json).ok()?;
+    t.map.gains = gains.get(1..)?.as_chunks::<2>().0.iter().map(|g| half::f16::from_le_bytes(*g).to_f32()).collect();
+    Some(t)
+}
+
+/// What a proxy's JPEG holds under `tag` ([`with_segment`]), inflated, among the segments right after its start marker;
+/// `None` when there is none or it can't be read.
+fn segment(jpg: &[u8], tag: &[u8]) -> Option<Vec<u8>> {
     let mut rest = jpg.strip_prefix(&[0xFF, 0xD8])?;
     while let Some((&[0xFF, MATCH_MARKER, hi, lo], after)) = rest.split_first_chunk::<4>() {
         let body = after.get(..usize::from(u16::from_be_bytes([hi, lo])).checked_sub(2)?)?;
         if let Some(z) = body.strip_prefix(tag) {
-            let json = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(z, MATCH_MAX).ok()?;
-            return serde_json::from_slice(&json).ok();
+            return miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(z, MATCH_MAX).ok();
         }
         rest = after.get(body.len()..)?;
     }
@@ -167,7 +188,7 @@ pub fn encode(img: &Rgb32f, info: &SourceInfo) -> Result<Vec<u8>, String> {
     .map_err(|e| e.to_string())?;
     // (a map or look too big for its segment is left out: the photo then renders without the map, or Camera Matching
     // as Color; the look goes in last so it stays the first segment, where older builds look for it)
-    let jpg = info.local_tone.as_deref().and_then(|t| with_segment(&jpg, TONE_TAG, t)).unwrap_or(jpg);
+    let jpg = info.local_tone.as_deref().and_then(|t| with_local_tone(&jpg, t)).unwrap_or(jpg);
     let jpg = info.camera_match.as_deref().and_then(|m| with_camera_match(&jpg, m)).unwrap_or(jpg);
     let mut out = MAGIC.to_vec();
     let mut head = serde_json::json!({
@@ -226,7 +247,7 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     // the decoder undoes the sRGB encoding; the values are the source's own primaries
     let mut img = d.image;
     img.data.iter_mut().for_each(|c| *c = c.map(|v| v * scale));
-    Ok((img, tone, camera_match_in(jpg).map(Arc::new), segment::<LocalTone>(jpg, TONE_TAG).map(Arc::new)))
+    Ok((img, tone, camera_match_in(jpg).map(Arc::new), local_tone_in(jpg).map(Arc::new)))
 }
 
 /// Where a library keeps its smart previews.
@@ -593,7 +614,8 @@ mod tests {
         };
         let img = lightcraft_scenes::demo_library()[0].render(64, 40);
         let with_tone = SourceInfo { camera_tone: Some(tone), ..Default::default() };
-        let (plain, bytes) = (encode(&img, &with_tone).unwrap(), encode(&img, &SourceInfo { camera_match: Some(Arc::new(m.clone())), ..with_tone.clone() }).unwrap());
+        let (plain, bytes) =
+            (encode(&img, &with_tone).unwrap(), encode(&img, &SourceInfo { camera_match: Some(Arc::new(m.clone())), ..with_tone.clone() }).unwrap());
         eprintln!("camera look: {} bytes in the proxy", bytes.len() - plain.len());
         let (pixels, got_tone, got, _) = decode(&bytes).unwrap();
         assert_eq!((got.as_deref(), got_tone), (Some(&m), Some(tone)));
@@ -631,16 +653,17 @@ mod tests {
     fn local_tone_travels_with_the_proxy() {
         use lightcraft_raw::gaintable::{GainTableMap, SourcePlacement};
         let map = GainTableMap {
-            points_v: 6,
-            points_h: 8,
+            points_v: 12,
+            points_h: 16,
             points_n: 257,
-            spacing_v: 0.2,
-            spacing_h: 1.0 / 7.0,
+            spacing_v: 1.0 / 11.0,
+            spacing_h: 1.0 / 15.0,
             origin_v: 0.0,
             origin_h: 0.0,
             weights: [0.25, 0.5, 0.25, 0.0, 0.0],
             gamma: 0.5,
-            gains: (0..6 * 8 * 257).map(|i| 1.0 + ((i * 37) % 257) as f32 / 97.0).collect(),
+            // (steps of 1/128 up to 3: kept exactly by the proxy's f16 gains)
+            gains: (0..12 * 16 * 257).map(|i| 1.0 + ((i * 37 + i / 257) % 257) as f32 / 128.0).collect(),
         };
         let lt = LocalTone { map, placement: SourcePlacement { rect: [0.0, 0.0, 1.0, 1.0], orientation: lightcraft_geom::Orientation::Rotate90 } };
         let m = CameraMatch { start_hue_sat: None, matrix: lightcraft_color::Mat3::IDENTITY, hue_sat: None, tone: None };
@@ -664,6 +687,12 @@ mod tests {
         let header = SourceInfo { raw: true, ..Default::default() };
         assert_eq!(load(&path).unwrap().info_or(header).local_tone.as_deref(), Some(&lt));
         let _ = std::fs::remove_dir_all(&dir);
+        // a damaged map is ignored, never trusted
+        let start = bytes.windows(TONE_TAG.len()).position(|w| w == TONE_TAG).unwrap();
+        let mut flipped = bytes.clone();
+        flipped[start + TONE_TAG.len() + 40] ^= 0x5a;
+        let (pixels, _, _, got) = decode(&flipped).unwrap();
+        assert_eq!((pixels.width, got), (img.width, None));
     }
 
     #[test]
