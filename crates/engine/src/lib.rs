@@ -101,6 +101,7 @@ pub mod slide_template;
 pub mod slide_title;
 pub mod slideshow;
 pub mod slideshow_export;
+pub mod video_export;
 pub mod smart;
 pub mod sync;
 pub mod text;
@@ -439,6 +440,8 @@ pub struct Session {
     pub(crate) external_tasks: std::collections::BTreeMap<u64, activity::TaskGuard>,
     /// The last (or running) slideshow export (`slideshow.export`).
     pub slideshow_export: Option<std::sync::Arc<slideshow_export::ExportRun>>,
+    /// The video export running or last run (`video.export`).
+    pub video_export: Option<std::sync::Arc<slideshow_export::ExportRun>>,
     /// The last (or running) Build Previews.
     pub preview_build: Option<std::sync::Arc<cmd::previews::PreviewBuild>>,
     /// Develop defaults applied on import (persisted in prefs.json).
@@ -613,6 +616,7 @@ impl Session {
             external_tasks: Default::default(),
             preview_build: None,
             slideshow_export: None,
+            video_export: None,
             import_defaults: import::ImportDefaults::default(),
             cache_mb: 0,
             slideshow: slideshow::PlaybackSettings::default(),

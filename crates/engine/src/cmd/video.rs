@@ -58,7 +58,6 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(not(target_arch = "wasm32"))]
 fn frame(s: &mut Session, p: &Value) -> Result<Value> {
     use base64::Engine as _;
-    use lightcraft_raster::Rgba8;
     const C: &str = "video.frame";
     let (id, clip) = clip_of(s, C, p)?;
     let edge = f64_or(p, "maxEdge", 1024.0);
@@ -67,9 +66,12 @@ fn frame(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let edge = edge as usize;
     let time = p.get("time").filter(|v| !v.is_null());
-    let img = match time {
-        Some(t) => clip.frame_at(t.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad(C, "`time` must be a number of seconds"))?, edge),
-        None => clip.poster(edge),
+    let cover = s.develop_of(id).and_then(|d| d.video).and_then(|v| v.cover);
+    let img = match (time, cover) {
+        (Some(t), _) => clip.frame_at(t.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad(C, "`time` must be a number of seconds"))?, edge),
+        // (the poster frame the clip was given, else the library's pick)
+        (None, Some(c)) => clip.frame_at(c, edge),
+        (None, None) => clip.poster(edge),
     }
     .map_err(|e| bad(C, e.to_string()))?;
     let img = if img.width.max(img.height) > edge {
@@ -77,14 +79,16 @@ fn frame(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         img
     };
-    // linear Rec.2020 → sRGB
-    let m = lightcraft_color::WORKING.to_space(&lightcraft_color::SRGB).to_f32();
-    let mut out = Rgba8::new(img.width, img.height);
-    for (o, px) in out.data.iter_mut().zip(&img.data) {
-        let q = [0, 1, 2].map(|r| m[r][0] * px[0] + m[r][1] * px[1] + m[r][2] * px[2]);
-        let e = lightcraft_color::transfer::encode_srgb8;
-        *o = [e(q[0]), e(q[1]), e(q[2]), 255];
-    }
+    // (with `edits`, the picture as an export shows it: the develop settings applied and the crop)
+    let photo = s.catalog.photo(id).ok_or_else(|| bad(C, "no photo"))?;
+    let edits = p.get("edits").and_then(Value::as_bool).unwrap_or(false);
+    let out = crate::video_export::finish_picture(
+        img,
+        &crate::media::source_info(photo),
+        &photo.develop,
+        &lightcraft_pipeline::RenderRequest::fit(edge, edge),
+        edits,
+    );
     let path = str_param(p, "path");
     let jpeg = path.is_some_and(|f| f.to_lowercase().ends_with(".jpg") || f.to_lowercase().ends_with(".jpeg"));
     let format = if jpeg { crate::export::ExportFormat::Jpeg } else { crate::export::ExportFormat::Png };
@@ -182,6 +186,19 @@ fn set_cover(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"photo": id.0, "cover": time}))
 }
 
+fn export(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "video.export";
+    if cfg!(target_arch = "wasm32") {
+        return Err(bad(C, "video export needs the desktop app, a phone or lightcraft-cli"));
+    }
+    let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
+    crate::video_export::start(s, p, wait).map_err(|e| bad(C, e))
+}
+
+fn export_status(s: &mut Session, _: &Value) -> Result<Value> {
+    Ok(s.video_export.as_ref().map_or_else(|| json!({"running": false}), |r| r.json()))
+}
+
 /// Where a clip can be played from: its file on this computer, or (for a synced clip whose original has not come yet)
 /// nothing until `sync.downloadOriginals` brings it. A frontend with a system player plays `path`.
 fn source(s: &mut Session, p: &Value) -> Result<Value> {
@@ -199,7 +216,17 @@ fn source(s: &mut Session, p: &Value) -> Result<Value> {
     // (a synced photo's path names its place on the server until its original is downloaded)
     let remote = path.starts_with(lightcraft_catalog::sync::PATH_PREFIX);
     let here = !remote && std::path::Path::new(path).is_file();
-    Ok(json!({"photo": id.0, "path": here.then_some(path), "available": here, "remote": remote, "duration": photo.duration}))
+    let edit = photo.develop.video.unwrap_or_default();
+    Ok(json!({
+        "photo": id.0,
+        "path": here.then_some(path),
+        "available": here,
+        "remote": remote,
+        "duration": photo.duration,
+        "trimStart": edit.trim_start,
+        "trimEnd": edit.trim_end,
+        "cover": edit.cover,
+    }))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -223,11 +250,29 @@ pub fn specs() -> Vec<CommandSpec> {
             set_cover
         ),
         cmd!(
+            "video.export",
+            "Export Video",
+            [],
+            None,
+            "{id?, path: \"….mp4\", maxEdge?: 64–8192 (the long edge; default the clip's own), quality?: \"smaller\"|\"balanced\"|\"better\", edits?: true (apply the develop settings to every picture), trim?: true (keep only the trimmed part), wait?: false} → {taskId, background, path, frames, width, height} (with `wait`: {path, frames, width, height, seconds, bytes, audio}) — write a video clip again as an H.264 MP4 with its edits, the part kept and its sound; in the background with a row in the activity stack (`activity.cancel {id}` stops it, leaving no file); `video.exportStatus` reads how it goes. Never overwrites an original",
+            always,
+            export
+        ),
+        cmd!(
+            query "video.exportStatus",
+            "Video Export Status",
+            [],
+            None,
+            "{} → {running, taskId, path, done, total, cancelled, result?, error?} — the video export running or the last one",
+            always,
+            export_status
+        ),
+        cmd!(
             query "video.source",
             "Video Source",
             [],
             None,
-            "{id?} → {photo, path, available, remote, duration} — where a video clip can be played from: `path` is its file on this computer (null when it is not here: `remote` says it is a synced clip whose original is still on the server, which `sync.downloadOriginals` brings)",
+            "{id?} → {photo, path, available, remote, duration, trimStart, trimEnd, cover} — where a video clip can be played from (and, from the library alone, how it is trimmed): `path` is its file on this computer (null when it is not here: `remote` says it is a synced clip whose original is still on the server, which `sync.downloadOriginals` brings)",
             always,
             source
         ),
@@ -245,7 +290,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Video Frame",
             [],
             None,
-            "{id?, time?: seconds, maxEdge?: 1024 (16-4096), path?} → {photo, time, width, height, png: base64 | path} — one picture of a video clip as recorded (no develop settings): the one at `time`, else the poster frame (a key frame about a tenth of the way in, skipping black ones). With `path` the picture is written there (PNG, or JPEG for .jpg) instead of returned",
+            "{id?, time?: seconds, maxEdge?: 1024 (16-4096), edits?: false, path?} → {photo, time, width, height, png: base64 | path} — one picture of a video clip: the one at `time`, else the poster frame (a key frame about a tenth of the way in, skipping black ones). As recorded, or with `edits` as an export shows it (develop settings and crop applied). With `path` the picture is written there (PNG, or JPEG for .jpg) instead of returned",
             always,
             frame
         ),

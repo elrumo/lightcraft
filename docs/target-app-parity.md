@@ -78,7 +78,7 @@ from the checklist sections and the deep-dive documents.
 | Merge and HDR | 3% | 85% | 60% | 20–35 h | merge 88% (HDR merge 🟡: AI Denoise on merged DNGs, JPEG response, memory; gap 29), HDR 80% (HDR display on macOS; not on Windows and Linux; the hours are those of the last review) |
 | Views, compare, zoom, culling | 5% | 90% | 70% | 15–30 h | zoom detail P0 gap |
 | Classic output modules (Map, Book, Slideshow, Print, Web, publish, tethering) | 4% | 15% | 10% | 90–150 h | Classic extras 48% counts many small keys; the modules themselves are mostly ⬜ |
-| Video | 1% | 0% | 0% | 25–45 h | clips import with a poster frame (H.264 / HEVC); no player, trim, edits or export |
+| Video | 1% | 0% | 0% | 25–45 h | clips import with a poster frame (H.264 / HEVC), can be trimmed, given a poster frame, edited and exported as H.264 MP4; no player in the desktop and web apps, no hardware encoder |
 | **Weighted** | 100% | **~77%** | **~61%** (61.5%) | **600–1,100 h** | |
 
 ## AI

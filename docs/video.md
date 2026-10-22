@@ -46,6 +46,31 @@ enforces it, and refuses `filmcraft-codecs` and `symphonia` (MPL-2.0)). The H.26
   allocate (picture size, sample size, how far a seek may decode); damaged clips are errors the import reports like any
   unreadable file. Tests cut files at every eighth and overwrite their middle.
 
+## Editing a clip
+
+A clip's own edits (the part kept, the poster frame) are in its develop settings (`DevelopSettings.video`: `trim_start`,
+`trim_end`, `cover`, seconds into the clip; catalog format 12), so they are undoable, kept in the history, synced, and left
+out of Copy Settings and presets. The develop settings themselves (exposure, colour, tone, effects, crop…) are the clip's
+too: they show on its poster frame like on a photo and are applied to every picture when it is exported.
+
+- `video.setTrim {id?, start?, end?}`: keep the part between; at least 0.1 s stays; `null` puts that end back. One undo step.
+- `video.setCover {id?, time}`: the poster frame, the picture the grid, the loupe and the previews show. The source path the
+  loader reads carries the time (`files::at_time` / `split_time`, a NUL between the file and the seconds) and the render
+  caches' content key includes it (`media::content_key`), so a new frame is a new picture everywhere.
+- `video.frame {time?, edits?}`: one picture; with `edits` as an export shows it (develop settings and crop applied), without
+  as recorded. No `time` is the poster frame the clip was given, else the library's pick.
+- `video.export {id?, path, maxEdge?, quality?, edits?, trim?, wait?}`: the clip written again as an H.264 MP4 in the
+  background (a row in the activity stack; cancelling leaves no file; written as `.part` and renamed; never over an
+  original). Each picture is decoded once, in order (`Clip::for_each_frame`), goes through the same pipeline as a still
+  (`media::develop`, on the GPU when there is one), is made even and encoded by FilmCraft's pure-Rust encoder
+  (`Mp4Encoder`: constant quality 28 / 23 / 19 for smaller / balanced / better, two B pictures, key frames every two seconds).
+  The kept part's sound is copied sample for sample, not decoded. `video.exportStatus` reads the progress.
+
+Not built: playing an edited clip in real time (a native frontend renders a small preview file with `video.export` and plays
+that), the hardware encoder (see *Hardware video*), HDR output, joining clips, copying the video stream of an untouched trim
+without re-encoding, and following a moving subject with a mask (masks, spots and lens blur apply at the same place in every
+picture).
+
 ## Live Photos
 
 A Live Photo is a still (HEIC or JPEG) and the few seconds of clip a phone records around it. The still is the photo;

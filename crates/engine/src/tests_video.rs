@@ -139,6 +139,13 @@ fn a_clips_length_is_in_its_summary_and_its_source_is_its_file() {
     assert!(of(still)["duration"].is_null());
     let r = s.execute("video.source", &json!({"id": clip.0})).unwrap();
     assert_eq!((r["available"].as_bool(), r["remote"].as_bool()), (Some(true), Some(false)), "{r}");
+    assert!(r["trimStart"].is_null() && r["trimEnd"].is_null() && r["cover"].is_null(), "{r}");
+    s.execute("video.setTrim", &json!({"id": clip.0, "start": 0.5})).unwrap();
+    s.execute("video.setCover", &json!({"id": clip.0, "time": 1.0})).unwrap();
+    let t = s.execute("video.source", &json!({"id": clip.0})).unwrap();
+    assert_eq!((t["trimStart"].as_f64(), t["trimEnd"].is_null(), t["cover"].as_f64()), (Some(0.5), true, Some(1.0)), "{t}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(r["path"], json!(dir.join("IMG_1.MP4").to_string_lossy()), "{r}");
     assert!(s.execute("video.source", &json!({"id": still.0})).is_err());
     // the file gone: nothing to play
@@ -167,7 +174,10 @@ fn a_clip_is_trimmed_in_one_undo_step() {
     assert_eq!((i["trimStart"].as_f64(), i["trimEnd"].is_null()), (Some(0.5), true), "{i}");
     s.execute("video.setTrim", &json!({"id": clip.0, "start": null})).unwrap();
     assert!(s.develop_of(clip).unwrap().video.is_none(), "an untrimmed clip has no video edit");
+    // three trims, three undo steps
     s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.develop_of(clip).unwrap().video.and_then(|v| v.trim_end), Some(1.5));
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(s.develop_of(clip).unwrap().video.is_none());
     // refused
@@ -224,4 +234,90 @@ fn a_trim_and_a_poster_frame_survive_a_reopen_and_a_peers_older_data() {
     // older data has no such field
     let older = serde_json::to_string(&lightcraft_develop::DevelopSettings::default()).unwrap();
     assert_eq!(serde_json::from_str::<lightcraft_develop::DevelopSettings>(&older).unwrap().video, None);
+}
+
+fn clip_mean_red(path: &std::path::Path, t: f64) -> f32 {
+    let c = lightcraft_video::Clip::open_path(path).unwrap();
+    let img = c.frame_at(t, 64).unwrap();
+    img.data.iter().map(|p| p[0]).sum::<f32>() / img.data.len() as f32
+}
+
+#[test]
+fn an_edited_trimmed_clip_is_written_again_with_both() {
+    let (mut s, clip, still, dir) = with_clip("export");
+    s.execute("video.setTrim", &json!({"id": clip.0, "start": 0.5, "end": 1.5})).unwrap();
+    let plain = dir.join("plain.mp4");
+    let r = s.execute("video.export", &json!({"id": clip.0, "path": plain.to_string_lossy(), "edits": false, "wait": true})).unwrap();
+    assert_eq!(
+        (r["frames"].as_u64(), r["width"].as_u64(), r["height"].as_u64(), r["audio"].as_bool()),
+        (Some(10), Some(128), Some(96), Some(false)),
+        "{r}"
+    );
+    assert!(r["seconds"].as_f64().is_some_and(|d| (d - 1.0).abs() < 1e-9), "{r}");
+    let info = lightcraft_video::probe_path(&plain).unwrap();
+    assert_eq!(info.frames, 10, "{info:?}");
+    assert!((info.duration - 1.0).abs() < 0.06, "{}", info.duration);
+    // the part kept starts at the 5th picture of the original
+    let original = lightcraft_video::Clip::open_path(&dir.join("IMG_1.MP4")).unwrap();
+    let want = original.frame_at(0.5, 64).unwrap();
+    let want = want.data.iter().map(|p| p[0]).sum::<f32>() / want.data.len() as f32;
+    let got = clip_mean_red(&plain, 0.0);
+    assert!((got - want).abs() < want * 0.2, "{got} vs {want}");
+    // no half-written file is left
+    assert!(!dir.join("plain.mp4.part").exists());
+    // the develop settings are applied to every picture
+    s.selection = crate::Selection::single(clip);
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    let bright = dir.join("bright.mp4");
+    s.execute("video.export", &json!({"id": clip.0, "path": bright.to_string_lossy(), "wait": true})).unwrap();
+    assert!(clip_mean_red(&bright, 0.5) > clip_mean_red(&plain, 0.5) * 1.3, "{} vs {}", clip_mean_red(&bright, 0.5), clip_mean_red(&plain, 0.5));
+    // and the whole clip comes out when trim is off, smaller when asked
+    let whole = dir.join("whole.mp4");
+    let r = s.execute("video.export", &json!({"id": clip.0, "path": whole.to_string_lossy(), "trim": false, "maxEdge": 64, "wait": true})).unwrap();
+    assert_eq!((r["frames"].as_u64(), r["width"].as_u64(), r["height"].as_u64()), (Some(20), Some(64), Some(48)), "{r}");
+    // the status says how it went
+    let st = s.execute("video.exportStatus", &json!({})).unwrap();
+    assert_eq!((st["running"].as_bool(), st["result"]["frames"].as_u64()), (Some(false), Some(20)), "{st}");
+    // refused: not an mp4, not a clip, a bad size or quality, an original
+    for bad in [
+        json!({"id": clip.0, "path": dir.join("x.mov").to_string_lossy()}),
+        json!({"id": still.0, "path": dir.join("y.mp4").to_string_lossy()}),
+        json!({"id": clip.0, "path": dir.join("z.mp4").to_string_lossy(), "maxEdge": 8}),
+        json!({"id": clip.0, "path": dir.join("z.mp4").to_string_lossy(), "quality": "tiny"}),
+        json!({"id": clip.0}),
+        json!({"id": clip.0, "path": dir.join("IMG_1.MP4").to_string_lossy()}),
+    ] {
+        assert!(s.execute("video.export", &bad).is_err(), "{bad}");
+    }
+    assert!(dir.join("IMG_1.MP4").metadata().unwrap().len() > 100, "the original is untouched");
+}
+
+#[test]
+fn a_cancelled_export_leaves_nothing() {
+    let (mut s, clip, _, dir) = with_clip("cancel");
+    let target = dir.join("never.mp4");
+    let prepared = crate::video_export::prepare(&mut s, &json!({"id": clip.0, "path": target.to_string_lossy()})).unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(true);
+    let r = prepared.run(&|_, _| {}, &cancel);
+    assert!(r.as_ref().is_err_and(|e| e.contains("cancelled")), "{r:?}");
+    assert!(!target.exists() && !dir.join("never.mp4.part").exists());
+}
+
+#[test]
+fn a_frame_can_be_asked_for_with_the_edits() {
+    use base64::Engine as _;
+    let (mut s, clip, _, _) = with_clip("frame-edits");
+    let red = |r: &serde_json::Value| {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(r["png"].as_str().unwrap()).unwrap();
+        mean(&lightcraft_codecs::decode(&bytes, Default::default()).unwrap().to_srgb8())
+    };
+    s.selection = crate::Selection::single(clip);
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    let plain = red(&s.execute("video.frame", &json!({"id": clip.0, "time": 1.0})).unwrap());
+    let edited = red(&s.execute("video.frame", &json!({"id": clip.0, "time": 1.0, "edits": true})).unwrap());
+    assert!(edited > plain * 1.2, "{plain} vs {edited}");
+    // with no time, the poster frame the clip was given
+    s.execute("video.setCover", &json!({"id": clip.0, "time": 1.9})).unwrap();
+    let cover = red(&s.execute("video.frame", &json!({"id": clip.0})).unwrap());
+    assert!(cover > red(&s.execute("video.frame", &json!({"id": clip.0, "time": 0.0})).unwrap()) + 20.0);
 }
