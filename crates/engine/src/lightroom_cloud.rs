@@ -479,7 +479,8 @@ pub(crate) mod tests {
         std::fs::write(&original, b"x").unwrap();
         let mut s = crate::Session::new();
         let id = s.catalog.alloc_photo_id();
-        let mut photo = Photo::new(id, Source::File { path: original.to_string_lossy().into() }, "IMG_0001.HEIC", "HEIC", 4032, 3024, "2026-01-01T00:00:00");
+        let mut photo =
+            Photo::new(id, Source::File { path: original.to_string_lossy().into() }, "IMG_0001.HEIC", "HEIC", 4032, 3024, "2026-01-01T00:00:00");
         photo.file_size = 2_000_000;
         photo.captured = Some("2024-06-25T22:25:00".into());
         s.commit("add", Op::AddPhoto { photo: Box::new(photo) }).unwrap();

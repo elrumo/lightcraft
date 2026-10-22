@@ -300,7 +300,8 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guards:
             .as_object()
             .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
             .unwrap_or_default();
-        *lock(&job.taken_back) = reply["takenBack"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+        *lock(&job.taken_back) =
+            reply["takenBack"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
         // (how far each part is: the server's own counts, which every server has; the previews' come with the claim)
         let status = call(&cfg, "GET", "/api/search/status", Body::Empty, None);
         let status: Value = if status.ok() { serde_json::from_str(&status.body).unwrap_or(Value::Null) } else { Value::Null };

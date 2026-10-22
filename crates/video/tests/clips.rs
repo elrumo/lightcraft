@@ -32,7 +32,13 @@ fn real_clips_decode() {
         }
         let clip = Clip::open_path(&path).unwrap();
         let poster = clip.poster(512).unwrap_or_else(|e| panic!("{name}: poster: {e}"));
-        assert!(poster.width.max(poster.height) >= 256 && mean(&poster) > 0.01, "{name}: poster {}x{} mean {}", poster.width, poster.height, mean(&poster));
+        assert!(
+            poster.width.max(poster.height) >= 256 && mean(&poster) > 0.01,
+            "{name}: poster {}x{} mean {}",
+            poster.width,
+            poster.height,
+            mean(&poster)
+        );
         let middle = clip.frame_at(info.duration / 2.0, 512).unwrap_or_else(|e| panic!("{name}: middle: {e}"));
         assert!(mean(&middle) > 0.0, "{name}");
         let (mut times, mut got) = (Vec::new(), 0);
