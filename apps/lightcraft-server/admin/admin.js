@@ -1519,7 +1519,8 @@ function liveState(p, c) {
   if (c.now && c.now.secs > 600 && (last === null || last > 600)) {
     return { kind: 'stuck', text: what + ' for ' + dur(c.now.secs) + ' without finishing one. It may be stuck: restarting the server starts it again.' };
   }
-  if (c.now) return { kind: 'on', text: what + lastly };
+  if (c.now) return { kind: 'on', text: what + lastly + (c.first ? ' · put first' : '') };
+  if (c.first) return { kind: 'on', text: 'Put first: starting now' };
   // (devices that do a part for their users: the worker here leaves those photos to them)
   if (c.deviceSecs !== null && c.deviceSecs !== undefined) {
     const seen = c.deviceSecs < 5 ? 'just now' : dur(c.deviceSecs) + ' ago';
@@ -1552,9 +1553,28 @@ function showSched(p, c) {
       }
       await route();
     };
+    const first = el('button', { type: 'button', class: 'btn quiet', title: 'Skip the wait: this runs next, before the others take their turn.' }, 'Start now');
+    first.addEventListener('click', async () => {
+      busy(first, true);
+      try {
+        const s = await api('POST', 'search/first/' + PART_KEY[p]);
+        // (the worker leaves a user's photos to their devices while they do this part: starting now doesn't touch those)
+        const held = (s.users || []).filter((u) => {
+          const done = u[FEATURES[p].users];
+          return u.work && u.work[PART_KEY[p]].device && done !== null && done !== undefined && done < u.total;
+        });
+        if (held.length) {
+          toast(held.map((u) => u.name).join(', ') + "'s devices do this for them, so the server leaves their photos alone. Press Continue here under their name to do them on the server.", 'info');
+        }
+      } catch (x) {
+        fail(x);
+      }
+      busy(first, false);
+      await route();
+    });
     pause.addEventListener('click', () => send(pause.dataset.paused !== '1'));
     for (const i of [mode, from, to]) i.addEventListener('change', () => { from.hidden = to.hidden = mode.value !== 'window'; send(pause.dataset.paused === '1'); });
-    box.append(live, eta, el('div', { class: 'row' }, pause, mode, from, to));
+    box.append(live, eta, el('div', { class: 'row' }, pause, mode, from, to, first));
   }
   const [live, eta, row] = box.children;
   const state = liveState(p, c);
@@ -1563,7 +1583,8 @@ function showSched(p, c) {
     live.className = 'live ' + state.kind;
     live.lastChild.textContent = state.text;
   }
-  const [pause, mode, from, to] = row.children;
+  const [pause, mode, from, to, first] = row.children;
+  first.hidden = !c.left || c.paused || !c.runsNow || !!c.now || c.first;
   pause.dataset.paused = c.paused ? '1' : '0';
   pause.textContent = c.paused ? 'Resume' : 'Pause';
   if (!row.contains(document.activeElement) || document.activeElement === pause) {
@@ -1585,7 +1606,7 @@ function showSched(p, c) {
 
 /** Under a user's bar: their time left at the pace of the last ten minutes, what waits for previews,
  * what couldn't be done, and the last problem. */
-function userLines(p, w, done, total, c) {
+function userLines(p, w, done, total, c, user) {
   if (!w) return [];
   const bits = [];
   const left = Math.max(0, total - done);
@@ -1597,6 +1618,7 @@ function userLines(p, w, done, total, c) {
   if (w.waiting) bits.push(n(w.waiting) + ' waiting for previews');
   if (w.failed) bits.push(n(w.failed) + " couldn't be " + { sr: 'described', tx: 'read', fc: 'looked at', sn: 'checked' }[p]);
   const out = bits.length ? [el('p', { class: 'sub', title: w.failed ? 'Photos that could not be done are tried again when the server restarts.' : null }, bits.join(' · '))] : [];
+  if (w.device && left) out.push(el('button', { type: 'button', class: 'btn quiet', title: 'Stop waiting for their devices: this server does the rest.', onclick: (e) => continueHere(e.currentTarget, p, user) }, 'Continue here'));
   if (w.problem && left) out.push(el('p', { class: 'sub problem' }, w.problem.charAt(0).toUpperCase() + w.problem.slice(1)));
   return out;
 }
@@ -1638,7 +1660,7 @@ function showFeature(p, s) {
         el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name),
         el('span', { class: 'bytes' }, n(done) + ' / ' + n(u.total)),
         meter,
-        ...userLines(p, w, done, u.total, f.schedule),
+        ...userLines(p, w, done, u.total, f.schedule, u.name),
       ),
     );
     progress(meter, u.total ? done / u.total : 1);
@@ -1668,7 +1690,7 @@ function showPeople(s) {
     input.addEventListener('change', () => togglePeople(u, input));
     const text = u.faces ? (u.found === null ? 'Waiting for the server…' : n(u.found) + ' of ' + n(u.total) + ' photos looked at') : 'Off';
     const w = u.work && u.work.faces;
-    const lines = u.faces && u.found !== null ? userLines('fc', w, u.found, u.total, f.schedule) : [];
+    const lines = u.faces && u.found !== null ? userLines('fc', w, u.found, u.total, f.schedule, u.name) : [];
     list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), el('span', { class: 'bytes' }, text), el('label', { class: 'switch' }, input), ...lines));
   }
   if (!s.users.length) list.append(el('li', { class: 'muted' }, 'No users yet.'));
@@ -1892,6 +1914,20 @@ async function togglePeople(u, input) {
   } catch (x) {
     fail(x);
   } finally {
+    await route();
+  }
+}
+
+/** The server does a part itself again for a user whose devices were doing it. */
+async function continueHere(btn, p, user) {
+  busy(btn, true);
+  try {
+    await api('POST', 'users/' + enc(user) + '/search/' + PART_KEY[p] + '/here');
+    toast('This server will do the rest for ' + user + '.', 'info');
+  } catch (x) {
+    fail(x);
+  } finally {
+    busy(btn, false);
     await route();
   }
 }

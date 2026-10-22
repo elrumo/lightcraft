@@ -769,72 +769,65 @@ pub(crate) fn run(st: &Arc<State>) {
         if v.stop.load(Ordering::SeqCst) {
             break;
         }
-        let report = |key: String, what: &str, r: Result<(), String>| match r {
-            Ok(()) => {
-                lock(&v.problems).remove(&key);
+        let users = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect::<Vec<_>>()).unwrap_or_default();
+        // (a part an admin put first: every user's photos, before the others take their turn)
+        if let Some(part) = v.switch.first() {
+            let mut more = false;
+            for user in &users {
+                more |= run_part(st, user, part) == Some(true);
             }
-            Err(e) => {
-                if lock(&v.problems).insert(key.clone(), e.clone()).as_deref() != Some(e.as_str()) {
-                    log::warn!("{what} of {key}: {e}");
-                }
+            if !more {
+                v.switch.set_first(None);
             }
-        };
-        for user in accounts::read_users(&st.data).map(|f| f.users.into_keys().collect::<Vec<_>>()).unwrap_or_default() {
-            if v.installed() && v.switch.may_run(Part::Search) && !v.work.moved(&user, Part::Search) {
-                v.switch.working(Some((Part::Search, &user)));
-                let r = index_user(st, &user);
-                if r == Ok(true) {
-                    v.wake();
-                }
-                report(user.clone(), "search index", r.map(|_| ()));
-            }
-            if v.faces_installed()
-                && v.switch.may_run(Part::Faces)
-                && !v.work.moved(&user, Part::Faces)
-                && !v.stop.load(Ordering::SeqCst)
-                && accounts::read_users(&st.data).is_ok_and(|f| f.users.get(&user).is_some_and(|u| u.faces))
-            {
-                v.switch.working(Some((Part::Faces, &user)));
-                match scan_user(st, &user) {
-                    Ok(more) => {
-                        lock(&v.problems).remove(&format!("{user}:faces"));
-                        if more {
-                            v.wake();
-                        }
-                    }
-                    Err(e) => report(format!("{user}:faces"), "face index", Err(e)),
-                }
-            }
-            if v.text_installed() && v.switch.may_run(Part::Text) && !v.work.moved(&user, Part::Text) && !v.stop.load(Ordering::SeqCst) {
-                v.switch.working(Some((Part::Text, &user)));
-                match read_user(st, &user) {
-                    // (more to read: come back after looking at new photos)
-                    Ok(more) => {
-                        lock(&v.problems).remove(&format!("{user}:text"));
-                        if more {
-                            v.wake();
-                        }
-                    }
-                    Err(e) => report(format!("{user}:text"), "text index", Err(e)),
-                }
-            }
-            if v.sensitive_installed() && v.switch.may_run(Part::Sensitive) && !v.work.moved(&user, Part::Sensitive) && !v.stop.load(Ordering::SeqCst)
-            {
-                v.switch.working(Some((Part::Sensitive, &user)));
-                match crate::sensitive::check_user(st, &user) {
-                    Ok(more) => {
-                        lock(&v.problems).remove(&format!("{user}:sensitive"));
-                        if more {
-                            v.wake();
-                        }
-                    }
-                    Err(e) => report(format!("{user}:sensitive"), "sensitive-content scores", Err(e)),
-                }
+            v.switch.working(None);
+        }
+        for user in &users {
+            for part in [Part::Search, Part::Faces, Part::Text, Part::Sensitive] {
+                run_part(st, user, part);
             }
             v.switch.working(None);
         }
         v.unload_if_idle();
     }
+}
+
+/// One chunk of `part` for `user`: `None` when it doesn't run now (not installed, paused, a device's, or off),
+/// else whether there is more of it.
+fn run_part(st: &Arc<State>, user: &str, part: Part) -> Option<bool> {
+    let v = &st.vision;
+    let report = |key: String, what: &str, r: Result<(), String>| match r {
+        Ok(()) => {
+            lock(&v.problems).remove(&key);
+        }
+        Err(e) => {
+            if lock(&v.problems).insert(key.clone(), e.clone()).as_deref() != Some(e.as_str()) {
+                log::warn!("{what} of {key}: {e}");
+            }
+        }
+    };
+    let installed = match part {
+        Part::Search => v.installed(),
+        Part::Faces => v.faces_installed() && accounts::read_users(&st.data).is_ok_and(|f| f.users.get(user).is_some_and(|u| u.faces)),
+        Part::Text => v.text_installed(),
+        Part::Sensitive => v.sensitive_installed(),
+    };
+    if !installed || !v.switch.may_run(part) || v.work.moved(user, part) || v.stop.load(Ordering::SeqCst) {
+        return None;
+    }
+    v.switch.working(Some((part, user)));
+    // (more to do: come back after looking at new photos)
+    let (key, what, r) = match part {
+        Part::Search => (user.to_string(), "search index", index_user(st, user)),
+        Part::Faces => (format!("{user}:faces"), "face index", scan_user(st, user)),
+        Part::Text => (format!("{user}:text"), "text index", read_user(st, user)),
+        Part::Sensitive => (format!("{user}:sensitive"), "sensitive-content scores", crate::sensitive::check_user(st, user)),
+    };
+    let more = r == Ok(true);
+    if more {
+        v.wake();
+    }
+    report(key, what, r.map(|_| ()));
+    Some(more)
 }
 
 /// Looks for the faces in up to [`READ_CHUNK`] of a user's photos that have a smart preview and

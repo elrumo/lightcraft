@@ -126,8 +126,9 @@ originals stay missing; use LightCraft's missing-photo relinking tools to update
 
 File → Import Lightroom Albums… brings a Lightroom
 catalog's albums and folders of albums into the open library, holding the photos the library
-**already has**. No photo is added, and no rating, keyword or edit changes: the albums are made in one
-undo step (`library.importLightroom {"path": …, "albumsOnly": true}`). On a library synced with
+**already has**. No photo is added, and no rating, keyword or existing edit changes (one exception: the
+[develop settings](#develop-settings-of-a-lightroom-cloud-catalog) of a photo that has no edits here): the
+albums are made in one undo step (`library.importLightroom {"path": …, "albumsOnly": true}`). On a library synced with
 `lightcraft-server` the albums are ordinary album changes, so they reach the other devices; run the
 import on any device of the library.
 
@@ -151,6 +152,27 @@ MessagePack (decoded in tree, `crates/engine/src/msgpack.rs`). The reader
 the photos albums hold (`importSource.fileName`, `fileSize`, `originalWidth`, `originalHeight`,
 `xmp.exif.DateTimeOriginal`, `captureDate`), looking each revision up by its rowid. Deleted documents,
 albums of shared spaces and photos not in the catalog are left out.
+
+### Develop settings of a Lightroom (cloud) catalog
+
+A cloud catalog keeps each photo's edit as a `version` / `edit` document whose `develop.xmpCameraRaw` is the
+Camera Raw XMP packet itself, or `{sha256}` naming the file `settings/<sha256>` beside the catalog (in the
+`.lrlibrary`'s `<catalog id>` folder). For each matched photo the latest edit (by `userUpdated`) is read, and
+when the photo has no edits in the library yet:
+
+- the packet is applied as the photo's edit (the same mapping as reading a sidecar; the change is part of
+  the import's one undo step);
+- when the original is a file on this computer and has no sidecar, the packet is copied there unchanged,
+  as `<name>.xmp` (the library's sidecar naming), so other programs and a later *Read Metadata from File*
+  see it. A sidecar already there is never replaced.
+
+On a library synced with `lightcraft-server` the edit travels like any other, and the server writes the
+sidecar beside the photo in a folder an admin made writable ([sync.md](sync.md)); photos the server holds
+in its own store have no folder, so the edit is all they get. A photo that has edits here keeps them
+(`editsKept`). The report adds `edits`, `editsKept`, `editsUnavailable` (named in the catalog, but the
+file isn't in `settings/`: Lightroom keeps only some on the computer), `editsCropHeld` and `sidecars`.
+A crop waits (`editsCropHeld`): the stored image's orientation isn't read, so it stays out of the edit
+(the copied sidecar carries it for Read Metadata from File).
 
 Each Lightroom photo is matched to a library photo (not deleted, not only browsed, not a virtual copy;
 `crates/engine/src/lightroom_albums.rs`), never guessed:

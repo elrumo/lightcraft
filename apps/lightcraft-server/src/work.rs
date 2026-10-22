@@ -38,6 +38,8 @@ use crate::switch::Part;
 
 /// How long a claimed photo is the device's.
 pub const TTL: Duration = Duration::from_secs(10 * 60);
+/// How long a user's devices may go without claiming photos before an admin's "Start now" takes their work back.
+const IDLE: Duration = Duration::from_secs(10 * 60);
 /// Photos in one claim at most.
 const MAX_CLAIM: usize = 64;
 const DEFAULT_CLAIM: usize = 16;
@@ -92,13 +94,26 @@ impl Work {
         self.data.as_deref().map(|d| accounts::user_dir(d, user).join(FILE))
     }
 
-    /// The work `user` left to their devices, by name (missing or damaged file: none).
-    fn moved_names(&self, user: &str) -> Vec<String> {
+    /// What `user`'s file says: the work they left to their devices, and the parts an admin took back from them
+    /// (missing or damaged file: none), each by name and in the same order every time.
+    fn read(&self, user: &str) -> (Vec<String>, Vec<String>) {
         let v: Option<Value> = self.file(user).and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok());
-        let have: Vec<&str> =
-            v.as_ref().and_then(|v| v["moved"].as_array()).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        // (always in the same order)
-        PARTS.iter().map(|p| p.key()).chain([PREVIEWS]).filter(|n| have.contains(n)).map(String::from).collect()
+        let names = |key: &str| -> Vec<String> {
+            let have: Vec<&str> = v.as_ref().and_then(|v| v[key].as_array()).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+            PARTS.iter().map(|p| p.key()).chain([PREVIEWS]).filter(|n| have.contains(n)).map(String::from).collect()
+        };
+        (names("moved"), names("takenBack"))
+    }
+
+    /// The work `user` left to their devices, by name.
+    fn moved_names(&self, user: &str) -> Vec<String> {
+        self.read(user).0
+    }
+
+    /// The parts an admin took back from `user`'s devices: their devices are told (the claim's answer) and drop them,
+    /// and keep their hands off until the person chooses the part again.
+    pub fn taken_back(&self, user: &str) -> Vec<String> {
+        self.read(user).1
     }
 
     /// The model work `user` left to their devices.
@@ -140,8 +155,36 @@ impl Work {
     }
 
     fn set_moved(&self, user: &str, names: &[String]) -> Result<(), String> {
+        let taken = self.taken_back(user);
+        self.write(user, names, &taken)
+    }
+
+    fn write(&self, user: &str, moved: &[String], taken: &[String]) -> Result<(), String> {
         let file = self.file(user).ok_or("this server has no data folder to keep the setting in")?;
-        accounts::write_private_json(&file, &json!({"moved": names}))
+        accounts::write_private_json(&file, &json!({"moved": moved, "takenBack": taken}))
+    }
+
+    /// Takes `part` back from `user`'s devices: this server's worker does it for them again, and their devices are told
+    /// to stop claiming it (they leave it off until the person chooses it again).
+    pub fn take_back(&self, user: &str, part: Part) -> Result<(), String> {
+        let (mut moved, mut taken) = self.read(user);
+        moved.retain(|n| n != part.key());
+        if !taken.iter().any(|n| n == part.key()) {
+            taken.push(part.key().to_string());
+        }
+        self.write(user, &moved, &taken)
+    }
+
+    /// `take_back` for each user whose devices have not claimed photos for [`IDLE`] (or since this server started) and
+    /// who left `part` to them: who they are.
+    pub fn take_back_idle(&self, users: &[String], part: Part) -> Vec<String> {
+        let mut back = Vec::new();
+        for user in users {
+            if self.moved(user, part) && self.helper_seen(user).is_none_or(|d| d > IDLE) && self.take_back(user, part).is_ok() {
+                back.push(user.clone());
+            }
+        }
+        back
     }
 
     /// How long ago one of `user`'s devices last claimed photos.
@@ -218,7 +261,12 @@ pub(crate) fn claim(st: &State, req: &mut Request, user: &str) -> Resp {
             }
         }
     }
+    let taken = st.vision.work.taken_back(user);
     for (part, engine) in wanted {
+        if taken.iter().any(|n| n == part.key()) {
+            refused.insert(part.key().into(), json!("this server took it back"));
+            continue;
+        }
         if let Some(why) = refusal(st, user, part, engine) {
             refused.insert(part.key().into(), json!(why));
             continue;
@@ -237,7 +285,8 @@ pub(crate) fn claim(st: &State, req: &mut Request, user: &str) -> Resp {
         }
     }
     lock(&st.vision.work.seen).insert(user.to_string(), Instant::now());
-    api::json(200, &json!({"items": items, "refused": refused, "progress": progress, "ttl": TTL.as_secs()}))
+    let taken: Vec<&String> = taken.iter().filter(|n| asked.contains_key(n.as_str())).collect();
+    api::json(200, &json!({"items": items, "refused": refused, "progress": progress, "ttl": TTL.as_secs(), "takenBack": taken}))
 }
 
 /// `POST /api/work/release`
@@ -272,7 +321,7 @@ pub(crate) fn release(st: &State, req: &mut Request, user: &str) -> Resp {
 pub(crate) fn settings(st: &State, user: &str) -> Resp {
     let w = &st.vision.work;
     let moved = w.moved_names(user);
-    api::json(200, &json!({"moved": moved, "helperSeen": w.helper_seen(user).map(|d| d.as_secs())}))
+    api::json(200, &json!({"moved": moved, "takenBack": w.taken_back(user), "helperSeen": w.helper_seen(user).map(|d| d.as_secs())}))
 }
 
 /// `PUT /api/work/settings`
@@ -282,25 +331,29 @@ pub(crate) fn set_settings(st: &State, req: &mut Request, user: &str) -> Resp {
         Err(r) => return r,
     };
     let w = &st.vision.work;
+    // (what the person chose on a device, not what a device does on its own when it starts: only a choice undoes an
+    // admin's taking a part back)
+    let chosen = body["chosen"].as_bool() == Some(true);
+    let (moved, taken) = (w.moved_names(user), w.taken_back(user));
     // (a device adds and removes its own parts: another device's stay)
     let parts = if body.get("moved").is_some() {
-        parts_of(&body["moved"])
+        parts_of(&body["moved"]).map(|all| (all, true))
     } else {
         let (add, remove) = (parts_of(body.get("add").unwrap_or(&json!([]))), parts_of(body.get("remove").unwrap_or(&json!([]))));
         add.and_then(|add| remove.map(|remove| (add, remove))).map(|(add, remove)| {
-            let mut now = w.moved_names(user);
+            let mut now = moved.clone();
             now.retain(|p| !remove.contains(p));
-            add.into_iter().filter(|p| !now.contains(p)).collect::<Vec<_>>().into_iter().fold(now, |mut all, p| {
-                all.push(p);
-                all
-            })
+            let add: Vec<String> = add.into_iter().filter(|p| (chosen || !taken.contains(p)) && !now.contains(p)).collect();
+            now.extend(add);
+            (now, chosen)
         })
     };
-    let parts = match parts {
+    let (parts, chosen) = match parts {
         Ok(p) => p,
         Err(e) => return error(400, e),
     };
-    match w.set_moved(user, &parts) {
+    let taken: Vec<String> = taken.into_iter().filter(|t| !(chosen && parts.contains(t))).collect();
+    match w.write(user, &parts, &taken) {
         Ok(()) => settings(st, user),
         Err(e) => error(500, e),
     }
@@ -327,6 +380,8 @@ mod tests {
         assert_eq!(w.moved_parts("ann"), [Part::Search, Part::Sensitive]);
         assert!(w.moved("ann", Part::Search) && !w.moved("ann", Part::Text) && !w.moved("bob", Part::Search));
         assert!(!w.previews_moved("ann"));
+        w.take_back("ann", Part::Search).unwrap();
+        assert_eq!(w.moved_parts("ann"), [Part::Sensitive], "only that part comes back");
         w.set_moved("ann", &["previews".to_string()]).unwrap();
         assert!(w.previews_moved("ann") && !w.previews_moved("bob") && w.moved_parts("ann").is_empty());
         w.set_moved("ann", &["sensitive".to_string(), "search".to_string()]).unwrap();

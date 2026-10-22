@@ -134,7 +134,14 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   Cut / Copy / Paste / Select All menu, Esc restoring the text, and reports how an edit ended. Give each a widget id
   that is unique on screen. Older fields still on `TextEdit` move over as they are touched.
 - Shell gotcha: `mv`/`cp` are aliased interactive here — use `/bin/mv -f` / `/bin/cp -f`.
-- Parallel agents: separate git worktrees and `CARGO_TARGET_DIR=target/agent-<name>`; each agent uses its **own control port** (pick one in 18000–19999, never the default 7980) and its own scratch subfolder (`<scratch>/<agent-name>/`) — never `rm -rf` shared paths; delete your target dir when done (disk is shared); keep every `Cargo.toml` valid at all times (the `crates/*` glob means one broken manifest breaks everyone).
+- **Big rebuildable data goes to the Backup drive when it is mounted** (the main drive is small and fills mid-CI):
+  `~/bin/ext-storage <subpath> <fallback>` prints `/Volumes/Backup/dev-cache/<subpath>` while the drive is really
+  mounted, else the fallback, and never fails. Shells already export `CARGO_TARGET_DIR` that way (`~/.zshenv`,
+  fish `conf.d/ext-storage.fish`). Agents that need their own dirs use
+  `export CARGO_TARGET_DIR="$(ext-storage cargo-target/agent-<name> target/agent-<name>)"` and
+  `-derivedDataPath "$(ext-storage xcode-dd/<name> <scratch>/dd)"` instead of a path on the main drive. Unplugged =
+  the default location, so a cold build; never symlink `target/` to the drive.
+- Parallel agents: separate git worktrees and `CARGO_TARGET_DIR` (see above; was `target/agent-<name>`); each agent uses its **own control port** (pick one in 18000–19999, never the default 7980) and its own scratch subfolder (`<scratch>/<agent-name>/`) — never `rm -rf` shared paths; delete your target dir when done (disk is shared); keep every `Cargo.toml` valid at all times (the `crates/*` glob means one broken manifest breaks everyone).
 - Test corpora: `cargo xtask corpus --download` into `corpus/` (gitignored, CC0 only). Never commit media.
 - Shared real-file test corpora (Photoshop-authored PSDs, etc.) live in [`storytold/photocraft-corpus`](https://github.com/storytold/photocraft-corpus), explained in [craftrules `standards/test-corpora.md`](https://github.com/storytold/craftrules/blob/main/standards/test-corpora.md). Never commit large binary fixtures to this repo; fetch them pinned by commit and sha256-verified, as PhotoCraft does with `cargo xtask corpus`.
 

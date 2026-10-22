@@ -109,6 +109,8 @@ pub struct Switch {
     /// Per part and user, the batches of photos the worker finished lately: when each ended, how
     /// many it had and the seconds it took (the newest is kept however old), for the admin page.
     pace: Mutex<[HashMap<String, VecDeque<(Instant, usize, f64)>>; 4]>,
+    /// The part an admin put first: the worker does it for everyone before the others' turns.
+    first: Mutex<Option<Part>>,
     /// The part and user the worker is on, and since when.
     now: Mutex<Option<(Part, String, Instant)>>,
     /// Per part and user, the photos still waiting for their previews when the worker last looked.
@@ -215,6 +217,15 @@ impl Switch {
     /// How long ago the worker last finished a photo for `part`.
     pub fn last(&self, part: Part) -> Option<Duration> {
         lock(&self.pace)[part.slot()].values().filter_map(|q| q.back()).map(|b| b.0.elapsed()).min()
+    }
+
+    /// The part an admin put first, until it has nothing left to do.
+    pub fn first(&self) -> Option<Part> {
+        *lock(&self.first)
+    }
+
+    pub fn set_first(&self, part: Option<Part>) {
+        *lock(&self.first) = part;
     }
 
     /// What the worker is on (`None`: nothing).

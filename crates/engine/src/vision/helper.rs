@@ -151,6 +151,8 @@ pub struct HelperJob {
     error: Mutex<Option<String>>,
     /// Parts the server refused to hand out, and why.
     refused: Mutex<Vec<(String, String)>>,
+    /// Parts an admin took back from this user's devices: the server does them now, and this device stops asking.
+    taken_back: Mutex<Vec<String>>,
     pub(super) unavailable: Vec<(String, String)>,
     pub(super) parts: Vec<HelperPart>,
     /// The private folder the previews being worked on are in (it is deleted when the helper ends).
@@ -298,6 +300,7 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guards:
             .as_object()
             .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
             .unwrap_or_default();
+        *lock(&job.taken_back) = reply["takenBack"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
         // (how far each part is: the server's own counts, which every server has; the previews' come with the claim)
         let status = call(&cfg, "GET", "/api/search/status", Body::Empty, None);
         let status: Value = if status.ok() { serde_json::from_str(&status.body).unwrap_or(Value::Null) } else { Value::Null };
@@ -690,6 +693,11 @@ impl crate::Session {
         self.vision.helper_once.retain(|p| self.vision.helper_parts.contains(p));
         self.save_prefs().map_err(|e| e.to_string())?;
         let dropped: Vec<&String> = old.iter().filter(|o| !self.vision.helper_parts.contains(o)).collect();
+        let added: Vec<&String> = self.vision.helper_parts.iter().filter(|p| !old.contains(p)).collect();
+        if !added.is_empty() && self.vision_signed_in() {
+            // (a choice: the server's taking the part back no longer holds)
+            let _ = self.vision_aux("PUT", "/api/work/settings", Body::Json(json!({"add": added, "chosen": true}).to_string()), super::Aux::Work);
+        }
         if !dropped.is_empty() && self.vision_signed_in() {
             // (the server does them again)
             let _ = self.vision_aux("PUT", "/api/work/settings", Body::Json(json!({"remove": dropped}).to_string()), super::Aux::Work);
@@ -776,6 +784,13 @@ impl crate::Session {
     /// starts one when parts are chosen and this library is signed in to a server.
     pub(super) fn vision_helper_upkeep(&mut self) {
         self.vision_helper_finish_once();
+        // (the server took parts back from this user's devices: this device's choice follows, and stays off them)
+        let taken = self.vision.helper.as_ref().map(|j| lock(&j.taken_back).clone()).unwrap_or_default();
+        if self.vision.helper_parts.iter().any(|p| taken.contains(p)) {
+            let rest: Vec<String> = self.vision.helper_parts.iter().filter(|p| !taken.contains(p)).cloned().collect();
+            let _ = self.vision_helper_set(&rest);
+            return;
+        }
         let signed_in = self.vision_signed_in();
         let (server, token) = self.sync.as_ref().map(|st| (st.config.server.clone(), st.config.token.clone())).unwrap_or_default();
         let wanted = signed_in && !self.vision.helper_parts.is_empty() && !self.vision_helper_all_paused();
