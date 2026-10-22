@@ -917,11 +917,19 @@ impl Engine {
                     let photo = self.session.catalog.photo(id).ok_or_else(|| bad("no such photo"))?;
                     let version = usize::try_from(v).ok().and_then(|v| photo.versions.get(v)).ok_or_else(|| bad("no such version"))?;
                     (*version.settings).clone()
+                } else if let Some(h) = p.get("history").and_then(Value::as_u64) {
+                    // an earlier step of the photo's edit (a video of the edit's steps)
+                    let photo = self.session.catalog.photo(id).ok_or_else(|| bad("no such photo"))?;
+                    let step = usize::try_from(h).ok().and_then(|h| photo.history.get(h)).ok_or_else(|| bad("no such history step"))?;
+                    (*step.settings).clone()
+                } else if p.get("original").and_then(Value::as_bool) == Some(true) {
+                    // as imported, before any edit (the Before of a before/after)
+                    self.session.catalog.photo(id).ok_or_else(|| bad("no such photo"))?.import_defaults()
                 } else if p.get("edited").and_then(Value::as_bool) == Some(true) {
                     // the photo as it is (Compare, Survey, the filmstrip: several photos large at once)
                     (*d).clone()
                 } else {
-                    return Err(bad("give `preset`, `profile`, `version` or `edited: true`"));
+                    return Err(bad("give `preset`, `profile`, `version`, `history`, `original: true` or `edited: true`"));
                 };
                 let job = self.session.variant_job(id, &settings, edge).ok_or_else(|| bad("no such photo"))?;
                 let key = job.key;

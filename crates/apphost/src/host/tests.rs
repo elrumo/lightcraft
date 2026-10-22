@@ -662,6 +662,12 @@ fn a_face_renders_on_its_own() {
     let slot = r["result"]["slot"].as_str().unwrap().to_string();
     let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
     assert!(image["width"].as_u64().unwrap() <= 200 && image["height"].as_u64().unwrap() <= 200, "{image}");
+    // the photo as imported, and a history step (the edit video's frames)
+    let r = h.call(&req(5, "render.variant", json!({"photo": photo, "original": true, "edge": 200})), Duration::from_secs(30));
+    // (an unedited demo photo renders the same as imported: that picture is already there, so no new one comes)
+    assert!(r["result"]["slot"].as_str().unwrap().starts_with("variant:"), "{r}");
+    let none = h.call(&req(6, "render.variant", json!({"photo": photo, "history": 999, "edge": 200})), Duration::from_secs(30));
+    assert_eq!(none["error"]["code"], "badParams", "{none}");
 }
 
 // Photo Merge as the phone does it: previews that a newer one replaces, then the full merge in the
