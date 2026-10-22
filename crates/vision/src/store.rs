@@ -8,7 +8,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::hash::Hasher as _;
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use siphasher::sip128::{Hasher128 as _, SipHasher13};
@@ -160,7 +160,9 @@ impl RecordFile {
     /// record in order. An unrelated, foreign or other-model file is an error, never overwritten.
     pub fn open(path: &Path, spec: &Spec<'_>, mut each: impl FnMut(&[u8])) -> Result<RecordFile, Error> {
         spec.check()?;
-        let mut file = OpenOptions::new().read(true).append(true).create(true).open(path)?;
+        // (not an append handle: on Windows one may not be cut back, so a damaged tail could never be cut off;
+        // each write goes to the end it keeps, `len`)
+        let mut file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
         let len = file.metadata()?.len();
         if len > MAX_FILE_BYTES {
             return Err(Error::Format("file too large"));
@@ -168,6 +170,7 @@ impl RecordFile {
         if len < HEADER_LEN as u64 {
             // new, or a header that was never fully written: nothing in it is worth keeping
             file.set_len(0)?;
+            file.seek(SeekFrom::Start(0))?;
             file.write_all(&spec.header())?;
             return Ok(RecordFile { file, rec_len: spec.rec_len, len: HEADER_LEN as u64 });
         }
@@ -204,7 +207,7 @@ impl RecordFile {
         if recs.is_empty() || !recs.len().is_multiple_of(self.rec_len) {
             return Err(Error::Invalid("record length"));
         }
-        if let Err(e) = self.file.write_all(recs) {
+        if let Err(e) = self.file.seek(SeekFrom::Start(self.len)).and_then(|_| self.file.write_all(recs)) {
             let _ = self.file.set_len(self.len);
             return Err(e.into());
         }

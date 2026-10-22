@@ -283,7 +283,8 @@ fn file_into(folder: &Path, src: &Path, name: &str, date: &str) -> Result<(Strin
     let temp = dir.join(format!(".lightcraft-filing-{}", accounts::random_hex(4)?));
     let copied = (|| -> std::io::Result<u64> {
         let n = std::fs::copy(src, &temp)?;
-        std::fs::File::open(&temp)?.sync_all()?;
+        // (through a handle that may write: Windows refuses to flush a read-only one)
+        std::fs::OpenOptions::new().write(true).open(&temp)?.sync_all()?;
         Ok(n)
     })();
     let size = copied.map_err(|e| {

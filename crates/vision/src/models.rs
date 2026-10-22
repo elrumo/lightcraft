@@ -257,6 +257,12 @@ pub fn face_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    /// Paths written with `/` (equal to the joined ones on Windows too, where a join puts `\` between the parts).
+    fn paths(p: &[&str]) -> Vec<PathBuf> {
+        p.iter().map(PathBuf::from).collect()
+    }
 
     #[test]
     fn the_default_location_is_pinned_and_the_files_are_checked() {
@@ -276,11 +282,10 @@ mod tests {
     fn the_text_models_fill_the_folders_the_reader_loads() {
         let parts = ocr_downloads(Path::new("/m/ocr"), Some("https://mirror.example/models/"), None);
         assert_eq!(parts.len(), 2);
-        let mut names: Vec<String> =
-            parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name).to_string_lossy().into_owned())).collect();
+        let mut names: Vec<PathBuf> = parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name))).collect();
         names.sort();
         // (the reader's own file names are checked in the OCR tests, which need the `onnx` feature)
-        assert_eq!(names, ["/m/ocr/det/inference.onnx", "/m/ocr/rec/inference.onnx", "/m/ocr/rec/inference.yml"]);
+        assert_eq!(names, paths(&["/m/ocr/det/inference.onnx", "/m/ocr/rec/inference.onnx", "/m/ocr/rec/inference.yml"]));
         for (files, mirrors, dir) in &parts {
             assert_eq!(mirrors.len(), 2, "the user's mirror, then the pinned default");
             let leaf = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
@@ -297,10 +302,9 @@ mod tests {
     #[test]
     fn the_face_models_fill_the_folder_the_finder_loads() {
         let parts = face_downloads(Path::new("/m/faces"), Some("https://mirror.example/models"), None);
-        let mut names: Vec<String> =
-            parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name).to_string_lossy().into_owned())).collect();
+        let mut names: Vec<PathBuf> = parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name))).collect();
         names.sort();
-        assert_eq!(names, ["/m/faces/face_detection_yunet_2023mar.onnx", "/m/faces/face_recognition_sface_2021dec.onnx"]);
+        assert_eq!(names, paths(&["/m/faces/face_detection_yunet_2023mar.onnx", "/m/faces/face_recognition_sface_2021dec.onnx"]));
         for (files, mirrors, _) in &parts {
             assert_eq!(mirrors.len(), 2);
             assert_eq!(mirrors[0], "https://mirror.example/models/faces");
@@ -316,9 +320,8 @@ mod tests {
     #[test]
     fn the_sensitive_content_model_fills_the_folder_the_classifier_loads() {
         let parts = nsfw_downloads(Path::new("/m/nsfw"), Some("https://mirror.example/models"), None);
-        let names: Vec<String> =
-            parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name).to_string_lossy().into_owned())).collect();
-        assert_eq!(names, ["/m/nsfw/model_int8.onnx"]);
+        let names: Vec<PathBuf> = parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name))).collect();
+        assert_eq!(names, paths(&["/m/nsfw/model_int8.onnx"]));
         #[cfg(feature = "onnx")]
         assert_eq!(crate::nsfw::MODEL_FILE, "model_int8.onnx");
         for (files, mirrors, _) in &parts {
