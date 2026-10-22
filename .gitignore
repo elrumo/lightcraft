@@ -19,3 +19,6 @@ plan/
 dng-test.dng
 
 /temp
+# the measurement-only crate's own lock and build (crates/video/hw-bench is not a workspace member; its lock lists symphonia)
+/crates/video/hw-bench/Cargo.lock
+/crates/video/hw-bench/target
