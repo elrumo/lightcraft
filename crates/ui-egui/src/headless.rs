@@ -1055,6 +1055,10 @@ mod tests {
     fn snapshots_are_deterministic_and_control_requests_work() {
         let shot = || {
             let mut h = demo([900.0, 600.0]);
+            // The grid's thumbnails first, so the filmstrip's are cut from them: a thumbnail rendered
+            // while the loupe's preview is decoded is cut from that preview instead of its own source,
+            // a few levels apart, and which comes first is up to the workers.
+            assert!(h.settle(Duration::from_secs(300)), "the demo grid did not settle within 300 s");
             let r = h.request("ui.set", json!({"view": "detail"}), Duration::from_secs(10));
             assert_eq!(r["ok"], true, "{r}");
             // Compare only fully settled frames: a timed-out settle would compare half-rendered
@@ -1066,8 +1070,19 @@ mod tests {
         assert_eq!(a.size, b.size);
         // The photo may come from the GPU in one run and the CPU in the other (the GPU warms up in
         // the background), which differ by ≤ 1–2 LSB; anything more is a real difference.
-        let diff = a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.to_array().iter().zip(y.to_array()).any(|(p, q)| p.abs_diff(q) > 2)).count();
-        assert_eq!(diff, 0, "{diff} pixels differ between two runs");
+        let w = a.size[0];
+        let differ: Vec<(usize, usize)> = a
+            .pixels
+            .iter()
+            .zip(&b.pixels)
+            .enumerate()
+            .filter(|(_, (x, y))| x.to_array().iter().zip(y.to_array()).any(|(p, q)| p.abs_diff(q) > 2))
+            .map(|(i, _)| (i % w, i / w))
+            .collect();
+        let diff = differ.len();
+        let (x0, x1) = (differ.iter().map(|p| p.0).min(), differ.iter().map(|p| p.0).max());
+        let (y0, y1) = (differ.iter().map(|p| p.1).min(), differ.iter().map(|p| p.1).max());
+        assert_eq!(diff, 0, "{diff} pixels differ between two runs, in x {x0:?}..={x1:?}, y {y0:?}..={y1:?}");
     }
 
     /// Keyboard culling: Compare (rating keys hit the candidate, arrows move it, auto-advance),
