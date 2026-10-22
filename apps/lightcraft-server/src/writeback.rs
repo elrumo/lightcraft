@@ -308,7 +308,8 @@ fn file_into(folder: &Path, src: &Path, name: &str, date: &str) -> Result<(Strin
         let _ = std::fs::remove_file(&temp);
         return match placed {
             Ok(()) => {
-                let mtime = std::fs::metadata(&target).map(|m| folders::mtime_of(&m)).unwrap_or(0);
+                // (the size and time the index checks the file by: its own, read together)
+                let (size, mtime) = std::fs::metadata(&target).map_or((size, 0), |m| (m.len(), folders::mtime_of(&m)));
                 Ok((format!("{year}/{date}/{candidate}"), size, mtime))
             }
             Err(e) => Err(format!("{}: {e}", target.display())),
