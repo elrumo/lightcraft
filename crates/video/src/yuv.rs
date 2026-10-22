@@ -37,6 +37,16 @@ impl Plane {
             Plane::U16(v) => v.get(i).map_or(0, |s| u32::from(*s)),
         }
     }
+
+    /// The sum of `n` samples from `start` (0 when they are not all there).
+    #[inline]
+    fn sum(&self, start: usize, n: usize) -> u64 {
+        let end = start.saturating_add(n);
+        match self {
+            Plane::U8(v) => v.get(start..end).map_or(0, |s| s.iter().map(|x| u64::from(*x)).sum()),
+            Plane::U16(v) => v.get(start..end).map_or(0, |s| s.iter().map(|x| u64::from(*x)).sum()),
+        }
+    }
 }
 
 /// How the samples are to be read (H.273 code points; 2 = unspecified).
@@ -168,12 +178,54 @@ fn linear(transfer_code: u16, v: f32) -> f32 {
     }
 }
 
-/// `f` as linear Rec.2020 in display orientation with its larger side at most about `2 * max_edge` (never smaller than
-/// `max_edge`, unless the picture is): the caller finishes with a proper resize.
+/// Steps of a curve table: the curves are smooth, so interpolating between 4096 of them is exact to about 1e-7.
+const CURVE_STEPS: usize = 4096;
+
+/// [`linear`] for a curve over 0..=1 as `CURVE_STEPS + 1` values, made once per curve: a `powf` for each of the three
+/// channels of every pixel was most of a poster's cost.
+fn curve_table(transfer_code: u16) -> &'static [f32] {
+    use std::sync::OnceLock;
+    static TABLES: [OnceLock<Vec<f32>>; 4] = [OnceLock::new(), OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let slot = match transfer_code {
+        16 => 0,
+        18 => 1,
+        8 => 2,
+        _ => 3,
+    };
+    let Some(table) = TABLES.get(slot) else { return &[] };
+    table.get_or_init(|| (0..=CURVE_STEPS).map(|i| linear(transfer_code, i as f32 / CURVE_STEPS as f32)).collect())
+}
+
+/// `table` (from [`curve_table`]) at `v` in 0..=1, interpolated.
+#[inline]
+fn lookup(table: &[f32], v: f32) -> f32 {
+    let x = v.clamp(0.0, 1.0) * CURVE_STEPS as f32;
+    let i = (x as usize).min(CURVE_STEPS - 1);
+    match (table.get(i), table.get(i + 1)) {
+        (Some(a), Some(b)) => a + (b - a) * (x - i as f32),
+        _ => v,
+    }
+}
+
+/// `f` as linear Rec.2020 in display orientation, reduced by the largest whole factor that leaves its larger side at
+/// least `2 * max_edge` (the whole picture when it is smaller): the caller finishes with a proper resize.
 pub(crate) fn to_working(f: &Frame, max_edge: usize, rotation: u8) -> Result<Rgb32f> {
-    f.check()?;
     let long = f.width.max(f.height);
-    let factor = (long / max_edge.max(1).saturating_mul(2)).max(1);
+    to_working_by(f, (long / max_edge.max(1).saturating_mul(2)).max(1), rotation)
+}
+
+/// [`to_working`] reduced by the smallest whole factor that brings the larger side to at most `2 * max_edge` (never
+/// smaller than `max_edge`, unless the picture is): fewer pixels to convert, and to resize after, for a picture only a
+/// thumbnail is made of.
+pub(crate) fn to_working_within(f: &Frame, max_edge: usize, rotation: u8) -> Result<Rgb32f> {
+    let long = f.width.max(f.height);
+    to_working_by(f, long.div_ceil(max_edge.max(1).saturating_mul(2)).max(1), rotation)
+}
+
+/// `f` as linear Rec.2020 in display orientation, each output pixel the mean of a `factor` × `factor` block of luma.
+fn to_working_by(f: &Frame, factor: usize, rotation: u8) -> Result<Rgb32f> {
+    f.check()?;
+    let factor = factor.max(1);
     let (ow, oh) = ((f.width / factor).max(1), (f.height / factor).max(1));
     let (kr, kb) = coefficients(f.color.matrix, f.height);
     let kg = 1.0 - kr - kb;
@@ -186,20 +238,18 @@ pub(crate) fn to_working(f: &Frame, max_edge: usize, rotation: u8) -> Result<Rgb
     } else {
         (16.0 * scale, 219.0 * scale, 128.0 * scale, 224.0 * scale)
     };
-    let tf = f.color.transfer;
+    let curve = curve_table(f.color.transfer);
     let mut out = Rgb32f::new(ow, oh);
     par_rows(&mut out.data, ow, |oy, row| {
         for (ox, px) in row.iter_mut().enumerate() {
             // the block of luma this output pixel covers
             let (x0, y0) = (ox * factor, oy * factor);
             let (x1, y1) = ((x0 + factor).min(f.width), (y0 + factor).min(f.height));
-            let (mut sum, mut n) = (0u64, 0u64);
+            let mut sum = 0u64;
             for sy in y0..y1 {
-                for sx in x0..x1 {
-                    sum += u64::from(f.y.at(sy * f.y_stride + sx));
-                    n += 1;
-                }
+                sum += f.y.sum(sy * f.y_stride + x0, x1 - x0);
             }
+            let n = ((y1 - y0) * (x1 - x0)) as u64;
             let luma = if n == 0 { 0.0 } else { sum as f32 / n as f32 };
             let (cx, cy) = (((x0 + x1) / 2) / 2, ((y0 + y1) / 2) / 2);
             let ci = cy * f.uv_stride + cx;
@@ -209,7 +259,7 @@ pub(crate) fn to_working(f: &Frame, max_edge: usize, rotation: u8) -> Result<Rgb
             let r = (yn + cr_r * pr).clamp(0.0, 1.0);
             let g = (yn - cb_g * pb - cr_g * pr).clamp(0.0, 1.0);
             let b = (yn + cb_b * pb).clamp(0.0, 1.0);
-            let lin = [linear(tf, r), linear(tf, g), linear(tf, b)];
+            let lin = [lookup(curve, r), lookup(curve, g), lookup(curve, b)];
             *px = [
                 m[0][0] * lin[0] + m[0][1] * lin[1] + m[0][2] * lin[2],
                 m[1][0] * lin[0] + m[1][1] * lin[1] + m[1][2] * lin[2],
@@ -222,3 +272,6 @@ pub(crate) fn to_working(f: &Frame, max_edge: usize, rotation: u8) -> Result<Rgb
     }
     Ok(out)
 }
+
+#[cfg(test)]
+pub(crate) mod tests;

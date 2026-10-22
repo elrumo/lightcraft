@@ -4027,6 +4027,7 @@ dependencies = [
  "lightcraft-color",
  "lightcraft-raster",
  "lightcraft-testkit",
+ "web-time",
 ]
 
 [[package]]

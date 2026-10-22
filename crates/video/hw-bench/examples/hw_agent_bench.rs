@@ -705,7 +705,7 @@ mod bench {
             ("software decode only", sw_dec),
             ("VideoToolbox decode, new session each time", hw_cold),
             ("VideoToolbox decode, session already open", hw_warm),
-            ("`lightcraft_video::Clip::poster(512)` today (open + decode + colour + resize)", product),
+            ("`lightcraft_video::Clip::poster(512)` (open + decode + colour + resize)", product),
         ] {
             table.row(vec![name.into(), format!("{:.1}", ms(st.wall)), format!("{:.1}", ms(st.cpu))]);
         }

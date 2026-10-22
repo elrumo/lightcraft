@@ -76,5 +76,17 @@ pub(crate) fn guarded<T>(what: &str, f: impl FnOnce() -> Result<T>) -> Result<T>
         .unwrap_or_else(|_| Err(Error::Malformed(format!("the video decoder failed while {what}"))))
 }
 
+/// Run `f`, printing its duration to stderr when `LIGHTCRAFT_PROFILE` is set (the switch the render pipeline uses).
+pub(crate) fn timed<R>(what: &str, f: impl FnOnce() -> R) -> R {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("LIGHTCRAFT_PROFILE").is_some()) {
+        return f();
+    }
+    let t = web_time::Instant::now();
+    let r = f();
+    eprintln!("    video {what}: {:.2} ms", t.elapsed().as_secs_f64() * 1e3);
+    r
+}
+
 #[cfg(test)]
 mod tests;

@@ -5,12 +5,10 @@ use lightcraft_raster::Rgb32f;
 
 use crate::info::{VideoInfo, info_of, video_track};
 use crate::yuv::{self, Color, Frame};
-use crate::{Error, Result, guarded};
+use crate::{Error, Result, guarded, timed};
 
 /// The largest compressed picture read from a file.
 const MAX_SAMPLE: u32 = 256 << 20;
-/// Pictures decoded past the one wanted, to let the decoder's reorder buffer release it.
-const TAIL: usize = 32;
 /// The most pictures decoded to reach one: key frames further apart than this are not worth a seek.
 const MAX_FEED: usize = 2000;
 /// A poster frame darker than this (mean luma, black 0 to white 1) is a fade-in or a black leader; try another.
@@ -76,9 +74,9 @@ impl<S: ByteSource> Clip<S> {
                     continue;
                 }
                 tried.push(key);
-                let frame = self.decode(key, key, None)?;
+                let frame = timed("poster: decode", || self.decode(key, key, None))?;
                 let frame = Frame { color: frame.color.or(self.color), ..frame };
-                let luma = frame.mean_luma();
+                let luma = timed("poster: mean luma", || frame.mean_luma());
                 let bright = luma >= DARK;
                 if best.as_ref().is_none_or(|(l, _)| luma > *l) {
                     best = Some((luma, frame));
@@ -88,7 +86,7 @@ impl<S: ByteSource> Clip<S> {
                 }
             }
             let (_, frame) = best.ok_or_else(|| Error::Malformed("the clip has no pictures".into()))?;
-            yuv::to_working(&frame, max_edge, self.info.rotation)
+            timed("poster: to_working", || yuv::to_working_within(&frame, max_edge, self.info.rotation))
         })
     }
 
@@ -159,7 +157,7 @@ impl<S: ByteSource> Clip<S> {
         }
     }
 
-    /// Decode samples `first..=last` in decode order (and the few after, until a key frame) and return the picture
+    /// Decode samples `first..=last` in decode order and return the picture
     /// whose pts is `want` (the closest, when no picture has exactly it), or the first picture out when `want` is `None`.
     fn decode(&self, first: usize, last: usize, want: Option<i64>) -> Result<Frame> {
         let t = self.t()?;
@@ -178,22 +176,20 @@ impl<S: ByteSource> Clip<S> {
             }
             best.as_ref().is_some_and(|(d, _)| *d == 0)
         };
-        let mut i = first;
-        while let Some(s) = t.samples.get(i) {
-            if i > last && (s.is_sync || i > last + TAIL) {
-                break;
-            }
+        for i in first..=last {
+            let Some(s) = t.samples.get(i) else { break };
             if s.size > MAX_SAMPLE {
                 return Err(Error::Malformed("a picture claims to be larger than 256 MiB".into()));
             }
-            let data = self.mp4.read_sample(&self.src, self.track, i)?;
-            if take(dec.feed(&data, s.pts)?, &mut best) {
+            let data = timed("decode: read", || self.mp4.read_sample(&self.src, self.track, i))?;
+            if take(timed("decode: feed", || dec.feed(&data, s.pts))?, &mut best) {
                 break;
             }
-            i += 1;
         }
+        // (the picture wanted is among those fed; the decoder may hold it for the ones that follow in show order, which
+        // `flush` releases at once, where feeding on would decode pictures nobody asked for)
         if best.as_ref().is_none_or(|(d, _)| want.is_some() && *d != 0) {
-            take(dec.flush(), &mut best);
+            take(timed("decode: flush", || dec.flush()), &mut best);
         }
         best.map(|(_, f)| f).ok_or_else(|| Error::Malformed("the decoder produced no picture".into()))
     }
@@ -303,3 +299,6 @@ fn from_hevc(p: filmcraft_hevc::Picture) -> Frame {
         },
     }
 }
+
+#[cfg(test)]
+mod tests;

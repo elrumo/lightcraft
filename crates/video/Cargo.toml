@@ -9,6 +9,7 @@ license.workspace = true
 lightcraft-raster = { workspace = true }
 lightcraft-color = { workspace = true }
 filmcraft-isobmff = { workspace = true }
+web-time = { workspace = true }
 # Patent-encumbered codecs are features so a distributor can drop them (docs/video.md).
 filmcraft-h264 = { workspace = true, optional = true }
 filmcraft-hevc = { workspace = true, optional = true }
