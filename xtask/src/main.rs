@@ -7,6 +7,7 @@ mod assets;
 mod bench;
 mod build_info;
 mod ci_report;
+mod filmcraft;
 mod geodata;
 mod ico;
 mod layers;
@@ -26,6 +27,11 @@ commands:
   bench [FILE] [--strict] [--threshold PCT]
                   run the render benchmark, append to target/bench/history.jsonl, compare CPU time with
                   the previous run (default input: corpus/raw/arw-sony-a7m3-compressed.arw)
+  filmcraft --check [--strict] | --update [REV] [--no-test]
+                  the FilmCraft pin behind the video decoders (Cargo.toml, one rev for every filmcraft-* crate): --check
+                  lists what main has that the pin lacks (and FilmCraft's rust-version), non-zero only with --strict;
+                  --update moves every rev (default: main's head), runs `cargo update` for those packages and the
+                  video tests, and refuses a rev that needs a newer Rust than ours (docs/video.md)
   geodata <dir>   rebuild crates/geo/data/{places,land}.bin from the GeoNames dumps (cities15000.txt, countryInfo.txt,
                   admin1CodesASCII.txt) and Natural Earth's ne_110m_land.shp found in <dir> (see assets/ATTRIBUTION.md)
   ico <out.ico> <in.png>...
@@ -59,6 +65,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
     let result = match args.first().map(String::as_str) {
+        Some("filmcraft") => filmcraft::run(&root(), &rest),
         Some("geodata") => geodata::run(&root(), &rest),
         Some("ico") => ico::run(&rest),
         Some("version") => version::run(&root(), &rest),
