@@ -387,7 +387,12 @@ impl Session {
         match (on, self.icloud.as_mut()) {
             (true, Some(_)) => {}
             (true, None) => {
-                let mut ic = ICloud::new(Saved { on: true, epoch: now_ms().unsigned_abs(), ..Saved::default() }, BTreeMap::new());
+                // (past the epoch it had when it was turned off: one from the clock alone could come back equal to
+                // the one the host had while it was on, turned on again within the millisecond or after the clock
+                // went back, and the host would not fetch everything again)
+                let last = lib.files_mut().read(STATE).ok().flatten().and_then(|b| serde_json::from_slice::<Saved>(&b).ok()).map_or(0, |s| s.epoch);
+                let epoch = last.wrapping_add(1).max(now_ms().unsigned_abs());
+                let mut ic = ICloud::new(Saved { on: true, epoch, ..Saved::default() }, BTreeMap::new());
                 ic.saved_dirty = true;
                 ic.held_dirty = true;
                 ic.save(lib.files_mut());
