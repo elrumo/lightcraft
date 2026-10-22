@@ -268,11 +268,22 @@ impl Engine {
                 "unsent": libraries::unsent(&dir),
             }));
         }
-        // (held while it goes: another program can't open it meanwhile)
+        // (held while it goes: another program can't open it meanwhile; the lock's own file goes last, once
+        // released, as Windows can't delete a file that is open)
         let lock = lightcraft_catalog::LibraryLock::acquire(&dir, "LightCraft (deleting the library)")
             .map_err(|e| ErrorBody::new("libraryInUse", format!("{}: {e}", dir.display())))?;
-        let removed = std::fs::remove_dir_all(&dir);
+        let removed = std::fs::read_dir(&dir).and_then(|entries| {
+            for e in entries {
+                let e = e?;
+                if e.file_name() == lightcraft_catalog::lock::LOCK {
+                    continue;
+                }
+                if e.file_type()?.is_dir() { std::fs::remove_dir_all(e.path())? } else { std::fs::remove_file(e.path())? }
+            }
+            Ok(())
+        });
         drop(lock);
+        let removed = removed.and_then(|()| std::fs::remove_dir_all(&dir));
         removed.map_err(|e| ErrorBody::new("other", format!("{}: the library could not be deleted completely: {e}", dir.display())))?;
         log::info!("library {}: deleted", dir.display());
         let mut recent = self.recent_param(p);

@@ -71,7 +71,7 @@ pub struct Mp4Encoder<W: Write + Seek> {
 impl<W: Write + Seek> Mp4Encoder<W> {
     pub fn new(out: W, o: EncodeOptions, audio: Option<&AudioTrack>) -> Result<Self> {
         guarded("starting the encoder", || {
-            if o.width == 0 || o.height == 0 || o.width % 2 != 0 || o.height % 2 != 0 || o.width > 16384 || o.height > 16384 {
+            if o.width == 0 || o.height == 0 || !o.width.is_multiple_of(2) || !o.height.is_multiple_of(2) || o.width > 16384 || o.height > 16384 {
                 return Err(Error::Unsupported(format!("a {}x{} picture can't be encoded (an even size up to 16384)", o.width, o.height)));
             }
             if !o.fps.is_finite() || o.fps <= 0.0 || o.fps > 1000.0 {

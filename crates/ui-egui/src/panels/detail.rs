@@ -706,11 +706,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let job = if interacting { job.draft() } else { job };
         // at rest the render is shrunk to exactly the size it is drawn at with a Lanczos filter on
         // the worker, so the window draws it texel for texel instead of shrinking it with 2-tap
-        // sampling (the render is up to a 64 px step larger, or the preview level)
+        // sampling (the render is up to a 64 px step larger, or the preview level); a pinch holds it
+        // with the plan
         let job = if interacting {
             job
         } else {
-            job.with_display_fit((target_rect.width() * ppp).round() as usize, (target_rect.height() * ppp).round() as usize)
+            let fresh = ((target_rect.width() * ppp).round() as usize, (target_rect.height() * ppp).round() as usize);
+            let (w, h) = app.size_hold.display_fit(now, fresh);
+            job.with_display_fit(w, h)
         };
         let job = job.with_overlay(overlay).with_proof(app.ui.soft_proof.then_some(app.ui.proof));
         let job = job.with_hidden_grading(app.ui.grading_hidden_for(id));

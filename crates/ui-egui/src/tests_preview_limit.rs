@@ -636,6 +636,8 @@ mod in_the_loupe {
         for _ in 0..40 {
             h.request("ui.zoom", json!({"factor": 1.08}), T);
             assert_eq!(h.app.region_view, None, "no window while the pinch runs");
+            // (asked for, it would arrive at another size on a machine that renders it in time)
+            assert!(!h.app.renderer.is_pending(Slot::Main), "no whole-frame render while the pinch runs");
         }
         assert!(matches!(h.app.ui.zoom, crate::state::Zoom::Percent(p) if p > 100.0), "{:?}", h.app.ui.zoom);
         assert_eq!(rendered_long_edge(&h), main_at_fit, "the whole-frame render keeps its size");

@@ -400,6 +400,26 @@ fn turning_it_off_and_on_again_merges_without_deleting() {
     assert!(cloud.records.values().any(|r| r.key == "one"));
 }
 
+// Given sync turned off and on again with a clock that went back meanwhile (or within the millisecond), the
+// epoch still changes: the host fetches everything again
+#[test]
+fn on_again_after_the_clock_went_back_is_a_new_epoch() {
+    let root = temp_dir("epoch");
+    let a = Device::new(&root, "a");
+    let mut s = a.s;
+    let seen = s.icloud_epoch().unwrap();
+    s.execute("icloud.enable", &json!({"on": false})).unwrap();
+    // (as saved by a device whose clock ran a day ahead)
+    let files = s.library.as_mut().unwrap().files_mut();
+    let mut saved: Value = serde_json::from_slice(&files.read(crate::icloud::STATE).unwrap().unwrap()).unwrap();
+    let ahead = saved["epoch"].as_u64().unwrap() + 86_400_000;
+    saved["epoch"] = json!(ahead);
+    files.write_atomic(crate::icloud::STATE, &serde_json::to_vec(&saved).unwrap()).unwrap();
+    s.execute("icloud.enable", &json!({"on": true})).unwrap();
+    let epoch = s.icloud_epoch().unwrap();
+    assert!(epoch > ahead && epoch != seen, "{epoch} after {ahead}");
+}
+
 #[test]
 fn the_state_is_kept_with_the_library() {
     let root = temp_dir("kept");

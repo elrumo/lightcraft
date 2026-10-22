@@ -64,7 +64,9 @@ fn tree(dir: &Path) -> BTreeSet<String> {
             if e.path().is_dir() {
                 walk(&e.path(), base, out);
             } else {
-                out.insert(e.path().strip_prefix(base).unwrap().to_string_lossy().to_string());
+                // (joined with `/`, as the server's keys are, on Windows too)
+                let rel = e.path().strip_prefix(base).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>();
+                out.insert(rel.join("/"));
             }
         }
     }

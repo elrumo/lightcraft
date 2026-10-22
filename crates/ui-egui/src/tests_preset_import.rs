@@ -421,7 +421,7 @@ fn files_that_are_not_presets_say_why() {
     open_review(&mut h, &[&bad.to_string_lossy(), &photos.to_string_lossy()]);
     let rv = review(&h);
     assert!(rv.items.is_empty() && rv.profiles.is_empty());
-    let named: Vec<&str> = rv.problems.iter().map(|(f, _)| f.rsplit('/').next().unwrap_or(f)).collect();
+    let named: Vec<&str> = rv.problems.iter().map(|(f, _)| f.rsplit(['/', '\\']).next().unwrap_or(f)).collect();
     assert_eq!(named, ["Not a pack.zip", "Only photos.zip"], "{:?}", rv.problems);
     assert!(rv.problems.iter().all(|(_, why)| !why.is_empty()), "{:?}", rv.problems);
     assert!(crate::preset_import::informational(rv));
@@ -526,12 +526,12 @@ fn a_zip_of_luts_is_not_a_failure_but_a_zip_of_photos_is() {
     open_review(&mut h, &[&luts.to_string_lossy(), &photos.to_string_lossy()]);
     let rv = review(&h);
     assert_eq!((rv.items.len(), rv.profiles.len()), (0, 1), "{rv:?}");
-    let named: Vec<&str> = rv.problems.iter().map(|(f, _)| f.rsplit('/').next().unwrap_or(f)).collect();
+    let named: Vec<&str> = rv.problems.iter().map(|(f, _)| f.rsplit(['/', '\\']).next().unwrap_or(f)).collect();
     assert_eq!(named, ["Photos.zip"], "{:?}", rv.problems);
     confirm(&mut h);
     assert_eq!(h.app.session.lut_profiles.len(), 1);
     let o = review(&h).outcome.clone().unwrap();
-    let named: Vec<&str> = o.problems.iter().map(|(f, _)| f.rsplit('/').next().unwrap_or(f)).collect();
+    let named: Vec<&str> = o.problems.iter().map(|(f, _)| f.rsplit(['/', '\\']).next().unwrap_or(f)).collect();
     assert_eq!((o.presets, o.profiles, named), (0, 1, vec!["Photos.zip"]), "{o:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

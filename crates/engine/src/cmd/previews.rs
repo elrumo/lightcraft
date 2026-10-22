@@ -268,9 +268,7 @@ fn smart_run(
                 let r = source
                     .ok_or_else(|| "nothing to build from".to_string())
                     .and_then(|s| s.load_source())
-                    .and_then(|src| {
-                        crate::smart::encode(&src.image, &src.info_or(Default::default()))
-                    })
+                    .and_then(|src| crate::smart::encode(&src.image, &src.info_or(Default::default())))
                     .and_then(|b| {
                         let parent = path.parent().ok_or_else(|| format!("{}: no parent folder", path.display()))?;
                         // Only create the leaf shard: do not recreate a missing external drive.

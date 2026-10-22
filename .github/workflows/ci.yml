@@ -66,7 +66,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
+          # (the wasm and ios steps of `cargo xtask ci` type-check for these)
+          targets: wasm32-unknown-unknown, aarch64-apple-ios
       # Dependencies only (rust-cache drops the workspace's own artifacts), saved from main and
       # restored by pull requests, so the 10 GB cache holds one entry per job.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

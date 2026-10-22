@@ -1900,7 +1900,8 @@ fn downloaded_originals_go_over_the_budget_least_recently_used_first() {
     // (megabytes are whole: use the smallest budget and make the two files big enough to matter)
     for id in &ids {
         let Source::File { path } = &b.catalog.photo(*id).unwrap().source else { panic!() };
-        let f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        // (a handle that may write: Windows refuses `set_len` through an append-only one)
+        let f = std::fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_len(700 << 10).unwrap();
     }
     b.execute("sync.originalsBudget", &json!({"mb": 1})).unwrap();
@@ -1933,9 +1934,7 @@ fn the_budget_never_deletes_the_only_copy_or_what_is_in_use() {
     let grow = |b: &Session| {
         for id in &ids {
             let Source::File { path } = &b.catalog.photo(*id).unwrap().source else { return };
-            if let Ok(f) = std::fs::OpenOptions::new().append(true).open(path) {
-                let _ = f.set_len(700 << 10);
-            }
+            std::fs::OpenOptions::new().write(true).open(path).unwrap().set_len(700 << 10).unwrap();
         }
     };
     grow(&b);

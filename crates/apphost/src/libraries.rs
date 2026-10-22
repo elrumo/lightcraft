@@ -285,10 +285,13 @@ pub fn size_on_disk(dir: &Path, max_files: usize) -> (u64, bool) {
 }
 
 /// A path as an app keeps it: `~/…` inside `home`, whose absolute path an iOS app's container
-/// changes with each update; any other path as it is.
+/// changes with each update, with `/` between its folders on every system; any other path as it is.
 pub fn portable(path: &Path, home: Option<&Path>) -> String {
     match home.and_then(|h| path.strip_prefix(h).ok()) {
-        Some(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.to_string_lossy()),
+        Some(rest) if !rest.as_os_str().is_empty() => {
+            let folders: Vec<_> = rest.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+            format!("~/{}", folders.join("/"))
+        }
         _ => path.to_string_lossy().into_owned(),
     }
 }
@@ -296,7 +299,7 @@ pub fn portable(path: &Path, home: Option<&Path>) -> String {
 /// A path an app kept ([`portable`]): `~/…` is inside `home` (without a home it stays as it is).
 pub fn expand(path: &str, home: Option<&Path>) -> PathBuf {
     match (path.strip_prefix("~/"), home) {
-        (Some(rest), Some(h)) => h.join(rest),
+        (Some(rest), Some(h)) => rest.split('/').filter(|f| !f.is_empty()).fold(h.to_path_buf(), |p, f| p.join(f)),
         _ if path == "~" => home.map_or_else(|| PathBuf::from(path), Path::to_path_buf),
         _ => PathBuf::from(path),
     }

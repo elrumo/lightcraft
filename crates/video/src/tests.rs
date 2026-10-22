@@ -278,7 +278,12 @@ mod encode {
 
     #[test]
     fn the_encoder_refuses_what_it_cannot_write() {
-        for bad in [EncodeOptions { width: 127, ..opts() }, EncodeOptions { height: 0, ..opts() }, EncodeOptions { fps: 0.0, ..opts() }, EncodeOptions { fps: f64::NAN, ..opts() }] {
+        for bad in [
+            EncodeOptions { width: 127, ..opts() },
+            EncodeOptions { height: 0, ..opts() },
+            EncodeOptions { fps: 0.0, ..opts() },
+            EncodeOptions { fps: f64::NAN, ..opts() },
+        ] {
             assert!(Mp4Encoder::new(Cursor::new(Vec::new()), bad, None).is_err(), "{bad:?}");
         }
         let mut enc = Mp4Encoder::new(Cursor::new(Vec::new()), opts(), None).unwrap();
