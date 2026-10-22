@@ -172,13 +172,28 @@ fn a_clip_is_trimmed_in_one_undo_step() {
     s.execute("video.setTrim", &json!({"id": clip.0, "end": null})).unwrap();
     let i = s.execute("video.info", &json!({"id": clip.0})).unwrap();
     assert_eq!((i["trimStart"].as_f64(), i["trimEnd"].is_null()), (Some(0.5), true), "{i}");
+    s.execute("video.setTrim", &json!({"id": clip.0, "start": 0.7, "end": 1.2})).unwrap();
+    let trimmed = |s: &Session| s.develop_of(clip).unwrap().video.map(|v| (v.trim_start, v.trim_end));
+    assert_eq!(trimmed(&s), Some((Some(0.7), Some(1.2))));
+    // trims in a row are one undo step (a trim bar sends one per drag): one undo takes them all back, redo brings
+    // the last one
+    let steps = s.undo.len();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((trimmed(&s), s.undo.len()), (None, steps - 1));
+    assert!(!s.catalog.photo(clip).unwrap().is_edited());
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(trimmed(&s), Some((Some(0.7), Some(1.2))));
+    // a trim after the redone one joins it too
     s.execute("video.setTrim", &json!({"id": clip.0, "start": null})).unwrap();
-    assert!(s.develop_of(clip).unwrap().video.is_none(), "an untrimmed clip has no video edit");
-    // each trim is its own undo step: back through both ends put back, then the trim itself
+    assert_eq!(s.undo.len(), steps);
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.develop_of(clip).unwrap().video.and_then(|v| v.trim_start), Some(0.5));
+    assert_eq!(trimmed(&s), None);
+    // anything between (another edit, an undo) starts a new step
+    s.execute("video.setTrim", &json!({"id": clip.0, "start": 0.5})).unwrap();
+    s.execute("video.setCover", &json!({"id": clip.0, "time": 1.0})).unwrap();
+    s.execute("video.setTrim", &json!({"id": clip.0, "end": 1.5})).unwrap();
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.develop_of(clip).unwrap().video.and_then(|v| v.trim_end), Some(1.5));
+    assert_eq!(trimmed(&s), Some((Some(0.5), None)));
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.develop_of(clip).unwrap().video.and_then(|v| v.trim_end), Some(1.5));
     s.execute("edit.undo", &json!({})).unwrap();
