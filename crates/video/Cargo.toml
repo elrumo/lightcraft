@@ -24,6 +24,7 @@ testdata = ["encode"]
 
 [dev-dependencies]
 filmcraft-h264enc = { workspace = true }
+lightcraft-testkit = { workspace = true }
 
 [lints]
 workspace = true

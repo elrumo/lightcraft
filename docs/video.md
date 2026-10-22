@@ -292,6 +292,11 @@ user's page and Storage; a native frontend reads the same JSON through `host.adm
 
 ## Tests
 
-Synthetic clips only: `lightcraft_video::testdata` (feature `testdata`) encodes flat-grey H.264 pictures with FilmCraft's
-encoder and muxes them as MP4, with or without B pictures. Real HEVC iPhone clips would go in the gitignored `corpus/`
-(`skip!`); none is wired in yet.
+Nothing is committed but synthetic clips: `lightcraft_video::testdata` (feature `testdata`) encodes flat-grey H.264
+pictures with FilmCraft's encoder and muxes them as MP4, with or without B pictures (and a sound track that is not sound).
+
+Real clips are opt-in: `LIGHTCRAFT_VIDEO_CLIPS=<folder of .mp4 / .mov / .m4v> cargo test -p lightcraft-video --test clips`
+probes each, makes its poster, reads its middle and its first second in order (`skip!` without the variable). On
+2026-10-22 it passed on clips made with ffmpeg: x264 1280 x 720 with AAC sound, a clip with a 90 degree display matrix (read
+as 720 x 1280), and VideoToolbox's HEVC at 960 x 540 (8-bit) and 1920 x 1080 (Main 10). iPhone clips (Dolby Vision HLG, Live
+Photo movies) have not been tried.
