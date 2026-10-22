@@ -23,16 +23,33 @@ pub fn clip(frames: usize, keyint: u32, bframes: u8) -> Vec<u8> {
 
 /// [`clip`] with picture `i` a flat grey of luma `luma(i)`.
 pub fn clip_with(frames: usize, keyint: u32, bframes: u8, luma: impl Fn(usize) -> u8) -> Vec<u8> {
-    build(frames, keyint, bframes, luma, false)
+    build(frames, keyint, bframes, flat(luma), false)
+}
+
+/// [`clip`] with pictures that have something in them: a diagonal luma ramp that moves, and chroma that changes across and
+/// down the picture (a flat grey cannot tell a wrong chroma sample, a mirrored or a turned picture from a right one).
+pub fn clip_textured(frames: usize, keyint: u32, bframes: u8) -> Vec<u8> {
+    let picture = |i: usize| {
+        let y = (0..W * H).map(|p| 40 + ((p % W) * 2 + (p / W) * 3 + i * 5) as u8 % 160).collect();
+        let u = (0..W * H / 4).map(|p| 80 + ((p % (W / 2)) * 3) as u8 % 90).collect();
+        let v = (0..W * H / 4).map(|p| 70 + ((p / (W / 2)) * 4) as u8 % 100).collect();
+        (y, u, v)
+    };
+    build(frames, keyint, bframes, picture, false)
+}
+
+/// Every picture a flat grey of luma `luma(i)`.
+fn flat(luma: impl Fn(usize) -> u8) -> impl Fn(usize) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    move |i| (vec![luma(i); W * H], vec![128u8; W * H / 4], vec![128u8; W * H / 4])
 }
 
 /// [`clip`] with a sound track beside it: 48 kHz AAC "samples" of 1024 frames that are not sound (they are copied, never
 /// decoded), one byte each, `n` where `n` counts from 0.
 pub fn clip_with_sound(frames: usize, keyint: u32, bframes: u8) -> Vec<u8> {
-    build(frames, keyint, bframes, grey, true)
+    build(frames, keyint, bframes, flat(grey), true)
 }
 
-fn build(frames: usize, keyint: u32, bframes: u8, luma: impl Fn(usize) -> u8, sound: bool) -> Vec<u8> {
+fn build(frames: usize, keyint: u32, bframes: u8, picture: impl Fn(usize) -> (Vec<u8>, Vec<u8>, Vec<u8>), sound: bool) -> Vec<u8> {
     let mut cfg = EncoderConfig::new(W as u32, H as u32, 10, 1);
     cfg.profile = if bframes > 0 { Profile::High } else { Profile::Baseline };
     cfg.rate = RateControl::Qp(18);
@@ -45,7 +62,7 @@ fn build(frames: usize, keyint: u32, bframes: u8, luma: impl Fn(usize) -> u8, so
     let Ok(avcc) = AvcConfig::parse(&enc.avcc()) else { return Vec::new() };
     let mut packets = Vec::new();
     for i in 0..frames {
-        let (y, u, v) = (vec![luma(i); W * H], vec![128u8; W * H / 4], vec![128u8; W * H / 4]);
+        let (y, u, v) = picture(i);
         let f = YuvFrame { y: &y, u: &u, v: &v, y_stride: W, uv_stride: W / 2 };
         if let Ok(p) = enc.encode(&f, i as i64 * STEP) {
             packets.extend(p);

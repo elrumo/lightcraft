@@ -527,6 +527,31 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.vision.wake();
             Ok(search(st))
         }),
+        // (a part a device was left with, taken back: a device that never comes would leave it waiting for good)
+        (Method::Post, ["users", name, "search", kind, "here"]) => match Part::from_key(kind) {
+            None => Err(Ok((404, "no such part".to_string()))),
+            Some(part) => known_user(st, name).and_then(|()| st.vision.work.take_back(name, part).map_err(|e| Ok((500, e)))).map(|()| {
+                log::info!("admin {me}: {name}'s {kind} work taken back from their devices");
+                st.vision.wake();
+                search(st)
+            }),
+        },
+        // (take the next chunks of one part before the others': it starts now instead of waiting for its turn)
+        (Method::Post, ["search", "first", kind]) => match Part::from_key(kind) {
+            None => Err(Ok((404, "no such part".to_string()))),
+            Some(part) => {
+                log::info!("admin {me}: {kind} first");
+                // (users whose devices do this part but haven't come for a while: the server does theirs now, and their
+                // devices are told at their next claim)
+                let users = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect::<Vec<_>>()).unwrap_or_default();
+                for user in st.vision.work.take_back_idle(&users, part) {
+                    log::info!("admin {me}: {user}'s {kind} work taken back from their idle devices");
+                }
+                st.vision.switch.set_first(Some(part));
+                st.vision.wake();
+                Ok(search(st))
+            }
+        },
         (Method::Put, ["search", "schedule", kind]) => match Part::from_key(kind) {
             None => Err(Ok((404, "no such part".to_string()))),
             Some(part) => read_json::<Schedule>(req).map_err(Err).and_then(|b| {
@@ -893,6 +918,7 @@ fn search(st: &State) -> Value {
             "paused": v.switch.paused(part),
             "from": w.map(|w| w.0), "to": w.map(|w| w.1),
             "runsNow": v.switch.may_run(part),
+            "first": v.switch.first() == Some(part),
             "left": left,
             "ready": left.saturating_sub(stuck),
             "perMinute": v.switch.per_minute(part, None),

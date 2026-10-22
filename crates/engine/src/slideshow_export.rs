@@ -375,14 +375,14 @@ const CANCELLED: &str = "Slideshow export cancelled";
 
 /// A file written as `<path>.part` and renamed over `path` when complete; dropped before that,
 /// the part file is removed.
-struct PartFile {
+pub(crate) struct PartFile {
     part: PathBuf,
     target: PathBuf,
     done: bool,
 }
 
 impl PartFile {
-    fn new(target: &Path) -> Result<(PartFile, std::fs::File), String> {
+    pub(crate) fn new(target: &Path) -> Result<(PartFile, std::fs::File), String> {
         if let Some(dir) = target.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
@@ -393,7 +393,7 @@ impl PartFile {
         Ok((PartFile { part, target: target.to_path_buf(), done: false }, f))
     }
 
-    fn commit(mut self, guard: &OriginalGuard) -> Result<(), String> {
+    pub(crate) fn commit(mut self, guard: &OriginalGuard) -> Result<(), String> {
         guard.check(&self.target)?;
         std::fs::rename(&self.part, &self.target).map_err(|e| format!("{}: {e}", self.target.display()))?;
         self.done = true;
@@ -698,7 +698,7 @@ impl Prepared {
     }
 }
 
-/// A slideshow export running in the background (`slideshow.export`; `slideshow.exportStatus`).
+/// An export running in the background (`slideshow.export` / `slideshow.exportStatus`, and `video.export` / `video.exportStatus`).
 #[derive(Debug, Default)]
 pub struct ExportRun {
     /// Its row in the activity stack (`activity.cancel {id}` stops it).

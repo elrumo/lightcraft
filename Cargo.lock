@@ -4026,6 +4026,8 @@ dependencies = [
  "filmcraft-isobmff",
  "lightcraft-color",
  "lightcraft-raster",
+ "lightcraft-testkit",
+ "web-time",
 ]
 
 [[package]]

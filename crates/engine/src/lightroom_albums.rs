@@ -13,11 +13,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use lightcraft_catalog::{Album, AlbumId, Filter, Op, PhotoId, RuleSet};
 use serde_json::{Value, json};
 
 use crate::lightroom_catalog::{ImportIndex, path_key};
+use crate::sidecar::SidecarNaming;
 
 /// A catalog's albums, their photos and what identifies each photo's file.
 #[derive(Clone, Debug, Default)]
@@ -30,7 +32,18 @@ pub struct AlbumSource {
     pub members: HashMap<String, Vec<String>>,
     /// The photos albums hold, by catalog key.
     pub photos: HashMap<String, PhotoIdentity>,
+    /// The latest develop settings (Camera Raw XMP) of those photos, by catalog key (cloud catalogs).
+    pub edits: HashMap<String, DevelopSource>,
     pub warnings: Vec<String>,
+}
+
+/// Where a cloud catalog keeps a photo's develop settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DevelopSource {
+    /// The XMP packet, in the catalog itself.
+    Inline(String),
+    /// The sha256 of the packet's file, `settings/<sha256>` beside the catalog.
+    Hash(String),
 }
 
 /// An album or a folder of albums, as the catalog names it.
@@ -84,24 +97,39 @@ pub(crate) struct LibraryPhoto {
     dims: (u32, u32),
     path: Option<String>,
     hash: Option<String>,
+    /// Whether the photo has edits of its own already (Lightroom's never replace them).
+    edited: bool,
+    /// The original, when it is a file on this disk, and how its sidecar is named.
+    file: Option<(String, SidecarNaming)>,
 }
 
 /// The library's photos as matching sees them (not deleted, not only browsed, not virtual copies).
 pub(crate) fn library_photos(s: &crate::Session) -> Vec<LibraryPhoto> {
-    s.catalog
-        .photos()
-        .filter(|p| p.in_library() && p.copy_of.is_none())
-        .map(|p| LibraryPhoto {
-            id: p.id,
-            stem: stem(&p.file_name),
-            size: p.file_size,
-            second: p.captured.as_deref().and_then(second),
-            dims: (p.width, p.height),
-            path: match &p.source {
-                lightcraft_catalog::Source::File { path } => Some(path_key(path)),
+    let photos: Vec<_> = s.catalog.photos().filter(|p| p.in_library() && p.copy_of.is_none()).collect();
+    let ids: Vec<PhotoId> = photos.iter().map(|p| p.id).collect();
+    let namings = s.sidecar_namings(&ids);
+    photos
+        .into_iter()
+        .zip(namings)
+        .map(|(p, naming)| {
+            let file = match &p.source {
+                lightcraft_catalog::Source::File { path } if !path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) => Some((path.clone(), naming)),
                 _ => None,
-            },
-            hash: lightcraft_catalog::sync::content_key(p),
+            };
+            LibraryPhoto {
+                id: p.id,
+                stem: stem(&p.file_name),
+                size: p.file_size,
+                second: p.captured.as_deref().and_then(second),
+                dims: (p.width, p.height),
+                path: match &p.source {
+                    lightcraft_catalog::Source::File { path } => Some(path_key(path)),
+                    _ => None,
+                },
+                hash: lightcraft_catalog::sync::content_key(p),
+                edited: p.edited.is_some(),
+                file,
+            }
         })
         .collect()
 }
@@ -356,6 +384,81 @@ pub struct AlbumPlan {
     pub(crate) warnings: Vec<String>,
     /// The photos albums hold that the library lacks (or has twice over), by name.
     pub(crate) missing: Vec<Value>,
+    /// Lightroom's develop settings for matched photos that have no edits here: the XMP packets.
+    pub(crate) develop: Vec<(PhotoId, String)>,
+    pub(crate) edits: EditCounts,
+}
+
+/// What came of the develop settings of the matched photos.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct EditCounts {
+    /// Applied as the photo's edit.
+    pub(crate) applied: usize,
+    /// Left alone: the photo has edits here already.
+    pub(crate) kept: usize,
+    /// Copied beside the original as its `.xmp` sidecar.
+    pub(crate) sidecars: usize,
+    /// The catalog names settings that aren't in the library's `settings` folder (or can't be read).
+    pub(crate) unavailable: usize,
+    /// Applied without the crop: the file's orientation isn't known here.
+    pub(crate) crop_held: usize,
+}
+
+/// The largest settings packet read (they are a few KB).
+const MAX_PACKET: u64 = 4 << 20;
+
+/// The XMP packet `source` names: inline, or the file `settings/<sha256>` in `settings_dir`.
+fn packet_of(source: &DevelopSource, settings_dir: Option<&Path>) -> Option<String> {
+    match source {
+        DevelopSource::Inline(packet) => Some(packet.clone()),
+        DevelopSource::Hash(hash) if hash.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+            let path = settings_dir?.join(hash);
+            std::fs::metadata(&path).ok().filter(|m| m.len() <= MAX_PACKET)?;
+            std::fs::read_to_string(path).ok()
+        }
+        DevelopSource::Hash(_) => None,
+    }
+}
+
+/// Lightroom's develop settings for the matched photos that have no edits here, read off the owner
+/// thread, and (a copy, never replacing a sidecar) written beside the originals on this disk.
+fn develop_of(
+    source: &AlbumSource,
+    matches: &HashMap<String, PhotoId>,
+    library: &[LibraryPhoto],
+    settings_dir: Option<&Path>,
+    cancel: &AtomicBool,
+) -> (Vec<(PhotoId, String)>, EditCounts) {
+    let by_id: HashMap<PhotoId, &LibraryPhoto> = library.iter().map(|p| (p.id, p)).collect();
+    let mut counts = EditCounts::default();
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let mut keys: Vec<_> = source.edits.keys().collect();
+    keys.sort_unstable();
+    for key in keys {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let (Some(id), Some(edit)) = (matches.get(key), source.edits.get(key)) else { continue };
+        let Some(photo) = by_id.get(id).filter(|_| seen.insert(*id)) else { continue };
+        if photo.edited {
+            counts.kept += 1;
+            continue;
+        }
+        let Some(packet) = packet_of(edit, settings_dir) else {
+            counts.unavailable += 1;
+            continue;
+        };
+        if let Some((original, naming)) = &photo.file
+            && Path::new(original).is_file()
+            && crate::sidecar::find_sidecar(original, *naming).is_none()
+            && lightcraft_catalog::safe_file::write_atomic(&crate::sidecar::sidecar_path(original, *naming), packet.as_bytes()).is_ok()
+        {
+            counts.sidecars += 1;
+        }
+        out.push((*id, packet));
+    }
+    (out, counts)
 }
 
 /// The most photos the result lists by name.
@@ -396,16 +499,18 @@ fn missing_photos(source: &AlbumSource, matches: &HashMap<String, PhotoId>, libr
 }
 
 impl AlbumPlan {
-    /// Match the photos of `source`'s albums against `library`.
-    pub(crate) fn new(source: AlbumSource, library: &[LibraryPhoto]) -> Self {
+    /// Match the photos of `source`'s albums against `library`; `settings_dir` is where the catalog's
+    /// develop settings files are (cloud catalogs).
+    pub(crate) fn new(source: AlbumSource, library: &[LibraryPhoto], settings_dir: Option<&Path>, cancel: &AtomicBool) -> Self {
         let (matches, counts) = match_photos(&source, library);
+        let (develop, edits) = develop_of(&source, &matches, library, settings_dir, cancel);
         let members = source
             .members
             .iter()
             .map(|(album, photos)| (album.clone(), photos.iter().filter_map(|key| matches.get(key).copied()).collect()))
             .collect();
         let missing = missing_photos(&source, &matches, library);
-        AlbumPlan { source: source.source, albums: source.albums, members, counts, warnings: source.warnings, missing }
+        AlbumPlan { source: source.source, albums: source.albums, members, counts, warnings: source.warnings, missing, develop, edits }
     }
 
     /// Make the albums in one undo step and report what was done.
@@ -414,8 +519,29 @@ impl AlbumPlan {
         for photos in self.members.values_mut() {
             photos.retain(|id| s.catalog.photo(*id).is_some_and(|p| p.in_library()));
         }
-        let (ops, made) = album_ops(s, &self.source, &self.albums, &self.members, index);
+        let (mut ops, made) = album_ops(s, &self.source, &self.albums, &self.members, index);
         self.warnings.extend(made.warnings.iter().cloned());
+        // the settings only go to photos still without edits, and only what is left of the plan
+        let mut edits = self.edits;
+        for (id, packet) in std::mem::take(&mut self.develop) {
+            let Some(photo) = s.catalog.photo(id).filter(|p| p.in_library() && p.edited.is_none()) else { continue };
+            let Ok(mut sc) = crate::sidecar::parse_sidecar(&packet, crate::crs::Target::for_photo(photo)) else {
+                edits.unavailable += 1;
+                continue;
+            };
+            if sc.needs_frame() {
+                // ponytail: the stored image's orientation isn't read here, so a crop waits for
+                // Read Metadata from File (the sidecar copied beside the photo carries it)
+                sc.set_frame(None);
+                edits.crop_held += usize::from(sc.hold_unframed_crop().is_some());
+            }
+            if let Ok(Op::Batch { ops: changes }) = s.sidecar_op(id, sc)
+                && !changes.is_empty()
+            {
+                edits.applied += 1;
+                ops.extend(changes);
+            }
+        }
         if !ops.is_empty() {
             s.commit("Import Lightroom Albums", Op::Batch { ops })?;
         }
@@ -433,6 +559,11 @@ impl AlbumPlan {
             "unmatched": self.counts.unmatched,
             "missing": self.missing.iter().take(MAX_LISTED).collect::<Vec<_>>(),
             "missingTotal": self.missing.len(),
+            "edits": edits.applied,
+            "editsKept": edits.kept,
+            "editsUnavailable": edits.unavailable,
+            "editsCropHeld": edits.crop_held,
+            "sidecars": edits.sidecars,
             "warnings": self.warnings,
         }))
     }
@@ -443,7 +574,17 @@ mod tests {
     use super::*;
 
     fn photo(id: u64, name: &str, size: u64, captured: &str, dims: (u32, u32)) -> LibraryPhoto {
-        LibraryPhoto { id: PhotoId(id), stem: stem(name), size, second: second(captured), dims, path: None, hash: Some(format!("{id:032x}")) }
+        LibraryPhoto {
+            id: PhotoId(id),
+            stem: stem(name),
+            size,
+            second: second(captured),
+            dims,
+            path: None,
+            hash: Some(format!("{id:032x}")),
+            edited: false,
+            file: None,
+        }
     }
 
     fn identity(name: &str, size: Option<u64>, captured: &str, dims: Option<(u32, u32)>) -> PhotoIdentity {

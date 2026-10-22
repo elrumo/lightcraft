@@ -3,7 +3,7 @@
 //! Clean-room from the public MessagePack specification
 //! (<https://github.com/msgpack/msgpack/blob/master/spec.md>). Input is untrusted: every length is
 //! checked against the bytes left before anything is read or allocated, and nesting is capped.
-//! Binary and extension values become `null`; map keys that aren't strings are written as JSON.
+//! Binary values of printable text become strings, other binary and extension values `null`; map keys that aren't strings are written as JSON.
 
 use serde_json::{Map, Number, Value};
 
@@ -57,8 +57,12 @@ impl<'a> Reader<'a> {
             // bin 8 / 16 / 32
             0xc4..=0xc6 => {
                 let n = self.len(1 << (tag - 0xc4))?;
-                self.take(n)?;
-                Value::Null
+                let bytes = self.take(n)?;
+                // Lightroom stores ids and hashes as hex text in a bin: those read as strings
+                match std::str::from_utf8(bytes) {
+                    Ok(s) if s.len() <= 256 && s.bytes().all(|b| b.is_ascii_graphic()) => Value::String(s.to_string()),
+                    _ => Value::Null,
+                }
             }
             // ext 8 / 16 / 32: length, type byte, data
             0xc7..=0xc9 => {
@@ -195,6 +199,9 @@ mod tests {
         assert_eq!(decode(&[0xcd, 0x01, 0x00]).unwrap(), json!(256));
         assert_eq!(decode(&[0xca, 0x3f, 0xc0, 0, 0]).unwrap(), json!(1.5));
         assert_eq!(decode(&[0x82, 0x01, 0xa1, b'a', 0xc4, 2, 9, 9, 0xc0]).unwrap(), json!({"1": "a", "null": null}));
+        // a bin of printable text (an id, a hash) is a string; other bytes are null
+        assert_eq!(decode(&[0xc4, 3, b'a', b'b', b'c']).unwrap(), json!("abc"));
+        assert_eq!(decode(&[0xc4, 2, 0xff, 0x00]).unwrap(), Value::Null);
     }
 
     /// Hostile input is an error, never a panic or an allocation sized by a forged length.

@@ -1,0 +1,67 @@
+# Weekly: moves the FilmCraft pin (the `rev` of every `filmcraft-*` dependency in Cargo.toml, behind the video decoders) to
+# the head of FilmCraft's main and opens, or refreshes, ONE pull request "chore(deps): FilmCraft <rev>" for CI to build and
+# test. Dependabot does not move git dependencies pinned by rev. Nothing here merges: the golden-picture tests in
+# crates/video decide whether a bump changes what is decoded, and a person reads the pull request.
+#
+# `cargo xtask filmcraft --update` refuses a rev that needs a newer Rust than ours; then the job fails and says so.
+# Pull requests opened with the default GITHUB_TOKEN do not start other workflows (CI), so set the repository secret
+# FILMCRAFT_PIN_TOKEN (a token that may push branches and open pull requests) to have CI run on the pull request.
+# A fork runs this on its own CI, or runs the command by hand (docs/video.md, "FilmCraft pin").
+name: FilmCraft pin
+
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: filmcraft-pin
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  BRANCH: chore/filmcraft-pin
+
+jobs:
+  pin:
+    name: Move the pin
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.FILMCRAFT_PIN_TOKEN || github.token }}
+      GITHUB_TOKEN: ${{ secrets.FILMCRAFT_PIN_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ secrets.FILMCRAFT_PIN_TOKEN || github.token }}
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - name: What main has that the pin lacks
+        run: cargo xtask filmcraft --check
+      - name: Move the pin (CI runs the tests on the pull request)
+        run: cargo xtask filmcraft --update --no-test
+      - name: Open or refresh the pull request
+        run: |
+          if git diff --quiet -- Cargo.toml Cargo.lock; then
+            echo "The pin is current."
+            exit 0
+          fi
+          rev=$(git diff -U0 -- Cargo.toml | sed -n -E 's/^\+filmcraft-.*rev = "([0-9a-f]{12})[0-9a-f]*".*/\1/p' | head -n 1)
+          title="chore(deps): FilmCraft ${rev}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add Cargo.toml Cargo.lock
+          git commit -m "$title" -m "Moves every filmcraft-* dependency to one rev (cargo xtask filmcraft --update). CI builds and tests it; the golden-picture tests in crates/video fail if decoded pictures changed."
+          git push --force origin "$BRANCH"
+          body="Moves the FilmCraft pin to ${rev} (weekly job, \`cargo xtask filmcraft --update\`). Run \`cargo xtask filmcraft --check\` for the commits in between. Merge only when CI is green and the golden-picture tests in crates/video agree with the decoders' output."
+          number=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$title" --body "$body"
+          else
+            gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" --title "$title" --body "$body"
+          fi

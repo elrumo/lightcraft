@@ -43,7 +43,7 @@ mod bench {
     use filmcraft_codecs::{DecodedFrame, hw, make_video_decoder, software_video_decoder};
     use filmcraft_frame::{Chroma, PixelData};
     use filmcraft_h264enc as sw;
-    use filmcraft_isobmff::{AvcConfig, Brand, Mp4File, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions};
+    use filmcraft_isobmff::{AvcConfig, Brand, HevcConfig, Mp4File, Mp4Writer, SampleEntry, TrackConfig, WriteSample, WriterOptions};
     use filmcraft_platform::Availability;
     use filmcraft_platform::videotoolbox_encode::{VtConfig, VtEncoder, VtProfile, VtRate};
 
@@ -184,13 +184,7 @@ mod bench {
 
     fn scale(v: &View<'_>, dw: usize, dh: usize) -> Yuv {
         let (scw, sch, dcw, dch) = (v.w.div_ceil(2), v.h.div_ceil(2), dw / 2, dh / 2);
-        Yuv {
-            w: dw,
-            h: dh,
-            y: scale_plane(v.y, v.w, v.h, dw, dh),
-            u: scale_plane(v.u, scw, sch, dcw, dch),
-            v: scale_plane(v.v, scw, sch, dcw, dch),
-        }
+        Yuv { w: dw, h: dh, y: scale_plane(v.y, v.w, v.h, dw, dh), u: scale_plane(v.u, scw, sch, dcw, dch), v: scale_plane(v.v, scw, sch, dcw, dch) }
     }
 
     // ---- encoders ------------------------------------------------------------------------------------------------------
@@ -281,8 +275,6 @@ mod bench {
         track: usize,
         entry: SampleEntry,
         samples: Vec<Vec<u8>>,
-        w: usize,
-        h: usize,
         bytes: usize,
     }
 
@@ -310,12 +302,40 @@ mod bench {
         track.media_start = Some(first_pts - first_dts);
         let t = wr.add_track(track).map_err(s)?;
         for p in &packets {
-            let sample =
-                WriteSample { data: &p.data, duration: STEP as u32, composition_offset: (p.pts - p.dts) as i32, is_sync: p.keyframe };
+            let sample = WriteSample { data: &p.data, duration: STEP as u32, composition_offset: (p.pts - p.dts) as i32, is_sync: p.keyframe };
             wr.write_sample(t, sample).map_err(s)?;
         }
         let bytes = wr.finish().map_err(s)?.into_inner();
         std::fs::write(path, bytes).map_err(s)
+    }
+
+    /// An HEVC clip from the same pictures, made by the VideoToolbox encoder (FilmCraft has no HEVC encoder): real HEVC
+    /// Main data, so the HEVC decoders (software and hardware) have something to read.
+    fn make_hevc_clip(path: &Path, w: usize, h: usize, frames: usize, kbps: u32) -> R<()> {
+        let cfg = VtConfig {
+            width: w as u32,
+            height: h as u32,
+            timescale: FPS,
+            frame_duration: 1,
+            keyframe_interval: FPS,
+            profile: VtProfile::HevcMain,
+            rate: VtRate::Vbr { target_kbps: kbps, max_kbps: kbps * 3 / 2 },
+        };
+        let mut enc = VtEncoder::new(cfg)?;
+        let mut packets = Vec::new();
+        for t in 0..frames {
+            let f = gen_frame(w, h, t);
+            packets.extend(enc.encode(t as u64, &f.y, &f.u, &f.v)?);
+        }
+        packets.extend(enc.flush()?);
+        let hvcc = enc.parameter_sets().and_then(|p| p.hvcc).ok_or("the encoder gave no hvcC record")?;
+        let mut wr = Mp4Writer::new(std::io::Cursor::new(Vec::new()), WriterOptions::new(Brand::Mp4)).map_err(s)?;
+        let entry = SampleEntry::hevc(HevcConfig::parse(&hvcc).map_err(s)?, w as u16, h as u16);
+        let t = wr.add_track(TrackConfig::new(entry, FPS)).map_err(s)?;
+        for p in &packets {
+            wr.write_sample(t, WriteSample { data: &p.data, duration: 1, composition_offset: 0, is_sync: p.key }).map_err(s)?;
+        }
+        std::fs::write(path, wr.finish().map_err(s)?.into_inner()).map_err(s)
     }
 
     fn open_source(path: &Path) -> R<Source> {
@@ -324,9 +344,8 @@ mod bench {
         let track = mp4.tracks.iter().position(|t| t.video().is_some()).ok_or("no video track")?;
         let t = &mp4.tracks[track];
         let entry = t.entries.first().ok_or("no sample entry")?.clone();
-        let (w, h) = t.video().map(|v| (v.width as usize, v.height as usize)).ok_or("no video params")?;
         let samples = (0..t.samples.len()).map(|i| mp4.read_sample(&bytes, track, i).map_err(s)).collect::<R<Vec<_>>>()?;
-        Ok(Source { path: path.to_owned(), mp4, track, entry, samples, w, h, bytes: bytes.len() })
+        Ok(Source { path: path.to_owned(), mp4, track, entry, samples, bytes: bytes.len() })
     }
 
     // ---- the legs ------------------------------------------------------------------------------------------------------
@@ -498,7 +517,12 @@ mod bench {
         std::fs::create_dir_all(&args.dir).map_err(s)?;
         let registered = filmcraft_platform::register();
         println!("# Hardware video bench\n");
-        println!("- machine: {} · macOS {} · {} cores", cmd("sysctl", &["-n", "machdep.cpu.brand_string"]), cmd("sw_vers", &["-productVersion"]), cmd("sysctl", &["-n", "hw.ncpu"]));
+        println!(
+            "- machine: {} · macOS {} · {} cores",
+            cmd("sysctl", &["-n", "machdep.cpu.brand_string"]),
+            cmd("sw_vers", &["-productVersion"]),
+            cmd("sysctl", &["-n", "hw.ncpu"])
+        );
         println!("- load average at start: {}", cmd("sh", &["-c", "uptime | sed 's/.*load averages*: //'"]));
         println!("- reps per row: {} (wall = best, CPU = median); clips {} fps, High profile, 2 B-frames, key frame every second", args.n_reps, FPS);
         println!("- `register()`: {registered:?} · decoder backend: {:?}", hw::hw_backend());
@@ -523,11 +547,15 @@ mod bench {
             println!("\n## {label}\n");
             let session = hw::hw_stats();
             let hw_ok = filmcraft_platform::hardware_decoder_for(&src.entry);
-            println!("- `hardware_decoder_for(stream)`: **{hw_ok}** (a VideoToolbox session {})", if hw_ok { "opens for this stream" } else { "does not open" });
+            println!(
+                "- `hardware_decoder_for(stream)`: **{hw_ok}** (a VideoToolbox session {})",
+                if hw_ok { "opens for this stream" } else { "does not open" }
+            );
             let _ = session;
 
             // decode only
-            let mut table = Table::new(&["decoder", "wall ms/pic", "CPU ms/pic", "pics/s (wall)", "CPU ÷ wall", "hw pictures", "declined", "fallbacks"]);
+            let mut table =
+                Table::new(&["decoder", "wall ms/pic", "CPU ms/pic", "pics/s (wall)", "CPU ÷ wall", "hw pictures", "declined", "fallbacks"]);
             for d in [Dec::Software, Dec::Hardware] {
                 let runs = reps(args.n_reps, || pipeline(&src, d, None))?;
                 let l = pick(&runs)?;
@@ -568,11 +596,13 @@ mod bench {
             println!("\n**Encode only** ({tw}x{th}, {} generated pictures)\n\n{}", pics.len(), table.render());
 
             // the lighter-copy pipeline
-            let mut table = Table::new(&["path", "wall ms/pic", "CPU ms/pic", "pics/s (wall)", "decode CPU", "scale CPU", "encode CPU", "CPU ÷ wall"]);
+            let mut table =
+                Table::new(&["path", "wall ms/pic", "CPU ms/pic", "pics/s (wall)", "decode CPU", "scale CPU", "encode CPU", "CPU ÷ wall"]);
             let paths = [
                 ("A software decode + software encode", Dec::Software, EncKind::Software),
                 ("B VideoToolbox decode + software encode", Dec::Hardware, EncKind::Software),
                 ("C VideoToolbox decode + VideoToolbox encode", Dec::Hardware, EncKind::VtH264),
+                ("D software decode + VideoToolbox encode", Dec::Software, EncKind::VtH264),
             ];
             for (name, d, k) in paths {
                 let runs = reps(args.n_reps, || pipeline(&src, d, Some((k, (tw, th), kbps))))?;
@@ -595,6 +625,35 @@ mod bench {
 
             // a poster: one key frame
             poster(&src, args.n_reps)?;
+
+            // the same pictures as HEVC (what an iPhone records), decoded in software and in hardware
+            let hevc_path = args.dir.join(format!("clip-{h}p-{frames}-hevc.mp4"));
+            if !hevc_path.exists() {
+                make_hevc_clip(&hevc_path, w, h, frames, kbps_src)?;
+            }
+            let hevc = open_source(&hevc_path)?;
+            println!("\n## {h}p HEVC (VideoToolbox-encoded), {} pictures, {:.1} MB\n", hevc.samples.len(), hevc.bytes as f64 / 1e6);
+            println!("- `hardware_decoder_for(stream)`: **{}**", filmcraft_platform::hardware_decoder_for(&hevc.entry));
+            let mut table =
+                Table::new(&["decoder", "wall ms/pic", "CPU ms/pic", "pics/s (wall)", "CPU ÷ wall", "hw pictures", "declined", "fallbacks"]);
+            for d in [Dec::Software, Dec::Hardware] {
+                let runs = reps(args.n_reps, || pipeline(&hevc, d, None))?;
+                let l = pick(&runs)?;
+                let wall = best_wall(&runs);
+                table.row(vec![
+                    d.name().into(),
+                    format!("{:.2}", wall / l.frames as f64),
+                    format!("{:.2}", per_frame(l.total.cpu, l.frames)),
+                    format!("{:.1}", l.frames as f64 / (wall / 1000.0)),
+                    format!("{:.2}", ms(l.total.cpu) / wall),
+                    format!("{}", l.hw_frames),
+                    format!("{}", l.hw_declined),
+                    format!("{}", l.hw_fallbacks),
+                ]);
+                rows.hevc.push((h, d, wall / l.frames as f64, per_frame(l.total.cpu, l.frames)));
+            }
+            println!("\n**HEVC decode only**\n\n{}", table.render());
+            poster(&hevc, args.n_reps)?;
         }
         println!("\n## Summary\n\n{}", rows.summary());
         Ok(())
@@ -646,7 +705,7 @@ mod bench {
             ("software decode only", sw_dec),
             ("VideoToolbox decode, new session each time", hw_cold),
             ("VideoToolbox decode, session already open", hw_warm),
-            ("`lightcraft_video::Clip::poster(512)` today (open + decode + colour + resize)", product),
+            ("`lightcraft_video::Clip::poster(512)` (open + decode + colour + resize)", product),
         ] {
             table.row(vec![name.into(), format!("{:.1}", ms(st.wall)), format!("{:.1}", ms(st.cpu))]);
         }
@@ -681,6 +740,7 @@ mod bench {
         decode: Vec<(usize, Dec, f64, f64, u64)>,
         encode: Vec<(usize, EncKind, f64, f64)>,
         pipeline: Vec<(usize, &'static str, f64, f64)>,
+        hevc: Vec<(usize, Dec, f64, f64)>,
     }
 
     impl Rows {
@@ -689,12 +749,37 @@ mod bench {
             let mut out = Vec::new();
             for &(h, d, wall, cpu, _) in self.decode.iter().filter(|r| r.1 == Dec::Hardware) {
                 if let Some(&(_, _, sw_wall, sw_cpu, _)) = self.decode.iter().find(|r| r.0 == h && r.1 == Dec::Software) {
-                    out.push(format!("- decode {h}p {}: wall {:.1}x faster, CPU time {:.1}x lower ({:.2} vs {:.2} CPU ms per picture)", d.name(), sw_wall / wall, sw_cpu / cpu, cpu, sw_cpu));
+                    out.push(format!(
+                        "- decode {h}p {}: wall {:.1}x faster, CPU time {:.1}x lower ({:.2} vs {:.2} CPU ms per picture)",
+                        d.name(),
+                        sw_wall / wall,
+                        sw_cpu / cpu,
+                        cpu,
+                        sw_cpu
+                    ));
                 }
             }
             for &(h, k, wall, cpu) in self.encode.iter().filter(|r| r.1 != EncKind::Software) {
                 if let Some(&(_, _, sw_wall, sw_cpu)) = self.encode.iter().find(|r| r.0 == h && r.1 == EncKind::Software) {
-                    out.push(format!("- encode to {h}p, {}: wall {:.1}x faster, CPU time {:.1}x lower ({:.2} vs {:.2} CPU ms per picture)", k.name(), sw_wall / wall, sw_cpu / cpu, cpu, sw_cpu));
+                    out.push(format!(
+                        "- encode to {h}p, {}: wall {:.1}x faster, CPU time {:.1}x lower ({:.2} vs {:.2} CPU ms per picture)",
+                        k.name(),
+                        sw_wall / wall,
+                        sw_cpu / cpu,
+                        cpu,
+                        sw_cpu
+                    ));
+                }
+            }
+            for &(h, _, wall, cpu) in self.hevc.iter().filter(|r| r.1 == Dec::Hardware) {
+                if let Some(&(_, _, sw_wall, sw_cpu)) = self.hevc.iter().find(|r| r.0 == h && r.1 == Dec::Software) {
+                    out.push(format!(
+                        "- decode {h}p HEVC VideoToolbox: wall {:.1}x faster, CPU time {:.1}x lower ({:.2} vs {:.2} CPU ms per picture)",
+                        sw_wall / wall,
+                        sw_cpu / cpu,
+                        cpu,
+                        sw_cpu
+                    ));
                 }
             }
             let a: Vec<_> = self.pipeline.iter().filter(|r| r.1.starts_with('A')).collect();

@@ -8,7 +8,9 @@
 //! - `album` / `collection`: an album (`name`, `parent.id`); `album` / `collection_set`: a folder;
 //! - `album_asset`: a photo in an album (`album.id`, `asset.id`);
 //! - `asset` / `image` or `video`: a photo (`importSource.fileName`, `fileSize`, `originalWidth`,
-//!   `originalHeight`, `captureDate`, `xmp.exif.DateTimeOriginal`).
+//!   `originalHeight`, `captureDate`, `xmp.exif.DateTimeOriginal`);
+//! - `version` / `edit`: one edit of a photo (`asset.id`, `userUpdated`, `develop.xmpCameraRaw`: the
+//!   XMP packet itself, or `{sha256}` naming the file `settings/<sha256>` beside the catalog).
 //!
 //! Learnt from a user's own catalog file; nothing of Adobe's app was looked into.
 
@@ -18,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
 use serde_json::Value;
 
-use crate::lightroom_albums::{AlbumSource, PhotoIdentity, SourceAlbum, second};
+use crate::lightroom_albums::{AlbumSource, DevelopSource, PhotoIdentity, SourceAlbum, second};
 use crate::lightroom_sqlite::{LiveTable, Value as SqlValue};
 
 /// Whether `path` is a Lightroom (cloud) catalog (`*.mcat`) rather than a Classic `.lrcat`.
@@ -32,6 +34,7 @@ enum Kind {
     Folder,
     Member,
     Photo,
+    Edit,
 }
 
 fn columns(table: &LiveTable, wanted: &[&str]) -> Result<(usize, Vec<usize>), String> {
@@ -104,6 +107,7 @@ pub fn read_staged(
     progress_stage.store(stage::LISTING, Ordering::Relaxed);
     let mut wanted = Vec::new();
     let mut photo_revs = HashMap::new();
+    let mut edit_revs = Vec::new();
     for row in db.read_table(docs.rootpage, doc_columns)? {
         if int(&row.values, deleted_at) != 0 {
             continue;
@@ -113,12 +117,15 @@ pub fn read_staged(
             ("album", "collection_set") => Kind::Folder,
             ("album_asset", _) => Kind::Member,
             ("asset", "image" | "video") => Kind::Photo,
+            ("version", "edit") => Kind::Edit,
             _ => continue,
         };
         let id = text(&row.values, id_at).to_string();
         let rev = int(&row.values, rev_at);
         if kind == Kind::Photo {
             photo_revs.insert(id, rev);
+        } else if kind == Kind::Edit {
+            edit_revs.push(rev);
         } else {
             wanted.push((rev, id, kind));
         }
@@ -167,7 +174,7 @@ pub fn read_staged(
                     out.members.entry(album.to_string()).or_default().push(photo.to_string());
                 }
             }
-            Kind::Photo => {}
+            Kind::Photo | Kind::Edit => {}
         }
     }
     // a member of an album that isn't there (deleted, or in a shared space) is dropped
@@ -202,6 +209,33 @@ pub fn read_staged(
                 Err(e) => warn(&mut out, format!("photo {id}: {e}")),
             }
         }
+    }
+    if photos {
+        // each of those photos' latest edit (a photo is edited again and again: every edit is a document)
+        edit_revs.sort_unstable();
+        total.fetch_add(edit_revs.len(), Ordering::Relaxed);
+        let mut latest: HashMap<String, (String, i64, DevelopSource)> = HashMap::new();
+        for rev in edit_revs {
+            step(1)?;
+            let Ok(Some(doc)) = content(rev) else { continue };
+            let asset = str_at(&doc, "/asset/id");
+            if !out.photos.contains_key(asset) {
+                continue;
+            }
+            let develop = match doc.pointer("/develop/xmpCameraRaw") {
+                Some(Value::String(packet)) if !packet.is_empty() => DevelopSource::Inline(packet.clone()),
+                Some(Value::Object(o)) => match o.get("sha256").and_then(Value::as_str) {
+                    Some(hash) => DevelopSource::Hash(hash.to_string()),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            let updated = Some(str_at(&doc, "/userUpdated")).filter(|u| !u.is_empty()).unwrap_or_else(|| str_at(&doc, "/develop/userUpdated"));
+            if latest.get(asset).is_none_or(|(u, r, _)| (updated, rev) > (u.as_str(), *r)) {
+                latest.insert(asset.to_string(), (updated.to_string(), rev, develop));
+            }
+        }
+        out.edits = latest.into_iter().map(|(asset, (_, _, develop))| (asset, develop)).collect();
     }
     unchanged(&db)?;
     Ok(out)
@@ -254,6 +288,15 @@ pub(crate) mod tests {
     use crate::lightroom_sqlite::Value as Sql;
     use serde_json::json;
 
+    /// A Camera Raw settings packet, as Lightroom keeps a photo's edit.
+    pub(crate) fn settings_packet(exposure: &str) -> String {
+        format!(
+            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+             <rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"17.1\" \
+             crs:HasSettings=\"True\" crs:Exposure2012=\"{exposure}\"/></rdf:RDF></x:xmpmeta>"
+        )
+    }
+
     /// A Lightroom (cloud) catalog in `dir`: folder "Trips" holding album "Japan" (photos `p1`, a
     /// photo `p9` that isn't in the catalog), album "Empty", album "Video" (`p2`), a deleted album, a
     /// member of a shared-space album and a preset, each document one revision.
@@ -278,6 +321,22 @@ pub(crate) mod tests {
             ),
             ("p2", "asset", "video", 0, json!({"captureDate": "2024-06-26T10:00:00", "importSource": {"fileName": "IMG_0002.MOV", "fileSize": 9}})),
             ("preset", "asset", "preset", 0, json!({"name": "Warm"})),
+            // two edits of p1: the later one's settings are a file beside the catalog
+            (
+                "e1",
+                "version",
+                "edit",
+                0,
+                json!({"asset": {"id": "p1"}, "userUpdated": "2024-07-01T00:00:00.000Z", "develop": {"xmpCameraRaw": settings_packet("3.00")}}),
+            ),
+            (
+                "e2",
+                "version",
+                "edit",
+                0,
+                json!({"asset": {"id": "p1"}, "userUpdated": "2025-01-01T00:00:00.000Z", "develop": {"xmpCameraRaw": {"sha256": "abc123"}}}),
+            ),
+            ("e3", "version", "edit", 0, json!({"asset": {"id": "p2"}, "develop": {"xmpCameraRaw": {}}})),
         ];
         let doc_rows = docs
             .iter()
@@ -358,6 +417,8 @@ pub(crate) mod tests {
             }
         );
         assert_eq!(source.photos.get("p2").and_then(|p| p.captured.clone()), Some("20240626100000".into()));
+        assert_eq!(source.edits.get("p1"), Some(&DevelopSource::Hash("abc123".into())), "the latest edit of a photo, by its time");
+        assert_eq!(source.edits.get("p2"), None, "an edit without settings is left out");
         assert_eq!(source.photos.len(), 2);
         let (cancel, total, done) = Default::default();
         let report = inspect(&dir.join("Managed Catalog.mcat"), &cancel, &total, &done).unwrap();
@@ -400,6 +461,36 @@ pub(crate) mod tests {
 
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(s.catalog.albums().count(), 0, "one undo step");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The catalog's develop settings reach photos without edits: applied as the edit and copied
+    /// beside a local original as its sidecar (never over one that is there); a photo with edits
+    /// of its own keeps them.
+    #[test]
+    fn develop_settings_become_the_edit_and_a_sidecar() {
+        use lightcraft_catalog::{Op, Photo, Source};
+        let dir = temp_dir("develop");
+        let path = mcat(&dir);
+        let packet = settings_packet("1.00");
+        std::fs::create_dir_all(dir.join("settings")).unwrap();
+        std::fs::write(dir.join("settings/abc123"), &packet).unwrap();
+        let original = dir.join("IMG_0001.HEIC");
+        std::fs::write(&original, b"x").unwrap();
+        let mut s = crate::Session::new();
+        let id = s.catalog.alloc_photo_id();
+        let mut photo = Photo::new(id, Source::File { path: original.to_string_lossy().into() }, "IMG_0001.HEIC", "HEIC", 4032, 3024, "2026-01-01T00:00:00");
+        photo.file_size = 2_000_000;
+        photo.captured = Some("2024-06-25T22:25:00".into());
+        s.commit("add", Op::AddPhoto { photo: Box::new(photo) }).unwrap();
+
+        let report = crate::lightroom_catalog::import(&mut s, &path, false, false).unwrap();
+        assert_eq!((report["edits"].as_u64(), report["sidecars"].as_u64()), (Some(1), Some(1)), "{report}");
+        assert_eq!(std::fs::read_to_string(dir.join("IMG_0001.xmp")).unwrap(), packet, "the file as Lightroom kept it");
+        assert!(s.catalog.photo(id).unwrap().edited.is_some());
+
+        let again = crate::lightroom_catalog::import(&mut s, &path, false, false).unwrap();
+        assert_eq!((again["edits"].as_u64(), again["editsKept"].as_u64(), again["sidecars"].as_u64()), (Some(0), Some(1), Some(0)));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -1244,6 +1244,69 @@ fn photos_are_handed_out_once_and_only_for_what_the_server_keeps() {
 }
 
 #[test]
+fn start_now_takes_a_part_back_from_idle_devices_and_tells_them() {
+    let (f, _) = helper_fixture("work-take-back", &["sensitive"]);
+    let fake = lightcraft_vision::fake::FAKE_CLASSIFIER_ID;
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+
+    // no device of ann's has come since the server started: Start now is the server's, and ann's setting follows
+    assert_eq!(post(&admin, "/api/admin/search/first/sensitive", b"{}").0, 200);
+    let (_, s) = get(&f.ann, "/api/work/settings");
+    assert_eq!((&s["moved"], &s["takenBack"]), (&json!([]), &json!(["sensitive"])), "{s}");
+    // (the device that asks next is told, and handed nothing)
+    let (_, r) = claim(&f.ann, json!({"sensitive": fake}), 4);
+    assert_eq!(r["takenBack"], json!(["sensitive"]), "{r}");
+    assert!(keys_of(&r).is_empty() && r["refused"]["sensitive"].as_str().unwrap().contains("took it back"), "{r}");
+    // a device starting on its own does not undo it; the person choosing the part does
+    assert_eq!(put(&f.ann, "/api/work/settings", json!({"add": ["sensitive"]})).1["moved"], json!([]));
+    let (_, s) = put(&f.ann, "/api/work/settings", json!({"add": ["sensitive"], "chosen": true}));
+    assert_eq!((&s["moved"], &s["takenBack"]), (&json!(["sensitive"]), &json!([])), "{s}");
+    assert!(claim(&f.ann, json!({"sensitive": fake}), 4).1["takenBack"].as_array().unwrap().is_empty());
+
+    // a device that is claiming keeps its part
+    assert_eq!(post(&admin, "/api/admin/search/first/sensitive", b"{}").0, 200);
+    assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!(["sensitive"]));
+}
+
+#[test]
+fn a_device_follows_the_server_taking_its_work_back() {
+    let (f, _) = helper_fixture("work-device-follows", &[]);
+    let mut s = device(&f, "helper", Some(Arc::new(Padded)));
+    s.vision.set_classifier(Arc::new(lightcraft_vision::fake::FakeClassifier));
+    s.execute("vision.setHelper", &json!({"parts": ["sensitive"]})).unwrap();
+    for _ in 0..600 {
+        s.vision_poll();
+        sync(&mut s);
+        if s.execute("vision.helper", &json!({})).unwrap()["done"]["sensitive"] == 4 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!(["sensitive"]));
+
+    // the admin has the server do it: the device's own setting follows, and stays off
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+    assert_eq!(post(&admin, "/api/admin/users/ann/search/sensitive/here", b"{}").0, 200);
+    let mut parts = json!(null);
+    for _ in 0..600 {
+        s.vision_poll();
+        sync(&mut s);
+        parts = s.execute("vision.helper", &json!({})).unwrap()["parts"].clone();
+        if parts == json!([]) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(parts, json!([]), "the device stopped doing it");
+    assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!([]), "and the server does it");
+    // (choosing it again on the device is a choice: it is the device's again)
+    s.execute("vision.setHelper", &json!({"parts": ["sensitive"]})).unwrap();
+    assert_eq!(get(&f.ann, "/api/work/settings").1["takenBack"], json!([]));
+}
+
+#[test]
 fn a_device_does_the_models_work_and_the_photos_never_stay_on_it() {
     let (f, calls) = helper_fixture("work-device", &["sensitive"]);
     let mut s = device(&f, "helper", Some(Arc::new(Padded)));

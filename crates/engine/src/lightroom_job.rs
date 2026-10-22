@@ -313,6 +313,8 @@ impl LightroomJob {
         }
         .map_err(|e| if cancel.load(Ordering::Relaxed) { cancelled() } else { error(e) })?;
         let index_path = self.archive_dir.as_ref().map(|dir| dir.join("lightroom-index.json"));
+        // a cloud catalog keeps its develop settings in `settings/` beside it
+        let settings_dir = crate::lightroom_cloud::is_cloud(&self.path).then(|| self.path.with_file_name("settings"));
         Ok(PreparedLightroom {
             data: CatalogImport {
                 source: source.source.clone(),
@@ -334,7 +336,7 @@ impl LightroomJob {
             cancelled: cancel.load(Ordering::Relaxed),
             albums: {
                 self.progress.stage.store(crate::lightroom_cloud::stage::MATCHING, Ordering::Relaxed);
-                Some(AlbumPlan::new(source, library))
+                Some(AlbumPlan::new(source, library, settings_dir.as_deref(), cancel))
             },
         })
     }
