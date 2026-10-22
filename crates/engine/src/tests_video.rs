@@ -195,9 +195,11 @@ fn a_clip_is_trimmed_in_one_undo_step() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(trimmed(&s), Some((Some(0.5), None)));
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.develop_of(clip).unwrap().video.and_then(|v| v.trim_end), Some(1.5));
+    s.execute("video.setTrim", &json!({"id": clip.0, "end": 1.6})).unwrap();
     s.execute("edit.undo", &json!({})).unwrap();
-    assert!(s.develop_of(clip).unwrap().video.is_none());
+    assert_eq!(trimmed(&s), Some((Some(0.5), None)), "the trim before the undo is a step of its own");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(trimmed(&s), None);
     // refused
     for bad in [
         json!({"id": clip.0}),

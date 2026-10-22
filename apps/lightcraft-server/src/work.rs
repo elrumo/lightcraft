@@ -99,7 +99,8 @@ impl Work {
     fn read(&self, user: &str) -> (Vec<String>, Vec<String>) {
         let v: Option<Value> = self.file(user).and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok());
         let names = |key: &str| -> Vec<String> {
-            let have: Vec<&str> = v.as_ref().and_then(|v| v[key].as_array()).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+            let have: Vec<&str> =
+                v.as_ref().and_then(|v| v[key].as_array()).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
             PARTS.iter().map(|p| p.key()).chain([PREVIEWS]).filter(|n| have.contains(n)).map(String::from).collect()
         };
         (names("moved"), names("takenBack"))
