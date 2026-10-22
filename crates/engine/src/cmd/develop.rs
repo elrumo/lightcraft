@@ -33,6 +33,18 @@ fn groups_param(p: &Value, c: &str) -> Result<Option<Vec<SettingsGroup>>> {
     }
 }
 
+/// What pasting (or syncing) settings carrying model work leaves to be made again on the photos that changed: for each
+/// `{photo, masks: [{mask, component}], spots: [index], expand}` (`work` as [`lightcraft_develop::ai_work`] found it in
+/// the source). A native frontend makes them again on each photo (`mask.setObject`, `spot.erase`, `crop.generate`) and
+/// tells the user it is doing so.
+fn ai_redo(work: &lightcraft_develop::AiWork, photos: &[PhotoId]) -> Value {
+    if work.is_empty() {
+        return json!([]);
+    }
+    let masks: Vec<Value> = work.masks.iter().map(|(m, c)| json!({"mask": m, "component": c})).collect();
+    photos.iter().map(|id| json!({"photo": id.0, "masks": masks, "spots": work.spots, "expand": work.expand})).collect()
+}
+
 /// The Generative Expand model ids, for messages.
 fn expand_ids() -> String {
     crate::expand::ExpandModel::ALL.iter().map(|m| m.id()).collect::<Vec<_>>().join(", ")
@@ -970,6 +982,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 let d = s.develop_of(id).unwrap_or_default();
                 s.clipboard = Some(lightcraft_develop::extract_groups(&d, &s.copy_groups));
+                s.clipboard_ai = lightcraft_develop::ai_work(&d, &s.copy_groups);
                 s.clipboard_source = s.catalog.photo(id).map(|p| crate::upright_transfer::source_of(p, &d, &s.library_identity));
                 Ok(json!({"groups": s.copy_groups}))
             }
@@ -986,19 +999,23 @@ pub fn specs() -> Vec<CommandSpec> {
                 let prev =
                     s.previous_active.filter(|id| s.catalog.photo(*id).is_some_and(|ph| !ph.deleted)).ok_or_else(|| bad(c, "no previous photo"))?;
                 let groups = groups_param(p, c)?.unwrap_or_else(|| s.copy_groups.clone());
-                let partial = lightcraft_develop::extract_groups(&s.develop_of(prev).unwrap_or_default(), &groups);
+                let from = s.develop_of(prev).unwrap_or_default();
+                let partial = lightcraft_develop::extract_groups(&from, &groups);
+                let work = lightcraft_develop::ai_work(&from, &groups);
                 let ids: Vec<PhotoId> = s.targets(p)?.into_iter().filter(|id| *id != prev).collect();
                 let source = s.catalog.photo(prev).map(|ph| crate::upright_transfer::source_of(ph, &ph.develop, &s.library_identity));
-                let ops = ids
-                    .iter()
-                    .filter_map(|id| {
-                        s.catalog.photo(*id).map(|ph| (*id, crate::upright_transfer::transferred(ph, &ph.develop, &partial, source.as_ref())))
-                    })
-                    .filter_map(|(id, d)| s.develop_op(id, d, "Paste from Previous"))
-                    .collect::<Vec<_>>();
+                let (mut ops, mut changed) = (Vec::new(), Vec::new());
+                for id in ids {
+                    let Some(ph) = s.catalog.photo(id) else { continue };
+                    let d = crate::upright_transfer::transferred(ph, &ph.develop, &partial, source.as_ref());
+                    if let Some(op) = s.develop_op(id, d, "Paste from Previous") {
+                        ops.push(op);
+                        changed.push(id);
+                    }
+                }
                 let n = ops.len();
                 s.commit("Paste from Previous", Op::Batch { ops })?;
-                Ok(json!({"changed": n, "from": prev.0}))
+                Ok(json!({"changed": n, "from": prev.0, "ai": ai_redo(&work, &changed)}))
             }
         ),
         cmd!(
@@ -1006,30 +1023,35 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paste Edit Settings",
             ["Edit"],
             Some("Cmd+V"),
-            "{ids?, groups?: [settingsGroup] (paste only these of the copied groups)}",
+            "{ids?, groups?: [settingsGroup] (paste only these of the copied groups)} → {changed, ai: [{photo, masks: [{mask, component}], spots: [index], expand}]}: what a model made on the copied photo (Object / Describe selections, AI Remove fills, Generative Expand) and is not carried over: make it again on each listed photo (`mask.setObject` / `mask.objectPoint`…, `spot.erase`, `crop.generate`); the selections arrive without their picture, from the same clicks or words",
             has_clipboard,
             |s, p| {
                 let c = "develop.paste";
                 let mut clip = s.clipboard.clone().unwrap_or_default();
+                let mut work = s.clipboard_ai.clone();
                 if let Some(only) = groups_param(p, c)? {
                     // the clipboard holds whole groups: rebuild it with just the chosen (copied) ones
                     let only: Vec<_> = only.into_iter().filter(|g| s.copy_groups.contains(g)).collect();
                     let full = lightcraft_develop::apply_partial(&DevelopSettings::default(), &clip, 1.0);
                     clip = lightcraft_develop::extract_groups(&full, &only);
+                    work = work.only(&only);
                 }
                 let ids = s.targets(p)?;
                 // copied in another library: its photo ids say nothing about this one's
                 let source = s.clipboard_source.clone().filter(|from| from.taken_in(&s.library_identity));
-                let ops = ids
-                    .iter()
-                    .filter_map(|id| {
-                        s.catalog.photo(*id).map(|ph| (*id, crate::upright_transfer::transferred(ph, &ph.develop, &clip, source.as_ref())))
-                    })
-                    .filter_map(|(id, d)| s.develop_op(id, d, "Paste Settings"))
-                    .collect::<Vec<_>>();
+                let (mut ops, mut changed) = (Vec::new(), Vec::new());
+                for id in ids {
+                    let Some(ph) = s.catalog.photo(id) else { continue };
+                    let d = crate::upright_transfer::transferred(ph, &ph.develop, &clip, source.as_ref());
+                    if let Some(op) = s.develop_op(id, d, "Paste Settings") {
+                        ops.push(op);
+                        changed.push(id);
+                    }
+                }
                 let n = ops.len();
                 s.commit("Paste Settings", Op::Batch { ops })?;
-                Ok(json!({"changed": n}))
+                // (`ai`: what the copied photo's models made, to be made again on each of these)
+                Ok(json!({"changed": n, "ai": ai_redo(&work, &changed)}))
             }
         ),
         cmd!(

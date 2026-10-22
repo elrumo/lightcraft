@@ -732,6 +732,10 @@ pub(crate) fn pending_previews(st: &State, user: &str, max: usize) -> Result<(Ve
             break;
         }
         let Some(hash) = photo.content_hash.as_deref() else { continue };
+        // (a clip's original can be gigabytes: its poster is made here, or by the helper's video part, never by this one)
+        if photo.kind == lightcraft_engine::catalog::MediaKind::Video {
+            continue;
+        }
         if !crate::folders::previews_missing(&blobs, hash) || st.folders.is_failed(user, hash) || st.vision.work.previews_leased(user, &key) {
             continue;
         }

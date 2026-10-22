@@ -102,6 +102,12 @@ pub struct UserLib {
 }
 
 impl UserLib {
+    /// A file was added to or removed from `blobs`: the usage numbers and the listing of lighter copies are made again.
+    pub(crate) fn forget_stats(&mut self) {
+        self.usage = None;
+        self.copies = None;
+    }
+
     fn open(data: &Path, user: &str) -> Result<UserLib, String> {
         let dir = accounts::user_dir(data, user);
         let lib = dir.join("library");
@@ -438,15 +444,20 @@ fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
     json(200, &json!(u))
 }
 
-/// A user's library by kind, and what their videos take with the lighter copies the server keeps of them. The copies
-/// are listed without the library locked (pushes and pulls go on meanwhile) and reused for [`USAGE_TTL`].
-pub(crate) fn library_stats(st: &State, user: &str, l: &Mutex<UserLib>) -> (crate::stats::Tally, proto::VideoUsage) {
+/// The lighter copies of a user's videos on disk (each one's name, the content hash of the video it stands for, and size),
+/// listed without the library locked (pushes and pulls go on meanwhile) and reused for [`USAGE_TTL`].
+pub(crate) fn copy_names(st: &State, user: &str, l: &Mutex<UserLib>) -> Arc<Vec<(String, u64)>> {
     let cached = l.lock().unwrap_or_else(PoisonError::into_inner).copies.as_ref().filter(|(at, _)| at.elapsed() < USAGE_TTL).map(|(_, c)| c.clone());
-    let copies = cached.unwrap_or_else(|| {
+    cached.unwrap_or_else(|| {
         let found = Arc::new(crate::stats::copies(&accounts::user_dir(&st.data, user).join("blobs")));
         l.lock().unwrap_or_else(PoisonError::into_inner).copies = Some((Instant::now(), found.clone()));
         found
-    });
+    })
+}
+
+/// A user's library by kind, and what their videos take with the lighter copies the server keeps of them.
+pub(crate) fn library_stats(st: &State, user: &str, l: &Mutex<UserLib>) -> (crate::stats::Tally, proto::VideoUsage) {
+    let copies = copy_names(st, user, l);
     let l = l.lock().unwrap_or_else(PoisonError::into_inner);
     let tally = l.tally();
     (tally, crate::stats::video_usage(l.catalog(), &tally, &copies))
@@ -470,7 +481,8 @@ fn activity(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
     });
     let previews = proto::Progress { done: s.previews_done as u64, total: s.previews_total as u64, eta_secs: s.previews_eta_secs };
     let (search, text, faces) = crate::vision::progress(st, l, &who.user);
-    json(200, &json!(proto::Activity { scan, previews, search, text, faces }))
+    let video = st.video.progress(st, &who.user);
+    json(200, &json!(proto::Activity { scan, previews, search, text, faces, video }))
 }
 
 /// The files of one kind under `blobs/<kind>/<xx>/<hash>`.
@@ -666,7 +678,7 @@ pub(crate) fn folder_original_path(st: &State, l: &Mutex<UserLib>, user: &str, h
 fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user: &str, kind: &str, hash: &str) -> Resp {
     let dir = l.lock().unwrap_or_else(PoisonError::into_inner).dir.join("blobs");
     let Some(path) = blob_path(&dir, kind, hash) else {
-        return error(400, "not a photo file this server keeps (/api/blobs/original|smart|mini/<32 hex digits>)");
+        return error(400, "not a photo file this server keeps (/api/blobs/original|smart|mini|video/<32 hex digits>)");
     };
     let hash = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     match method {
@@ -677,7 +689,7 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
                 Err(_) => None,
             };
             // a device shows a photo whose preview isn't built yet: build it before the rest, and say so
-            if f.is_none() && kind != "original" && matches!(method, Method::Get) {
+            if f.is_none() && matches!(kind, "smart" | "mini") && matches!(method, Method::Get) {
                 match rush_preview(st, l, user, &dir, &hash) {
                     Some(PreviewState::Built) => f = std::fs::File::open(&path).ok(),
                     Some(state) => return preview_not_yet(state),
@@ -686,13 +698,18 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
             }
             let Some(mut f) = f else {
                 // an original may be part-way: say how far
-                let have = if kind == "original" { std::fs::metadata(part_path(&dir, &hash)).map(|m| m.len()).unwrap_or(0) } else { 0 };
+                let part = match kind {
+                    "original" => Some(part_path(&dir, &hash)),
+                    "video" => Some(crate::video::part_of(&dir, &hash)),
+                    _ => None,
+                };
+                let have = part.and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
                 return offset_error(404, "the server doesn't have this file yet", have);
             };
             let len = f.metadata().map(|m| m.len()).unwrap_or(0);
             // by content: never changes
             let mut headers: Vec<Header> = [
-                header("Content-Type", "application/octet-stream"),
+                header("Content-Type", if kind == "video" { "video/mp4" } else { "application/octet-stream" }),
                 header("Accept-Ranges", "bytes"),
                 header("Cache-Control", "private, max-age=31536000, immutable"),
             ]
@@ -721,9 +738,12 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
             if let Some(r) = over_quota(st, user, incoming) {
                 return r;
             }
+            if kind == "video" {
+                return crate::video::put(st, req, l, user, &dir, &hash, &path);
+            }
             // `?previews=1` on an original: the device asks the server to build its previews
             let previews = kind == "original" && req.url().split_once('?').is_some_and(|(_, q)| query(q, "previews") == Some("1"));
-            let resp = put_blob(st, req, &dir, kind, &path);
+            let resp = put_blob(st, req, &dir, kind, &path, if kind == "original" { Check::Hash } else { Check::Magic }, None);
             if resp.status_code().0 == 200 {
                 st.sizes.add(user, incoming);
             }
@@ -845,13 +865,27 @@ impl Drop for Writing<'_> {
     }
 }
 
-/// `PUT /api/blobs/<kind>/<hash>`. A preview is taken whole or not at all. An original is
-/// streamed to `tmp/original-<hash>.part` and hashed on the way; if the connection breaks, what
+/// What the bytes of an upload have to be for the server to keep them.
+pub(crate) enum Check<'a> {
+    /// Hash to the file's name (an original).
+    Hash,
+    /// Hash to this digest (a lighter copy of a video: its bytes are not the original's).
+    Digest(&'a str),
+    /// Start like a LightCraft preview.
+    Magic,
+}
+
+/// Looks at a received file before it is put in place (`Err`: refuse it, with this status); `Ok(Some(body))` drops the
+/// file and answers `200` with the body, `Ok(None)` keeps it.
+pub(crate) type Inspect<'a> = &'a mut dyn FnMut(&Path, u64) -> Result<Option<Value>, (u16, String)>;
+
+/// `PUT /api/blobs/<kind>/<hash>`. A preview is taken whole or not at all. An original (or a video's lighter copy) is
+/// streamed to `tmp/<kind>-<hash>.part` and hashed on the way; if the connection breaks, what
 /// arrived stays, `HEAD` says how much (`Upload-Offset`), and a `PUT` with
 /// `Content-Range: bytes <offset>-<last>/<total>` carries on from there. A plain `PUT` starts
-/// over. Only the hash decides whether the file is kept.
-fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) -> Resp {
-    let original = kind == "original";
+/// over. Only the hash (the copy's digest, for a copy) decides whether the file is kept; `inspect` may still refuse it.
+pub(crate) fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path, check: Check, inspect: Option<Inspect>) -> Resp {
+    let original = kind == "original" || kind == "video";
     let max = if original { BLOB_MAX } else { PREVIEW_MAX };
     let expected = req.body_length().map(|n| n as u64);
     if expected.is_some_and(|n| n > max) {
@@ -860,7 +894,9 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
     // (the path's file name is the hash, normalized)
     let hash = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let tmp_dir = dir.join("tmp");
-    let part = if original {
+    let part = if kind == "video" {
+        crate::video::part_of(dir, &hash)
+    } else if original {
         part_path(dir, &hash)
     } else {
         match accounts::random_hex(8) {
@@ -871,7 +907,7 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
     let range = match header_value(req, "Content-Range").map(upload_range) {
         None => None,
         Some(Some(r)) if original => Some(r),
-        Some(_) => return error(400, "Content-Range: bytes <first>-<last>/<total>, on an original"),
+        Some(_) => return error(400, "Content-Range: bytes <first>-<last>/<total>, on an original or a lighter video"),
     };
     let _writing = if original {
         match Writing::take(&st.uploading, &part) {
@@ -899,7 +935,7 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
         }
     };
     let mut keep = false;
-    let r = (|| -> Result<(), (u16, String)> {
+    let r = (|| -> Result<Option<Value>, (u16, String)> {
         let io = |e: std::io::Error| (500, e.to_string());
         std::fs::create_dir_all(&tmp_dir).map_err(io)?;
         let mut hasher = lightcraft_preview::Hasher128::new();
@@ -948,14 +984,22 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
             keep = original && f.sync_data().is_ok();
             return Err((400, format!("the upload ended after {got} of {} bytes", expected.unwrap_or(0))));
         }
-        if original && hasher.finish().to_string() != hash {
-            return Err((422, "the file isn't the one its hash names".into()));
-        }
-        if !original && head != PREVIEW_MAGIC {
-            return Err((422, "not a LightCraft preview".into()));
+        let digest = hasher.finish().to_string();
+        match check {
+            Check::Hash if digest != hash => return Err((422, "the file isn't the one its hash names".into())),
+            Check::Digest(d) if digest != d => return Err((422, "the file isn't the one its digest names".into())),
+            Check::Magic if head != PREVIEW_MAGIC => return Err((422, "not a LightCraft preview".into())),
+            _ => {}
         }
         f.sync_all().map_err(io)?;
         drop(f);
+        if let Some(inspect) = inspect {
+            // (a refused or dropped file is not kept for a resume: it was whole)
+            if let Some(body) = inspect(&part, total)? {
+                let _ = std::fs::remove_file(&part);
+                return Ok(Some(body));
+            }
+        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(io)?;
         }
@@ -965,10 +1009,11 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
         {
             let _ = d.sync_all();
         }
-        Ok(())
+        Ok(None)
     })();
     match r {
-        Ok(()) => {
+        Ok(Some(body)) => json(200, &body),
+        Ok(None) => {
             if kind == "mini" || kind == "smart" {
                 // a photo that can be indexed for search now (its text is read from the smart preview)
                 st.vision.wake();

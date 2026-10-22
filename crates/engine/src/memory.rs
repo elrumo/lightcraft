@@ -382,6 +382,8 @@ impl crate::Session {
         if self.vision_unload_idle(web_time::Duration::ZERO) {
             log::info!("memory: the idle photo-understanding models were unloaded");
         }
+        // (the AI Remove networks: loaded again from their files at the next stroke)
+        self.unload_erasers();
         self.media.clear_sources();
         crate::camera_preview::forget_fits();
         lightcraft_gpu::trim_pool(0);

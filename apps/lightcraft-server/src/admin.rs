@@ -510,6 +510,36 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             log::info!("admin {me}: limits {v:?}");
             Ok(st.limits.status())
         }),
+        // lighter copies of videos: the settings with where the queue stands, and what an admin may do to the queue
+        (Method::Get, ["video"]) => Ok(st.video.status(st)),
+        (Method::Put, ["video"]) => read_json::<Value>(req).map_err(Err).and_then(|v| {
+            let s = st.video.set(&v).map_err(|e| Ok((400, e)))?;
+            log::info!("admin {me}: lighter videos {s:?}");
+            Ok(st.video.status(st))
+        }),
+        (Method::Post, ["video", action @ ("apply" | "pause" | "resume" | "retry-failed")]) => {
+            if *action == "apply" && !st.video.settings().enabled {
+                Err(Ok((409, "turn lighter videos on first".to_string())))
+            } else {
+                // (done first: a log macro does not evaluate its arguments when the level is off)
+                match *action {
+                    "apply" => {
+                        let n = st.video.apply(st);
+                        log::info!("admin {me}: lighter videos: {n} clips queued again for other settings");
+                    }
+                    "pause" => st.video.pause(true),
+                    "resume" => st.video.pause(false),
+                    _ => {
+                        let n = st.video.retry_failed(st);
+                        log::info!("admin {me}: lighter videos: {n} failed clips tried again");
+                    }
+                }
+                if matches!(*action, "pause" | "resume") {
+                    log::info!("admin {me}: lighter videos: {action}");
+                }
+                Ok(st.video.status(st))
+            }
+        }
         (Method::Get, ["search"]) => Ok(search(st)),
         (Method::Put, ["search"]) => read_json::<Enabled>(req).map_err(Err).and_then(|b| {
             st.vision.set_enabled(b.enabled).map_err(|e| Ok((500, e)))?;

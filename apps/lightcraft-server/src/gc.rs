@@ -80,6 +80,20 @@ pub fn run(data: &Path, dry_run: bool) -> Result<Report, String> {
                 }
             }
         }
+        // what became of a video that has left the library: the record of its lighter copy (or of "already efficient", or of
+        // why it failed) goes with the copy above
+        if let Ok(records) = std::fs::read_dir(dir.join("video")) {
+            for f in records.flatten() {
+                let name = f.file_name().to_string_lossy().to_string();
+                let Some(hash) = name.strip_suffix(".json") else { continue };
+                let Ok(meta) = f.metadata() else { continue };
+                if keep.contains(hash) || !old(&meta, now) {
+                    r.kept += 1;
+                } else {
+                    remove(&f.path(), &meta, &mut r);
+                }
+            }
+        }
         // pictures rendered for album links that nobody asked for in a while (they are made again on request)
         if let Ok(cache) = std::fs::read_dir(dir.join("shares").join("cache")) {
             for f in cache.flatten() {

@@ -714,6 +714,7 @@ fn server(t: &Tokens, v: &View) -> Vec<Row> {
         (Icon::Search, "Indexing photos for search", a.search),
         (Icon::Info, "Reading the text in photos", a.text),
         (Icon::Subject, "Finding people in photos", a.faces),
+        (Icon::Filmstrip, "Making lighter copies of videos", a.video),
     ] {
         if let Some(p) = p.filter(|p| p.active()) {
             out.push(

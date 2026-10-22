@@ -145,7 +145,73 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     if let Some(blur) = out.get_mut("lens_blur").and_then(Value::as_object_mut) {
         blur.remove("depth");
     }
+    // (an Object or Describe selection's picture is of the photo it was made on: the clicks and the words stay, the
+    // other photo's selection is made again from them, see [`ai_work`])
+    if let Some(Value::Array(masks)) = out.get_mut("masks") {
+        for shape in masks
+            .iter_mut()
+            .filter_map(|m| m.get_mut("components")?.as_array_mut())
+            .flatten()
+            .filter_map(|c| c.get_mut("shape")?.as_object_mut())
+        {
+            if matches!(shape.get("kind").and_then(Value::as_str), Some("object" | "prompt")) {
+                shape.remove("seg");
+                shape.remove("detail");
+            }
+        }
+    }
     Value::Object(out)
+}
+
+/// What a copy of some settings leaves to be made again on the photo it is pasted onto: the pictures of the first photo
+/// that [`extract_groups`] drops. A model's work is not carried from one photo to another, it is done again.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AiWork {
+    /// Object and Describe selections: `(mask id, component index)`.
+    pub masks: Vec<(u32, usize)>,
+    /// Remove spots an AI model filled, as indexes into the copied spots (the ones [`extract_groups`] keeps).
+    pub spots: Vec<usize>,
+    /// Generative Expand painted the area past the edges.
+    pub expand: bool,
+}
+
+impl AiWork {
+    pub fn is_empty(&self) -> bool {
+        self.masks.is_empty() && self.spots.is_empty() && !self.expand
+    }
+
+    /// What of this is made again when only `groups` are pasted.
+    pub fn only(&self, groups: &[SettingsGroup]) -> AiWork {
+        AiWork {
+            masks: if groups.contains(&SettingsGroup::Masks) { self.masks.clone() } else { Vec::new() },
+            spots: if groups.contains(&SettingsGroup::Spots) { self.spots.clone() } else { Vec::new() },
+            expand: self.expand && groups.contains(&SettingsGroup::Crop),
+        }
+    }
+}
+
+/// The model work in `s` that a copy of `groups` leaves behind (see [`AiWork`]).
+pub fn ai_work(s: &DevelopSettings, groups: &[SettingsGroup]) -> AiWork {
+    let mut work = AiWork::default();
+    if groups.contains(&SettingsGroup::Masks) {
+        for m in &s.masks {
+            for (k, c) in m.components.iter().enumerate() {
+                let done = match &c.shape {
+                    crate::MaskShape::Object { seg, detail, .. } | crate::MaskShape::Prompt { seg, detail, .. } => seg.is_some() || !detail.is_empty(),
+                    _ => false,
+                };
+                if done {
+                    work.masks.push((m.id, k));
+                }
+            }
+        }
+    }
+    if groups.contains(&SettingsGroup::Spots) {
+        // (as `extract_groups` keeps them: the spots that are not an object's shape)
+        work.spots = s.spots.iter().filter(|sp| sp.shape.is_none()).enumerate().filter(|(_, sp)| sp.fill.is_some()).map(|(i, _)| i).collect();
+    }
+    work.expand = groups.contains(&SettingsGroup::Crop) && s.crop.expand && s.expand_fill.is_some();
+    work
 }
 
 /// Recursively merge `patch` into `base` (objects merge; everything else replaces).
@@ -262,6 +328,41 @@ mod tests {
         assert_eq!(b.light.exposure, 1.0);
         assert_eq!(b.effects.clarity, 30.0);
         assert_eq!(b.crop.geometry.angle, 0.0);
+    }
+
+    /// Object and Describe selections are pictures of their photo: a copy keeps the clicks and the words and finds them
+    /// again with [`ai_work`], and nothing else is asked to be made again.
+    #[test]
+    fn copied_selections_leave_their_pictures_and_are_found_again() {
+        let seg = Some(crate::SegMask::from_logits(4, &[3.0; 16]));
+        let comp = |shape| crate::MaskComponent { name: None, op: Default::default(), invert: false, shape };
+        let mut a = DevelopSettings::default();
+        a.masks.push(crate::Mask {
+            id: 7,
+            components: vec![
+                comp(crate::MaskShape::Sky),
+                comp(crate::MaskShape::Object { hint: vec![lightcraft_geom::Point::new(0.5, 0.5)], exclude: vec![], seg: seg.clone(), detail: vec![], edge: 0.0 }),
+                comp(crate::MaskShape::Prompt { text: "the red car".into(), seg, detail: vec![], edge: 0.0 }),
+            ],
+            ..Default::default()
+        });
+        let fill = crate::SpotFill::from_linear(2, 2, [0.4, 0.4, 0.6, 0.6], &[[0.5; 3]; 4]);
+        let at = lightcraft_geom::Point::new(0.5, 0.5);
+        a.spots.push(crate::Spot { points: vec![at], ..Default::default() });
+        a.spots.push(crate::Spot { points: vec![at], fill, ..Default::default() });
+        let groups = [SettingsGroup::Masks, SettingsGroup::Spots];
+        let v = extract_groups(&a, &groups);
+        let parts = &v["masks"][0]["components"];
+        for k in [1, 2] {
+            assert!(parts[k]["shape"].get("seg").is_none(), "{v}");
+        }
+        assert_eq!(parts[2]["shape"]["text"], "the red car", "the words stay");
+        assert_eq!(parts[1]["shape"]["hint"].as_array().map(Vec::len), Some(1), "the clicks stay");
+        let work = ai_work(&a, &groups);
+        assert_eq!((work.masks.clone(), work.spots.clone(), work.expand), (vec![(7, 1), (7, 2)], vec![1], false));
+        assert!(ai_work(&a, &[SettingsGroup::Light]).is_empty());
+        assert!(work.only(&[SettingsGroup::Spots]).masks.is_empty());
+        assert!(DevelopSettings::default().masks.is_empty() && ai_work(&DevelopSettings::default(), &groups).is_empty());
     }
 
     #[test]

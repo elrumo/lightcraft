@@ -944,8 +944,10 @@ pub mod proto {
     }
 
     /// `/api/blobs/<kind>/<hash>` (`HEAD`, `GET`, `PUT`): a photo's original, its smart preview
-    /// (≤ 2560 px) and its mini preview (≤ 512 px, for thumbnails), by content hash.
-    pub const BLOB_KINDS: [&str; 3] = ["original", "smart", "mini"];
+    /// (≤ 2560 px) and its mini preview (≤ 512 px, for thumbnails), by content hash; and for a video the lighter
+    /// copy the server keeps (`video`: an MP4 named by the *original's* hash, so a `PUT` carries the copy's own
+    /// digest in `X-LightCraft-Digest`, see `docs/sync.md`).
+    pub const BLOB_KINDS: [&str; 4] = ["original", "smart", "mini", "video"];
 
     /// `POST /api/render`: render a photo whose original the server keeps (by content hash) with the edits sent
     /// here, and answer with the encoded image: the way a device that can't hold a full-size render in memory (a phone,
@@ -1103,6 +1105,9 @@ pub mod proto {
         pub search: Option<Progress>,
         pub text: Option<Progress>,
         pub faces: Option<Progress>,
+        /// Making lighter copies of the user's videos (`None`: the server's admin has the setting off, or there are
+        /// no videos). `done` counts the clips that have a copy or need none; the ones that failed are left out of `total`.
+        pub video: Option<Progress>,
     }
 
     impl Activity {
@@ -1110,7 +1115,7 @@ pub mod proto {
         pub fn busy(&self) -> bool {
             self.scan.as_ref().is_some_and(|s| s.scanning)
                 || self.previews.active()
-                || [self.search, self.text, self.faces].into_iter().flatten().any(|p| p.active())
+                || [self.search, self.text, self.faces, self.video].into_iter().flatten().any(|p| p.active())
         }
     }
 }
@@ -1181,5 +1186,22 @@ mod usage_tests {
         assert_eq!(json["foldersOnDisk"], 4);
         assert_eq!((json["photos"].clone(), json["folders"]["bytes"].clone()), (3.into(), 9.into()));
         assert_eq!(serde_json::from_value::<Usage>(json).unwrap(), u);
+    }
+
+    /// A server from before lighter videos sends no `video` in its activity and still reads; the clips being copied keep a
+    /// device's status popover busy, and the video blob kind is one the server serves.
+    #[test]
+    fn an_older_server_has_no_video_activity_and_the_copies_keep_the_popover_busy() {
+        use super::proto::{Activity, BLOB_KINDS, Progress};
+        let older: Activity = serde_json::from_str(r#"{"previews": {"done": 3, "total": 3}, "search": {"done": 1, "total": 2}}"#).unwrap();
+        assert_eq!(older.video, None);
+        assert!(older.busy(), "the search index is still being made");
+        let copying = Activity { video: Some(Progress { done: 1, total: 4, eta_secs: Some(60) }), ..Default::default() };
+        assert!(copying.busy());
+        let done = Activity { video: Some(Progress { done: 4, total: 4, eta_secs: None }), ..Default::default() };
+        assert!(!done.busy());
+        let json = serde_json::to_value(&copying).unwrap();
+        assert_eq!((json["video"]["done"].clone(), json["video"]["etaSecs"].clone()), (1.into(), 60.into()));
+        assert!(BLOB_KINDS.contains(&"video"));
     }
 }

@@ -689,3 +689,22 @@ main > section { animation: enter 0.18s ease-out; }
 .models .mem::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); opacity: .5; }
 .models .mem.on::before { background: var(--positive); opacity: 1; }
 #dash [data-view="processing"] .btn-row { margin-top: 14px; }
+
+/* the Videos panel: a drop-down like a text box, and the failed list */
+.field select {
+  height: 40px;
+  width: 100%;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--heading);
+  background: var(--surface);
+  border: 2px solid var(--field);
+  border-radius: 8px;
+}
+.field select:hover { border-color: var(--field-hover); }
+.field select:focus { outline: none; border-color: var(--text-2); box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.limits-grid .switch { align-self: start; }
+.failures li { flex-wrap: wrap; }
+.failures .muted { flex: 1 1 100%; overflow-wrap: anywhere; }
+#vdPanel form h3 { margin-top: 20px; }

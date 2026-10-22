@@ -13,8 +13,10 @@
 //! <data>/users.json                       users: argon2 password hash, library id
 //! <data>/search.json                      { enabled }: search by description on or off (admin page)
 //! <data>/server-presets.json              presets shared with every user, built-ins hidden for all (admin page)
+//! <data>/video.json                       lighter videos: on or off, codec, size, quality, who encodes (admin page)
 //! <data>/users/<name>/library/            the op log (catalog.log)
-//! <data>/users/<name>/blobs/<kind>/<xx>/<hash>   original | smart | mini
+//! <data>/users/<name>/blobs/<kind>/<xx>/<hash>   original | smart | mini | video (a clip's lighter copy)
+//! <data>/users/<name>/video/<hash>.json   what became of a clip: its copy's record, "already efficient", or why it failed
 //! <data>/users/<name>/presets.json        { version, presets }
 //! <data>/users/<name>/devices.json        signed-in devices (token hashes, id spaces)
 //! <data>/users/<name>/folders.json        the user's library folders as last scanned
@@ -55,6 +57,7 @@ mod stats;
 pub mod switch;
 pub mod throttle;
 pub mod usage;
+pub mod video;
 pub mod vision;
 pub mod work;
 pub mod writeback;
@@ -104,6 +107,9 @@ pub struct Config {
     /// Sites whose pages may call the API from a browser (`https://photos.example.com`; `*`: any),
     /// for a web build served from somewhere else than this server ([`cors`]). Empty: none.
     pub cors_origins: Vec<String>,
+    /// Makes the lighter copies of videos when the server does it itself ([`video`]; `None`: the pure-Rust software
+    /// encoder). Tests give a fake.
+    pub video_encoder: Option<Arc<dyn video::VideoEncoder>>,
 }
 
 impl Config {
@@ -126,6 +132,7 @@ impl Config {
             render_threads: None,
             render_wait: None,
             cors_origins: Vec::new(),
+            video_encoder: None,
         }
     }
 }
@@ -167,6 +174,8 @@ pub struct State {
     pub(crate) usage: usage::Usage,
     /// Checks of users' originals for files cut short ([`integrity`]).
     pub(crate) checker: integrity::Checker,
+    /// The lighter copies of videos: settings, queue, the server's own encoding ([`video`]).
+    pub(crate) video: video::Videos,
 }
 
 /// A running server.
@@ -203,6 +212,7 @@ impl Server {
         let vision_dir = cfg.vision_dir.clone().unwrap_or_else(|| cfg.data.join("models").join("siglip2"));
         let links = shares::Index::load(&cfg.data);
         let shared_presets = server_presets::ServerPresets::load(&cfg.data);
+        let data_dir = cfg.data.clone();
         let state = Arc::new(State {
             vision: vision::Search::new(vision_dir, cfg.embedder)
                 .with_data(&cfg.data)
@@ -228,6 +238,7 @@ impl Server {
             presets: Mutex::new(shared_presets),
             usage: usage::Usage::new(),
             checker: integrity::Checker::default(),
+            video: video::Videos::new(&data_dir, cfg.video_encoder),
         });
         // (counted now, so the admin page has the numbers by the time anyone opens it)
         state.sizes.refresh(&state.data);
@@ -240,6 +251,8 @@ impl Server {
         workers.push(std::thread::Builder::new().name("lc-vision".into()).spawn(move || vision::run(&s)).map_err(|e| e.to_string())?);
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-writeback".into()).spawn(move || writeback::run(&s)).map_err(|e| e.to_string())?);
+        let s = state.clone();
+        workers.push(std::thread::Builder::new().name("lc-video".into()).spawn(move || video::run(&s)).map_err(|e| e.to_string())?);
         state.usage.sample();
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-usage".into()).spawn(move || s.usage.run()).map_err(|e| e.to_string())?);
@@ -276,6 +289,21 @@ impl Server {
         self.state.folders.request(user);
     }
 
+    /// The next lighter-video job of `user`'s for `who` (what a Mac helper's claim route will call; tests).
+    pub fn next_video_job(&self, user: &str, who: video::Worker) -> Option<video::Job> {
+        self.state.video.next_job(&self.state, user, who)
+    }
+
+    /// A worker could not do `job`: the clip is listed as failed until an admin retries.
+    pub fn fail_video_job(&self, job: &video::Job, why: video::Failure) {
+        self.state.video.fail(&self.state, job, why);
+    }
+
+    /// A worker says it is done with a clip and names the digest of the copy it uploaded: what the server holds of it.
+    pub fn finish_video_job(&self, user: &str, hash: &str, digest: &str) -> Result<video::Mark, String> {
+        self.state.video.finish(user, hash, digest)
+    }
+
     /// Look for photos to index for search now (tests; it happens by itself as previews arrive).
     pub fn index_for_search(&self) {
         self.state.vision.wake();
@@ -298,6 +326,7 @@ impl Drop for Server {
         self.state.writer.shut_down();
         self.state.usage.shut_down();
         self.state.checker.shut_down();
+        self.state.video.shut_down();
         for t in self.workers.drain(..) {
             let _ = t.join();
         }

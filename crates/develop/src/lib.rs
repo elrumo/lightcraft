@@ -13,7 +13,7 @@ pub mod segmask;
 pub mod settings;
 
 pub use controls::{CONTROLS, ControlSpec, Section, Track};
-pub use presets::{Preset, SettingsGroup, apply_partial, extract_groups};
+pub use presets::{AiWork, Preset, SettingsGroup, ai_work, apply_partial, extract_groups};
 pub use segmask::{DepthMap, ExpandFill, SegMask, SpotFill};
 pub use settings::*;
 

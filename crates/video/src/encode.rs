@@ -28,6 +28,15 @@ pub struct EncodeOptions {
     pub bframes: u8,
 }
 
+/// How an encode is paced and what it aims at, beyond [`EncodeOptions`] (the default is what [`Mp4Encoder::new`] does).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tuning {
+    /// Aim at this average bitrate (kbit/s, with room to burst to half as much again) instead of the constant quality.
+    pub kbps: Option<u32>,
+    /// Worker threads (0: every core). 1 encodes on the calling thread, which the caller can give a low priority.
+    pub threads: usize,
+}
+
 /// The audio track of a clip, to be copied into the file written ([`Mp4Encoder::new`], [`Mp4Encoder::copy_audio`]).
 #[derive(Debug, Clone)]
 pub struct AudioTrack {
@@ -70,6 +79,11 @@ pub struct Mp4Encoder<W: Write + Seek> {
 
 impl<W: Write + Seek> Mp4Encoder<W> {
     pub fn new(out: W, o: EncodeOptions, audio: Option<&AudioTrack>) -> Result<Self> {
+        Self::new_tuned(out, o, Tuning::default(), audio)
+    }
+
+    /// [`new`](Self::new) with a bitrate to aim at and a number of threads ([`Tuning`]).
+    pub fn new_tuned(out: W, o: EncodeOptions, t: Tuning, audio: Option<&AudioTrack>) -> Result<Self> {
         guarded("starting the encoder", || {
             if o.width == 0 || o.height == 0 || !o.width.is_multiple_of(2) || !o.height.is_multiple_of(2) || o.width > 16384 || o.height > 16384 {
                 return Err(Error::Unsupported(format!("a {}x{} picture can't be encoded (an even size up to 16384)", o.width, o.height)));
@@ -79,7 +93,11 @@ impl<W: Write + Seek> Mp4Encoder<W> {
             }
             let mut cfg = EncoderConfig::new(o.width as u32, o.height as u32, (o.fps * 1000.0).round().max(1.0) as u32, 1000);
             cfg.profile = if o.bframes > 0 { Profile::High } else { Profile::Main };
-            cfg.rate = RateControl::Crf(o.crf.clamp(10.0, 40.0));
+            cfg.rate = match t.kbps {
+                Some(k) => RateControl::Vbr { target_kbps: k.clamp(50, 400_000), max_kbps: k.clamp(50, 400_000).saturating_mul(3) / 2 },
+                None => RateControl::Crf(o.crf.clamp(10.0, 40.0)),
+            };
+            cfg.threads = t.threads;
             cfg.bframes = o.bframes.min(3);
             cfg.keyint = ((o.fps * 2.0).round() as u32).clamp(1, 250);
             cfg.scenecut = false;

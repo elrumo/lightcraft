@@ -1,6 +1,6 @@
 # Video clips
 
-> **Last updated:** 2026-10-22 · **Change:** minor (poster frames cost 3 to 6 times less CPU: profiled, the decoder was fed pictures past the key frame and every pixel paid three `powf`; Hardware video: VideoToolbox decode and encode measured against the pure-Rust ones on a Mac, with a go / no-go; the FilmCraft pin moves with `cargo xtask filmcraft`; library stats; Live Photos, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision)
+> **Last updated:** 2026-10-22 · **Change:** minor (Lighter copies: a sync server keeps a smaller copy of every video beside the original, set from the admin page, made by a Mac helper later or by the server's own pure-Rust encoder at the lowest priority; the helper and replacing originals remain; poster frames cost 3 to 6 times less CPU: profiled, the decoder was fed pictures past the key frame and every pixel paid three `powf`; Hardware video: VideoToolbox decode and encode measured against the pure-Rust ones on a Mac, with a go / no-go; the FilmCraft pin moves with `cargo xtask filmcraft`; library stats; Live Photos, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision)
 
 LightCraft lists video clips next to photos: MP4 / M4V / MOV files import as photos of kind **Video** with their length,
 size, recording date and place, and a **poster frame** stands for them in the grid, the filmstrip, the loupe and in the
@@ -95,6 +95,44 @@ its clip, the **motion**, is kept with it (`crates/engine/src/live_photo.rs`):
   then); a photo-library picture left unchanged takes its clip with it when it is forgotten; a sign-out tidies the
   account's clips away; files in `Motion/` that no entry names go when the library opens.
 - **Not yet.** A folder import pairing `IMG_0001.HEIC` with `IMG_0001.MOV` by itself, syncing the motion, developing it.
+
+## Lighter copies
+
+A sync server can keep a **lighter copy** of every video beside the original, so a library of phone clips streams and
+downloads at a fraction of the size. The original is never touched. Admins turn it on from the admin page, **Processing
+▸ Videos** ([sync.md](sync.md#the-admin-page)); it is off by default.
+
+- **Settings** (`<data>/video.json`, server-wide, `GET` / `PUT /api/admin/video`): the format (`h264`, or `hevc` for a Mac
+  helper), the biggest size (`original`, 1080, 720, 480; a clip is never made bigger than it is), the quality
+  (`smaller` / `balanced` / `better`), `skipIfSmaller`, `serverFallback` and `helper`. The bitrate is worked out from
+  the picture's height and rate: Balanced is 5000 kbit/s at 1080p30 and 2500 at 720p30, interpolated between 240p and
+  2160p, scaled by the frame rate (0.5x to 2x of 30), by 0.6 / 1 / 1.5 for the quality and by 0.7 for HEVC. A damaged
+  file means the defaults; a field that is not one, or a value that is not one of its choices, is refused naming it.
+- **The copy** is the blob kind `video` (`blobs/video/<xx>/<hash of the original>`, an MP4; same duration, the pictures
+  turned as displayed, BT.709 tags, the sound copied as it is). Beside it, outside `blobs`, a record
+  (`users/<name>/video/<hash>.json`) holds the codec, height, bitrate, the sizes, whether a hardware encoder made it, the
+  settings it was made with, the copy's digest, or the mark "already efficient", or why the clip failed. `skipIfSmaller`
+  keeps no copy that is not at least 15% smaller than the original (the clip is marked and not tried again). The copy
+  counts in the user's storage limit and in `Usage.video.encoded`, and `gc` removes it, and its record, a day after its
+  video has left the library. A copy is uploaded with `PUT /api/blobs/video/<hash>` and its digest in
+  `X-LightCraft-Digest` ([sync.md](sync.md#protocol)).
+- **The queue** is every video in a user's library (not in Recently Deleted, not a virtual copy), existing and new,
+  with no copy and no mark. The admin page shows how many are done of how many, how many are left, the time that takes
+  at the pace so far, what is failing and why (`unsupported`, `unreadable`, `encoder`), and can pause, resume, try the
+  failed ones again, and make the copies again that were made with other settings (**Encode existing videos now**).
+  Devices see it in `GET /api/activity` (`video`). A video whose original the server does not have yet (a device has not
+  uploaded it) waits and is not counted as left.
+- **Who encodes.** A Mac helper claims videos (`video::Videos::next_job`, `fail`, `finish`: the Rust surface; the claim
+  routes, leases that renew and the helper itself are not built). When nothing can encode, the panel says **waiting for a
+  helper**. With `serverFallback` on the server encodes by itself with FilmCraft's pure-Rust H.264 encoder
+  (`lightcraft_video::lighter_copy`, behind the `VideoEncoder` trait): one video at a time, on one thread of the lowest
+  priority (`lightcraft_sysmem::lower_thread_priority`: nice 19 on Linux, background quality of service on macOS), with
+  the encoder on a single thread, stopped at once by a pause or a change of setting, and a panic in it is a failed clip,
+  not a crash. It makes H.264 only, and refuses HDR clips (the copy would be squeezed into SDR). It is slow (see
+  *Hardware video*: about 5 pictures a second at 1080p), which is why it is opt-in.
+- **Not built yet:** the helper (claim routes, a Mac encoding with VideoToolbox when idle), replacing uploaded originals
+  with their copies, devices choosing the copy to play or download ("Prefer lighter videos"), serving the copy for a
+  device that asks for a video the server holds no original of, and urgent copies for a clip a device is trying to play.
 
 ## FilmCraft pin
 

@@ -529,3 +529,48 @@ fn mask_and_spot_targets_preserve_explicit_defaults_and_selection_clearing() {
     s.execute("mask.brushStroke", &json!({"points": [[0.5, 0.5]]})).unwrap();
     assert_eq!(s.develop_of(s.active().unwrap()).unwrap().masks.len(), 3);
 }
+
+/// Pasting masks and Remove spots a model made lists what is to be made again on each photo that changed, and the
+/// selections arrive without the first photo's picture.
+#[test]
+fn paste_lists_the_model_work_to_make_again() {
+    use lightcraft_develop::{Mask, MaskComponent, MaskShape, SegMask, Spot, SpotFill};
+    use lightcraft_geom::Point;
+    let mut s = Session::with_demo();
+    let ids: Vec<_> = s.visible().iter().copied().take(2).collect();
+    let mut d = (*s.develop_of(ids[0]).unwrap()).clone();
+    let seg = Some(SegMask::from_logits(4, &[3.0; 16]));
+    d.masks.push(Mask {
+        id: 3,
+        components: vec![MaskComponent {
+            name: None,
+            op: Default::default(),
+            invert: false,
+            shape: MaskShape::Object { hint: vec![Point::new(0.5, 0.5)], exclude: vec![], seg, detail: vec![], edge: 0.0 },
+        }],
+        ..Default::default()
+    });
+    let fill = SpotFill::from_linear(2, 2, [0.4, 0.4, 0.6, 0.6], &[[0.5; 3]; 4]);
+    d.spots.push(Spot { points: vec![Point::new(0.5, 0.5)], fill, ..Default::default() });
+    s.set_develop(ids[0], d, "test").unwrap();
+    s.execute("library.select", &json!({"ids": [ids[0].0]})).unwrap();
+    s.execute("develop.copy", &json!({"groups": ["masks", "spots"]})).unwrap();
+    let r = s.execute("develop.paste", &json!({"ids": [ids[1].0]})).unwrap();
+    assert_eq!(r["changed"], 1);
+    assert_eq!(r["ai"], json!([{"photo": ids[1].0, "masks": [{"mask": 3, "component": 0}], "spots": [0], "expand": false}]));
+    let b = s.develop_of(ids[1]).unwrap();
+    assert!(matches!(&b.masks[0].components[0].shape, MaskShape::Object { seg: None, hint, .. } if hint.len() == 1), "the clicks came, the picture did not");
+    assert!(b.spots[0].fill.is_none());
+    // only the Remove spots (on a photo with nothing yet): the selections are not made again
+    s.execute("library.select", &json!({"ids": [ids[1].0]})).unwrap();
+    s.execute("develop.reset", &json!({})).unwrap();
+    s.execute("library.select", &json!({"ids": [ids[0].0]})).unwrap();
+    let r = s.execute("develop.paste", &json!({"ids": [ids[1].0], "groups": ["spots"]})).unwrap();
+    assert_eq!(r["ai"], json!([{"photo": ids[1].0, "masks": [], "spots": [0], "expand": false}]));
+    // a plain copy has nothing to make again
+    s.execute("develop.copy", &json!({"groups": ["light"]})).unwrap();
+    s.execute("develop.set", &json!({"values": {"light.exposure": 0.5}})).unwrap();
+    s.execute("develop.copy", &json!({"groups": ["light"]})).unwrap();
+    let r = s.execute("develop.paste", &json!({"ids": [ids[1].0]})).unwrap();
+    assert_eq!(r["ai"], json!([]));
+}

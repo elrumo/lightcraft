@@ -39,7 +39,14 @@ pub struct EraseModel {
     /// Held while a network paints: one at a time, however many strokes wait (a big network takes seconds and
     /// hundreds of megabytes).
     pub(crate) turn: Arc<Mutex<()>>,
+    /// Since when nothing has been painting (the networks stay loaded a while for the next stroke, see [`KEEP_LOADED`]).
+    idle_since: Mutex<Option<web_time::Instant>>,
 }
+
+/// How long MI-GAN and LaMa stay loaded after the last stroke was painted: the next one usually follows within seconds,
+/// and loading LaMa again takes a few. Then they are dropped (about 200 MB for LaMa, more once it has run), which a
+/// phone cannot afford to keep for the rest of the session.
+const KEEP_LOADED: web_time::Duration = web_time::Duration::from_secs(45);
 
 /// How AI Remove paints: the small network or the larger one. A fill is stored with its spot whichever made it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -349,6 +356,10 @@ impl Session {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|_| Err("AI Remove failed unexpectedly".into()))
             };
             let _ = tx.send(r);
+            // (the stroke's pictures and the network's working memory go back to the system now, not at the next
+            // memory warning)
+            drop(job);
+            crate::memory::release();
             drop(guard);
         };
         #[cfg(not(target_arch = "wasm32"))]
@@ -367,6 +378,7 @@ impl Session {
     /// Store the fills that are done (call every tick), one undo step each. An error for each that failed; a fill
     /// whose stroke was moved, resized or deleted meanwhile, or that was cancelled, is dropped without one.
     pub fn poll_erase(&mut self) -> Vec<String> {
+        self.unload_idle_erasers();
         let done: Vec<(PhotoId, SpotKey, Result<SpotFill, String>)> = {
             let mut jobs = self.eraser.jobs.lock().unwrap_or_else(PoisonError::into_inner);
             let mut done = Vec::new();
@@ -396,6 +408,43 @@ impl Session {
             }
         }
         errors
+    }
+
+    /// Drop the networks once nothing has painted for [`KEEP_LOADED`] (call every tick: it is a clock read when
+    /// nothing is loaded or something is painting).
+    fn unload_idle_erasers(&self) {
+        let mut since = self.eraser.idle_since.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.erase_running() > 0 || self.expand_running().is_some() {
+            *since = None;
+            return;
+        }
+        let now = web_time::Instant::now();
+        if now.duration_since(*since.get_or_insert(now)) >= KEEP_LOADED && self.unload_erasers() {
+            *since = None;
+        }
+    }
+
+    /// Drop MI-GAN and LaMa when nothing is painting or using them and they can be read from disk again, and hand
+    /// their memory back. Whether any was loaded.
+    pub fn unload_erasers(&self) -> bool {
+        if self.erase_running() > 0 || self.expand_running().is_some() {
+            return false;
+        }
+        let mut dropped = false;
+        {
+            let mut slot = self.eraser.loaded.lock().unwrap_or_else(PoisonError::into_inner);
+            // (the browser build is handed the file and has no copy to read again)
+            if slot.as_ref().is_some_and(|e| Arc::strong_count(e) == 1) && self.eraser_file().is_some_and(|f| f.exists()) {
+                *slot = None;
+                dropped = true;
+            }
+        }
+        dropped |= self.unload_lama();
+        if dropped {
+            log::info!("memory: the AI Remove networks were unloaded");
+            crate::memory::release();
+        }
+        dropped
     }
 
     /// Put `fill` in the spot `key` names, if it is still there: one undo step.

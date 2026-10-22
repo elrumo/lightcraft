@@ -452,6 +452,16 @@ impl Session {
         load_lama(&self.lama_file().ok_or_else(lama_missing)?, &self.expand.lama)
     }
 
+    /// Drop LaMa when no job holds it and its file is there to load again. Whether it was loaded.
+    pub(crate) fn unload_lama(&self) -> bool {
+        let mut slot = self.expand.lama.lock().unwrap_or_else(PoisonError::into_inner);
+        if slot.as_ref().is_some_and(|l| Arc::strong_count(l) == 1) && self.lama_file().is_some_and(|f| f.exists()) {
+            *slot = None;
+            return true;
+        }
+        false
+    }
+
     fn lama_file(&self) -> Option<std::path::PathBuf> {
         self.enhancer.model_dir(lightcraft_erase::lama::ID).map(|d| d.join(lightcraft_erase::lama::FILE))
     }

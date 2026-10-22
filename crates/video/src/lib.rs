@@ -21,6 +21,8 @@ mod decode;
 #[cfg(feature = "encode")]
 mod encode;
 mod info;
+#[cfg(all(feature = "encode", not(target_arch = "wasm32")))]
+mod lighter;
 /// Synthetic clips, for the tests of this crate and the ones above it (feature `testdata`).
 #[cfg(any(test, feature = "testdata"))]
 #[doc(hidden)]
@@ -29,11 +31,13 @@ mod yuv;
 
 pub use decode::Clip;
 #[cfg(feature = "encode")]
-pub use encode::{EncodeOptions, Mp4Encoder};
+pub use encode::{EncodeOptions, Mp4Encoder, Tuning};
 pub use filmcraft_isobmff::ByteSource;
 #[cfg(not(target_arch = "wasm32"))]
 pub use info::probe_path;
 pub use info::{VideoInfo, is_video, probe};
+#[cfg(all(feature = "encode", not(target_arch = "wasm32")))]
+pub use lighter::{Lightened, LighterError, Plan, lighter_copy};
 
 /// Why a clip could not be read or decoded.
 #[derive(Debug, Clone, PartialEq, Eq)]

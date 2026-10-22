@@ -1474,7 +1474,7 @@ const FEATURES = {
 };
 
 function loadSearch() {
-  return swr(['search'], showSearch);
+  return swr(['search', 'video'], showSearch);
 }
 
 /** The progress of a download in the fetch box with prefix `p`, or the box hidden. */
@@ -1826,8 +1826,167 @@ function reprocessModel(p, what) {
   });
 }
 
-function showSearch([s]) {
-  const again = [showPreviewsAll(s.previews), showFeature('sr', s), showFeature('tx', s), showFeature('sn', s), showPeople(s)].some(Boolean);
+// ------------------------------------------------------------- lighter videos
+
+const VIDEO_CODECS = [['h264', 'H.264: plays everywhere'], ['hevc', 'HEVC: about 30% smaller, needs a Mac helper']];
+const VIDEO_HEIGHTS = [['original', 'As the video is'], ['1080', '1080p at most'], ['720', '720p at most'], ['480', '480p at most']];
+const VIDEO_QUALITIES = [['smaller', 'Smaller files'], ['balanced', 'Balanced'], ['better', 'Better pictures']];
+const VIDEO_WHY = { unsupported: "This server can't read this kind of video", unreadable: "The file can't be read", encoder: 'The encoder failed' };
+
+/** A drop-down field for the video settings form. */
+function pick(name, label, choices, value, help) {
+  const id = 'f-' + name;
+  const input = el('select', { id, name }, ...choices.map(([v, text]) => el('option', { value: v }, text)));
+  input.value = String(value);
+  return el('div', { class: 'field' }, el('label', { for: id }, label), input, help ? el('p', { class: 'help' }, help) : '');
+}
+
+/** The settings form: what the copies are made as, and who makes them. Left alone while it is being edited. */
+function showVideoForm(v) {
+  const box = $('vdFields');
+  if (box.contains(document.activeElement)) return;
+  const s = v.settings;
+  const check = (name, label, help, on) => {
+    const { input, wrap } = field({ type: 'switch', name, label, help, value: on });
+    input.dataset.key = name;
+    return wrap;
+  };
+  box.replaceChildren(
+    pick('codec', 'Format', VIDEO_CODECS, s.codec),
+    pick('maxHeight', 'Biggest size', VIDEO_HEIGHTS, s.maxHeight, 'A video is never made bigger than it is.'),
+    pick('quality', 'Quality', VIDEO_QUALITIES, s.quality, 'Balanced is about 5 Mbit/s for a 1080p video and 2.5 for 720p.'),
+    check('skipIfSmaller', 'Keep only copies that are worth it', 'A copy that is not at least 15% smaller than the video is dropped, and the video is marked already efficient.', s.skipIfSmaller),
+    check('helper', 'Let a Mac helper make them', 'A Mac running a native LightCraft app takes videos while it is idle, using its video hardware: a fraction of the processor time.', s.helper),
+    check('serverFallback', 'Let the server make them when no Mac does', 'In software, one video at a time, on one core, at the lowest priority: hours for a long video. H.264 only.', s.serverFallback),
+  );
+}
+
+/** The state of the queue in a line. */
+function videoText(v) {
+  const left = v.left ? n(v.left) + ' left' + (v.etaSecs && v.state === 'encoding' ? ', about ' + dur(v.etaSecs) + ' to go' : '') + (v.perMinute && v.state === 'encoding' ? ' (' + (v.perMinute < 10 ? v.perMinute.toFixed(1) : n(Math.round(v.perMinute))) + ' a minute)' : '') : '0 left';
+  switch (v.state) {
+    case 'off':
+      return 'Off: videos keep only their originals.';
+    case 'paused':
+      return 'Paused: ' + left + '. The one being made stops and starts again when you resume.';
+    case 'idle':
+      return 'Nothing waiting: 0 left.';
+    case 'waiting':
+      return left + '. Waiting: nothing is making them yet.';
+    default:
+      return left + '.';
+  }
+}
+
+/** Lighter copies for everyone: how far along, what is being made, who may make them, the failures. */
+function showVideos(v) {
+  const s = v.settings;
+  const sw = $('vdSwitch');
+  if (document.activeElement !== sw) sw.checked = s.enabled;
+  const done = v.have + v.efficient;
+  $('vdHelp').textContent = s.enabled ? '' : 'Off. Turn on to make a lighter copy of every video, the ones already here and the new ones.';
+  $('vdCover').textContent = v.total
+    ? n(done) + ' of ' + plural(v.total, 'video', 'videos') + ' done' + (v.efficient ? ' (' + n(v.efficient) + ' already efficient)' : '') + (v.failed ? ', ' + n(v.failed) + ' failed' : '') + (v.noOriginal ? ', ' + n(v.noOriginal) + ' whose original is not here yet' : '')
+    : 'No videos yet.';
+  $('vdText').textContent = videoText(v);
+  progress($('vdBar'), v.total ? done / v.total : 0);
+  $('vdBar').classList.toggle('busy', v.state === 'encoding');
+  const now = (v.encoding || []).map((e) => el('li', {}, el('b', {}, 'Now'), el('code', { title: e.user }, e.name), el('span', { class: 'muted' }, e.total ? Math.floor((100 * e.done) / e.total) + '%' : '')));
+  $('vdNow').replaceChildren(...now);
+  // what it waits for, and the helper
+  const wait = $('vdWait');
+  wait.hidden = v.state !== 'waiting';
+  if (!wait.hidden) {
+    wait.querySelector('b').textContent = v.waitingFor === 'helper' ? 'Waiting for a Mac helper' : 'Nothing can make them';
+    wait.querySelector('p').textContent =
+      v.waitingFor === 'helper'
+        ? 'No Mac has asked for videos yet. Open a native LightCraft app on a Mac signed in to this server and turn on the helper in its settings, or let the server make them itself below.'
+        : 'Turn on the Mac helper or let the server make them, below.';
+  }
+  const pause = $('vdPause');
+  pause.hidden = !s.enabled || (!v.paused && !v.left);
+  pause.querySelector('span').textContent = v.paused ? 'Resume' : 'Pause';
+  pause.querySelector('use').setAttribute('href', v.paused ? '#i-play' : '#i-pause');
+  pause.onclick = () => videoAction(v.paused ? 'resume' : 'pause');
+  $('vdApply').hidden = !s.enabled;
+  $('vdApply').onclick = () => videoAction('apply');
+  $('vdRetry').hidden = !v.failed;
+  $('vdRetry').onclick = () => videoAction('retry-failed');
+  showVideoForm(v);
+  const facts = $('vdFacts');
+  facts.replaceChildren();
+  fact(facts, 'Originals', bytes(v.bytes.originals));
+  fact(facts, 'Lighter copies', bytes(v.bytes.encoded));
+  fact(facts, 'Saved', bytes(v.bytes.saved));
+  fact(facts, 'Mac helper', !s.helper ? 'Off' : v.helper.seen ? (v.helper.there ? 'Asked for videos ' : 'Last asked for videos ') + ago(v.helper.seen) : 'None has asked yet');
+  fact(facts, 'The server itself', v.serverCanEncode ? 'Makes them when no Mac does' : s.serverFallback ? 'Cannot make ' + (s.codec === 'hevc' ? 'HEVC' : 'this format') + ' (H.264 only)' : 'Does not make them');
+  if (v.queuedAgain) fact(facts, 'Made again', plural(v.queuedAgain, 'copy', 'copies') + ' (made with other settings)');
+  // the failures, with the reason each
+  $('vdFailedBox').hidden = !v.failures.length;
+  $('vdFailed').replaceChildren(
+    ...v.failures.map((f) =>
+      el('li', {}, el('b', {}, VIDEO_WHY[f.kind] || 'Failed'), el('code', { title: f.user + ' · ' + f.hash }, f.name || f.hash), el('span', { class: 'muted' }, f.reason + (f.at ? ' · ' + ago(f.at) : ''))),
+    ),
+  );
+  const list = $('vdUsers');
+  list.replaceChildren();
+  $('vdUsersNone').hidden = v.users.length > 0;
+  for (const u of v.users) {
+    const doneU = u.have + u.efficient;
+    const meter = el('div', { class: 'meter' + (u.left && v.state === 'encoding' ? ' busy' : '') }, el('div', {}));
+    const notes = [u.left ? n(u.left) + ' left' : '', u.failed ? n(u.failed) + ' failed' : '', u.noOriginal ? n(u.noOriginal) + ' not uploaded yet' : ''].filter(Boolean).join(' · ');
+    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), el('span', { class: 'bytes' }, n(doneU) + ' / ' + n(u.total)), meter, ...(notes ? [el('p', { class: 'sub' }, notes)] : [])));
+    progress(meter, u.total ? doneU / u.total : 1);
+  }
+  return s.enabled && v.state === 'encoding';
+}
+
+async function videoAction(action) {
+  try {
+    const v = await api('POST', 'video/' + action);
+    if (action === 'apply') toast(v.queuedAgain ? plural(v.queuedAgain, 'copy', 'copies') + ' made with other settings will be made again.' : 'Looking for videos to do.', 'info');
+    if (action === 'retry-failed') toast('Trying the failed videos again.', 'info');
+  } catch (e) {
+    fail(e);
+  }
+  await route();
+}
+
+async function toggleVideos(e) {
+  const sw = e.target;
+  sw.disabled = true;
+  try {
+    await api('PUT', 'video', { enabled: sw.checked });
+    toast(sw.checked ? 'Making lighter copies of the videos.' : 'Turned off. The copies already made stay.', 'info');
+  } catch (x) {
+    fail(x);
+  } finally {
+    sw.disabled = false;
+    await route();
+  }
+}
+
+async function saveVideoSettings(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type=submit]');
+  const body = {};
+  for (const input of $('vdFields').querySelectorAll('select')) body[input.name] = input.name === 'maxHeight' && input.value !== 'original' ? +input.value : input.value;
+  for (const input of $('vdFields').querySelectorAll('input[type=checkbox]')) body[input.dataset.key] = input.checked;
+  busy(btn, true);
+  try {
+    await api('PUT', 'video', body);
+    document.activeElement.blur();
+    toast('Saved. Copies already made stay as they are: Encode existing videos now makes the older ones again with these settings.');
+  } catch (x) {
+    fail(x);
+  } finally {
+    busy(btn, false);
+  }
+  await route();
+}
+
+function showSearch([s, video]) {
+  const again = [showPreviewsAll(s.previews), showVideos(video), showFeature('sr', s), showFeature('tx', s), showFeature('sn', s), showPeople(s)].some(Boolean);
   const models = showModels(s);
   clearTimeout(timer);
   // (downloads and describing run on the server: watch them; so does the countdown to a model leaving memory, less often)
@@ -2100,6 +2259,8 @@ document.addEventListener('DOMContentLoaded', () => {
   splitMenu('previewsSplit');
   splitMenu('pvSplit');
   $('limForm').addEventListener('submit', saveLimits);
+  $('vdForm').addEventListener('submit', saveVideoSettings);
+  $('vdSwitch').addEventListener('change', toggleVideos);
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);
   $('importPresets').addEventListener('click', () => {

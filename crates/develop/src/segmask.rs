@@ -18,7 +18,8 @@ pub const MAX_SIDE: usize = 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SegMask {
     pub side: u32,
-    pub data: String,
+    /// (shared: every undo step of the photo holds the whole settings, and so would hold its own copy)
+    pub data: std::sync::Arc<str>,
     /// The part of the image the grid covers, normalized `[x0, y0, x1, y1]` (`None` = all of
     /// it). A zoomed-in pass over one object covers just its surroundings, at a higher
     /// resolution than a pass over the whole photo.
@@ -31,7 +32,7 @@ impl SegMask {
     pub fn from_logits(side: usize, logits: &[f32]) -> SegMask {
         let q: Vec<u8> = logits.iter().take(side * side).map(|l| ((l * SCALE).round().clamp(-127.0, 127.0) as i8) as u8).collect();
         let z = miniz_oxide::deflate::compress_to_vec(&q, 8);
-        SegMask { side: side as u32, data: base64_encode(&z), rect: None }
+        SegMask { side: side as u32, data: base64_encode(&z).into(), rect: None }
     }
 
     /// From `side × side` logits over the part `rect` of the image.
@@ -179,7 +180,8 @@ pub struct SpotFill {
     pub rect: [f64; 4],
     /// Linear value of code 255.
     pub scale: f32,
-    pub data: String,
+    /// (shared, as [`SegMask::data`]: a photo with many AI strokes keeps one copy of each, not one per undo step)
+    pub data: std::sync::Arc<str>,
 }
 
 impl SpotFill {
@@ -201,7 +203,7 @@ impl SpotFill {
             }
         }
         let data = base64_encode(&miniz_oxide::deflate::compress_to_vec(&q, 8));
-        Some(SpotFill { w: w as u32, h: h as u32, rect, scale, data })
+        Some(SpotFill { w: w as u32, h: h as u32, rect, scale, data: data.into() })
     }
 
     /// The covered part, normalized; `None` when damaged.

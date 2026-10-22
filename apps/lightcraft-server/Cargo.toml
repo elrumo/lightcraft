@@ -35,6 +35,8 @@ log = { workspace = true }
 lightcraft-sysmem = { workspace = true }
 # sizing the thread pool decodes and develops run on (`limits`)
 rayon = { workspace = true }
+# the lighter copies of videos (`video`): reading a clip's header, encoding it again when no Mac helper does
+lightcraft-video = { workspace = true }
 
 [dev-dependencies]
 lightcraft-video = { workspace = true, features = ["testdata"] }

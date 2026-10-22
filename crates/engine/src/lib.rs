@@ -328,6 +328,8 @@ pub struct Session {
     /// The photo the clipboard was copied from (an Upright correction moves only between entries of
     /// the same file: [`crate::upright_transfer`]).
     pub clipboard_source: Option<crate::upright_transfer::UprightSource>,
+    /// What of the clipboard a model made on the photo it came from: pasting makes it again on each photo it lands on.
+    pub clipboard_ai: lightcraft_develop::AiWork,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
     pub browse: Option<Browse>,
     /// The folder the [`LibrarySource::LibraryFolder`] view shows: the library's photos imported
@@ -567,6 +569,7 @@ impl Session {
             focus_scan: Default::default(),
             clipboard: None,
             clipboard_source: None,
+            clipboard_ai: Default::default(),
             meta_clipboard: None,
             browse: None,
             library_folder: None,

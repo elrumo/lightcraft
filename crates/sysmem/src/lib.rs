@@ -23,6 +23,9 @@
 //! and `sync_data` are `F_FULLFSYNC`, which SMB shares refuse with ENOTSUP while `fsync` works
 //! (issue #1407).
 //!
+//! [`lower_thread_priority`] gives a background thread (the sync server's video encoder) the lowest priority:
+//! `setpriority` on Linux, the background quality of service on macOS.
+//!
 //! This is LightCraft's only crate allowed `unsafe` (FFI calls into libSystem, in `apple`: the ones
 //! above, and `mmap` / `munmap` for the allocator). Its API is safe, and on failure or on other
 //! platforms it releases nothing / knows nothing / allocates as the system does.
@@ -56,6 +59,21 @@ pub fn fsync(file: &std::fs::File) -> std::io::Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
         file.sync_all()
+    }
+}
+
+/// Give the calling thread the lowest scheduling priority, for work that should only use what everything else leaves
+/// (a server encoding videos for its library in the background): nice 19 on Linux, the background quality of service
+/// on macOS. Only this thread: a thread it starts later is not lowered. Returns whether the system took it (`false`
+/// elsewhere, or when it refused).
+pub fn lower_thread_priority() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        priority::lower()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        false
     }
 }
 
@@ -405,9 +423,51 @@ mod apple {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(unsafe_code)]
+mod priority {
+    use std::ffi::c_int;
+
+    #[cfg(target_os = "linux")]
+    unsafe extern "C" {
+        /// libc (`sys/resource.h`): the nice value of a process, or on Linux of the thread `who` names (0: the caller).
+        fn setpriority(which: c_int, who: u32, prio: c_int) -> c_int;
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        /// libSystem (`pthread/qos.h`): the quality of service of the calling thread.
+        fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: c_int) -> c_int;
+    }
+
+    pub(super) fn lower() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: `setpriority` takes three integers and touches no memory of ours; `PRIO_PROCESS` (0) with
+            // `who` 0 means the calling thread on Linux.
+            unsafe { setpriority(0, 0, 19) == 0 }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // `QOS_CLASS_BACKGROUND`
+            const BACKGROUND: u32 = 0x09;
+            // SAFETY: `pthread_set_qos_class_self_np` takes two integers and touches no memory of ours; it
+            // changes only the calling thread.
+            unsafe { pthread_set_qos_class_self_np(BACKGROUND, 0) == 0 }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::release_free_memory;
+
+    /// A thread can lower its own priority (and nothing else's), and doing it twice is harmless.
+    #[test]
+    fn a_thread_lowers_its_own_priority() {
+        let took = std::thread::spawn(|| super::lower_thread_priority() && super::lower_thread_priority()).join().unwrap();
+        assert_eq!(took, cfg!(any(target_os = "linux", target_os = "macos")));
+    }
 
     /// Held by the tests that give kept blocks back or switch reuse: the kept blocks are the process's.
     static KEPT: std::sync::Mutex<()> = std::sync::Mutex::new(());

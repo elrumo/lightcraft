@@ -347,6 +347,38 @@
           <p class="muted" id="pvUsersNone" hidden>No users yet.</p>
           <p class="muted help">Previews are the smaller copies that devices show instead of the originals. A single user's can be built from their Folders page.</p>
         </section>
+        <section class="panel" id="vdPanel">
+          <h2>Videos</h2>
+          <p class="muted">A lighter copy of every video, kept beside the original, which is never touched: devices play it, or download it over a slow connection, instead of the big file. A Mac running a native LightCraft app makes them while it is idle; without one, the server can make them itself, slowly.</p>
+          <label class="switch" for="vdSwitch">
+            <input type="checkbox" id="vdSwitch" role="switch">
+            <span><span class="label">Make lighter copies of everyone's videos</span><span class="help" id="vdHelp"></span></span>
+          </label>
+          <p id="vdCover" class="cover"></p>
+          <p class="muted" id="vdText"></p>
+          <div class="meter" id="vdBar"><div></div></div>
+          <ul class="building" id="vdNow"></ul>
+          <div class="alert info" id="vdWait" hidden><svg class="icon"><use href="#i-info"/></svg><div><b></b><p></p></div></div>
+          <div class="btn-row">
+            <button type="button" class="btn secondary" id="vdPause"><svg class="icon"><use href="#i-pause"/></svg><span>Pause</span></button>
+            <button type="button" class="btn secondary" id="vdApply" title="Makes the copies again that were made with other settings than these, and looks again for originals that were missing"><svg class="icon"><use href="#i-refresh"/></svg><span>Encode existing videos now</span></button>
+            <button type="button" class="btn secondary" id="vdRetry" hidden><svg class="icon"><use href="#i-refresh"/></svg><span>Try the failed ones again</span></button>
+          </div>
+          <form id="vdForm" novalidate>
+            <h3>How the copies are made</h3>
+            <div class="limits-grid" id="vdFields"></div>
+            <div class="limits-actions"><button type="submit" class="btn accent">Save</button></div>
+          </form>
+          <dl class="facts" id="vdFacts"></dl>
+          <div id="vdFailedBox" hidden>
+            <h3>Failed</h3>
+            <ul class="building failures" id="vdFailed"></ul>
+          </div>
+          <h3>Videos done</h3>
+          <ul class="usage work" id="vdUsers"></ul>
+          <p class="muted" id="vdUsersNone" hidden>No users yet.</p>
+          <p class="muted help">A copy that would not be at least 15% smaller is not kept (the video is marked "already efficient"), when that setting is on. The copies take room in the user's storage limit.</p>
+        </section>
         <section class="panel">
           <h2>AI models</h2>
           <p class="muted">Each kind of processing below needs its model, downloaded once onto this server. Clients that don't use a server download the same models themselves.</p>

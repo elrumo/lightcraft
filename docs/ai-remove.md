@@ -80,7 +80,18 @@ downloaded…" (or "…(LaMa)…") and add nothing; `quality: "high"` on a devic
 - In the browser the model runs on the page's thread, so the page pauses for a few seconds per stroke (the notice is
   shown first). Running it in a Web Worker is the next step. Elsewhere it runs on a worker, one stroke at a time, and a
   stroke whose fill is still being painted renders as classic Remove.
-- The settings of a photo with many AI spots grow by the size of their fills.
+- The settings of a photo with many AI spots grow by the size of their fills. Every undo step holds the photo's whole
+  settings, so a fill's data is one shared string (`Arc<str>`): the steps share it instead of each keeping a copy.
+- Copy Settings leaves a photo's fills behind (a picture of that photo), and a Remove spot arrives as a classic one.
+  `develop.paste` and `develop.pastePrevious` answer `ai: [{photo, masks, spots, expand}]`, what the copied photo's models
+  made (Object and Describe selections, AI fills, Generative Expand), so a frontend can make it again on each photo it
+  landed on (`spot.erase`, `mask.setObject`, `crop.generate`) and say so.
+- **Memory (2026-10-22).** The networks stay loaded 45 s after the last stroke (the next one is usually seconds away),
+  then MI-GAN and LaMa are dropped and their pages go back to the system (`Session::unload_erasers`, called by the tick;
+  a memory warning drops them at once). A job also hands its pictures and working memory back when it ends. Measured
+  with `cargo run --release -p lightcraft-apphost --example remove_bench -- <photo> <strokes> heal remove fast high`
+  (`BENCH_MEMORY_MB` acts as a phone, `BENCH_IDLE=<s>` waits before the last reading): on an iPhone ProRAW, 20 strokes of
+  MI-GAN left the process 250 MB above where it started, LaMa the same; classic Heal and Remove strokes left nothing.
 - The fill is not written to Lightroom's XMP fields; LightCraft keeps it in its own settings (and its XMP block).
 
 ## Managing the model
