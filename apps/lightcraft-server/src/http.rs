@@ -768,20 +768,32 @@ mod tests {
     fn a_head_that_trickles_in_is_cut_off() {
         let s = serve_with(fast(), |_| text(200, "ok"));
         let mut c = TcpStream::connect(s.addr()).unwrap();
-        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.set_read_timeout(Some(Duration::from_millis(150))).unwrap();
         let t0 = Instant::now();
         // a byte every 150 ms never completes the head: the deadline counts from the first byte
+        let mut got = Vec::new();
+        let mut buf = [0u8; 512];
         for b in b"GET / HTTP/1.1\r\nX-Slow: yes\r\n" {
             if c.write_all(&[*b]).is_err() {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(150));
+            // (the pause between bytes reads the answer as it comes, as a client does: one that writes on
+            // after the server hung up is reset, and Windows then drops the answer it had not read)
+            match c.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    got.extend_from_slice(&buf[..n]);
+                    break;
+                }
+                Err(_) => {}
+            }
             if t0.elapsed() > Duration::from_secs(3) {
                 break;
             }
         }
-        let mut got = String::new();
-        let _ = c.read_to_string(&mut got);
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let _ = c.read_to_end(&mut got);
+        let got = String::from_utf8_lossy(&got);
         assert!(got.starts_with("HTTP/1.1 408"), "{got:?} after {:?}", t0.elapsed());
         assert!(t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
     }

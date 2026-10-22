@@ -174,7 +174,10 @@ fn storage_is_reported_per_user_and_matches_the_disk() {
     }
     assert_eq!((r["server"]["photos"].clone(), r["server"]["devices"].clone()), (json!(2), json!(1)), "{r}");
     assert_eq!(r["serverError"], Value::Null, "{r}");
-    assert!(r["server"]["disk"]["total"].as_u64().unwrap_or(0) > 0, "the server's disk is known: {r}");
+    // (from `df`: Unix only, `usage::disk_space`)
+    if cfg!(unix) {
+        assert!(r["server"]["disk"]["total"].as_u64().unwrap_or(0) > 0, "the server's disk is known: {r}");
+    }
     // this computer: the library folder and its previews are measured too
     assert!(r["local"]["library"].as_u64().unwrap() > 0 && r["local"]["smart"]["files"].as_u64().unwrap() > 0, "{r}");
     // a second user's files don't count
