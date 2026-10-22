@@ -245,17 +245,25 @@ What each file needs: `videotoolbox_encode.rs` (679 lines) depends on `objc2-*` 
 (571 lines) needs `filmcraft_codecs::{hw::NalStreamInfo, DecodedFrame, VideoDecoder, CodecError}`, `filmcraft_frame` and
 `filmcraft_color`; `hardware_encode.rs` needs `filmcraft_export`'s encoder trait.
 
-1. **Ask FilmCraft for a split (preferred).** Two Cargo features: `audio` on `filmcraft-codecs` (default on; it gates
-   symphonia and `audio.rs`) and the same for `filmcraft-export` on `filmcraft-platform`. Then
-   `filmcraft-platform = { default-features = false }` brings neither symphonia nor the export stack. FilmCraft is the same
-   organisation and owns the unsafe; the product only adds one dependency and a named `unsafe` exception.
+1. **Ask FilmCraft to move the video-decoder half of `filmcraft-codecs` into a crate of its own (preferred; chosen
+   2026-10-22).** What `filmcraft-platform`'s decode half takes from `filmcraft-codecs` is the registry
+   (`register_video_decoder`, `software_video_decoder`), `VideoDecoder`, `DecodedFrame`, `CodecError` / `Result` and the
+   `hw` module: `lib.rs`, `video.rs`, `hw.rs`, `hw_frame.rs` and `stream_color.rs`, none of which uses symphonia.
+   Symphonia is in `audio.rs` (its `CodecType` is in signatures that mp4, mkv, mpeg, avi and ogg call, so a plain `audio`
+   feature on `filmcraft-codecs` is not a small change). With the video half in its own crate, which `filmcraft-codecs`
+   re-exports so nothing breaks, and the `filmcraft-export` half of `filmcraft-platform` (`hardware_encode.rs`, the encoder
+   registration) behind a default-on `export` feature, `filmcraft-platform = { default-features = false }` has **no
+   symphonia and no export stack: a scratch `cargo tree` of the video half (16 FilmCraft crates: the decoders, parsers and
+   `filmcraft-media`; plus the `objc2-*` bindings) is 76 crates instead of 132**, all clean-room Apache-2.0 pure Rust or already in
+   our tree. FilmCraft owns the `unsafe`; the product adds one dependency and a named `unsafe` exception. The draft
+   request is in the shared notes folder (`filmcraft-split-request.md`).
 2. **Vendor the two VideoToolbox files** into a small crate (`unsafe` allowed, a line in `CLAUDE.md`, a `NOTICE` entry,
    a sync script), the decoder rewired to our own planar `Frame`. The encoder alone is self-contained, but the helper needs
    both (path D vs C). About 1,250 lines to keep in step with upstream.
 3. **Write a thin wrapper over `objc2-video-toolbox` ourselves**: the same size, no licence or sync question, all the FFI
    ours to maintain.
-4. **Accept MPL-2.0 symphonia** (used unmodified, a `NOTICE` entry): the least work, but it widens the tree by 132 crates
-   and the licence set, so it is the maintainer's call.
+4. **Accept MPL-2.0 symphonia** (used unmodified, a `NOTICE` entry): the least work, but it brings the whole 132-crate tree,
+   13 of them MPL-2.0, so it is the maintainer's call.
 
 In all four the code lives behind a macOS-only `hw-video` feature of `lightcraft-video` (never wasm), and the engine reaches it
 through the `VideoDecoder` / encoder traits.
