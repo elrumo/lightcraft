@@ -6,6 +6,10 @@
 //!   source's own light, before white balance: every edit after that (white balance, tone,
 //!   colour, masks, Remove spots, grain…) applies to the new area exactly as to the photo, and a
 //!   later change carries over. The photo's own pixels never change.
+//! - **What reads a source position.** The camera's local tone map ([`crate::local_tone`]) and the planes laid
+//!   over the source (mattes, depth: [`crate::masks::source_to_out`]) are looked up by where a pixel sits in the
+//!   photo. Past it they take the photo's nearest edge, in a frame with a lens or perspective warp too
+//!   ([`crate::optics::Warp::source_pos`]): left out, the new area stayed as painted beside a photo the map lifts.
 //! - **The edge.** The fill holds the photo's pixels for a few pixels inside its edge, so the
 //!   bilinear lookup at the edge reads the photo; without a lens or perspective warp, the last
 //!   fill pixel outside the edge fades from the photo's edge pixels into the fill.
@@ -752,6 +756,132 @@ mod tests {
         s.crop.geometry.rect = Rect::new(f64::NAN, 0.0, 9.0, 1.0);
         let v = view_rect(&s, 120.0, 80.0);
         assert!(v.x1 <= 1.0 + EXPAND_MAX && v.x0 >= -EXPAND_MAX && v.x0.is_finite());
+    }
+
+    /// A fill of a flat colour (display-encoded) over the new area, for `s`'s crop.
+    fn coloured_fill(src: &Rgb32f, s: &DevelopSettings, rgb: [f32; 3]) -> ExpandFill {
+        let input = expand_input(src, &SourceInfo::default(), s, 256).unwrap();
+        let (w, h) = input.size();
+        let painted = Rgb32f::from_fn(w, h, |x, y| if input.known[y * w + x] { input.image.get(x, y) } else { rgb });
+        input.finish(&painted, "test").unwrap()
+    }
+
+    /// The photo the crop reaches past on the left, as `warped` (a perspective correction, which is how a lens
+    /// correction frames a photo too) or not, with a coloured fill.
+    fn expanded_with_fill(src: &Rgb32f, warped: bool) -> DevelopSettings {
+        let mut s = expanded(Rect::new(-0.25, -0.1, 1.0, 1.0));
+        s.geometry.vertical = if warped { 40.0 } else { 0.0 };
+        s.expand_fill = Some(coloured_fill(src, &s, [0.8, 0.5, 0.3]));
+        s
+    }
+
+    /// The pixels of `img` (a render of `s`) around the normalized point `n`: one in the new area, one in the photo.
+    fn around(img: &Rgba8, s: &DevelopSettings, n: Point) -> Vec<[u8; 4]> {
+        let frame = Frame::new(120, 80, s, true);
+        let (w, h) = frame.fit(img.width, img.height);
+        assert_eq!((w, h), (img.width, img.height));
+        let p = frame.norm_to_out(w, h).apply(n);
+        let (cx, cy) = (p.x as usize, p.y as usize);
+        (cy - 3..=cy + 3).flat_map(|y| (cx - 3..=cx + 3).map(move |x| img.get(x, y))).collect()
+    }
+
+    /// How far, per pixel and summed over the channels, `a` is from `b`.
+    fn distance(a: &[[u8; 4]], b: &[[u8; 4]]) -> f64 {
+        a.iter().zip(b).map(|(p, q)| (0..3).map(|c| f64::from(p[c].abs_diff(q[c]))).sum::<f64>()).sum::<f64>() / a.len() as f64
+    }
+
+    /// Every edit that works on a pixel's own colour and place reaches the new area as it reaches the photo: the fill
+    /// is put in at the resample, before white balance, and nothing after that tells the two apart.
+    #[test]
+    fn edits_reach_the_new_area_as_they_reach_the_photo() {
+        let src = photo(120, 80);
+        let edits: Vec<(&str, fn(&mut DevelopSettings))> = vec![
+            ("exposure", |s| s.light.exposure = 1.0),
+            ("contrast", |s| s.light.contrast = 60.0),
+            ("highlights", |s| s.light.highlights = -80.0),
+            ("temperature", |s| {
+                s.wb.mode = lightcraft_develop::WbMode::Custom;
+                s.wb.temp = 9000.0;
+            }),
+            ("saturation", |s| s.color.saturation = -80.0),
+            ("vibrance", |s| s.color.vibrance = 80.0),
+            ("tone curve", |s| s.curve.highlights = -60.0),
+            ("dehaze", |s| s.effects.dehaze = 60.0),
+            ("vignette", |s| s.vignette.amount = -80.0),
+            ("grain", |s| s.grain.amount = 80.0),
+            ("black and white", |s| s.treatment = lightcraft_develop::Treatment::Bw),
+            ("calibration", |s| s.calibration.red_hue = 50.0),
+        ];
+        let req = RenderRequest::fit(300, 300);
+        for warped in [false, true] {
+            let base = expanded_with_fill(&src, warped);
+            let before = render(&src, &SourceInfo::default(), &base, &req).image;
+            let past = Point::new(-0.2, 0.5);
+            let was = around(&before, &base, past);
+            for (name, edit) in &edits {
+                let mut s = base.clone();
+                edit(&mut s);
+                let after = render(&src, &SourceInfo::default(), &s, &req).image;
+                let moved = distance(&around(&after, &s, past), &was);
+                assert!(moved > 3.0, "{name} (warped: {warped}) left the new area as it was: {moved}");
+            }
+        }
+    }
+
+    /// An Apple ProRAW's local tone map (a gain per pixel) reaches the new area, in a frame with a lens or perspective
+    /// warp too (its pixels past the photo have no source position there: they take the photo's nearest edge's gain).
+    /// Without it the new area stayed as the model painted it while the photo was lifted by the map.
+    #[test]
+    fn the_cameras_local_tone_map_reaches_the_new_area_under_a_warp() {
+        use lightcraft_raw::gaintable::{GainTableMap, SourcePlacement};
+        let src = photo(120, 80);
+        let map = GainTableMap {
+            points_v: 1,
+            points_h: 1,
+            points_n: 2,
+            spacing_v: 0.0,
+            spacing_h: 0.0,
+            origin_v: 0.0,
+            origin_h: 0.0,
+            weights: [0.3, 0.6, 0.1, 0.0, 0.0],
+            gamma: 1.0,
+            gains: vec![2.0, 2.0],
+        };
+        let placement = SourcePlacement { rect: [0.0, 0.0, 1.0, 1.0], orientation: lightcraft_geom::Orientation::Normal };
+        let plain = SourceInfo { raw: true, ..SourceInfo::default() };
+        let toned = SourceInfo { local_tone: Some(Arc::new(crate::local_tone::LocalTone { map, placement })), ..plain.clone() };
+        let req = RenderRequest::fit(300, 300);
+        for warped in [false, true] {
+            let s = expanded_with_fill(&src, warped);
+            let (a, b) = (render(&src, &plain, &s, &req).image, render(&src, &toned, &s, &req).image);
+            for (what, n) in [("the new area", Point::new(-0.2, 0.5)), ("the photo", Point::new(0.5, 0.5))] {
+                // (twice the light is well over 30 levels brighter at both)
+                let lifted = distance(&around(&b, &s, n), &around(&a, &s, n));
+                assert!(lifted > 30.0, "the local tone map lifts {what} (warped: {warped}): {lifted}");
+            }
+        }
+    }
+
+    /// A plane over the source (a segmentation matte, a depth map) goes on into the new area as its nearest edge, in a
+    /// frame with a warp as in one without; outside a warp's image without Expand it is still 0.
+    #[test]
+    fn a_plane_over_the_source_goes_on_into_the_new_area() {
+        let plane = lightcraft_raster::Plane { width: 8, height: 8, data: vec![1.0; 64] };
+        for warped in [false, true] {
+            let mut s = expanded(Rect::new(-0.25, -0.1, 1.0, 1.0));
+            s.geometry.vertical = if warped { 40.0 } else { 0.0 };
+            let frame = Frame::new(120, 80, &s, true);
+            let (w, h) = frame.fit(300, 300);
+            let p = frame.norm_to_out(w, h).apply(Point::new(-0.2, 0.5));
+            let out = crate::masks::source_to_out(&plane, &frame, w, h);
+            assert_eq!(out.get(p.x as usize, p.y as usize), 1.0, "warped: {warped}");
+        }
+        // without Expand a warp's empty corners stay 0
+        let mut s = DevelopSettings::default();
+        s.geometry.vertical = 40.0;
+        let frame = Frame::new(120, 80, &s, true);
+        let (w, h) = frame.fit(300, 300);
+        assert!(crate::masks::source_to_out(&plane, &frame, w, h).data.contains(&0.0));
     }
 
     #[test]

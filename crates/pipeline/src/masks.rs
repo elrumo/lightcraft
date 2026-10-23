@@ -582,7 +582,8 @@ fn matte_alpha(mattes: &[&Image<u8>], frame: &Frame, w: usize, h: usize) -> Plan
 /// A plane over the EXIF-oriented source (at any resolution) at output resolution, sampled like
 /// the image: user orientation, lens / perspective warp, crop and flips; area-averaged first when
 /// the output is much smaller than the plane, bilinear otherwise. Outside the source (a warp's
-/// empty corners) it is 0.
+/// empty corners) it is 0, except with Generative Expand, whose new area takes the plane's nearest
+/// edge there as it does without a warp (a sky mask goes on into a sky the model painted).
 pub(crate) fn source_to_out(p: &Plane, frame: &Frame, w: usize, h: usize) -> Plane {
     let mut out = Plane::new(w, h);
     let o2t = frame.out_to_oriented(w, h);
@@ -593,16 +594,17 @@ pub(crate) fn source_to_out(p: &Plane, frame: &Frame, w: usize, h: usize) -> Pla
     let k = oriented.width as f64 / frame.ow * frame.ow.max(frame.oh) / ppl;
     let base = box_down(&oriented, if k >= 2.0 { (k.floor() as usize).min(64) } else { 1 });
     let (sx, sy) = ((base.width as f64 / frame.ow) as f32, (base.height as f64 / frame.oh) as f32);
+    let expands = frame.expands();
     for_rows(&mut out.data, w, |y, row| {
         for (x, v) in row.iter_mut().enumerate() {
+            let flat = || o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
             let s = match &frame.warp {
-                Some(wp) => {
-                    let Some((_, s)) = wp.frame(&o2t, x, y) else {
-                        continue;
-                    };
-                    s
-                }
-                None => o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5)),
+                Some(wp) => match wp.frame(&o2t, x, y) {
+                    Some((_, s)) => s,
+                    None if expands => Some(wp.source_pos(&o2t, x, y)).filter(|s| s.x.is_finite() && s.y.is_finite()).unwrap_or_else(flat),
+                    None => continue,
+                },
+                None => flat(),
             };
             *v = bilinear(&base, s.x as f32 * sx, s.y as f32 * sy);
         }

@@ -1,7 +1,8 @@
 //! Before / After: what the "before" side shows. By default a photo's import state (camera
 //! defaults plus the import preset, see [`Photo::import_defaults`]); it can be set from the
 //! current settings, a history step or a version, and copied or swapped with the current
-//! settings. The before side always uses the current crop and orientation so the two line up.
+//! settings. The before side always uses the current crop (with the area Generative Expand painted past the photo's
+//! edges: it is part of the framing, not an edit) and orientation so the two line up.
 
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ impl Session {
     /// The settings the "before" side of photo `p` renders with.
     pub fn before_settings(&self, p: &Photo) -> DevelopSettings {
         let base = self.before.get(&p.id).map(|b| (**b).clone()).unwrap_or_else(|| p.import_defaults());
-        DevelopSettings { crop: p.develop.crop, orientation: p.develop.orientation, ..base }
+        DevelopSettings { crop: p.develop.crop, expand_fill: p.develop.expand_fill.clone(), orientation: p.develop.orientation, ..base }
     }
 }
 

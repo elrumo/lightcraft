@@ -599,14 +599,15 @@ impl Session {
         if !d.crop.expand {
             return Err("Turn on Expand in the crop tool first, then drag the crop past the photo's edges".into());
         }
-        let info = self.source_info(id);
-        let mut src = self.source_now(id, SourceLevel::Preview)?;
+        // (the picture a render develops, not the plain source: the fill is put in at the resample, so it must be in
+        // the light the photo is in there, with the camera's look and the Denoise already on it)
+        let (mut src, mut info) = self.develop_source_now(id, SourceLevel::Preview)?;
         let nothing = "The crop shows nothing past the photo: drag its edges outward (or pick a wider aspect) first";
         let mut input = lightcraft_pipeline::expand::expand_input(&src, &info, &d, side).ok_or(nothing)?;
         // the preview has fewer pixels than the canvas wants: read the original
         let full = self.catalog.photo(id).map_or(0, |p| p.width.max(p.height) as usize);
         if input.native < side as f64 && full > src.width.max(src.height) {
-            src = self.source_now(id, SourceLevel::Full)?;
+            (src, info) = self.develop_source_now(id, SourceLevel::Full)?;
             input = lightcraft_pipeline::expand::expand_input(&src, &info, &d, side).ok_or(nothing)?;
         }
         Ok(input)

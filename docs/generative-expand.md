@@ -151,6 +151,17 @@ The web and desktop apps do not have this painter.
   source is past the photo take the stored fill, fading in over one fill pixel at the edge. The
   GPU renderer resamples such frames on the CPU. Area past the photo with no fill renders as an
   empty canvas's light neutral and is transparent in the preview (the checkerboard).
+- **What reads where a pixel sits in the photo** takes the photo's nearest edge in the new area, in a
+  frame with a lens or perspective warp as in one without (`Warp::source_pos`): the camera's local
+  tone map (an Apple ProRAW's gain table; the new area gets the gain of the photo beside it, so it is
+  lifted as the photo is), and the planes laid over the source (a segmentation matte, Lens Blur's
+  depth). Before, a warped frame left the new area out of the local tone map, which left it dark
+  beside the lifted photo.
+- **The picture the model paints from** is the one a render develops, not the plain source
+  (`Session::develop_source_now`): in the camera's look with the Camera Matching profile, and with
+  the AI Denoise the photo has, so the new area is in the same light as the photo when the fill goes
+  back in. Changing the profile or the Denoise later moves the photo and not the fill: Generate again.
+- **Before** (the long press, Before / After) keeps the painted area: it is part of the crop, not an edit.
 - **Upright, lens corrections, Transform** move the photo under a fill made for the old geometry:
   Generate again after changing them.
 

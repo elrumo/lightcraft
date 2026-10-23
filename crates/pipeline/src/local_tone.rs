@@ -31,7 +31,9 @@ pub fn enabled(info: &SourceInfo, s: &DevelopSettings) -> bool {
 }
 
 /// Multiply the resampled, not yet white-balanced source `img` (the output frame of `p`) by the
-/// local tone gain at each pixel. Blank canvas (outside a lens / perspective warp) is left alone.
+/// local tone gain at each pixel. Blank canvas (outside a lens / perspective warp) is left alone, except
+/// with Generative Expand, whose new area is rendered like the photo: it takes the gain of the photo's
+/// nearest edge (the table repeats its edge tables), as it does when no warp is in the way.
 pub fn apply(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     let Some(lt) = info.local_tone.as_deref().filter(|_| enabled(info, &p.settings)) else { return };
     let Some(eval) = lt.map.evaluator() else { return };
@@ -40,16 +42,19 @@ pub fn apply(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     let (ow, oh) = (frame.ow.max(1e-9), frame.oh.max(1e-9));
     let o2t = frame.out_to_oriented(w, h);
     let user = frame.orient.inverse();
+    let expands = frame.expands();
     let to_prophoto = PROPHOTO.from_xyz().mul(&bradford(D65, D50)).mul(&REC2020.to_xyz()).to_f32();
     crate::for_rows(&mut img.data, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {
             // output pixel → user-oriented source px → EXIF-oriented source (0..1) → active area
+            let flat = || o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
             let s = match &frame.warp {
                 Some(wp) => match wp.frame(&o2t, x, y) {
                     Some((_, s)) => s,
+                    None if expands => Some(wp.source_pos(&o2t, x, y)).filter(|s| s.x.is_finite() && s.y.is_finite()).unwrap_or_else(flat),
                     None => continue,
                 },
-                None => o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5)),
+                None => flat(),
             };
             let (u, v) = user.map(s.x / ow, s.y / oh, 1.0, 1.0);
             let (ax, ay) = lt.placement.active(u, v);

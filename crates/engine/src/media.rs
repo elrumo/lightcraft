@@ -2115,6 +2115,21 @@ impl crate::Session {
         self.media.insert_source(id, level, r);
         Ok(image)
     }
+
+    /// [`Self::source_now`] for what a render of photo `id` develops: the picture in the camera's look when the photo has
+    /// the Camera Matching profile and with the Denoise it asks for, and the facts to render it against
+    /// ([`DecodedSource::develop_input`]). Generative Expand paints from this, so the new area is in the light the
+    /// photo is rendered in.
+    pub fn develop_source_now(&mut self, id: PhotoId, level: SourceLevel) -> Result<(Arc<Rgb32f>, SourceInfo), String> {
+        let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
+        let r = self.media.source_ref(&p, level).load_source()?;
+        if let Some(info) = &r.info {
+            self.learn_as_shot_wb(id, info);
+        }
+        let input = r.develop_input(&p.develop, source_info(&p));
+        self.media.insert_source(id, level, r);
+        Ok(input)
+    }
 }
 
 /// The long edge to read photo `p`'s source at for an export `out_long` pixels long, when that is less than half the
@@ -2467,6 +2482,28 @@ mod tests {
         let other = DecodedSource::new(picture(edge), Some(SourceInfo { camera_tone: Some(neutral), ..Default::default() }));
         let (image, got) = other.develop_input(&s, SourceInfo::default());
         assert!(Arc::ptr_eq(&image, &other.image) && got.camera_tone == Some(neutral));
+    }
+
+    /// Generative Expand paints from the picture a render develops (in the camera's look for Camera Matching): the fill
+    /// is put in at the resample, so one painted from the plain source would show none of that look.
+    #[test]
+    fn develop_source_now_is_the_picture_a_render_develops() {
+        use lightcraft_pipeline::{CameraMatch, profiles::CAMERA};
+        let mut s = crate::Session::with_demo();
+        let id = s.active().unwrap();
+        let mut picture = Rgb32f::new(64, 48);
+        picture.data.fill([0.2, 0.3, 0.4]);
+        let m = Arc::new(CameraMatch { start_hue_sat: None, matrix: lightcraft_color::Mat3::diag(2.0, 1.0, 0.5), hue_sat: None, tone: None });
+        let info = SourceInfo { raw: true, camera_match: Some(m), ..Default::default() };
+        s.media.insert_source(id, SourceLevel::Preview, DecodedSource::new(Arc::new(picture), Some(info)));
+        let (plain, _) = s.develop_source_now(id, SourceLevel::Preview).unwrap();
+        assert_eq!(plain.data[0], [0.2, 0.3, 0.4], "Color: the plain picture");
+        let mut d = (*s.develop_of(id).unwrap()).clone();
+        d.profile.id = CAMERA.into();
+        s.set_develop(id, d, "Camera Matching").unwrap();
+        let (matched, info) = s.develop_source_now(id, SourceLevel::Preview).unwrap();
+        assert_eq!(matched.data[0], [0.4, 0.3, 0.2], "Camera Matching: the camera's look on the pixels");
+        assert!(info.camera_match.is_some());
     }
 
     #[test]

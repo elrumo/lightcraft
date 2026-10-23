@@ -249,6 +249,15 @@ impl Warp {
         self.frame(o2t, x, y).is_some()
     }
 
+    /// The green-plane source position of output pixel `(x, y)` also where it is past the image, which
+    /// [`frame`](Self::frame) answers `None` for: Generative Expand's new area takes what a source position
+    /// decides (the camera's local tone map, the mattes) from the photo's nearest edge. May lie far outside the
+    /// image, or not be finite (a lens polynomial run past its range).
+    pub fn source_pos(&self, o2t: &Affine, x: usize, y: usize) -> Point {
+        let (_, (gx, gy)) = self.framing(o2t, x as f64 + 0.5, y as f64 + 0.5);
+        Point::new(gx, gy)
+    }
+
     /// [`covers`](Self::covers) for every pixel of the output block `x0..x1 × y0..y1` at once, when that is
     /// certain: `Some(true)` if all are covered, `Some(false)` if none is, `None` if the block may straddle the
     /// image edge (or can't be bounded) and each pixel must be decided alone.

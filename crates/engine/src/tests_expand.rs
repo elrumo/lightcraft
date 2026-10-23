@@ -115,6 +115,20 @@ fn classic_generate_fills_the_new_area_as_one_undo_step() {
     assert!(!has_fill(&s) && !s.develop_of(id).unwrap().crop.expand);
 }
 
+/// The Before side keeps the framing, the area painted past the photo's edges included (it is part of the crop, not
+/// an edit): without it the long press and Before / After showed the new area as empty.
+#[test]
+fn the_before_side_keeps_the_new_area() {
+    let mut s = session();
+    let id = s.active().unwrap();
+    s.execute("crop.expand", &json!({"on": true})).unwrap();
+    s.execute("crop.set", &json!({"rect": [-0.15, 0.0, 1.15, 1.0]})).unwrap();
+    s.execute("crop.generate", &json!({"model": "classic"})).unwrap();
+    assert!(s.before_settings(s.catalog.photo(id).unwrap()).expand_fill.is_some());
+    let before = s.render_job(id, 400, 400, true, true).unwrap().run().rendered.unwrap().image;
+    assert!(before.data.iter().all(|p| p[3] == 255), "no empty area on the Before side");
+}
+
 #[test]
 fn generate_in_the_background_shows_in_the_activity_stack() {
     let mut s = session();

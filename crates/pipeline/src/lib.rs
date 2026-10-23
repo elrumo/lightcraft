@@ -781,9 +781,9 @@ fn overlay_alphas_all(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Ve
 }
 
 /// Convenience: render a before/after pair side by side is up to the UI; this renders "before"
-/// (default look, keeping the crop so framing matches, under the photo's own rendering process).
+/// (default look, keeping the crop and the area Generative Expand painted past the photo so framing matches, under the photo's own rendering process).
 pub fn before_settings(s: &DevelopSettings) -> DevelopSettings {
-    let mut b = DevelopSettings { crop: s.crop, orientation: s.orientation, ..DevelopSettings::default() };
+    let mut b = DevelopSettings { crop: s.crop, expand_fill: s.expand_fill.clone(), orientation: s.orientation, ..DevelopSettings::default() };
     b.wb = lightcraft_develop::WhiteBalance { mode: lightcraft_develop::WbMode::AsShot, ..b.wb };
     b
 }
