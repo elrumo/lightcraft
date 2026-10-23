@@ -1605,6 +1605,7 @@ impl Engine {
             visible_count: visible.len(),
             library_generation: self.session.library_generation(),
             presets_generation: presets_generation(&self.session),
+            sensitive_rev: self.session.vision.sensitive_rev(),
             active: self.session.active(),
             selection_count: self.session.selection.ids.len(),
             undo: self.session.undo.last().map(|u| u.label.clone()),
@@ -1678,7 +1679,6 @@ impl Engine {
                 let freed = self.session.release_memory();
                 log::warn!("memory warning: {} MB of decoded photos released", freed >> 20);
             }
-            "terminate" => {
             // The loupe is gone (back to the grid): its pictures and stage caches, the decoded photos and the GPU's spare
             // buffers go, as a memory warning would free them, without the system asking. A phone keeps a zoomed 48 MP
             // photo's original, its stages and a GPU copy (~2 GB) for a photo that is no longer shown otherwise.
@@ -1689,6 +1689,7 @@ impl Engine {
                 let freed = self.session.release_memory();
                 log::info!("photo closed: {} MB of decoded photos released", freed >> 20);
             }
+            "terminate" => {
                 self.save();
                 if !self.demo
                     && let Err(e) = self.session.close_library()

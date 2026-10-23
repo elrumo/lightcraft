@@ -99,10 +99,12 @@ as it drives the egui app. `engine.*`, `render.*` and `host.*` are answered by t
 Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, quick?, ms, histogram?}` (slots
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…; `main`'s `histogram` comes with every sharp picture and
 with a draft at most every 33 ms, a drag's ~120 pictures a second each carrying 1,024 numbers: keep the last one); `renderFailed {slot, photo, key, error}`; `state {state:
-{catalogRevision, visibleGen, visibleCount, libraryGeneration, presetsGeneration, active, selectionCount, undo, redo,
+{catalogRevision, visibleGen, visibleCount, libraryGeneration, presetsGeneration, sensitiveRev, active, selectionCount, undo, redo,
 interaction, activeMask, activeSpot, unsaved, sync?, faces?, icloud?}}` when any of it changes (`presetsGeneration`: changes
 with the preset list, including presets the sync brings from another device: the Presets panel reads `presets.list`
-again) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`icloud`: `{rev, epoch}` while
+again) (`sensitiveRev`: changes when the photos flagged as possibly sensitive may have, a mark by the person
+(`photo.markSensitive`), the server's list or this device's scores arriving; none of them is a catalog change, so
+`catalogRevision` stays and the grid reads its photos again, for their `sensitive` flag, when this moves) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`icloud`: `{rev, epoch}` while
 iCloud sync is on for the library: a new `rev` means there may be records to send, `icloud.changes`; a new `epoch` that the
 engine forgot what the cloud has, so the frontend drops its own sync state and fetches everything again; see
 [sync.md](sync.md#icloud-apple-devices-without-a-server)) (`activeMask` / `activeSpot`: the Masking tool's

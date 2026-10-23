@@ -114,6 +114,11 @@ pub struct HostState {
     /// again, a profile browser `profiles.menu`.
     #[serde(default)]
     pub presets_generation: u64,
+    /// Changes whenever the photos flagged as possibly sensitive may have (the person marked some, the server's list or
+    /// this device's scores came in). It is no catalog change, so `catalogRevision` stays: a frontend reads the grid's
+    /// photos again when this moves, for their `sensitive` flag.
+    #[serde(default)]
+    pub sensitive_rev: u64,
     /// The photo the loupe and the edit tools work on.
     pub active: Option<PhotoId>,
     pub selection_count: usize,

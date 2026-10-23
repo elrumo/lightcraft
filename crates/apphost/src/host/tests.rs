@@ -515,6 +515,33 @@ fn the_state_says_when_the_presets_change() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// Marking a photo sensitive is no catalog change, so the state's `catalogRevision` stays: its `sensitiveRev` moves instead (a
+// native frontend reads the grid's photos again then, for their `sensitive` flag), and not for a rating
+#[test]
+fn the_state_says_when_photos_are_marked_sensitive() {
+    let h = demo();
+    let state = |h: &Host, id: u64| h.call(&req(id, "host.state", json!({})), Duration::from_secs(30))["result"].clone();
+    let before = state(&h, 1);
+    assert!(before["sensitiveRev"].as_u64().is_some(), "{before}");
+    h.call(&req(2, "engine.execute", json!({"command": "photo.rate", "params": {"rating": 3}})), Duration::from_secs(30));
+    assert_eq!(state(&h, 3)["sensitiveRev"], before["sensitiveRev"], "a rating leaves the flags alone");
+    let rows = h.call(&req(4, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    let first = rows["result"]["photos"][0]["id"].clone();
+    assert_ne!(rows["result"]["photos"][0]["sensitive"], true, "{rows}");
+    let rated = state(&h, 5);
+    let r = h.call(&req(6, "engine.execute", json!({"command": "photo.markSensitive", "params": {"ids": [first]}})), Duration::from_secs(30));
+    assert_eq!(r["result"]["changed"], 1, "{r}");
+    let after = state(&h, 7);
+    assert_ne!(after["sensitiveRev"], rated["sensitiveRev"], "marking moves it");
+    assert_eq!(after["catalogRevision"], rated["catalogRevision"], "and it is no catalog change");
+    let pushed = h.wait_for(|e| e["kind"] == "state" && e["state"]["sensitiveRev"] == after["sensitiveRev"]);
+    assert_eq!(pushed["state"]["sensitiveRev"], after["sensitiveRev"]);
+    let rows = h.call(&req(8, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    assert_eq!(rows["result"]["photos"][0]["sensitive"], true, "{rows}");
+    h.call(&req(9, "engine.execute", json!({"command": "photo.unmarkSensitive", "params": {"ids": [first]}})), Duration::from_secs(30));
+    assert_ne!(state(&h, 10)["sensitiveRev"], after["sensitiveRev"], "taking the mark off moves it too");
+}
+
 // Previews of a preset, a profile and a version on the active photo come as `variant:` pictures
 #[test]
 fn presets_profiles_and_versions_preview() {
@@ -644,33 +671,6 @@ fn a_zoomed_view_keeps_its_original_decoded() {
     budget(&h, 9, json!({"mb": default_mb}));
 }
 
-// People's faces: a face box renders as its own small picture
-#[test]
-fn a_face_renders_on_its_own() {
-    let h = demo();
-    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
-    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
-    let r = h.call(&req(2, "render.face", json!({"photo": photo, "rect": [0.3, 0.3, 0.5, 0.6], "edge": 96})), Duration::from_secs(30));
-    let slot = r["result"]["slot"].as_str().unwrap().to_string();
-    assert!(slot.starts_with("variant:"), "{r}");
-    let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
-    assert!(image["width"].as_u64().unwrap() <= 96 && image["height"].as_u64().unwrap() <= 96, "{image}");
-    let bad = h.call(&req(3, "render.face", json!({"photo": photo, "rect": {"x0": "a"}})), Duration::from_secs(30));
-    assert_eq!(bad["error"]["code"], "badParams", "{bad}");
-    // the photo as it is, at a size of its own (Compare, Survey)
-    let r = h.call(&req(4, "render.variant", json!({"photo": photo, "edited": true, "edge": 200})), Duration::from_secs(30));
-    let slot = r["result"]["slot"].as_str().unwrap().to_string();
-    let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
-    assert!(image["width"].as_u64().unwrap() <= 200 && image["height"].as_u64().unwrap() <= 200, "{image}");
-    // the photo as imported, and a history step (the edit video's frames)
-    let r = h.call(&req(5, "render.variant", json!({"photo": photo, "original": true, "edge": 200})), Duration::from_secs(30));
-    // (an unedited demo photo renders the same as imported: that picture is already there, so no new one comes)
-    assert!(r["result"]["slot"].as_str().unwrap().starts_with("variant:"), "{r}");
-    let none = h.call(&req(6, "render.variant", json!({"photo": photo, "history": 999, "edge": 200})), Duration::from_secs(30));
-    assert_eq!(none["error"]["code"], "badParams", "{none}");
-}
-
-// Photo Merge as the phone does it: previews that a newer one replaces, then the full merge in the
 // Back at the grid, the photo that was zoomed on is not kept: the decoded original (which the cache would keep, under its
 // budget, after the view is back at fit) and the view's stages go with the loupe.
 #[test]
@@ -698,6 +698,33 @@ fn closing_the_photo_frees_the_original() {
     h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main");
 }
 
+// People's faces: a face box renders as its own small picture
+#[test]
+fn a_face_renders_on_its_own() {
+    let h = demo();
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    let r = h.call(&req(2, "render.face", json!({"photo": photo, "rect": [0.3, 0.3, 0.5, 0.6], "edge": 96})), Duration::from_secs(30));
+    let slot = r["result"]["slot"].as_str().unwrap().to_string();
+    assert!(slot.starts_with("variant:"), "{r}");
+    let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
+    assert!(image["width"].as_u64().unwrap() <= 96 && image["height"].as_u64().unwrap() <= 96, "{image}");
+    let bad = h.call(&req(3, "render.face", json!({"photo": photo, "rect": {"x0": "a"}})), Duration::from_secs(30));
+    assert_eq!(bad["error"]["code"], "badParams", "{bad}");
+    // the photo as it is, at a size of its own (Compare, Survey)
+    let r = h.call(&req(4, "render.variant", json!({"photo": photo, "edited": true, "edge": 200})), Duration::from_secs(30));
+    let slot = r["result"]["slot"].as_str().unwrap().to_string();
+    let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
+    assert!(image["width"].as_u64().unwrap() <= 200 && image["height"].as_u64().unwrap() <= 200, "{image}");
+    // the photo as imported, and a history step (the edit video's frames)
+    let r = h.call(&req(5, "render.variant", json!({"photo": photo, "original": true, "edge": 200})), Duration::from_secs(30));
+    // (an unedited demo photo renders the same as imported: that picture is already there, so no new one comes)
+    assert!(r["result"]["slot"].as_str().unwrap().starts_with("variant:"), "{r}");
+    let none = h.call(&req(6, "render.variant", json!({"photo": photo, "history": 999, "edge": 200})), Duration::from_secs(30));
+    assert_eq!(none["error"]["code"], "badParams", "{none}");
+}
+
+// Photo Merge as the phone does it: previews that a newer one replaces, then the full merge in the
 // background, which says how it went (the demo's photos may not merge: either way it answers)
 #[test]
 fn merges_preview_and_run_in_the_background() {

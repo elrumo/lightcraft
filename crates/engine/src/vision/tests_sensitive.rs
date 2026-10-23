@@ -116,6 +116,25 @@ fn a_photo_can_be_marked_sensitive_without_the_model() {
     assert!(s.sensitive_photos().is_empty());
 }
 
+// Marking is no catalog change: the Possibly Sensitive list in view must follow it anyway, and `sensitive_rev` (what a
+// frontend watches to read the photos' flags again) must move with every mark
+#[test]
+fn marking_moves_the_possibly_sensitive_view_and_the_revision() {
+    let mut s = Session::with_demo();
+    let id = s.visible()[0];
+    s.execute("library.source", &json!({"kind": "sensitive"})).unwrap();
+    assert!(s.visible().is_empty());
+    let (before, catalog) = (s.vision.sensitive_rev(), s.catalog.revision);
+    s.execute("photo.markSensitive", &json!({"ids": [id.0]})).unwrap();
+    assert_ne!(s.vision.sensitive_rev(), before, "marking moves the revision");
+    assert_eq!(s.catalog.revision, catalog, "and is no catalog change");
+    assert_eq!(s.visible(), vec![id], "the view lists it at once");
+    let marked = s.vision.sensitive_rev();
+    s.execute("photo.unmarkSensitive", &json!({"ids": [id.0]})).unwrap();
+    assert_ne!(s.vision.sensitive_rev(), marked);
+    assert!(s.visible().is_empty(), "and drops it at once");
+}
+
 #[test]
 fn marking_not_sensitive_beats_the_model() {
     let mut s = session(Arc::new(All));

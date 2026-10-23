@@ -166,9 +166,10 @@ impl Vision {
         self.shared.sensitive_len.load(Ordering::Relaxed)
     }
 
-    /// Changes whenever the flagged photos may have (a view's cache key).
+    /// Changes whenever the flagged photos may have (a view's cache key, and what a frontend reads again the photos'
+    /// `sensitive` flag on): scores here, the server's list, and the person's own marks.
     pub fn sensitive_rev(&self) -> u64 {
-        self.shared.sensitive_rev.load(Ordering::Relaxed).wrapping_add(self.remote.sensitive.rev << 32)
+        self.shared.sensitive_rev.load(Ordering::Relaxed).wrapping_add(self.remote.sensitive.rev << 32).wrapping_add(self.sensitive_marks_rev << 48)
     }
 
     /// The classifier's download state.
