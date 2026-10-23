@@ -76,6 +76,8 @@ struct Fake {
     hold: AtomicBool,
     started: AtomicUsize,
     made: AtomicUsize,
+    /// The rayon threads and the thread's name the last encode saw.
+    ran_on: Mutex<(usize, String)>,
 }
 
 impl Fake {
@@ -86,6 +88,7 @@ impl Fake {
             hold: AtomicBool::new(false),
             started: AtomicUsize::new(0),
             made: AtomicUsize::new(0),
+            ran_on: Mutex::new((0, String::new())),
         })
     }
 }
@@ -97,6 +100,7 @@ impl VideoEncoder for Fake {
 
     fn encode(&self, src: &Path, dst: &Path, settings: &Settings, cancel: &AtomicBool, progress: &dyn Fn(u64, u64)) -> Result<Encoded, EncodeError> {
         self.started.fetch_add(1, Ordering::SeqCst);
+        *self.ran_on.lock().unwrap() = (rayon::current_num_threads(), std::thread::current().name().unwrap_or_default().to_string());
         while self.hold.load(Ordering::SeqCst) {
             if cancel.load(Ordering::SeqCst) {
                 return Err(EncodeError::Cancelled);
@@ -149,6 +153,9 @@ fn lab_with(tag: &str, clips: Vec<(&str, Vec<u8>)>, extra: Vec<(&str, Vec<u8>)>,
     cfg.scan_interval = None;
     cfg.preview_threads = Some(1);
     cfg.video_encoder = encoder;
+    // (a thread of the lowest priority gets almost no time on a machine other work has saturated, and a test waits a minute:
+    // LC_TEST_VIDEO_LOW_PRIORITY=1 runs them the way a server does)
+    cfg.video_low_priority = std::env::var_os("LC_TEST_VIDEO_LOW_PRIORITY").is_some();
     let server = Server::start(cfg).unwrap();
     scanned(&server);
     let base = format!("http://{}", server.addr());
@@ -583,6 +590,7 @@ fn the_queue_counts_pauses_retries_and_applies_again() {
         "{s}"
     );
     assert_eq!(lab.copies(), 3);
+    assert_eq!(*fake.ran_on.lock().unwrap(), (1, "lc-video-encode".to_string()), "an encode has a pool of one thread to itself");
     let (sizes, copies): (u64, u64) = lab.clips[..3].iter().map(|c| c.2.len() as u64).fold((0, 0), |(a, b), n| (a + n, b + n * 40 / 100));
     assert_eq!((s["bytes"]["encoded"].as_u64(), s["bytes"]["saved"].as_u64()), (Some(copies), Some(sizes - copies)), "{s}");
     let r = lab.record(&lab.clips[0].1).unwrap();

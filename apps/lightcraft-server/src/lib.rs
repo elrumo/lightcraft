@@ -110,6 +110,9 @@ pub struct Config {
     /// Makes the lighter copies of videos when the server does it itself ([`video`]; `None`: the pure-Rust software
     /// encoder). Tests give a fake.
     pub video_encoder: Option<Arc<dyn video::VideoEncoder>>,
+    /// The server's own video encoding runs at the lowest priority (default). A thread at the lowest priority gets almost
+    /// no time on a machine other work has saturated, so tests that need an encode to finish there turn it off.
+    pub video_low_priority: bool,
 }
 
 impl Config {
@@ -133,6 +136,7 @@ impl Config {
             render_wait: None,
             cors_origins: Vec::new(),
             video_encoder: None,
+            video_low_priority: true,
         }
     }
 }
@@ -238,7 +242,7 @@ impl Server {
             presets: Mutex::new(shared_presets),
             usage: usage::Usage::new(),
             checker: integrity::Checker::default(),
-            video: video::Videos::new(&data_dir, cfg.video_encoder),
+            video: video::Videos::new(&data_dir, cfg.video_encoder, cfg.video_low_priority),
         });
         // (counted now, so the admin page has the numbers by the time anyone opens it)
         state.sizes.refresh(&state.data);

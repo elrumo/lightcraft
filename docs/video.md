@@ -125,10 +125,16 @@ downloads at a fraction of the size. The original is never touched. Admins turn 
 - **Who encodes.** A Mac helper claims videos (`video::Videos::next_job`, `fail`, `finish`: the Rust surface; the claim
   routes, leases that renew and the helper itself are not built). When nothing can encode, the panel says **waiting for a
   helper**. With `serverFallback` on the server encodes by itself with FilmCraft's pure-Rust H.264 encoder
-  (`lightcraft_video::lighter_copy`, behind the `VideoEncoder` trait): one video at a time, on one thread of the lowest
-  priority (`lightcraft_sysmem::lower_thread_priority`: nice 19 on Linux, background quality of service on macOS), with
-  the encoder on a single thread, stopped at once by a pause or a change of setting, and a panic in it is a failed clip,
-  not a crash. It makes H.264 only, and refuses HDR clips (the copy would be squeezed into SDR). It is slow (see
+  (`lightcraft_video::lighter_copy`, behind the `VideoEncoder` trait): one video at a time, with a panic in it a failed
+  clip, not a crash, and stopped at once by a pause or a change of setting. It runs at the lowest priority
+  (`lightcraft_sysmem::lower_thread_priority`: nice 19 on Linux, background quality of service on macOS) on a rayon pool of
+  one thread of its own (`video::encode_pool`). The encoder and the decoders are set to one thread, but the encoder's
+  look-ahead, the scaler and the colour conversion call rayon, which would have run them on the global pool at normal
+  priority; installed on that pool, they stay on the one lowered thread (a unit test and the queue test check it). A
+  thread at the lowest priority gets almost no time on a machine other work has saturated (a test run with 60 busy loops
+  added to a machine at load 1000: the worker did not reach its first clip in a minute, where the same tests at normal
+  priority passed in 51 s), which is the intent for a server; `Config::video_low_priority` (default on) turns it off, and
+  the tests do, unless `LC_TEST_VIDEO_LOW_PRIORITY=1`. It makes H.264 only, and refuses HDR clips (the copy would be squeezed into SDR). It is slow (see
   *Hardware video*: about 5 pictures a second at 1080p with every core; on one background thread a 6 s 720p clip took
   about 165 s on an M1 Max, a bit over one picture a second), which is why it is opt-in. Checked on a scratch server
   with ffmpeg-made clips: a 720p H.264 clip with AAC sound came back as a 1.9 MB copy of 3.6 MB (2.49 Mbit/s for the

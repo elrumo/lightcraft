@@ -563,10 +563,33 @@ pub struct Videos {
     stop: AtomicBool,
     /// Stops the encode in flight (a pause, a setting that makes it moot, shutting down).
     cancel: AtomicBool,
+    /// The encoder, and the work it leaves to rayon (the look-ahead, the scaling and the colour conversion), run on this
+    /// pool's one thread, so that all of it has the priority [`Videos::low_priority`] gives it, not the global pool's.
+    pool: Option<rayon::ThreadPool>,
+    /// The server's own encoding runs at the lowest priority ([`Config::video_low_priority`](crate::Config)).
+    low_priority: bool,
+}
+
+/// The pool the server's own encodes run on: one thread, at the lowest priority when `low`. Nothing else uses it, so a
+/// rayon call anywhere in the encode (FilmCraft's look-ahead, the scaler, the colour conversion) stays on that thread
+/// instead of going to the global pool at normal priority.
+fn encode_pool(low: bool) -> Option<rayon::ThreadPool> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .thread_name(|_| "lc-video-encode".into())
+        .start_handler(move |_| {
+            if low {
+                lightcraft_sysmem::lower_thread_priority();
+            }
+        })
+        .build()
+        .ok()
 }
 
 impl Videos {
-    pub fn new(data: &Path, encoder: Option<Arc<dyn VideoEncoder>>) -> Videos {
+    /// `low_priority`: the server's own encoding runs at the lowest priority (always, but in tests that need it to finish
+    /// on a machine other work has saturated: a thread of the lowest priority gets almost no time there).
+    pub fn new(data: &Path, encoder: Option<Arc<dyn VideoEncoder>>, low_priority: bool) -> Videos {
         Videos {
             data: data.to_path_buf(),
             settings: Mutex::new(Settings::load(data)),
@@ -577,6 +600,8 @@ impl Videos {
             bell: Condvar::new(),
             stop: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
+            pool: encode_pool(low_priority),
+            low_priority,
         }
     }
 
@@ -969,8 +994,11 @@ fn place(part: &Path, to: &Path) -> Result<(), String> {
 /// The worker thread: takes the next clip of any user when the fallback is on, encodes it, files the result.
 pub(crate) fn run(st: &Arc<State>) {
     let v = &st.video;
-    // (the encoder is the machine's last priority: previews, renders and requests come first)
-    lightcraft_sysmem::lower_thread_priority();
+    // (the encoder is the machine's last priority: previews, renders and requests come first; it runs on the encode pool's
+    // thread, and this one, which only looks for the next clip, goes with it)
+    if v.low_priority {
+        lightcraft_sysmem::lower_thread_priority();
+    }
     while !v.stop.load(Ordering::SeqCst) {
         {
             let mut w = lock(&v.wanted);
@@ -1008,10 +1036,16 @@ impl Videos {
             return self.release(&job.user, &job.clip.hash);
         }
         let result = lightcraft_engine::guard::catch("encoding a video", || {
-            self.encoder.encode(&src, &part, &job.settings, &self.cancel, &|done, total| {
-                progress.0.store(done, Ordering::Relaxed);
-                progress.1.store(total, Ordering::Relaxed);
-            })
+            let encode = || {
+                self.encoder.encode(&src, &part, &job.settings, &self.cancel, &|done, total| {
+                    progress.0.store(done, Ordering::Relaxed);
+                    progress.1.store(total, Ordering::Relaxed);
+                })
+            };
+            match &self.pool {
+                Some(pool) => pool.install(encode),
+                None => encode(),
+            }
         });
         lock(&self.queue).encoding.retain(|a| !Arc::ptr_eq(&a.done, &progress));
         match result {
@@ -1159,7 +1193,7 @@ mod tests {
     #[test]
     fn settings_are_validated_kept_and_a_damaged_file_means_the_defaults() {
         let dir = temp("settings");
-        let v = Videos::new(&dir, None);
+        let v = Videos::new(&dir, None, false);
         let s = v.settings();
         assert_eq!((s.enabled, s.codec, s.max_height, s.quality), (false, Codec::H264, MaxHeight::Lines(1080), Quality::Balanced));
         assert_eq!((s.skip_if_smaller, s.server_fallback, s.helper), (true, false, true));
@@ -1167,7 +1201,7 @@ mod tests {
         let s = v.set(&json!({"enabled": true, "codec": "hevc", "maxHeight": "original", "quality": "smaller"})).unwrap();
         assert_eq!((s.enabled, s.codec, s.max_height, s.quality), (true, Codec::Hevc, MaxHeight::Original, Quality::Smaller));
         assert!(s.skip_if_smaller, "what the patch leaves out stays");
-        assert_eq!(Videos::new(&dir, None).settings(), s, "kept in video.json");
+        assert_eq!(Videos::new(&dir, None, false).settings(), s, "kept in video.json");
         let on_disk: Value = serde_json::from_slice(&std::fs::read(dir.join(FILE)).unwrap()).unwrap();
         assert_eq!((on_disk["maxHeight"].clone(), on_disk["skipIfSmaller"].clone()), (json!("original"), json!(true)));
 
@@ -1189,7 +1223,7 @@ mod tests {
 
         for damaged in [&b"{not json"[..], b"{\"codec\": \"av1\"}", b"[]", b""] {
             std::fs::write(dir.join(FILE), damaged).unwrap();
-            assert_eq!(Videos::new(&dir, None).settings(), Settings::default());
+            assert_eq!(Videos::new(&dir, None, false).settings(), Settings::default());
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1258,6 +1292,23 @@ mod tests {
         assert_eq!(p.per_minute_at(t0 + Duration::from_secs(60)), Some(3.0));
         assert_eq!(p.eta_at(t0 + Duration::from_secs(60), 0), Some(0));
         assert_eq!(Pace::default().eta_at(t0, 5), None);
+    }
+
+    /// Everything an encode asks of rayon stays on the encode pool's one thread (not the global pool's, which runs at normal
+    /// priority), whether or not that thread is lowered.
+    #[test]
+    fn the_encode_runs_on_a_pool_of_one_thread_of_its_own() {
+        use rayon::prelude::*;
+        for low in [false, true] {
+            let pool = encode_pool(low).unwrap();
+            let (name, threads, seen) = pool.install(|| {
+                let here = std::thread::current().id();
+                // (what the scaler and the look-ahead do)
+                let off: usize = (0..64usize).into_par_iter().filter(|_| std::thread::current().id() != here).count();
+                (std::thread::current().name().map(str::to_string), rayon::current_num_threads(), off)
+            });
+            assert_eq!((name.as_deref(), threads, seen), (Some("lc-video-encode"), 1, 0), "low priority {low}");
+        }
     }
 
     /// The record lives beside the copies, not among them: `stats::copies` lists `blobs/video` and must not see it.
