@@ -1,9 +1,10 @@
 //! The per-pixel stage: everything after the spatial planes are ready, in one parallel pass.
 
 use lightcraft_color::Map3;
+use lightcraft_color::Mat3;
 use lightcraft_color::luminance_2020;
 use lightcraft_color::spline::{Lut1, MonotoneCurve};
-use lightcraft_color::transfer::linear_to_srgb;
+use lightcraft_color::transfer::{linear_to_srgb, srgb_to_linear};
 use lightcraft_develop::{DevelopSettings, LocalAdjustments, ToneCurve, VignetteStyle};
 use lightcraft_geom::Point;
 use lightcraft_raster::Rgba8;
@@ -81,6 +82,42 @@ fn curve_luts(c: &ToneCurve) -> Option<[Lut1; 3]> {
     }
     let per = [&c.red, &c.green, &c.blue];
     Some(std::array::from_fn(|i| if chans[i] { MonotoneCurve::new(&to_pts(per[i])).to_lut(N).compose(&base) } else { base.clone() }))
+}
+
+/// A LUT profile's table is made for sRGB. For an output with other primaries (Display P3, a monitor's own, Adobe RGB,
+/// ProPhoto, Rec. 2020) the colour goes to sRGB's primaries through these matrices (linear output → linear sRGB, and
+/// back), takes the lookup there and returns, so a look is the same in a preview and in any export. `None` for sRGB
+/// itself or a display whose primaries are sRGB's to within a thousandth (and for primaries that can't be inverted).
+pub fn lut_space(to_out: &[[f32; 3]; 3]) -> Option<([[f32; 3]; 3], [[f32; 3]; 3])> {
+    let srgb = crate::output::OutputSpace::Srgb.from_working();
+    if to_out.iter().flatten().zip(srgb.iter().flatten()).all(|(a, b)| (a - b).abs() < 1e-3) {
+        return None;
+    }
+    let m = |a: &[[f32; 3]; 3]| Mat3(a.map(|r| r.map(f64::from)));
+    let (out, s) = (m(to_out), m(&srgb));
+    // linear output → Rec.2020 → sRGB, and back
+    Some((s.mul(&out.inverse()?).to_f32(), out.mul(&s.inverse()?).to_f32()))
+}
+
+/// The LUT profile's lookup of the display-encoded colour `e` (output primaries, sRGB curve), blended by its amount `k`:
+/// the table sees SDR values (an HDR render keeps what is above SDR white), in sRGB's primaries when `space` says so.
+/// The GPU kernel (`finish.wgsl`, `lut_through`) computes the same.
+#[inline]
+fn lut_pixel(l: &crate::lut::Lut3d, k: f32, e: [f32; 3], space: Option<&([[f32; 3]; 3], [[f32; 3]; 3])>, hdr: bool) -> [f32; 3] {
+    let through = |e: [f32; 3]| {
+        let c = e.map3(|v| v.clamp(0.0, 1.0));
+        let m = l.apply(c);
+        // (an SDR render pulls towards the table's colour from where it is, an HDR one from the clamped colour)
+        let from = if hdr { c } else { e };
+        [e[0] + (m[0] - from[0]) * k, e[1] + (m[1] - from[1]) * k, e[2] + (m[2] - from[2]) * k]
+    };
+    match space {
+        None => through(e),
+        Some((to_s, from_s)) => {
+            let s = mul3(to_s, e.map3(srgb_to_linear)).map3(linear_to_srgb);
+            mul3(from_s, through(s).map3(srgb_to_linear)).map3(linear_to_srgb)
+        }
+    }
 }
 
 /// Vignette (post-crop) parameters.
@@ -404,6 +441,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
 ) -> Vec<T> {
     let (w, h) = (p.img.width, p.img.height);
     let p_lut = fp.lut.clone();
+    let lut_sp = p_lut.as_ref().and_then(|_| lut_space(&fp.to_out));
     let FinishParams {
         tone,
         ops,
@@ -691,16 +729,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 e = e.map3(|v| v + k);
             }
             let e = match &p_lut {
-                Some((l, k)) if hdr => {
-                    // the LUT sees SDR values; the part above SDR white is carried over
-                    let c = e.map3(|v| v.clamp(0.0, 1.0));
-                    let m = l.apply(c);
-                    [e[0] + (m[0] - c[0]) * k, e[1] + (m[1] - c[1]) * k, e[2] + (m[2] - c[2]) * k]
-                }
-                Some((l, k)) => {
-                    let m = l.apply(e.map3(|v| v.clamp(0.0, 1.0)));
-                    [e[0] + (m[0] - e[0]) * k, e[1] + (m[1] - e[1]) * k, e[2] + (m[2] - e[2]) * k]
-                }
+                Some((l, k)) => lut_pixel(l, *k, e, lut_sp.as_ref(), hdr),
                 None => e,
             };
             *px = store(warn.unwrap_or(e));
@@ -826,6 +855,39 @@ mod tests {
         // luma is kept
         let y = |e: [f32; 3]| 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
         assert!((y(r) - y(after)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_lut_sees_srgb_primaries_whatever_the_output() {
+        use crate::output::OutputSpace;
+        // a table far from the identity: red and blue swapped, green lifted
+        let n = 9;
+        let mut data = Vec::new();
+        for b in 0..n {
+            for g in 0..n {
+                for r in 0..n {
+                    let f = |v: usize| v as f32 / (n - 1) as f32;
+                    data.push([f(b), f(g) * 0.8 + 0.1, f(r)]);
+                }
+            }
+        }
+        let lut = crate::lut::Lut3d { size: n, data, domain_min: [0.0; 3], domain_max: [1.0; 3], title: None };
+        assert!(lut_space(&OutputSpace::Srgb.from_working()).is_none(), "sRGB needs no conversion");
+        for space in [OutputSpace::DisplayP3, OutputSpace::AdobeRgb, OutputSpace::ProPhoto, OutputSpace::Rec2020] {
+            let sp = lut_space(&space.from_working()).unwrap();
+            for c in [[0.2f32, 0.5, 0.7], [0.8, 0.3, 0.2], [0.5, 0.5, 0.5], [0.9, 0.7, 0.1], [0.05, 0.4, 0.2]] {
+                // the colour as this output holds it, through the lookup, and back in sRGB's numbers
+                let held = mul3(&sp.1, c.map3(srgb_to_linear)).map3(linear_to_srgb);
+                let out = lut_pixel(&lut, 1.0, held, Some(&sp), false);
+                let back = mul3(&sp.0, out.map3(srgb_to_linear)).map3(linear_to_srgb);
+                let want = lut.apply(c);
+                assert!((0..3).all(|k| (back[k] - want[k]).abs() < 2e-3), "{space:?} {c:?}: {back:?} vs {want:?}");
+                // and half the amount is half way, in the same primaries
+                let half = lut_pixel(&lut, 0.5, held, Some(&sp), false);
+                let half = mul3(&sp.0, half.map3(srgb_to_linear)).map3(linear_to_srgb);
+                assert!((0..3).all(|k| (half[k] - (c[k] + want[k]) / 2.0).abs() < 2e-3), "{space:?} {c:?} at half: {half:?}");
+            }
+        }
     }
 
     #[test]

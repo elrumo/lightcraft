@@ -484,7 +484,8 @@ pub fn specs() -> Vec<CommandSpec> {
             // imported LUT profiles too (#618), marked as in `profiles.menu`
             let imported =
                 s.lut_profiles.iter().map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": favorite(&p.id), "imported": true}));
-            Ok(Value::Array(builtin.chain(imported).collect()))
+            let packs = s.pack_profiles().map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": favorite(&p.id), "pack": true}));
+            Ok(Value::Array(builtin.chain(packs).chain(imported).collect()))
         }),
         cmd!(query "profiles.menu", "Profile Menu", [], None, "{} — favourites, recent (newest first) and groups", always, |s, _| Ok(s.profile_menu())),
         cmd!(query "history.list", "List History", [], None, "{id?} — returns {history: labels oldest first, cursor: index of the step the settings are at (later steps can be returned to), versions}", has_active, |s, p| {

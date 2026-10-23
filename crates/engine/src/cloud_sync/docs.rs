@@ -461,7 +461,9 @@ impl Session {
         self.keyword_set = None;
         self.recent_keywords.clear();
         // (a favourite or recent profile that was one of the removed LUTs)
-        let known = |id: &String| crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id);
+        let known = |id: &String| {
+            crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id) || crate::cmd::packs::is_pack_profile(id)
+        };
         self.profile_favorites = std::mem::take(&mut self.profile_favorites).into_iter().filter(known).collect();
         self.profile_recent = std::mem::take(&mut self.profile_recent).into_iter().filter(known).collect();
         if let Err(e) = self.save_prefs() {

@@ -352,6 +352,11 @@ pub struct Session {
     /// The built-in presets and groups the sync server's admin hid for all its users: not in
     /// [`Session::presets`] (see [`Session::set_server_presets`]). Persisted in presets.json.
     pub server_hidden: presets::Hidden,
+    /// The packs the app set (`pack.set`): its own looks, never saved or synced ([`cmd::packs`]).
+    pub packs: Vec<cmd::packs::Pack>,
+    /// Built-in presets that were favourites when the library was read (a pack's are among them, and its
+    /// presets come after the library).
+    pub(crate) pack_favorites: Vec<String>,
     /// Favourite profile ids (persisted with the library, like preset favourites).
     pub profile_favorites: Vec<String>,
     /// Recently applied profile ids, newest first (at most [`presets::RECENT_PROFILES`]).
@@ -579,6 +584,8 @@ impl Session {
             preset_group_order: Vec::new(),
             hidden_presets: presets::Hidden::default(),
             server_hidden: presets::Hidden::default(),
+            packs: Vec::new(),
+            pack_favorites: Vec::new(),
             profile_favorites: Vec::new(),
             profile_recent: Vec::new(),
             journal: Vec::new(),
@@ -1610,6 +1617,8 @@ mod tests_models;
 mod tests_move_to_share;
 #[cfg(test)]
 mod tests_organize;
+#[cfg(test)]
+mod tests_pack;
 #[cfg(test)]
 mod tests_persist;
 #[cfg(test)]

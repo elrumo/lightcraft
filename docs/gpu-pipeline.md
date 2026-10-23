@@ -144,7 +144,7 @@ walks the drive.
   slope 1 above white, the HDR vignette and gamut map, as `finish_with`'s HDR branches) and writes the
   picture's RGBA half floats after the 8-bit image (`HDR_OUT`, two words a pixel), and `hdr_hist` counts its
   HDR histogram with workgroup atomics, so no CPU pass touches the pixels. It falls back where an SDR
-  render does (LUT profiles, refined masks) and to the CPU's float render when it fails. HDR exports stay
+  render does (refined masks, a LUT profile over 65 points a side) and to the CPU's float render when it fails. HDR exports stay
   on the CPU (`try_render` declines high bit depths).
 - wasm32: the crate compiles to the CPU fallback (WebGPU needs asynchronous device creation and a
   device shared with the canvas — open item below).
@@ -153,7 +153,7 @@ walks the drive.
 - Shared parameters, so the two implementations cannot drift apart: `pipeline::plan` (effective
   settings, frame, output size, stage-cache keys), `Frame::sample_plan`, `local::{wb_matrix_for,
   nr_params, plane_sigmas, guided_fast_step, airlight_of}`, `finish::{FinishParams, mask_terms}`,
-  `masks::brush_dabs`; exact tables (tone LUT, sRGB LUT, curve LUTs, resample taps) and the OkLab
+  `masks::brush_dabs`; exact tables (tone LUT, sRGB LUT, curve LUTs, a LUT profile's table, resample taps) and the OkLab
   matrices are uploaded / generated into the WGSL prelude from the CPU values.
 - Buffers, not textures: images are `array<f32>` with the CPU's interleaved layout (RGB, 1–3
   channels), so upload / readback are plain copies of `Rgb32f` / `Plane` / `Rgba8` data.

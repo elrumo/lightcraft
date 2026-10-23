@@ -80,6 +80,17 @@ const FIELDS: &[(&str, usize)] = &[
     ("OUT_Y", 3),
     ("OUT_TRC", 1),
     ("OUT_GAMMA", 1),
+    // a LUT profile (`lightcraft_pipeline::lut`): its table's offset in `aux`, points a side, amount, domain
+    ("HAS_LUT", 1),
+    ("LUT_OFF", 1),
+    ("LUT_N", 1),
+    ("LUT_AMT", 1),
+    ("LUT_MIN", 3),
+    ("LUT_INV", 3),
+    // the output's primaries aren't sRGB's: the lookup happens in sRGB's (`finish::lut_space`)
+    ("LUT_SPACE", 1),
+    ("LUT_TO_S", 9),
+    ("LUT_FROM_S", 9),
     // first row of a band dispatch (the kernel runs over rows Y0.., see `render`)
     ("Y0", 1),
     // the render's peak (linear, SDR white = 1; above 1 an HDR render) and its sRGB encoding
@@ -169,6 +180,16 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
         aux.extend_from_slice(m);
     }
 
+    // a LUT profile's table follows (r changes fastest, as in the .cube file)
+    let lut = fp.lut.as_ref().filter(|(l, _)| l.size <= lightcraft_pipeline::lut::GPU_MAX_SIZE);
+    let lut_off = aux.len();
+    if let Some((l, _)) = lut {
+        aux.reserve(l.data.len() * 3);
+        for v in &l.data {
+            aux.extend_from_slice(v);
+        }
+    }
+
     let mut p = Block::new();
     p.u("W", fp.w as u32);
     p.u("H", fp.h as u32);
@@ -254,6 +275,19 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     let (trc, gamma) = fp.out_trc.code();
     p.u("OUT_TRC", trc);
     p.f("OUT_GAMMA", gamma);
+    if let Some((l, amount)) = lut {
+        p.b("HAS_LUT", true);
+        p.u("LUT_OFF", lut_off as u32);
+        p.u("LUT_N", l.size as u32);
+        p.f("LUT_AMT", *amount);
+        p.fs("LUT_MIN", &l.domain_min);
+        p.fs("LUT_INV", &std::array::from_fn::<f32, 3, _>(|k| 1.0 / (l.domain_max[k] - l.domain_min[k]).max(1e-6)));
+        if let Some((to_s, from_s)) = lightcraft_pipeline::finish::lut_space(&fp.to_out) {
+            p.b("LUT_SPACE", true);
+            p.fs("LUT_TO_S", to_s.as_flattened());
+            p.fs("LUT_FROM_S", from_s.as_flattened());
+        }
+    }
     p.f("PEAK", fp.peak);
     p.f("PEAK_ENC", lightcraft_color::transfer::linear_to_srgb(fp.peak));
     if let Some((amt, cell, rough, seed)) = fp.grain {

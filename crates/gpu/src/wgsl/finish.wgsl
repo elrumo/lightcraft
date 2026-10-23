@@ -1,7 +1,7 @@
 // The per-pixel stage: a straight port of `lightcraft_pipeline::finish` (keep in step with it).
 // Bindings: img (rgb, pre-exposure), log_l, base, clar, tex, dark, masks (NMASK planes, then the
 // blurred chromaticity when HAS_CHROMA), aux
-// (tone LUT | chroma curve | sRGB LUT | curve LUTs | mask terms), out (packed RGBA8; with HDR_OUT, the
+// (tone LUT | chroma curve | sRGB LUT | curve LUTs | mask terms | a LUT profile's table), out (packed RGBA8; with HDR_OUT, the
 // HDR picture follows: RGBA half floats, two words a pixel). PEAK above 1 is an HDR render
 // (`OutputDepth::F32Hdr`): values up to PEAK survive instead of clipping at SDR white.
 
@@ -47,6 +47,71 @@ fn curve(ch: u32, x: f32) -> f32 {
     let i = min(u32(f), CURVE_N - 2u);
     let t = f - f32(i);
     return aux[o + i] + (aux[o + i + 1u] - aux[o + i]) * t;
+}
+
+// A LUT profile's table in `aux` (`lut::Lut3d::apply`: trilinear, red changing fastest).
+fn lut_at(o: u32, n: u32, r: u32, g: u32, b: u32) -> vec3<f32> {
+    let i = o + (r + n * (g + n * b)) * 3u;
+    return vec3<f32>(aux[i], aux[i + 1u], aux[i + 2u]);
+}
+
+fn lut_apply(c: vec3<f32>) -> vec3<f32> {
+    let n = pu(F_LUT_N);
+    let o = pu(F_LUT_OFF);
+    let s = f32(n - 1u);
+    let mn = vec3<f32>(pf(F_LUT_MIN), pf(F_LUT_MIN + 1u), pf(F_LUT_MIN + 2u));
+    let inv = vec3<f32>(pf(F_LUT_INV), pf(F_LUT_INV + 1u), pf(F_LUT_INV + 2u));
+    let x = clamp((c - mn) * inv, vec3<f32>(0.0), vec3<f32>(1.0)) * s;
+    let fl = min(floor(x), vec3<f32>(s - 1.0));
+    let f = x - fl;
+    let i = vec3<u32>(fl);
+    let c00 = mix(lut_at(o, n, i.x, i.y, i.z), lut_at(o, n, i.x + 1u, i.y, i.z), f.x);
+    let c10 = mix(lut_at(o, n, i.x, i.y + 1u, i.z), lut_at(o, n, i.x + 1u, i.y + 1u, i.z), f.x);
+    let c01 = mix(lut_at(o, n, i.x, i.y, i.z + 1u), lut_at(o, n, i.x + 1u, i.y, i.z + 1u), f.x);
+    let c11 = mix(lut_at(o, n, i.x, i.y + 1u, i.z + 1u), lut_at(o, n, i.x + 1u, i.y + 1u, i.z + 1u), f.x);
+    return mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z);
+}
+
+// The sRGB curve, decoded (`lightcraft_color::transfer::srgb_to_linear`; below the knee it is the signed line).
+fn srgb_decode(v: f32) -> f32 {
+    if (v <= 0.04045) {
+        return v / 12.92;
+    }
+    return pow((v + 0.055) / 1.055, 2.4);
+}
+
+// `finish::lut_pixel` for an output with sRGB's primaries: the table's colour, blended by the amount.
+fn lut_through(e: vec3<f32>, hdr: bool) -> vec3<f32> {
+    let c = clamp(e, vec3<f32>(0.0), vec3<f32>(1.0));
+    let m = lut_apply(c);
+    let k = pf(F_LUT_AMT);
+    if (hdr) {
+        return e + (m - c) * k;
+    }
+    return e + (m - e) * k;
+}
+
+fn lut_pixel(e: vec3<f32>, hdr: bool) -> vec3<f32> {
+    if (pu(F_LUT_SPACE) == 0u) {
+        return lut_through(e, hdr);
+    }
+    // the output's primaries aren't sRGB's: look up in sRGB's and come back
+    let to_s = array<vec3<f32>, 3>(
+        vec3<f32>(pf(F_LUT_TO_S), pf(F_LUT_TO_S + 1u), pf(F_LUT_TO_S + 2u)),
+        vec3<f32>(pf(F_LUT_TO_S + 3u), pf(F_LUT_TO_S + 4u), pf(F_LUT_TO_S + 5u)),
+        vec3<f32>(pf(F_LUT_TO_S + 6u), pf(F_LUT_TO_S + 7u), pf(F_LUT_TO_S + 8u)),
+    );
+    let from_s = array<vec3<f32>, 3>(
+        vec3<f32>(pf(F_LUT_FROM_S), pf(F_LUT_FROM_S + 1u), pf(F_LUT_FROM_S + 2u)),
+        vec3<f32>(pf(F_LUT_FROM_S + 3u), pf(F_LUT_FROM_S + 4u), pf(F_LUT_FROM_S + 5u)),
+        vec3<f32>(pf(F_LUT_FROM_S + 6u), pf(F_LUT_FROM_S + 7u), pf(F_LUT_FROM_S + 8u)),
+    );
+    let lin = vec3<f32>(srgb_decode(e.x), srgb_decode(e.y), srgb_decode(e.z));
+    let t = mul3(to_s, lin);
+    var s = vec3<f32>(srgb_exact(t.x), srgb_exact(t.y), srgb_exact(t.z));
+    s = lut_through(s, hdr);
+    let b = mul3(from_s, vec3<f32>(srgb_decode(s.x), srgb_decode(s.y), srgb_decode(s.z)));
+    return vec3<f32>(srgb_exact(b.x), srgb_exact(b.y), srgb_exact(b.z));
 }
 
 fn band_weights(h: f32) -> array<f32, 8> {
@@ -618,6 +683,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         let k = pf(F_GRAIN_AMT) * g * (0.35 + 2.6 * lum * (1.0 - lum));
         e = e + k;
+    }
+    if (pu(F_HAS_LUT) != 0u) {
+        // a LUT profile: it sees SDR values, an HDR render keeps what is above SDR white (`finish_with`)
+        e = lut_pixel(e, hdr);
     }
     if (pu(F_HDR_OUT) != 0u) {
         // the HDR picture (`hdr_view::HdrPicture`): the encoded values held to the peak's encoding

@@ -366,7 +366,13 @@ fn presets_json(s: &Session) -> String {
     let presets = &s.presets;
     let f = PresetsFile {
         user: presets.iter().filter(|p| !p.builtin).cloned().collect(),
-        favorites: presets.iter().filter(|p| p.builtin && p.favorite).map(|p| p.id.clone()).collect(),
+        // (a pack's favourites stay while its presets aren't there yet: the app sets its packs after the library opens)
+        favorites: presets
+            .iter()
+            .filter(|p| p.builtin && p.favorite)
+            .map(|p| p.id.clone())
+            .chain(s.pack_favorites.iter().filter(|f| !presets.iter().any(|p| &p.id == *f)).cloned())
+            .collect(),
         server: presets.iter().filter(|p| crate::presets::is_server_preset(p)).cloned().collect(),
         server_hidden: s.server_hidden.clone(),
         profile_favorites: s.profile_favorites.clone(),
@@ -698,6 +704,7 @@ impl Session {
         }
         // presets
         if let Some(f) = settings.read::<PresetsFile>(files.as_mut(), "presets.json") {
+            self.pack_favorites = f.favorites.clone();
             for p in &mut self.presets {
                 p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
             }
@@ -711,10 +718,14 @@ impl Session {
                 let server = f.server.into_iter().map(|p| Preset { favorite: f.favorites.contains(&p.id), ..p }).collect();
                 self.set_server_presets(server, f.server_hidden);
             }
-            let known = |id: &String| crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id);
+            let known = |id: &String| {
+                crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id) || crate::cmd::packs::is_pack_profile(id)
+            };
             self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
             self.profile_recent = f.profile_recent.into_iter().filter(known).take(crate::presets::RECENT_PROFILES).collect();
         }
+        // (the app's packs are the app's, not the library's: they stay when it switches libraries)
+        self.insert_pack_presets();
         // view state
         if let Some(v) = settings.read::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;

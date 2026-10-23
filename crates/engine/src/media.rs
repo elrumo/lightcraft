@@ -1318,10 +1318,12 @@ pub fn develop_hdr(
     (rendered, fallback, deep.and_then(|d| HdrPicture::from_deep(&d, peak)).map(Arc::new))
 }
 
-/// Whether a render of `s` for `req` can go to the GPU: LUT profiles and refined masks have no GPU
-/// stage, nor has soft proofing.
+/// Whether a render of `s` for `req` can go to the GPU: refined masks have no GPU stage, nor has soft
+/// proofing, nor a LUT profile bigger than the kernel takes ([`lightcraft_pipeline::lut::GPU_MAX_SIZE`]).
 fn gpu_renders(s: &DevelopSettings, req: &RenderRequest) -> bool {
-    !lightcraft_pipeline::lut::is_lut_profile(&s.profile.id) && !s.masks.iter().any(|m| m.visible && m.refine > 0.0) && req.proof.is_none()
+    lightcraft_pipeline::lut::get(&s.profile.id).is_none_or(|l| l.size <= lightcraft_pipeline::lut::GPU_MAX_SIZE)
+        && !s.masks.iter().any(|m| m.visible && m.refine > 0.0)
+        && req.proof.is_none()
 }
 
 /// Render `src`: on the GPU when `gpu` is set and a GPU is available (`lightcraft_gpu`), else on

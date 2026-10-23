@@ -251,6 +251,7 @@ impl Session {
     /// presets and groups it hides for all its users: the list is then the built-in presets, the server's,
     /// then the user's. Favourites stay favourites (a built-in one the server hid and shows again doesn't).
     pub fn set_server_presets(&mut self, server: Vec<Preset>, hidden: Hidden) {
+        self.fold_pack_favorites();
         let favorites: std::collections::HashSet<String> = self.presets.iter().filter(|p| p.builtin && p.favorite).map(|p| p.id.clone()).collect();
         let user: Vec<Preset> = self.presets.iter().filter(|p| !p.builtin).cloned().collect();
         let mut list: Vec<Preset> = builtin().into_iter().filter(|p| !hidden.hides(p)).collect();
@@ -261,6 +262,7 @@ impl Session {
         list.extend(user);
         *self.presets = list;
         self.server_hidden = hidden;
+        self.insert_pack_presets();
     }
 
     /// Rename preset group `group` (of the user's presets) to `name`; a group already called `name` takes
@@ -697,7 +699,7 @@ impl Session {
         if let Some(p) = profile(id) {
             return Some((p.name, p.group));
         }
-        self.lut_profiles.iter().find(|p| p.id == id).map(|p| (p.name.as_str(), p.group.as_str()))
+        self.lut_profiles.iter().chain(self.pack_profiles()).find(|p| p.id == id).map(|p| (p.name.as_str(), p.group.as_str()))
     }
 
     /// Remember `id` as the most recently applied profile.
@@ -715,12 +717,32 @@ impl Session {
                 .iter()
                 .find(|p| p.id == id)
                 .map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.contains(&p.id), "imported": true}))
+                .or_else(|| {
+                    self.pack_profiles()
+                        .find(|p| p.id == id)
+                        .map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.contains(&p.id)}))
+                })
         };
         let list = |ids: &[String]| ids.iter().filter_map(|id| profile(id).map(item).or_else(|| lut_item(id))).collect::<Vec<_>>();
         let mut groups: Vec<Value> = profile_groups()
             .into_iter()
             .map(|g| json!({"name": g, "profiles": PROFILES.iter().filter(|p| p.group == g).map(item).collect::<Vec<_>>()}))
             .collect();
+        // the app's own packs' profiles (can't be deleted), by their groups, after the built-in ones
+        let mut pack_groups: Vec<&str> = Vec::new();
+        for p in self.pack_profiles() {
+            if !pack_groups.contains(&p.group.as_str()) {
+                pack_groups.push(p.group.as_str());
+            }
+        }
+        for g in pack_groups {
+            let profiles: Vec<Value> = self
+                .pack_profiles()
+                .filter(|p| p.group == g)
+                .map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.contains(&p.id)}))
+                .collect();
+            groups.push(json!({"name": g, "profiles": profiles}));
+        }
         // imported LUT profiles, by their groups
         let mut lut_groups: Vec<&str> = self.lut_profiles.iter().map(|p| p.group.as_str()).collect();
         lut_groups.sort_unstable();

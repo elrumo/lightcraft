@@ -1144,3 +1144,49 @@ fn noise_reduction_drafts_reuse_the_wide_planes_as_on_the_cpu() {
     let fresh = lightcraft_gpu::render(&src, &info, &s, &full, None).expect("gpu render");
     assert_eq!(warm.image, fresh.image, "the full render after the drag is exact");
 }
+
+/// A LUT profile (applied last, after curves and grain, blended by its Amount) renders the same on the GPU: at
+/// the usual amount, softened and past 100 %, in a render with grain and curves and in an HDR one.
+#[test]
+fn lut_profiles_match() {
+    if !gpu() {
+        return;
+    }
+    use lightcraft_pipeline::lut::{self, Lut3d};
+    let n = 17usize;
+    let s = |v: f32| v * v * (3.0 - 2.0 * v);
+    let mut data = Vec::new();
+    for b in 0..n {
+        for g in 0..n {
+            for r in 0..n {
+                let c = [r, g, b].map(|i| i as f32 / (n - 1) as f32);
+                // a toning look: an S curve, crosstalk between the channels, a cool cast in the shadows
+                data.push([s(c[0]) * 0.9 + 0.1 * c[1], s(c[1]) * 0.95 + 0.05 * c[2], (s(c[2]) * 0.9 + 0.1 * c[0]) * 0.92 + 0.06 * (1.0 - c[0])]);
+            }
+        }
+    }
+    let id = "lut:equivalence-test";
+    lut::register(id, Lut3d { size: n, data, domain_min: [0.0; 3], domain_max: [1.0; 3], title: None });
+    let src = scene(0, 320, 240);
+    let info = SourceInfo { raw: true, ..Default::default() };
+    for amount in [100.0, 60.0, 150.0] {
+        let mut s = DevelopSettings::default();
+        s.profile.id = id.into();
+        s.profile.amount = amount;
+        check(&format!("LUT {amount}%"), &src, &info, &s, &RenderRequest::fit(320, 240));
+        s.grain.amount = 35.0;
+        s.light.exposure = 0.4;
+        s.curve.master = vec![Point::new(0.0, 0.02), Point::new(0.5, 0.45), Point::new(1.0, 1.0)];
+        check(&format!("LUT {amount}% + grain + curve"), &src, &info, &s, &RenderRequest::fit(320, 240));
+    }
+    // an output with other primaries looks the table up in sRGB's (`finish::lut_space`), on both renderers
+    let mut s = DevelopSettings::default();
+    s.profile.id = id.into();
+    s.profile.amount = 100.0;
+    s.color.saturation = 40.0;
+    for space in lightcraft_pipeline::OutputSpace::ALL {
+        let req = RenderRequest { space, ..RenderRequest::fit(320, 240) };
+        check(&format!("LUT in {space:?}"), &src, &info, &s, &req);
+    }
+    lut::unregister(id);
+}

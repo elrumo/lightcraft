@@ -17,7 +17,7 @@ never shown wrong.
    SDR loupe render would (`media::develop_hdr` → `lightcraft_gpu::try_render_hdr`: the per-pixel kernel
    writes the half floats beside the 8-bit picture and a second kernel counts the HDR histogram, within
    half-float rounding of the CPU's float render, [gpu-pipeline](gpu-pipeline.md#correctness-cpu-oracle-and-equivalence-tests)),
-   else on the CPU (a LUT profile, a refined mask, no GPU), with the loupe's stage caches either way. The
+   else on the CPU (a refined mask, a LUT profile over 65 points a side, no GPU), with the loupe's stage caches either way. The
    8-bit `image` of the result is its reduction, and the histogram shows its HDR range.
    Only the loupe (`Slot::Main`) and its zoom window (`Slot::Region`) ask for it: the Before views show
    the unedited photo, and everything else is small SDR previews. A diagnostic overlay or a soft proof is
@@ -74,7 +74,7 @@ shader writes what it samples), so a value above 1 reaches the surface as it is.
 
 ## Known limits
 
-- Where the HDR picture renders on the CPU (a LUT profile, a refined mask, no GPU) a slider drag redraws far
+- Where the HDR picture renders on the CPU (a refined mask, a LUT profile over 65 points a side, no GPU) a slider drag redraws far
   slower than an SDR one: the CPU's `finish (deep)` takes ~180 ms for a 24 MP CR3's full-size loupe picture
   and ~12 ms for a 0.25 MP draft (M1 Max), so the drafts shrink (the draft budget learns it, apart from SDR's).
 - On the GPU an HDR picture still costs more than an SDR one at the same size: its readback is three times

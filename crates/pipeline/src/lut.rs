@@ -1,10 +1,16 @@
 //! 3D LUT profiles: `.cube` files (the plain-text Cube LUT format: `LUT_3D_SIZE`, optional
 //! `DOMAIN_MIN` / `DOMAIN_MAX`, then size³ "r g b" lines with red changing fastest), applied to
 //! the display-encoded output colour and blended by the profile amount. Profiles are registered
-//! here by id (`lut:…`) and found by the finishing stage; LUT profiles render on the CPU.
+//! here by id (`lut:…`) and found by the finishing stage. The GPU takes tables up to
+//! [`GPU_MAX_SIZE`] points a side (the table travels in the kernel's auxiliary buffer); a bigger one
+//! renders on the CPU.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
+
+/// The biggest table (points a side) the GPU renders: 65³ is 3.2 MB of floats.
+pub const GPU_MAX_SIZE: usize = 65;
 
 /// A 3D colour lookup table.
 #[derive(Clone, Debug, PartialEq)]
@@ -19,6 +25,7 @@ pub struct Lut3d {
 impl Lut3d {
     /// Parse a `.cube` file.
     pub fn parse_cube(text: &str) -> Result<Lut3d, String> {
+        let text = text.trim_start_matches('\u{feff}');
         let (mut size, mut title) = (0usize, None);
         let (mut min, mut max) = ([0.0f32; 3], [1.0f32; 3]);
         let mut data = Vec::new();
@@ -83,14 +90,28 @@ impl Lut3d {
     }
 }
 
-fn registry() -> &'static RwLock<HashMap<String, Arc<Lut3d>>> {
-    static R: OnceLock<RwLock<HashMap<String, Arc<Lut3d>>>> = OnceLock::new();
+/// What is registered under a profile id: a table, or the file one is read from the first time a render asks.
+enum Entry {
+    Ready(Arc<Lut3d>),
+    File(PathBuf),
+    /// A file that was read and is not a table: no LUT, and not read again on every render.
+    Failed,
+}
+
+fn registry() -> &'static RwLock<HashMap<String, Entry>> {
+    static R: OnceLock<RwLock<HashMap<String, Entry>>> = OnceLock::new();
     R.get_or_init(Default::default)
 }
 
 /// Make a LUT available to renders under profile id `id` (`lut:…`).
 pub fn register(id: &str, lut: Lut3d) {
-    registry().write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), Arc::new(lut));
+    registry().write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), Entry::Ready(Arc::new(lut)));
+}
+
+/// Make the `.cube` file at `path` available under `id`, read when a render first needs it: an app with a pack of
+/// big tables doesn't parse them all at every start.
+pub fn register_file(id: &str, path: impl Into<PathBuf>) {
+    registry().write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), Entry::File(path.into()));
 }
 
 /// The LUT registered for profile `id`.
@@ -98,7 +119,39 @@ pub fn get(id: &str) -> Option<Arc<Lut3d>> {
     if !id.starts_with("lut:") {
         return None;
     }
-    registry().read().unwrap_or_else(|e| e.into_inner()).get(id).cloned()
+    let path = match registry().read().unwrap_or_else(|e| e.into_inner()).get(id)? {
+        Entry::Ready(l) => return Some(l.clone()),
+        Entry::Failed => return None,
+        Entry::File(p) => p.clone(),
+    };
+    // (read outside the lock: two renders asking at once may both read it, which only costs time)
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        // (a file that can't be read now, on a volume not mounted yet or half copied, is asked for again next time)
+        return None;
+    };
+    let lut = Lut3d::parse_cube(&text).ok().map(Arc::new);
+    let mut w = registry().write().unwrap_or_else(|e| e.into_inner());
+    if matches!(w.get(id), Some(Entry::File(p)) if *p == path) {
+        w.insert(id.to_string(), lut.clone().map_or(Entry::Failed, Entry::Ready));
+    }
+    lut
+}
+
+/// The size and title a `.cube` file's first lines (`head`) declare, without reading its table.
+pub fn cube_header(head: &str) -> Result<(usize, Option<String>), String> {
+    let mut title = None;
+    for line in head.lines() {
+        let l = line.trim();
+        if let Some(r) = l.strip_prefix("TITLE") {
+            title = Some(r.trim().trim_matches('"').to_string());
+        } else if let Some(r) = l.strip_prefix("LUT_3D_SIZE") {
+            let n: usize = r.trim().parse().map_err(|_| format!("bad LUT_3D_SIZE `{}`", r.trim()))?;
+            return if (2..=256).contains(&n) { Ok((n, title)) } else { Err(format!("LUT_3D_SIZE {n} out of range")) };
+        } else if l.starts_with("LUT_1D_SIZE") {
+            return Err("1D LUTs are not supported (only 3D .cube files)".into());
+        }
+    }
+    Err("not a 3D .cube LUT (no LUT_3D_SIZE)".into())
 }
 
 /// Forget a LUT profile.
@@ -106,7 +159,7 @@ pub fn unregister(id: &str) {
     registry().write().unwrap_or_else(|e| e.into_inner()).remove(id);
 }
 
-/// Profile ids that render with a LUT (and so on the CPU).
+/// Profile ids that name a LUT (`lut:…`).
 pub fn is_lut_profile(id: &str) -> bool {
     id.starts_with("lut:")
 }
@@ -126,6 +179,29 @@ mod tests {
             }
         }
         s
+    }
+
+    #[test]
+    fn a_registered_file_is_read_when_first_asked_for() {
+        let dir = std::env::temp_dir().join(format!("lc-lut-lazy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.cube"), cube(|c| [c[2], c[1], c[0]], 5)).unwrap();
+        std::fs::write(dir.join("bad.cube"), "LUT_3D_SIZE 4\n0 0 0\n").unwrap();
+        register_file("lut:lazy-test", dir.join("a.cube"));
+        register_file("lut:lazy-bad", dir.join("bad.cube"));
+        register_file("lut:lazy-gone", dir.join("gone.cube"));
+        let l = get("lut:lazy-test").unwrap();
+        assert!((l.apply([0.1, 0.5, 0.8])[0] - 0.8).abs() < 1e-5);
+        std::fs::remove_file(dir.join("a.cube")).unwrap();
+        assert!(get("lut:lazy-test").is_some(), "read once");
+        assert!(get("lut:lazy-bad").is_none() && get("lut:lazy-gone").is_none());
+        assert!(get("lut:lazy-nothing").is_none());
+        for id in ["lut:lazy-test", "lut:lazy-bad", "lut:lazy-gone"] {
+            unregister(id);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(cube_header("TITLE \"Look\"\nLUT_3D_SIZE 33\n0 0 0").unwrap(), (33, Some("Look".to_string())));
+        assert!(cube_header("LUT_1D_SIZE 4").is_err() && cube_header("0 0 0").is_err() && cube_header("LUT_3D_SIZE 999").is_err());
     }
 
     #[test]
