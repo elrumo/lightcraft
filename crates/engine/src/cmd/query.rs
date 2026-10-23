@@ -441,7 +441,8 @@ pub fn specs() -> Vec<CommandSpec> {
             ))
         }),
         cmd!(query "presets.list", "List Presets", [], None, "{} → [{id, name, group, favorite, builtin (built-in or the sync server's: not editable), hidden (the preset itself, `preset.hide`)}]", always, |s, _| {
-            let hidden = |id: &String| s.hidden_presets.presets.contains(id);
+            // (an app pack's presets are never hidden: what a server or another device hides doesn't reach them)
+            let hidden = |id: &String| s.hidden_presets.presets.contains(id) && !s.is_pack_preset(id);
             Ok(Value::Array(
                 s.presets
                     .iter()
@@ -472,7 +473,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         .iter()
                         .map(|g| {
                             let (builtin, user) = kinds.get(g.as_str()).copied().unwrap_or_default();
-                            json!({"name": g, "hidden": s.hidden_presets.groups.contains(g), "builtin": builtin, "user": user})
+                            json!({"name": g, "hidden": s.hidden_presets.groups.contains(g) && !s.is_pack_group(g), "builtin": builtin, "user": user})
                         })
                         .collect(),
                 ))

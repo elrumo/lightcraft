@@ -46,6 +46,16 @@ pub struct Pack {
 }
 
 impl Session {
+    /// Whether `id` is a preset an app pack brought.
+    pub fn is_pack_preset(&self, id: &str) -> bool {
+        self.packs.iter().any(|p| p.presets.iter().any(|q| q.id == id))
+    }
+
+    /// Whether `group` is a group an app pack's presets are in.
+    pub fn is_pack_group(&self, group: &str) -> bool {
+        self.packs.iter().any(|p| p.presets.iter().any(|q| q.group == group))
+    }
+
     /// Every pack's profiles.
     pub fn pack_profiles(&self) -> impl Iterator<Item = &LutProfile> {
         self.packs.iter().flat_map(|p| p.profiles.iter())

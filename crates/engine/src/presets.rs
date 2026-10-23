@@ -254,6 +254,7 @@ impl Session {
         self.fold_pack_favorites();
         let favorites: std::collections::HashSet<String> = self.presets.iter().filter(|p| p.builtin && p.favorite).map(|p| p.id.clone()).collect();
         let user: Vec<Preset> = self.presets.iter().filter(|p| !p.builtin).cloned().collect();
+        // (what the server hides is the built-in presets it knows; an app pack's are put back after, and never hidden)
         let mut list: Vec<Preset> = builtin().into_iter().filter(|p| !hidden.hides(p)).collect();
         list.extend(server.into_iter().filter(|p| p.id.starts_with(SERVER_PREFIX)).map(|p| Preset { builtin: true, ..p }));
         for p in &mut list {

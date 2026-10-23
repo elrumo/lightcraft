@@ -16,6 +16,11 @@ a photo edited with one of its profiles keeps the profile's id and renders with 
 pack (without it the profile is skipped, the photo's other settings still apply), and a favourite stays a favourite
 across restarts (the library keeps the ids; the pack's presets pick them up when it is set).
 
+A pack's presets are never hidden, whoever asks: the sync server's admin hides built-in presets and groups for all its
+users (`server-presets`, [sync](sync.md)) and other devices sync their own hide lists (`hidden-presets`), and neither reaches
+them. `presets.list` and `presets.groups {details}` report them as not hidden, and `preset.hide` / `preset.hideGroup`
+refuse to hide them (taking a stale hide off is allowed). Connected to a server or not, the app's looks are in the panel.
+
 `pack.set` again replaces the pack's earlier version (its tables and presets go first); without `dir` it takes the pack
 out. Files over 64 MB and folders over 500 files are not read. The profiles show in `profiles.menu` and `profiles.list`
 (`pack: true`, not `imported`: `profile.deleteImported` refuses them).

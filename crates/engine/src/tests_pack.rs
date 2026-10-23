@@ -229,3 +229,43 @@ fn a_pack_cannot_take_a_built_in_presets_id_and_bad_parameters_are_refused() {
     assert_eq!(s.packs.len(), 1, "the pack is still set");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// With a sync server connected, what the server's admin hides (built-in presets and groups, by id and by name) and what
+/// another device synced as hidden never reaches an app pack's presets: they are listed, and not hidden, and cannot be hidden.
+#[test]
+fn a_server_and_the_hide_lists_never_hide_a_packs_presets() {
+    let dir = temp_dir("srv");
+    let pack = dir.join("Test +");
+    std::fs::create_dir_all(&pack).unwrap();
+    write_cube(&pack.join("Warm.cube"), "Warm", 0.2);
+    write_presets(&pack.join("Test +.lcpreset"), &["Warm", "Cool"], "srvpack");
+    let mut s = Session::new();
+    s.execute("pack.set", &json!({"id": "srvpack", "dir": pack.to_string_lossy()})).unwrap();
+    let (warm, cool) = (id_of(&mut s, "Warm"), id_of(&mut s, "Cool"));
+    // the server hides everything it can by name and id, and shares a preset of its own
+    let hidden = crate::presets::Hidden { presets: vec![warm.clone(), cool.clone()], groups: vec!["Test +".into()] };
+    let own = lightcraft_develop::Preset {
+        id: "srv.mine".into(),
+        name: "Shared".into(),
+        group: "Studio".into(),
+        settings: json!({"grain": {"amount": 5.0}}),
+        favorite: false,
+        builtin: true,
+    };
+    s.set_server_presets(vec![own], hidden.clone());
+    assert_eq!(names(&mut s, "Test +"), ["Warm", "Cool"], "listed with a server's hide lists in force");
+    assert_eq!(names(&mut s, "Studio"), ["Shared"]);
+    // and another device synced them as hidden
+    s.hidden_presets = hidden;
+    let list = s.execute("presets.list", &json!({})).unwrap();
+    assert!(list.as_array().unwrap().iter().filter(|p| p["group"] == "Test +").all(|p| p["hidden"] == false), "{list}");
+    let groups = s.execute("presets.groups", &json!({"details": true})).unwrap();
+    assert_eq!(groups.as_array().unwrap().iter().find(|g| g["name"] == "Test +").unwrap()["hidden"], false, "{groups}");
+    // the person cannot hide them either, but can take a stale hide off
+    assert!(s.execute("preset.hide", &json!({"id": warm, "hidden": true})).is_err());
+    assert!(s.execute("preset.hideGroup", &json!({"group": "Test +", "hidden": true})).is_err());
+    s.execute("preset.hide", &json!({"id": warm, "hidden": false})).unwrap();
+    s.execute("preset.hideGroup", &json!({"group": "Test +", "hidden": false})).unwrap();
+    assert!(!s.hidden_presets.presets.contains(&warm) && !s.hidden_presets.groups.contains(&"Test +".to_string()));
+    let _ = std::fs::remove_dir_all(&dir);
+}

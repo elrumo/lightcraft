@@ -1302,7 +1302,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Hide Preset",
             [],
             None,
-            "{id, hidden?: bool} (toggles when omitted) — the Presets panels leave it out unless they show hidden presets; any preset, built-in ones too (synced) → {hidden}",
+            "{id, hidden?: bool} (toggles when omitted) — the Presets panels leave it out unless they show hidden presets; any preset, built-in ones too, but not an app pack's (synced) → {hidden}",
             always,
             |s, p| {
                 let c = "preset.hide";
@@ -1312,6 +1312,9 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad(c, format!("unknown preset `{pid}`")));
                 }
                 let hidden = bool_or(p, "hidden", !was);
+                if hidden && s.is_pack_preset(&pid) {
+                    return Err(bad(c, "the app's own presets can't be hidden"));
+                }
                 s.hidden_presets.presets.retain(|h| *h != pid);
                 if hidden {
                     s.hidden_presets.presets.push(pid);
@@ -1325,7 +1328,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Hide Preset Group",
             [],
             None,
-            "{group, hidden?: bool} (toggles when omitted) — the Presets panels leave the group out unless they show hidden presets (synced) → {hidden}",
+            "{group, hidden?: bool} (toggles when omitted) — the Presets panels leave the group out unless they show hidden presets; not a group an app pack's presets are in (synced) → {hidden}",
             always,
             |s, p| {
                 let c = "preset.hideGroup";
@@ -1335,6 +1338,9 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad(c, format!("unknown preset group `{group}`")));
                 }
                 let hidden = bool_or(p, "hidden", !was);
+                if hidden && s.is_pack_group(&group) {
+                    return Err(bad(c, "the app's own presets can't be hidden"));
+                }
                 s.hidden_presets.groups.retain(|h| *h != group);
                 if hidden {
                     s.hidden_presets.groups.push(group);
