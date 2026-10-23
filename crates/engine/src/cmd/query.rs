@@ -152,6 +152,28 @@ fn describe(s: &mut Session, p: &Value) -> crate::Result<Value> {
 
 // Catalog queries also run in the 32-bit web build. A narrowing cast wraps
 // an out-of-range offset to zero, returning the first page instead of no photos.
+/// `develop.get {slim}`: the long base64 strings the settings keep pictures in (`data` of an AI fill, a selection, a depth
+/// map) emptied; everything else stays. (Bounded: the settings are a few levels deep.)
+fn blank_blobs(v: &mut Value, depth: usize) {
+    /// Longer than any `data` that is not a picture.
+    const LONG: usize = 1024;
+    if depth > 32 {
+        return;
+    }
+    match v {
+        Value::Object(m) => {
+            for (k, x) in m.iter_mut() {
+                match x {
+                    Value::String(text) if k == "data" && text.len() > LONG => *text = String::new(),
+                    other => blank_blobs(other, depth + 1),
+                }
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(|x| blank_blobs(x, depth + 1)),
+        _ => {}
+    }
+}
+
 fn pagination_usize(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
 }
@@ -312,10 +334,22 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(v)
         }),
-        cmd!(query "develop.get", "Get Develop Settings", [], None, "{id?} → the photo's develop settings", always, |s, p| {
-            let id = photo_arg(s, p, "develop.get")?;
-            Ok(s.develop_of(id).map(|d| d.to_json()).unwrap_or(Value::Null))
-        }),
+        cmd!(
+            query "develop.get",
+            "Get Develop Settings",
+            [],
+            None,
+            "{id?, slim?: bool (the pictures the settings store, an AI Remove fill, a model's selection, a depth map, an expanded area, come as empty strings, their sizes and places kept: a frontend that only draws or lists the edit has no use for them, and a photo with many AI strokes has megabytes of them)} → the photo's develop settings",
+            always,
+            |s, p| {
+                let id = photo_arg(s, p, "develop.get")?;
+                let mut v = s.develop_of(id).map(|d| d.to_json()).unwrap_or(Value::Null);
+                if p.get("slim").and_then(Value::as_bool) == Some(true) {
+                    blank_blobs(&mut v, 0);
+                }
+                Ok(v)
+            }
+        ),
         cmd!(
             query "view.frame",
             "Photo Frame",
@@ -505,5 +539,30 @@ mod pagination_tests {
         assert_eq!(pagination_usize(u64::MAX), usize::MAX);
         #[cfg(target_pointer_width = "32")]
         assert_eq!(pagination_usize(u64::from(u32::MAX) + 1), usize::MAX);
+    }
+
+    #[test]
+    fn slim_settings_lose_their_pictures_and_nothing_else() {
+        let blob = "A".repeat(5000);
+        let mut v = json!({
+            "exposure": 1.0,
+            "spots": [{"mode": "remove", "points": [[0.1, 0.2]], "fill": {"w": 64, "h": 64, "rect": [0.0, 0.0, 1.0, 1.0], "scale": 2.0, "data": blob}}],
+            "masks": [{"components": [{"shape": {"kind": "object", "seg": {"side": 64, "data": blob}}}]}],
+            "note": {"data": "short"},
+        });
+        let before = v.to_string().len();
+        blank_blobs(&mut v, 0);
+        assert!(v.to_string().len() < before - 9000);
+        assert_eq!(v["spots"][0]["fill"]["data"], "");
+        assert_eq!(v["spots"][0]["fill"]["w"], 64);
+        assert_eq!(v["masks"][0]["components"][0]["shape"]["seg"]["data"], "");
+        assert_eq!(v["masks"][0]["components"][0]["shape"]["kind"], "object");
+        assert_eq!(v["note"]["data"], "short");
+        // (a tree deeper than the bound is left alone, not recursed to the bottom)
+        let mut deep = json!({"data": blob});
+        for _ in 0..200 {
+            deep = json!({"x": deep});
+        }
+        blank_blobs(&mut deep, 0);
     }
 }

@@ -671,6 +671,33 @@ fn a_face_renders_on_its_own() {
 }
 
 // Photo Merge as the phone does it: previews that a newer one replaces, then the full merge in the
+// Back at the grid, the photo that was zoomed on is not kept: the decoded original (which the cache would keep, under its
+// budget, after the view is back at fit) and the view's stages go with the loupe.
+#[test]
+fn closing_the_photo_frees_the_original() {
+    let h = demo();
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    let p = &first["result"]["photos"][0];
+    let (photo, long) = (p["id"].as_u64().unwrap(), p["width"].as_u64().unwrap().max(p["height"].as_u64().unwrap()));
+    let full = |h: &Watch, id: u64| {
+        let m = h.call(&req(id, "host.memory", json!({})), Duration::from_secs(30));
+        m["result"]["engine"]["fullSource"]["count"].as_u64().unwrap()
+    };
+    let zoom = json!({"drawn": long, "visible": [0.45, 0.45, 0.55, 0.55]});
+    h.submit(&req(2, "render.view", json!({"photo": photo, "width": 400, "height": 300, "zoom": zoom}))).unwrap();
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "region");
+    let t0 = std::time::Instant::now();
+    while full(&h, 3) == 0 && t0.elapsed() < Duration::from_secs(10) {}
+    assert_eq!(full(&h, 4), 1, "the original is decoded while zoomed");
+    let r = h.call(&req(5, "host.lifecycle", json!({"event": "photoClosed"})), Duration::from_secs(30));
+    assert!(r["error"].is_null(), "{r}");
+    assert_eq!(full(&h, 6), 0, "and goes with the loupe");
+    // (the grid's thumbnails stay: only the loupe's pictures went)
+    let again = h.call(&req(7, "render.view", json!({"photo": photo, "width": 400, "height": 300})), Duration::from_secs(30));
+    assert!(again["error"].is_null(), "{again}");
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main");
+}
+
 // background, which says how it went (the demo's photos may not merge: either way it answers)
 #[test]
 fn merges_preview_and_run_in_the_background() {

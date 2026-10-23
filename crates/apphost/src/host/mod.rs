@@ -1679,6 +1679,16 @@ impl Engine {
                 log::warn!("memory warning: {} MB of decoded photos released", freed >> 20);
             }
             "terminate" => {
+            // The loupe is gone (back to the grid): its pictures and stage caches, the decoded photos and the GPU's spare
+            // buffers go, as a memory warning would free them, without the system asking. A phone keeps a zoomed 48 MP
+            // photo's original, its stages and a GPU copy (~2 GB) for a photo that is no longer shown otherwise.
+            "photoClosed" => {
+                for slot in [Slot::Main, Slot::Preview, Slot::Region, Slot::RegionBefore, Slot::Before, Slot::Hover] {
+                    self.sched.cancel(slot);
+                }
+                let freed = self.session.release_memory();
+                log::info!("photo closed: {} MB of decoded photos released", freed >> 20);
+            }
                 self.save();
                 if !self.demo
                     && let Err(e) = self.session.close_library()
