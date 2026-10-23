@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use lightcraft_catalog::{Op, PhotoId, Source};
+use lightcraft_catalog::{Op, Source};
 
 use super::{Job, SyncState, blob_key, content_path};
 use crate::Session;
@@ -85,10 +85,7 @@ impl Session {
         }
         let target = budget / 100 * LEAVE;
         // the photos whose original this device needs: kept offline, open, selected
-        let mut need: HashSet<PhotoId> = st.config.offline_photos.iter().copied().collect();
-        for a in &st.config.offline_albums {
-            need.extend(self.catalog.album_photos(*a));
-        }
+        let mut need = self.offline_set(st);
         need.extend(self.selection.ids.iter().copied());
         need.extend(self.active());
         let pinned: HashSet<String> = need.iter().filter_map(|id| self.catalog.photo(*id)).filter_map(|p| blob_key(p)).collect();

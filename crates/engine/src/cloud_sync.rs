@@ -120,6 +120,9 @@ pub struct SyncConfig {
     /// [`SyncConfig::store_originals`]).
     pub offline_albums: Vec<AlbumId>,
     pub offline_photos: Vec<PhotoId>,
+    /// Photos of an offline album taken out of offline use one by one (`photo.makeAvailableOffline` off): the album
+    /// keeps the rest. Only photos an offline album still holds are listed, and never one of `offline_photos`.
+    pub offline_excluded: Vec<PhotoId>,
     /// Keep the original of every photo on this device too (not just the ones available offline).
     pub store_originals: bool,
     /// The most the originals downloaded from the server may take on this device, in MB: the ones used longest
@@ -1063,6 +1066,28 @@ pub struct QueueItem {
     pub running: bool,
 }
 
+/// What a device keeps offline and how much is here ([`Session::sync_offline_status`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineStatus {
+    /// The albums kept offline, with their progress.
+    pub albums: Vec<OfflineAlbum>,
+    /// The photos kept offline whose smart preview (or original) is on this device, by id.
+    pub ready: Vec<u64>,
+    /// The photos kept offline that are still to come.
+    pub waiting: Vec<u64>,
+}
+
+/// An album kept offline: the photos it holds and how many of them are here.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OfflineAlbum {
+    pub id: u64,
+    /// The photos kept offline that the album holds (less the ones taken out one by one).
+    pub total: usize,
+    pub done: usize,
+}
+
 /// A synced photo's preview file names ([`Session::proxy_names`]), and which of them are here.
 struct ProxyNames {
     smart: String,
@@ -1316,8 +1341,71 @@ impl Session {
         }
         toggle(&mut st.config.offline_albums, albums, on);
         toggle(&mut st.config.offline_photos, photos, on);
+        let covered: HashSet<PhotoId> = st.config.offline_albums.iter().flat_map(|a| self.catalog.album_photos(*a)).collect();
+        if on {
+            // (what is asked for again is kept again; an album switched on starts afresh)
+            let again: HashSet<PhotoId> = photos.iter().copied().chain(albums.iter().flat_map(|a| self.catalog.album_photos(*a))).collect();
+            st.config.offline_excluded.retain(|id| !again.contains(id));
+        } else {
+            // a photo taken out that an offline album still holds is left out of it
+            for id in photos.iter().filter(|id| covered.contains(*id)) {
+                if !st.config.offline_excluded.contains(id) {
+                    st.config.offline_excluded.push(*id);
+                }
+            }
+        }
+        st.config.offline_excluded.retain(|id| covered.contains(id));
         st.plan_gen += 1;
         self.persist()
+    }
+
+    /// The photos kept on this device even offline: those asked for and those of the offline albums, less the ones
+    /// taken out of an album one by one.
+    pub(crate) fn offline_set(&self, st: &SyncState) -> HashSet<PhotoId> {
+        let mut set = HashSet::new();
+        for a in &st.config.offline_albums {
+            set.extend(self.catalog.album_photos(*a));
+        }
+        for id in &st.config.offline_excluded {
+            set.remove(id);
+        }
+        set.extend(st.config.offline_photos.iter().copied());
+        set
+    }
+
+    /// What this device keeps offline and how much of it is here: for each offline album the photos it holds and the
+    /// ones whose smart preview (or original) this device has, and the photos kept offline by whether they are here yet.
+    /// Walks every photo kept offline, so a big album costs a while: ask when something changed, not every frame.
+    pub fn sync_offline_status(&self) -> OfflineStatus {
+        let Some(st) = &self.sync else { return OfflineStatus::default() };
+        let none = HashSet::new();
+        let have = st.have.as_ref().unwrap_or(&none);
+        let (mut ready, mut waiting) = (HashSet::new(), HashSet::new());
+        for id in self.offline_set(st) {
+            let Some(p) = self.catalog.photo(id).filter(|p| p.in_library()) else { continue };
+            let here = match self.remote_key(p) {
+                None => true,
+                Some(key) => self.proxy_names(p, &key, have).has_smart,
+            };
+            let into = if here { &mut ready } else { &mut waiting };
+            into.insert(id);
+        }
+        let albums = st
+            .config
+            .offline_albums
+            .iter()
+            .map(|a| {
+                let held = self.catalog.album_photos(*a);
+                let done = held.iter().filter(|id| ready.contains(*id)).count();
+                OfflineAlbum { id: a.0, total: done + held.iter().filter(|id| waiting.contains(*id)).count(), done }
+            })
+            .collect();
+        let sorted = |set: HashSet<PhotoId>| {
+            let mut ids: Vec<u64> = set.into_iter().map(|id| id.0).collect();
+            ids.sort_unstable();
+            ids
+        };
+        OfflineStatus { albums, ready: sorted(ready), waiting: sorted(waiting) }
     }
 
     /// Stop talking to the server for now (or resume).
@@ -1444,7 +1532,8 @@ impl Session {
     /// Is photo `id` kept on this device even offline?
     pub fn sync_is_offline(&self, id: PhotoId) -> bool {
         let Some(st) = &self.sync else { return false };
-        st.config.offline_photos.contains(&id) || st.config.offline_albums.iter().any(|a| self.catalog.album_photos(*a).contains(&id))
+        st.config.offline_photos.contains(&id)
+            || (!st.config.offline_excluded.contains(&id) && st.config.offline_albums.iter().any(|a| self.catalog.album_photos(*a).contains(&id)))
     }
 
     /// What the host should do next: at most one request that orders the library (sign-in,
@@ -1855,10 +1944,7 @@ impl Session {
     /// none of these costs no allocation.
     fn plan_blobs(&self, st: &SyncState, now: Instant) -> Vec<Job> {
         let retry_ok = |key: &str| st.blob_retry.get(key).is_none_or(|t| now >= *t);
-        let mut offline: HashSet<PhotoId> = st.config.offline_photos.iter().copied().collect();
-        for a in &st.config.offline_albums {
-            offline.extend(self.catalog.album_photos(*a));
-        }
+        let offline = self.offline_set(st);
         let originals_dir = self.originals_dir();
         let store = self.sync_store.as_ref().filter(|_| self.media.smart_dir.is_none());
         let originals = st.config.store_originals || !st.want_originals.is_empty();
@@ -2353,6 +2439,7 @@ impl Session {
         st.outbox_changed();
         // what this device keeps offline is named by the new ids
         st.config.offline_photos = st.config.offline_photos.iter().filter_map(|id| merged.photos.get(id).copied()).collect();
+        st.config.offline_excluded = st.config.offline_excluded.iter().filter_map(|id| merged.photos.get(id).copied()).collect();
         st.config.offline_albums = st.config.offline_albums.iter().filter_map(|id| merged.albums.get(id).copied()).collect();
         st.planned = None;
         st.merged = Some(r);

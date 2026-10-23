@@ -521,6 +521,11 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
   checked about once a minute and when a download lands. No limit is the default. Every photo you open adds its original, so set one on a device with little room.
 - **Make Available Offline:** right-click an album (✓ marks it in the sidebar), or **Photo ▸ Make Available Offline**
   for selected photos: their smart previews stay on the device, so they open and edit without a network.
+  `photo.makeAvailableOffline {ids, on: false}` on a photo that an offline album holds leaves just that photo out of the
+  album's copy (the album switched off and on brings it back). `sync.offline` says how far it has come: per offline
+  album the photos it holds and how many are here (a smart preview or the original is on this device), and the ids of
+  the photos kept offline that are here (`ready`) and still to come (`waiting`), for a native frontend's album rows,
+  photo marks and sync popover. It walks every photo kept offline: ask when the sync state moves, not every frame.
 - A downloaded original (`<library>/sync/originals/<hash>/<name>`) becomes the photo's file on this device only. It is
   checked against the photo's content hash before it is used, and a download that breaks off is continued, not started
   again (`<name>.part`); an upload that breaks off is continued from what the server kept.

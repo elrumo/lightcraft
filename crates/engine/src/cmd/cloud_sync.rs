@@ -306,10 +306,15 @@ fn photo_offline(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let on = match p.get("on").and_then(Value::as_bool) {
         Some(on) => on,
-        None => !ids.iter().all(|id| s.sync_state().is_some_and(|st| st.config.offline_photos.contains(id))),
+        None => !ids.iter().all(|id| s.sync_is_offline(*id)),
     };
     s.sync_offline(&[], &ids, on)?;
     Ok(json!({"photos": ids.len(), "offline": on}))
+}
+
+/// What the device keeps offline and how much of it has arrived.
+fn offline_status(s: &mut Session, _: &Value) -> Result<Value> {
+    serde_json::to_value(s.sync_offline_status()).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -325,6 +330,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "sync.queue", "Sync Queue", [], None,
             "{kind: \"changes\" | \"uploads\" | \"downloads\", offset?, limit?}: one page (`limit` 100, at most 500) of what `sync.status` counts as `pending`, `uploads` and `downloads`, photo by photo: `total` of them in all, `changes` (the pending ones: a record's several changes are one item), and `items` of {kind (photo, album, stack, label, keyword, other), id, name, what (the values changing: rating, develop, add…; or the file moving: original, smart preview, preview, building previews), running}, the transfers moving now first",
             synced, queue),
+        cmd!(query "sync.offline", "Offline Status", [], None,
+            "→ {albums: [{id, total, done}], ready: [photo ids], waiting: [photo ids]}: what this device keeps offline (`album.makeAvailableOffline`, `photo.makeAvailableOffline`) and how much of it is here: per offline album the photos it holds (`total`) and those whose smart preview or original is on this device (`done`); `ready` and `waiting` list every photo kept offline by whether it is here yet. Walks them all: ask when something changed, not every frame",
+            synced, offline_status),
         cmd!(query "sync.activity", "Sync Activity", [], None,
             "{refresh?: bool}: what this device is sending and receiving (changes waiting, photos and files queued and done, the ones moving now) and what the server is doing for this library (scanning library folders, building previews, indexing for search), as the server last said (asked for again every 2 s while someone looks) unless `refresh` asks it now",
             synced, activity),
@@ -430,14 +438,17 @@ pub fn specs() -> Vec<CommandSpec> {
             synced,
             album_offline
         ),
-        cmd!(
-            "photo.makeAvailableOffline",
-            "Make Available Offline",
-            ["Photo"],
-            None,
-            "{ids?, on?}: keep these photos' smart previews on this device (toggle without `on`; default: the selection)",
-            synced_selection,
-            photo_offline
-        ),
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "photo.makeAvailableOffline",
+                "Make Available Offline",
+                ["Photo"],
+                None,
+                "{ids?, on?}: keep these photos' smart previews on this device (toggle without `on`; default: the selection). `on: false` on a photo an offline album holds leaves it out of the album's copy (the album switched off and on brings it back)",
+                synced_selection,
+                photo_offline
+            )
+        },
     ]
 }

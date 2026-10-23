@@ -1965,6 +1965,56 @@ fn the_budget_never_deletes_the_only_copy_or_what_is_in_use() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// An album kept offline says how much of it has arrived; a photo taken out of it one by one stays out (its smart preview
+/// is no longer wanted) until the album is switched off and on, or the photo is asked for again.
+#[test]
+fn an_offline_album_reports_its_progress_and_a_photo_can_leave_it() {
+    let mut f = Fake::new();
+    let (a, root, ids) = first_device("offline-progress", &mut f);
+    drop(a);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    b.selection = crate::Selection { ids: ids.clone(), ..Default::default() };
+    let album = b.execute("album.create", &json!({"name": "Trip", "addSelected": true})).unwrap()["id"].as_u64().unwrap();
+    b.selection = crate::Selection::default();
+    sync(&mut b, &mut f);
+    let status = |b: &mut Session| b.execute("sync.offline", &json!({})).unwrap();
+    assert_eq!(status(&mut b), json!({"albums": [], "ready": [], "waiting": []}));
+
+    // asked for: the photos wait for their smart previews, then have them
+    b.execute("album.makeAvailableOffline", &json!({"id": album, "on": true})).unwrap();
+    let mut want: Vec<u64> = ids.iter().map(|id| id.0).collect();
+    want.sort_unstable();
+    let s = status(&mut b);
+    assert_eq!((s["albums"][0]["total"].as_u64(), s["albums"][0]["done"].as_u64()), (Some(2), Some(0)), "{s}");
+    assert_eq!(s["waiting"], json!(want));
+    sync(&mut b, &mut f);
+    let s = status(&mut b);
+    assert_eq!(s["albums"], json!([{"id": album, "total": 2, "done": 2}]), "{s}");
+    assert_eq!(s["ready"], json!(want));
+
+    // one photo taken out: the album keeps the other
+    b.execute("photo.makeAvailableOffline", &json!({"ids": [ids[0].0], "on": false})).unwrap();
+    assert!(!b.sync_is_offline(ids[0]) && b.sync_is_offline(ids[1]));
+    let s = status(&mut b);
+    assert_eq!(s["albums"], json!([{"id": album, "total": 1, "done": 1}]), "{s}");
+    assert_eq!(s["ready"], json!([ids[1].0]));
+    // (it stays out through a sync, and the toggle that follows asks for it again)
+    sync(&mut b, &mut f);
+    assert!(!b.sync_is_offline(ids[0]));
+    b.execute("photo.makeAvailableOffline", &json!({"ids": [ids[0].0]})).unwrap();
+    assert!(b.sync_is_offline(ids[0]) && b.sync_state().unwrap().config.offline_excluded.is_empty());
+
+    // out again; the album off and on starts afresh
+    b.execute("photo.makeAvailableOffline", &json!({"ids": [ids[0].0], "on": false})).unwrap();
+    b.execute("album.makeAvailableOffline", &json!({"id": album, "on": false})).unwrap();
+    assert!(b.sync_state().unwrap().config.offline_excluded.is_empty(), "nothing holds it any more");
+    b.execute("album.makeAvailableOffline", &json!({"id": album, "on": true})).unwrap();
+    assert!(b.sync_is_offline(ids[0]) && b.sync_is_offline(ids[1]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // ---- the other shared documents ----
 
 fn names(v: &Value) -> Vec<String> {
