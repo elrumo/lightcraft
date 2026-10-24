@@ -2524,6 +2524,33 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/getfile.php/3540/nice/Olympus%20-%20E-500%20-%2016bit%20%284:3%29.ORF",
         "fa5a4759b2de2b573f59629ad1baf64ad04a85fb8fe1fb3cbf68e08a42fff4f0",
     ),
+    // Uncompressed Olympus compacts and the E-20, one file each (crates/raw/tests/it/olympus_samsung_corpus.rs); the
+    // raw.pixls.us/data/ paths of the same CC0 files.
+    (
+        "orf-olympus-c5050z.orf",
+        "https://raw.pixls.us/data/Olympus/C5050Z/RAW_OLYMPUS_C5050Z.ORF",
+        "f4b013e78204ebaadd740d93416080856b3c51ec154760e2e2de0e552873044a",
+    ),
+    (
+        "orf-olympus-c8080wz.orf",
+        "https://raw.pixls.us/data/Olympus/C8080WZ/RAW_OLYMPUS_C8080.ORF",
+        "d7bbb0740fd55a6cddae193bb03c873c1b774c10c6f4d2160d843460d5436fa4",
+    ),
+    (
+        "orf-olympus-e-20.orf",
+        "https://raw.pixls.us/data/Olympus/E-20/RAW_OLYMPUS_E20.ORF",
+        "888e84a03f4174be2cc6d577587ebee80813a410cd6587b485a7d1ffeec6dac8",
+    ),
+    (
+        "orf-olympus-sp350.orf",
+        "https://raw.pixls.us/data/Olympus/SP350/RAW_OLYMPUS_SP350.ORF",
+        "37dca153cbb42e52a13fecdb3929ae2f7b4d73d7c1ab083b0b06e85887d5ebd1",
+    ),
+    (
+        "orf-olympus-sp500uz.orf",
+        "https://raw.pixls.us/data/Olympus/SP500UZ/RAW_OLYMPUS_SP500UZ.ORF",
+        "076d1a979bba1cfb48c3e90410305de60e8ae4f988eabd246d684117f80a9f96",
+    ),
     // OM Digital Solutions' `.ori` (High Res / Pro Capture originals): an ORF container with the compressed coding
     // (crates/raw/tests/it/olympus_ori_corpus.rs). One per body family; raw.pixls.us/data/ paths.
     (

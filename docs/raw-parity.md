@@ -1,5 +1,6 @@
 # RAW parity: cameras, formats, demosaic, colour and lens profiles
 
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (ORF-VERIFY: the Olympus C-5050, C-8080, E-20 (the three bodies marked unverified) and the SP-350 and SP-500 UZ (marked preview, but their files are the two-field 12-bit layout) decode from sensor data on CC0 files, hashes pinned and checked against the camera JPEG; 556 verified, 653 unverified, 200 preview)
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (ORF-ORI: OM Digital Solutions' `.ori` files, the originals of its High Res and Pro Capture shots, import as raws: they are ORF containers with the compressed coding, so they open from the camera's JPEG with a reason that names them, and develop from sensor data if their strip is an uncompressed layout; 19 CC0 files from 8 bodies checked, 4 pinned)
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (a raw whose camera JPEG gives no look to fit starts from its camera's typical colour, the mean of the 52 measured cameras' matrices (leave-one-out CIEDE2000 2.0 from the camera's own best matrix, against 8.7 for camera RGB read as sRGB), and a neutral tone at its maker's exposure: Sony A33, A500, A580 and Samsung NX210, NX1100 ΔE00 to the camera JPEG 6.5–19.8 → 4.2–8.4; `calibrate --references` fits a neutral look (exposure, contrast, hue/saturation table) for any maker and format, not only Canon CR3; `library.importFormats` gives a native frontend's file picker every extension Import takes; upstream v0.13.0 merged: Minolta MRW decoded, 6 bodies verified; Canon ColorData Kelvin; lossy JPEG XL DNG tiles with a non-linear declared transfer curve decode, and DNGs with a look table fit their tone to a 1024 px preview; the EOS R6 neutral tone refitted on vignetting-corrected frames, ΔE00 against Lightroom 3.96 → 3.30; Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
 
@@ -16,9 +17,9 @@ ranked in [gaps.md](gaps.md). Details per format: [cr3.md](cr3.md),
 | Measure | Value | Kind |
 |---|---:|---|
 | Adobe-listed camera models | **1,446** | measured: [raw/adobe-cameras.tsv](raw/adobe-cameras.tsv) |
-| Decoded from sensor data and **verified** on a real file | **551** (38%) | measured: [raw/evidence.tsv](raw/evidence.tsv) |
-| Decoder path should handle it, **unverified** | **656** (45%) | measured from the format rules (631 of them DNG, mostly phones) |
-| **Preview-only** (embedded JPEG) | **202** (14%) | measured |
+| Decoded from sensor data and **verified** on a real file | **556** (38%) | measured: [raw/evidence.tsv](raw/evidence.tsv) |
+| Decoder path should handle it, **unverified** | **653** (45%) | measured from the format rules (631 of them DNG, mostly phones) |
+| **Preview-only** (embedded JPEG) | **200** (14%) | measured |
 | **Unsupported** (not imported, refused or decodes wrongly) | **37** (3%) | measured |
 | Models added since 2017 (Camera Raw 10+): verified / unverified / preview / unsupported | 182 / 542 / 22 / 8 of 754 | measured |
 | **Share of photographers whose camera fully works** (decodes from sensor data), use-weighted | **~94%** | estimated: measured classes × written usage weights × per-format confidence |
@@ -122,7 +123,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Nikon | 99 | 77 | 19 | 0 | 3 | COOLPIX 5700 / 8400 / 8800 decode wrongly (two stacked half-height fields, CMYG read as RGB); HE / HE★ is a per-shot setting, preview-only |
 | Fujifilm | 97 | 65 | 9 | 23 | 0 | pre-X FinePix RAF without a raw IFD (estimated split) |
 | Google | 88 | 5 | 83 | 0 | 0 | — |
-| Olympus | 71 | 17 | 3 | 51 | 0 | **compressed ORF** |
+| Olympus | 71 | 22 | 0 | 49 | 0 | **compressed ORF** |
 | Leica | 61 | 27 | 34 | 0 | 0 | — |
 | Xiaomi, Oppo, LG, Huawei, OnePlus, Motorola, Nokia | 139 | 0 | 139 | 0 | 0 | — (DNG) |
 | Pentax / Ricoh | 60 | 40 | 20 | 0 | 0 | — |
@@ -132,7 +133,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | DJI | 21 | 4 | 17 | 0 | 0 | DNG |
 | OM Digital Solutions | 7 | 0 | 0 | 7 | 0 | **compressed ORF** |
 | Kodak, Konica Minolta, Epson, Sigma, GoPro, Contax, others | 56 | 12 | 16 | 13 | 15 | DCR, GPR not imported; KDC, X3F preview (Epson ERF and Minolta MRW decode) |
-| **All** | **1,446** | **551 (38%)** | **656 (45%)** | **202 (14%)** | **37 (3%)** | |
+| **All** | **1,446** | **556 (38%)** | **653 (45%)** | **200 (14%)** | **37 (3%)** | |
 
 ## By use (estimated)
 
@@ -143,7 +144,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Nikon | 16% | 98% | 89% | decoders cover every NEF coding but HE; 77 bodies verified |
 | Fujifilm | 10% | 94% | 92% | |
 | Panasonic | 4% | 100% | 98% | bulk-checked |
-| OM / Olympus | 3% | 6% | 5% | compressed ORF |
+| OM / Olympus | 3% | 6% | 6% | compressed ORF |
 | Phones | 3% | 93% | 4% | DNG |
 | Pentax / Ricoh | 1.5% | 99% | 80% | |
 | Leica | 1% | 99% | 72% | the Q3 verified, 13 more bodies pinned on CC0 files |
@@ -184,7 +185,7 @@ checked (the per-model CC0 sweeps of October 2026); compressed ORF (OM / Olympus
 | SR2 | DSC-R1 | ✅ | CC0 3221 sample; folder and direct import both decode sensor data |
 | RAF | uncompressed, lossless and lossy compressed; Bayer and X-Trans; GFX 14/16-bit | ✅ | 24 files from 13 bodies exact |
 | RAF | pre-X FinePix without a raw IFD | ⬜ | `raf.rs` refuses (26 Adobe models, estimated split) |
-| ORF | uncompressed 16-bit, 12-bit packed, two-field 12-bit, 12.8 bpp | ✅ | E-1, E-400, XZ-2 corpus; #651 |
+| ORF | uncompressed 16-bit, 12-bit packed, two-field 12-bit, 12.8 bpp | ✅ | E-1, E-400, XZ-2 corpus and 19 files in `olympus_samsung_corpus.rs` (sensor hash and camera-JPEG check; the E-20, C-5050, C-8080, SP-350 and SP-500 UZ added 2026-10-24); #651 |
 | ORF | **compressed** (every Olympus / OM body since ~2008) | ⬜ | `orf.rs` refuses; the E-M1 and E-M10 III corpus files are `KNOWN_UNSUPPORTED` |
 | ORI | OM Digital Solutions' High Res and Pro Capture originals (`.ori`) | 🟡 | an ORF container with the compressed coding: imports as a preview-only raw whose reason names the ORI, develops from sensor data if its strip is an uncompressed layout; 19 CC0 files from 8 bodies, 4 pinned in `olympus_ori_corpus.rs` |
 | RW2 / RWL / RAW | formats 2, 4, 5, 6, 7, 8 and 16-bit words | ✅ | 118 bodies (#215) |
@@ -378,3 +379,4 @@ The normalizer now subtracts the computed black and scales each DNG sample plane
 | 2026-10-16 | minor | DNG `ProfileToneCurve` renders with per-channel chroma: ProRAW was 74% as colourful as Apple's and Lightroom's render |
 | 2026-10-18 | minor | Minolta MRW decoded (`vendor/mrw.rs`): DiMAGE 7, 7Hi, A1, A2, A200 and Dynax / Maxxum 7D verified; 551 verified, 656 unverified, 201 preview (re-measured with `coverage.py`) |
 | 2026-10-24 | minor | ORF-ORI: `.ori` is an import extension and a raw format (import, pickers, camera cards); an ORI is read like an ORF (same container, compressed strip) and imports as a preview-only raw named in its reason; 19 CC0 ORI files from OM-1, OM-1 Mark II, OM-3, OM-5, OM-5 Mark II, E-M1 Mark II, E-M1 Mark III and E-M5 Mark II checked, 4 pinned (`olympus_ori_corpus.rs`) |
+| 2026-10-24 | minor | ORF-VERIFY: five more uncompressed Olympus bodies verified on one CC0 file each (`olympus_samsung_corpus.rs`: pinned sensor hash and camera-JPEG check): Camedia C-5050 Zoom, Camedia C-8080 Wide Zoom and E-20 (were unverified), SP-350 and SP-500 UZ (were preview-only: both files are the two-field 12-bit layout the SP-510 UZ and SP-570 UZ use, so they decode); 556 verified, 653 unverified, 200 preview (re-measured with `coverage.py`); SP-310, SP-320 and SP-560 UZ stay preview-only (no file to check) |
