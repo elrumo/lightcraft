@@ -429,4 +429,17 @@ mod tests {
         deep_merge(&mut a, &json!({"x": {"b": 3}, "y": [2, 3]}));
         assert_eq!(a, json!({"x": {"a": 1, "b": 3}, "y": [2, 3]}));
     }
+
+    /// The vignette style ids the SwiftUI app sends through `develop.merge` (`EffectsGroup.styles`):
+    /// "color" once failed with `unknown variant`, and each must come back out as it went in.
+    #[test]
+    fn vignette_style_wire_names() {
+        use crate::VignetteStyle::*;
+        for (id, style) in [("highlightPriority", HighlightPriority), ("colorPriority", ColorPriority), ("paintOverlay", PaintOverlay)] {
+            let s: DevelopSettings = serde_json::from_value(json!({"vignette": {"style": id}})).unwrap();
+            assert_eq!(s.vignette.style, style);
+            assert_eq!(serde_json::to_value(s.vignette.style).unwrap(), json!(id));
+        }
+        assert!(serde_json::from_value::<DevelopSettings>(json!({"vignette": {"style": "color"}})).is_err());
+    }
 }
