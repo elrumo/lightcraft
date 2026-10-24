@@ -74,10 +74,11 @@ fn table_valid(t: &HsvTable) -> bool {
     dims && len == Some(t.data.len()) && t.data.iter().flatten().all(|v| v.is_finite()) && t.data.iter().all(|e| e[1] >= 0.0 && e[2] >= 0.0)
 }
 
-/// The hue/saturation table a camera model's neutral look adds on top of its measured matrices (Canon CR3s,
-/// `camera_preview::neutral_look`), fitted by `lightcraft-cli calibrate --references` to renders of the same photos by
-/// another raw converter. Files are `<model>.neutral.json` next to the profiles ([`dir`], replacing a built-in one,
-/// [`NEUTRAL_BUNDLED`]).
+/// What a camera model's neutral look adds on top of its colour matrices: a hue/saturation table and, optionally, the
+/// tone's exposure and contrast (`camera_preview::neutral_look_for`), fitted by `lightcraft-cli calibrate --references`
+/// to renders of the same photos by another raw converter. A raw of a model that has one starts from the neutral look
+/// whatever its maker and format (Canon CR3s of models with measured matrices always do). Files are
+/// `<model>.neutral.json` next to the profiles ([`dir`], replacing a built-in one, [`NEUTRAL_BUNDLED`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NeutralTable {
     pub version: u32,
@@ -86,7 +87,13 @@ pub struct NeutralTable {
     /// Photos and colour pairs the table was fitted on.
     pub files: usize,
     pub samples: usize,
-    /// Correction of the scene colour through the model's spectral matrices (linear ProPhoto RGB).
+    /// Exposure (EV) and contrast of the neutral tone fitted to the same renders; without them the maker's exposure
+    /// (`camera_preview::maker_exposure`) and Canon's contrast.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contrast: Option<f32>,
+    /// Correction of the scene colour through the model's colour matrices (linear ProPhoto RGB).
     pub hue_sat: HsvTable,
 }
 
@@ -102,7 +109,8 @@ pub fn neutral_file_name(model: &str) -> String {
 
 fn parse_neutral(json: &[u8], origin: &str) -> Result<NeutralTable, String> {
     let table: NeutralTable = serde_json::from_slice(json).map_err(|e| format!("{origin}: {e}"))?;
-    if table.version != VERSION || table.model.trim().is_empty() || !table_valid(&table.hue_sat) {
+    let tone_ok = table.exposure.is_none_or(|e| (-2.0..=4.0).contains(&e)) && table.contrast.is_none_or(|c| (0.5..=3.0).contains(&c));
+    if table.version != VERSION || table.model.trim().is_empty() || !table_valid(&table.hue_sat) || !tone_ok {
         return Err(format!("{origin}: not a usable neutral-look table (version {}, model {:?})", table.version, table.model));
     }
     Ok(table)
@@ -280,6 +288,8 @@ pub fn cache_key() -> u64 {
 #[derive(Default)]
 pub struct Pool {
     models: HashMap<String, (usize, Vec<([f64; 3], [f64; 3])>)>,
+    /// The Exif make of each model (for the neutral look's exposure).
+    makes: HashMap<String, String>,
 }
 
 /// `pairs` in a fixed order: pools filled on several threads arrive in a different order each run, and the fits hold
@@ -315,14 +325,17 @@ impl Pool {
     }
 
     /// Add one raw file's neutral-look pairs against `reference`, a render of the same photo by another raw converter
-    /// (`camera_preview::neutral_pairs`). `Ok(None)` when the file can't contribute (not a CR3 of a model with
-    /// measured matrices, a render that doesn't line up).
+    /// (`camera_preview::neutral_pairs`). `Ok(None)` when the file can't contribute (not a vendor format handled by
+    /// `camera_preview::file_local_look`, has its own colour matrices, a render that doesn't line up).
     pub fn add_reference(&mut self, bytes: &[u8], reference: &[u8]) -> Result<Option<String>, String> {
         let mut raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
         raw.opcodes.list3.retain(|op| !op.is_lens_correction());
         let Some(model) = raw.metadata.model.as_deref().map(str::trim).filter(|m| !m.is_empty()).map(str::to_owned) else { return Ok(None) };
         let Some(pairs) = crate::camera_preview::neutral_pairs(&mut raw, reference) else { return Ok(None) };
         let step = pairs.len().div_ceil(PAIRS_PER_FILE).max(1);
+        if let Some(make) = raw.metadata.make.as_deref() {
+            self.makes.entry(model.clone()).or_insert_with(|| make.to_owned());
+        }
         let entry = self.models.entry(model.clone()).or_default();
         entry.0 += 1;
         entry.1.extend(pairs.into_iter().step_by(step));
@@ -337,9 +350,17 @@ impl Pool {
             .into_iter()
             .filter(|(_, (files, _))| *files >= min_files)
             .map(|(model, (files, pairs))| {
-                let hue_sat =
-                    crate::camera_preview::fit_neutral_table(&in_order(pairs)).ok_or_else(|| format!("{model}: no usable hue/saturation fit"))?;
-                Ok(NeutralTable { version: VERSION, model: model.clone(), files: *files, samples: pairs.len(), hue_sat })
+                let fit = crate::camera_preview::fit_neutral(&in_order(pairs), self.makes.get(model).map(String::as_str))
+                    .ok_or_else(|| format!("{model}: no usable hue/saturation fit"))?;
+                Ok(NeutralTable {
+                    version: VERSION,
+                    model: model.clone(),
+                    files: *files,
+                    samples: pairs.len(),
+                    exposure: Some(fit.exposure),
+                    contrast: Some(fit.contrast),
+                    hue_sat: fit.hue_sat,
+                })
             })
             .collect()
     }
@@ -361,6 +382,9 @@ impl Pool {
 
     /// Add another pool's photos and pairs (pools filled on separate threads).
     pub fn merge(&mut self, other: Pool) {
+        for (model, make) in other.makes {
+            self.makes.entry(model).or_insert(make);
+        }
         for (model, (files, pairs)) in other.models {
             let entry = self.models.entry(model).or_default();
             entry.0 += files;
@@ -398,7 +422,15 @@ mod tests {
     #[test]
     fn neutral_tables_round_trip_and_the_bundled_ones_load() {
         let dir = std::env::temp_dir().join(format!("lc-neutral-tables-{}", std::process::id()));
-        let table = NeutralTable { version: VERSION, model: "Canon EOS R6".into(), files: 3, samples: 99, hue_sat: profile().hue_sat.unwrap() };
+        let table = NeutralTable {
+            version: VERSION,
+            model: "Canon EOS R6".into(),
+            files: 3,
+            samples: 99,
+            exposure: Some(1.1),
+            contrast: None,
+            hue_sat: profile().hue_sat.unwrap(),
+        };
         let path = save_neutral(&table, &dir).unwrap();
         assert_eq!(path.file_name().unwrap(), "Canon_EOS_R6.neutral.json");
         assert_eq!(parse_neutral(&std::fs::read(&path).unwrap(), "test").unwrap(), table);
@@ -406,8 +438,13 @@ mod tests {
         let mut bad = table.clone();
         bad.hue_sat.data.pop();
         assert!(parse_neutral(&serde_json::to_vec(&bad).unwrap(), "test").is_err());
-        let newer = NeutralTable { version: VERSION + 1, ..table };
+        let newer = NeutralTable { version: VERSION + 1, ..table.clone() };
         assert!(parse_neutral(&serde_json::to_vec(&newer).unwrap(), "test").is_err());
+        // an exposure or contrast off the scale is refused, and a table written before they existed still loads
+        let wild = NeutralTable { exposure: Some(9.0), ..table.clone() };
+        assert!(parse_neutral(&serde_json::to_vec(&wild).unwrap(), "test").is_err());
+        let old = serde_json::json!({"version": VERSION, "model": "Canon EOS R6", "files": 1, "samples": 1, "hue_sat": table.hue_sat});
+        assert_eq!(parse_neutral(old.to_string().as_bytes(), "test").unwrap().exposure, None);
         assert!(parse_neutral(b"{not json", "test").is_err());
         std::fs::remove_dir_all(&dir).ok();
         for (model, json) in NEUTRAL_BUNDLED {

@@ -320,6 +320,39 @@ pub(super) const CAMERAS: &[Camera] = &[
     },
 ];
 
+/// The mean of all the measured cameras' matrices: the colour model of a camera nobody measured. See
+/// `tools/spectral_camera_table.py`.
+#[rustfmt::skip]
+pub(super) const GENERIC: Camera = Camera {
+        make: "",
+        model: "typical camera (52 measured)",
+        color_matrix: [Mat3([[0.924783, -0.268853, 0.010393], [-0.48094, 1.36115, 0.447907], [-0.061253, 0.158838, 0.880605]]), Mat3([[0.60338, -0.079375, -0.061561], [-0.489049, 1.19286, 0.24711], [-0.130241, 0.222414, 0.604184]])],
+        forward_matrix: [Mat3([[0.785658, 0.077852, 0.100786], [0.257278, 0.889947, -0.147225], [0.038369, -0.412663, 1.1994]]), Mat3([[0.797317, 0.127983, 0.038995], [0.316599, 0.942225, -0.258823], [0.037242, -0.237626, 1.02549]])],
+    };
+
+/// The same per maker with at least five measured cameras (Canon, Nikon, Sony).
+#[rustfmt::skip]
+pub(super) const GENERIC_MAKERS: &[Camera] = &[
+    Camera {
+        make: "Canon",
+        model: "typical Canon (22 measured)",
+        color_matrix: [Mat3([[0.883664, -0.185603, -0.01989], [-0.479743, 1.36729, 0.448835], [-0.061368, 0.170412, 0.859178]]), Mat3([[0.579454, -0.028604, -0.077448], [-0.489339, 1.20186, 0.24175], [-0.12814, 0.230985, 0.585453]])],
+        forward_matrix: [Mat3([[0.825125, -3.4e-05, 0.139204], [0.271035, 0.869342, -0.140377], [0.034193, -0.462171, 1.25308]]), Mat3([[0.821727, 0.029924, 0.112645], [0.326074, 0.902504, -0.228577], [0.034142, -0.261567, 1.05253]])],
+    },
+    Camera {
+        make: "Nikon",
+        model: "typical Nikon (11 measured)",
+        color_matrix: [Mat3([[1.1145, -0.401691, 0.017461], [-0.541571, 1.43188, 0.443575], [-0.066513, 0.145493, 1.01176]]), Mat3([[0.727102, -0.162531, -0.065939], [-0.52333, 1.22646, 0.24883], [-0.138555, 0.212807, 0.689901]])],
+        forward_matrix: [Mat3([[0.739785, 0.151413, 0.073098], [0.262281, 0.872451, -0.134732], [0.046617, -0.30383, 1.08232]]), Mat3([[0.736667, 0.230056, -0.002427], [0.303603, 0.951675, -0.255278], [0.037049, -0.180961, 0.969017]])],
+    },
+    Camera {
+        make: "Sony",
+        model: "typical Sony (11 measured)",
+        color_matrix: [Mat3([[0.737646, -0.222893, 0.03542], [-0.481446, 1.35787, 0.480548], [-0.065367, 0.153023, 0.880704]]), Mat3([[0.471656, -0.07024, -0.02741], [-0.478922, 1.16186, 0.269401], [-0.12646, 0.207172, 0.600039]])],
+        forward_matrix: [Mat3([[0.783866, 0.11024, 0.070189], [0.25379, 0.911804, -0.165594], [0.053864, -0.388681, 1.15992]]), Mat3([[0.830409, 0.173786, -0.0399], [0.329789, 0.987704, -0.317493], [0.042003, -0.224416, 1.00752]])],
+    },
+];
+
 /// `(make, model as sold, table model)`: other names of a camera in [`CAMERAS`], or of a camera with the same sensor.
 #[rustfmt::skip]
 pub(super) const ALIASES: &[(&str, &str, &str)] = &[
@@ -335,7 +368,6 @@ pub(super) const ALIASES: &[(&str, &str, &str)] = &[
     ("Canon", "EOS Rebel T3i", "EOS 600D"), // same model, alternative name
     ("Canon", "Kiss X5", "EOS 600D"), // same model, alternative name
     ("Canon", "EOS R5 Mark II", "EOS R5m2"), // same model, alternative name
-    ("Canon", "EOS R6 Mark II", "EOS R6m2"), // same model, alternative name
     ("Canon", "EOS 5DS R", "EOS 5DS"), // different model, same sensor
     ("Canon", "EOS 6D Mark II", "EOS RP"), // different model, same sensor
     ("Canon", "EOS R5 C", "EOS R5"), // different model, same sensor
@@ -347,4 +379,5 @@ pub(super) const ALIASES: &[(&str, &str, &str)] = &[
     ("Sony", "ILCE-7RM4A", "ILCE-7RM4"), // updated model, same sensor
     ("Sony", "ILCE-7RM3A", "ILCE-7RM3"), // updated model, same sensor
     ("Fujifilm", "GFX100S", "GFX 100"), // different model, same sensor
+    ("Canon", "EOS R6 Mark II", "EOS R6m2"), // same model, alternative name
 ];

@@ -115,13 +115,14 @@ USAGE:
   lightcraft-cli controls [--json]   list every develop control id with its range
   lightcraft-cli calibrate [--max N] [--out DIR] [--references DIR] FOLDERS/FILES…
       Fit a colour profile per camera model from raw files and their embedded camera JPEGs
-      (Sony ARW, Nikon NEF, Fujifilm RAF, Canon CR3 / CR2): up to N files spread over the folders (default 300; 0 = all), pooled per
+      (any maker's raws without colour matrices of their own): up to N files spread over the folders (default 300; 0 = all), pooled per
       model, written as <model>.json to DIR (default: the profiles folder LightCraft reads,
       <config>/camera-profiles, or $LIGHTCRAFT_CAMERA_PROFILES). Raws of a profiled model then
       take their colour from the profile and only their tone from their own JPEG.
-      --references DIR: Canon CR3s of models with measured matrices instead: fit the hue/saturation table
-      their neutral look adds, against renders of the same photos in DIR (<raw name>.jpg, .jpeg, .png or
-      .tif, upright, sRGB or tagged), written as <model>.neutral.json.
+      --references DIR: instead fit the neutral look of each model (exposure, contrast and the hue/saturation table
+      it adds to the model's colour matrices, or its maker's typical camera when none were measured), against
+      renders of the same photos in DIR (<raw name>.jpg, .jpeg, .png or .tif, upright, sRGB or tagged; Lightroom's
+      default exports, say), written as <model>.neutral.json. Raws of that model then start from this look.
   lightcraft-cli profile-db build --out DIR [OPTIONS]
       Write a camera and lens profile database for LightCraft to download (docs/profile-db.md): DIR gets
       index.json and files/<sha256>; upload DIR to any web server and give the app its https address.
@@ -224,7 +225,10 @@ fn main() -> ExitCode {
 /// Raw files below `path` (or `path` itself), skipping hidden and NAS metadata folders.
 fn raw_files(path: &Path, out: &mut Vec<std::path::PathBuf>, depth: usize) {
     let is_raw = |p: &Path| {
-        p.extension().and_then(|e| e.to_str()).is_some_and(|e| ["arw", "nef", "nrw", "raf", "cr2", "cr3"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+        p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+            // (a DNG has colour matrices of its own: nothing to fit)
+            !e.eq_ignore_ascii_case("dng") && lightcraft_engine::import::RAW_EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x))
+        })
     };
     if path.is_file() {
         if is_raw(path) {

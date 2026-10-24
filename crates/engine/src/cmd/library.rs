@@ -1739,6 +1739,15 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         cmd!(
+            "library.importFormats",
+            "Supported Photo Formats",
+            [],
+            None,
+            "{} — the file extensions Import takes (lower case, no dot), and the camera raw formats among them (some open from their embedded preview only), so that a file picker can offer every one → {extensions: [text], raw: [text]}",
+            always,
+            |_s, _p| Ok(json!({"extensions": crate::import::EXTENSIONS, "raw": crate::import::RAW_EXTENSIONS}))
+        ),
+        cmd!(
             "library.autoImport",
             "Auto Import Settings",
             [],

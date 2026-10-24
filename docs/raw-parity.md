@@ -1,6 +1,6 @@
 # RAW parity: cameras, formats, demosaic, colour and lens profiles
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (upstream: lossy JPEG XL DNG tiles with a non-linear declared transfer curve decode, and DNGs with a look table fit their tone to a 1024 px preview; the EOS R6 neutral tone refitted on vignetting-corrected frames, ΔE00 against Lightroom 3.96 → 3.30; Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (a raw whose camera JPEG gives no look to fit starts from its camera's typical colour, the mean of the 52 measured cameras' matrices (leave-one-out CIEDE2000 2.0 from the camera's own best matrix, against 8.7 for camera RGB read as sRGB), and a neutral tone at its maker's exposure: Sony A33, A500, A580 and Samsung NX210, NX1100 ΔE00 to the camera JPEG 6.5–19.8 → 4.2–8.4; `calibrate --references` fits a neutral look (exposure, contrast, hue/saturation table) for any maker and format, not only Canon CR3; `library.importFormats` gives a native frontend's file picker every extension Import takes; upstream: lossy JPEG XL DNG tiles with a non-linear declared transfer curve decode, and DNGs with a look table fit their tone to a 1024 px preview; the EOS R6 neutral tone refitted on vignetting-corrected frames, ΔE00 against Lightroom 3.96 → 3.30; Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
 
 Raw processing is the deepest single dimension of Lightroom parity: a photographer whose camera
 does not decode, or decodes with the wrong colour, cannot switch. This document measures it model by
@@ -80,6 +80,34 @@ unsupported to preview-only in the counts; sensor-decoding readiness is unchange
 - **Per-format confidence** for unverified bodies (the chance their files decode correctly): DNG, CR2,
   RAF, RW2 0.95; NEF, ARW, PEF 0.9; ORF, SRW, SR2 0.8; **CR3 0.6** (the CRX decoder refuses several
   coding variants; 26 bodies are verified, every CC0 CR3 on raw.pixls.us decodes).
+
+## Decode census of the CC0 archive (2026-10-24)
+
+One file per camera folder of raw.pixls.us (CC0; 772 folders with a raw of at most 45 MB, the smallest one), decoded with
+`lightcraft_raw::decode` from the sensor data (a second pass over the 381 files of the corpus gave no new failure kind).
+The sample is by camera folder, not by photographers, and a folder is a body or a body and a mode.
+
+| Result | Folders |
+|---|---:|
+| decode from sensor data | **574** (74%; 79% of the 724 that are not unrecognised dumps) |
+| compressed ORF (every Olympus / OM body since about 2008; 44 of 64 Olympus folders) | 50 |
+| raw dumps no decoder recognises: Canon PowerShot `.CRW` made with CHDK (29), action cameras and others (19) | 48 |
+| Canon CRW (EOS D30, D60, 10D, 300D, Digital Rebel; PowerShot Pro1…) | 18 |
+| pre-X FinePix RAF without a raw IFD (E550, S100FS, GX680…) | 18 |
+| Kodak KDC / DCR | 14 |
+| compressed SRW (NX1, NX30, NX300, NX500, NX2000, NX3000, NX3300, NX mini, EK-GN120) | 10 |
+| Sony ARW version 1 (DSLR-A100, A200…A390), SRF | 10 |
+| Phase One / Leaf IIQ in a private block | 8 |
+| Nikon small RAW (D4S) and compressed Coolpix NRW, D100 / D1X | 7 |
+| Sigma / Polaroid X3F | 7 |
+| Nikon HE / HE★ | 6 |
+| other (Leica Digilux 2, Panasonic L10 12-bit format 3) | 2 |
+
+By maker, folders that decode: Panasonic 110 of 111, Pentax 28 of 29, Leica 11 of 12, Minolta 9 of 10, Sony 92 of 102,
+Nikon 85 of 100, Canon 132 of 179 (the 47 failures: 29 CHDK dumps, 18 CRW), Fujifilm 62 of 80, Samsung 12 of 22,
+Olympus and OM System 20 of 64, Kodak 0 of 14. Every failure is a coding the decoder names, none is a panic or a wrong
+picture. The largest, compressed ORF, is the first line of the ranked list below; it is left for a derivation from the
+two patents and sample files, because a decoder written from memory of GPL decoders would not be clean-room.
 
 ## By maker (measured)
 
@@ -215,7 +243,7 @@ sample files. A pointer for contributors, not legal advice.
 
 | Item | Adobe | LightCraft |
 |---|---|---|
-| Default profile per model | Adobe Standard for every model (1,500 profile names in the bundle) | the DNG's own matrices; for a CR3 of the 8 Canon models with spectral matrices, those and a neutral look tuned to Lightroom's brightness (no fit to the camera JPEG's picture style); else a pooled profile (**5 bundled**: ILCA-99M2, ILCE-7CR, ILCE-7M4, X-H2S, X-T4); else a guarded per-file fit to the camera's embedded JPEG; else spectral matrices (**52 models**, rawtoaces-data, and the bodies sharing their sensors: 6 X-Trans CMOS 4 Fujifilm bodies take the X-T3's); else a neutral matrix |
+| Default profile per model | Adobe Standard for every model (1,500 profile names in the bundle) | the DNG's own matrices; for a CR3 of the 8 Canon models with spectral matrices, those and a neutral look tuned to Lightroom's brightness (no fit to the camera JPEG's picture style); else a pooled profile (**5 bundled**: ILCA-99M2, ILCE-7CR, ILCE-7M4, X-H2S, X-T4); else a guarded per-file fit to the camera's embedded JPEG; else spectral matrices (**52 models**, rawtoaces-data, and the bodies sharing their sensors: 6 X-Trans CMOS 4 Fujifilm bodies take the X-T3's) or, for a camera nobody measured, its maker's typical camera (the mean of the measured cameras' matrices, ΔE00 2.0 from the camera's own best matrix leaving each out in turn) with a neutral tone at the maker's exposure; a model fitted to Lightroom renders (`calibrate --references`, any maker) starts from its neutral look instead |
 | Camera Matching looks | 481 models (plus phone-maker looks) | none per picture style; the per-file JPEG fit imitates the camera's own look (the default for most raws, the Camera Look profile for CR3s that start neutral) |
 | Creative profiles | Adobe Color, Portrait, Landscape, Vivid, Monochrome… | our own looks (Color, Neutral, Vivid, Landscape, Portrait, Monochrome) |
 | DCP / dual-illuminant model | ✅ | dual-illuminant DNG colour (ColorMatrix / ForwardMatrix 1-2, CameraCalibration, AnalogBalance), HueSatMap, LookTable, ProfileToneCurve; external `.dcp` never loaded (clean-room); ProfileToneCurve renders with the colour of a per-channel curve (`tone::channel_chroma`): iPhone 17 Pro ProRAW mean chroma 9.4 → 12.6 against Apple's preview 12.7, and 10.6 → 15.8 against 17.4, lightness unchanged |
@@ -227,6 +255,7 @@ sample files. A pointer for contributors, not legal advice.
   bodies, median ΔE 5.1, ΔL\* +0.2; rejected fits fall back to a neutral matrix at median ΔE 18.5,
   ΔL\* −11, chroma ×0.39. RW2 140 of 174 files accepted, median 5.0. NEF 13 of 13, 2.9–7.8. RAF 23 of
   24, pooled X-H2S 1.62 / X-T4 2.34. SRW 2.2–7.6.
+- Without a JPEG to fit (no preview, one that does not line up, a scene the gates refuse): camera RGB read as sRGB with the default tone was ΔE00 9.5–19.8 from the camera JPEG, 3–20 L\* too dark and 0.3–0.8 as colourful (Sony A33, A500, A580, Samsung NX20, NX200, NX210, NX1100 of the CC0 archive); the typical camera and the neutral tone at the maker's exposure take six of those seven to 4.2–14.4 (A580 19.8 → 4.2; [camera-preview-colour.md](camera-preview-colour.md#cameras-nobody-measured-the-typical-camera)). The other 347 of the 354 corpus raws that render are unchanged.
 - Against Lightroom itself (few): Canon EOS R6 CR3s with custom picture styles and Auto Lighting Optimizer (19
   photos, Lightroom for iOS default exports): mean ΔE00 5.59 → 4.63, ΔL\* −1.8 → −0.7, chroma ×0.91 → ×1.04
   (neutral look, `camera-preview-colour.md`), 4.13 with the R6's hue/saturation table fitted to those exports
@@ -302,6 +331,7 @@ Beyond decoding:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Cameras nobody measured: `spectral::generic` (the mean of the 52 measured cameras' matrices, per maker for Canon, Nikon and Sony) is the colour of a raw whose camera JPEG gives no look, with the neutral tone at the maker's exposure (medians of the CC0 archive's fitted looks); `calibrate --references` fits exposure, contrast and the hue/saturation table of any model against Lightroom renders and a model so fitted starts from its neutral look, whatever its maker; `library.importFormats`; counts and scores unchanged |
 | 2026-10-21 | minor | Canon CR3 neutral tone refitted (1.494 EV / 1.65 → 1.30 EV / 1.80) on frames with the camera's vignetting correction, which had made the 19 EOS R6 photos 2.7 L\* brighter than Lightroom: ΔL\* −0.0, ΔE00 3.96 → 3.30; the R6 table refitted on it |
 | 2026-10-18 | patch | X-T30, X-T30 II, X-Pro3, X100V, X-S10 and X-E4 take the X-T3's spectral matrices (same 26.1 MP X-Trans CMOS 4 sensor): an X-T30 raw with a black-and-white (Acros) camera JPEG no longer opens in the muted neutral fallback |
 | 2026-10-15 | minor | DNGs with a look table and no tone curve (Lightroom-written, Adobe Standard) fit their tone to the embedded preview, also Lightroom's 1024 px one: two lossy ILCE-7CM2 DNGs no longer render 0.8 EV dark and flat |
