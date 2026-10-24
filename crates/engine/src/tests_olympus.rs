@@ -26,9 +26,9 @@ fn jpeg(w: usize, h: usize) -> Vec<u8> {
 
 /// A new-style Olympus maker note (`OLYMPUS\0II\x03\0`: the IFD at 12, offsets counted from the note's start) whose
 /// CameraSettings directory (0x2020) names `preview` as its PreviewImage (0x0101 start, 0x0102 length) and, when `frame`
-/// is given, whose ImageProcessing directory (0x2040) states the valid area (the sensor, 5184 × 3888) and that aspect frame
+/// is given, whose ImageProcessing directory (0x2040) states the valid area (the sensor, `area`) and that aspect frame
 /// (`AspectFrame`, 0x1113: left, top, right, bottom).
-fn maker_note(preview: &[u8], frame: Option<[u16; 4]>) -> Vec<u8> {
+fn maker_note(preview: &[u8], area: (u32, u32), frame: Option<[u16; 4]>) -> Vec<u8> {
     let entry = |tag: u16, typ: u16, count: u32, v: u32| {
         [tag.to_le_bytes().to_vec(), typ.to_le_bytes().to_vec(), count.to_le_bytes().to_vec(), v.to_le_bytes().to_vec()].concat()
     };
@@ -54,8 +54,8 @@ fn maker_note(preview: &[u8], frame: Option<[u16; 4]>) -> Vec<u8> {
         n.extend(5u16.to_le_bytes());
         n.extend(entry(0x0612, 4, 1, 0));
         n.extend(entry(0x0613, 4, 1, 0));
-        n.extend(entry(0x0614, 4, 1, 5184));
-        n.extend(entry(0x0615, 4, 1, 3888));
+        n.extend(entry(0x0614, 4, 1, area.0));
+        n.extend(entry(0x0615, 4, 1, area.1));
         n.extend(entry(0x1113, 3, 4, frame_at as u32));
         n.extend(0u32.to_le_bytes());
         n.extend(f.iter().flat_map(|v| v.to_le_bytes()));
@@ -87,7 +87,7 @@ fn container_framed(w: u32, h: u32, bits: u16, strip: Vec<u8>, orientation: u16,
     exif.set(t::EXPOSURE_TIME, Value::Rational(vec![(1, 125)]));
     exif.set(t::ISO_SPEED, Value::Short(vec![200]));
     exif.set(0xa302, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
-    exif.set(t::MAKER_NOTE, Value::Undefined(maker_note(preview, frame)));
+    exif.set(t::MAKER_NOTE, Value::Undefined(maker_note(preview, (w, h), frame)));
     ifd.set_child(t::EXIF_IFD, exif);
     let mut b = TiffWriter::new(ByteOrder::Little, false).write(&[ifd]).unwrap();
     b[2] = b'R';
@@ -240,5 +240,73 @@ fn an_aspect_frame_becomes_the_import_crop_of_a_preview_only_raw() {
         assert_eq!(p.develop.crop.geometry.rect, lightcraft_geom::Rect::UNIT, "{name}");
         assert!(p.import_look.is_none(), "{name}");
     }
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// A raw that decodes (here an uncompressed 16-bit ORF; the same holds for a decoded ORI) takes the aspect frame of a
+/// 16:9 shot as its import crop too: the whole 4:3 area is developed, the camera's own JPEG is cut to the frame.
+#[test]
+fn an_aspect_frame_becomes_the_import_crop_of_a_decoded_raw() {
+    let src = temp_dir("aspect-frame-decoded");
+    // a 48 x 36 sensor, all of it the valid area; 16:9 is its rows 4 to 30
+    let words: Vec<u8> = (0..48u32 * 36).flat_map(|i| (((200 + i * 37) % 4000) as u16).to_le_bytes()).collect();
+    let write = |name: &str, orientation: u16, frame: Option<[u16; 4]>| {
+        std::fs::write(src.join(name), container_framed(48, 36, 16, words.clone(), orientation, &jpeg(40, 30), frame)).unwrap();
+    };
+    write("wide.ori", 1, Some([0, 4, 47, 30]));
+    write("upright.orf", 8, Some([0, 4, 47, 30]));
+    write("four-three.orf", 1, None);
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(3), "{r}");
+    let photo = |name: &str| s.catalog.photos().find(|p| p.file_name == name).unwrap().clone();
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    let (top, bottom) = (4.0 / 36.0, 31.0 / 36.0);
+
+    let p = photo("wide.ori");
+    assert!(p.develops_raw() && (p.width, p.height) == (48, 36), "the whole area is developed");
+    let r = p.develop.crop.geometry.rect;
+    assert!(near(r.x0, 0.0) && near(r.x1, 1.0) && near(r.y0, top) && near(r.y1, bottom), "{r:?}");
+    assert!(!p.is_edited());
+    let wide_id = p.id;
+
+    // held upright the other way (EXIF 8, a quarter turn anticlockwise): the frame's rows become columns
+    let p = photo("upright.orf");
+    let r = p.develop.crop.geometry.rect;
+    assert!(near(r.y0, 0.0) && near(r.y1, 1.0) && near(r.x0, top) && near(r.x1, bottom), "{r:?}");
+
+    let p = photo("four-three.orf");
+    assert_eq!(p.develop.crop.geometry.rect, lightcraft_geom::Rect::UNIT);
+    assert!(s.render_job(wide_id, 48, 36, false, true).unwrap().run().rendered.is_ok());
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// A preview-only photo whose raw later decodes (a newer LightCraft reads the file) heals as the decoded raw it is and
+/// keeps the aspect crop it was imported with: the healed photo's settings are made afresh with the crop in them. (Its
+/// import look is the one it was imported with, as for a photo imported with a default preset: no catalog op sets it, so
+/// the photo reads as edited until Reset.)
+#[test]
+fn a_healed_raw_keeps_its_aspect_crop() {
+    let src = temp_dir("aspect-frame-heal");
+    let words: Vec<u8> = (0..48u32 * 36).flat_map(|i| (((200 + i * 37) % 4000) as u16).to_le_bytes()).collect();
+    let frame = Some([0, 4, 47, 30]);
+    let path = src.join("a.orf");
+    std::fs::write(&path, container_framed(48, 36, 16, compressed_strip(1), 1, &jpeg(40, 30), frame)).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+    let id = lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap());
+    assert!(s.catalog.photo(id).unwrap().preview_only.is_some());
+    let crop = s.catalog.photo(id).unwrap().develop.crop.geometry.rect;
+    assert_ne!(crop, lightcraft_geom::Rect::UNIT);
+    // the file now decodes
+    std::fs::write(&path, container_framed(48, 36, 16, words, 1, &jpeg(40, 30), frame)).unwrap();
+    s.media.forget(id);
+    let job = s.loupe_job(id, 48, 36, true).unwrap();
+    let r = job.run();
+    assert!(r.rendered.is_ok());
+    s.accept(&r);
+    let p = s.catalog.photo(id).unwrap();
+    assert!(p.develops_raw(), "healed");
+    assert_eq!(p.develop.crop.geometry.rect, crop, "the frame is still the crop");
     let _ = std::fs::remove_dir_all(&src);
 }

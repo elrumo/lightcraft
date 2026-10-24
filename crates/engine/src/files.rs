@@ -222,9 +222,11 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         let scale = WbScaleOf::new(raw.format, &raw.color, raw.wb_multipliers, &raw.metadata);
         let as_shot_wb = Some(scale.as_shot(lightcraft_raw::color::as_shot_white_xy_of(&raw)));
         let embedded_lens = crate::lens_profiles::for_raw(&raw, || m.clone());
+        // an Olympus / OM body's aspect-ratio setting (3:2, 16:9, 1:1): the whole 4:3 area is developed, the camera's JPEG is cut
+        let default_crop = (found == lightcraft_raw::RawFormat::Orf).then(|| default_crop_of(bytes, raw.orientation, w, h)).flatten();
         return Ok(ProbeInfo {
             embedded_lens,
-            default_crop: None,
+            default_crop,
             width: w,
             height: h,
             format: raw_format_name(name, found),

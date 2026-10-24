@@ -103,3 +103,24 @@ fn compressed_olympus_files_give_their_jpeg_lens_orientation_and_aspect_frame() 
     }
     eprintln!("compressed Olympus files checked: {seen}");
 }
+
+/// A raw that decodes states its aspect frame the same way: the XZ-10, shot at 3:2, develops its whole 3968 × 2976 valid
+/// area and says its own JPEG is rows 165 to 2810 of it; the XZ-2 and the E-1 (shot at 4:3, and the older note) say none.
+#[test]
+fn a_decoded_olympus_raw_states_its_aspect_frame_too() {
+    let read = |name: &str| {
+        let path = corpus().join("raw").join(name);
+        std::fs::read(&path).map_err(|_| lightcraft_testkit::skip!(Corpus, "{} absent", path.display())).ok()
+    };
+    if let Some(xz10) = read("orf-olympus-xz-10.orf") {
+        let raw = decode(&xz10).unwrap();
+        assert_eq!((raw.active_area.width, raw.active_area.height), (3968, 2976));
+        assert_eq!(olympus_aspect_frame(&xz10), Some([0.0, 165.0 / 2976.0, 1.0, 2811.0 / 2976.0]));
+    }
+    for name in ["orf-olympus-xz2.orf", "orf-olympus-e1.orf"] {
+        if let Some(bytes) = read(name) {
+            assert!(decode(&bytes).is_ok(), "{name}");
+            assert_eq!(olympus_aspect_frame(&bytes), None, "{name}");
+        }
+    }
+}

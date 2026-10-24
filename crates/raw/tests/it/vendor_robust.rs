@@ -46,6 +46,74 @@ fn magic_tiff(magic: &[u8; 4], make: &str) -> Vec<u8> {
     b
 }
 
+/// An Olympus ORF with a new-style maker note (`OLYMPUS\0II\x03\0`, offsets counted from the note's start): the Equipment
+/// directory with a lens name, CameraSettings pointing at a JPEG-looking preview and ImageProcessing with a valid area,
+/// an aspect frame, a black level and white balance. Its strip is the compressed kind (short) or uncompressed words.
+fn olympus_noted(uncompressed: bool) -> Vec<u8> {
+    let entry = |tag: u16, typ: u16, count: u32, value: u32| {
+        let mut e = tag.to_le_bytes().to_vec();
+        e.extend(typ.to_le_bytes());
+        e.extend(count.to_le_bytes());
+        e.extend(value.to_le_bytes());
+        e
+    };
+    let lens = b"OLYMPUS M.12-40mm F2.8\0";
+    let jpeg = [&[0xffu8, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 0, 4, 0, 4, 1, 1, 0x11, 0][..], &[0xff, 0xd9]].concat();
+    // layout: header 12 | main IFD (3 entries) | Equipment (1) | CameraSettings (2) | ImageProcessing (7) | frame, wb | lens | jpeg
+    let main_at = 12;
+    let equipment_at = main_at + 2 + 3 * 12 + 4;
+    let settings_at = equipment_at + 2 + 12 + 4;
+    let processing_at = settings_at + 2 + 2 * 12 + 4;
+    let values_at = processing_at + 2 + 7 * 12 + 4;
+    let (frame_at, wb_at, black_at, lens_at) = (values_at, values_at + 8, values_at + 16, values_at + 24);
+    let jpeg_at = lens_at + lens.len();
+    let mut n = b"OLYMPUS\0II\x03\0".to_vec();
+    n.extend(3u16.to_le_bytes());
+    n.extend(entry(0x2010, 13, 1, equipment_at as u32));
+    n.extend(entry(0x2020, 13, 1, settings_at as u32));
+    n.extend(entry(0x2040, 13, 1, processing_at as u32));
+    n.extend(0u32.to_le_bytes());
+    n.extend(1u16.to_le_bytes());
+    n.extend(entry(0x0203, 2, lens.len() as u32, lens_at as u32));
+    n.extend(0u32.to_le_bytes());
+    n.extend(2u16.to_le_bytes());
+    n.extend(entry(0x0101, 4, 1, jpeg_at as u32));
+    n.extend(entry(0x0102, 4, 1, jpeg.len() as u32));
+    n.extend(0u32.to_le_bytes());
+    n.extend(7u16.to_le_bytes());
+    n.extend(entry(0x0100, 3, 4, wb_at as u32));
+    n.extend(entry(0x0600, 3, 4, black_at as u32));
+    n.extend(entry(0x0612, 4, 1, 0));
+    n.extend(entry(0x0613, 4, 1, 0));
+    n.extend(entry(0x0614, 4, 1, W));
+    n.extend(entry(0x0615, 4, 1, H));
+    n.extend(entry(0x1113, 3, 4, frame_at as u32));
+    n.extend(0u32.to_le_bytes());
+    n.extend([0u16, 1, W as u16 - 1, H as u16 - 2].iter().flat_map(|v| v.to_le_bytes()));
+    n.extend([500u16, 440, 256, 256].iter().flat_map(|v| v.to_le_bytes()));
+    n.extend([64u16, 65, 65, 64].iter().flat_map(|v| v.to_le_bytes()));
+    n.extend(lens);
+    n.extend(&jpeg);
+    let px = (W * H) as usize;
+    let mut ifd = IfdBuilder::new();
+    ifd.set(t::IMAGE_WIDTH, Value::Long(vec![W]));
+    ifd.set(t::IMAGE_LENGTH, Value::Long(vec![H]));
+    ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![16]));
+    ifd.set(t::COMPRESSION, Value::Short(vec![1]));
+    ifd.set(t::PHOTOMETRIC, Value::Short(vec![1]));
+    ifd.set(t::MAKE, Value::Ascii("OLYMPUS IMAGING CORP.".into()));
+    ifd.set(t::MODEL, Value::Ascii("E-M1MarkII".into()));
+    let strip = if uncompressed { (0..px * 2).map(|i| (i * 13) as u8).collect() } else { vec![0, 0, 0, 0, 1, 0, 0, 9, 9, 9] };
+    ifd.set_image(ImageData::Strips { rows_per_strip: H, strips: vec![strip] });
+    let mut exif = IfdBuilder::new();
+    exif.set(0xa302, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
+    exif.set(t::MAKER_NOTE, Value::Undefined(n));
+    ifd.set_child(t::EXIF_IFD, exif);
+    let mut b = TiffWriter::new(ByteOrder::Little, false).write(&[ifd]).unwrap();
+    b[..4].copy_from_slice(b"IIRO");
+    b
+}
+
 /// A Panasonic RW2: sensor size, bit depth and raw format in IFD0, 12-bit packed blocks.
 fn rw2() -> Vec<u8> {
     let mut ifd = IfdBuilder::new();
@@ -319,6 +387,8 @@ fn samples() -> Vec<Vec<u8>> {
         cfa_tiff("SAMSUNG", 1, 12, ByteOrder::Little),
         cfa_tiff("ACME", 1, 16, ByteOrder::Little),
         magic_tiff(b"IIRO", "OLYMPUS IMAGING CORP."),
+        olympus_noted(false),
+        olympus_noted(true),
         rw2(),
         cr2(),
         raf(),
@@ -345,6 +415,8 @@ fn exercise(bytes: &[u8]) {
     let _ = lightcraft_raw::probe(bytes);
     let _ = lightcraft_raw::probe_info(bytes);
     let _ = lightcraft_raw::embedded_preview(bytes);
+    let _ = lightcraft_raw::olympus_aspect_frame(bytes);
+    let _ = lightcraft_meta::extract(bytes);
     if let Ok(img) = lightcraft_raw::decode(bytes)
         && img.width * img.height <= 1 << 16
     {
@@ -366,7 +438,7 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: 2000, .. ProptestConfig::default() })]
 
     #[test]
-    fn mutated_vendor_files_never_panic(kind in 0usize..20, flips in proptest::collection::vec((any::<usize>(), any::<u8>()), 1..16), cut in any::<usize>()) {
+    fn mutated_vendor_files_never_panic(kind in 0usize..22, flips in proptest::collection::vec((any::<usize>(), any::<u8>()), 1..16), cut in any::<usize>()) {
         let mut data = samples().swap_remove(kind);
         let n = data.len();
         for (i, v) in flips {
@@ -383,5 +455,19 @@ fn rw2_samples_decode_unmutated() {
     for s in &rw2_formats() {
         let r = lightcraft_raw::decode(s).unwrap();
         assert_eq!((r.width, r.height), (W as usize, H as usize));
+    }
+}
+
+/// The Olympus samples are real enough for the mutations above to reach the maker-note readers: the frame, the lens and
+/// the preview are found in them as they are, and the uncompressed one develops.
+#[test]
+fn olympus_samples_read_through_their_maker_note_unmutated() {
+    for uncompressed in [false, true] {
+        let s = olympus_noted(uncompressed);
+        assert_eq!(lightcraft_raw::probe(&s), Some(lightcraft_raw::RawFormat::Orf));
+        assert_eq!(lightcraft_raw::olympus_aspect_frame(&s), Some([0.0, 1.0 / H as f64, 1.0, (H - 1) as f64 / H as f64]));
+        assert_eq!(lightcraft_meta::extract(&s).lens_model.as_deref(), Some("OLYMPUS M.12-40mm F2.8"));
+        assert!(lightcraft_raw::embedded_preview(&s).is_some_and(|j| j.starts_with(&[0xff, 0xd8])));
+        assert_eq!(lightcraft_raw::decode(&s).is_ok(), uncompressed);
     }
 }

@@ -1,5 +1,6 @@
 # Lightroom parity checklist
 
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (LR-IMP-FORMATS: a decoded Olympus / OM raw takes the camera's aspect frame (3:2, 16:9, 1:1) as its import crop; status unchanged)
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (LR-IMP-FORMATS: a compressed Olympus / OM ORF opens as its largest camera JPEG with the lens from the maker note, a stored frame for Lightroom crops and the camera's aspect frame as its import crop; status unchanged)
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (LR-IMP-FORMATS: the uncompressed Olympus C-5050, C-8080, E-20, SP-350 and SP-500 UZ verified on CC0 files; status unchanged)
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (LR-IMP-FORMATS: OM Digital Solutions' `.ori` files (High Res and Pro Capture originals) import as preview-only raws; status unchanged)
@@ -1040,3 +1041,4 @@ Latin stays upright. Advanced Japanese composition remains open. Regression cove
 | 2026-10-24 | minor | LR-IMP-FORMATS: `.ori` is an import extension and raw format: OM Digital Solutions' High Res and Pro Capture originals import (folders, pickers, camera cards) as ORF containers with the compressed coding, preview-only with a reason that names them; status unchanged |
 | 2026-10-24 | minor | LR-IMP-FORMATS: five more uncompressed Olympus bodies (Camedia C-5050 Zoom, C-8080 Wide Zoom, E-20, SP-350, SP-500 UZ) verified on CC0 files, sensor hash and camera-JPEG check pinned; status unchanged |
 | 2026-10-24 | minor | LR-IMP-FORMATS: preview-only raws report their orientation (Lightroom crop edges in a sidecar are read in the stored frame); a compressed Olympus / OM ORF reads its lens name from the maker note where Exif has none and takes the camera's aspect frame (3:2, 16:9, 1:1) as its import crop; status unchanged |
+| 2026-10-24 | minor | LR-IMP-FORMATS: a decoded Olympus / OM raw (XZ-10, E-20 and the other uncompressed bodies) takes the camera's aspect frame as its import crop, as the preview-only ones do; status unchanged |
