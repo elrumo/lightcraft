@@ -135,7 +135,7 @@ pub struct Understood {
 
 impl TextQuery {
     pub fn parse(text: &str) -> TextQuery {
-        let words: Vec<&str> = text.split_whitespace().collect();
+        let words: Vec<&str> = search_tokens(text).collect();
         let mut any: Vec<Vec<Term>> = Vec::new();
         for group in words.split(|w| w.eq_ignore_ascii_case("or")) {
             let terms = parse_group(group);
@@ -203,16 +203,56 @@ fn parse_month(w: &str) -> Option<u8> {
     MONTHS.iter().position(|m| *m == w).map(|i| i as u8 + 1)
 }
 
+/// The tokens of a search text: split at whitespace, except inside double quotes, so
+/// `person:"Jane Doe"` is one token (issue #1449). An unclosed quote runs to the end of the text; a
+/// backslash is an ordinary character. One pass over the text, nothing allocated.
+fn search_tokens(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return None;
+        }
+        let mut quoted = false;
+        let end = rest
+            .char_indices()
+            .find(|&(_, c)| {
+                quoted ^= c == '"';
+                !quoted && c.is_whitespace()
+            })
+            .map_or(rest.len(), |(i, _)| i);
+        let (tok, tail) = rest.split_at(end);
+        rest = tail;
+        Some(tok)
+    })
+}
+
+/// `s` without the double quotes around it (a missing closing quote is allowed).
+fn unquote(s: &str) -> &str {
+    s.strip_prefix('"').map_or(s, |inner| inner.strip_suffix('"').unwrap_or(inner))
+}
+
+/// Whether a token is a `field:value` one: a token that starts with a quote is a phrase, even with a
+/// colon in it.
+fn is_field(w: &str) -> bool {
+    !w.starts_with('"') && w.contains(':')
+}
+
 fn parse_group(words: &[&str]) -> Vec<Term> {
     // "photos of madrid": drop fillers, but never all of them ("photos" alone searches for "photos")
-    let content = words.iter().filter(|w| !w.contains(':') && !is_filler(w)).count() + words.iter().filter(|w| w.contains(':')).count();
+    let content = words.iter().filter(|w| !is_field(w) && !is_filler(w)).count() + words.iter().filter(|w| is_field(w)).count();
     let drop_fillers = content > 0 && words.len() > 1;
     let mut terms = Vec::new();
     let mut i = 0;
     while let Some(&w) = words.get(i) {
-        if let Some((field, value)) = w.split_once(':') {
+        if is_field(w) {
             terms.push(Term::Field(w.to_lowercase()));
-            let _ = (field, value);
+            i += 1;
+            continue;
+        }
+        // a quoted phrase is plain text: no place, date or filler reading
+        if w.starts_with('"') {
+            terms.push(Term::Word(Word { text: unquote(&w.to_lowercase()).to_string(), by_text: true, place: None, date: None }));
             i += 1;
             continue;
         }
@@ -257,7 +297,7 @@ fn place_at(words: &[&str], i: usize) -> Option<(usize, String, Arc<PlaceFilter>
     }
     for n in (1..=MAX_NAME_WORDS.min(words.len().saturating_sub(i))).rev() {
         let run = words.get(i..i + n)?;
-        if run.iter().any(|w| w.contains(':')) {
+        if run.iter().any(|w| w.contains(':') || w.starts_with('"')) {
             continue;
         }
         let phrase = run.join(" ");
@@ -339,7 +379,7 @@ impl Word {
 fn text_contains(p: &Photo, t: &str) -> bool {
     let m = &p.meta;
     let hay = [&p.file_name, &m.title, &m.caption, &m.camera, &m.lens, &m.location, &m.city, &m.state, &m.country, &p.format];
-    hay.iter().any(|h| contains_ci(h, t)) || m.keywords.iter().any(|k| contains_ci(k, t))
+    hay.iter().any(|h| contains_ci(h, t)) || m.keywords.iter().any(|k| contains_ci(k, t)) || p.people().iter().any(|n| contains_ci(n, t))
 }
 
 /// The photos of `photos` whose file name holds `query`, ignoring case ("IMG_4008", "img_4008.dng",
@@ -373,7 +413,8 @@ pub(crate) fn has_person(p: &Photo, name: &str) -> bool {
 
 /// `field:value` (already lower-cased).
 fn field_matches(p: &Photo, t: &str) -> bool {
-    let Some((field, val)) = t.split_once(':') else { return false };
+    let Some((field, quoted)) = t.split_once(':') else { return false };
+    let val = unquote(quoted);
     let num = |s: &str| -> Option<(char, f64)> {
         let (op, rest) = match s.chars().next()? {
             c @ ('>' | '<' | '=') => (c, &s[1..]),
@@ -418,7 +459,9 @@ fn field_matches(p: &Photo, t: &str) -> bool {
         "country" => place_field(p, val, |k| k == Kind::Country),
         "near" => near(p, val),
         "bbox" => in_bbox(p, val),
-        // Not a known field: the colon is part of a plain word ("10:30", "Re:").
+        // Not a known field: the colon is part of a plain word ("10:30", "Re:"), its value unquoted
+        // (`re:"a b"` is the text `re:a b`).
+        _ if val.len() != quoted.len() => text_contains(p, &format!("{field}:{val}")),
         _ => text_contains(p, t),
     }
 }

@@ -2,7 +2,7 @@
 
 use lightcraft_catalog::{Op, PhotoId, Version};
 use lightcraft_develop::{DevelopSettings, Preset, Section, SettingsGroup, Treatment, Upright, WbMode, controls};
-use lightcraft_geom::{CropGeometry, CropHandle, Point, Rect, crop_cover_angle, crop_fit_angle, drag_crop_in};
+use lightcraft_geom::{CropGeometry, CropHandle, MIN_CROP_FRACTION, Point, Rect, crop_cover_angle, crop_fit_angle, drag_crop_in};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, f64_or, f64_req, has_active, has_clipboard, has_selection, index_req, ok, str_param};
@@ -194,8 +194,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
                     refit_crop_angle(angle, before, d, dims);
                 };
-                if let Some(ids) = p.get("ids").and_then(Value::as_array) {
-                    let ids: Vec<PhotoId> = ids.iter().filter_map(Value::as_u64).map(PhotoId).collect();
+                if let Some(ids) = super::photo_ids(p, "develop.set")? {
                     let ops = ids
                         .iter()
                         .filter_map(|id| s.develop_of(*id).map(|d| (*id, d)))
@@ -507,13 +506,25 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let id = active(s, "crop.set")?;
                 let (w, h) = crop_dims(s, id);
+                // the smallest crop a drag of the crop tool can make: below it an export comes out 1×1 (#1952)
+                let min_side = MIN_CROP_FRACTION * w.min(h) * (1.0 - 1e-9);
+                let too_small = |r: Rect| {
+                    (r.width() * w < min_side || r.height() * h < min_side).then(|| {
+                        bad("crop.set", format!("rect is smaller than the smallest crop ({} % of the shorter side)", MIN_CROP_FRACTION * 100.0))
+                    })
+                };
                 edit(s, "crop.set", "Crop", |d| {
-                    if let Some(a) = p.get("rect").and_then(Value::as_array) {
+                    let explicit = p.get("rect").and_then(Value::as_array);
+                    if let Some(a) = explicit {
                         let v: Vec<f64> = a.iter().filter_map(Value::as_f64).collect();
                         if v.len() != 4 {
                             return Err(bad("crop.set", "rect needs 4 numbers"));
                         }
-                        d.crop.geometry.rect = Rect::new(v[0].min(v[2]), v[1].min(v[3]), v[0].max(v[2]), v[1].max(v[3]));
+                        let r = Rect::new(v[0].min(v[2]), v[1].min(v[3]), v[0].max(v[2]), v[1].max(v[3]));
+                        if let Some(e) = too_small(r) {
+                            return Err(e);
+                        }
+                        d.crop.geometry.rect = r;
                     }
                     let angle = p.get("angle").and_then(Value::as_f64).map(|a| a.clamp(-45.0, 45.0));
                     let expand = d.crop.expand;
@@ -522,6 +533,12 @@ pub fn specs() -> Vec<CommandSpec> {
                         (None, Some(a)) => d.crop.geometry.with_angle_in(a, w, h, expand),
                         (_, a) => CropGeometry { angle: a.unwrap_or(d.crop.geometry.angle), ..d.crop.geometry }.constrained_in(w, h, expand),
                     };
+                    // a rect far larger than the photo is shrunk to fit it, and can come out a sliver
+                    if explicit.is_some()
+                        && let Some(e) = too_small(d.crop.geometry.rect)
+                    {
+                        return Err(e);
+                    }
                     Ok(())
                 })
             }

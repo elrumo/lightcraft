@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-20 · **Change:** minor (checklist recount 84.3% of 554 rows after the colour mixer's fit to Lightroom exports and Calibration ✅ → 🟡; a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-24 · **Change:** minor (upstream merged again, up to v0.13.0 (38f8d2508): Print gains Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺); Minolta MRW decoded, 6 bodies verified; German catalog 91% → 97%; Finnish and Indonesian interfaces; earlier: checklist recount 84.3% of 554 rows after the colour mixer's fit to Lightroom exports and Calibration ✅ → 🟡; a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -49,7 +49,7 @@ Hours are calibrated on this repo's PR history; see
 | UI/UX fidelity | ~70% | ~85% | 32–54 h | [ui-parity](docs/ui-parity.md) |
 | File formats (non-raw) | ~70% | ~85% | 30–55 h | [file-format-parity](docs/file-format-parity.md) |
 | Hardware | ~40% | ~50% | 40–80 h | [hardware-parity](docs/hardware-parity.md) |
-| Localization | ~55% of the 12 key languages | 7 of 12 present | 130–210 h (+145–255 h new scripts) | [localization-parity](docs/localization-parity.md) |
+| Localization | ~64% of the 12 key languages | 8 of 12 present | 130–210 h (+135–239 h new scripts) | [localization-parity](docs/localization-parity.md) |
 | Performance | ~70% | ~80% | 30–50 h | [target-app-parity](docs/target-app-parity.md#by-dimension) |
 | Stability | ~60% | — | 30–60 h | [target-app-parity](docs/target-app-parity.md#by-dimension) |
 | Platforms | ~60% | macOS, Windows, Linux, FreeBSD, web | 25–45 h | [target-app-parity](docs/target-app-parity.md#by-dimension) |
@@ -78,7 +78,7 @@ Weights and evidence: [target-app-parity.md](docs/target-app-parity.md#features)
 
 ## Languages
 
-Measured from `crates/ui-egui/locales` (share of 2,304 catalog messages translated); none is `full`
+Measured from `crates/ui-egui/locales` (share of 2,304 catalog messages translated; German counts 3,644 of 3,754, because its What's New lines add keys); none is `full`
 while lower-layer errors stay English. Detail: [localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | Translated | Status |
@@ -90,13 +90,13 @@ while lower-layer errors stay English. Detail: [localization-parity.md](docs/loc
 | Arabic | ar | 0% | none (no RTL / shaping) |
 | French | fr | 88% | partial |
 | Portuguese (Brazil) | pt-br | 85% | partial |
-| Indonesian | id | 0% | none |
+| Indonesian | id | 100% (What's New in English) | partial |
 | Japanese | ja | 87% | partial |
-| German | de | 91% | partial |
+| German | de | 97% (3,644/3,754) | partial |
 | Korean | ko | 0% | none (no Hangul face) |
 | Vietnamese | vi | 0% | none |
 
-Also shipped: Traditional Chinese (87%), Russian (74%), Ukrainian (99%), Italian (92%), Georgian (100%).
+Also shipped: Traditional Chinese (87%), Russian (74%), Ukrainian (99%), Italian (92%), Georgian (100%), Finnish (79%).
 
 ## Upcoming
 
@@ -138,6 +138,14 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 ## Progress log
 
+- 2026-10-24: Upstream merged again (up to v0.13.0, 38f8d2508; 675 commits). From upstream: Print gains the Japanese photo and
+  postcard papers, Minolta MRW decodes, German catalog 97%, Finnish and Indonesian interfaces, a shared CI gate workflow,
+  `cargo xtask ci --quick`. This fork keeps its sync server, Generative Expand and Sign Out ahead of it.
+- 2026-10-22: Print page setup and PDF output gain the Japanese photo and postcard papers — L判
+  (89 × 127 mm), 2L判 (127 × 178), KG判 (102 × 152), はがき (100 × 148), 往復はがき (148 × 200),
+  六切 (203 × 254), 四切 (254 × 305) and 名刺 (55 × 91) — at their exact metric sizes. The Print dialog
+  and `print.set` take their customary names, and names are matched case-, space- and
+  punctuation-insensitively (`L判`, `l`, `L-size` are one paper).
 - 2026-10-15: Upstream merged again (up to 0da998f2, v0.8.0; 699 commits). From upstream: 545 verified raw
   models (~85% of photographers on a verified body), CR3 on 26 verified Canon bodies, full-resolution zoom closed,
   the Slideshow settings / playback / PDF, JPEG and AV1 export, the Print dialog, a user manual under `docs/user/`, Italian, Georgian, Czech and
@@ -157,8 +165,11 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 - 2026-10-14: Camera-coverage sweep verifies 30 more models on 40 CC0 files, with file and sensor
   hashes pinned (`docs/raw/coverage.py`: 515 → 545 verified). Eleven candidates excluded after rechecking
   identity, provenance and camera-image agreement. Phone and drone DNG tone differences remain tracked in #1277.
+- 2026-10-18: Minolta / Konica Minolta MRW decodes from sensor data (12-bit packed and 16-bit words,
+  RGGB and GBRG, as-shot WB from `WBG`); DiMAGE 7, 7Hi, A1, A2, A200 and Dynax / Maxxum 7D verified on
+  CC0 files. 551 models verified, 201 preview-only; headline numbers unchanged.
 - 2026-10-14: 97 Canon CR2, Pentax and Ricoh models verified, one CC0 raw.pixls.us file each pinned and
-  checked against the camera JPEG (`crates/raw/tests/canon_pentax_corpus.rs`). 334 models verified, ~50% of
+  checked against the camera JPEG (`crates/raw/tests/it/canon_pentax_corpus.rs`). 334 models verified, ~50% of
   photographers on a verified body; headline numbers unchanged.
 - 2026-10-12: Mamiya MEF (ZD) decodes from sensor data and is imported; verified on a CC0 file. 241 models
   verified, 35 unsupported; headline numbers unchanged.
@@ -167,16 +178,13 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 - 2026-10-11: Leica Q3 verified by a recorded check of 38 private DNGs (all decode and develop at full
   size; mean ΔE to the camera JPEG 6.3–13.9). 236 models verified; headline numbers unchanged.
 - 2026-10-11 (CI): `ci.yml` runs `cargo xtask ci` on Linux and clippy and the tests on macOS and Windows, and the CPU ↔ GPU equivalence tests on lavapipe, Metal and WARP (`LIGHTCRAFT_GPU_ALLOW_SOFTWARE`, tests only), within the documented bounds on all three (max 1 LSB on lavapipe and WARP, 2 in one case on the runner's Metal; the bound is 3). `main` fails there until the #989 fixes and #1052 (Windows) land (#1050). Headline numbers unchanged.
-- 2026-10-12: Minolta / Konica Minolta MRW decodes from sensor data (12-bit packed and 16-bit words,
-  RGGB and GBRG, as-shot WB from `WBG`); DiMAGE 7, 7Hi, A1, A2, A200 and Dynax / Maxxum 7D verified on
-  CC0 files. 241 models verified, 222 preview-only; headline numbers unchanged.
 - 2026-10-12: 22 more Canon CR3 bodies verified (EOS R, RP, R3, R5, R6, R6 Mark II / III, R7, R10, R50,
   R50 V, 90D, 250D, 850D, M200, M50 Mark II, M6 Mark II, 1D X Mark III, PowerShot G5 X II, G7 X III, SX70,
   V1): one CC0 file each pinned and checked against the camera JPEG; all 110 CC0 CR3s on raw.pixls.us
   decode. The EOS R6 Mark III gets its as-shot white balance (`ColorData` 66). 259 models verified; RAW
   decoding 77% → 83%; mainstream ~49% → ~51%, essentials ~64% → ~65%, full ~61%.
 - 2026-10-12: 117 Nikon and Fujifilm bodies verified, one CC0 raw.pixls.us file each pinned and checked
-  against the camera JPEG (`crates/raw/tests/body_corpus.rs`); the sweep found COOLPIX 5700 / 8400 / 8800
+  against the camera JPEG (`crates/raw/tests/it/body_corpus.rs`); the sweep found COOLPIX 5700 / 8400 / 8800
   decoding wrongly. 354 models verified, ~58% of photographers on a verified body; headline numbers unchanged.
 - 2026-10-11: Canon EOS R5 Mark II C-RAW decodes from sensor data (57% of its files opened as a
   preview): the CRX QP map's first-symbol literal and limited-length escape; four CC0 R5 Mark II files
@@ -227,6 +235,9 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Upstream merged again (up to v0.13.0); headline numbers are recounted after the merge |
+| 2026-10-22 | minor | Print: Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺) in the page setup, Print dialog and PDF output; headline numbers unchanged |
+| 2026-10-19 | minor | Indonesian interface (`id`): every plain and formats message, plus 69 command labels, locale, menu command and tests; What's New left in English; Localization ~55% → ~64% (mean of the 12 key languages), 8 of 12 present |
 | 2026-10-20 | minor | Checklist recount: 84.3% of 554 rows (P0 98.0%, P1 93.9%, P2 61.2%); Calibration ✅ → 🟡 (unlike Lightroom's), the colour mixer fitted to Lightroom single-slider exports |
 | 2026-10-19 | minor | Removed the mentions of a native app that moved to its own repository; headline numbers unchanged |
 | 2026-10-16 | minor | Browser build: Export no longer runs on the page's thread (each rendered photo is made on a Web Worker, ✕ stops it at once): new checklist row LR-BEHAV-WEB-EXPORT 🟡, 549 → 550 rows, P1 94.8% → 94.5%; other numbers unchanged |
@@ -235,6 +246,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 | 2026-10-15 | minor | Sync: Sign Out waits until everything has reached the server, then removes the account's library from the device (as Lightroom's does), so two accounts' libraries never meet on a device; *Fork additions* row updated; numbers unchanged |
 | 2026-10-14 | minor | Generative Expand: Stable Diffusion 1.5, Kandinsky 2.2 and SDXL inpainting, offered by the device's profile; *Fork additions* row updated; numbers unchanged |
 | 2026-10-14 | minor | Localization ~52% → ~55% (mean of the 12 key languages): de, es, fr, ja and uk catalogs filled |
+| 2026-10-16 | minor | German 91% → 97% (217 interface strings and 862 What's New lines added); headline numbers unchanged |
 | 2026-10-14 | minor | 21 Sony and Leica models verified (258 models, 18%); headline numbers unchanged |
 | 2026-10-14 | minor | 17 uncompressed Olympus and Samsung models verified on one CC0 file each (254 models verified, 18%); headline numbers unchanged |
 | 2026-10-14 | minor | Full-resolution zoom (gap 4) closed: soft proofing gets zoom windows; headline numbers unchanged |
@@ -252,9 +264,10 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 | 2026-10-12 | minor | Mamiya MEF decoded and imported: ZD verified (241); headline numbers unchanged |
 | 2026-10-12 | minor | Epson ERF decoded: 3 more verified models (240); headline numbers unchanged |
 | 2026-10-12 | minor | Georgian (`ka`) interface language added (every catalog message) |
+| 2026-10-17 | minor | Finnish (`fi`) interface language added: 2,610 of 3,308 messages (79%), locale, menu command and tests; headline numbers unchanged |
 | 2026-10-12 | minor | UI/UX remaining 40–70 h → 34–58 h (accessibility audit landed); headline numbers unchanged |
 | 2026-10-11 | minor | Tests in CI on macOS, Windows and Linux (`ci.yml`, #1050), GPU equivalence tests on software adapters; not green on `main` yet, gap 9 6–12 h → 2–4 h; headline numbers unchanged |
-| 2026-10-12 | minor | Minolta MRW decoded: 6 more verified models (241), 11 fewer preview-only; headline numbers unchanged |
+| 2026-10-18 | minor | Minolta MRW decodes from sensor data; 6 Konica Minolta bodies verified; headline numbers unchanged |
 | 2026-10-12 | minor | 22 more CR3 bodies verified, EOS R6 Mark III white balance: RAW decoding 77% → 83%, RAW ~56% → ~60%; mainstream 49% → 51%, essentials 64% → 65%; full unchanged at ~61% |
 | 2026-10-12 | minor | 117 Nikon and Fujifilm bodies verified (354 models, 24%); headline numbers unchanged |
 | 2026-10-11 | minor | EOS R5 Mark II CR3 verified: CR3 on four verified bodies, RAW decoding 76% → 77%; headline numbers unchanged |

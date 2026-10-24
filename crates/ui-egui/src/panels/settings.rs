@@ -9,7 +9,8 @@
 //!
 //! Changes apply immediately (no OK/Cancel). Where they are stored:
 //! - **app settings** ([`crate::state::AppSettings`]: startup view, delete confirmation, GPU,
-//!   preview size, filmstrip/grid badges, last library, monitor profile) and Auto Advance live in
+//!   preview size, filmstrip/grid badges, last library, monitor profile, whether Import Lightroom
+//!   Catalog… asks where a catalog goes) and Auto Advance live in
 //!   the UI state, saved by the host in its config folder (`ui.json`);
 //! - **library settings** (import defaults, XMP sidecars, thumbnail cache size, slideshow
 //!   playback) go through the `library.preferences` / `library.xmpPreferences` /
@@ -716,9 +717,17 @@ pub(super) fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, add: impl FnOnc
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(egui::vec2(LABEL_W, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.set_min_width(LABEL_W);
-            ui.label(RichText::new(crate::i18n::tr(label)).color(t.text_label));
+            // (a label longer than its column wraps in it; it does not push the controls along)
+            ui.add(egui::Label::new(RichText::new(crate::i18n::tr(label)).color(t.text_label)).wrap());
         });
-        add(ui)
+        // The controls wrap in the room beside the label, each further line starting under the
+        // first control, so a row with many choices grows down and never widens the window.
+        let wrapped = egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true);
+        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 24.0), wrapped, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            add(ui)
+        })
+        .inner
     })
     .inner
 }
@@ -842,7 +851,7 @@ pub(super) fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, options:
 // ------------------------------------------------------------------------------------- General
 
 fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
-    let languages: Vec<_> = crate::i18n::Locale::ALL.iter().map(|language| (*language, language.name())).collect();
+    let languages: Vec<_> = crate::i18n::Locale::for_picker().into_iter().map(|language| (language, language.name())).collect();
     pick(ui, t, "settingsLanguage", crate::i18n::tr("Language"), &languages, &mut app.ui.language);
     crate::i18n::set_language(app.ui.language);
     if !IOS {
@@ -866,6 +875,35 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 hint(ui, t, crate::i18n::tr("not available here"));
             }
         });
+        // where libraries are folders to choose from (not in the browser, which keeps one)
+        if app.services.pick_folder.is_some() {
+            use crate::state::LaunchLibrary;
+            pick(
+                ui,
+                t,
+                "settingsAtLaunch",
+                crate::i18n::tr("At launch"),
+                &[(LaunchLibrary::Last, "Open the last library"), (LaunchLibrary::Ask, "Ask me")],
+                &mut app.ui.settings.at_launch,
+            );
+            hint(
+                ui,
+                t,
+                crate::i18n::tr("Ask me lists your recent libraries at launch. Holding Alt (Option on a Mac) as the window appears asks once."),
+            );
+        }
+        // File ▸ Import Lightroom Catalog… (#2672): the window that asks where a catalog goes, or not
+        {
+            use crate::state::LightroomImport;
+            pick(
+                ui,
+                t,
+                "settingsLightroomImport",
+                crate::i18n::tr("When importing a Lightroom catalog"),
+                &[(LightroomImport::Ask, "Ask where to import it"), (LightroomImport::AlwaysMerge, "Always merge into the open library")],
+                &mut app.ui.settings.lightroom_import,
+            );
+        }
     }
     heading(ui, t, crate::i18n::tr("Hidden"));
     row(ui, t, "", |ui| {
@@ -890,7 +928,7 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         t,
         "settingsStartup",
         crate::i18n::tr("Open in"),
-        &[(StartupView::Last, "Last view"), (StartupView::Grid, "Photo Grid"), (StartupView::Detail, "Detail")],
+        &[(StartupView::Last, "Last view"), (StartupView::Grid, "Photo Grid"), (StartupView::Detail, "Detail View")],
         &mut app.ui.settings.startup_view,
     );
     heading(ui, t, crate::i18n::tr("Culling"));
@@ -900,6 +938,8 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     if IOS {
         return;
     }
+    heading(ui, t, crate::i18n::tr("Dialogs"));
+    check(ui, "settings.closeDialogsOutside", &mut app.ui.settings.close_dialogs_outside, "Close a dialog by clicking outside it");
     heading(ui, t, crate::i18n::tr("External Editing"));
     row(ui, t, crate::i18n::tr("PhotoCraft"), |ui| {
         crate::text_field::TextField::singleline("field:photocraftPath", &mut app.ui.settings.photocraft_path)
@@ -1007,6 +1047,12 @@ fn cameras(app: &LightcraftApp) -> Vec<String> {
 
 fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let d = app.session.import_defaults.clone();
+    if !cfg!(target_arch = "wasm32") && !IOS {
+        heading(ui, t, crate::i18n::tr("Dropped Files"));
+        row(ui, t, "", |ui| {
+            check(ui, "settings.importDropped", &mut app.ui.settings.import_dropped_directly, "Import dropped files without review");
+        });
+    }
     heading(ui, t, crate::i18n::tr("Cameras and cards"));
     row(ui, t, "", |ui| {
         check(ui, "settings.importOnConnect", &mut app.ui.settings.import_on_connect, "Show the import when a camera or memory card is connected");
@@ -1605,7 +1651,7 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         t,
         crate::i18n::tr("Grouped: keywords inside the same keyword share a line naming it, and long lists and the suggestions are shortened."),
     );
-    heading(ui, t, crate::i18n::tr("Detail"));
+    heading(ui, t, crate::i18n::tr("Detail View"));
     check(ui, "settings.navigator", &mut app.ui.navigator, "Show the Navigator while zoomed in");
     use crate::state::InfoOverlay as I;
     pick(
@@ -1613,9 +1659,10 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         t,
         "settingsInfo",
         crate::i18n::tr("Info overlay"),
-        &[(I::Off, "Off"), (I::Basic, "File & date"), (I::Exposure, "Exposure")],
+        &[(I::Off, "Off"), (I::Basic, "Info 1"), (I::Exposure, "Info 2")],
         &mut app.ui.info_overlay,
     );
+    hint(ui, t, crate::i18n::tr("View → View Options chooses the lines Info 1 and Info 2 show."));
     heading(ui, t, crate::i18n::tr("Map"));
     check(ui, "settings.mapOnline", &mut app.ui.settings.map_online, "Load map tiles from the internet");
     hint(
@@ -1649,6 +1696,46 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
+/// View ▸ View Options (⌘J), Lightroom Classic's Loupe View tab: whether the info overlay shows and
+/// which, and the three lines each of Info 1 and Info 2 shows (`view.viewOptions`). Changes apply
+/// as they are made.
+pub(super) fn view_options(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    use crate::state::{InfoOverlay as I, LoupeInfo, LoupeInfoField as F};
+    heading(ui, t, crate::i18n::tr("Loupe View"));
+    let mut show = app.ui.info_overlay != I::Off;
+    if check(ui, "viewOptions.showInfo", &mut show, "Show Info Overlay") {
+        app.ui.info_overlay = if show { I::Basic } else { I::Off };
+    }
+    ui.add_enabled_ui(show, |ui| {
+        ui.horizontal(|ui| {
+            choices(ui, "viewOptionsInfo", &[(I::Basic, "Info 1"), (I::Exposure, "Info 2")], &mut app.ui.info_overlay);
+        });
+    });
+    for (n, title, defaults) in [(1, "Loupe Info 1", LoupeInfo::INFO1), (2, "Loupe Info 2", LoupeInfo::INFO2)] {
+        heading(ui, t, crate::i18n::tr(title));
+        let lines = if n == 1 { &mut app.ui.settings.loupe_info.info1 } else { &mut app.ui.settings.loupe_info.info2 };
+        for (i, line) in lines.iter_mut().enumerate() {
+            let id = format!("viewOptionsInfo{n}Line{}", i + 1);
+            let r = crate::widgets::combo_box(&id).width(220.0).selected_text(crate::i18n::tr(line.label())).show_ui(ui, |ui| {
+                for f in F::ALL {
+                    let key = serde_json::to_value(f).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+                    let r = ui.selectable_label(line == f, crate::i18n::tr(f.label()));
+                    register(ui.ctx(), format!("button:{id}-{key}"), r.rect);
+                    if r.clicked() {
+                        *line = *f;
+                    }
+                }
+            });
+            register(ui.ctx(), format!("combo:{id}"), r.response.rect);
+        }
+        let r = ui.add_enabled(*lines != defaults, egui::Button::new(crate::i18n::tr("Use Defaults")));
+        register(ui.ctx(), format!("button:viewOptionsDefaults{n}"), r.rect);
+        if r.clicked() {
+            *lines = defaults;
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------------- Slideshow
 
 /// A playback duration slider (`slider:{id}`). While it is dragged the value changes in memory
@@ -1671,7 +1758,7 @@ fn slideshow_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     // one column (the sidebar or the phone's page takes the side): the composed slide first, then the
     // settings
     // ponytail: upstream's preview stays in view beside the settings; here it scrolls away with the page
-    super::slide_layout::preview(app, ui, t);
+    super::slide_layout::preview(app, ui, t, f32::INFINITY);
     ui.add_space(6.0);
     super::slide_templates::section(app, ui, t);
     ui.add_space(6.0);
@@ -1864,12 +1951,7 @@ fn theme_card<V: PartialEq + Copy>(
                             });
                             register(ui.ctx(), format!("button:themeFavorite-{}", kind.id()), r.rect);
                             if favorite || hovered {
-                                crate::icons::paint(
-                                    ui.painter(),
-                                    r.rect.shrink(4.0),
-                                    if favorite { crate::icons::Icon::StarFilled } else { crate::icons::Icon::Star },
-                                    if favorite { t.accent } else { t.text_dim },
-                                );
+                                crate::rating::paint_star(ui.painter(), r.rect.shrink(4.0), favorite, if favorite { t.accent } else { t.text_dim });
                             }
                             if r.clicked() {
                                 if favorite {
@@ -2621,9 +2703,17 @@ fn switch_library(app: &mut LightcraftApp, path: &str) -> Result<Value, String> 
             app.ui.dialog = None;
         }
         app.renderer.forget_all();
-        app.ui.compare = None;
     }
     let switched = switched.map_err(|e| e.to_string())?;
+    // Photo IDs are local to a catalog: pins cannot follow them into another library (a refused
+    // or failed switch reopens the same catalog, so its pins stay).
+    if app.session.library_generation() != generation {
+        app.ui.reference = None;
+        app.ui.compare = None;
+        if app.ui.view == crate::state::ViewMode::Reference {
+            app.ui.view = crate::state::ViewMode::PhotoGrid;
+        }
+    }
     let path = switched.dir.to_string_lossy().into_owned();
     app.ui.settings.library_path = path.clone();
     let recent = &mut app.ui.settings.recent_libraries;
@@ -2681,16 +2771,74 @@ pub fn new_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> 
     switch_library(app, &dir.to_string_lossy())
 }
 
-/// `app.recentLibraries {clear?: bool}`: the recently opened libraries, newest first, as
-/// `[{path, name, exists, open}]` (`exists: false`: moved, or on a disk or network share that isn't
-/// connected, kept for when it is back). `clear`
-/// forgets them all.
+/// `app.recentLibraries {remove?: path, clear?: bool}`: the recently opened libraries, newest
+/// first, as `[{path, name, exists, checking, open, lastOpened}]`. `exists` is what the last
+/// background check found (`false`: moved, on a disconnected drive, not a folder or no longer a
+/// library; `null`: not checked yet, or the check couldn't tell: a folder that can't be listed, an
+/// unreadable catalog, a lookup or check that failed; `checking` says whether a check is running):
+/// the command never looks at a folder itself, as one on an offline network share can take
+/// seconds to answer. `lastOpened`: ISO 8601 time, `null` when not known. `remove` forgets that
+/// one entry (an error if the list doesn't hold it) and `clear` forgets them all; neither touches
+/// anything on disk (issue #1290).
 pub fn recent_libraries(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
+    match p.get("remove") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(path)) => {
+            if !forget_library(&mut app.ui.settings, path) {
+                return Err(format!("app.recentLibraries: {path:?} is not in the recent libraries"));
+            }
+            app.recent_checks.forget(path);
+        }
+        Some(_) => return Err("app.recentLibraries: remove must be a library path (a string)".into()),
+    }
     if p.get("clear").and_then(Value::as_bool) == Some(true) {
-        app.ui.settings.recent_libraries.clear();
+        for path in std::mem::take(&mut app.ui.settings.recent_libraries) {
+            app.recent_checks.forget(&path);
+        }
+        app.ui.settings.recent_opened.clear();
     }
     let open = lightcraft_apphost::libraries::open_dir(&app.session);
-    Ok(Value::Array(lightcraft_apphost::libraries::recent_list(&app.ui.settings.recent_libraries, open)))
+    let (settings, checks) = (&app.ui.settings, &app.recent_checks);
+    let list: Vec<Value> = settings
+        .recent_libraries
+        .iter()
+        .map(|r| {
+            let d = std::path::Path::new(r);
+            json!({
+                "path": r,
+                "name": library_name(d),
+                "exists": checks.exists(r),
+                "checking": checks.is_checking(r),
+                "open": open.is_some_and(|o| lightcraft_apphost::libraries::same(o, d)),
+                "lastOpened": settings.recent_opened.get(r),
+            })
+        })
+        .collect();
+    Ok(Value::Array(list))
+}
+
+/// Forget `path` in File ▸ Open Recent Library (and when it was opened); the library itself is
+/// left where it is. False if the list didn't hold it.
+pub fn forget_library(settings: &mut crate::state::AppSettings, path: &str) -> bool {
+    let before = settings.recent_libraries.len();
+    settings.recent_libraries.retain(|r| r != path);
+    settings.recent_opened.remove(path);
+    settings.recent_libraries.len() != before
+}
+
+/// A library's name as people see it: its folder's name.
+pub fn library_name(dir: &std::path::Path) -> String {
+    lightcraft_apphost::libraries::name(dir)
+}
+
+/// Put `path` first in the recent list ([`lightcraft_apphost::libraries::remember`]).
+pub fn remember_library(recent: &mut Vec<String>, path: &str) {
+    lightcraft_apphost::libraries::remember(recent, path);
+}
+
+/// `base` inside `location`, or `base 2`, `base 3`… if that is taken.
+pub(crate) fn free_name(location: &std::path::Path, base: &str) -> std::path::PathBuf {
+    lightcraft_apphost::libraries::free_name(location, base)
 }
 
 // ---------------------------------------------------------------------------- Display profile
@@ -2738,7 +2886,8 @@ mod tests {
     use serde_json::json;
 
     fn app_with_import() -> LightcraftApp {
-        let mut app = LightcraftApp::new(lightcraft_engine::Session::new(), crate::Services::default());
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), crate::Services::default());
+        app.run("photo.setReference", json!({})).unwrap();
         app.import = Some(crate::import::ImportTask::new(vec!["a.jpg".into()], json!({"mode": "add"}), 0, false));
         app
     }
@@ -2746,17 +2895,21 @@ mod tests {
     #[test]
     fn open_library_is_refused_while_an_import_runs() {
         let mut app = app_with_import();
+        let pin = app.ui.reference;
         let err = open_library(&mut app, &json!({"path": "other"})).unwrap_err();
         assert!(err.contains("import to finish"), "{err}");
         assert!(app.import.is_some());
+        assert_eq!(app.ui.reference, pin, "a refused Open Library keeps the reference pin");
     }
 
     #[test]
     fn new_library_is_refused_while_an_import_runs() {
         let mut app = app_with_import();
+        let pin = app.ui.reference;
         let err = new_library(&mut app, &json!({"path": "other"})).unwrap_err();
         assert!(err.contains("import to finish"), "{err}");
         assert!(app.import.is_some());
+        assert_eq!(app.ui.reference, pin, "a refused New Library keeps the reference pin");
     }
 
     /// The menu items that switch libraries are greyed out meanwhile, like during a Lightroom import.
@@ -2776,11 +2929,18 @@ mod tests {
     fn open_library_is_refused_while_an_import_scan_runs() {
         let dir = std::env::temp_dir().join(format!("lc-ui-switchscan-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let mut app = LightcraftApp::new(lightcraft_engine::Session::new(), crate::Services::default());
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), crate::Services::default());
+        app.run("photo.setReference", json!({})).unwrap();
+        let pin = app.ui.reference;
         crate::import::open(&mut app, vec![dir.to_string_lossy().into_owned()]).unwrap();
         assert!(app.scan.is_some());
         let err = open_library(&mut app, &json!({"path": "other"})).unwrap_err();
         assert!(err.contains("import to finish"), "{err}");
+        assert_eq!(app.ui.reference, pin, "a refused Open Library during a scan keeps the reference pin");
+        let err = new_library(&mut app, &json!({"path": "other"})).unwrap_err();
+        assert!(err.contains("import to finish"), "{err}");
+        assert_eq!(app.ui.reference, pin, "a refused New Library during a scan keeps the reference pin");
+        assert!(app.scan.is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

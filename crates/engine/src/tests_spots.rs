@@ -559,7 +559,10 @@ fn paste_lists_the_model_work_to_make_again() {
     assert_eq!(r["changed"], 1);
     assert_eq!(r["ai"], json!([{"photo": ids[1].0, "masks": [{"mask": 3, "component": 0}], "spots": [0], "expand": false}]));
     let b = s.develop_of(ids[1]).unwrap();
-    assert!(matches!(&b.masks[0].components[0].shape, MaskShape::Object { seg: None, hint, .. } if hint.len() == 1), "the clicks came, the picture did not");
+    assert!(
+        matches!(&b.masks[0].components[0].shape, MaskShape::Object { seg: None, hint, .. } if hint.len() == 1),
+        "the clicks came, the picture did not"
+    );
     assert!(b.spots[0].fill.is_none());
     // only the Remove spots (on a photo with nothing yet): the selections are not made again
     s.execute("library.select", &json!({"ids": [ids[1].0]})).unwrap();

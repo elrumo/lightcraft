@@ -354,5 +354,14 @@
   "{updated} albums that were already here got photos.": "{updated} álbumes que ya existían recibieron fotos.",
   "Downloading LaMa… {:.0} %": "Descargando LaMa… {:.0} %",
   "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.": "Usa el modelo LaMa, una descarga de {:.0} MB (licencia {}). {}. Hasta que se descargue, los trazos usan el modelo rápido.",
-  "AI Remove failed: {}": "Error al quitar con IA: {}"
+  "AI Remove failed: {}": "Error al quitar con IA: {}",
+  "Inside: {names}": "Dentro: {names}",
+  "Listing folders — folders: {folders}, files: {files}": "Listando carpetas — carpetas: {folders}, archivos: {files}",
+  "Drop to review {n} item{} for import": "Suelta para revisar {n} elemento{} antes de importar",
+  "Drop to import {n} item{}": "Suelta para importar {n} elemento{}",
+  "Drop to import {n} preset{}": "Suelta para importar {n} ajuste{0} preestablecido{0}",
+  "Could not read {name}: {e}": "No se pudo leer {name}: {e}",
+  "Added {n} photo{}": "{n} foto{0} añadida{0}",
+  "Where should the Lightroom catalog “{catalog}” go?": "¿Dónde debe ir el catálogo de Lightroom “{catalog}”?",
+  "Merge into the open library “{library}” ({count} photo{})": "Combinar con la biblioteca abierta “{library}” ({count} foto{})"
 }

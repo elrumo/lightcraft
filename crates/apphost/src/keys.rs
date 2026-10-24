@@ -68,8 +68,9 @@ pub const FIXED_KEYS: &[FixedKey] = &[
 ];
 
 /// Engine commands that intentionally share a key and are told apart by context (the Crop tool's X
-/// swaps the crop's aspect, anywhere else it rejects the photo).
-pub const CONTEXTUAL: &[(&str, &str)] = &[("photo.reject", "crop.rotateAspect")];
+/// swaps the crop's aspect, anywhere else it rejects the photo; A is Visualize Spots everywhere, the
+/// aspect lock under the Crop panel).
+pub const CONTEXTUAL: &[(&str, &str)] = &[("photo.reject", "crop.rotateAspect"), ("view.visualizeSpots", "crop.lockAspect")];
 
 #[cfg(test)]
 mod tests {
@@ -95,9 +96,10 @@ mod tests {
 
     #[test]
     fn contextual_pairs_name_real_commands() {
+        let known = |id: &str| lightcraft_engine::find_command(id).is_some() || crate::ui_commands::UI_COMMANDS.iter().any(|c| c.0 == id);
         for (a, b) in CONTEXTUAL {
-            assert!(lightcraft_engine::find_command(a).is_some(), "{a}");
-            assert!(lightcraft_engine::find_command(b).is_some(), "{b}");
+            assert!(known(a), "{a}");
+            assert!(known(b), "{b}");
         }
     }
 }

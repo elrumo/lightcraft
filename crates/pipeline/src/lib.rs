@@ -27,6 +27,7 @@ pub mod auto;
 pub mod blemish;
 pub mod colorops;
 pub mod cull;
+pub mod curve;
 pub mod dust;
 pub mod expand;
 pub mod finish;
@@ -47,6 +48,7 @@ pub mod transform;
 pub mod upright;
 pub mod visualize;
 
+pub use curve::{PARAM_AMOUNTS, PARAM_LUT, ParametricCurve};
 pub use output::{DeepImage, DeepSamples, DisplaySpace, OutputDepth, OutputSpace, OutputTrc, Proof, ProofLut, proof_profile, register_proof_profile};
 pub use visualize::{MaskView, Overlay};
 
@@ -62,7 +64,7 @@ pub use tone::ToneMap;
 /// A raw source's own colour model, for white balance: like Lightroom, a white balance
 /// re-evaluates the camera's colour matrices at the chosen white (camera-space white balance, DNG
 /// spec ch. 6) instead of adapting the as-shot rendering ([`local::wb_matrix_for`]).
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CameraColor {
     /// The file's colour tags (its profile look left out: it is applied at load).
     pub tags: lightcraft_raw::ColorData,
@@ -181,7 +183,7 @@ pub struct RenderRequest {
     pub space: OutputSpace,
     /// Sample format: 8-bit only, or also a 16-bit / linear float [`Rendered::deep`] (exports).
     pub depth: OutputDepth,
-    /// Soft proofing (CPU only; see [`Proof`]).
+    /// Soft proofing (a proof against an output-device profile renders on the CPU; see [`Proof`]).
     pub proof: Option<Proof>,
     /// Render only this window of the output that `max_w × max_h` describes (a zoomed view):
     /// the result is that window's pixels, as in the whole render. See [`PixelWindow`].

@@ -569,6 +569,7 @@ fn the_buttons_stay_in_reach_when_the_server_has_a_lot_to_do() {
         search: Some(busy),
         text: Some(busy),
         faces: Some(busy),
+        video: None,
     };
     let usage = json!({"photos": 5, "original": {"files": 3, "bytes": 3_000_000_000u64}, "folders": {"files": 900, "bytes": 9_000_000_000u64},
         "disk": {"total": 500_000_000_000u64, "free": 200_000_000_000u64}});

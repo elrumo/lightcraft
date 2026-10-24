@@ -354,5 +354,14 @@
   "{updated} albums that were already here got photos.": "Наявних альбомів, що отримали фото: {updated}.",
   "Downloading LaMa… {:.0} %": "Завантаження LaMa… {:.0} %",
   "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.": "Використовується модель LaMa, завантаження {:.0} МБ (ліцензія {}). {}. Доки її не завантажено, штрихи використовують швидку модель.",
-  "AI Remove failed: {}": "Не вдалося видалити за допомогою ШІ: {}"
+  "AI Remove failed: {}": "Не вдалося видалити за допомогою ШІ: {}",
+  "Inside: {names}": "Усередині: {names}",
+  "Listing folders — folders: {folders}, files: {files}": "Перегляд тек — тек: {folders}, файлів: {files}",
+  "Drop to review {n} item{} for import": "Відпустіть для перегляду перед імпортом (елементів: {n}){:.0}",
+  "Drop to import {n} item{}": "Відпустіть для імпорту (елементів: {n}){:.0}",
+  "Drop to import {n} preset{}": "Відпустіть для імпорту наборів налаштувань: {n}{:.0}",
+  "Could not read {name}: {e}": "Не вдалося прочитати {name}: {e}",
+  "Added {n} photo{}": "Додано фото: {n}{:.0}",
+  "Where should the Lightroom catalog “{catalog}” go?": "Куди імпортувати каталог Lightroom «{catalog}»?",
+  "Merge into the open library “{library}” ({count} photo{})": "Об’єднати з відкритою бібліотекою «{library}» (фото: {count}){:.0}"
 }

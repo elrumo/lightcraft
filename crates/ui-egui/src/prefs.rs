@@ -144,7 +144,7 @@ impl PrefsWriter {
     }
 
     pub fn save(&mut self, app: &LightcraftApp) -> Result<(), String> {
-        self.save_ui(&app.ui, app.library_problem.is_some())
+        self.save_ui(&app.ui, app.library_problem.as_ref().is_some_and(crate::panels::library_problem::LibraryProblem::saves_nothing))
     }
 
     /// Write `ui` if it changed since the last write; `temporary` (the library couldn't be

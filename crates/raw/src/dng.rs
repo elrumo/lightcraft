@@ -208,18 +208,74 @@ pub(crate) struct Bin {
 /// with a flat black level, no opcodes and no interleave (Apple ProRAW, Adobe's linear DNGs) can.
 pub(crate) fn decode_with(bytes: &[u8], mode: Mode, format: RawFormat, bin: Option<Bin>) -> Result<Option<RawImage>> {
     let tiff = Tiff::parse(bytes)?;
-    let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Corrupt("DNG without a raw image IFD".into()))?;
+    decode_ifd(bytes, &tiff, raw, raw, mode, format, bin)
+}
+
+/// The smallest reduced-resolution copy of a DNG's LinearRaw image whose default crop still has a long edge of
+/// `min_long` px: Lightroom keeps 256, 512 and 2048 px copies beside the full image of its HDR and panorama
+/// merges, so a thumbnail decodes a 512 px copy instead of a 24k × 7k image (about 19 s). Only a copy that the main
+/// image's tags describe as well: same samples per pixel and aspect ratio (within 1 %), and a main image without
+/// opcode lists, a linearization table or black-level deltas (all in full-size pixel coordinates).
+fn reduced_ifd<'a>(tiff: &'a Tiff, main: &Ifd, min_long: usize) -> Option<&'a Ifd> {
+    if main.u16(t::PHOTOMETRIC) != Some(photometric::LINEAR_RAW) {
+        return None;
+    }
+    let full_size_tags =
+        [t::OPCODE_LIST_1, t::OPCODE_LIST_2, t::OPCODE_LIST_3, t::LINEARIZATION_TABLE, t::BLACK_LEVEL_DELTA_H, t::BLACK_LEVEL_DELTA_V];
+    if full_size_tags.iter().any(|&tag| main.contains(tag)) {
+        return None;
+    }
+    let (mw, mh) = (main.u64(t::IMAGE_WIDTH)?, main.u64(t::IMAGE_LENGTH)?);
+    if mw == 0 || mh == 0 {
+        return None;
+    }
+    let crop_long = match main.f64s(t::DEFAULT_CROP_SIZE).as_deref() {
+        Some([w, h]) if w.is_finite() && h.is_finite() && *w >= 1.0 && *h >= 1.0 => w.max(*h).min(mw.max(mh) as f64),
+        _ => mw.max(mh) as f64,
+    };
+    let cpp = main.u16(t::SAMPLES_PER_PIXEL).unwrap_or(1);
+    tiff.all_ifds()
+        .into_iter()
+        .filter(|i| i.u32(t::NEW_SUBFILE_TYPE) == Some(1) && i.u16(t::PHOTOMETRIC) == Some(photometric::LINEAR_RAW))
+        .filter(|i| i.u16(t::SAMPLES_PER_PIXEL).unwrap_or(1) == cpp)
+        .filter_map(|i| {
+            let (w, h) = (i.u64(t::IMAGE_WIDTH)?, i.u64(t::IMAGE_LENGTH)?);
+            let (a, b) = (w.checked_mul(mh)?, h.checked_mul(mw)?);
+            let same_aspect = w > 0 && h > 0 && a.abs_diff(b).saturating_mul(100) <= a;
+            let covers = crop_long * w as f64 / mw as f64 >= min_long as f64;
+            (same_aspect && covers && w < mw && h < mh).then_some((i, w))
+        })
+        .min_by_key(|&(_, w)| w)
+        .map(|(i, _)| i)
+}
+
+/// [`decode`] from the smallest reduced-resolution copy of the raw image that covers `min_long` ([`reduced_ifd`]):
+/// the main image's levels, colour and metadata, its active area and default crop scaled to the copy. `None` when the
+/// file keeps no such copy.
+pub(crate) fn decode_reduced(bytes: &[u8], min_long: usize) -> Result<Option<RawImage>> {
+    let tiff = Tiff::parse(bytes)?;
+    let Some(main) = raw_ifd(&tiff) else { return Ok(None) };
+    let Some(small) = reduced_ifd(&tiff, main, min_long) else { return Ok(None) };
+    decode_ifd(bytes, &tiff, small, main, Mode::Full, RawFormat::Dng, None)
+}
+
+/// [`decode_with`] of the samples in `pixels`, described by the raw IFD `main`: the same IFD, or (see
+/// [`decode_reduced`]) a reduced-resolution copy of it, whose own level tags win and whose geometry is `main`'s
+/// scaled to its size.
+fn decode_ifd(bytes: &[u8], tiff: &Tiff, pixels: &Ifd, main: &Ifd, mode: Mode, format: RawFormat, bin: Option<Bin>) -> Result<Option<RawImage>> {
+    let ifd0 = &tiff.ifds[0];
+    let raw = main;
     // GoPro's GPR: a DNG whose raw data is VC-5 coded, which is not decoded (yet). Named here, before
     // the generic "TIFF compression 9" of the chunk decoder. Header mode still describes the file
     // (a GPR has no embedded preview, and a library keeps the photo with this reason shown, as it
     // does for any file whose pixels fail to decode, rather than refusing to import it).
     if mode == Mode::Full
-        && let Some(c) = raw.u16(t::COMPRESSION).filter(|&c| c == t::compression::VC5)
+        && let Some(c) = pixels.u16(t::COMPRESSION).filter(|&c| c == t::compression::VC5)
     {
         return Err(RawError::Unsupported(format!("DNG compression {c} (GoPro VC-5) is not decoded yet")));
     }
-    let info = raw.image()?;
+    let info = pixels.image()?;
     let (w, h, cpp) = (info.width as usize, info.height as usize, info.samples_per_pixel as usize);
     // one sample (CFA or monochrome), RGB or four colours; two are neither and can't be developed (issue #1511)
     if !matches!(cpp, 1 | 3 | 4) {
@@ -227,19 +283,23 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, format: RawFormat, bin: Opti
     }
     let bits = info.bits() as u32;
     let float = info.sample_format == 3;
+    // a reduced copy's own levels, where it states them
+    let levels = |tag| if pixels.contains(tag) { pixels } else { raw };
     let default_white = if float { 1.0 } else { ((1u64 << bits.min(16)) - 1) as f32 };
-    let mut white: Vec<f32> = raw.f64s(t::WHITE_LEVEL).unwrap_or_default().into_iter().map(|v| v as f32).filter(|v| *v > 0.0).collect();
+    let mut white: Vec<f32> =
+        levels(t::WHITE_LEVEL).f64s(t::WHITE_LEVEL).unwrap_or_default().into_iter().map(|v| v as f32).filter(|v| *v > 0.0).collect();
     if white.is_empty() {
         white = vec![default_white];
     }
-    let dim = raw.u64s(t::BLACK_LEVEL_REPEAT_DIM).unwrap_or_default();
+
+    let dim = levels(t::BLACK_LEVEL).u64s(t::BLACK_LEVEL_REPEAT_DIM).unwrap_or_default();
     let (br, bc) = match dim.as_slice() {
         [r, c] if (1..=16).contains(r) && (1..=16).contains(c) => (*r as usize, *c as usize),
         _ => (1, 1),
     };
     // (a FLOAT / DOUBLE tag can hold NaN or infinity: such a level reads as 0, in its place)
     let level = |v: f64| Some(v as f32).filter(|v| v.is_finite()).unwrap_or(0.0);
-    let mut values: Vec<f32> = raw.f64s(t::BLACK_LEVEL).unwrap_or_default().into_iter().map(level).collect();
+    let mut values: Vec<f32> = levels(t::BLACK_LEVEL).f64s(t::BLACK_LEVEL).unwrap_or_default().into_iter().map(level).collect();
     if values.len() != br * bc * cpp {
         values = vec![values.first().copied().unwrap_or(0.0)];
     }
@@ -248,17 +308,40 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, format: RawFormat, bin: Opti
     let black =
         BlackLevel { repeat_rows: br, repeat_cols: bc, values, delta_h: floats(t::BLACK_LEVEL_DELTA_H), delta_v: floats(t::BLACK_LEVEL_DELTA_V) };
 
+    // geometry in the main image's pixels (a reduced copy's is scaled below)
+    let (full_w, full_h) = if std::ptr::eq(pixels, raw) {
+        (w, h)
+    } else {
+        (raw.u64(t::IMAGE_WIDTH).unwrap_or(0) as usize, raw.u64(t::IMAGE_LENGTH).unwrap_or(0) as usize)
+    };
+    if full_w == 0 || full_h == 0 {
+        return Err(RawError::Corrupt("raw image IFD without a size".into()));
+    }
     let active_area = match raw.u64s(t::ACTIVE_AREA).as_deref() {
-        Some([top, left, bottom, right]) if bottom > top && right > left && (*bottom as usize) <= h && (*right as usize) <= w => {
+        Some([top, left, bottom, right]) if bottom > top && right > left && (*bottom as usize) <= full_h && (*right as usize) <= full_w => {
             Rect::new(*left as usize, *top as usize, (*right - *left) as usize, (*bottom - *top) as usize)
         }
-        _ => Rect::new(0, 0, w, h),
+        _ => Rect::new(0, 0, full_w, full_h),
     };
     let crop = match (raw.f64s(t::DEFAULT_CROP_ORIGIN).as_deref(), raw.f64s(t::DEFAULT_CROP_SIZE).as_deref()) {
         (Some([x, y]), Some([cw, ch])) if *cw >= 1.0 && *ch >= 1.0 && *x >= 0.0 && *y >= 0.0 => {
             Rect::new(x.round() as usize, y.round() as usize, cw.round() as usize, ch.round() as usize).clipped(active_area.width, active_area.height)
         }
         _ => Rect::new(0, 0, active_area.width, active_area.height),
+    };
+    // the developed size, which the metadata reports whatever copy the samples come from
+    let developed = (crop.width, crop.height);
+    let (active_area, crop) = if (full_w, full_h) == (w, h) {
+        (active_area, crop)
+    } else {
+        let (sx, sy) = (w as f64 / full_w as f64, h as f64 / full_h as f64);
+        let scale = |r: Rect| {
+            let (x, y) = ((r.x as f64 * sx).round() as usize, (r.y as f64 * sy).round() as usize);
+            let (x1, y1) = (((r.x + r.width) as f64 * sx).round() as usize, ((r.y + r.height) as f64 * sy).round() as usize);
+            Rect::new(x, y, x1.saturating_sub(x).max(1), y1.saturating_sub(y).max(1))
+        };
+        let area = scale(active_area).clipped(w, h);
+        (area, scale(crop).clipped(area.width, area.height))
     };
 
     let cfa = if info.photometric == photometric::CFA {
@@ -304,14 +387,14 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, format: RawFormat, bin: Opti
     let opcodes =
         crate::OpcodeLists { list1: opcode_list(t::OPCODE_LIST_1), list2: opcode_list(t::OPCODE_LIST_2), list3: opcode_list(t::OPCODE_LIST_3) };
 
-    let mut metadata = lightcraft_meta::from_tiff(&tiff);
-    metadata.width = Some(crop.width as u32);
-    metadata.height = Some(crop.height as u32);
+    let mut metadata = lightcraft_meta::from_tiff(tiff);
+    metadata.width = Some(developed.0 as u32);
+    metadata.height = Some(developed.1 as u32);
 
     // linearization table (integer data only)
     let table: Option<Vec<u16>> =
-        raw.u64s(t::LINEARIZATION_TABLE).filter(|t| !t.is_empty()).map(|t| t.iter().map(|&x| x.min(65535) as u16).collect());
-    let interleave = |tag| raw.u16(tag).map(usize::from).unwrap_or(1);
+        pixels.u64s(t::LINEARIZATION_TABLE).filter(|t| !t.is_empty()).map(|t| t.iter().map(|&x| x.min(65535) as u16).collect());
+    let interleave = |tag| pixels.u16(tag).map(usize::from).unwrap_or(1);
     let (rows, cols) = (interleave(t::ROW_INTERLEAVE_FACTOR), interleave(t::COLUMN_INTERLEAVE_FACTOR));
     let (mut width, mut height, mut active_area, mut crop) = (w, h, active_area, crop);
     let data = match bin {

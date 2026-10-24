@@ -21,6 +21,7 @@ crc32fast = { workspace = true }
 # (a fast substring search for the snapshot reader)
 memchr = "2"
 log = { workspace = true }
+chrono = { workspace = true }
 web-time = { workspace = true }
 # Generative Expand's limit (`shown_size`)
 lightcraft-geom = { workspace = true }

@@ -355,7 +355,7 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 app.ui.tool = if on { String::new() } else { "straighten".into() };
             }
             if text_button(ui, "straightenAuto", crate::i18n::tr("Auto"), false).clicked() {
-                let _ = app.run("crop.autoStraighten", json!({}));
+                app.auto_straighten(ui.ctx());
             }
         });
     });
@@ -707,8 +707,10 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.label(egui::RichText::new(crate::i18n::tr_format!("Virtual copy “{name}” of {of}", name = name, of = of)).color(t.text_label));
         }
         ui.add_space(8.0);
-        if let Some(r) = ui.horizontal(|ui| crate::widgets::stars(ui, "info", p.rating, 20.0)).inner {
-            let _ = app.run("photo.rate", json!({"rating": r}));
+        if let Some(r) = ui.horizontal(|ui| crate::rating::Rating::new("info", p.rating).show(ui)).inner {
+            let mut params = json!({"rating": r});
+            crate::panels::compare::target_active(app, &mut params);
+            let _ = app.run("photo.rate", params);
         }
         ui.add_space(6.0);
         // colour label: one swatch per label (hover shows its name); clicking the current one clears it
@@ -725,7 +727,10 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 }
                 let resp = resp.on_hover_text(crate::i18n::color_label(&app.session.catalog, l));
                 if resp.clicked() {
-                    let _ = app.run("photo.label", json!({"label": if on { "none".to_string() } else { key }}));
+                    // in Compare / Survey only the active photo, as the rating keys and the bottom pill do
+                    let mut params = json!({"label": if on { "none".to_string() } else { key }});
+                    crate::panels::compare::target_active(app, &mut params);
+                    let _ = app.run("photo.label", params);
                 }
             }
             if let Some(l) = p.label {
@@ -955,7 +960,7 @@ fn camera_card(ui: &mut egui::Ui, p: &lightcraft_catalog::Photo) {
                 }
             });
         }
-        // where the camera focused, and how (View ▸ Show Focus Point draws it): only when known; the
+        // where the camera focused, and how (View ▸ Focus Point draws it): only when known; the
         // whole card's width, so "AF-C · Expanded Flexible Spot · Face tracking" fits
         if let Some(text) = focus_text(m.focus.as_ref()) {
             ui.add_space(3.0);
@@ -1424,25 +1429,29 @@ fn versions(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             } else if resp.clicked() && !current {
                 let _ = app.run("version.restore", json!({"index": i}));
             }
-            resp.on_hover_text(crate::i18n::tr(if current { "The photo has these settings" } else { "Click to restore · double-click to rename" }))
-                .context_menu(|ui| {
-                    if ui.button(crate::i18n::tr("Restore")).clicked() {
-                        let _ = app.run("version.restore", json!({"index": i}));
-                    }
-                    if ui.button(crate::i18n::tr("Update with Current Settings")).clicked() {
-                        let _ = app.run("version.update", json!({"index": i}));
-                    }
-                    if ui.button(crate::i18n::tr("Rename…")).clicked() {
-                        crate::panels::dialogs::prompt(app, "Rename Version", "Version name", &v.name, "version.rename", json!({"index": i}), "name");
-                    }
-                    if ui.button(crate::i18n::tr("Set as Before")).clicked() {
-                        let _ = app.run("beforeAfter.setBefore", json!({"source": "version", "name": v.name}));
-                    }
-                    ui.separator();
-                    if ui.button(crate::i18n::tr("Delete")).clicked() {
-                        let _ = app.run("version.delete", json!({"index": i}));
-                    }
-                });
+            let resp = resp.on_hover_text(crate::i18n::tr(if current {
+                "The photo has these settings"
+            } else {
+                "Click to restore · double-click to rename"
+            }));
+            crate::widgets::context_menu(&resp, |ui| {
+                if ui.button(crate::i18n::tr("Restore")).clicked() {
+                    let _ = app.run("version.restore", json!({"index": i}));
+                }
+                if ui.button(crate::i18n::tr("Update with Current Settings")).clicked() {
+                    let _ = app.run("version.update", json!({"index": i}));
+                }
+                if ui.button(crate::i18n::tr("Rename…")).clicked() {
+                    crate::panels::dialogs::prompt(app, "Rename Version", "Version name", &v.name, "version.rename", json!({"index": i}), "name");
+                }
+                if ui.button(crate::i18n::tr("Set as Before")).clicked() {
+                    let _ = app.run("beforeAfter.setBefore", json!({"source": "version", "name": v.name}));
+                }
+                ui.separator();
+                if ui.button(crate::i18n::tr("Delete")).clicked() {
+                    let _ = app.run("version.delete", json!({"index": i}));
+                }
+            });
         }
     });
 }
@@ -1516,7 +1525,7 @@ fn activity(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             if resp.clicked() {
                 let _ = app.run("history.restore", json!({"index": i}));
             }
-            resp.context_menu(|ui| {
+            crate::widgets::context_menu(&resp, |ui| {
                 if ui.button(crate::i18n::tr("Copy History Step Settings to Before")).clicked() {
                     let _ = app.run("beforeAfter.setBefore", json!({"source": "history", "index": i}));
                 }

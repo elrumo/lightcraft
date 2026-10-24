@@ -69,12 +69,19 @@ pub fn paths(kind: Guide, orient: u8, w: f32, h: f32) -> Vec<Vec<(f32, f32)>> {
     }
 }
 
-/// The golden spiral: squares carved off a `w × h` rectangle (left, top, right, bottom, …), a
+/// The golden spiral: squares carved off a golden-ratio rectangle (left, top, right, bottom, …), a
 /// quarter circle in each, joined into one curve; plus the square boundaries.
+///
+/// The squares come off a `PHI × 1` rectangle whatever the crop's shape is, and the normalisation
+/// at the end stretches the result to fit. Only a golden-ratio rectangle subdivides into squares
+/// forever, so it is the one shape that gives a complete spiral at every crop (#2393); stretching
+/// it distorts the curve on a crop of another ratio, the price of the guide staying complete.
 fn spiral(w: f32, h: f32) -> Vec<Vec<(f32, f32)>> {
+    // A `PHI × 1` rectangle less a `1 × 1` square is `1 × 1/PHI`, the same shape again.
+    const PHI: f32 = std::f32::consts::GOLDEN_RATIO;
     // work landscape; transpose back for portrait crops
     let portrait = h > w;
-    let (rw, rh) = if portrait { (h, w) } else { (w, h) };
+    let (rw, rh) = (PHI, 1.0);
     let (mut x, mut y, mut cw, mut ch) = (0.0f32, 0.0f32, rw, rh);
     let mut curve = Vec::new();
     let mut squares = Vec::new();
@@ -150,6 +157,23 @@ mod tests {
         }
         // orientation mirrors the triangle
         assert_eq!(paths(Guide::Triangle, 1, w, h)[0], vec![(1.0, 0.0), (0.0, 1.0)]);
+    }
+
+    /// The spiral is the same complete guide at every crop shape (#2393).
+    #[test]
+    fn the_spiral_is_complete_at_every_aspect_ratio() {
+        let shapes = [(1.0f32, 1.0f32), (1.618, 1.0), (1.0, 1.618), (3.0, 2.0), (2.0, 3.0), (16.0, 9.0), (9.0, 16.0), (4.0, 5.0)];
+        let p = paths(Guide::Spiral, 0, 1.618, 1.0);
+        let (squares, points) = (p.len() - 1, p.last().map_or(0, Vec::len));
+        assert!(squares >= 8, "the golden rectangle itself gives a long spiral: {squares}");
+        for (w, h) in shapes {
+            for o in 0..4 {
+                let p = paths(Guide::Spiral, o, w, h);
+                assert_eq!(p.len() - 1, squares, "{w}x{h} orient {o}: {} squares, not {squares}", p.len() - 1);
+                assert_eq!(p.last().map_or(0, Vec::len), points, "{w}x{h} orient {o}: a shorter curve");
+                assert!(in_unit(&p), "{w}x{h} orient {o}");
+            }
+        }
     }
 
     #[test]

@@ -68,6 +68,8 @@ getrandom-02 = { package = "getrandom", version = "0.2", features = ["js"] }
 lightcraft-fetch = { workspace = true }
 ureq = { workspace = true }
 rustls-rustcrypto = { workspace = true }
+# capture-time parsing for face recognition (native only)
+chrono = { workspace = true }
 
 [features]
 # AI masks with SAM 3 (Object / Describe). Off for the web and CLI builds.

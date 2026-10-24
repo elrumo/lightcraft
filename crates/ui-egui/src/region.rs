@@ -246,8 +246,7 @@ pub const HOLD_SECS: f64 = 0.25;
 pub struct SizeHold {
     photo: Option<lightcraft_catalog::PhotoId>,
     plan: Option<LoupePlan>,
-    /// The size the whole frame was shrunk to before the gesture ([`Self::display_fit`]).
-    fit: Option<(usize, usize)>,
+    fit: Option<[usize; 2]>,
     until: f64,
 }
 
@@ -271,22 +270,21 @@ impl SizeHold {
         }
     }
 
-    /// Whether sizes are being held at `now` (the caller asks for a repaint when it ends).
-    pub fn holding(&self, now: f64) -> bool {
-        now < self.until
-    }
-
-    /// The size the whole frame at rest is shrunk to for display: `fresh` (the size it is drawn
-    /// at) normally, the size from before the gesture while sizes are held. A fit that followed the
-    /// zoom would render the whole frame again every frame of a pinch. Call after [`Self::apply`].
-    pub fn display_fit(&mut self, now: f64, fresh: (usize, usize)) -> (usize, usize) {
+    /// The size the whole frame is shrunk to at rest (the drawn size): the one from before the
+    /// gesture while sizes are held (call after [`Self::apply`] in the same frame), else `fresh`.
+    pub fn display_fit(&mut self, now: f64, gesturing: bool, fresh: [usize; 2]) -> [usize; 2] {
         match self.fit {
-            Some(held) if self.holding(now) => held,
+            Some(held) if gesturing || now < self.until => held,
             _ => {
                 self.fit = Some(fresh);
                 fresh
             }
         }
+    }
+
+    /// Whether sizes are being held at `now` (the caller asks for a repaint when it ends).
+    pub fn holding(&self, now: f64) -> bool {
+        now < self.until
     }
 }
 
@@ -783,23 +781,32 @@ mod tests {
         assert_eq!(hold.apply(p, 1.4, false, zoomed), zoomed);
     }
 
-    // Given a pinch, the size the whole frame is shrunk to for display holds with the plan (it
-    // follows the drawn size, which grows with the zoom)
+    // Given a pinch, the display-fit size holds like the render sizes and is retaken after it
     #[test]
-    fn a_pinch_holds_the_display_fit() {
+    fn a_pinch_holds_the_display_fit_size() {
         use lightcraft_catalog::PhotoId;
-        let fit = plan(&auto(), sizes(1400.0, 1400.0, 6000));
+        let (fit, zoomed) = (plan(&auto(), sizes(1400.0, 1400.0, 6000)), plan(&auto(), sizes(24000.0, 1400.0, 6000)));
         let mut hold = SizeHold::default();
         let p = PhotoId(1);
         hold.apply(p, 0.0, false, fit);
-        assert_eq!(hold.display_fit(0.0, (762, 508)), (762, 508));
+        assert_eq!(hold.display_fit(0.0, false, [1000, 800]), [1000, 800]);
         for k in 1..60 {
-            let t = k as f64 / 60.0;
-            hold.apply(p, t, true, fit);
-            assert_eq!(hold.display_fit(t, (762 + 10 * k, 508)), (762, 508), "frame {k}");
+            let now = k as f64 / 60.0;
+            hold.apply(p, now, true, zoomed);
+            assert_eq!(hold.display_fit(now, true, [1000 + k, 800 + k]), [1000, 800], "frame {k}");
         }
-        hold.apply(p, 1.3, false, fit);
-        assert_eq!(hold.display_fit(1.3, (2400, 1600)), (2400, 1600));
+        // stopped at t = 59/60: still held within the hold time…
+        hold.apply(p, 1.1, false, zoomed);
+        assert_eq!(hold.display_fit(1.1, false, [2560, 2048]), [1000, 800]);
+        // …then the size it ended at is taken, and kept while nothing moves
+        hold.apply(p, 1.3, false, zoomed);
+        assert_eq!(hold.display_fit(1.3, false, [2560, 2048]), [2560, 2048]);
+        assert_eq!(hold.display_fit(1.4, false, [2561, 2049]), [2561, 2049]);
+        // another photo forgets the held size
+        hold.apply(p, 1.5, true, zoomed);
+        hold.display_fit(1.5, true, [2561, 2049]);
+        hold.apply(PhotoId(2), 1.6, true, zoomed);
+        assert_eq!(hold.display_fit(1.6, true, [640, 480]), [640, 480]);
     }
 
     // Given another photo, the held sizes are forgotten
@@ -809,9 +816,9 @@ mod tests {
         let (fit, zoomed) = (plan(&auto(), sizes(1400.0, 1400.0, 6000)), plan(&auto(), sizes(24000.0, 1400.0, 6000)));
         let mut hold = SizeHold::default();
         hold.apply(PhotoId(1), 0.0, false, fit);
-        hold.display_fit(0.0, (762, 508));
+        hold.display_fit(0.0, false, [762, 508]);
         assert_eq!(hold.apply(PhotoId(2), 0.1, true, zoomed), zoomed);
-        assert_eq!(hold.display_fit(0.1, (900, 600)), (900, 600));
+        assert_eq!(hold.display_fit(0.1, true, [900, 600]), [900, 600]);
     }
 
     // Given side by side, a window is drawn in its pane only; given a wipe, on its side of the line

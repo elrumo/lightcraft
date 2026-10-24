@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 use super::{CommandSpec, always, bad, bool_or, cmd, has_active, has_library_selection, has_selection, ok, str_param};
 use crate::{LibrarySource, Result, Selection, Session};
 
+/// The selection after photos left the view (deleted, or rated, flagged or labelled out of it).
+/// Its callers end an open edit (a slider drag) before their own change, as moving to the next
+/// photo does, so it is its own undo step and comes first.
 pub(super) fn select_after_deletion(s: &mut Session, before: &[PhotoId]) {
     let at = before.iter().position(|id| Some(*id) == s.selection.active);
     let remaining: std::collections::HashSet<_> = s.visible_cloned().into_iter().collect();
@@ -307,10 +310,6 @@ fn strs(p: &Value, key: &str) -> Vec<String> {
     p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
 }
 
-fn ids_param(p: &Value) -> Option<Vec<PhotoId>> {
-    p.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(PhotoId).collect())
-}
-
 /// The targets an album can hold and how many were browsed (Local) photos, which album views
 /// never show (issue #684): those are skipped, and reported, instead of becoming invisible members.
 fn album_targets(s: &Session, targets: Vec<PhotoId>) -> (Vec<PhotoId>, usize) {
@@ -367,7 +366,6 @@ fn change_rating(s: &mut Session, p: &Value, delta: i8, label: &str) -> Result<V
     if n > 0 {
         s.commit(label, Op::Batch { ops })?;
     }
-    advance_if(s, p);
     Ok(json!({"changed": n}))
 }
 
@@ -386,8 +384,34 @@ fn change_flag(s: &mut Session, p: &Value, label: &str, step: impl Fn(Flag) -> F
     if n > 0 {
         s.commit(label, Op::Batch { ops })?;
     }
-    advance_if(s, p);
     Ok(json!({"changed": n}))
+}
+
+/// Rate, flag or label (`edit`), then `advance`. When the edit took the active photo out of the view (the filter bar,
+/// Picks or a smart album shows it no more), culling goes on from its place, as after a delete: the photo after it is
+/// active, or the one before it at the end (#2312), not the view's first photo. That photo is the next one, so
+/// `advance` doesn't step past it. Photos named by `ids` / `id` leave the selection to the caller: Compare and Survey
+/// keep showing the photo they rate.
+fn cull(s: &mut Session, p: &Value, edit: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
+    let named = [p.get("ids"), p.get("id")].into_iter().any(|t| t.is_some_and(|t| !t.is_null()));
+    // the view as it was, then an open drag ends first, as its own undo step (the selection may
+    // move on; the drag itself can take the photo out of the view)
+    let before = (!named).then(|| s.visible_shared().1);
+    if !named {
+        s.end_interaction()?;
+    }
+    let active = s.selection.active;
+    let v = edit(s)?;
+    if let Some(before) = before
+        && active.is_some_and(|a| before.contains(&a) && !s.visible().contains(&a))
+    {
+        select_after_deletion(s, &before);
+        s.active_mask = None;
+        s.active_spot = None;
+    } else {
+        advance_if(s, p);
+    }
+    Ok(v)
 }
 
 fn advance_if(s: &mut Session, p: &Value) {
@@ -547,6 +571,9 @@ pub fn specs() -> Vec<CommandSpec> {
                         if s.catalog.album(a).is_none_or(|a| a.folder) {
                             return Err(bad("library.source", "no such album"));
                         }
+                        // one album at a time: `to_filter` makes the album shown replace the filter's, and the
+                        // filter bar has no album chip, so a left-over one would narrow the next source unseen
+                        s.filter.album = None;
                         LibrarySource::Album(a)
                     }
                     "libraryFolder" => {
@@ -603,6 +630,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad("library.filter", problems.iter().map(ToString::to_string).collect::<Vec<_>>().join("; ")));
                 }
                 s.filter = f;
+                s.shelved_filter = None;
                 Ok(json!({"count": s.visible().len()}))
             }
         ),
@@ -645,6 +673,15 @@ pub fn specs() -> Vec<CommandSpec> {
                 mark_deleted(s, &ids, "Remove Folder from Library")?;
                 if s.filter.library_folder.as_deref().is_some_and(|c| lightcraft_catalog::query::folder_within(c, path)) {
                     s.filter.library_folder = None;
+                }
+                // a filter put aside by Enable Filters must not bring the removed folder back
+                if let Some(f) = s.shelved_filter.as_mut()
+                    && f.library_folder.as_deref().is_some_and(|c| lightcraft_catalog::query::folder_within(c, path))
+                {
+                    f.library_folder = None;
+                }
+                if s.shelved_filter.as_ref() == Some(&Filter::default()) {
+                    s.shelved_filter = None;
                 }
                 // the folder being shown is gone: back to everything, as for a deleted album
                 if s.library_folder.as_deref().is_some_and(|c| lightcraft_catalog::query::folder_within(c, path)) {
@@ -725,8 +762,30 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("library.clearFilter", "Clear Filters", ["View"], None, "{}", always, |s, _| {
             s.filter = Default::default();
+            s.shelved_filter = None;
             Ok(json!({"count": s.visible().len()}))
         }),
+        // Classic: Library > Enable Filters (Cmd+L) switches the filter off and on again as it was
+        cmd!(
+            "library.toggleFilters",
+            "Enable Filters",
+            ["View"],
+            Some("Cmd+L"),
+            "{} — with a filter set, puts it aside and shows everything; with one put aside, brings it back as it was (stars, flag, text… together). Setting or clearing a filter while it is off forgets the one put aside → {enabled, count}",
+            always,
+            |s, _| {
+                if s.filter != Filter::default() {
+                    s.shelved_filter = Some(std::mem::take(&mut s.filter));
+                } else if let Some(mut f) = s.shelved_filter.take() {
+                    // one folder at a time: the folder shown now wins over the one the filter had
+                    if s.source == LibrarySource::LibraryFolder {
+                        f.library_folder = None;
+                    }
+                    s.filter = f;
+                }
+                Ok(json!({"enabled": s.shelved_filter.is_none(), "count": s.visible().len()}))
+            }
+        ),
         cmd!(
             "library.sort",
             "Sort",
@@ -884,7 +943,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids: [id], active?: id, mode?: replace|add|toggle|range} — every id must be a photo of the library",
             always,
             |s, p| {
-                let ids = ids_param(p).unwrap_or_default();
+                let ids = super::photo_ids(p, "library.select")?.unwrap_or_default();
                 let active = p.get("active").and_then(Value::as_u64).map(PhotoId);
                 let mode = str_param(p, "mode").unwrap_or("replace");
                 // An id that is not in the library is an error, and the selection stays as it was:
@@ -1002,40 +1061,66 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| { step(s, -row_step(p)) }
         ),
         // ---- rating / flags / labels
-        cmd!("photo.rate", "Set Rating", ["Photo", "Set Rating"], None, "{rating: 0..5, ids?, advance?: bool}", has_selection, |s, p| {
-            let r = super::f64_req(p, "rating", "photo.rate")? as i64;
-            if !(0..=5).contains(&r) {
-                return Err(bad("photo.rate", "rating must be 0..5"));
+        cmd!(
+            "photo.rate",
+            "Set Rating",
+            ["Photo", "Set Rating"],
+            None,
+            "{rating: 0..5, ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            has_selection,
+            |s, p| {
+                let r = super::index_req(p, "rating", "photo.rate")
+                    .ok()
+                    .filter(|r| *r <= 5)
+                    .ok_or_else(|| bad("photo.rate", "rating must be a whole number 0..5"))?;
+                cull(s, p, |s| for_targets(s, p, "Set Rating", |id| Some(Op::SetRating { id, rating: r as u8 })))
             }
-            let v = for_targets(s, p, "Set Rating", |id| Some(Op::SetRating { id, rating: r as u8 }))?;
-            advance_if(s, p);
-            Ok(v)
-        }),
-        cmd!("photo.decreaseRating", "Decrease Rating", [], None, "{ids?, advance?: bool}", has_selection, |s, p| {
-            change_rating(s, p, -1, "Decrease Rating")
-        }),
-        cmd!("photo.increaseRating", "Increase Rating", [], None, "{ids?, advance?: bool}", has_selection, |s, p| {
-            change_rating(s, p, 1, "Increase Rating")
-        }),
-        cmd!("photo.flag", "Set Flag", ["Photo", "Set Flag"], None, "{flag: pick|reject|none, ids?, advance?: bool}", has_selection, |s, p| {
-            let f = str_param(p, "flag").and_then(Flag::parse).ok_or_else(|| bad("photo.flag", "flag must be pick|reject|none"))?;
-            let v = for_targets(s, p, "Set Flag", |id| Some(Op::SetFlag { id, flag: f }))?;
-            advance_if(s, p);
-            Ok(v)
-        }),
+        ),
+        cmd!(
+            "photo.decreaseRating",
+            "Decrease Rating",
+            [],
+            None,
+            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            has_selection,
+            |s, p| { cull(s, p, |s| change_rating(s, p, -1, "Decrease Rating")) }
+        ),
+        cmd!(
+            "photo.increaseRating",
+            "Increase Rating",
+            [],
+            None,
+            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            has_selection,
+            |s, p| { cull(s, p, |s| change_rating(s, p, 1, "Increase Rating")) }
+        ),
+        cmd!(
+            "photo.flag",
+            "Set Flag",
+            ["Photo", "Set Flag"],
+            None,
+            "{flag: pick|reject|none, ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            has_selection,
+            |s, p| {
+                let f = str_param(p, "flag").and_then(Flag::parse).ok_or_else(|| bad("photo.flag", "flag must be pick|reject|none"))?;
+                cull(s, p, |s| for_targets(s, p, "Set Flag", |id| Some(Op::SetFlag { id, flag: f })))
+            }
+        ),
         // Classic: ` cycles the flag; Cmd+Up / Cmd+Down raise / lower it (Ctrl on Windows and Linux)
         cmd!(
             "photo.cycleFlag",
             "Cycle Flag",
             ["Photo", "Set Flag"],
             Some("`"),
-            "{ids?, advance?: bool} — each photo's own flag: unflagged -> pick -> reject -> unflagged",
+            "{ids?, advance?: bool} — each photo's own flag: unflagged -> pick -> reject -> unflagged; without `ids`, the selection moves on when this takes the active photo out of the view",
             has_selection,
             |s, p| {
-                change_flag(s, p, "Cycle Flag", |f| match f {
-                    Flag::None => Flag::Pick,
-                    Flag::Pick => Flag::Reject,
-                    Flag::Reject => Flag::None,
+                cull(s, p, |s| {
+                    change_flag(s, p, "Cycle Flag", |f| match f {
+                        Flag::None => Flag::Pick,
+                        Flag::Pick => Flag::Reject,
+                        Flag::Reject => Flag::None,
+                    })
                 })
             }
         ),
@@ -1044,41 +1129,63 @@ pub fn specs() -> Vec<CommandSpec> {
             "Increase Flag Status",
             ["Photo", "Set Flag"],
             Some("Cmd+Up"),
-            "{ids?, advance?: bool} — reject -> unflagged -> pick (stops at pick)",
+            "{ids?, advance?: bool} — reject -> unflagged -> pick (stops at pick); without `ids`, the selection moves on when this takes the active photo out of the view",
             has_selection,
-            |s, p| { change_flag(s, p, "Increase Flag Status", |f| if f == Flag::Reject { Flag::None } else { Flag::Pick }) }
+            |s, p| { cull(s, p, |s| change_flag(s, p, "Increase Flag Status", |f| if f == Flag::Reject { Flag::None } else { Flag::Pick })) }
         ),
         cmd!(
             "photo.decreaseFlag",
             "Decrease Flag Status",
             ["Photo", "Set Flag"],
             Some("Cmd+Down"),
-            "{ids?, advance?: bool} — pick -> unflagged -> reject (stops at reject)",
+            "{ids?, advance?: bool} — pick -> unflagged -> reject (stops at reject); without `ids`, the selection moves on when this takes the active photo out of the view",
             has_selection,
-            |s, p| { change_flag(s, p, "Decrease Flag Status", |f| if f == Flag::Pick { Flag::None } else { Flag::Reject }) }
+            |s, p| { cull(s, p, |s| change_flag(s, p, "Decrease Flag Status", |f| if f == Flag::Pick { Flag::None } else { Flag::Reject })) }
         ),
-        cmd!("photo.pick", "Flag as Pick", ["Photo", "Set Flag"], Some("P"), "{ids?}", has_selection, |s, p| {
-            for_targets(s, p, "Flag as Pick", |id| Some(Op::SetFlag { id, flag: Flag::Pick }))
-        }),
-        cmd!("photo.reject", "Flag as Reject", ["Photo", "Set Flag"], Some("X"), "{ids?}", has_selection, |s, p| {
-            for_targets(s, p, "Flag as Reject", |id| Some(Op::SetFlag { id, flag: Flag::Reject }))
-        }),
-        cmd!("photo.unflag", "Unflag", ["Photo", "Set Flag"], Some("U"), "{ids?}", has_selection, |s, p| {
-            for_targets(s, p, "Unflag", |id| Some(Op::SetFlag { id, flag: Flag::None }))
-        }),
+        cmd!(
+            "photo.pick",
+            "Flag as Pick",
+            ["Photo", "Set Flag"],
+            Some("P"),
+            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            has_selection,
+            |s, p| { cull(s, p, |s| for_targets(s, p, "Flag as Pick", |id| Some(Op::SetFlag { id, flag: Flag::Pick }))) }
+        ),
+        cmd!(
+            "photo.reject",
+            "Flag as Reject",
+            ["Photo", "Set Flag"],
+            Some("X"),
+            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            has_selection,
+            |s, p| { cull(s, p, |s| for_targets(s, p, "Flag as Reject", |id| Some(Op::SetFlag { id, flag: Flag::Reject }))) }
+        ),
+        cmd!(
+            "photo.unflag",
+            "Unflag",
+            ["Photo", "Set Flag"],
+            Some("U"),
+            "{ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
+            has_selection,
+            |s, p| { cull(s, p, |s| for_targets(s, p, "Unflag", |id| Some(Op::SetFlag { id, flag: Flag::None }))) }
+        ),
         cmd!(
             "photo.label",
             "Set Color Label",
             ["Photo", "Set Color Label"],
             None,
-            "{label: red|yellow|green|blue|purple|none, ids?}",
+            "{label: red|yellow|green|blue|purple|none, ids?, advance?: bool} — without `ids`, the selection moves on when this takes the active photo out of the view",
             has_selection,
             |s, p| {
-                let l = match str_param(p, "label") {
-                    None | Some("none") => None,
-                    Some(x) => Some(ColorLabel::parse(x).ok_or_else(|| bad("photo.label", "unknown label"))?),
+                // `none` (or null) clears; a missing label or one that isn't text is an error, not a clear
+                let l = match p.get("label") {
+                    Some(Value::Null) => None,
+                    Some(Value::String(x)) if x == "none" => None,
+                    Some(Value::String(x)) => Some(ColorLabel::parse(x).ok_or_else(|| bad("photo.label", "unknown label"))?),
+                    None => return Err(bad("photo.label", "missing `label` (red|yellow|green|blue|purple|none)")),
+                    Some(_) => return Err(bad("photo.label", "label must be red|yellow|green|blue|purple|none")),
                 };
-                for_targets(s, p, "Set Color Label", |id| Some(Op::SetLabel { id, label: l }))
+                cull(s, p, |s| for_targets(s, p, "Set Color Label", |id| Some(Op::SetLabel { id, label: l })))
             }
         ),
         // ---- orientation
@@ -1095,8 +1202,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id?, index} — remove one face / pet region (by its position in the photo's regions) from the photo in the catalog; undoable. The XMP sidecar is never rewritten for this, even with auto-write on, so reading the metadata from the file brings the region back",
             always,
             |s, p| {
-                let id =
-                    p.get("id").and_then(Value::as_u64).map(PhotoId).or_else(|| s.active()).ok_or_else(|| bad("photo.removeRegion", "no photo"))?;
+                let id = super::photo_id(p, "photo.removeRegion")?.or_else(|| s.active()).ok_or_else(|| bad("photo.removeRegion", "no photo"))?;
                 let index = p
                     .get("index")
                     .and_then(Value::as_u64)
@@ -1122,7 +1228,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 const C: &str = "photo.setRegion";
                 // a drag is one undo step however many frames it took: the caller commits once, on release
-                let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or_else(|| s.active()).ok_or_else(|| bad(C, "no photo"))?;
+                let id = super::photo_id(p, C)?.or_else(|| s.active()).ok_or_else(|| bad(C, "no photo"))?;
                 let index = p
                     .get("index")
                     .and_then(Value::as_u64)
@@ -1236,6 +1342,8 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("photo.delete", "Delete Photo", ["Photo"], Some("Cmd+Delete"), "{ids?} — moves to Recently Deleted", has_selection, |s, p| {
             let before = s.visible_cloned();
             let targets = s.targets(p)?;
+            // an open drag ends first, as its own undo step (the selection moves on)
+            s.end_interaction()?;
             let n = mark_deleted(s, &targets, "Delete")?;
             select_after_deletion(s, &before);
             Ok(json!({"changed": n}))
@@ -1265,6 +1373,8 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("photo.deletePermanently", "Delete Permanently", ["Photo"], None, "{ids?}", has_selection, |s, p| {
             let before = s.visible_cloned();
             let t = s.targets(p)?;
+            // before the inverse ops are taken, so undo brings the photo back with its edit
+            s.end_interaction()?;
             let op = s.catalog.delete_photos_permanently_ops(&t);
             s.commit("Delete Permanently", op)?;
             select_after_deletion(s, &before);
@@ -1656,7 +1766,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_library_selection,
             |s, p| {
                 let id = album_param(p, "id", "album.addPhotos")?;
-                let targets = ids_param(p).unwrap_or_else(|| s.selected());
+                let targets = super::photo_ids(p, "album.addPhotos")?.unwrap_or_else(|| s.selected());
                 let al = s.catalog.album(id).ok_or_else(|| bad("album.addPhotos", "no such album"))?;
                 if al.is_smart() || al.folder {
                     return Err(bad("album.addPhotos", "smart albums and folders can't hold photos"));
@@ -1685,7 +1795,8 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids?} — B: adds the photos to the target album (the Quick Collection unless one is set), or removes them when they're all in it → {album, added, skipped}; Local photos are skipped",
             has_library_selection,
             |s, p| {
-                let targets = album_targets_or_err(s, "album.toggleTarget", ids_param(p).unwrap_or_else(|| s.selected()))?;
+                let targets =
+                    album_targets_or_err(s, "album.toggleTarget", super::photo_ids(p, "album.toggleTarget")?.unwrap_or_else(|| s.selected()))?;
                 let (targets, skipped) = targets;
                 let target = s.target_album.filter(|a| s.catalog.album(*a).is_some_and(|al| !al.is_smart() && !al.folder));
                 let id = match target.or_else(|| s.catalog.quick_collection()) {
@@ -1864,7 +1975,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     (Some(id), _) | (None, LibrarySource::Album(id)) => id,
                     _ => return Err(bad("album.removePhotos", "no album: pass `id` or show an album")),
                 };
-                let targets = ids_param(p).unwrap_or_else(|| s.selected());
+                let targets = super::photo_ids(p, "album.removePhotos")?.unwrap_or_else(|| s.selected());
                 let al = s.catalog.album(id).ok_or_else(|| bad("album.removePhotos", "no such album"))?;
                 if al.is_smart() {
                     return Err(bad("album.removePhotos", "smart albums update automatically: change their rules"));
@@ -2032,7 +2143,7 @@ pub fn specs() -> Vec<CommandSpec> {
             s.compact_library()?;
             ok()
         }),
-        cmd!("library.clearPreviews", "Clear Preview Cache", ["File"], None, "{}", always, |s, _| {
+        cmd!("library.clearPreviews", "Discard Preview Cache", ["File"], None, "{}", always, |s, _| {
             s.media.rendered.clear();
             s.media.clear_sources();
             ok()
@@ -2138,12 +2249,21 @@ fn has_library(s: &Session) -> std::result::Result<(), String> {
 /// Coordinates typed by a person: "51.5072, -0.1276", "51.5072 N 0.1276 W",
 /// "51°30'26\"N 0°7'39\"W" (degrees, minutes, seconds; N/S/E/W or signs).
 pub(crate) fn parse_gps(t: &str) -> Option<(f64, f64)> {
+    // typographic minus signs and dashes mean a negative value, like ASCII '-'
+    let t = t.replace(['\u{2212}', '\u{2012}', '\u{2013}', '\u{FE63}', '\u{FF0D}'], "-");
     let t = t.trim();
     // split into the two coordinates: at a comma, else after the first N/S hemisphere letter
     let (a, b) = match t.split_once(',') {
         Some((a, b)) => (a.trim().to_string(), b.trim().to_string()),
         None => {
-            let i = t.find(['N', 'S', 'n', 's']).map(|i| i + 1).or_else(|| t.find(char::is_whitespace))?;
+            let lead = t.starts_with(['N', 'S', 'n', 's']);
+            let i = if lead {
+                // hemisphere letter first: "N 51.5 W 0.1" splits at the E/W letter
+                t.char_indices().skip(1).find(|(_, c)| matches!(c, 'E' | 'W' | 'e' | 'w')).map(|(i, _)| i)
+            } else {
+                t.find(['N', 'S', 'n', 's']).map(|i| i + 1)
+            }
+            .or_else(|| t.find(char::is_whitespace))?;
             (t[..i].trim().to_string(), t[i..].trim().to_string())
         }
     };
@@ -2175,6 +2295,10 @@ mod gps_tests {
         assert!((la - 51.50722).abs() < 1e-4 && (lo + 0.1275).abs() < 1e-4, "{la} {lo}");
         let (la, lo) = p("33.8688 S, 151.2093 E").unwrap();
         assert!((la + 33.8688).abs() < 1e-9 && (lo - 151.2093).abs() < 1e-9);
+        assert_eq!(p("51.5 N 0.1 W"), Some((51.5, -0.1)));
+        assert_eq!(p("N 51.5072 W 0.1276"), Some((51.5072, -0.1276)));
+        assert_eq!(p("S 33.8688 E 151.2093"), Some((-33.8688, 151.2093)));
+        assert_eq!(p("\u{2212}33.8688, 151.2093"), Some((-33.8688, 151.2093)));
         assert_eq!(p("95, 10"), None);
         assert_eq!(p("hello"), None);
     }
@@ -2187,3 +2311,15 @@ mod relative_rating_tests;
 #[cfg(test)]
 #[path = "library/tests_flag_cycle.rs"]
 mod flag_cycle_tests;
+
+#[cfg(test)]
+#[path = "library/tests_rated_out.rs"]
+mod rated_out_tests;
+
+#[cfg(test)]
+#[path = "library/tests_enable_filters.rs"]
+mod enable_filters_tests;
+
+#[cfg(test)]
+#[path = "library/tests_source_album_filter.rs"]
+mod source_album_filter_tests;

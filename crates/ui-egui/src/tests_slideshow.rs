@@ -16,9 +16,13 @@ const T: Duration = Duration::from_secs(20);
 const SETTLE: Duration = Duration::from_secs(120);
 
 fn grid() -> Headless {
+    grid_sized([1000.0, 700.0])
+}
+
+fn grid_sized(size: [f32; 2]) -> Headless {
     let services = Services { png: None, ..Default::default() };
     let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
-    let mut h = Headless::new(app, [1000.0, 700.0], 1.0);
+    let mut h = Headless::new(app, size, 1.0);
     h.step();
     h
 }
@@ -237,8 +241,8 @@ fn playback_settings_drive_the_slideshow_and_bad_ones_are_refused() {
     reveal(&mut h, "check:settings.slideshowRandom");
     let r = h.request("ui.clickWidget", json!({"id": "check:settings.slideshowRandom"}), T);
     assert_eq!(r["ok"], true, "{r}");
-    h.step();
-    assert!(h.app.session.slideshow.random_order, "the checkbox goes through slideshow.playback");
+    // (waits for it: one frame isn't always enough on a loaded machine)
+    assert!(h.step_until(T, |h| h.app.session.slideshow.random_order), "the checkbox goes through slideshow.playback");
     h.settle(SETTLE);
 }
 
@@ -400,9 +404,17 @@ fn settings_shows_the_slide_layout_and_a_live_preview() {
     run(&mut h, "slideshow.layout", json!({"margins": 0.2, "backdropColor": "#00ff00"}));
     assert!(h.step_until(SETTLE, |h| h.app.renderer.textures.get(&Slot::SlidePreview).map(|t| t.key) != before));
     show_preview(&mut h);
-    let rect = h.app.widgets.iter().find(|(id, _)| id == "slideshow:preview").map(|(_, r)| *r).unwrap();
-    let img = h.paint();
-    let c = painted(&img, (rect.left() + 3.0) as usize, (rect.center().y) as usize);
+    // (painted once the new preview is on screen: one frame isn't always enough on a loaded machine)
+    let t0 = std::time::Instant::now();
+    let c = loop {
+        let rect = h.app.widgets.iter().find(|(id, _)| id == "slideshow:preview").map(|(_, r)| *r).unwrap();
+        let img = h.paint();
+        let c = painted(&img, (rect.left() + 3.0) as usize, (rect.center().y) as usize);
+        if (c[1] > 200 && c[0] < 60) || t0.elapsed() > T {
+            break c;
+        }
+        h.step();
+    };
     assert!(c[1] > 200 && c[0] < 60, "the green backdrop in the preview margin: {c:?}");
     h.settle(SETTLE);
 }
@@ -672,6 +684,8 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
     let before = SlideLook::of(&h.app.session);
     let r = h.request("ui.hoverWidget", json!({"id": "template:builtin:gallery-wall"}), T);
     assert_eq!(r["ok"], true, "{r}");
+    // (the pointer is over the row one frame after it moved there, and the page has settled the next)
+    h.step();
     h.step();
     assert_eq!(crate::panels::slide_templates::hovered(&h.view.ctx).as_deref(), Some("builtin:gallery-wall"));
     let grey = |h: &Headless| {
@@ -684,6 +698,7 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
     assert_eq!(SlideLook::of(&h.app.session), before, "hovering changes nothing");
     assert!(h.app.session.slide_templates_previous.is_none());
     // a click applies it
+    reveal(&mut h, "template:builtin:gallery-wall");
     let r = h.request("ui.clickWidget", json!({"id": "template:builtin:gallery-wall"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.step();
@@ -758,4 +773,26 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
     assert_eq!(SlideLook::of(&h.app.session).overlays, before.overlays);
     h.settle(SETTLE);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Hovering a template in the Template Browser previews it in the slide preview, so the preview
+/// must be in view while the templates (further down the page) are: it is pinned above the page,
+/// under the tab bar, and does not scroll away with it.
+#[test]
+fn the_slide_preview_stays_in_view_while_the_templates_are_browsed() {
+    // (900 x 560 is the least the desktop app's window is)
+    for size in [[1000.0, 700.0], [900.0, 560.0]] {
+        let mut h = grid_sized(size);
+        run(&mut h, "view.slideshowOptions", json!({}));
+        h.step();
+        let find = |h: &Headless, w: &str| h.app.widgets.iter().find(|(i, _)| i == w).map(|(_, r)| *r);
+        let tabs = find(&h, "button:settingsTab-slideshow").expect("the tab bar");
+        // down to the last section of the page: the templates are far above the preview's old place
+        reveal(&mut h, "button:slideshowExportPdf");
+        let preview = find(&h, "slideshow:preview").expect("the preview is still drawn");
+        let room = find(&h, "settings:pageRoom").unwrap();
+        assert!(preview.height() > 40.0, "{size:?}: {preview:?}");
+        assert!(preview.top() >= tabs.bottom(), "{size:?}: under the tab bar, not scrolled up behind it: {preview:?} {tabs:?}");
+        assert!(preview.bottom() <= room.top() + 1.0, "{size:?}: above the page, not in it: {preview:?} {room:?}");
+    }
 }

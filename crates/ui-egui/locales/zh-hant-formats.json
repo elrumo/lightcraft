@@ -354,5 +354,14 @@
   "{updated} albums that were already here got photos.": "{updated} 個既有相簿加入了相片。",
   "Downloading LaMa… {:.0} %": "正在下載 LaMa… {:.0} %",
   "Uses the LaMa model, a {:.0} MB download ({} licence). {}. Until it is downloaded, strokes use the fast model.": "使用 LaMa 模型（需下載 {:.0} MB，{} 授權）。{}。下載完成前，筆觸使用快速模型。",
-  "AI Remove failed: {}": "AI 移除失敗：{}"
+  "AI Remove failed: {}": "AI 移除失敗：{}",
+  "Inside: {names}": "其中：{names}",
+  "Listing folders — folders: {folders}, files: {files}": "正在列出資料夾 — 資料夾：{folders}，檔案：{files}",
+  "Drop to review {n} item{} for import": "放開滑鼠以在匯入前檢查 {n} 個項目{:.0}",
+  "Drop to import {n} item{}": "放開滑鼠以匯入 {n} 個項目{:.0}",
+  "Drop to import {n} preset{}": "放開滑鼠以匯入 {n} 個預設集{:.0}",
+  "Could not read {name}: {e}": "無法讀取 {name}：{e}",
+  "Added {n} photo{}": "已加入 {n} 張照片{:.0}",
+  "Where should the Lightroom catalog “{catalog}” go?": "Lightroom 目錄「{catalog}」要匯入到哪裡？",
+  "Merge into the open library “{library}” ({count} photo{})": "合併到目前開啟的照片庫「{library}」（{count} 張照片）{:.0}"
 }

@@ -68,7 +68,9 @@ pub fn shortcut_of<'a>(keymap: &'a Keymap, id: &str) -> Option<&'a str> {
     find_bindable(id).and_then(|b| binding(keymap, id, b.default))
 }
 
-/// Engine commands that intentionally share a key and are disambiguated by context in [`handle`].
+/// Engine commands that intentionally share a key and are disambiguated by context in [`handle`]:
+/// the X pair by the Crop panel, A by whether it is open (Visualize Spots everywhere, the aspect
+/// lock under the Crop panel).
 pub use lightcraft_apphost::keys::CONTEXTUAL;
 
 /// Commands other than `id` whose shortcut is the key `sc` (contextual partners excepted).
@@ -264,12 +266,16 @@ fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
     })
 }
 
-/// Default brackets rate in grids. Remapped brush keys retain their brush action, and a
-/// saved assignment of either bracket to another command takes precedence over this default.
-fn grid_bracket_command(keymap: &Keymap, grid: bool, id: &'static str, shortcut: (Modifiers, Key)) -> Option<&'static str> {
+/// Default brackets rate in grids, and the default backslash shows / hides the Filter Bar there
+/// (Lightroom Classic's Library keys; Detail keeps brush size and Show Original). The full-screen
+/// preview keeps the grid's view but shows the photo alone, so backslash stays Show Original there.
+/// Remapped brush and Show Original keys retain their action, and a saved assignment of the key to
+/// another command takes precedence over this default.
+fn grid_key_command(keymap: &Keymap, grid: bool, fullscreen: bool, id: &'static str, shortcut: (Modifiers, Key)) -> Option<&'static str> {
     let command = match (grid, id, shortcut) {
         (true, "brush.smaller", (m, Key::OpenBracket)) if m == Modifiers::NONE => "photo.decreaseRating",
         (true, "brush.larger", (m, Key::CloseBracket)) if m == Modifiers::NONE => "photo.increaseRating",
+        (true, "view.showOriginal", (m, Key::Backslash)) if m == Modifiers::NONE && !fullscreen => "view.filterBar",
         _ => return Some(id),
     };
     if keymap.iter().any(|(other, sc)| other != id && find_bindable(other).is_some() && parse(sc) == Some(shortcut)) { None } else { Some(command) }
@@ -357,7 +363,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 && !native(sc)
                 && !(k == Key::Escape && popup_open)
                 && matches(i, m, k)
-                && let Some(id) = grid_bracket_command(keymap, grid, b.id, (m, k))
+                && let Some(id) = grid_key_command(keymap, grid, app.ui.fullscreen, b.id, (m, k))
             {
                 fire.push(id.to_string());
             }
@@ -398,9 +404,10 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     // Auto Advance then moves on (next candidate in Compare, next photo elsewhere)
     let cull = |app: &mut LightcraftApp, id: &str, mut params: serde_json::Value, advance: bool| {
         compare::target_active(app, &mut params);
+        let was = app.session.active();
         let ok = app.run(id, params).is_ok();
         if ok && (advance || app.ui.auto_advance) {
-            compare::advance(app);
+            compare::advance(app, was);
         }
     };
     for (id, params) in aliased {
@@ -436,6 +443,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             app.toast(ctx, e);
         }
     }
+    let rotate_fires = fire.iter().any(|f| f == "crop.rotateAspect");
     for mut f in fire {
         // ⌫ in a grid takes the photos out of the album on screen (⌘⌫ deletes them, after asking);
         // anywhere else it deletes, as it always did. (A smart album keeps its photos: it says so.)
@@ -525,6 +533,22 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                         }
                         continue;
                     }
+                    R::Crop if app.ui.tool == "guidedUpright" => {
+                        // Delete removes the selected guide alone; with none selected it removes
+                        // nothing (the photo itself is never deleted while the tool is open)
+                        if let (Some((photo, i)), Some(active)) = (app.ui.selected_guide, app.session.active()) {
+                            if photo == active.0
+                                && let Some(d) = app.session.develop_of(active)
+                                && i < d.geometry.guides.len()
+                            {
+                                let guides: Vec<[f64; 4]> =
+                                    d.geometry.guides.iter().enumerate().filter(|(k, _)| *k != i).map(|(_, (a, b))| [a.x, a.y, b.x, b.y]).collect();
+                                let _ = app.run("geometry.guides", json!({"guides": guides}));
+                            }
+                            app.ui.selected_guide = None;
+                        }
+                        continue;
+                    }
                     R::RedEye => continue,
                     _ => {}
                 }
@@ -551,12 +575,22 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
                 continue;
             }
-            // X is both reject (library) and swap crop aspect (crop tool)
+            // X is both reject (library) and swap crop aspect (crop tool). When both bindings fire,
+            // swap once: twice would put the crop straight back (issue #1866).
             if f == "photo.reject" && app.ui.right == crate::state::RightPanel::Crop {
-                let _ = app.run("crop.rotateAspect", json!({}));
+                if !rotate_fires {
+                    let _ = app.run("crop.rotateAspect", json!({}));
+                }
                 continue;
             }
             if f == "crop.rotateAspect" && app.ui.right != crate::state::RightPanel::Crop {
+                continue;
+            }
+            // A is both Visualize Spots and the crop aspect lock: each key only in its own context
+            if f == "view.visualizeSpots" && app.ui.right == crate::state::RightPanel::Crop {
+                continue;
+            }
+            if f == "crop.lockAspect" && app.ui.right != crate::state::RightPanel::Crop {
                 continue;
             }
             // / refreshes the selected spot's source in the Remove tool (the filmstrip elsewhere)
@@ -569,12 +603,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let _ = app.run("view.maskOverlayColor", json!({}));
                 continue;
             }
-            // while cropping: O cycles the guides, Shift+O their orientation, A locks the aspect
+            // while cropping: O cycles the guides, Shift+O their orientation
             if app.ui.right == crate::state::RightPanel::Crop {
                 let crop_key = match f.as_str() {
                     "view.maskOverlay" => Some(("view.cropOverlay", json!({}))),
                     "view.cropOverlay" => Some(("view.cropOverlayOrientation", json!({}))),
-                    "view.visualizeSpots" => Some(("crop.aspect", json!({"aspect": "toggle"}))),
                     _ => None,
                 };
                 if let Some((cmd, p)) = crop_key {
@@ -812,6 +845,27 @@ mod tests {
         assert_eq!((h.app.ui.filmstrip, h.app.ui.left_panel), (filmstrip, left));
     }
 
+    /// Classic's F8 hides the right panel and shows the same one again; the other panels stay.
+    #[test]
+    fn classic_f8_hides_the_right_panel_and_brings_the_same_one_back() {
+        use crate::state::RightPanel;
+        let mut h = library();
+        h.app.ui.view = crate::state::ViewMode::Detail;
+        h.app.ui.right = RightPanel::Keywords;
+        h.settle(std::time::Duration::from_secs(10));
+        let (filmstrip, left) = (h.app.ui.filmstrip, h.app.ui.left_panel);
+        key(&mut h, "F8", false);
+        assert_eq!(h.app.ui.right, RightPanel::None);
+        assert_eq!((h.app.ui.filmstrip, h.app.ui.left_panel), (filmstrip, left));
+        key(&mut h, "F8", false);
+        assert_eq!(h.app.ui.right, RightPanel::Keywords, "the panel F8 hid comes back");
+        // a tool ends when F8 hides it; with nothing hidden before, F8 opens Edit
+        h.app.ui.right = RightPanel::None;
+        h.app.ui.right_hidden = RightPanel::None;
+        key(&mut h, "F8", false);
+        assert_eq!(h.app.ui.right, RightPanel::Edit);
+    }
+
     #[test]
     fn shift_culling_keys_advance_exactly_once() {
         use lightcraft_catalog::{ColorLabel, Flag, PhotoId};
@@ -880,6 +934,38 @@ mod tests {
             key(&mut h, k, false);
             assert_eq!(h.app.session.active(), Some(PhotoId(2)), "{k}");
         }
+    }
+
+    #[test]
+    fn culling_keys_go_on_from_a_photo_that_leaves_the_filter() {
+        // #2312: the filter shows one-star photos; taking photo 2's star off makes photo 3 active, once, with or
+        // without Shift and Auto Advance, and → goes on from there instead of from the first photo
+        use lightcraft_catalog::PhotoId;
+        let one_star = || {
+            let mut h = library();
+            h.app.session.execute("library.selectAll", &json!({})).unwrap();
+            h.app.session.execute("photo.rate", &json!({"rating": 1})).unwrap();
+            h.app.session.execute("library.filter", &json!({"rating": 1, "ratingOp": "exactly"})).unwrap();
+            h.app.session.execute("library.select", &json!({"ids": [2]})).unwrap();
+            h
+        };
+        for view in [crate::state::ViewMode::PhotoGrid, crate::state::ViewMode::Detail] {
+            for (shift, auto) in [(false, false), (true, false), (false, true), (true, true)] {
+                let mut h = one_star();
+                h.app.ui.view = view;
+                h.app.ui.auto_advance = auto;
+                key(&mut h, "0", shift);
+                assert_eq!(h.app.session.catalog.photo(PhotoId(2)).unwrap().rating, 0);
+                assert_eq!(h.app.session.active(), Some(PhotoId(3)), "{view:?} Shift={shift} Auto Advance={auto}");
+                key(&mut h, "right", false);
+                assert_eq!(h.app.session.active(), Some(PhotoId(4)), "{view:?} Shift={shift} Auto Advance={auto}");
+            }
+        }
+        // the Photo menu with Auto Advance too
+        let mut h = one_star();
+        h.app.ui.auto_advance = true;
+        crate::menubar::run_item(&mut h.app, "photo.rate", json!({"rating": 0})).unwrap();
+        assert_eq!(h.app.session.active(), Some(PhotoId(3)));
     }
 
     #[test]
@@ -1086,7 +1172,8 @@ mod tests {
         }
         for (i, (k, a)) in ui.iter().enumerate() {
             for (k2, b) in &ui[i + 1..] {
-                assert!(k != k2, "{a} and {b} share a key");
+                let contextual = CONTEXTUAL.iter().any(|(x, y)| (x == a && y == b) || (x == b && y == a));
+                assert!(k != k2 || contextual, "{a} and {b} share a key");
             }
         }
         for (i, (k, a)) in engine.iter().enumerate() {
@@ -1274,3 +1361,11 @@ mod relative_rating_tests;
 #[cfg(test)]
 #[path = "shortcuts/tests_flag_cycle.rs"]
 mod flag_cycle_tests;
+
+#[cfg(test)]
+#[path = "shortcuts/tests_enable_filters.rs"]
+mod enable_filters_tests;
+
+#[cfg(test)]
+#[path = "shortcuts/tests_filter_bar_key.rs"]
+mod filter_bar_key_tests;

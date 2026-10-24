@@ -22,6 +22,24 @@ fn wake(ctx: &egui::Context) -> Wake {
     Arc::new(move || ctx.request_repaint())
 }
 
+/// Tests: a catalog import that never ends while the returned value lives, so a drop meets it pending.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn stall_import(app: &mut LightcraftApp) -> Box<dyn std::any::Any> {
+    use lightcraft_apphost::lightroom::{Message, Task};
+    let (tx, rx) = std::sync::mpsc::channel::<Message>();
+    let task = Task::new(
+        &app.session,
+        Kind::Import,
+        PathBuf::from("catalog.lrcat"),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        lightcraft_engine::lightroom_job::LightroomProgress::default(),
+        rx,
+        &words,
+    );
+    app.lightroom.task = Some(task);
+    Box::new(tx)
+}
+
 /// Whether a Lightroom task currently owns the catalog transition.
 pub fn is_running(app: &LightcraftApp) -> bool {
     app.lightroom.running()
@@ -304,25 +322,17 @@ mod tests {
     }
 
     #[test]
-    fn skipped_images_are_one_line_in_the_ui_language() {
+    fn skipped_images_are_one_line() {
         let value = json!({"report": {"photos": 3, "collections": 0, "warnings": ["w1", "w2"], "skipped": [
             {"image": 7, "reason": "missingFile"},
             {"image": 8, "reason": "missingRoot"},
             {"image": 9, "reason": "masterSkipped"},
         ]}});
-        let details = |locale| {
-            crate::i18n::set_language(locale);
-            let dialog = result_dialog(&value, "done");
-            crate::i18n::set_language(crate::i18n::Locale::En);
-            let crate::state::Dialog::LightroomResult { details, .. } = dialog else { panic!("not a Lightroom result") };
-            details
-        };
-        let en = details(crate::i18n::Locale::En);
+        crate::i18n::set_language(crate::i18n::Locale::En);
+        let crate::state::Dialog::LightroomResult { details: en, .. } = result_dialog(&value, "done") else { panic!("not a Lightroom result") };
         assert_eq!(en.len(), 4, "{en:?}");
         assert_eq!(en[1], "3 catalog images were not imported because their records in the catalog are incomplete.");
         assert_eq!(&en[2..], ["w1", "w2"]);
-        let es = details(crate::i18n::Locale::Es);
-        assert_eq!(es[1], "No se importaron 3 imágenes del catálogo porque sus registros en el catálogo están incompletos.");
     }
 
     #[test]

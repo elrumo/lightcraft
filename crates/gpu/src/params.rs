@@ -91,6 +91,13 @@ const FIELDS: &[(&str, usize)] = &[
     ("LUT_SPACE", 1),
     ("LUT_TO_S", 9),
     ("LUT_FROM_S", 9),
+    // soft proofing (matrix proofs; `ProofParams`): working → proof RGB, its luma, proof → output, warnings
+    ("PROOF", 1),
+    ("PROOF_M", 9),
+    ("PROOF_Y", 3),
+    ("PROOF_OUT", 9),
+    ("PROOF_DEST_WARN", 1),
+    ("PROOF_DISP_WARN", 1),
     // first row of a band dispatch (the kernel runs over rows Y0.., see `render`)
     ("Y0", 1),
     // the render's peak (linear, SDR white = 1; above 1 an HDR render) and its sRGB encoding
@@ -290,6 +297,14 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     }
     p.f("PEAK", fp.peak);
     p.f("PEAK_ENC", lightcraft_color::transfer::linear_to_srgb(fp.peak));
+    if let Some(pp) = fp.proof.as_ref().filter(|pp| pp.table.is_none()) {
+        p.b("PROOF", true);
+        p.fs("PROOF_M", pp.to_proof.as_flattened());
+        p.fs("PROOF_Y", &pp.luma);
+        p.fs("PROOF_OUT", pp.proof_to_out.as_flattened());
+        p.b("PROOF_DEST_WARN", pp.dest_warning);
+        p.b("PROOF_DISP_WARN", pp.display_warning);
+    }
     if let Some((amt, cell, rough, seed)) = fp.grain {
         p.b("GRAIN", true);
         p.f("GRAIN_AMT", amt);

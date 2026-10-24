@@ -148,11 +148,8 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     // (an Object or Describe selection's picture is of the photo it was made on: the clicks and the words stay, the
     // other photo's selection is made again from them, see [`ai_work`])
     if let Some(Value::Array(masks)) = out.get_mut("masks") {
-        for shape in masks
-            .iter_mut()
-            .filter_map(|m| m.get_mut("components")?.as_array_mut())
-            .flatten()
-            .filter_map(|c| c.get_mut("shape")?.as_object_mut())
+        for shape in
+            masks.iter_mut().filter_map(|m| m.get_mut("components")?.as_array_mut()).flatten().filter_map(|c| c.get_mut("shape")?.as_object_mut())
         {
             if matches!(shape.get("kind").and_then(Value::as_str), Some("object" | "prompt")) {
                 shape.remove("seg");
@@ -197,7 +194,9 @@ pub fn ai_work(s: &DevelopSettings, groups: &[SettingsGroup]) -> AiWork {
         for m in &s.masks {
             for (k, c) in m.components.iter().enumerate() {
                 let done = match &c.shape {
-                    crate::MaskShape::Object { seg, detail, .. } | crate::MaskShape::Prompt { seg, detail, .. } => seg.is_some() || !detail.is_empty(),
+                    crate::MaskShape::Object { seg, detail, .. } | crate::MaskShape::Prompt { seg, detail, .. } => {
+                        seg.is_some() || !detail.is_empty()
+                    }
                     _ => false,
                 };
                 if done {
@@ -341,7 +340,13 @@ mod tests {
             id: 7,
             components: vec![
                 comp(crate::MaskShape::Sky),
-                comp(crate::MaskShape::Object { hint: vec![lightcraft_geom::Point::new(0.5, 0.5)], exclude: vec![], seg: seg.clone(), detail: vec![], edge: 0.0 }),
+                comp(crate::MaskShape::Object {
+                    hint: vec![lightcraft_geom::Point::new(0.5, 0.5)],
+                    exclude: vec![],
+                    seg: seg.clone(),
+                    detail: vec![],
+                    edge: 0.0,
+                }),
                 comp(crate::MaskShape::Prompt { text: "the red car".into(), seg, detail: vec![], edge: 0.0 }),
             ],
             ..Default::default()

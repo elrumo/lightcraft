@@ -492,7 +492,14 @@ fn watermark_preview(
                 Ok(img) => img,
                 Err(e) => {
                     let note = if e.is_some() { "Preview unavailable" } else { "Loading preview…" };
-                    let r = ui.label(egui::RichText::new(crate::i18n::tr(note)).color(t.text_dim));
+                    let r = ui
+                        .horizontal(|ui| {
+                            if e.is_none() {
+                                crate::progress::spinner(ui, 12.0);
+                            }
+                            ui.label(egui::RichText::new(crate::i18n::tr(note)).color(t.text_dim))
+                        })
+                        .inner;
                     if let Some(e) = e {
                         r.on_hover_text(e);
                     }
@@ -603,12 +610,13 @@ fn watermark_form(app: &mut LightcraftApp, ui: &mut egui::Ui, wm: &mut Watermark
 
 /// Image Sizing: full size, or a resize mode and its value(s), don't enlarge, ppi.
 fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut Resize, ppi: &mut u16) {
-    const MODES: [(R, &str); 7] = [
+    const MODES: [(R, &str); 8] = [
         (R::LongEdge, "Long Edge"),
         (R::ShortEdge, "Short Edge"),
         (R::Width, "Width"),
         (R::Height, "Height"),
-        (R::Dimensions, "Width × Height"),
+        (R::WidthHeight, "Width & Height"),
+        (R::Dimensions, "Dimensions"),
         (R::Megapixels, "Megapixels"),
         (R::Percent, "Percentage"),
     ];
@@ -643,7 +651,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut Resize, ppi: &mut u16
                 _ if matches!(before, R::Megapixels | R::Percent) => 2048.0,
                 _ => r.value,
             };
-            if r.mode == R::Dimensions && r.height == 0 {
+            if matches!(r.mode, R::Dimensions | R::WidthHeight) && r.height == 0 {
                 r.height = r.value as u32;
             }
         }
@@ -651,13 +659,13 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut Resize, ppi: &mut u16
         let spec = match r.mode {
             R::Megapixels => &SIZE_MP,
             R::Percent => &SIZE_PCT,
-            R::Dimensions => &SIZE_W,
+            R::Dimensions | R::WidthHeight => &SIZE_W,
             _ => &SIZE_PX,
         };
         if num(ui, spec, &mut v) {
             r.value = v as f32;
         }
-        if r.mode == R::Dimensions {
+        if matches!(r.mode, R::Dimensions | R::WidthHeight) {
             let mut h = r.height as f64;
             if num(ui, &SIZE_H, &mut h) {
                 r.height = h as u32;

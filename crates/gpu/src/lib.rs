@@ -498,12 +498,13 @@ pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &R
 }
 
 /// Whether the GPU renders requests of this kind at all (a given render can still fall back to
-/// the CPU): the kernel writes 8-bit output, so high-bit-depth exports and soft proofs render on
-/// the CPU, and so does Visualize HDR, which needs the float HDR render. [`try_render`] follows it,
-/// and the loupe sizes its slider-drag drafts by it (issue #330), so the two can't drift apart.
+/// the CPU): the kernel writes 8-bit output, so high-bit-depth exports render on the CPU, and so do
+/// soft proofs against an output-device profile (`device_proof`: its 3D table is CPU-side) and
+/// Visualize HDR, which needs the float HDR render. [`try_render`] follows it, and the loupe sizes
+/// its slider-drag drafts by it (issue #330), so the two can't drift apart.
 /// (The loupe's HDR picture has an entry of its own, [`try_render_hdr`].)
-pub fn handles(depth: lightcraft_pipeline::OutputDepth, proofed: bool, overlay: lightcraft_pipeline::Overlay) -> bool {
-    depth == lightcraft_pipeline::OutputDepth::U8 && !proofed && overlay != lightcraft_pipeline::Overlay::HdrRange
+pub fn handles(depth: lightcraft_pipeline::OutputDepth, device_proof: bool, overlay: lightcraft_pipeline::Overlay) -> bool {
+    depth == lightcraft_pipeline::OutputDepth::U8 && !device_proof && overlay != lightcraft_pipeline::Overlay::HdrRange
 }
 
 /// [`render`], reporting why this render made no GPU image: [`Fallback::NotTried`] when the GPU
@@ -517,7 +518,8 @@ pub fn try_render(
     req: &RenderRequest,
     stages: Option<&StageCache>,
 ) -> Result<Rendered, Fallback> {
-    if !handles(req.depth, req.proof.is_some(), req.overlay) {
+    let device_proof = req.proof.is_some_and(|p| lightcraft_pipeline::proof_profile(p.profile).is_some());
+    if !handles(req.depth, device_proof, req.overlay) {
         return Err(Fallback::NotTried);
     }
     attempt(src, info, s, req, stages).map(|(r, _)| r)

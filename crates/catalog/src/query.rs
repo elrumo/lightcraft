@@ -49,6 +49,10 @@ pub struct Filter {
     /// order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic: Option<String>,
+    /// Show nothing: an explicit empty result (Find Similar with no matches), since an empty
+    /// `only` means "no constraint".
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub only_none: bool,
     /// Any of these labels (the filter bar's multi-select); empty = no constraint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<ColorLabel>,
@@ -214,6 +218,17 @@ pub(crate) struct Prepared {
 }
 
 impl Filter {
+    /// The labels that `label` and `labels` let through together (they AND), in `labels`' order;
+    /// `None` when neither is set, empty when they exclude each other. The chip and the filter
+    /// bar's buttons show this, so they match what is filtered.
+    pub fn labels_shown(&self) -> Option<Vec<ColorLabel>> {
+        match (self.label, self.labels.is_empty()) {
+            (None, true) => None,
+            (Some(l), true) => Some(vec![l]),
+            (l, false) => Some(self.labels.iter().copied().filter(|x| l.is_none_or(|l| l == *x)).collect()),
+        }
+    }
+
     /// Human-readable summary of the active rules (smart album tooltips, `album.list`).
     pub fn describe(&self) -> String {
         self.describe_in(None)
@@ -371,6 +386,9 @@ impl Filter {
             return false;
         }
         if !self.labels.is_empty() && !p.label.is_some_and(|l| self.labels.contains(&l)) {
+            return false;
+        }
+        if self.only_none {
             return false;
         }
         if (self.semantic.is_some() || !self.only.is_empty())

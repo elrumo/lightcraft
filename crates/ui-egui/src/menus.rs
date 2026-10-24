@@ -15,20 +15,26 @@ pub use lightcraft_apphost::ui_commands::{UI_COMMANDS, UiCommand};
 /// has a matching menu command (also listed through the control channel). Tests check coverage.
 pub const LANGUAGE_COMMANDS: &[UiCommand] = &[
     ("app.language.english", crate::i18n::Locale::En.name(), None, "Edit>Language"),
-    ("app.language.simplifiedChinese", crate::i18n::Locale::ZhHans.name(), None, "Edit>Language"),
-    ("app.language.traditionalChinese", crate::i18n::Locale::ZhHant.name(), None, "Edit>Language"),
-    ("app.language.japanese", crate::i18n::Locale::Ja.name(), None, "Edit>Language"),
-    ("app.language.portuguese", crate::i18n::Locale::PtBr.name(), None, "Edit>Language"),
-    ("app.language.french", crate::i18n::Locale::Fr.name(), None, "Edit>Language"),
-    ("app.language.spanish", crate::i18n::Locale::Es.name(), None, "Edit>Language"),
+    // The picker order (`Locale::for_picker`): alphabetical by the language's own name after
+    // English; Cyrillic, Georgian, then CJK names follow the Latin ones. A test keeps them equal.
+    ("app.language.indonesian", crate::i18n::Locale::Id.name(), None, "Edit>Language"),
+    ("app.language.catalan", crate::i18n::Locale::Ca.name(), None, "Edit>Language"),
+    ("app.language.czech", crate::i18n::Locale::Cs.name(), None, "Edit>Language"),
     ("app.language.german", crate::i18n::Locale::De.name(), None, "Edit>Language"),
+    ("app.language.spanish", crate::i18n::Locale::Es.name(), None, "Edit>Language"),
+    ("app.language.french", crate::i18n::Locale::Fr.name(), None, "Edit>Language"),
+    ("app.language.italian", crate::i18n::Locale::It.name(), None, "Edit>Language"),
+    ("app.language.polish", crate::i18n::Locale::Pl.name(), None, "Edit>Language"),
+    ("app.language.portuguese", crate::i18n::Locale::PtBr.name(), None, "Edit>Language"),
+    ("app.language.finnish", crate::i18n::Locale::Fi.name(), None, "Edit>Language"),
+    ("app.language.swedish", crate::i18n::Locale::Sv.name(), None, "Edit>Language"),
+    ("app.language.vietnamese", crate::i18n::Locale::Vi.name(), None, "Edit>Language"),
     ("app.language.russian", crate::i18n::Locale::Ru.name(), None, "Edit>Language"),
     ("app.language.ukrainian", crate::i18n::Locale::Uk.name(), None, "Edit>Language"),
-    ("app.language.polish", crate::i18n::Locale::Pl.name(), None, "Edit>Language"),
-    ("app.language.czech", crate::i18n::Locale::Cs.name(), None, "Edit>Language"),
-    ("app.language.italian", crate::i18n::Locale::It.name(), None, "Edit>Language"),
     ("app.language.georgian", crate::i18n::Locale::Ka.name(), None, "Edit>Language"),
-    ("app.language.catalan", crate::i18n::Locale::Ca.name(), None, "Edit>Language"),
+    ("app.language.japanese", crate::i18n::Locale::Ja.name(), None, "Edit>Language"),
+    ("app.language.simplifiedChinese", crate::i18n::Locale::ZhHans.name(), None, "Edit>Language"),
+    ("app.language.traditionalChinese", crate::i18n::Locale::ZhHant.name(), None, "Edit>Language"),
 ];
 
 /// Every UI command: the languages, then everything else. `xtask parity` reads both tables from
@@ -56,6 +62,10 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
         "app.language.italian" => Some(crate::i18n::Locale::It),
         "app.language.georgian" => Some(crate::i18n::Locale::Ka),
         "app.language.catalan" => Some(crate::i18n::Locale::Ca),
+        "app.language.swedish" => Some(crate::i18n::Locale::Sv),
+        "app.language.finnish" => Some(crate::i18n::Locale::Fi),
+        "app.language.indonesian" => Some(crate::i18n::Locale::Id),
+        "app.language.vietnamese" => Some(crate::i18n::Locale::Vi),
         _ => None,
     }
 }
@@ -130,7 +140,7 @@ fn import_into_album(app: &mut LightcraftApp, p: &Value, r: Result<Value, String
 pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
     if let Some(s) = v.as_str() {
         let h = s.strip_prefix('#').unwrap_or(s);
-        if h.len() != 6 {
+        if h.len() != 6 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let c = |i: usize| u8::from_str_radix(h.get(i..i + 2)?, 16).ok();
@@ -325,12 +335,15 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "view.reference" => {
             // the reference: the one set before, else the active photo (the next one becomes active)
             let vis = app.session.visible_cloned();
-            let reference = app
-                .ui
-                .reference
-                .filter(|r| app.session.catalog.photo(lightcraft_catalog::PhotoId(*r)).is_some())
-                .or_else(|| app.session.active().map(|a| a.0));
-            let Some(r) = reference else { return Some(Err("select a photo to use as the reference".into())) };
+            let live = |id: u64| crate::panels::compare::live(app, lightcraft_catalog::PhotoId(id));
+            let active = app.session.active().map(|a| a.0);
+            let reference = app.ui.reference.filter(|r| live(*r)).or_else(|| active.filter(|a| live(*a)));
+            let Some(r) = reference else {
+                return Some(Err(match active {
+                    Some(a) => format!("photo {a} is in Recently Deleted: restore it to use it as the reference"),
+                    None => "select a photo to use as the reference".into(),
+                }));
+            };
             app.ui.reference = Some(r);
             if app.session.active().is_none_or(|a| a.0 == r)
                 && let Some(i) = vis.iter().position(|x| x.0 == r)
@@ -342,8 +355,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"reference": r, "active": app.session.active().map(|a| a.0)}))
         }
         "photo.setReference" => {
-            let id = p.get("id").and_then(Value::as_u64).or_else(|| app.session.active().map(|a| a.0));
-            app.ui.reference = id;
+            // only an absent (or null) `id` means the active photo; any other non-id is refused
+            let id = match p.get("id").filter(|v| !v.is_null()) {
+                Some(v) => match v.as_u64() {
+                    Some(id) => Some(id),
+                    None => return Some(Err(format!("photo.setReference: `id` must be a photo id, not {v}"))),
+                },
+                None => app.session.active().map(|a| a.0),
+            };
+            let Some(id) = id else { return Some(Err("select a photo to use as the reference".into())) };
+            match app.session.catalog.photo(lightcraft_catalog::PhotoId(id)) {
+                None => return Some(Err(format!("no photo {id}"))),
+                Some(p) if p.deleted => return Some(Err(format!("photo {id} is in Recently Deleted: restore it to use it as the reference"))),
+                Some(_) => {}
+            }
+            app.ui.reference = Some(id);
             Ok(json!({"reference": id}))
         }
         "compare.swap" => crate::panels::compare::swap(app),
@@ -399,7 +425,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 panel(app, &ctx, RightPanel::Crop, "Crop, Rotate, Geometry");
             } else if app.ui.view == ViewMode::People && app.ui.person_page.is_some() {
                 app.ui.person_page = None;
-            } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey) {
+            } else if matches!(app.ui.view, ViewMode::Compare | ViewMode::Survey | ViewMode::Reference) {
                 app.ui.view = ViewMode::Detail;
             } else if app.ui.view == ViewMode::Detail {
                 // a photo opened from a person's page (or the unnamed faces) goes back there, any other to the grid
@@ -475,6 +501,27 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             };
             app.toast(&ctx, crate::i18n::tr(label));
             Ok(json!({"infoOverlay": app.ui.info_overlay}))
+        }
+        "view.viewOptions" => {
+            // `info1` / `info2` set the lines for an agent; without them the window opens
+            let mut info = app.ui.settings.loupe_info;
+            let mut set = false;
+            for (key, lines) in [("info1", &mut info.info1), ("info2", &mut info.info2)] {
+                let Some(v) = p.get(key) else { continue };
+                match serde_json::from_value(v.clone()) {
+                    Ok(v) => *lines = v,
+                    Err(_) => {
+                        return Some(Err(format!("`{key}`: three of none|fileName|captureDate|dimensions|exposure|camera|lens|cameraAndLens")));
+                    }
+                }
+                set = true;
+            }
+            if set {
+                app.ui.settings.loupe_info = info;
+            } else {
+                app.ui.dialog = Some(Dialog::ViewOptions);
+            }
+            Ok(json!({"loupeInfo": app.ui.settings.loupe_info}))
         }
         "view.chooseLayoutImage" => {
             let path = match p.get("path").and_then(Value::as_str) {
@@ -843,6 +890,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
+        // A under the Crop panel: the aspect lock (the panel's button runs the same toggle)
+        "crop.lockAspect" => app.run("crop.aspect", json!({"aspect": "toggle"})),
         "view.cropOverlay" => {
             use crate::state::CropOverlay::*;
             app.ui.crop_overlay = match app.ui.crop_overlay {
@@ -1177,7 +1226,15 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dialog.captureTime" => {
-            let time = app.session.active().and_then(|id| app.session.catalog.photo(id)).map(|p| p.date().replace('T', " ")).unwrap_or_default();
+            // a time that doesn't fully read isn't offered as the starting point (`10:0` would read as midnight)
+            let time = app
+                .session
+                .active()
+                .and_then(|id| app.session.catalog.photo(id))
+                .map(|p| p.date())
+                .filter(|d| lightcraft_catalog::dates::shift_iso(d, 0).is_some())
+                .map(|d| d.replace('T', " "))
+                .unwrap_or_default();
             let mode = p.get("mode").and_then(Value::as_str).unwrap_or("set").to_string();
             app.ui.dialog =
                 Some(Dialog::CaptureTime { mode, time: time.get(..19).unwrap_or(&time).to_string(), days: 0, hours: 0, minutes: 0, zone: 0.0 });
@@ -1339,7 +1396,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "photo.editInExternal" => edit_in(app, &ctx, p, false),
         "photo.openOriginalInExternal" => open_original_in(app, &ctx, p),
         "dialog.cull" => {
-            app.ui.dialog = Some(Dialog::Cull { reject_below: 0.0, pick_best: true });
+            let (burst_gap, similarity) = app.ui.cull_burst.unwrap_or((10.0, 0.93));
+            app.ui.dialog = Some(Dialog::Cull { reject_below: 0.0, pick_best: true, burst_gap, similarity });
             Ok(Value::Null)
         }
         "app.whatsNew" => {
@@ -1401,6 +1459,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         // a Lightroom cloud catalog (.mcat, .lrlibrary) always gives only its albums
         "file.importLightroom" | "file.importLightroomAlbums" => {
             let albums_only = id == "file.importLightroomAlbums";
+            // where the catalog goes (#2672): checked before a file dialog opens
+            let dest = match crate::lightroom_destination::Request::parse(p) {
+                Ok(dest) => dest,
+                Err(e) => return Some(Err(e)),
+            };
             let path = match p.get("path").and_then(Value::as_str).map(str::to_string) {
                 Some(path) => Some(path),
                 None => {
@@ -1413,7 +1476,9 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 }
             };
             match path {
-                Some(path) => app.run("library.importLightroom", json!({"path": path, "albumsOnly": albums_only})),
+                // (albums only go into the open library: no destination to ask about)
+                Some(path) if albums_only => app.run("library.importLightroom", json!({"path": path, "albumsOnly": true})),
+                Some(path) => crate::lightroom_destination::import(app, &path, &dest),
                 None => Ok(Value::Null),
             }
         }
@@ -2030,6 +2095,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "app.export" => crate::control::export_active(app, p),
         "photo.renderToDng" => return crate::render_dng_task::start(app, p),
         "app.showInFinder" => show_in_finder(app),
+        "app.showInFolders" => show_in_folders(app, p.get("id").and_then(Value::as_u64).map(lightcraft_catalog::PhotoId)),
         "app.openLogFolder" => open_log_folder(app),
         "app.discord" | "app.website" | "app.github" | "app.artcraft" | "app.help" | "app.feedback" => {
             let url = crate::links::url_of(id).unwrap_or(crate::links::WEBSITE);
@@ -2098,6 +2164,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
                     .and_then(|id| app.session.catalog.photo(id))
                     .is_some_and(|p| matches!(p.source, lightcraft_engine::catalog::Source::File { .. }))
         }
+        "app.showInFolders" => show_in_folders_enabled(app, None),
         "app.openSamModelFolder" => app.session.segmenter.dir.is_some() && app.services.open_with.is_some(),
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
         "file.exportMaskEffects" => !app.session.mask_effects.is_empty(),
@@ -2238,6 +2305,39 @@ fn show_in_finder(app: &mut LightcraftApp) -> Result<Value, String> {
     Ok(json!({"path": path}))
 }
 
+/// The folder the active photo was imported from, as the sidebar's Folders section counts it (a
+/// photo straight in a disk's root is in the root). `None` for a demo scene, a photo only browsed
+/// in Local or in Recently Deleted, and one on the startup disk's root, which has no row to show.
+fn photo_folder(app: &LightcraftApp, id: Option<lightcraft_catalog::PhotoId>) -> Option<String> {
+    let photo = id.or_else(|| app.session.active()).and_then(|id| app.session.catalog.photo(id)).filter(|p| p.in_library())?;
+    let lightcraft_engine::catalog::Source::File { path } = &photo.source else { return None };
+    let dir = path.rfind(['/', '\\']).and_then(|i| path.get(..i.max(1)))?;
+    (!lightcraft_catalog::folders::is_startup_disk(dir)).then(|| dir.to_string())
+}
+
+/// Whether Show in Folders has a row to show for photo `id` (the active one when `None`): its
+/// folder must be a row of the tree, which stops `MAX_DEPTH` levels down. With no fresh tree to
+/// look in, the folder alone decides, and the command still checks.
+pub fn show_in_folders_enabled(app: &LightcraftApp, id: Option<lightcraft_catalog::PhotoId>) -> bool {
+    let Some(dir) = photo_folder(app, id) else { return false };
+    app.caches.folder_tree_if_fresh(&app.session.catalog).is_none_or(|tree| crate::panels::left::folder_row_of(&tree, &dir).is_some())
+}
+
+/// Photo ▸ Show in Folders (Lightroom's Go to Folder in Library): show the folder of photo `id`
+/// (the active one when `None`; the grid's menu passes the photo right-clicked) as a click on its
+/// row in the sidebar's Folders section does, and bring the row into view: the sidebar, the
+/// section and the folders above it open, and it scrolls there (`reveal_folder`).
+fn show_in_folders(app: &mut LightcraftApp, id: Option<lightcraft_catalog::PhotoId>) -> Result<Value, String> {
+    let dir = photo_folder(app, id).ok_or("this photo is not in a folder of the library")?;
+    let tree = app.caches.folder_tree(&app.session.catalog);
+    // the row's own spelling (forward slashes): what its click hands `library.source`, and its id
+    let path = crate::panels::left::folder_row_of(&tree, &dir).map(|n| n.path.clone()).ok_or("this photo's folder is not in Folders")?;
+    app.run("library.source", json!({"kind": "libraryFolder", "path": path}))?;
+    app.ui.left_panel = true;
+    app.ui.reveal_folder = Some(path.clone());
+    Ok(json!({"path": path}))
+}
+
 /// Photo ▸ Edit In: render a copy of each selected photo with its edits (stacked on its original)
 /// as Settings ▸ External Editing asks for that editor, then open them there. When every selected
 /// photo is an image file (not a raw), the Edit Photo dialog asks first whether to edit that copy, a
@@ -2245,7 +2345,14 @@ fn show_in_finder(app: &mut LightcraftApp) -> Result<Value, String> {
 /// original) answers it. `p` may also override the file (`format`, `colorSpace`, `bitDepth`) and
 /// the editor (`app`). The editor is checked first, so a missing one leaves no copy behind. The
 /// files opened are watched for what the editor saves ([`LightcraftApp::check_external_edits`]).
+/// Once the copies exist, an editor that won't open them is reported in the result's `failed` (and
+/// a toast), not as an error.
 fn edit_in(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: bool) -> Result<Value, String> {
+    // every way in (menu, shortcut, context menu, the control channel) says why nothing opened
+    edit_in_inner(app, ctx, p, photocraft).inspect_err(|e| app.toast(ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e)))
+}
+
+fn edit_in_inner(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: bool) -> Result<Value, String> {
     let settings = &app.ui.settings;
     let (file, configured) = if photocraft {
         let path = settings.photocraft_path.trim();
@@ -2254,11 +2361,8 @@ fn edit_in(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: 
         (settings.external_file, settings.external_editor.clone())
     };
     let editor = p.get("app").and_then(Value::as_str).map_or(configured, str::to_string);
-    if let Some(check) = app.services.check_editor.as_ref()
-        && let Err(e) = check(&editor)
-    {
-        app.toast(ctx, e.clone());
-        return Err(e);
+    if let Some(check) = app.services.check_editor.as_ref() {
+        check(&editor)?;
     }
     if p.get("mode").is_none() && edits_image_files(app) {
         app.ui.dialog = Some(Dialog::EditIn { photocraft, mode: app.ui.settings.edit_in_mode });
@@ -2293,9 +2397,18 @@ fn edit_in(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: 
         }
     }
     let original = r["mode"] == "original";
-    match (failed, copies.as_slice()) {
-        (Some(e), _) => app.toast(ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e)),
-        (None, [path]) => {
+    let mut r = r;
+    if let Some(o) = r.as_object_mut() {
+        o.insert("failed".into(), json!(failed));
+    }
+    if let Some(e) = failed {
+        // the copies are in the library already (one undo step): an error would invite a retry
+        // that makes another set, so the result says what failed and the toast says why
+        app.toast(ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e));
+        return Ok(r);
+    }
+    match copies.as_slice() {
+        [path] => {
             let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             if original {
                 app.toast(ctx, crate::i18n::tr_format!("{name} opened for editing", name = name));
