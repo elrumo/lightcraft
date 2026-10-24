@@ -1479,6 +1479,12 @@ fn file_modified(path: &str) -> Option<String> {
     Some(crate::import::civil(secs))
 }
 
+/// Whether the process runs in the macOS App Sandbox (it names its container in the environment).
+#[cfg(target_os = "macos")]
+fn sandboxed() -> bool {
+    std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
+}
+
 impl crate::Session {
     /// Install the filesystem file hooks (desktop, CLI, MCP headless), and on macOS the Apple Photos
     /// runner ([`crate::apple_photos::osascript`]; installed, not run).
@@ -1489,9 +1495,13 @@ impl crate::Session {
         self.media.file_probe = Some(p);
         self.media.preview_loader = Some(fs_preview_loader());
         self.media.denoise.loader = Some(fs_pair_loader());
+        // (not in a sandboxed app, the Mac App Store's: macOS gives it no Apple Events to Photos, so the runner would only
+        // fail after the Automation prompt that can't be answered; the app adds to Photos itself, or has no such button)
         #[cfg(target_os = "macos")]
         {
-            self.apple_photos = Some(crate::apple_photos::osascript());
+            if !sandboxed() {
+                self.apple_photos = Some(crate::apple_photos::osascript());
+            }
         }
         self
     }

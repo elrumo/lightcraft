@@ -45,6 +45,13 @@ pub const EXTENSIONS: &[&str] = &[
     "mp4", "m4v", "mov",
 ];
 
+/// The camera raw formats among [`EXTENSIONS`] (lower case): sensor data, or for some a preview only (see there).
+/// `library.importFormats` reports them to a file picker.
+pub const RAW_EXTENSIONS: &[&str] = &[
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "rw2", "rwl", "raw", "pef", "srw", "iiq", "crw", "mrw", "x3f", "kdc",
+    "mos", "erf", "3fr", "fff", "mef",
+];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImportMode {
     /// Reference the files where they are.
@@ -1790,6 +1797,28 @@ impl Session {
 #[cfg(test)]
 #[path = "import/tests_known.rs"]
 mod tests_known;
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    /// A file picker asks `library.importFormats` for what Import takes: every raw format is an import extension,
+    /// listed once, and the command says exactly what the constants do.
+    #[test]
+    fn the_formats_command_lists_the_import_extensions_and_the_raw_ones_among_them() {
+        let mut seen = std::collections::HashSet::new();
+        for e in RAW_EXTENSIONS {
+            assert!(EXTENSIONS.contains(e), "{e} is a raw format but not an import extension");
+            assert!(seen.insert(*e), "{e} listed twice");
+            assert_eq!(*e, e.to_lowercase());
+        }
+        let r = Session::new().execute("library.importFormats", &serde_json::json!({})).unwrap();
+        let list = |k: &str| -> Vec<String> { r[k].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect() };
+        assert_eq!(list("extensions"), EXTENSIONS);
+        assert_eq!(list("raw"), RAW_EXTENSIONS);
+        assert!(list("raw").iter().all(|e| list("extensions").contains(e)));
+    }
+}
 
 #[cfg(test)]
 mod prepared_tests {

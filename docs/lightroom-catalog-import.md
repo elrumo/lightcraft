@@ -200,13 +200,28 @@ when the photo has no edits in the library yet:
   as `<name>.xmp` (the library's sidecar naming), so other programs and a later *Read Metadata from File*
   see it. A sidecar already there is never replaced.
 
-On a library synced with `lightcraft-server` the edit travels like any other, and the server writes the
-sidecar beside the photo in a folder an admin made writable ([sync.md](sync.md)); photos the server holds
-in its own store have no folder, so the edit is all they get. A photo that has edits here keeps them
-(`editsKept`). The report adds `edits`, `editsKept`, `editsUnavailable` (named in the catalog, but the
-file isn't in `settings/`: Lightroom keeps only some on the computer), `editsCropHeld` and `sidecars`.
-A crop waits (`editsCropHeld`): the stored image's orientation isn't read, so it stays out of the edit
-(the copied sidecar carries it for Read Metadata from File).
+On a library synced with `lightcraft-server`, a photo that has no file on this computer gets its edit as an
+ordinary change and, as a file, `PUT /api/companions/<content hash>?name=<file name>`: the server keeps it under
+`blobs/companion/<hash>/` and puts it beside the photo when a library folder it may write in holds the photo
+(never over a file that is there, either sidecar naming); a photo only in the server's own store has no folder,
+so the file waits until the photo is filed into the imports folder. The scan then finds a new edit file as a
+photo. A photo that has edits here keeps them (`editsKept`). The report adds `edits`, `editsKept`,
+`editsUnavailable` (named in the catalog, but the file isn't in `settings/`: Lightroom keeps only some on the
+computer), `editsCropHeld` and `sidecars`.
+
+The crop is in the stored image's frame, which is the file's EXIF orientation (the catalog's
+`xmp.tiff.Orientation`, in words such as `right top`) and the photo's size; a photo whose catalog says no
+orientation has its crop left out (`editsCropHeld`), the sidecar beside it still carries it.
+
+### Photoshop edits
+
+*Edit in Photoshop* leaves `IMG_0001-Edit.tif` / `.psb` (also `-Edit-2`, `.psd`, `.jpg`, `.png`) in the catalog's
+`originals` folder and in the library's `TemporaryEdits` folder
+(`crates/engine/src/lightroom_companions.rs`). Each is put in the folder of the library photo of the same name
+(the only one: a name several photos have is left, `editFilesUnmatched`), or sent to the server that holds that
+photo the same way as a sidecar. A file of that name there already stays (`editFilesKept`), and a file that
+couldn't be put there is counted in `editFilesFailed`. The file is a new photo the next time the folder is
+browsed or scanned, as Lightroom shows it beside the original.
 
 Each Lightroom photo is matched to a library photo (not deleted, not only browsed, not a virtual copy;
 `crates/engine/src/lightroom_albums.rs`), never guessed:

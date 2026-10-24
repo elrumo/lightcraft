@@ -19,7 +19,8 @@ use lightcraft_catalog::{Album, AlbumId, Filter, Op, PhotoId, RuleSet};
 use serde_json::{Value, json};
 
 use crate::lightroom_catalog::{ImportIndex, path_key};
-use crate::sidecar::SidecarNaming;
+use crate::lightroom_companions::{EditFile, Server};
+use crate::sidecar::{SidecarNaming, StoredFrame};
 
 /// A catalog's albums, their photos and what identifies each photo's file.
 #[derive(Clone, Debug, Default)]
@@ -72,6 +73,8 @@ pub struct PhotoIdentity {
     pub dims: Option<(u32, u32)>,
     /// Where the original is (Classic catalogs).
     pub path: Option<String>,
+    /// The file's EXIF orientation (1 to 8), when the catalog says.
+    pub orientation: Option<u16>,
 }
 
 /// A capture time to the second as `YYYYMMDDHHMMSS`, from any ISO 8601 or EXIF spelling (its first
@@ -374,6 +377,15 @@ pub(crate) fn album_ops(
     (ops, counts)
 }
 
+/// What goes with the photos besides the albums: where the catalog keeps develop settings, the edit files
+/// found beside it, and the server (when the library syncs with one).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Extras<'a> {
+    pub(crate) settings_dir: Option<&'a Path>,
+    pub(crate) edit_files: &'a [EditFile],
+    pub(crate) server: Option<&'a Server>,
+}
+
 /// Albums-only work prepared off the owner thread: the albums with the library photos that matched.
 #[derive(Clone, Debug)]
 pub struct AlbumPlan {
@@ -385,23 +397,40 @@ pub struct AlbumPlan {
     /// The photos albums hold that the library lacks (or has twice over), by name.
     pub(crate) missing: Vec<Value>,
     /// Lightroom's develop settings for matched photos that have no edits here: the XMP packets.
-    pub(crate) develop: Vec<(PhotoId, String)>,
+    pub(crate) develop: Vec<DevelopEdit>,
     pub(crate) edits: EditCounts,
 }
 
-/// What came of the develop settings of the matched photos.
+/// A photo's Lightroom develop settings, with the stored image's frame their crop is in (when the catalog
+/// says how the file is oriented).
+#[derive(Clone, Debug)]
+pub(crate) struct DevelopEdit {
+    pub(crate) id: PhotoId,
+    pub(crate) packet: String,
+    pub(crate) frame: Option<StoredFrame>,
+}
+
+/// What came of the develop settings and edit files of the matched photos.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct EditCounts {
     /// Applied as the photo's edit.
     pub(crate) applied: usize,
     /// Left alone: the photo has edits here already.
     pub(crate) kept: usize,
-    /// Copied beside the original as its `.xmp` sidecar.
+    /// Put beside the photo as its `.xmp` sidecar (a copy on this disk, or sent to the server).
     pub(crate) sidecars: usize,
     /// The catalog names settings that aren't in the library's `settings` folder (or can't be read).
     pub(crate) unavailable: usize,
-    /// Applied without the crop: the file's orientation isn't known here.
+    /// Applied without the crop: the catalog doesn't say how the file is oriented.
     pub(crate) crop_held: usize,
+    /// Edit files (`IMG_1-Edit.tif`) put beside their photo or sent to the server.
+    pub(crate) files: usize,
+    /// Edit files already beside their photo.
+    pub(crate) files_kept: usize,
+    /// Edit files with no photo to go beside (none, several, or nowhere to put it).
+    pub(crate) files_unmatched: usize,
+    /// Edit files that couldn't be put there.
+    pub(crate) files_failed: usize,
 }
 
 /// The largest settings packet read (they are a few KB).
@@ -420,15 +449,52 @@ fn packet_of(source: &DevelopSource, settings_dir: Option<&Path>) -> Option<Stri
     }
 }
 
+/// Where a photo's companion files go: beside its original when that is a file on this disk, else to the
+/// server that holds it (by content hash).
+enum Place<'a> {
+    Beside(&'a str),
+    Server(&'a str),
+}
+
+fn place_of<'a>(photo: &'a LibraryPhoto, server: Option<&Server>) -> Option<Place<'a>> {
+    match (&photo.file, &photo.hash) {
+        (Some((original, _)), _) if Path::new(original).is_file() => Some(Place::Beside(original)),
+        (_, Some(hash)) if server.is_some() => Some(Place::Server(hash)),
+        _ => None,
+    }
+}
+
+/// Copy `src` into the folder of `original` as `name`; `Ok(false)`: a file of that name is there already.
+fn copy_beside(src: &Path, original: &str, name: &str) -> Result<bool, String> {
+    let dir = Path::new(original).parent().ok_or("the original has no folder")?;
+    let (target, temp) = (dir.join(name), dir.join(format!(".{name}.lightcraft-part")));
+    if target.exists() {
+        return Ok(false);
+    }
+    let err = |e: std::io::Error| format!("{}: {e}", target.display());
+    std::fs::copy(src, &temp).map_err(err)?;
+    if target.exists() {
+        let _ = std::fs::remove_file(&temp);
+        return Ok(false);
+    }
+    std::fs::rename(&temp, &target).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        err(e)
+    })?;
+    Ok(true)
+}
+
 /// Lightroom's develop settings for the matched photos that have no edits here, read off the owner
-/// thread, and (a copy, never replacing a sidecar) written beside the originals on this disk.
+/// thread, and put (a copy, never replacing a sidecar) beside the originals: on this disk, or sent to the
+/// server for photos it holds.
 fn develop_of(
     source: &AlbumSource,
     matches: &HashMap<String, PhotoId>,
     library: &[LibraryPhoto],
     settings_dir: Option<&Path>,
+    server: Option<&Server>,
     cancel: &AtomicBool,
-) -> (Vec<(PhotoId, String)>, EditCounts) {
+) -> (Vec<DevelopEdit>, EditCounts) {
     let by_id: HashMap<PhotoId, &LibraryPhoto> = library.iter().map(|p| (p.id, p)).collect();
     let mut counts = EditCounts::default();
     let mut out = Vec::new();
@@ -449,16 +515,75 @@ fn develop_of(
             counts.unavailable += 1;
             continue;
         };
-        if let Some((original, naming)) = &photo.file
-            && Path::new(original).is_file()
-            && crate::sidecar::find_sidecar(original, *naming).is_none()
-            && lightcraft_catalog::safe_file::write_atomic(&crate::sidecar::sidecar_path(original, *naming), packet.as_bytes()).is_ok()
-        {
-            counts.sidecars += 1;
+        match place_of(photo, server) {
+            Some(Place::Beside(original)) => {
+                let naming = photo.file.as_ref().map(|(_, n)| *n).unwrap_or_default();
+                if crate::sidecar::find_sidecar(original, naming).is_none()
+                    && lightcraft_catalog::safe_file::write_atomic(&crate::sidecar::sidecar_path(original, naming), packet.as_bytes()).is_ok()
+                {
+                    counts.sidecars += 1;
+                }
+            }
+            Some(Place::Server(hash)) => {
+                // (the server puts it beside the photo, or keeps it for when the photo is filed into a folder)
+                let temp = std::env::temp_dir().join(format!("lightcraft-lr-{}-{}.xmp", std::process::id(), id.0));
+                if std::fs::write(&temp, packet.as_bytes()).is_ok() {
+                    let sent = server.map(|s| s.put_companion(hash, &format!("{}.xmp", photo.stem), &temp));
+                    counts.sidecars += usize::from(matches!(sent, Some(Ok(()))));
+                    let _ = std::fs::remove_file(&temp);
+                }
+            }
+            None => {}
         }
-        out.push((*id, packet));
+        // the crop is in the stored image's frame: the file's orientation (the catalog's words) and its shown size
+        let frame = source
+            .photos
+            .get(key)
+            .and_then(|p| p.orientation)
+            .filter(|_| photo.dims.0 > 0 && photo.dims.1 > 0)
+            .and_then(|o| StoredFrame::of_shown(lightcraft_geom::Orientation::from_exif(o), f64::from(photo.dims.0), f64::from(photo.dims.1)));
+        out.push(DevelopEdit { id: *id, packet, frame });
     }
     (out, counts)
+}
+
+/// Put each edit file beside the library photo it came from (the one photo with its name), or send it to the
+/// server that holds that photo; never over a file that is there.
+fn place_edit_files(files: &[EditFile], library: &[LibraryPhoto], server: Option<&Server>, cancel: &AtomicBool, counts: &mut EditCounts) {
+    let mut by_stem: HashMap<&str, Vec<&LibraryPhoto>> = HashMap::new();
+    for p in library.iter().filter(|p| crate::lightroom_companions::original_stem(&format!("{}.tif", p.stem)).is_none()) {
+        by_stem.entry(&p.stem).or_default().push(p);
+    }
+    for file in files {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let candidates = by_stem.get(file.original_stem.as_str()).map(Vec::as_slice).unwrap_or_default();
+        let Found::One(id) = pick(candidates) else {
+            counts.files_unmatched += 1;
+            continue;
+        };
+        let Some(photo) = candidates.iter().find(|p| p.id == id) else { continue };
+        match place_of(photo, server) {
+            Some(Place::Beside(original)) => match copy_beside(&file.path, original, &file.name) {
+                Ok(true) => counts.files += 1,
+                Ok(false) => counts.files_kept += 1,
+                Err(e) => {
+                    log::warn!("Lightroom edit file {}: {e}", file.name);
+                    counts.files_failed += 1;
+                }
+            },
+            Some(Place::Server(hash)) => match server.map(|s| s.put_companion(hash, &file.name, &file.path)) {
+                Some(Ok(())) => counts.files += 1,
+                Some(Err(e)) => {
+                    log::warn!("Lightroom edit file {}: {e}", file.name);
+                    counts.files_failed += 1;
+                }
+                None => counts.files_unmatched += 1,
+            },
+            None => counts.files_unmatched += 1,
+        }
+    }
 }
 
 /// The most photos the result lists by name.
@@ -501,9 +626,10 @@ fn missing_photos(source: &AlbumSource, matches: &HashMap<String, PhotoId>, libr
 impl AlbumPlan {
     /// Match the photos of `source`'s albums against `library`; `settings_dir` is where the catalog's
     /// develop settings files are (cloud catalogs).
-    pub(crate) fn new(source: AlbumSource, library: &[LibraryPhoto], settings_dir: Option<&Path>, cancel: &AtomicBool) -> Self {
+    pub(crate) fn new(source: AlbumSource, library: &[LibraryPhoto], extras: Extras<'_>, cancel: &AtomicBool) -> Self {
         let (matches, counts) = match_photos(&source, library);
-        let (develop, edits) = develop_of(&source, &matches, library, settings_dir, cancel);
+        let (develop, mut edits) = develop_of(&source, &matches, library, extras.settings_dir, extras.server, cancel);
+        place_edit_files(extras.edit_files, library, extras.server, cancel, &mut edits);
         let members = source
             .members
             .iter()
@@ -523,16 +649,15 @@ impl AlbumPlan {
         self.warnings.extend(made.warnings.iter().cloned());
         // the settings only go to photos still without edits, and only what is left of the plan
         let mut edits = self.edits;
-        for (id, packet) in std::mem::take(&mut self.develop) {
+        for DevelopEdit { id, packet, frame } in std::mem::take(&mut self.develop) {
             let Some(photo) = s.catalog.photo(id).filter(|p| p.in_library() && p.edited.is_none()) else { continue };
             let Ok(mut sc) = crate::sidecar::parse_sidecar(&packet, crate::crs::Target::for_photo(photo)) else {
                 edits.unavailable += 1;
                 continue;
             };
             if sc.needs_frame() {
-                // ponytail: the stored image's orientation isn't read here, so a crop waits for
-                // Read Metadata from File (the sidecar copied beside the photo carries it)
-                sc.set_frame(None);
+                // (without the catalog's orientation the crop is left out: the sidecar beside the photo keeps it)
+                sc.set_frame(frame);
                 edits.crop_held += usize::from(sc.hold_unframed_crop().is_some());
             }
             if let Ok(Op::Batch { ops: changes }) = s.sidecar_op(id, sc)
@@ -564,6 +689,10 @@ impl AlbumPlan {
             "editsUnavailable": edits.unavailable,
             "editsCropHeld": edits.crop_held,
             "sidecars": edits.sidecars,
+            "editFiles": edits.files,
+            "editFilesKept": edits.files_kept,
+            "editFilesUnmatched": edits.files_unmatched,
+            "editFilesFailed": edits.files_failed,
             "warnings": self.warnings,
         }))
     }
@@ -588,7 +717,7 @@ mod tests {
     }
 
     fn identity(name: &str, size: Option<u64>, captured: &str, dims: Option<(u32, u32)>) -> PhotoIdentity {
-        PhotoIdentity { name: name.into(), size, captured: second(captured), dims, path: None }
+        PhotoIdentity { name: name.into(), size, captured: second(captured), dims, path: None, orientation: None }
     }
 
     fn source(photos: Vec<(&str, PhotoIdentity)>) -> AlbumSource {

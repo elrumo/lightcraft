@@ -163,6 +163,11 @@ impl Index {
         keys.iter().filter_map(|k| Some((self.path_of(k)?, self.files.get(k)?))).map(|(p, e)| (p, e.size, e.mtime)).collect()
     }
 
+    /// The keys of the files holding content `hash`.
+    pub fn keys_of(&self, hash: &str) -> &[String] {
+        self.by_hash.get(hash).map(Vec::as_slice).unwrap_or(&[])
+    }
+
     /// Has a photo file with content `hash` (the server needs no upload of it).
     pub fn has(&self, hash: &str) -> bool {
         self.by_hash.contains_key(hash)

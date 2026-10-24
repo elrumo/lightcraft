@@ -679,15 +679,6 @@ main > section { animation: enter 0.18s ease-out; }
 .sched .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .sched select, .sched input[type=time] { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--heading); }
 
-.models { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
-.models li { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
-.models .what { display: flex; flex-direction: column; min-width: min(12rem, 100%); flex: 1 1 12rem; overflow-wrap: anywhere; }
-.models .what b { color: var(--heading); }
-.models .ok { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-weight: 600; }
-.models .meter { flex: 1 0 100%; }
-.models .mem { flex: 1 0 100%; display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 12.5px; }
-.models .mem::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); opacity: .5; }
-.models .mem.on::before { background: var(--positive); opacity: 1; }
 #dash [data-view="processing"] .btn-row { margin-top: 14px; }
 
 /* the Videos panel: a drop-down like a text box, and the failed list */
@@ -708,3 +699,104 @@ main > section { animation: enter 0.18s ease-out; }
 .failures li { flex-wrap: wrap; }
 .failures .muted { flex: 1 1 100%; overflow-wrap: anywhere; }
 #vdPanel form h3 { margin-top: 20px; }
+
+/* ============================================================ Processing: a wide page of jobs */
+/* the page takes the room a big screen has; the other pages keep their reading width */
+main:has(> [data-view="processing"]:not([hidden])) { max-width: 1840px; }
+[data-view="processing"] .page-head { align-items: flex-start; }
+[data-view="processing"] .lead { max-width: 62ch; font-size: 15px; }
+.mem-note { max-width: 36ch; font-size: 13px; text-align: right; margin-top: 8px; }
+
+/* states, one set of colours for the strip and the cards: blue works, green is done, amber waits for you, red is wrong */
+.chip { display: inline-flex; align-items: center; gap: 7px; height: 24px; padding: 0 10px 0 9px; border-radius: 12px; font-size: 12.5px; font-weight: 600; white-space: nowrap; background: var(--fill); color: var(--text-2); --c: var(--text-3); }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.chip.on { --c: var(--accent); background: var(--accent-subtle); color: var(--accent-text); }
+.chip.on::before { animation: breathe-c 1.6s ease-out infinite; }
+.chip.idle { --c: var(--positive); background: var(--positive-subtle); color: var(--positive); }
+.chip.paused { --c: var(--notice); background: color-mix(in srgb, var(--notice) 14%, transparent); color: var(--text); }
+.chip.stuck { --c: var(--negative); background: var(--negative-subtle); color: var(--negative-text); }
+.chip.off::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--c); }
+@keyframes breathe-c { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 55%, transparent); } to { box-shadow: 0 0 0 6px transparent; } }
+@media (prefers-reduced-motion: reduce) { .chip.on::before { animation: none; } }
+
+/* the strip: every job in one glance, each a button to its card */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-bottom: 24px; overflow: hidden; border-radius: 16px; background: var(--line); box-shadow: var(--shadow); }
+@media (min-width: 640px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1240px) { .tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.tile { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 16px 18px 22px; border: 0; background: var(--surface); font: inherit; text-align: left; color: var(--text); cursor: pointer; transition: background-color 0.13s; }
+.tile:hover { background: var(--fill); }
+.tile:focus-visible { outline-offset: -3px; }
+.tile .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.tile-name { font-weight: 600; color: var(--text-2); }
+.tile-pct { font-size: 32px; line-height: 1.1; font-weight: 650; letter-spacing: -0.02em; color: var(--heading); font-variant-numeric: tabular-nums; }
+.tile.off .tile-pct { color: var(--text-3); }
+.tile-note { min-height: 20px; font-size: 13px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tile-bar { position: absolute; inset: auto 0 0 0; height: 4px; background: var(--track); overflow: hidden; }
+.tile-bar i { display: block; height: 100%; background: var(--text-3); transition: width 0.4s ease; }
+.tile.on .tile-bar i { background: var(--accent); }
+.tile.idle .tile-bar i { background: var(--positive); }
+.tile.paused .tile-bar i { background: var(--notice); }
+.tile.stuck .tile-bar i { background: var(--negative); }
+.tile-bar.busy::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 30%; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 70%, transparent), transparent); animation: slide 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .tile-bar.busy::after { display: none; } }
+
+/* the cards: as many columns as fit, equal height in a row, the model always at the foot */
+.jobs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 20px; }
+.job { display: flex; flex-direction: column; gap: 16px; padding: 22px 24px 20px; scroll-margin-top: 16px; }
+.job-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.job-head h2 { font-size: 17px; font-weight: 650; margin: 0 0 2px; }
+.job-sub { max-width: 58ch; font-size: 13px; line-height: 1.45; color: var(--text-3); }
+.job-sub:empty { display: none; }
+.job-head .switch { flex: none; }
+.job-head .switch input { margin: 2px 0 0; }
+.fig-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 10px; }
+.fig-pct { font-size: 30px; line-height: 1.1; font-weight: 650; letter-spacing: -0.02em; color: var(--heading); font-variant-numeric: tabular-nums; }
+.fig-count { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.fig-row .chip { margin-left: auto; align-self: center; }
+.job-detail { margin: -6px 0 0; font-size: 13px; color: var(--text-3); }
+.job-detail:empty { display: none; }
+.job-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.job .sched { margin: 0; }
+.job .sched .row { margin-top: 4px; }
+.job .fetch { margin: 0; }
+.job .alert { margin: 0; }
+.job .help { font-size: 12.5px; color: var(--text-3); }
+.job .building { margin: 0; }
+.job h3 { margin: 4px 0 0; font-size: 14px; }
+.kvs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 16px; padding: 14px 0; border-block: 1px solid var(--line); font-size: 13px; }
+.kvs > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.kvs span { color: var(--text-3); }
+.kvs b { font-weight: 600; color: var(--heading); overflow-wrap: anywhere; }
+.job .limits-grid { margin-top: 4px; }
+
+/* a part of a card that folds away */
+.fold > summary { display: flex; align-items: center; gap: 8px; padding: 2px 0; list-style: none; cursor: pointer; font-weight: 600; color: var(--text-2); user-select: none; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before { content: ""; width: 6px; height: 6px; margin: 0 4px 2px 2px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform 0.15s; }
+.fold[open] > summary::before { transform: rotate(45deg); margin-bottom: 4px; }
+.fold > summary:hover { color: var(--heading); }
+.fold > :not(summary) { margin-top: 12px; }
+.fold + .fold { margin-top: -8px; }
+
+/* the buttons of a card: the switch, then the schedule, small and quiet */
+.job .sched .row { gap: 6px; }
+.job .sched select, .job .sched input[type=time] { width: auto; height: 32px; padding: 0 12px; border: 0; border-radius: 16px; background: var(--fill-hover); font-weight: 600; font-size: 13px; }
+.job .sched input[type=time] { padding: 0 8px; }
+.job .sched .live { margin-bottom: 6px; }
+.job .sched .eta { margin-bottom: 6px; }
+
+/* the model: one line at the foot of its card */
+.model { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; font-size: 13px; }
+.model-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 240px; overflow-wrap: anywhere; }
+.model-info b { color: var(--heading); font-weight: 600; font-size: 14px; }
+.model .mem { display: flex; align-items: center; gap: 8px; margin-top: 3px; color: var(--text-3); font-size: 12.5px; }
+.model .mem::before { content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); opacity: .5; }
+.model .mem.on::before { background: var(--positive); opacity: 1; }
+.model-actions { display: flex; align-items: center; gap: 2px; margin-right: -8px; }
+.btn.quiet.danger:hover { background: var(--negative-subtle); color: var(--negative-text); }
+.job > .help + .model, .job > .fold + .model { margin-top: auto; }
+
+@media (max-width: 760px) {
+  .mem-note { text-align: left; max-width: none; margin-top: 0; }
+  .job { padding: 18px 18px 16px; }
+}

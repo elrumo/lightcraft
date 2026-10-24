@@ -323,15 +323,17 @@
 
     <!-- Processing -->
     <section data-view="processing" hidden>
-      <div class="page-head"><div><h1>Processing</h1><p class="lead">What the server does with your users' photos in the background so their devices don't have to: build previews, find photos by description, by the words printed in them and by the people in them, and flag the ones that might be sensitive. The AI models are downloaded once onto this server.</p></div></div>
-      <div class="columns">
-        <section class="panel">
-          <h2>Previews</h2>
-          <p id="pvCover" class="cover"></p>
-          <p class="muted" id="pvText"></p>
-          <div class="meter" id="pvBar"><div></div></div>
+      <div class="page-head"><div><h1>Processing</h1><p class="lead">What the server does in the background so your users' devices don't have to: previews, lighter videos, and finding photos by description, by the words in them and by the people in them.</p></div><p class="muted mem-note" id="mmMemory"></p></div>
+      <div class="tiles" id="jobTiles" role="list" aria-label="Background jobs"></div>
+      <div class="jobs">
+        <section class="panel job" id="job-pv">
+          <header class="job-head">
+            <div><h2>Previews</h2><p class="job-sub">The smaller copies devices show instead of the originals. One user's can be built from their Folders page.</p></div>
+          </header>
+          <div class="fig" id="pvFig"></div>
+          <p class="job-detail" id="pvText"></p>
           <ul class="building" id="pvNow"></ul>
-          <div class="btn-row">
+          <div class="job-actions">
             <button type="button" class="btn secondary" id="pvPause"><svg class="icon"><use href="#i-pause"/></svg><span>Pause</span></button>
             <div class="split" id="pvSplit">
               <button type="button" class="btn secondary split-main" id="pvAll" title="Builds the previews that don't exist yet, for every user, and tries again the ones that failed"><svg class="icon"><use href="#i-refresh"/></svg><span>Build missing previews</span></button>
@@ -342,55 +344,53 @@
               </div>
             </div>
           </div>
-          <h3>Photos with previews</h3>
-          <ul class="usage work" id="pvUsers"></ul>
-          <p class="muted" id="pvUsersNone" hidden>No users yet.</p>
-          <p class="muted help">Previews are the smaller copies that devices show instead of the originals. A single user's can be built from their Folders page.</p>
+          <details class="fold" open>
+            <summary>Photos with previews</summary>
+            <ul class="usage work" id="pvUsers"></ul>
+            <p class="muted" id="pvUsersNone" hidden>No users yet.</p>
+          </details>
         </section>
-        <section class="panel" id="vdPanel">
-          <h2>Videos</h2>
-          <p class="muted">A lighter copy of every video, kept beside the original, which is never touched: devices play it, or download it over a slow connection, instead of the big file. A Mac running a native LightCraft app makes them while it is idle; without one, the server can make them itself, slowly.</p>
-          <label class="switch" for="vdSwitch">
-            <input type="checkbox" id="vdSwitch" role="switch">
-            <span><span class="label">Make lighter copies of everyone's videos</span><span class="help" id="vdHelp"></span></span>
-          </label>
-          <p id="vdCover" class="cover"></p>
-          <p class="muted" id="vdText"></p>
-          <div class="meter" id="vdBar"><div></div></div>
+
+        <section class="panel job" id="job-vd">
+          <header class="job-head">
+            <div><h2>Videos</h2><p class="job-sub" id="vdHelp"></p></div>
+            <label class="switch" for="vdSwitch"><input type="checkbox" id="vdSwitch" role="switch" aria-label="Make lighter copies of everyone's videos"></label>
+          </header>
+          <div class="fig" id="vdFig"></div>
+          <p class="job-detail" id="vdCover"></p>
+          <p class="job-detail" id="vdText"></p>
           <ul class="building" id="vdNow"></ul>
           <div class="alert info" id="vdWait" hidden><svg class="icon"><use href="#i-info"/></svg><div><b></b><p></p></div></div>
-          <div class="btn-row">
+          <div class="job-actions">
             <button type="button" class="btn secondary" id="vdPause"><svg class="icon"><use href="#i-pause"/></svg><span>Pause</span></button>
             <button type="button" class="btn secondary" id="vdApply" title="Makes the copies again that were made with other settings than these, and looks again for originals that were missing"><svg class="icon"><use href="#i-refresh"/></svg><span>Encode existing videos now</span></button>
             <button type="button" class="btn secondary" id="vdRetry" hidden><svg class="icon"><use href="#i-refresh"/></svg><span>Try the failed ones again</span></button>
           </div>
-          <form id="vdForm" novalidate>
-            <h3>How the copies are made</h3>
-            <div class="limits-grid" id="vdFields"></div>
-            <div class="limits-actions"><button type="submit" class="btn accent">Save</button></div>
-          </form>
-          <dl class="facts" id="vdFacts"></dl>
+          <div class="kvs" id="vdFacts"></div>
           <div id="vdFailedBox" hidden>
             <h3>Failed</h3>
             <ul class="building failures" id="vdFailed"></ul>
           </div>
-          <h3>Videos done</h3>
-          <ul class="usage work" id="vdUsers"></ul>
-          <p class="muted" id="vdUsersNone" hidden>No users yet.</p>
-          <p class="muted help">A copy that would not be at least 15% smaller is not kept (the video is marked "already efficient"), when that setting is on. The copies take room in the user's storage limit.</p>
+          <details class="fold" open>
+            <summary>Videos done</summary>
+            <ul class="usage work" id="vdUsers"></ul>
+            <p class="muted" id="vdUsersNone" hidden>No users yet.</p>
+          </details>
+          <details class="fold">
+            <summary>How the copies are made</summary>
+            <form id="vdForm" novalidate>
+              <div class="limits-grid" id="vdFields"></div>
+              <div class="limits-actions"><button type="submit" class="btn accent">Save</button></div>
+            </form>
+          </details>
         </section>
-        <section class="panel">
-          <h2>AI models</h2>
-          <p class="muted">Each kind of processing below needs its model, downloaded once onto this server. Clients that don't use a server download the same models themselves.</p>
-          <p class="muted" id="mmMemory"></p>
-          <ul class="models" id="mmList"></ul>
-        </section>
-        <section class="panel">
-          <h2>Search by description</h2>
-          <label class="switch" for="srSwitch">
-            <input type="checkbox" id="srSwitch" role="switch">
-            <span><span class="label">Search for everyone on this server</span><span class="help" id="srHelp"></span></span>
-          </label>
+
+        <section class="panel job" id="job-sr">
+          <header class="job-head">
+            <div><h2>Search by description</h2><p class="job-sub" id="srHelp"></p></div>
+            <label class="switch" for="srSwitch"><input type="checkbox" id="srSwitch" role="switch" aria-label="Search for everyone on this server"></label>
+          </header>
+          <div class="fig" id="srFig"></div>
           <div class="sched" id="srSched"></div>
           <div class="fetch" id="srFetch" hidden>
             <div class="fetch-head"><span id="srFetchText"></span><span id="srFetchPct"></span></div>
@@ -398,18 +398,21 @@
             <div class="btn-row"><button type="button" class="btn secondary" id="srCancel">Cancel download</button></div>
           </div>
           <div class="alert negative" id="srError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
-          <dl class="facts" id="srFacts"></dl>
-          <h3>Photos described</h3>
-          <ul class="usage work" id="srUsers"></ul>
-          <p class="muted" id="srUsersNone" hidden></p>
-          <p class="muted">Someone who prefers to search on their own computer can still choose that in LightCraft's search panel.</p>
+          <details class="fold" open>
+            <summary>Photos described</summary>
+            <ul class="usage work" id="srUsers"></ul>
+            <p class="muted" id="srUsersNone" hidden></p>
+          </details>
+          <p class="help">Someone who prefers to search on their own computer can still choose that in LightCraft's search panel.</p>
+          <div class="model" id="srModel"></div>
         </section>
-        <section class="panel">
-          <h2>Words in photos</h2>
-          <label class="switch" for="txSwitch">
-            <input type="checkbox" id="txSwitch" role="switch">
-            <span><span class="label">Find photos by the text printed in them</span><span class="help" id="txHelp"></span></span>
-          </label>
+
+        <section class="panel job" id="job-tx">
+          <header class="job-head">
+            <div><h2>Words in photos</h2><p class="job-sub" id="txHelp"></p></div>
+            <label class="switch" for="txSwitch"><input type="checkbox" id="txSwitch" role="switch" aria-label="Find photos by the text printed in them"></label>
+          </header>
+          <div class="fig" id="txFig"></div>
           <div class="sched" id="txSched"></div>
           <div class="fetch" id="txFetch" hidden>
             <div class="fetch-head"><span id="txFetchText"></span><span id="txFetchPct"></span></div>
@@ -417,17 +420,20 @@
             <div class="btn-row"><button type="button" class="btn secondary" id="txCancel">Cancel download</button></div>
           </div>
           <div class="alert negative" id="txError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
-          <dl class="facts" id="txFacts"></dl>
-          <h3>Photos read</h3>
-          <ul class="usage work" id="txUsers"></ul>
-          <p class="muted" id="txUsersNone" hidden></p>
+          <details class="fold" open>
+            <summary>Photos read</summary>
+            <ul class="usage work" id="txUsers"></ul>
+            <p class="muted" id="txUsersNone" hidden></p>
+          </details>
+          <div class="model" id="txModel"></div>
         </section>
-        <section class="panel">
-          <h2>Sensitive content</h2>
-          <label class="switch" for="snSwitch">
-            <input type="checkbox" id="snSwitch" role="switch">
-            <span><span class="label">Flag photos that might be sensitive</span><span class="help" id="snHelp"></span></span>
-          </label>
+
+        <section class="panel job" id="job-sn">
+          <header class="job-head">
+            <div><h2>Sensitive content</h2><p class="job-sub" id="snHelp"></p></div>
+            <label class="switch" for="snSwitch"><input type="checkbox" id="snSwitch" role="switch" aria-label="Flag photos that might be sensitive"></label>
+          </header>
+          <div class="fig" id="snFig"></div>
           <div class="sched" id="snSched"></div>
           <div class="fetch" id="snFetch" hidden>
             <div class="fetch-head"><span id="snFetchText"></span><span id="snFetchPct"></span></div>
@@ -435,15 +441,20 @@
             <div class="btn-row"><button type="button" class="btn secondary" id="snCancel">Cancel download</button></div>
           </div>
           <div class="alert negative" id="snError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
-          <dl class="facts" id="snFacts"></dl>
-          <h3>Photos checked</h3>
-          <ul class="usage work" id="snUsers"></ul>
-          <p class="muted" id="snUsersNone" hidden></p>
-          <p class="muted">Devices list the flagged photos under Possibly Sensitive and can blur them in the grid. Each person decides what to hide.</p>
+          <details class="fold" open>
+            <summary>Photos checked</summary>
+            <ul class="usage work" id="snUsers"></ul>
+            <p class="muted" id="snUsersNone" hidden></p>
+          </details>
+          <p class="help">Devices list the flagged photos under Possibly Sensitive and can blur them in the grid. Each person decides what to hide.</p>
+          <div class="model" id="snModel"></div>
         </section>
-        <section class="panel">
-          <h2>People</h2>
-          <p class="muted">The server can find the faces in a user's photos and group them into people, which they name on their own devices. Faces are personal data, so this is off for everyone until you turn it on for them, one person at a time. They can delete everything found, from their devices.</p>
+
+        <section class="panel job" id="job-fc">
+          <header class="job-head">
+            <div><h2>People</h2><p class="job-sub">Finds the faces in a user's photos and groups them into people, which they name on their own devices. Faces are personal data: off for everyone until you turn it on for them, one person at a time.</p></div>
+          </header>
+          <div class="fig" id="fcFig"></div>
           <div class="sched" id="fcSched"></div>
           <div class="fetch" id="fcFetch" hidden>
             <div class="fetch-head"><span id="fcFetchText"></span><span id="fcFetchPct"></span></div>
@@ -451,9 +462,11 @@
             <div class="btn-row"><button type="button" class="btn secondary" id="fcCancel">Cancel download</button></div>
           </div>
           <div class="alert negative" id="fcError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
-          <div class="btn-row" id="fcGet" hidden><button type="button" class="btn accent" id="fcDownload"><svg class="icon"><use href="#i-sparkle"/></svg><span>Download the face models</span></button></div>
-          <p class="muted" id="fcNeeds" hidden></p>
-          <ul class="people" id="fcUsers"></ul>
+          <details class="fold" open>
+            <summary>Who it looks at</summary>
+            <ul class="people" id="fcUsers"></ul>
+          </details>
+          <div class="model" id="fcModel"></div>
         </section>
       </div>
     </section>

@@ -50,7 +50,9 @@ use lightcraft_raw::{
 /// check for curves under 1.5, #699); a tone-only fallback for near-black scenes with too few colour pairs (#1587); DNG
 /// tone fitting uses a lens-corrected proxy when the file carries lens opcodes; validated A7CR distortion, including
 /// the lens data stored with each smart preview.
-pub const LOOK_VERSION: u32 = 19;
+/// 20: a raw whose camera JPEG gives no look starts from its camera's typical colour and a neutral tone at its maker's
+/// exposure ([`typical_look`]), not from camera RGB as sRGB with the default tone.
+pub const LOOK_VERSION: u32 = 20;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {
@@ -181,12 +183,20 @@ fn starting_colour_with(
             eprintln!("[profile] {:?} neutral look on spectral sensitivities: {} {}", raw.format, camera.make, camera.model);
         }
         let (xy, neutral) = start(raw);
-        let starting = neutral_look(raw.metadata.model.as_deref());
+        let starting = neutral_look_for(raw.metadata.model.as_deref(), raw.metadata.make.as_deref());
         let matched = match fitted {
             Some(look) => camera_match((&neutral, starting.as_ref()), &t, Some(look)),
             None => camera_match((&neutral, starting.as_ref()), &neutral, if black_and_white { monochrome(raw, &neutral) } else { None }),
         };
         return (xy, neutral, starting, matched);
+    }
+    // A model fitted to Lightroom's renders of its raws (a neutral table: `lightcraft-cli calibrate --references`), of any
+    // maker, starts from the neutral look and its camera's colour, whatever its camera JPEG shows
+    if file_local_look(raw.format)
+        && raw.metadata.model.as_deref().is_some_and(|m| crate::camera_profiles::neutral_table(m).is_some())
+        && let Some(look) = typical_look(raw, &t)
+    {
+        return (xy, t, Some(look), None);
     }
     let (look, black_and_white) = fit(raw, &t);
     if let Some(look) = look {
@@ -202,9 +212,20 @@ fn starting_colour_with(
         }
         None => (xy, t),
     };
-    // A black-and-white JPEG first tries its existing tone fit on the chosen colour.
+    // A black-and-white JPEG first tries its existing tone fit on the chosen colour; a colour one that gave no look pays
+    // nothing more, and a photo with no look at all starts from its camera's typical colour and a neutral tone
     let look = if black_and_white { monochrome(raw, &t) } else { None };
-    (xy, t, look.or_else(|| dark(raw, &t)), None)
+    let look = look.or_else(|| dark(raw, &t));
+    let look = look.or_else(|| typical_look(raw, &t));
+    if lightcraft_pipeline::profiling() && look.is_some() {
+        eprintln!(
+            "[profile] {:?} typical look: {} {}",
+            raw.format,
+            raw.metadata.make.as_deref().unwrap_or(""),
+            raw.metadata.model.as_deref().unwrap_or("")
+        );
+    }
+    (xy, t, look, None)
 }
 
 /// Median tone and chroma curves of the camera looks fitted to the embedded JPEGs of 50 public Canon RF-mount CR3
@@ -441,12 +462,40 @@ fn dng_tone_curve(tone: &CameraTone) -> Option<ToneCurve> {
     ToneCurve::from_tag(&flat)
 }
 
+/// The colour a raw's camera most likely has when its file has no colour matrices, as the matrix that takes what the
+/// fallback transform `t` gives (white-balanced camera RGB read as sRGB) to what the camera's measured matrices give,
+/// or, for a camera nobody measured, its maker's typical camera ([`lightcraft_raw::spectral::generic`]). Used where
+/// the camera JPEG gives no look to fit, in place of "camera RGB is sRGB": leaving each of 52 measured cameras out in
+/// turn, the typical camera is within CIEDE2000 2.0 of the camera's own best matrix (camera RGB as sRGB: 8.7). It
+/// keeps white, so neutrals stay neutral. `None` when `t` has matrices of its own.
+fn prior(raw: &RawImage, t: &CameraTransform) -> Option<Mat3> {
+    if !t.matrix_is_fallback {
+        return None;
+    }
+    let camera = spectral(raw).unwrap_or_else(|| lightcraft_raw::spectral::generic(raw.metadata.make.as_deref()));
+    let mut color = ColorData { profile: Default::default(), ..raw.color.clone() };
+    if !camera.fill(&mut color) {
+        return None;
+    }
+    let g = lightcraft_raw::color::camera_transform_of(&color, lightcraft_raw::color::as_shot_white_of(&color, raw.wb_multipliers));
+    // both matrices act on white-balanced camera RGB; the multipliers are the file's, so they agree, but a file
+    // without any is balanced by each model's own daylight, which the composition below carries
+    let total = |t: &CameraTransform| t.matrix.mul(&Mat3::diag(f64::from(t.wb[0]), f64::from(t.wb[1]), f64::from(t.wb[2])));
+    let to = total(&g).mul(&total(t).inverse()?);
+    to.0.iter().flatten().all(|v| v.is_finite() && v.abs() < 16.0).then_some(to)
+}
+
 /// The look fitted to the file's camera JPEG, and whether that JPEG is black and white ([`monochrome`]).
 pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, lens: Option<&LensGeometry>) -> (Option<CameraLook>, bool) {
     if !transform.matrix_is_fallback || !file_local_look(raw.format) {
         return (None, false);
     }
-    let Some((sensor, reference, clipped)) = proxies(raw, bytes, transform, PROXY, 0.0, lens) else { return (None, false) };
+    let Some((sensor, reference, clipped)) = proxies(raw, bytes, transform, PROXY, 0.0, lens) else {
+        if lightcraft_pipeline::profiling() {
+            eprintln!("[profile] {:?} camera look: no proxies to fit (see above)", raw.format);
+        }
+        return (None, false);
+    };
     let sensor = with_jpeg_vignetting(raw, sensor, &reference, &clipped);
     let black_and_white = monochrome(&reference);
     // A camera profile pooled from many photos knows colours this photo shows too little of;
@@ -574,12 +623,34 @@ const NEUTRAL_TOE: f32 = 0.004;
 /// luminance-only curve keeps highlights too colourful (+76%); this lands within 10% at every brightness.
 const NEUTRAL_CHROMA: (f32, f32) = (0.926, 0.765);
 
-/// LightCraft's neutral starting look on a camera's measured matrices: [`NEUTRAL_TONE`] with [`NEUTRAL_CHROMA`], and
-/// the hue/saturation table of camera `model` when there is one (`camera_profiles::neutral_table`, fitted with
-/// [`neutral_pairs`]); `None` only if the built-in curve were invalid (a test checks it).
+/// LightCraft's neutral starting look on a Canon camera's measured matrices ([`neutral_look_for`] for Canon).
+#[cfg(test)]
 fn neutral_look(model: Option<&str>) -> Option<CameraLook> {
+    neutral_look_for(model, Some("Canon"))
+}
+
+/// LightCraft's neutral starting look for camera `model` of `make`: the tone at the exposure and contrast fitted for the
+/// model (`camera_profiles::neutral_table`, `lightcraft-cli calibrate --references`) or, without a fit, at the maker's
+/// exposure ([`maker_exposure`]) and [`NEUTRAL_TONE`]'s contrast, with [`NEUTRAL_CHROMA`], and the model's hue/saturation
+/// table when it has one ([`neutral_pairs`]). `None` only if the built-in curve were invalid (a test checks it).
+fn neutral_look_for(model: Option<&str>, make: Option<&str>) -> Option<CameraLook> {
+    let table = model.and_then(crate::camera_profiles::neutral_table);
+    let e = table.as_ref().and_then(|t| t.exposure).unwrap_or_else(|| maker_exposure(make));
+    let c = table.as_ref().and_then(|t| t.contrast).unwrap_or(NEUTRAL_TONE.1);
+    Some(CameraLook { hue_sat: table.map(|t| t.hue_sat.clone()), ..neutral_curve(e, c)? })
+}
+
+/// The neutral tone's display value (linear) at scene luminance `x`, exposure `e` EV and contrast `c`.
+fn neutral_value(x: f32, e: f32, c: f32) -> f32 {
+    let t = lightcraft_pipeline::tone::GREY * (x * 2f32.powf(e) / lightcraft_pipeline::tone::GREY).powf(c);
+    let soft = |v: f32| 0.5 * (v + (v * v + NEUTRAL_TOE * NEUTRAL_TOE).sqrt());
+    (soft(t / (1.0 + t)) - soft(0.0)) / (soft(1.0) - soft(0.0))
+}
+
+/// The neutral tone at exposure `e` EV and contrast `c` with [`NEUTRAL_CHROMA`] and no table.
+fn neutral_curve(e: f32, c: f32) -> Option<CameraLook> {
     use lightcraft_pipeline::tone::{GREY, channel_chroma};
-    let (mut e, mut c) = NEUTRAL_TONE;
+    let (mut e, mut c) = (e, c);
     if let Ok(v) = std::env::var("LC_NEUTRAL_TONE") {
         let mut it = v.split(',').filter_map(|x| x.parse::<f32>().ok());
         e = it.next().unwrap_or(e);
@@ -588,15 +659,67 @@ fn neutral_look(model: Option<&str>) -> Option<CameraLook> {
     // 32 knots, evenly spaced in log luminance from 12 stops under grey to 5 over (beyond: the bounded shoulder)
     let knots = std::array::from_fn(|i| {
         let x = GREY * 2f32.powf(-12.0 + 17.0 * i as f32 / 31.0);
-        let t = GREY * (x * 2f32.powf(e) / GREY).powf(c);
-        let soft = |v: f32| 0.5 * (v + (v * v + NEUTRAL_TOE * NEUTRAL_TOE).sqrt());
-        [x, (soft(t / (1.0 + t)) - soft(0.0)) / (soft(1.0) - soft(0.0))]
+        [x, neutral_value(x, e, c)]
     });
     let tone = CameraTone::new(knots)?;
     let (s, a) = NEUTRAL_CHROMA;
     let tone = tone.with_chroma(channel_chroma(|y| tone.apply(y)).map(|k| (s * k.powf(a)).clamp(0.0, 4.0)))?;
-    let hue_sat = model.and_then(crate::camera_profiles::neutral_table).map(|t| t.hue_sat.clone());
-    Some(CameraLook { matrix: Mat3::IDENTITY, tone, hue_sat })
+    Some(CameraLook { matrix: Mat3::IDENTITY, tone, hue_sat: None })
+}
+
+/// The exposure ([`NEUTRAL_TONE`]'s, in EV) at which a maker's raws start when nothing else says: the tone a camera
+/// JPEG puts mid-grey at differs between makers by up to 0.8 EV, so the neutral tone is moved by how far the maker's
+/// median is from Canon's, whose 1.30 EV was fitted to Lightroom's exports. The medians are those of the neutral
+/// curve's exposure (contrast 1.80) best matching each fitted camera look of the CC0 archive's raws (Canon 106 files
+/// 1.23, Sony 34 1.18, Nikon 75 1.24, Fujifilm 70 1.00, Panasonic and Leica 15 1.07, Olympus 17 0.61, Pentax 15 0.46,
+/// Samsung 6 0.67, Epson 3 0.68, Minolta 3 0.49; 354 files 1.12) and it assumes the camera JPEG stands to
+/// Lightroom's rendering as Canon's does (Sony's, measured on 24 ILCE-7CR photos with DRO off, does:
+/// Lightroom is +0.15 L* from the camera JPEG). An estimate, until a maker's own Lightroom exports are fitted.
+fn maker_exposure(make: Option<&str>) -> f32 {
+    let make = make.unwrap_or_default().to_uppercase();
+    let has = |names: &[&str]| names.iter().any(|n| make.contains(n));
+    let median = if has(&["CANON"]) {
+        CANON_MEDIAN_EXPOSURE
+    } else if has(&["SONY"]) {
+        1.18
+    } else if has(&["NIKON"]) {
+        1.24
+    } else if has(&["FUJI"]) {
+        1.00
+    } else if has(&["PANASONIC", "LEICA"]) {
+        1.07
+    } else if has(&["OLYMPUS", "OM DIGITAL"]) {
+        0.61
+    } else if has(&["PENTAX", "RICOH"]) {
+        0.46
+    } else if has(&["SAMSUNG"]) {
+        0.67
+    } else if has(&["EPSON"]) {
+        0.68
+    } else if has(&["MINOLTA", "KONICA"]) {
+        0.49
+    } else {
+        1.12
+    };
+    NEUTRAL_TONE.0 + (median - CANON_MEDIAN_EXPOSURE)
+}
+
+/// The Canon median of [`maker_exposure`]'s table.
+const CANON_MEDIAN_EXPOSURE: f32 = 1.23;
+
+/// What a raw starts from when its camera JPEG gave no look to fit (no JPEG, one that does not line up with the sensor,
+/// or a scene the fit's gates refuse): the colour of its camera when that is known (measured matrices, already in `t`)
+/// or else its maker's typical camera ([`prior`]), and the neutral look for its model ([`neutral_look_for`]: the tone at
+/// the maker's exposure, [`maker_exposure`], unless the model was fitted to Lightroom's renders).
+/// Without it such a photo rendered camera RGB as sRGB with the default tone, about 11 L* too dark and 0.4 as colourful
+/// as the camera's own picture on the CC0 archive's Sony A33, A500 and A580 and Samsung NX20 and NX200.
+fn typical_look(raw: &RawImage, t: &CameraTransform) -> Option<CameraLook> {
+    // (a DNG without matrices is camera RGB on purpose: a linear export, not a camera's own raw)
+    if raw.format == RawFormat::Dng {
+        return None;
+    }
+    let matrix = if t.matrix_is_fallback { prior(raw, t)? } else { Mat3::IDENTITY };
+    Some(CameraLook { matrix, ..neutral_look_for(raw.metadata.model.as_deref(), raw.metadata.make.as_deref())? })
 }
 
 /// Colour pairs for a neutral-look table of a CR3's camera model ([`neutral_look`]): the scene colour the table sees
@@ -605,12 +728,13 @@ fn neutral_look(model: Option<&str>) -> Option<CameraLook> {
 /// ([`without_chroma`]), so the table makes up only what the tone and chroma curves leave. The render may be cropped
 /// slightly or lens-corrected: the pairs line up as for a camera JPEG ([`align_cr3_framing`]), away from edges, and
 /// clipped sensor pixels are left out. `None` for other files or renders that don't line up with it
-/// ([`MIN_REFERENCE_ALIGNMENT`]).
+/// ([`MIN_REFERENCE_ALIGNMENT`]). The pairs are whole: [`fit_neutral`] takes the neutral tone out of them first.
 pub(crate) fn neutral_pairs(raw: &mut RawImage, reference: &[u8]) -> Option<Vec<([f64; 3], [f64; 3])>> {
-    if raw.format != RawFormat::Cr3 || lightcraft_raw::color::has_matrix(&raw.color) {
+    if lightcraft_raw::color::has_matrix(&raw.color) || !file_local_look(raw.format) {
         return None;
     }
-    spectral(raw)?.fill(&mut raw.color);
+    // the colour the render starts from: the model's measured matrices, else its maker's typical camera
+    spectral(raw).unwrap_or_else(|| lightcraft_raw::spectral::generic(raw.metadata.make.as_deref())).fill(&mut raw.color);
     let transform = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
     let edge = (2 * PROFILE_PROXY).max(384) as u32;
     let decoded =
@@ -625,12 +749,11 @@ pub(crate) fn neutral_pairs(raw: &mut RawImage, reference: &[u8]) -> Option<Vec<
     }
     let sensor = without_clipped(&sensor, &clipped).unwrap_or(sensor);
     let (pairs, _) = collect_pairs(&sensor, &reference, 0.05, Some(EDGE_CONTRAST), false)?;
-    let tone = ToneMap::camera(&neutral_look(None)?.tone, 0.0, 0.0, 0.0);
     // An sRGB render clips colours outside sRGB to its edge (a deep blue sky loses its red channel): there its
     // saturation is the file's limit, not the converter's look, and fitted it cut the sky's colour by a fifth.
     let to_srgb = lightcraft_color::SRGB.from_xyz().mul(&REC2020.to_xyz());
     let inside = |y: &[f64; 3]| to_srgb.apply(*y).iter().all(|v| (SRGB_EDGE..=1.0 - SRGB_EDGE).contains(v));
-    Some(pairs.into_iter().filter(|(_, y)| inside(y)).filter_map(|(x, y)| Some((x, without_chroma(y, &tone)?))).collect())
+    Some(pairs.into_iter().filter(|(_, y)| inside(y)).collect())
 }
 
 /// How close to 0 or 1 a linear sRGB channel of a reference render may come before the pair is left out (about 3 of
@@ -652,9 +775,59 @@ fn without_chroma(y: [f64; 3], tone: &ToneMap) -> Option<[f64; 3]> {
     (o > 0.0 && o < 1.0 && k >= 0.25).then(|| y.map(|v| o + (v - o) / k))
 }
 
-/// A neutral-look hue/saturation table fitted to [`neutral_pairs`] pooled from many photos.
-pub(crate) fn fit_neutral_table(pairs: &[([f64; 3], [f64; 3])]) -> Option<HsvTable> {
-    fit_hue_sat(pairs, &Mat3::IDENTITY)
+/// What [`fit_neutral`] gives for a camera model.
+#[derive(Clone, Debug)]
+pub(crate) struct NeutralFit {
+    /// Exposure (EV) and contrast of the neutral tone.
+    pub exposure: f32,
+    pub contrast: f32,
+    pub hue_sat: HsvTable,
+}
+
+/// The neutral look of a camera model fitted to [`neutral_pairs`] pooled from many photos: the exposure and contrast
+/// at which the neutral tone best follows the render's brightness ([`fit_neutral_tone`]; the maker's exposure and
+/// [`NEUTRAL_TONE`]'s contrast where the pairs say too little), then, with that tone's chroma curve taken out of the
+/// render's colours, the hue/saturation table that makes up what the tone and chroma curve leave.
+pub(crate) fn fit_neutral(pairs: &[([f64; 3], [f64; 3])], make: Option<&str>) -> Option<NeutralFit> {
+    let (exposure, contrast) = fit_neutral_tone(pairs).unwrap_or((maker_exposure(make), NEUTRAL_TONE.1));
+    let tone = ToneMap::camera(&neutral_curve(exposure, contrast)?.tone, 0.0, 0.0, 0.0);
+    let stripped: Vec<_> = pairs.iter().filter_map(|(x, y)| Some((*x, without_chroma(*y, &tone)?))).collect();
+    Some(NeutralFit { exposure, contrast, hue_sat: fit_hue_sat(&stripped, &Mat3::IDENTITY)? })
+}
+
+/// The exposure and contrast of the neutral tone that best follow a render's brightness: the median gamma-encoded
+/// luminance of the render per quarter stop of scene luminance (bins of at least 25 pairs, 8 or more of them), compared
+/// with the tone's at the bin's centre over a grid of exposures (-0.5 to 3 EV) and contrasts (1 to 2.6). That is how
+/// the Canon values were first set, by hand, against 19 EOS R6 photos. `None` when the pairs do not span the tones.
+fn fit_neutral_tone(pairs: &[([f64; 3], [f64; 3])]) -> Option<(f32, f32)> {
+    let encoded = |v: f64| v.max(0.0).powf(1.0 / 2.2);
+    let mut bins: std::collections::BTreeMap<i32, Vec<f64>> = Default::default();
+    for (x, y) in pairs {
+        let (lx, ly) = (luma(*x), luma(*y));
+        if lx > 0.002 && lx < 2.0 && ly > 0.002 && ly < 0.97 {
+            bins.entry((lx.log2() * 4.0).floor() as i32).or_default().push(encoded(ly));
+        }
+    }
+    let points: Vec<(f32, f64)> = bins
+        .into_iter()
+        .filter(|(_, v)| v.len() >= 25)
+        .filter_map(|(bin, mut v)| Some((2f32.powf((bin as f32 + 0.5) / 4.0), median(&mut v)?)))
+        .collect();
+    if points.len() < 8 {
+        return None;
+    }
+    let cost = |e: f32, c: f32| -> f64 { points.iter().map(|&(x, m)| (encoded(f64::from(neutral_value(x, e, c))) - m).powi(2)).sum() };
+    let (mut best, mut at) = (f64::INFINITY, (NEUTRAL_TONE.0, NEUTRAL_TONE.1));
+    for ie in 0..=175 {
+        for ic in 0..=80 {
+            let (e, c) = (-0.5 + 0.02 * ie as f32, 1.0 + 0.02 * ic as f32);
+            let k = cost(e, c);
+            if k < best {
+                (best, at) = (k, (e, c));
+            }
+        }
+    }
+    best.is_finite().then_some(at)
 }
 
 /// Sony's global tone curve with the Dynamic Range Optimizer off (Standard creative style), pooled
@@ -1293,7 +1466,11 @@ fn proxy_base(raw: &RawImage, bytes: &[u8], edge: u32) -> Option<std::rc::Rc<Pro
         bytes,
         lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: FIT_PREVIEW_MAX_PIXELS },
         None,
-    )?;
+    );
+    if decoded.is_none() && lightcraft_pipeline::profiling() {
+        eprintln!("[profile] camera look: the embedded preview does not decode");
+    }
+    let decoded = decoded?;
     let source_long = decoded.source_width.max(decoded.source_height) as usize;
     let crop = raw.crop.clipped(raw.active_area.width, raw.active_area.height);
     let k = proxy_bin(&crop, edge);
@@ -1344,6 +1521,12 @@ fn proxies_with(
     if !matches(crop.width, crop.height, reference.width, reference.height) {
         // Panasonic previews show the whole active area while the default crop is the in-camera aspect ratio
         if !matches(a.width, a.height, reference.width, reference.height) {
+            if lightcraft_pipeline::profiling() {
+                eprintln!(
+                    "[profile] camera look: preview {}×{} and sensor crop {}×{} (active area {}×{}) differ in shape",
+                    reference.width, reference.height, crop.width, crop.height, a.width, a.height
+                );
+            }
             return None;
         }
         let (sx, sy) = (reference.width as f64 / a.width as f64, reference.height as f64 / a.height as f64);
@@ -1359,7 +1542,12 @@ fn proxies_with(
         Some(made) => made,
         None => {
             let k = proxy_bin(&crop, edge);
-            let s = sensor_proxy(raw, k, edge as usize)?;
+            let Some(s) = sensor_proxy(raw, k, edge as usize) else {
+                if lightcraft_pipeline::profiling() {
+                    eprintln!("[profile] camera look: no binned sensor proxy");
+                }
+                return None;
+            };
             let c = clip_mask(&s);
             (k, s, c)
         }
@@ -1735,6 +1923,12 @@ type Pair = ([f64; 3], [f64; 3]);
 type Pairs = Vec<Pair>;
 fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f, min_chroma: f32, edge_limit: Option<f32>, dark: bool) -> Option<(Pairs, Pairs)> {
     if (sensor.width, sensor.height) != (reference.width, reference.height) || sensor.data.len() != reference.data.len() {
+        if lightcraft_pipeline::profiling() {
+            eprintln!(
+                "[profile] camera look: sensor proxy {}×{} and preview proxy {}×{} differ in size",
+                sensor.width, sensor.height, reference.width, reference.height
+            );
+        }
         return None;
     }
     let mut pairs = Vec::new();
@@ -1761,7 +1955,11 @@ fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f, min_chroma: f32, edge_limi
         colour += usize::from(max - min > min_chroma);
         pairs.push((input.map(f64::from), output.map(f64::from)));
     }
-    (pairs.len() >= 256 && colour >= pairs.len() / 20).then_some((pairs, bright))
+    let enough = pairs.len() >= 256 && colour >= pairs.len() / 20;
+    if !enough && lightcraft_pipeline::profiling() {
+        eprintln!("[profile] camera look: {} usable colour pairs of {} proxy pixels, {colour} coloured: too few", pairs.len(), sensor.data.len());
+    }
+    enough.then_some((pairs, bright))
 }
 
 /// The original colour-pair eligibility, also used to preserve its held-out split in tone fitting.
@@ -2202,7 +2400,9 @@ fn monochrome_look(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, le
     let dro = lightcraft_raw::embedded_preview_dynamic_range_optimized(bytes) == Some(true);
     let unclipped = without_clipped(&sensor, &clipped);
     let bright = HighlightCheck { pairs: highlights(&sensor, &reference), dro, grey: true };
-    let look = fit_tone_only_with(unclipped.as_ref().unwrap_or(&sensor), &reference, None, &bright)?;
+    // (a camera nobody measured: its maker's typical colour instead of camera RGB as sRGB)
+    let colour = prior(raw, transform).map(|p| (p, None));
+    let look = fit_tone_only_with(unclipped.as_ref().unwrap_or(&sensor), &reference, colour, &bright)?;
     let look = if dro { with_dro_off_tone(look) } else { look };
     if lightcraft_pipeline::profiling() {
         eprintln!(
@@ -3434,6 +3634,60 @@ mod tests {
         }
     }
 
+    /// A raw without colour matrices gets its camera's typical colour where its JPEG gives nothing to fit: the matrix
+    /// keeps white (so neutrals stay neutral), is not the identity (camera RGB is not sRGB), takes a measured camera's
+    /// own matrices where the table has the model, and does not exist for a raw that has matrices.
+    #[test]
+    fn a_raw_without_matrices_gets_the_colour_of_a_typical_camera() {
+        let transform = |raw: &RawImage| lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
+        let space = |make: &str, model: &str| {
+            let raw = raw_of(RawFormat::Orf, make, model, Default::default());
+            let t = transform(&raw);
+            assert!(t.matrix_is_fallback);
+            prior(&raw, &t).unwrap_or_else(|| panic!("{make} {model}: no prior"))
+        };
+        for (make, model) in [("OLYMPUS IMAGING CORP.", "E-M5"), ("SONY", "ILCE-7M2"), ("Canon", "Canon EOS 7D"), ("NIKON CORPORATION", "NIKON D750")]
+        {
+            let p = space(make, model);
+            let white = p.apply([1.0; 3]);
+            assert!((0..3).all(|i| (white[i] - 1.0).abs() < 1e-6), "{make}: white {white:?}");
+            assert!(p.inverse().is_some(), "{make}");
+            assert!(p.0.iter().flatten().zip(Mat3::IDENTITY.0.iter().flatten()).any(|(a, b)| (a - b).abs() > 0.05), "{make}: identity");
+        }
+        // a camera in the table takes its measured matrices; its maker's typical camera is another colour
+        let (measured, typical) = (space("SONY", "ILCE-7M3"), space("SONY", "ILCE-7M2"));
+        assert!((0..3).any(|r| (0..3).any(|c| (measured.0[r][c] - typical.0[r][c]).abs() > 0.01)));
+        // a raw that has matrices needs no prior
+        let mut own = raw_of(RawFormat::Dng, "Leica Camera AG", "M10", Default::default());
+        lightcraft_raw::spectral::generic(None).fill(&mut own.color);
+        assert!(prior(&own, &transform(&own)).is_none());
+    }
+
+    /// The typical look: the typical camera's colour with the neutral tone at the maker's exposure, brighter for a
+    /// maker whose JPEGs put mid-grey higher; with measured matrices the colour is already in the transform.
+    #[test]
+    fn a_photo_with_no_look_starts_from_a_typical_colour_and_the_makers_exposure() {
+        let look = |make: &str, model: &str| {
+            let raw = raw_of(RawFormat::Srw, make, model, Default::default());
+            typical_look(&raw, &lightcraft_raw::color::camera_transform(&raw, lightcraft_raw::color::as_shot_white_xy(&raw))).unwrap()
+        };
+        let (sony, samsung, canon) = (look("SONY", "DSLR-A580"), look("SAMSUNG", "NX200"), look("Canon", "Canon EOS 7D"));
+        assert_ne!(sony.matrix, Mat3::IDENTITY);
+        let mid = |l: &CameraLook| l.tone.apply(0.18);
+        assert!(mid(&sony) > mid(&samsung) + 0.03 && mid(&canon) >= mid(&sony), "{} {} {}", mid(&sony), mid(&samsung), mid(&canon));
+        assert!((maker_exposure(Some("Canon")) - NEUTRAL_TONE.0).abs() < 1e-5);
+        assert!(maker_exposure(None) < NEUTRAL_TONE.0 && (maker_exposure(Some("Contax")) - maker_exposure(None)).abs() < 1e-6);
+        // measured matrices are in the transform already
+        let mut raw = raw_of(RawFormat::Arw, "SONY", "ILCE-7M3", Default::default());
+        lightcraft_raw::spectral::find(Some("SONY"), "ILCE-7M3").unwrap().fill(&mut raw.color);
+        let t = lightcraft_raw::color::camera_transform(&raw, lightcraft_raw::color::as_shot_white_xy(&raw));
+        assert!(!t.matrix_is_fallback);
+        assert_eq!(typical_look(&raw, &t).unwrap().matrix, Mat3::IDENTITY);
+        // a DNG without matrices is a linear export on purpose, not a camera's raw: left alone
+        let dng = raw_of(RawFormat::Dng, "Leica Camera AG", "M10", Default::default());
+        assert!(typical_look(&dng, &lightcraft_raw::color::camera_transform(&dng, lightcraft_raw::color::as_shot_white_xy(&dng))).is_none());
+    }
+
     /// The lens warp the colour fit follows is the first `WarpRectilinear`'s green plane; no warp, a DNG 1.6 chain
     /// (phone DNGs, which carry colour matrices), a centre outside the area or a non-finite term give none.
     #[test]
@@ -3812,12 +4066,48 @@ mod tests {
         };
         let pairs = neutral_pairs(&mut raw, &png(&upright)).expect("the sample's own JPEG lines up");
         assert!(pairs.len() > 1000, "{}", pairs.len());
-        assert!(fit_neutral_table(&pairs).is_some());
+        assert!(fit_neutral(&pairs, Some("Canon")).is_some());
         // the render turned upside down, or of something else, gives none
         let mut raw = lightcraft_raw::decode(&bytes).unwrap();
         let mut other = upright.clone();
         other.data.reverse();
         assert!(neutral_pairs(&mut raw, &png(&other)).is_none());
+    }
+
+    /// Pairs made by the neutral look at a known exposure and contrast, with a flat hue/saturation, give those
+    /// back, and a table that changes nothing: what the Lightroom-reference calibration of any maker rests on.
+    #[test]
+    fn the_neutral_fit_recovers_the_exposure_and_contrast_of_the_renders() {
+        for (e, c) in [(1.30f32, 1.80f32), (0.7, 1.5), (1.9, 2.2)] {
+            let tone = ToneMap::camera(&neutral_curve(e, c).unwrap().tone, 0.0, 0.0, 0.0);
+            // scene colours over 9 stops and all hues, in a fixed order (an LCG: no random source in tests)
+            let mut state = 12345u64;
+            let mut next = || {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (state >> 33) as f64 / (1u64 << 31) as f64
+            };
+            let pairs: Vec<([f64; 3], [f64; 3])> = (0..6000)
+                .map(|_| {
+                    let level = 0.18 * 2f64.powf(-6.0 + 9.0 * next());
+                    let x = [level * (0.4 + 1.2 * next()), level * (0.4 + 1.2 * next()), level * (0.4 + 1.2 * next())];
+                    (x, displayed(x, &tone))
+                })
+                .collect();
+            let fit = fit_neutral(&pairs, Some("Canon")).expect("pairs over nine stops");
+            assert!(
+                (fit.exposure - e).abs() < 0.12 && (fit.contrast - c).abs() < 0.12,
+                "({e}, {c}) came back as ({}, {})",
+                fit.exposure,
+                fit.contrast
+            );
+            // the tone explains the render: the table has nothing to add (shifts in degrees, scales 1)
+            let shifts: f32 = fit.hue_sat.data.iter().map(|d| d[0].abs()).sum::<f32>() / fit.hue_sat.data.len() as f32;
+            let scales: f32 = fit.hue_sat.data.iter().map(|d| (d[1] - 1.0).abs()).sum::<f32>() / fit.hue_sat.data.len() as f32;
+            assert!(shifts < 1.5 && scales < 0.06, "({e}, {c}): shift {shifts}, scale {scales}");
+        }
+        // too few tones to follow: the maker's exposure and Canon's contrast
+        let few: Vec<([f64; 3], [f64; 3])> = (0..300).map(|i| ([0.1 + 0.0001 * i as f64, 0.1, 0.1], [0.3, 0.3, 0.3])).collect();
+        assert!(fit_neutral_tone(&few).is_none());
     }
 
     /// [`HueSat::undo`] inverts the EOS R6's neutral-look table (fitted to Lightroom exports; its sky blues shift

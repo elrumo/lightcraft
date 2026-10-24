@@ -302,6 +302,61 @@ JPEG (CR2s, other makes, CR3s of models without measured matrices), DNGs, which 
 files. The tools that read the photo's pixels to set sliders (Auto, Auto White Balance, the white-balance picker) read
 the neutral look.
 
+## Cameras nobody measured: the typical camera
+
+A raw whose camera JPEG gives no look to fit (the camera wrote no JPEG, one that does not line up with the sensor, a scene
+the fit's gates refuse) used to render "camera RGB is sRGB" with the default tone map. On the CC0 archive's Sony A33, A500
+and A580 and Samsung NX20, NX200, NX210 and NX1100 that was ΔE00 9.5 to 19.8 from the camera JPEG, 7 to 20 L\* too dark and
+0.3 to 0.7 as colourful. Two things replace it (`typical_look` in `camera_preview.rs`).
+
+**Colour: the typical camera.** `lightcraft_raw::spectral::generic` is the mean of the matrices of the 52 measured cameras
+(`ColorMatrix1/2`, `ForwardMatrix1/2`; the mean of the Canon, Nikon or Sony ones for those makers, which have at least
+five). It is a guess, not a measurement. How good a guess was measured by leaving each measured camera out in turn and
+predicting its matrices from the others (`tools/spectral_generic_loo.py`), as mean CIEDE2000 over the
+190 training reflectances of rawtoaces-data (D65; Standard Illuminant A in brackets):
+
+| Colour model of a camera that was not measured | mean ΔE00 | 90th percentile |
+|---|---|---|
+| the camera's own best 3×3 (the floor for any matrix) | 1.15 (1.45) | 2.2 (3.1) |
+| camera RGB read as sRGB (what a raw without matrices got) | 8.7 (9.0) | 12.5 (12.7) |
+| mean of the other 51 cameras | 2.0 (2.3) | 3.8 (4.5) |
+| mean of the other cameras of its maker | 1.8 (2.2) | 3.5 (4.3) |
+| the same, a whole maker left out (Canon / Nikon / Sony / Fujifilm) | 2.3 / 2.3 / 1.7 / 2.7 | |
+
+A maker with no measured camera at all (Olympus, Pentax, Panasonic, Leica, Samsung…) is covered by the last row. Ridge
+regression on the file's Daylight and Tungsten white-balance presets would take the mean to 1.6; not built. The matrix
+goes in as the look's matrix (`look.matrix · transform.matrix`), so the file's colour tags, its white balance and the
+relative white-balance scale are untouched, and a camera with a measured row uses that row.
+
+**Tone: the neutral tone at the maker's exposure.** The tone a camera JPEG puts mid-grey at differs by maker, so the
+Canon-fitted exposure (1.30 EV) is moved by the maker's median: the exposure of the neutral curve (contrast 1.80) that best
+follows each accepted fit's tone curve on the CC0 archive's 354 raws:
+
+| Maker | files | EV (10th to 90th percentile) | exposure used |
+|---|---|---|---|
+| Canon | 106 | 1.23 (CR2 1.20, CR3 1.26; 0.4 to 1.6) | 1.30 |
+| Nikon | 75 | 1.24 (0.3 to 1.5) | 1.31 |
+| Sony | 34 | 1.18 (0.7 to 1.3) | 1.25 |
+| Panasonic, Leica | 15 | 1.07 (0.8 to 1.5) | 1.14 |
+| Fujifilm | 70 | 1.00 (0.7 to 1.9) | 1.07 |
+| Samsung | 6 | 0.67 (0.5 to 1.0) | 0.74 |
+| Epson | 3 | 0.68 | 0.75 |
+| Olympus | 17 | 0.61 (0.5 to 1.1) | 0.68 |
+| Minolta | 3 | 0.49 | 0.56 |
+| Pentax | 15 | 0.46 (-0.2 to 0.9) | 0.53 |
+| any other | 354 | 1.12 | 1.19 |
+
+This assumes a camera JPEG stands to Lightroom's rendering as Canon's does; the one other maker measured against
+Lightroom, Sony (24 ILCE-7CR photos with DRO off), agrees (Lightroom +0.15 L\* from the camera JPEG). It is an
+estimate until a maker's own Lightroom exports are fitted.
+
+**What was tried and dropped.** Fitting the look in the typical camera's space (the sensor proxy mapped through the
+typical camera before the fit, the fit's ridge then pulling toward it, the look carried back afterwards) was no closer to
+the camera JPEGs on the 354 corpus raws (mean ΔE00 4.105 → 4.150): a least-squares matrix does not change with the space
+it is fitted in, but the luminance weighting of its pairs and the gates' "30% better than the fallback" test, measured
+against a now better fallback, do. 19 files got more than 0.5 worse (X-T3 3.00 → 4.27, ILCE-7CM2 2.56 → 4.06), 7 better.
+Fits stay in the fallback transform's space; the typical camera is used only where there is no fit.
+
 ## Spectral camera matrices and the order of precedence
 
 For 52 camera models LightCraft has colour matrices fitted to the camera's measured spectral sensitivities
@@ -322,12 +377,16 @@ A raw starts from the first of these that is available (`camera_preview::startin
 
 1. the file's own colour matrices (DNG);
 2. for a Canon CR3 of a model with spectral matrices, those matrices and the neutral look (previous section);
+2b. a model fitted to Lightroom's renders (`<model>.neutral.json`, `lightcraft-cli calibrate --references`; any maker and
+   format, the Canon EOS R6's is built in): the neutral look at the model's fitted exposure and contrast with its
+   hue/saturation table, on the model's measured matrices or its maker's typical camera, whatever the camera JPEG shows;
 3. a camera profile for its model (bundled or local), with tone and chroma fitted to the file's JPEG;
 4. the file-local fit to its own JPEG described above;
-5. the model's spectral matrices, with LightCraft's default tone curve and no JPEG fit (a Canon CR3 with no embedded JPEG takes the median Canon camera tone instead, below);
-6. the neutral fallback.
+5. the model's spectral matrices, or for a camera nobody measured its maker's typical camera, with the neutral tone at the
+   maker's exposure and no JPEG fit (a Canon CR3 with no embedded JPEG takes the median Canon camera tone instead, below).
+   Before 2026-10-24 this step took the default tone curve, and a camera nobody measured, step 6's camera RGB read as sRGB.
 
-When the file's JPEG is black and white, step 3 fits the tone curve alone with the profile's colour; without a profile, or when that fit fails, 5 and 6 take the tone curve fitted to it (see the black-and-white JPEG paragraph above). If every existing JPEG fit fails, a near-black frame may take the guarded tone-only fallback described above, after its spectral or neutral colour has been chosen.
+When the file's JPEG is black and white, step 3 fits the tone curve alone with the profile's colour; without a profile, or when that fit fails, 5 takes the tone curve fitted to it (see the black-and-white JPEG paragraph above). If every existing JPEG fit fails, a near-black frame may take the guarded tone-only fallback described above, after its spectral or neutral colour has been chosen. 
 
 Apart from step 2, the spectral matrices only replace the neutral fallback: a photo whose JPEG fit is accepted (with or without a
 profile) renders exactly as before, and a covered model takes its spectral matrices only when that fit fails the

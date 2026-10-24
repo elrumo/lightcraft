@@ -1633,16 +1633,6 @@ function showFeature(p, s) {
   showFetch(p, d);
   showFetchError(p, d, f.installed);
   showSched(p, f.schedule);
-  const facts = $(p + 'Facts');
-  facts.replaceChildren();
-  if (p === 'sr') {
-    fact(facts, 'Model', s.model + (s.installed ? '' : ' (not downloaded)'));
-    fact(facts, 'Licence', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
-    fact(facts, 'Kept in', s.dir, true);
-  } else {
-    fact(facts, 'Models', F.models + (f.installed ? ' (installed)' : ' (not downloaded)'));
-    fact(facts, 'Licence', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
-  }
   const list = $(p + 'Users');
   list.replaceChildren();
   let any = false;
@@ -1677,12 +1667,9 @@ function showPeople(s) {
   showFetch('fc', d);
   showFetchError('fc', d, f.installed);
   showSched('fc', f.schedule);
-  $('fcGet').hidden = f.installed || d.running;
-  const needs = $('fcNeeds');
-  needs.hidden = f.installed;
-  needs.textContent = d.running ? 'Downloading the face models onto this server…' : 'Needs the face models: ' + bytes(f.sizeBytes) + ', downloaded once onto this server.';
   const list = $('fcUsers');
   list.replaceChildren();
+  $('fcSched').hidden = list.parentElement.hidden = !f.installed;
   if (!f.installed) return d.running;
   for (const u of s.users) {
     const input = el('input', { type: 'checkbox', role: 'switch', 'aria-label': 'Find the people in ' + u.name + "'s photos" });
@@ -1700,15 +1687,11 @@ function showPeople(s) {
 /** Building previews for everyone: the batch added up, what is being built, and each user's coverage. */
 function showPreviewsAll(v) {
   const paused = v.paused;
-  const cover = v.photos == null ? 'Counting previews…' : n(v.have) + ' of ' + plural(v.photos, 'photo has', 'photos have') + ' previews' + (v.photos ? ' (' + Math.floor((100 * v.have) / v.photos) + '%)' : '');
-  $('pvCover').textContent = (paused ? 'Paused. ' : v.left ? (v.rebuilding ? 'Rebuilding. ' : 'Building. ') : '') + cover;
-  const total = v.done + v.left;
   $('pvText').textContent =
     (v.left
       ? n(v.done) + ' built, ' + n(v.left) + ' left' + (v.etaSecs && !paused ? ', about ' + dur(v.etaSecs) + ' to go' : '') + (v.perMinute && !paused ? ' (' + n(v.perMinute) + ' a minute)' : '') + '.'
       : 'Nothing waiting: 0 left.' + (v.lastAt ? ' The last batch, ' + plural(v.lastDone, 'preview', 'previews') + ', finished ' + ago(v.lastAt) + '.' : '')) +
     (paused ? ' Paused for every user: the ones being built finish, then it waits.' : '');
-  progress($('pvBar'), v.rebuilding && total ? v.done / total : v.photos ? v.have / v.photos : v.left && total ? v.done / total : 0);
   $('pvNow').replaceChildren(
     ...v.building.slice(0, 6).map((f) => el('li', {}, el('b', {}, 'Now'), el('code', { title: f }, f.slice(f.lastIndexOf('/') + 1)))),
     ...(v.left && !v.building.length && !paused ? [el('li', { class: 'muted' }, 'Waiting for a builder.')] : []),
@@ -1760,15 +1743,13 @@ function memoryLine(m, key) {
   return 'In memory' + (h.indexes ? ' with ' + plural(h.indexes, "user's index", "users' indexes") : '') + left;
 }
 
-/** One row per AI model: what it is for, its size, whether it is here, whether it is in memory, and a button to get it. */
+/** One line per AI model, in the card of the job that uses it: what it is, its size and licence, whether it is in memory, and its buttons. */
 function showModels(s) {
   const m = s.memory;
   const any = ['search', 'text', 'faces', 'sensitive'].some((k) => m[k].loaded);
   $('mmMemory').textContent =
-    (m.rss === null ? '' : 'The server holds ' + bytes(m.rss) + ' of memory (read every 30 s). ') +
-    (any
-      ? 'Models are let go after ' + dur(m.unloadAfterSecs) + ' without use' + (m.idleSecs === null ? '.' : '; the last use was ' + dur(m.idleSecs) + ' ago. The check runs every 30 s.')
-      : 'No model is in memory now. Each loads when it has work.');
+    (m.rss === null ? '' : 'The server holds ' + bytes(m.rss) + ' of memory. ') +
+    (any ? 'Models are let go after ' + dur(m.unloadAfterSecs) + ' without use.' : 'No model is in memory now. Each loads when it has work.');
   const rows = [
     ['sr', 'Search by description', s.model, s, () => downloadFeature('sr', s)],
     ['tx', 'Words in photos', FEATURES.tx.models, s.text, () => downloadFeature('tx', s.text)],
@@ -1776,21 +1757,21 @@ function showModels(s) {
     ['sn', 'Sensitive content', FEATURES.sn.models, s.sensitive, () => downloadFeature('sn', s.sensitive)],
   ];
   let going = false;
-  $('mmList').replaceChildren(
-    ...rows.map(([p, what, model, f, get]) => {
-      const d = f.download;
-      going ||= d.running;
-      const btn = d.running
-        ? el('button', { type: 'button', class: 'btn secondary', onclick: () => cancelDownload(p) }, 'Cancel')
-        : f.installed
-          ? el('span', { class: 'ok' }, el('span', {}, 'Installed'), el('button', { type: 'button', class: 'btn quiet', onclick: () => reprocessModel(p, what) }, 'Reprocess'), el('button', { type: 'button', class: 'btn quiet', onclick: () => removeModel(p, what) }, 'Remove'))
-          : el('button', { type: 'button', class: 'btn accent', onclick: get }, 'Download');
-      const meter = d.running ? el('div', { class: 'meter' }, el('div', {})) : null;
-      const li = el('li', {}, el('span', { class: 'what' }, el('b', {}, what), el('span', { class: 'muted' }, model + ' · ' + bytes(f.sizeBytes))), btn, ...(meter ? [meter] : []), ...(f.installed ? [el('span', { class: 'mem' + (m[PART_KEY[p]].loaded ? ' on' : '') }, memoryLine(m, PART_KEY[p]))] : []));
-      if (meter) progress(meter, d.total ? d.done / d.total : 0);
-      return li;
-    }),
-  );
+  for (const [p, what, model, f, get] of rows) {
+    const d = f.download;
+    going ||= d.running;
+    const facts = el('span', { class: 'muted' }, bytes(f.sizeBytes));
+    if (f.licenseUrl) facts.append(' · ', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
+    const buttons = d.running
+      ? [el('span', { class: 'muted' }, 'Downloading…')]
+      : f.installed
+        ? [el('button', { type: 'button', class: 'btn quiet', onclick: () => reprocessModel(p, what) }, 'Process again'), el('button', { type: 'button', class: 'btn quiet danger', onclick: () => removeModel(p, what) }, 'Remove')]
+        : [el('button', { type: 'button', class: 'btn accent', onclick: (e) => get(e.currentTarget) }, el('span', {}, 'Download'))];
+    $(p + 'Model').replaceChildren(
+      el('div', { class: 'model-info' }, el('b', { title: p === 'sr' ? 'Kept in ' + s.dir : null }, model + (f.installed ? '' : ' (not downloaded)')), facts, ...(f.installed ? [el('span', { class: 'mem' + (m[PART_KEY[p]].loaded ? ' on' : '') }, memoryLine(m, PART_KEY[p]))] : [])),
+      el('div', { class: 'model-actions' }, ...buttons),
+    );
+  }
   return going ? 2000 : any ? 5000 : 0;
 }
 
@@ -1872,7 +1853,7 @@ function videoText(v) {
     case 'idle':
       return 'Nothing waiting: 0 left.';
     case 'waiting':
-      return left + '. Waiting: nothing is making them yet.';
+      return left + '.';
     default:
       return left + '.';
   }
@@ -1884,13 +1865,11 @@ function showVideos(v) {
   const sw = $('vdSwitch');
   if (document.activeElement !== sw) sw.checked = s.enabled;
   const done = v.have + v.efficient;
-  $('vdHelp').textContent = s.enabled ? '' : 'Off. Turn on to make a lighter copy of every video, the ones already here and the new ones.';
-  $('vdCover').textContent = v.total
-    ? n(done) + ' of ' + plural(v.total, 'video', 'videos') + ' done' + (v.efficient ? ' (' + n(v.efficient) + ' already efficient)' : '') + (v.failed ? ', ' + n(v.failed) + ' failed' : '') + (v.noOriginal ? ', ' + n(v.noOriginal) + ' whose original is not here yet' : '')
-    : 'No videos yet.';
+  $('vdHelp').textContent = s.enabled
+    ? 'A lighter copy of every video, kept beside the original, which is never touched. A Mac running LightCraft makes them while idle; without one the server can, slowly.'
+    : 'Off. Turn on to make a lighter copy of every video, the ones already here and the new ones.';
+  $('vdCover').textContent = [v.efficient ? n(v.efficient) + ' already efficient' : '', v.failed ? n(v.failed) + ' failed' : '', v.noOriginal ? n(v.noOriginal) + ' whose original is not here yet' : ''].filter(Boolean).join(' · ');
   $('vdText').textContent = videoText(v);
-  progress($('vdBar'), v.total ? done / v.total : 0);
-  $('vdBar').classList.toggle('busy', v.state === 'encoding');
   const now = (v.encoding || []).map((e) => el('li', {}, el('b', {}, 'Now'), el('code', { title: e.user }, e.name), el('span', { class: 'muted' }, e.total ? Math.floor((100 * e.done) / e.total) + '%' : '')));
   $('vdNow').replaceChildren(...now);
   // what it waits for, and the helper
@@ -1914,13 +1893,15 @@ function showVideos(v) {
   $('vdRetry').onclick = () => videoAction('retry-failed');
   showVideoForm(v);
   const facts = $('vdFacts');
-  facts.replaceChildren();
-  fact(facts, 'Originals', bytes(v.bytes.originals));
-  fact(facts, 'Lighter copies', bytes(v.bytes.encoded));
-  fact(facts, 'Saved', bytes(v.bytes.saved));
-  fact(facts, 'Mac helper', !s.helper ? 'Off' : v.helper.seen ? (v.helper.there ? 'Asked for videos ' : 'Last asked for videos ') + ago(v.helper.seen) : 'None has asked yet');
-  fact(facts, 'The server itself', v.serverCanEncode ? 'Makes them when no Mac does' : s.serverFallback ? 'Cannot make ' + (s.codec === 'hevc' ? 'HEVC' : 'this format') + ' (H.264 only)' : 'Does not make them');
-  if (v.queuedAgain) fact(facts, 'Made again', plural(v.queuedAgain, 'copy', 'copies') + ' (made with other settings)');
+  const kv = (k, x) => el('div', {}, el('span', {}, k), el('b', {}, x));
+  facts.replaceChildren(
+    kv('Originals', bytes(v.bytes.originals)),
+    kv('Lighter copies', bytes(v.bytes.encoded)),
+    kv('Saved', bytes(v.bytes.saved)),
+    kv('Mac helper', !s.helper ? 'Off' : v.helper.seen ? (v.helper.there ? 'Asked for videos ' : 'Last asked for videos ') + ago(v.helper.seen) : 'None has asked yet'),
+    kv('The server itself', v.serverCanEncode ? 'Makes them when no Mac does' : s.serverFallback ? 'Cannot make ' + (s.codec === 'hevc' ? 'HEVC' : 'this format') + ' (H.264 only)' : 'Does not make them'),
+    ...(v.queuedAgain ? [kv('Made again', plural(v.queuedAgain, 'copy', 'copies') + ' (made with other settings)')] : []),
+  );
   // the failures, with the reason each
   $('vdFailedBox').hidden = !v.failures.length;
   $('vdFailed').replaceChildren(
@@ -1985,8 +1966,113 @@ async function saveVideoSettings(e) {
   await route();
 }
 
+// ------------------------------------------------------- the jobs at a glance
+
+/** Where a job stands, as the strip on top and the card's headline show it: `kind` colours it (on, idle, paused, wait, stuck, off). */
+function jobOf(key, name, done, total, [kind, label], note, busy) {
+  return { key, name, done, total, kind, label, note, busy: busy && kind === 'on' };
+}
+
+function previewsJob(v) {
+  const state = v.paused ? ['paused', 'Paused'] : v.left ? ['on', v.rebuilding ? 'Rebuilding' : 'Building'] : ['idle', 'Up to date'];
+  const note = v.left ? (v.paused ? n(v.left) + ' waiting' : v.etaSecs ? 'About ' + dur(v.etaSecs) + ' left' : n(v.left) + ' left') : '';
+  return jobOf('pv', 'Previews', v.have, v.photos, state, note, true);
+}
+
+function videosJob(v) {
+  const state = !v.settings.enabled ? ['off', 'Off'] : v.paused ? ['paused', 'Paused'] : v.state === 'encoding' ? ['on', 'Encoding'] : v.state === 'waiting' ? ['wait', 'Waiting'] : ['idle', 'Up to date'];
+  return jobOf('vd', 'Videos', v.have + v.efficient, v.total, state, v.left && v.settings.enabled ? n(v.left) + ' left' : '', true);
+}
+
+/** Search, words, sensitive content and people share one schedule shape; `on` is whether anyone gets it. */
+function indexJob(p, name, f, on, done, total) {
+  const c = f.schedule;
+  const ls = on && f.installed && !c.paused && c.left && c.runsNow ? liveState(p, c) : null;
+  const state = f.download.running
+    ? ['on', 'Downloading']
+    : !f.installed
+      ? ['off', 'Needs model']
+      : !on
+        ? ['off', 'Off']
+        : c.paused
+          ? ['paused', 'Paused']
+          : !c.left
+            ? ['idle', 'Up to date']
+            : !c.runsNow
+              ? ['paused', 'Outside its hours']
+              : ls && ls.kind === 'on'
+                ? ['on', 'Working']
+                : ls && ls.kind === 'stuck'
+                  ? ['stuck', 'May be stuck']
+                  : ['wait', 'Waiting'];
+  const note = !on || !c.left ? '' : c.paused ? n(c.left) + ' waiting' : c.perMinute && c.ready ? etaOf(c.ready, c.perMinute) : n(c.left) + ' left';
+  return jobOf(p, name, done, total, state, note, true);
+}
+
+function featureJob(p, name, s) {
+  const F = FEATURES[p];
+  const f = F.pick(s);
+  let done = 0;
+  let total = 0;
+  for (const u of s.users) {
+    const x = u[F.users];
+    if (x === null || x === undefined) continue;
+    done += x;
+    total += u.total;
+  }
+  return indexJob(p, name, f, f.active, done, total);
+}
+
+function peopleJob(s) {
+  const who = s.users.filter((u) => u.faces && u.found !== null);
+  const total = who.reduce((a, u) => a + u.total, 0);
+  return indexJob('fc', 'People', s.faces, s.users.some((u) => u.faces), who.reduce((a, u) => a + u.found, 0), total);
+}
+
+const pctOf = (j) => (j.total ? Math.min(100, Math.floor((100 * j.done) / j.total)) : null);
+
+/** A status chip: a dot (breathing while it works) and a word. */
+const chip = (j) => el('span', { class: 'chip ' + j.kind }, j.label);
+
+/** The strip of tiles on top of the page, and the headline (percent, count, state, bar) of each card. */
+function showJobs(jobs) {
+  $('jobTiles').replaceChildren(
+    ...jobs.map((j) => {
+      const pct = pctOf(j);
+      const bar = el('i', {});
+      bar.style.width = (pct === null ? 0 : (100 * j.done) / j.total).toFixed(1) + '%';
+      return el(
+        'button',
+        { type: 'button', role: 'listitem', class: 'tile ' + j.kind, title: 'Go to ' + j.name, onclick: () => $('job-' + j.key).scrollIntoView({ behavior: 'smooth', block: 'start' }) },
+        el('span', { class: 'tile-name' }, j.name),
+        el('b', { class: 'tile-pct' }, pct === null ? '–' : pct + '%'),
+        chip(j),
+        el('span', { class: 'tile-note' }, j.note),
+        el('span', { class: 'tile-bar' + (j.busy ? ' busy' : '') }, bar),
+      );
+    }),
+  );
+  for (const j of jobs) {
+    const pct = pctOf(j);
+    const meter = el('div', { class: 'meter large' + (j.busy ? ' busy' : '') }, el('div', {}));
+    progress(meter, j.total ? j.done / j.total : 0);
+    $(j.key + 'Fig').replaceChildren(
+      el('div', { class: 'fig-row' }, el('b', { class: 'fig-pct' }, pct === null ? '–' : pct + '%'), el('span', { class: 'fig-count' }, j.total == null ? 'Counting…' : n(j.done) + ' of ' + n(j.total) + (j.key === 'vd' ? ' videos' : ' photos')), chip(j)),
+      meter,
+    );
+  }
+}
+
 function showSearch([s, video]) {
   const again = [showPreviewsAll(s.previews), showVideos(video), showFeature('sr', s), showFeature('tx', s), showFeature('sn', s), showPeople(s)].some(Boolean);
+  showJobs([
+    previewsJob(s.previews),
+    videosJob(video),
+    featureJob('sr', 'Descriptions', s),
+    featureJob('tx', 'Words', s),
+    featureJob('sn', 'Sensitive', s),
+    peopleJob(s),
+  ]);
   const models = showModels(s);
   clearTimeout(timer);
   // (downloads and describing run on the server: watch them; so does the countdown to a model leaving memory, less often)
@@ -2027,8 +2113,7 @@ async function downloadFeature(p, f) {
   if (ok) toast('Downloading the ' + F.what + '. You can leave this page: it keeps going.', 'info');
 }
 
-async function downloadFaces() {
-  const btn = $('fcDownload');
+async function downloadFaces(btn) {
   busy(btn, true);
   try {
     const s = await api('GET', 'search');
@@ -2271,7 +2356,6 @@ document.addEventListener('DOMContentLoaded', () => {
   $('gcRun').addEventListener('click', gcRun);
   for (const p of ['sr', 'tx', 'sn']) $(p + 'Switch').addEventListener('change', (e) => toggleFeature(p, e));
   for (const p of ['sr', 'tx', 'fc', 'sn']) $(p + 'Cancel').addEventListener('click', () => cancelDownload(p));
-  $('fcDownload').addEventListener('click', downloadFaces);
   window.addEventListener('hashchange', route);
   start();
 });

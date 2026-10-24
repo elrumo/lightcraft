@@ -875,6 +875,7 @@ pub(crate) fn album_source(data: &CatalogImport) -> AlbumSource {
                 captured: second(text(&p.image, "captureTime")),
                 dims: u32::try_from(w).ok().zip(u32::try_from(h).ok()).filter(|(w, h)| *w > 0 && *h > 0),
                 path: Some(p.path.clone()),
+                orientation: None,
             },
         );
     }

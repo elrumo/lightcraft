@@ -239,6 +239,54 @@ fn uploads_are_filed_into_the_imports_folder_and_the_servers_copy_goes() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// `PUT /api/companions/<hash>?name=…` as a device sends it: the answer's `placed`.
+fn put_companion(fx: &Fx, dev: &Session, hash: &str, name: &str, body: &[u8]) -> Value {
+    let token = dev.sync_state().unwrap().config.token.clone();
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let mut r = agent
+        .put(format!("{}/api/companions/{hash}?name={name}", fx.url))
+        .header("Authorization", format!("Bearer {token}"))
+        .send(body)
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    serde_json::from_slice(&r.body_mut().read_to_vec().unwrap()).unwrap()
+}
+
+#[test]
+fn files_sent_for_a_photo_go_beside_it_in_a_writable_folder_and_only_there() {
+    for writable in [true, false] {
+        let fx = fixture(if writable { "companions-rw" } else { "companions-ro" }, writable, false);
+        let dev = device(&fx, "d1");
+        let a = id_at(&dev, "Photos/a.png");
+        let hash = dev.catalog.photo(a).unwrap().content_hash.clone().unwrap();
+        let before = tree(&fx.photos);
+
+        // an XMP sidecar and an edit file (a photo of its own, which the scan finds)
+        let packet = XMP.to_string();
+        let r = put_companion(&fx, &dev, &hash, "a.xmp", packet.as_bytes());
+        write_png(&fx.root.join("edit/a-Edit.png"), 9);
+        let edit = std::fs::read(fx.root.join("edit/a-Edit.png")).unwrap();
+        let r2 = put_companion(&fx, &dev, &hash, "a-Edit.png", &edit);
+        if writable {
+            assert_eq!((r["placed"].as_u64(), r2["placed"].as_u64()), (Some(1), Some(1)), "{r} {r2}");
+            assert_eq!(std::fs::read_to_string(fx.photos.join("a.xmp")).unwrap(), packet, "the file as sent");
+            assert_eq!(std::fs::read(fx.photos.join("a-Edit.png")).unwrap(), edit);
+            // never over a file that is there
+            let again = put_companion(&fx, &dev, &hash, "a.xmp", b"other");
+            assert_eq!(again["placed"].as_u64(), Some(0));
+            assert_eq!(std::fs::read_to_string(fx.photos.join("a.xmp")).unwrap(), packet);
+            // the edit file is found as a new photo; the server's own sidecar isn't read back
+            let st = scanned(&fx.server, 1);
+            assert_eq!((st.added, st.sidecars), (1, 0), "{st:?}");
+        } else {
+            assert_eq!((r["placed"].as_u64(), r2["placed"].as_u64()), (Some(0), Some(0)), "{r} {r2}");
+            assert_eq!(tree(&fx.photos), before, "nothing is written in a read-only folder");
+        }
+        drop(fx.server);
+        let _ = std::fs::remove_dir_all(&fx.root);
+    }
+}
+
 #[test]
 fn folder_modes_are_checked() {
     let root = temp("modes");

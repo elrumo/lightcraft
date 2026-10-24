@@ -1,6 +1,6 @@
 //! Library folders the server may write in (an admin's choice, per folder; the default is read-only).
 //!
-//! Two things, and only these:
+//! Three things, and only these (the third is in `companions`):
 //! - **XMP sidecars.** When a device changes a photo that lives in a writable library folder (its rating, flag,
 //!   label, edits or metadata), the server writes the photo's `.xmp` beside it a few seconds later — the same
 //!   file, merged the same way, as the desktop app's *Automatically Write Changes into XMP*, so Lightroom and
@@ -160,7 +160,7 @@ fn users_with_imports(data: &Path) -> Vec<String> {
 }
 
 /// A user's folders the server may write in, by lower-case name.
-fn writable_folders(st: &State, user: &str) -> HashMap<String, LibraryFolder> {
+pub(crate) fn writable_folders(st: &State, user: &str) -> HashMap<String, LibraryFolder> {
     accounts::read_users(&st.data)
         .ok()
         .and_then(|f| f.users.get(user).map(|u| u.folders.iter().filter(|f| f.writable).map(|f| (f.name.to_lowercase(), f.clone())).collect()))
@@ -173,7 +173,7 @@ fn now_iso() -> String {
 
 /// Which sidecar name each photo in the library folders uses: a raw and a JPEG of the same name share the stem,
 /// so the raw (else the first by name) has `IMG_1.xmp` and the others `IMG_1.JPG.xmp`.
-fn naming_of(c: &Catalog) -> HashMap<PhotoId, SidecarNaming> {
+pub(crate) fn naming_of(c: &Catalog) -> HashMap<PhotoId, SidecarNaming> {
     let stem = |sp: &str| Path::new(sp).with_extension("").to_string_lossy().to_lowercase();
     let mut groups: HashMap<String, Vec<(bool, String, PhotoId)>> = HashMap::new();
     for p in c.photos().filter(|p| p.copy_of.is_none()) {
@@ -357,6 +357,7 @@ fn file_uploads(st: &State, user: &str) {
             .collect()
     };
     let mut filed = 0;
+    let mut filed_hashes = Vec::new();
     for f in todo {
         let Some(src) = blob_path(&blobs, "original", &f.hash).filter(|b| b.is_file()) else { continue };
         let (rel, size, mtime) = match file_into(Path::new(&dest.path), &src, &f.name, &f.date) {
@@ -379,7 +380,12 @@ fn file_uploads(st: &State, user: &str) {
         if pushed.is_some_and(|refused| refused.is_empty()) {
             let _ = std::fs::remove_file(&src);
             filed += 1;
+            filed_hashes.push(f.hash.clone());
         }
+    }
+    // files sent for these photos while they had no folder go beside them now
+    for hash in filed_hashes {
+        crate::companions::place(st, user, &hash);
     }
     if filed > 0 {
         log::info!("{user}: filed {filed} uploaded photo(s) into {}", dest.name);

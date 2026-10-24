@@ -168,7 +168,10 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
   without downloading the model); another does the same for finding photos by the words printed in them; **People**
   finds the faces in photos, one person at a time because faces are personal data. Each needs a model: if it isn't on
   the server yet the page shows its size and licence, downloads it onto the server (resumable, you can leave the page)
-  and turns it on. Turning a switch off keeps the files. It also shows how far each user's photos have got.
+  and turns it on. Turning a switch off keeps the files. It also shows how far each user's photos have got. The page
+  opens with a strip of the six jobs (previews, videos, descriptions, words, sensitive content, people) with their
+  percent, state and time left; below, one card per job holds its switch, schedule, per-user progress and its model
+  (size, licence, in memory or not, Process again, Remove). It uses the width of a big screen.
 - **Processing ▸ Videos:** lighter copies of the library's videos ([docs/video.md](video.md#lighter-copies)). A switch
   turns them on for everyone (off by default) and a form sets the format (H.264, or HEVC for a Mac helper), the
   biggest size (as the video is, 1080p, 720p, 480p), the quality (smaller, balanced, better: a bitrate worked out
@@ -263,13 +266,17 @@ can make such folders a user's **library folders** (admin page › Users › the
   the user › Library folders › **Writing**, or `lightcraft-server folder writable ann Photos on`; add
   `--writable` / `--imports` to `folder add`). The folder must be mounted read-write, writable by the server's user
   (uid 10001 in the image; `:rw` in the compose file); the server tries a file before it says yes, and the admin
-  page shows when a folder that should be writable isn't. Two things then happen, and nothing else:
+  page shows when a folder that should be writable isn't. Three things then happen, and nothing else:
   - **XMP sidecars:** when a device changes a photo in such a folder — rating, flag, colour label, develop settings,
     title, caption, keywords — the server writes its `.xmp` a few seconds later, beside the photo, merged into one
     that's there (the same file, naming and merge as the desktop app's *Automatically Write Changes into XMP*; a
     raw+JPEG pair shares `IMG_1.xmp` for the raw and `IMG_1.JPG.xmp` for the JPEG). Lightroom and other programs
     see the edits. If another program changed that sidecar since the server last read it, the server doesn't
     overwrite it: it reads it first (a scan is started), and what that program wrote wins; the next change goes out.
+  - **Companion files:** a device can send a file that goes beside a photo, an XMP sidecar or an edit file such as
+    `IMG_1-Edit.tif` (`PUT /api/companions/<content hash>?name=<file name>`; the Lightroom import does). The server
+    keeps it under `blobs/companion/<hash>/` and puts it beside the photo, never over a file that is there; a photo
+    in no writable folder keeps the file until it is filed into the imports folder.
   - **Uploads are filed here, if it is the user's imports folder** (`--imports`; one per user; implies writable).
     A photo a device uploads would otherwise live in the server's own store (`blobs/original`, not a place you
     browse). In an imports folder it becomes `<folder>/<year>/<yyyy-mm-dd>/<name>` (by capture date, else import

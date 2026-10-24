@@ -104,10 +104,16 @@ fn jpeg_frame(b: &[u8]) -> Option<(u32, u32, u8)> {
     Some((be16(7)?, be16(5)?, at(9)?))
 }
 
-/// Whether the JPEG `b` ends with its EOI marker (allowing a little padding after it). Byte stuffing
-/// keeps `FF D9` out of entropy-coded data, so one in the last bytes is the end, not a stray pair.
+/// Most padding a container may leave after a JPEG's EOI marker before the JPEG counts as cut off. The A-mount ARWs of
+/// Sony (DSLR-A230 to A900, SLT-A33 to A99) and the NX SRWs of Samsung pad their full-size previews by 51 to 57 bytes
+/// of the length they declare; with 16 allowed, those previews looked cut off and lost to their 160 × 120 thumbnails
+/// (blurry previews, and no camera JPEG to fit a look to).
+const EOI_PADDING: usize = 1024;
+
+/// Whether the JPEG `b` ends with its EOI marker (allowing up to [`EOI_PADDING`] bytes of padding after it). Byte
+/// stuffing keeps `FF D9` out of entropy-coded data, so one in the last bytes is the end, not a stray pair.
 fn ends_with_eoi(b: &[u8]) -> bool {
-    b.get(b.len().saturating_sub(16)..).is_some_and(|tail| tail.windows(2).any(|w| w == [0xff, 0xd9]))
+    b.get(b.len().saturating_sub(EOI_PADDING)..).is_some_and(|tail| tail.windows(2).any(|w| w == [0xff, 0xd9]))
 }
 
 /// Whether `b` is a JPEG XL file: a bare codestream or the ISO-BMFF container's signature box.
@@ -622,6 +628,22 @@ mod tests {
             ifd0.add_sub_ifd(ifd(j));
         }
         TiffWriter::default().write(&[ifd0]).unwrap()
+    }
+
+    /// A full-size preview followed by padding inside its declared extent (51 bytes in Sony's A-mount ARWs, 57 in
+    /// Samsung's NX SRWs) is complete and beats the thumbnail, and one cut off before its end marker still loses to it.
+    #[test]
+    fn a_padded_preview_beats_the_thumbnail_and_a_cut_off_one_does_not() {
+        let (big, thumb) = (sized_jpeg(1616, 1080, 3, 500), sized_jpeg(160, 120, 3, 10));
+        let padded = |pad: usize| [big.clone(), vec![0u8; pad]].concat();
+        for pad in [0, 16, 51, 57, 400] {
+            let file = tiff_with_jpegs(&[&thumb, &padded(pad)]);
+            assert_eq!(embedded_preview(&file).unwrap(), big, "{pad} bytes of padding: the full-size preview, padding dropped");
+        }
+        // cut off: no end marker anywhere near the end
+        let cut = &big[..big.len() - 100];
+        let file = tiff_with_jpegs(&[&thumb, cut]);
+        assert_eq!(embedded_preview(&file).unwrap(), thumb, "a truncated file keeps its intact thumbnail");
     }
 
     /// A stand-in decodes the smallest JPEG that covers its box and shows the same picture as the largest: not a

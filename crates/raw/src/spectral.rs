@@ -90,6 +90,17 @@ pub fn find(make: Option<&str>, model: &str) -> Option<&'static Camera> {
     }
 }
 
+/// The colour model of a camera nobody measured: the mean matrices of the measured cameras of its maker where
+/// there are several (Canon, Nikon, Sony), else of all of them. Leaving each measured camera out and predicting its
+/// matrices this way, the mean CIEDE2000 on the 190 training reflectances is 2.0 under D65 (the camera's own best
+/// matrix 1.15; camera RGB read as sRGB 8.7), and 1.7 to 2.7 with a whole maker left out, so it also stands for
+/// makers with no measured camera (`tools/spectral_generic_loo.py`). A guess, not a measurement: a file with a
+/// matrix of its own, or a camera [`find`] knows, never takes it.
+pub fn generic(make: Option<&str>) -> &'static Camera {
+    let brand = make.map(brand).unwrap_or_default();
+    table::GENERIC_MAKERS.iter().find(|c| !brand.is_empty() && self::brand(c.make) == brand).unwrap_or(&table::GENERIC)
+}
+
 /// [`find`] for a camera written as one string, Exif make and model joined by a space (the catalog keeps
 /// `"SONY ILCE-7M3"`, `"NIKON CORPORATION NIKON D850"`): every split into make and model is tried, then the
 /// whole string as a model alone. Returns the same row as `find(Some(make), model)` for the parts it was
@@ -251,6 +262,32 @@ mod tests {
                 assert!((0..3).all(|i| (w[i] - d50[i]).abs() < 1e-4), "{} {w:?}", c.model);
             }
         }
+    }
+
+    #[test]
+    fn a_camera_nobody_measured_gets_its_makers_typical_matrices() {
+        assert_eq!(generic(Some("Canon")).make, "Canon");
+        assert_eq!(generic(Some("NIKON CORPORATION")).make, "Nikon");
+        assert_eq!(generic(Some("SONY")).make, "Sony");
+        // makers with fewer than five measured cameras, no maker and an unknown one: the mean of all of them
+        for make in [Some("OLYMPUS IMAGING CORP."), Some("FUJIFILM"), Some("Panasonic"), Some(""), None] {
+            assert_eq!(generic(make).make, "", "{make:?}");
+        }
+        for c in table::GENERIC_MAKERS.iter().chain([&table::GENERIC]) {
+            for m in c.color_matrix.iter().chain(&c.forward_matrix) {
+                assert!(m.0.iter().flatten().all(|v| v.is_finite() && v.abs() < 4.0) && m.inverse().is_some(), "{}", c.model);
+            }
+            // an average of white-preserving matrices still maps white to D50
+            for fm in &c.forward_matrix {
+                let w = fm.apply([1.0; 3]);
+                let d50 = lightcraft_color::D50.to_xyz();
+                assert!((0..3).all(|i| (w[i] - d50[i]).abs() < 1e-4), "{} {w:?}", c.model);
+            }
+        }
+        // it fills a file without matrices like a measured camera does, and leaves one with matrices alone
+        let mut color = ColorData::default();
+        assert!(generic(Some("OLYMPUS IMAGING CORP.")).fill(&mut color));
+        assert!(crate::color::has_matrix(&color));
     }
 
     #[test]
