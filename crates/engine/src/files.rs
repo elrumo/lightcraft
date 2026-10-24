@@ -158,6 +158,15 @@ fn raw_format_name(name: &str, found: lightcraft_raw::RawFormat) -> String {
     .to_string()
 }
 
+/// A preview-only raw's reason. An `.ori` is what OM Digital Solutions writes for the original frames of its High Res
+/// and Pro Capture modes: an ORF container with the same compressed coding, which the decoder names an ORF.
+fn preview_only_reason(name: &str, why: String) -> String {
+    match why.strip_prefix("Olympus compressed ORF") {
+        Some(rest) if ext_upper(name) == "ORI" => format!("Olympus compressed ORI (a High Res or Pro Capture original){rest}"),
+        _ => why,
+    }
+}
+
 /// "unrecognized file format" plus what the file holds (its size and first bytes), so a report names
 /// an empty, placeholder or wrapped file instead of leaving a guess.
 fn unrecognized(bytes: &[u8]) -> String {
@@ -196,7 +205,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
                     as_shot_wb: None,
                     content_hash,
                     xmp: lightcraft_meta::embedded(bytes).xmp,
-                    preview_only: Some(why),
+                    preview_only: Some(preview_only_reason(name, why)),
                     ..Default::default()
                 });
             }

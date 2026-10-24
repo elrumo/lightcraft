@@ -118,8 +118,8 @@ fn candidate_day(c: &ImportCandidate) -> Option<&str> {
 
 /// Raw formats, as a candidate's format or extension names them (its "Raw" tag).
 const RAW_FORMATS: &[&str] = &[
-    "3FR", "ARW", "CR2", "CR3", "CRW", "DCR", "DNG", "ERF", "FFF", "IIQ", "KDC", "MEF", "MOS", "MRW", "NEF", "NRW", "ORF", "PEF", "RAF", "RAW",
-    "RW2", "RWL", "SR2", "SRF", "SRW", "X3F",
+    "3FR", "ARW", "CR2", "CR3", "CRW", "DCR", "DNG", "ERF", "FFF", "IIQ", "KDC", "MEF", "MOS", "MRW", "NEF", "NRW", "ORF", "ORI", "PEF", "RAF",
+    "RAW", "RW2", "RWL", "SR2", "SRF", "SRW", "X3F",
 ];
 
 /// The candidate is a raw file.
@@ -2205,6 +2205,8 @@ mod tests {
         d.toggle_range(3..4);
         assert!(!d.checked[3], "a duplicate is never checked");
         assert!(is_raw(&ImportCandidate { path: "/card/x.CR3".into(), ..Default::default() }) && !is_raw(&d.candidates[0]));
+        // OM Digital Solutions' High Res / Pro Capture originals
+        assert!(is_raw(&ImportCandidate { path: "/card/P5048183.ORI".into(), ..Default::default() }));
     }
 
     /// A day's box checks as Check All does: with "Leave them", a file in Recently Deleted stays out

@@ -2524,6 +2524,28 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/getfile.php/3540/nice/Olympus%20-%20E-500%20-%2016bit%20%284:3%29.ORF",
         "fa5a4759b2de2b573f59629ad1baf64ad04a85fb8fe1fb3cbf68e08a42fff4f0",
     ),
+    // OM Digital Solutions' `.ori` (High Res / Pro Capture originals): an ORF container with the compressed coding
+    // (crates/raw/tests/it/olympus_ori_corpus.rs). One per body family; raw.pixls.us/data/ paths.
+    (
+        "ori-olympus-e-m5-mark-ii.ori",
+        "https://raw.pixls.us/data/Olympus/E-M5%20Mark%20II/CB252215.ORI",
+        "f2c7a1dfbfcc6093b28373a1616569b8bd9c2d91cb708480b8312d510c57fbd6",
+    ),
+    (
+        "ori-olympus-e-m1-mark-iii.ori",
+        "https://raw.pixls.us/data/Olympus/E-M1MarkIII/_3160529.ORI",
+        "d831692b608471ad64667eb2485bab553de0ddb9366d384c4ecb731092b5dc42",
+    ),
+    (
+        "ori-om-system-om-1-mark-ii.ori",
+        "https://raw.pixls.us/data/OM%20System/OM-1%20Mark%20II/80mp-14bit-tripod.ori",
+        "a5ee1e874d7aa357192173e12695627f90a8800a272b6c6e4959f029afb59837",
+    ),
+    (
+        "ori-om-digital-om-3.ori",
+        "https://raw.pixls.us/data/OM%20Digital%20Solutions/OM-3/P5048183.ORI",
+        "6fab41a21d5c8c0469619049888b0a36c7b260d893e3c35c174044b7293e9d43",
+    ),
     (
         "cr2-canon-eos-70d.cr2",
         "https://raw.pixls.us/getfile.php/784/nice/Canon%20-%20EOS%2070D%20-%20RAW.CR2",

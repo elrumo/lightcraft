@@ -19,6 +19,7 @@ fn corpus_root() -> PathBuf {
 const KNOWN_UNSUPPORTED: &[&str] = &[
     "cr3-",           // Unverified CRX coding variants; exact supported cases live in cr3_corpus.rs.
     "orf-olympus-em", // Olympus compressed ORF
+    ".ori",           // OM Digital Solutions High Res / Pro Capture originals: the compressed ORF coding
     "-he.nef",        // Nikon High Efficiency (HE / HE★) NEF, issue #193
     "sraw",           // Canon sRAW / mRAW
 ];

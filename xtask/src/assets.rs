@@ -37,6 +37,7 @@ const ASSET_EXT: &[&str] = &[
     "arw",
     "raf",
     "orf",
+    "ori",
     "rw2",
     "rwl",
     "raw",
@@ -162,13 +163,21 @@ mod tests {
 
     #[test]
     fn flags_unattributed_forbidden_and_missing_licence() {
-        let files: Vec<String> =
-            ["assets/fonts/Foo-Bold.ttf", "assets/icons/x.svg", "crates/scenes/t.png", "src/lib.rs", "p/camera.dcp", "assets/fonts/Adobe-Foo.otf"]
-                .map(String::from)
-                .into();
+        let files: Vec<String> = [
+            "assets/fonts/Foo-Bold.ttf",
+            "assets/icons/x.svg",
+            "crates/scenes/t.png",
+            "src/lib.rs",
+            "p/camera.dcp",
+            "assets/fonts/Adobe-Foo.otf",
+            "assets/raw/P1.ori",
+        ]
+        .map(String::from)
+        .into();
         let p = check(&files, MD, |_| false);
         assert!(p.iter().any(|m| m.starts_with("assets/icons/x.svg: no entry")));
         assert!(p.iter().any(|m| m.starts_with("p/camera.dcp")));
+        assert!(p.iter().any(|m| m.starts_with("assets/raw/P1.ori: no entry")), "an OM System ORI is a raw like an ORF: {p:?}");
         assert!(p.iter().any(|m| m.contains("Adobe-Foo.otf: asset name")));
         assert!(p.iter().any(|m| m.contains("OFL-Foo.txt")));
         assert!(!p.iter().any(|m| m.starts_with("assets/fonts/Foo-Bold.ttf") || m.starts_with("crates/scenes") || m.starts_with("src/")));

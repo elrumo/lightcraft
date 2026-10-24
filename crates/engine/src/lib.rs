@@ -1689,6 +1689,8 @@ mod tests_models;
 #[cfg(test)]
 mod tests_move_to_share;
 #[cfg(test)]
+mod tests_olympus;
+#[cfg(test)]
 mod tests_organize;
 #[cfg(test)]
 mod tests_pack;
