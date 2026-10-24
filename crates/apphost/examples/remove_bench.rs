@@ -130,14 +130,16 @@ fn main() {
                 println!("  {mode} {:>3}: footprint {:.0} MB", i + 1, footprint_mb());
             }
         }
-        while ai && background {
-            let busy = call("engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}}));
-            let _ = busy;
-            std::thread::sleep(Duration::from_millis(200));
-            let rep = call("host.memory", json!({}));
-            let _ = rep;
-            if t0.elapsed() > Duration::from_secs(5) {
-                break;
+        if ai && background {
+            loop {
+                let busy = call("engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}}));
+                let _ = busy;
+                std::thread::sleep(Duration::from_millis(200));
+                let rep = call("host.memory", json!({}));
+                let _ = rep;
+                if t0.elapsed() > Duration::from_secs(5) {
+                    break;
+                }
             }
         }
         println!("{mode}: {strokes} strokes in {:.1} s, footprint {:.0} MB", t0.elapsed().as_secs_f64(), footprint_mb());
