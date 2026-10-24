@@ -2,18 +2,24 @@
 //! every picture, a size and a quality, and the clip's sound copied as it is. Runs in the background with a row in the
 //! activity stack (`video.export`, `video.exportStatus`); a cancelled or failed export leaves nothing behind.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(not(target_arch = "wasm32"))]
 use lightcraft_catalog::{MediaKind, PhotoId, Source};
 use lightcraft_develop::DevelopSettings;
 use lightcraft_pipeline::{RenderRequest, SourceInfo};
 use lightcraft_raster::Rgba8;
+#[cfg(not(target_arch = "wasm32"))]
 use serde_json::{Value, json};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::slideshow_export::PartFile;
 
+#[cfg(not(target_arch = "wasm32"))]
 /// How small the file is made: the encoder's constant quality (lower is better and bigger).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Quality {
@@ -22,6 +28,7 @@ pub enum Quality {
     Better,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Quality {
     fn parse(s: &str) -> Option<Quality> {
         match s {
@@ -41,6 +48,7 @@ impl Quality {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A video export ready to run: everything it needs, detached from the session.
 pub struct Prepared {
     pub path: String,
@@ -60,6 +68,7 @@ pub struct Prepared {
     pub fps: f64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Prepare the export `p` asks for (`id?`, `path`, `maxEdge?`, `quality?`, `edits?`, `trim?`).
 pub fn prepare(s: &mut crate::Session, p: &Value) -> Result<Prepared, String> {
     let path = p.get("path").and_then(Value::as_str).map(str::trim).filter(|x| !x.is_empty()).ok_or("missing `path`")?;
@@ -124,6 +133,7 @@ pub fn prepare(s: &mut crate::Session, p: &Value) -> Result<Prepared, String> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 const CANCELLED: &str = "Video export cancelled";
 
 /// A decoded picture (linear Rec.2020) as 8-bit sRGB: with the develop settings applied and the crop (`edits`), the way
@@ -147,6 +157,7 @@ pub(crate) fn finish_picture(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Make an even size of `img` (the encoder needs one) by dropping a last odd column or row.
 fn even(img: Rgba8) -> Rgba8 {
     let (w, h) = (img.width & !1, img.height & !1);
@@ -156,6 +167,7 @@ fn even(img: Rgba8) -> Rgba8 {
     Rgba8::from_fn(w, h, |x, y| img.get(x, y))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Prepared {
     /// Write the file: `progress(done, total)` after each picture; stops (leaving nothing) when `cancel` is set.
     pub fn run(self, progress: &dyn Fn(u64, u64), cancel: &AtomicBool) -> Result<Value, String> {
@@ -208,6 +220,7 @@ impl Prepared {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Run `prepared` to the end, recording progress and the outcome in `run` (and the row).
 pub fn run_to_end(prepared: Prepared, run: &crate::slideshow_export::ExportRun, task: &crate::activity::TaskGuard) {
     let handle = task.handle();
@@ -223,6 +236,7 @@ pub fn run_to_end(prepared: Prepared, run: &crate::slideshow_export::ExportRun, 
     run.finished.store(true, Ordering::Relaxed);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The `video.export` command's body; `wait` runs it here (scripts, tests).
 pub fn start(s: &mut crate::Session, p: &Value, wait: bool) -> Result<Value, String> {
     if s.video_export.as_ref().is_some_and(|r| r.running()) {

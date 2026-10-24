@@ -191,11 +191,16 @@ fn set_cover(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "video.export";
-    if cfg!(target_arch = "wasm32") {
-        return Err(bad(C, "video export needs the desktop app, a phone or lightcraft-cli"));
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (s, p);
+        Err(bad(C, "video export needs the desktop app, a phone or lightcraft-cli"))
     }
-    let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
-    crate::video_export::start(s, p, wait).map_err(|e| bad(C, e))
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
+        crate::video_export::start(s, p, wait).map_err(|e| bad(C, e))
+    }
 }
 
 fn export_status(s: &mut Session, _: &Value) -> Result<Value> {
