@@ -3414,7 +3414,8 @@ mod tests {
         {
             let p = space(make, model);
             let white = p.apply([1.0; 3]);
-            assert!((0..3).all(|i| (white[i] - 1.0).abs() < 1e-6), "{make}: white {white:?}");
+            // (the tables hold matrices to six decimals, so white is kept to a few millionths)
+            assert!((0..3).all(|i| (white[i] - 1.0).abs() < 1e-5), "{make}: white {white:?}");
             assert!(p.inverse().is_some(), "{make}");
             assert!(p.0.iter().flatten().zip(Mat3::IDENTITY.0.iter().flatten()).any(|(a, b)| (a - b).abs() > 0.05), "{make}: identity");
         }
@@ -3931,14 +3932,15 @@ mod tests {
     }
 
     /// Step 4: when the JPEG fit fails (here: no camera JPEG at all), a model with a spectral row takes its matrices,
-    /// whether or not it has a camera profile (the ILCE-7M4 has a bundled one).
+    /// whether or not it has a camera profile (the ILCE-7M4 has a bundled one). The photo then starts from the typical
+    /// look: the neutral tone, with the colour already in the transform (an identity matrix in the look).
     #[test]
     fn a_failed_jpeg_fit_falls_back_to_the_spectral_matrices() {
         assert!(crate::camera_profiles::get("ILCE-7M4").is_some());
         let camera = lightcraft_raw::spectral::find(Some("SONY"), "ILCE-7M4").unwrap();
         let mut raw = raw_of(RawFormat::Arw, "SONY", "ILCE-7M4", Default::default());
         let (_, t, look, _) = starting_colour(&mut raw, &[], None, None);
-        assert!(look.is_none());
+        assert!(look.is_some_and(|l| l.matrix == Mat3::IDENTITY && l.hue_sat.is_none()));
         assert_eq!(raw.color.color_matrix, camera.color_matrix.map(Some));
         assert!(!t.matrix_is_fallback);
 
@@ -3946,7 +3948,7 @@ mod tests {
         let mut raw = raw_of(RawFormat::Cr2, "Canon", "Canon EOS 600D", Default::default());
         let (xy, t, look, _) =
             starting_colour_with(&mut raw, |_, _| (None, false), |_, _| panic!("a colour JPEG never takes the black-and-white step"));
-        assert!(look.is_none());
+        assert!(look.is_some_and(|l| l.matrix == Mat3::IDENTITY && l.hue_sat.is_none()));
         assert_eq!(raw.color.illuminant, [17, 21]);
         assert_eq!(raw.color.forward_matrix, camera.forward_matrix.map(Some));
         assert!(!t.matrix_is_fallback);
@@ -4015,12 +4017,14 @@ mod tests {
         assert!(tone(RawFormat::Cr2, "Canon EOS 600D", &[], false, &None).is_none());
     }
 
-    /// Step 5: a camera outside the table whose fit fails keeps the neutral fallback.
+    /// Step 5: a camera outside the table whose fit fails keeps the neutral fallback transform (nothing is written
+    /// into the raw), and starts from its maker's typical colour in the look.
     #[test]
     fn a_camera_outside_the_table_keeps_the_fallback() {
         let mut raw = raw_of(RawFormat::Cr2, "Canon", "Canon EOS 7D", Default::default());
         let (_, t, look, _) = starting_colour(&mut raw, &[], None, None);
-        assert!(look.is_none() && t.matrix_is_fallback);
+        assert!(t.matrix_is_fallback);
+        assert!(look.is_some_and(|l| l.matrix != Mat3::IDENTITY), "the typical camera's colour");
         assert_eq!(raw.color, lightcraft_raw::ColorData::default());
         // without a model there is no table row
         let mut raw = raw_of(RawFormat::Cr2, "Canon", "", Default::default());
@@ -5137,8 +5141,9 @@ mod tests {
     }
 
     /// [`monochrome_look`] on a synthetic raw file: an ILCE-7M4 (it has a bundled camera profile) whose camera JPEG,
-    /// in a minimal TIFF, is black and white gets the tone curve, on the colour of the transform it is given; the
-    /// same file with a tinted JPEG gets nothing from this step.
+    /// in a minimal TIFF, is black and white gets the tone curve, on the colour of the transform it is given (the
+    /// camera's typical colour where that transform is the fallback's); the same file with a tinted JPEG gets nothing
+    /// from this step.
     #[test]
     fn monochrome_look_reads_the_files_black_and_white_jpeg() {
         use lightcraft_raw::{BlackLevel, ColorData, OpcodeLists, Orientation, RawData, Rect};
@@ -5192,7 +5197,14 @@ mod tests {
         };
         let t = lightcraft_raw::color::camera_transform(&raw, lightcraft_raw::color::as_shot_white_xy(&raw));
         let look = monochrome_look(&raw, &file([1.0; 3]), &t, None).expect("a tone curve from the black-and-white JPEG");
-        assert!(look.matrix == Mat3::IDENTITY && look.hue_sat.is_none(), "on the transform's colour");
+        // the raw has no matrices, so the transform is the fallback's: the look adds the camera's typical colour
+        assert!(t.matrix_is_fallback && Some(look.matrix) == prior(&raw, &t) && look.hue_sat.is_none(), "on the camera's colour");
+        // with the measured matrices already in the transform, the look keeps them and adds the tone curve alone
+        let mut measured = raw.clone();
+        spectral(&measured).unwrap().fill(&mut measured.color);
+        let t_measured = lightcraft_raw::color::camera_transform(&measured, lightcraft_raw::color::as_shot_white_xy(&measured));
+        let on_measured = monochrome_look(&measured, &file([1.0; 3]), &t_measured, None).expect("a tone curve on the measured colour");
+        assert!(!t_measured.matrix_is_fallback && on_measured.matrix == Mat3::IDENTITY && on_measured.hue_sat.is_none(), "on the transform's colour");
         let curve = ToneMap::camera(&look.tone, 0.0, 0.0, 0.0);
         let mid = curve.apply(0.25);
         assert!((mid - (1.0 - (-0.75f32).exp())).abs() < 0.05, "the camera's curve at 0.25: {mid}");
