@@ -40,6 +40,7 @@
 pub mod accounts;
 pub mod admin;
 pub mod api;
+pub mod companions;
 pub mod cors;
 pub mod docs;
 pub mod folders;

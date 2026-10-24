@@ -223,6 +223,8 @@ pub struct LightroomJob {
     progress: LightroomProgress,
     /// Albums only: the library's photos, to match the catalog's against.
     library: Option<Vec<LibraryPhoto>>,
+    /// The server the library syncs with, to send it the files that go beside its photos.
+    server: Option<crate::lightroom_companions::Server>,
 }
 
 impl LightroomJob {
@@ -242,7 +244,8 @@ impl LightroomJob {
             add_done: Arc::clone(&import.done),
             ..LightroomProgress::default()
         };
-        Ok(Self { path, update_existing, import, token: LightroomLibraryToken::capture(s), archive_dir, progress, library })
+        let server = s.sync_server().map(|(url, token)| crate::lightroom_companions::Server { url, token });
+        Ok(Self { path, update_existing, import, token: LightroomLibraryToken::capture(s), archive_dir, progress, library, server })
     }
 
     /// The job's progress, to watch from another thread while [`LightroomJob::prepare`] runs.
@@ -314,7 +317,8 @@ impl LightroomJob {
         .map_err(|e| if cancel.load(Ordering::Relaxed) { cancelled() } else { error(e) })?;
         let index_path = self.archive_dir.as_ref().map(|dir| dir.join("lightroom-index.json"));
         // a cloud catalog keeps its develop settings in `settings/` beside it
-        let settings_dir = crate::lightroom_cloud::is_cloud(&self.path).then(|| self.path.with_file_name("settings"));
+        let cloud = crate::lightroom_cloud::is_cloud(&self.path);
+        let settings_dir = cloud.then(|| self.path.with_file_name("settings"));
         Ok(PreparedLightroom {
             data: CatalogImport {
                 source: source.source.clone(),
@@ -336,7 +340,9 @@ impl LightroomJob {
             cancelled: cancel.load(Ordering::Relaxed),
             albums: {
                 self.progress.stage.store(crate::lightroom_cloud::stage::MATCHING, Ordering::Relaxed);
-                Some(AlbumPlan::new(source, library, settings_dir.as_deref(), cancel))
+                let edit_files = if cloud { crate::lightroom_companions::find_edit_files(&self.path, cancel) } else { Vec::new() };
+                let extras = crate::lightroom_albums::Extras { settings_dir: settings_dir.as_deref(), edit_files: &edit_files, server: self.server.as_ref() };
+                Some(AlbumPlan::new(source, library, extras, cancel))
             },
         })
     }

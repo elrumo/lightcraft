@@ -260,7 +260,24 @@ fn identity(doc: &Value) -> PhotoIdentity {
         captured: second(str_at(doc, "/xmp/exif/DateTimeOriginal")).or_else(|| second(str_at(doc, "/captureDate"))),
         dims: dimension("/importSource/originalWidth").zip(dimension("/importSource/originalHeight")),
         path: None,
+        orientation: orientation(str_at(doc, "/xmp/tiff/Orientation")),
     }
+}
+
+/// The EXIF orientation (1 to 8) of the words Lightroom keeps it in: where the stored image's first row
+/// and first column are (`right top`: its top is on the right, turned a quarter clockwise).
+fn orientation(words: &str) -> Option<u16> {
+    Some(match words.trim().to_lowercase().as_str() {
+        "top left" => 1,
+        "top right" => 2,
+        "bottom right" => 3,
+        "bottom left" => 4,
+        "left top" => 5,
+        "right top" => 6,
+        "right bottom" => 7,
+        "left bottom" => 8,
+        _ => return None,
+    })
 }
 
 /// A report of the catalog at `path` without reading its photos: `{kind, albums, folders, photos,
@@ -293,7 +310,8 @@ pub(crate) mod tests {
         format!(
             "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
              <rdf:Description rdf:about=\"\" xmlns:crs=\"http://ns.adobe.com/camera-raw-settings/1.0/\" crs:Version=\"17.1\" \
-             crs:HasSettings=\"True\" crs:Exposure2012=\"{exposure}\"/></rdf:RDF></x:xmpmeta>"
+             crs:HasSettings=\"True\" crs:Exposure2012=\"{exposure}\" crs:HasCrop=\"True\" crs:CropLeft=\"0.1\" crs:CropTop=\"0.1\" \
+             crs:CropRight=\"0.9\" crs:CropBottom=\"0.9\" crs:CropAngle=\"0\"/></rdf:RDF></x:xmpmeta>"
         )
     }
 
@@ -317,7 +335,7 @@ pub(crate) mod tests {
                 "image",
                 0,
                 json!({"captureDate": "2024-06-25T21:25:00Z", "importSource": {"fileName": "IMG_0001.HEIC",
-                "fileSize": 2_000_000, "originalWidth": 4032, "originalHeight": 3024}, "xmp": {"exif": {"DateTimeOriginal": "2024-06-25T22:25:00.670+01:00"}}}),
+                "fileSize": 2_000_000, "originalWidth": 4032, "originalHeight": 3024}, "xmp": {"exif": {"DateTimeOriginal": "2024-06-25T22:25:00.670+01:00"}, "tiff": {"Orientation": "right top"}}}),
             ),
             ("p2", "asset", "video", 0, json!({"captureDate": "2024-06-26T10:00:00", "importSource": {"fileName": "IMG_0002.MOV", "fileSize": 9}})),
             ("preset", "asset", "preset", 0, json!({"name": "Warm"})),
@@ -394,6 +412,11 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn exif_orientation_is_read_from_lightrooms_words() {
+        assert_eq!([orientation("top left"), orientation("Right Top"), orientation("left bottom"), orientation("")], [Some(1), Some(6), Some(8), None]);
+    }
+
+    #[test]
     fn albums_folders_members_and_photo_identities_are_read() {
         let dir = temp_dir("read");
         let source = read_all(&mcat(&dir));
@@ -413,7 +436,8 @@ pub(crate) mod tests {
                 size: Some(2_000_000),
                 captured: Some("20240625222500".into()),
                 dims: Some((4032, 3024)),
-                path: None
+                path: None,
+                orientation: Some(6),
             }
         );
         assert_eq!(source.photos.get("p2").and_then(|p| p.captured.clone()), Some("20240626100000".into()));
@@ -475,8 +499,13 @@ pub(crate) mod tests {
         let packet = settings_packet("1.00");
         std::fs::create_dir_all(dir.join("settings")).unwrap();
         std::fs::write(dir.join("settings/abc123"), &packet).unwrap();
-        let original = dir.join("IMG_0001.HEIC");
+        // the photo is in a folder of its own; the library's edit file (Photoshop's) is beside the catalog
+        std::fs::create_dir_all(dir.join("photos")).unwrap();
+        let original = dir.join("photos/IMG_0001.HEIC");
         std::fs::write(&original, b"x").unwrap();
+        std::fs::create_dir_all(dir.join("originals/2024")).unwrap();
+        std::fs::write(dir.join("originals/2024/IMG_0001-Edit.psb"), b"layers").unwrap();
+        std::fs::write(dir.join("originals/2024/IMG_7777-Edit.tif"), b"nobody's").unwrap();
         let mut s = crate::Session::new();
         let id = s.catalog.alloc_photo_id();
         let mut photo =
@@ -487,11 +516,15 @@ pub(crate) mod tests {
 
         let report = crate::lightroom_catalog::import(&mut s, &path, false, false).unwrap();
         assert_eq!((report["edits"].as_u64(), report["sidecars"].as_u64()), (Some(1), Some(1)), "{report}");
-        assert_eq!(std::fs::read_to_string(dir.join("IMG_0001.xmp")).unwrap(), packet, "the file as Lightroom kept it");
+        assert_eq!(std::fs::read_to_string(dir.join("photos/IMG_0001.xmp")).unwrap(), packet, "the file as Lightroom kept it");
+        assert_eq!(std::fs::read(dir.join("photos/IMG_0001-Edit.psb")).unwrap(), b"layers", "the edit file beside its photo");
+        assert_eq!((report["editFiles"].as_u64(), report["editFilesUnmatched"].as_u64()), (Some(1), Some(1)), "{report}");
+        assert_eq!(report["editsCropHeld"].as_u64(), Some(0), "the catalog's orientation puts the crop in its frame: {report}");
         assert!(s.catalog.photo(id).unwrap().edited.is_some());
 
         let again = crate::lightroom_catalog::import(&mut s, &path, false, false).unwrap();
         assert_eq!((again["edits"].as_u64(), again["editsKept"].as_u64(), again["sidecars"].as_u64()), (Some(0), Some(1), Some(0)));
+        assert_eq!((again["editFiles"].as_u64(), again["editFilesKept"].as_u64()), (Some(0), Some(1)), "an edit file is never put twice");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

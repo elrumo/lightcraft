@@ -64,6 +64,7 @@ pub mod lightroom_albums;
 mod lightroom_archive;
 pub mod lightroom_catalog;
 pub mod lightroom_cloud;
+pub mod lightroom_companions;
 pub mod lightroom_folder;
 pub mod lightroom_job;
 mod lightroom_smart;

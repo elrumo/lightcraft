@@ -301,6 +301,8 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["docs", name]) => get_doc(&l, name),
         (Method::Put, ["docs", name]) => put_doc(req, &l, name),
         (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
+        // a file that goes beside a photo (an XMP sidecar, an edit file)
+        (Method::Put, ["companions", hash]) => crate::companions::put(st, req, &who.user, hash, q),
         // search by description (see `vision`)
         (Method::Get, ["search", "status"]) => crate::vision::status(st, &l, &who.user),
         (Method::Get, ["search"]) => crate::vision::search(st, &l, &who.user, q),

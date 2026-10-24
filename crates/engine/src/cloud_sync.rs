@@ -1221,6 +1221,12 @@ fn is_host_port(a: &str) -> bool {
 }
 
 impl Session {
+    /// The server this library is signed in to: its URL and this device's token.
+    pub(crate) fn sync_server(&self) -> Option<(String, String)> {
+        let st = self.sync.as_ref().filter(|st| !st.config.token.is_empty() && !st.config.server.is_empty())?;
+        Some((st.config.server.clone(), st.config.token.clone()))
+    }
+
     /// The library's sync, when it was ever signed in.
     pub fn sync_state(&self) -> Option<&SyncState> {
         self.sync.as_ref()
