@@ -66,7 +66,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "photo.hide",
             "Hide Photo",
             ["Photo"],
-            Some("Cmd+L"),
+            Some("Cmd+Alt+L"),
             "{ids?} — into the Hidden album: left out of All Photos, albums, search and People until Hidden is unlocked",
             can_hide,
             |s, p| {

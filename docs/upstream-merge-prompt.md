@@ -51,7 +51,14 @@ Bring the latest changes from the upstream repository https://github.com/storyto
    - A failing test is reported with its output. Do not delete or weaken tests to get green.
 6. **Commit.** One merge commit for the merge itself; fixes after it as follow-up commits with a task-style message and the
    attribution line the environment requires. Only commit green states you actually checked.
-7. **Update the memory note** `upstream-merge.md`: last merged upstream commit, the date, new policies you had to decide,
+7. **Write the HelpBites changelog (every pull).** From the upstream commit list and What's New, write one JSON file
+   `apps/lightbites-web/shared/changelog/upstream-<date>.json` (copy the shape of the previous one): entries in plain
+   words, **photo engine** (`"area": "photo-engine"`, title prefix "Photo engine:") apart from the **front-end**
+   (`"area": "front-end"`, prefix "Front-end:"), each with a `tag` (`new`, `improved`, `fix`). Report with
+   `node scripts/helpbites-changelog.mjs shared/changelog/<file>.json`, then publish with `--apply` (env from
+   `apps/lightbites-web/.env`) once the merge is on main and green. Say in the summary which front-end items the
+   SwiftUI app does not have yet. Commit the file in the lightbites-web repo.
+8. **Update the memory note** `upstream-merge.md`: last merged upstream commit, the date, new policies you had to decide,
    and anything left unverified.
 
 ## The summary (final reply, and save it to the scratchpad)

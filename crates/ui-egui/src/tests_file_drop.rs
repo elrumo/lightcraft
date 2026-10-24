@@ -39,6 +39,8 @@ fn setup(tag: &str, n: usize, ms: u64) -> (Headless, Vec<String>, std::path::Pat
     let mut app = LightcraftApp::new(s, Services { png: None, ..Default::default() });
     app.ui.view = crate::state::ViewMode::PhotoGrid;
     app.ui.left_panel = true;
+    // tiles belong to the direct import; a drop otherwise opens the import review (tests_drop_import)
+    app.ui.settings.import_dropped_directly = true;
     let mut h = Headless::new(app, [1300.0, 900.0], 1.0);
     h.settle(T);
     (h, files, dir)

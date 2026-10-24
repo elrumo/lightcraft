@@ -8,7 +8,7 @@ pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static
 
 pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.appearance.system", "System", None, "Edit>Appearance"),
-    ("app.appearance.light", "Light", None, "Edit>Appearance"),
+    ("app.appearance.light", "Light Mode", None, "Edit>Appearance"),
     ("app.appearance.dark", "Dark", None, "Edit>Appearance"),
     ("ui.dock", "Arrange Panel", None, ""),
     ("ui.dock.reset", "Reset Panel Layout", None, "Window"),

@@ -341,7 +341,8 @@ impl LightroomJob {
             albums: {
                 self.progress.stage.store(crate::lightroom_cloud::stage::MATCHING, Ordering::Relaxed);
                 let edit_files = if cloud { crate::lightroom_companions::find_edit_files(&self.path, cancel) } else { Vec::new() };
-                let extras = crate::lightroom_albums::Extras { settings_dir: settings_dir.as_deref(), edit_files: &edit_files, server: self.server.as_ref() };
+                let extras =
+                    crate::lightroom_albums::Extras { settings_dir: settings_dir.as_deref(), edit_files: &edit_files, server: self.server.as_ref() };
                 Some(AlbumPlan::new(source, library, extras, cancel))
             },
         })

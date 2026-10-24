@@ -155,6 +155,8 @@ fn a_thumbnail_asked_once_renders_when_its_preview_lands() {
     let mut e = Engine::start(&config, events.clone(), Arc::new(Leases::default()), tx).unwrap();
     let landed = Arc::new(AtomicBool::new(false));
     let l = landed.clone();
+    // (thumbnails load through the reduced loader when there is one: this test's loader is the plain one)
+    e.session.media.reduced_loader = None;
     e.session.media.file_loader = Some(Arc::new(move |_, _| {
         if !l.load(Ordering::SeqCst) {
             return Err("still downloading".into());
@@ -797,7 +799,7 @@ fn the_fixed_keys_are_listed_for_a_hosts_key_map() {
     assert_eq!((three["command"].as_str(), &three["params"]), (Some("photo.rate"), &json!({"rating": 3})), "{three}");
     let shifted = fixed.iter().find(|k| k["shortcut"] == "Shift+X").unwrap();
     assert_eq!(shifted["params"], json!({"flag": "reject", "advance": true}), "{shifted}");
-    assert_eq!(r["result"]["contextual"], json!([["photo.reject", "crop.rotateAspect"]]));
+    assert_eq!(r["result"]["contextual"], json!([["photo.reject", "crop.rotateAspect"], ["view.visualizeSpots", "crop.lockAspect"]]));
 }
 
 #[test]

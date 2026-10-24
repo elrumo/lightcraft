@@ -1696,12 +1696,13 @@ fn show_in_folders_chooses_the_photos_folder_and_opens_the_rows_above_it() {
     assert!(crate::menus::ui_enabled(&h.app, "app.showInFolders"));
     click(&mut h, "sidebarSection:folders");
     h.app.run("view.leftPanel", json!({})).unwrap();
-    h.step();
+    // (the sidebar slides away)
+    h.settle(SETTLE);
     assert!(!h.app.ui.left_panel && !has(&h, "sidebarTitle"), "the sidebar is hidden");
     let r = h.request("ui.menu.invoke", json!({"id": "app.showInFolders"}), T);
     assert_eq!(r["ok"], true, "{r}");
-    h.step();
-    h.step();
+    // (the sidebar slides back in and the rows above the folder unfold)
+    h.settle(SETTLE);
     assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::LibraryFolder);
     assert_eq!(h.app.session.library_folder.as_deref(), Some("/pics/trip/day1"));
     assert_eq!(h.app.session.visible().len(), 1, "the folder's photos fill the grid");
@@ -1712,8 +1713,7 @@ fn show_in_folders_chooses_the_photos_folder_and_opens_the_rows_above_it() {
     click(&mut h, "libraryFolderToggle:/pics/trip");
     assert!(!has(&h, "source:libfolder:/pics/trip/day1"));
     h.app.run("app.showInFolders", json!({})).unwrap();
-    h.step();
-    h.step();
+    h.settle(SETTLE);
     assert!(has(&h, "source:libfolder:/pics/trip/day1"), "opened again");
 }
 

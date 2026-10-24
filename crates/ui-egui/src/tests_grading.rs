@@ -491,8 +491,8 @@ fn a_wheel_that_goes_away_mid_drag_gives_the_pointer_back() {
     assert_eq!(h.last_cursor, egui::CursorIcon::None);
     // the flyout closes under the drag: no wheel is drawn to let go of the pointer itself
     h.app.ui.toggle_flyout("grading");
-    h.step();
-    h.step();
+    // (the flyout folds away)
+    h.settle(SETTLE);
     assert!(widget(&h, "wheel:midtones").is_none());
     assert_ne!(h.last_cursor, egui::CursorIcon::None);
     assert_eq!(cursor_moves(&h), [press]);

@@ -413,7 +413,10 @@ pub(crate) mod tests {
 
     #[test]
     fn exif_orientation_is_read_from_lightrooms_words() {
-        assert_eq!([orientation("top left"), orientation("Right Top"), orientation("left bottom"), orientation("")], [Some(1), Some(6), Some(8), None]);
+        assert_eq!(
+            [orientation("top left"), orientation("Right Top"), orientation("left bottom"), orientation("")],
+            [Some(1), Some(6), Some(8), None]
+        );
     }
 
     #[test]

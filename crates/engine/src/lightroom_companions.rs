@@ -35,7 +35,8 @@ impl Server {
     pub fn put_companion(&self, hash: &str, name: &str, file: &Path) -> Result<(), String> {
         use crate::cloud_sync::{Body, Task, run};
         let url = format!("{}/api/companions/{hash}?name={}", self.url.trim_end_matches('/'), encode(name));
-        let task = Task::Http { id: 0, method: "PUT", url, token: self.token.clone(), body: Body::File(file.to_string_lossy().into_owned()), save_to: None };
+        let task =
+            Task::Http { id: 0, method: "PUT", url, token: self.token.clone(), body: Body::File(file.to_string_lossy().into_owned()), save_to: None };
         let done = run(&task);
         match done.status {
             200..=299 => Ok(()),

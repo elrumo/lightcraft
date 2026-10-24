@@ -214,12 +214,15 @@ impl GridCache {
     ) -> Arc<Vec<DateRun>> {
         let shaped = !square;
         match &self.runs {
-            // (a develop edit changes a shape without changing the list: the shapes follow the catalog revision)
-            Some((k, r))
-                if *k == key
-                    && self.read.as_ref().is_some_and(|read| read.shapes.is_some() == shaped && (square || read.revision == cat.revision)) =>
-            {
-                r.clone()
+            Some((k, r)) if *k == key && self.read.as_ref().is_some_and(|read| read.shapes.is_some() == shaped) => {
+                let r = r.clone();
+                // A develop edit (a crop, a rotation) changes a shape without changing the list: the
+                // runs stay, the touched photos' shapes are read again (not a view build).
+                if let Some(read) = self.read.take_if(|read| shaped && read.revision != cat.revision) {
+                    let dates = read.dates;
+                    self.read = Some(read.follow(stats, cat, ids, dates, shaped).unwrap_or_else(|| ListRead::whole(stats, cat, ids, dates, shaped)));
+                }
+                r
             }
             _ => {
                 stats.view_builds += 1;
@@ -1327,7 +1330,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
     } else {
         let ph = img_rect.shrink(if square && !tiles { 20.0 } else { 0.0 });
-        p.rect_filled(ph, 0.0, if crate::theme::Tokens::is_dark(ui.ctx()) { Color32::from_gray(38) } else { t.inset });
+        p.rect_filled(ph, 0.0, t.skeleton);
         if app.compact {
             let _ = ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), false, 0.0);
         }

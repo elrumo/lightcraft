@@ -33,12 +33,14 @@ const HEIF_PACKAGES: &[&str] = &["lightcraft-codecs", "lightcraft-heif"];
 /// a build script's `rerun-if-changed`): a change to one counts as a change to those packages.
 /// An entry ending in `/` covers the directory. `embedded_files_are_mapped` keeps this complete.
 const EMBEDDED: &[(&str, &[&str])] = &[
-    ("assets/app-icon/", &["lightcraft"]),
+    ("assets/app-icon/", &["lightcraft", "lightcraft-server"]),
     ("assets/camera-profiles/", &["lightcraft-engine"]),
     ("assets/camera-tone/", &["lightcraft-engine"]),
-    ("assets/fonts/", &["lightcraft-engine", "lightcraft-ui-egui"]),
+    ("assets/fonts/", &["lightcraft-engine", "lightcraft-ui-egui", "lightcraft-vision"]),
     ("contributors/", &["lightcraft-ui-egui"]),
-    ("docs/whats-new.md", &["lightcraft-ui-egui"]),
+    ("docs/whats-new.md", &["lightcraft-engine", "lightcraft-ui-egui"]),
+    ("xtask/src/build_info.rs", &["lightcraft", "lightcraft-server"]),
+    ("crates/apphost/src/ui_commands.rs", &["xtask"]),
     ("docs/raw/coverage-sweep.tsv", &["lightcraft-raw"]),
     ("docs/raf-corpus.sha256", &["lightcraft-raw"]),
     ("xtask/src/main.rs", &["lightcraft-raw"]),

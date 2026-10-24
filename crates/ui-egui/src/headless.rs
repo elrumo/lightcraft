@@ -4742,10 +4742,10 @@ mod tests {
         // Appearance cards (one row per theme, with its favorite star) sit above these controls;
         // scroll the compact settings viewport past them.
         h.request("ui.hoverWidget", json!({"id": "radio:theme-charcoal"}), t);
-        h.request("ui.scroll", json!({"dy": -700.0}), t);
-        for _ in 0..4 {
-            h.step();
-        }
+        // (just far enough to bring the Filmstrip and Grid rows into the window: the page is longer
+        // than the room, and a full scroll to its end would leave the Filmstrip rows above it)
+        h.request("ui.scroll", json!({"dy": -300.0}), t);
+        h.settle(t);
         h.request("ui.clickWidget", json!({"id": "check:settings.filmNames"}), t);
         assert!(!h.app.ui.settings.film_names);
         h.request("ui.clickWidget", json!({"id": "button:settingsGridBadges-1"}), t);

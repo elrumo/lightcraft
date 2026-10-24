@@ -72,9 +72,9 @@ pub fn put(st: &State, req: &mut Request, user: &str, hash: &str, q: &str) -> Re
         std::fs::create_dir_all(&dir).map_err(io)?;
         let part = dir.join(format!(".{}.part", accounts::random_hex(8)?));
         let mut f = std::fs::File::create(&part).map_err(io)?;
-        let copied = std::io::copy(&mut req.as_reader().take(MAX_BYTES + 1), &mut f).map_err(io).and_then(|n| {
-            if n > MAX_BYTES { Err("too large".to_string()) } else { f.flush().and_then(|()| f.sync_all()).map_err(io) }
-        });
+        let copied = std::io::copy(&mut req.as_reader().take(MAX_BYTES + 1), &mut f)
+            .map_err(io)
+            .and_then(|n| if n > MAX_BYTES { Err("too large".to_string()) } else { f.flush().and_then(|()| f.sync_all()).map_err(io) });
         match copied.and_then(|()| std::fs::rename(&part, dir.join(&name)).map_err(io)) {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -110,7 +110,8 @@ pub(crate) fn place(st: &State, user: &str, hash: &str) -> usize {
     let Ok(l) = lib(st, user) else { return 0 };
     let mut guard = l.lock().unwrap_or_else(PoisonError::into_inner);
     let UserLib { core, index, dir: user_dir, .. } = &mut *guard;
-    let Some(key) = index.keys_of(hash).iter().find(|k| k.split_once('/').is_some_and(|(root, _)| writable.contains_key(&root.to_lowercase()))).cloned()
+    let Some(key) =
+        index.keys_of(hash).iter().find(|k| k.split_once('/').is_some_and(|(root, _)| writable.contains_key(&root.to_lowercase()))).cloned()
     else {
         return 0;
     };
@@ -142,7 +143,8 @@ pub(crate) fn place(st: &State, user: &str, hash: &str) -> usize {
         }
         let temp = folder.join(format!(".{name}.lightcraft-part"));
         let copied = std::fs::copy(&src, &temp).and_then(|_| std::fs::OpenOptions::new().write(true).open(&temp)?.sync_all());
-        let moved = copied.and_then(|()| if target.exists() { Err(std::io::ErrorKind::AlreadyExists.into()) } else { std::fs::rename(&temp, &target) });
+        let moved =
+            copied.and_then(|()| if target.exists() { Err(std::io::ErrorKind::AlreadyExists.into()) } else { std::fs::rename(&temp, &target) });
         match moved {
             Ok(()) => {
                 let _ = std::fs::remove_file(&src);

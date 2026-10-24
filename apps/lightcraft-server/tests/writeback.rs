@@ -243,11 +243,8 @@ fn uploads_are_filed_into_the_imports_folder_and_the_servers_copy_goes() {
 fn put_companion(fx: &Fx, dev: &Session, hash: &str, name: &str, body: &[u8]) -> Value {
     let token = dev.sync_state().unwrap().config.token.clone();
     let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
-    let mut r = agent
-        .put(format!("{}/api/companions/{hash}?name={name}", fx.url))
-        .header("Authorization", format!("Bearer {token}"))
-        .send(body)
-        .unwrap();
+    let mut r =
+        agent.put(format!("{}/api/companions/{hash}?name={name}", fx.url)).header("Authorization", format!("Bearer {token}")).send(body).unwrap();
     assert_eq!(r.status().as_u16(), 200);
     serde_json::from_slice(&r.body_mut().read_to_vec().unwrap()).unwrap()
 }

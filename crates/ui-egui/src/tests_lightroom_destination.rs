@@ -383,7 +383,8 @@ fn merge_is_refused_when_another_library_was_opened_meanwhile() {
     let stale = dialog.clone();
     h.app.ui.dialog = dialog;
     h.step();
-    click(&mut h, "button:dialogOk");
+    // (this fork closes the dialogs of the library left behind when a library is switched, so the
+    // window is gone before OK can be pressed; confirm still refuses it, below)
     assert!(h.app.ui.dialog.is_none(), "the window closes: the library it named is gone");
     // confirm's own error, not the last toast: another notice (the library switch's, on macOS)
     // can replace the toast before it is read
@@ -413,7 +414,8 @@ fn a_new_library_is_refused_when_another_library_was_opened_meanwhile() {
     let stale = dialog.clone();
     h.app.ui.dialog = dialog;
     h.step();
-    click(&mut h, "button:dialogOk");
+    // (this fork closes the dialogs of the library left behind when a library is switched, so the
+    // window is gone before OK can be pressed; confirm still refuses it, below)
     assert!(h.app.ui.dialog.is_none(), "the window closes: the library it named is gone");
     // confirm's own error, not the last toast: another notice (the library switch's, on macOS)
     // can replace the toast before it is read

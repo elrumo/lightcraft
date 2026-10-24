@@ -232,11 +232,20 @@ impl Overlay {
     }
 
     /// Whether the overlay works pixel by pixel on the finished image, so a window render shows
-    /// the same as the whole frame would.
+    /// the same as the whole frame would. Visualize Spots' high pass reads about 3σ = 1.8 % of the
+    /// long edge, inside the window's margin (4.5 %).
     pub fn per_pixel(self) -> bool {
         matches!(
             self,
-            Overlay::None | Overlay::Mask { .. } | Overlay::AllMasks { .. } | Overlay::ClipShadows | Overlay::ClipHighlights | Overlay::Grayscale
+            Overlay::None
+                | Overlay::Mask { .. }
+                | Overlay::AllMasks { .. }
+                | Overlay::PointColorRange(_)
+                | Overlay::HdrRange
+                | Overlay::Spots(_)
+                | Overlay::ClipShadows
+                | Overlay::ClipHighlights
+                | Overlay::Grayscale
         )
     }
 

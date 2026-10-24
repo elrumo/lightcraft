@@ -262,22 +262,21 @@ fn a_photo_deleted_while_it_plays_does_not_stall_the_slideshow() {
     h.settle(SETTLE);
 }
 
-/// Scroll the Settings ▸ Slideshow page (one column here: the composed slide first, then the settings)
-/// until widget `id` is in view: the sections are taller than the dialog.
+/// Scroll the Settings ▸ Slideshow page (one column here, the composed slide pinned above it) until
+/// widget `id` is in view in the room for the page: the sections are taller than the dialog.
 fn reveal(h: &mut Headless, id: &str) {
     let find = |h: &Headless, w: &str| h.app.widgets.iter().find(|(i, _)| i == w).map(|(_, r)| *r);
     for _ in 0..60 {
         h.step();
-        let win = find(h, "dialog:window").expect("Settings is open");
-        // (below the title and tabs, above the Close button)
-        let (top, bottom) = (win.top() + 120.0, win.bottom() - 100.0);
+        let room = find(h, "settings:pageRoom").expect("Settings is open");
+        let (top, bottom) = (room.top() + 10.0, room.bottom() - 10.0);
         let dy = match find(h, id) {
             Some(w) if w.center().y >= top && w.center().y <= bottom => return,
-            Some(w) => (top + 60.0 - w.center().y).clamp(-500.0, 500.0),
+            Some(w) => (room.center().y - w.center().y).clamp(-500.0, 500.0),
             None => -300.0,
         };
         // (the pointer over the page, right of the sidebar)
-        let r = h.request("ui.hoverWidget", json!({"id": "dialog:window", "fx": 0.7, "fy": 0.5}), T);
+        let r = h.request("ui.hoverWidget", json!({"id": "settings:pageRoom"}), T);
         assert_eq!(r["ok"], true, "{r}");
         let r = h.request("ui.scroll", json!({"dy": dy}), T);
         assert_eq!(r["ok"], true, "{r}");
@@ -288,8 +287,8 @@ fn reveal(h: &mut Headless, id: &str) {
     panic!("{id} never came into view");
 }
 
-/// Scroll the Settings page back up until the composed slide is in view (the page is one column here, so
-/// the slide scrolls away with the settings).
+/// Until the composed slide is in view (it is pinned above the page, but in a window too short for
+/// that it scrolls away with the settings).
 fn show_preview(h: &mut Headless) {
     let find = |h: &Headless, w: &str| h.app.widgets.iter().find(|(i, _)| i == w).map(|(_, r)| *r);
     for _ in 0..60 {
@@ -776,8 +775,8 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
 }
 
 /// Hovering a template in the Template Browser previews it in the slide preview, so the preview
-/// must be in view while the templates (further down the page) are: it is pinned above the page,
-/// under the tab bar, and does not scroll away with it.
+/// must be in view while the templates (further down the page) are: it is pinned above the page
+/// and does not scroll away with it.
 #[test]
 fn the_slide_preview_stays_in_view_while_the_templates_are_browsed() {
     // (900 x 560 is the least the desktop app's window is)
@@ -786,13 +785,14 @@ fn the_slide_preview_stays_in_view_while_the_templates_are_browsed() {
         run(&mut h, "view.slideshowOptions", json!({}));
         h.step();
         let find = |h: &Headless, w: &str| h.app.widgets.iter().find(|(i, _)| i == w).map(|(_, r)| *r);
-        let tabs = find(&h, "button:settingsTab-slideshow").expect("the tab bar");
+        // (the sections are a sidebar here: the page starts level with its first row)
+        let tabs = find(&h, "button:settingsTab-general").expect("the sidebar");
         // down to the last section of the page: the templates are far above the preview's old place
         reveal(&mut h, "button:slideshowExportPdf");
         let preview = find(&h, "slideshow:preview").expect("the preview is still drawn");
         let room = find(&h, "settings:pageRoom").unwrap();
         assert!(preview.height() > 40.0, "{size:?}: {preview:?}");
-        assert!(preview.top() >= tabs.bottom(), "{size:?}: under the tab bar, not scrolled up behind it: {preview:?} {tabs:?}");
+        assert!(preview.top() >= tabs.top(), "{size:?}: in the dialog, not scrolled up out of it: {preview:?} {tabs:?}");
         assert!(preview.bottom() <= room.top() + 1.0, "{size:?}: above the page, not in it: {preview:?} {room:?}");
     }
 }

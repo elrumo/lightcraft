@@ -27,6 +27,9 @@ const ROW_HEIGHT: f32 = 29.0;
 /// Temp-data key of the row (its widget id after `source:`, lower-case) the sidebar scrolls to
 /// this frame: set before the sections are drawn, cleared after.
 const SCROLL_TO_ROW: &str = "left-scroll-to-row";
+/// Until when (`ctx.input().time`) [`SCROLL_TO_ROW`] is asked again each frame: the rows above the
+/// one asked for unfold, so it moves for a moment after it is first drawn.
+const SCROLL_UNTIL: &str = "left-scroll-until";
 
 /// Temp-data key of the Folders choice whose rows above were last opened ([`reveal_chosen`]):
 /// removed, they open again.
@@ -354,6 +357,15 @@ fn out_of_sight(app: &LightcraftApp, ui: &mut egui::Ui, id: &str, label: &str, c
 /// A row's height: taller on a phone ([`PHONE_ROW_H`]).
 fn row_height(ui: &egui::Ui) -> f32 {
     if crate::is_compact(ui.ctx()) { PHONE_ROW_H } else { ROW_HEIGHT }
+}
+
+/// Ask the sidebar to scroll to the row `id`, and keep asking while the folds above it open.
+fn ask_scroll(ui: &egui::Ui, id: String) {
+    let until = ui.input(|i| i.time) + 0.6;
+    ui.data_mut(|d| {
+        d.insert_temp(egui::Id::new(SCROLL_TO_ROW), id.to_lowercase());
+        d.insert_temp(egui::Id::new(SCROLL_UNTIL), until);
+    });
 }
 
 /// Whether the sidebar is asked to scroll to the row `id` this frame ([`SCROLL_TO_ROW`]).
@@ -993,7 +1005,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     set_tree_open(ui, egui::Id::new(("kw-open", above.to_lowercase())), true);
                 }
                 // …and the sidebar scrolls to it
-                ui.data_mut(|d| d.insert_temp(egui::Id::new(SCROLL_TO_ROW), format!("keyword:{path}").to_lowercase()));
+                ask_scroll(ui, format!("keyword:{path}"));
             }
             server_folders_section(app, ui);
             // the folder Show in Folders went to: Folders is shown and opened, and so are the
@@ -1002,7 +1014,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 app.ui.sidebar.reveal(SidebarSection::Folders);
                 ui.data_mut(|d| d.remove::<Option<String>>(egui::Id::new(LIBFOLDER_REVEALED)));
                 // …and the sidebar scrolls to it
-                ui.data_mut(|d| d.insert_temp(egui::Id::new(SCROLL_TO_ROW), format!("libfolder:{path}").to_lowercase()));
+                ask_scroll(ui, format!("libfolder:{path}"));
             }
             // Local keeps track of the folder being browsed whether or not it is drawn
             let local = local_now(app, ui);
@@ -1036,7 +1048,12 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 };
                 placed.push(at);
             }
-            ui.data_mut(|d| d.remove::<String>(egui::Id::new(SCROLL_TO_ROW)));
+            // (asked again while the rows above it unfold)
+            if ui.input(|i| i.time) >= ui.data(|d| d.get_temp::<f64>(egui::Id::new(SCROLL_UNTIL))).unwrap_or(0.0) {
+                ui.data_mut(|d| d.remove::<String>(egui::Id::new(SCROLL_TO_ROW)));
+            } else {
+                ui.ctx().request_repaint();
+            }
             // room below the last section (a section dragged to the end is dropped here; on a phone,
             // the last rows scroll up clear of Create New)
             ui.add_space(if page { CREATE_H + 40.0 } else { SECTION_GAP * 2.0 });

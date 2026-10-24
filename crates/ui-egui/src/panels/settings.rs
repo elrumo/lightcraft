@@ -170,11 +170,14 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_he
     ui.painter().vline(line_x, outer.y_range(), Stroke::new(1.0, t.divider));
     let page = Rect::from_min_max(pos2(line_x + 1.0, outer.top()), outer.max);
     ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
+        let pinned = pin_slide_preview(app, ui, &t, tab.as_str(), page.height());
         // (each section starts at its top)
         let scrolled = egui::ScrollArea::vertical().id_salt(("settings-page", tab.clone())).auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::NONE.inner_margin(Margin { left: 20 + CARD_PAD as i8, right: 10 + CARD_PAD as i8, top: 0, bottom: 12 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                page_header(ui, &t, tab.as_str());
+                if !pinned {
+                    page_header(ui, &t, tab.as_str());
+                }
                 let column = Column { left: ui.max_rect().left(), right: ui.max_rect().right(), top: ui.cursor().top() };
                 ui.data_mut(|d| {
                     d.remove::<Card>(card_id());
@@ -186,7 +189,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_he
                     "performance" => performance_tab(app, ui, &t),
                     "display" => display_tab(app, ui, &t),
                     "interface" => interface_tab(app, ui, &t),
-                    "slideshow" => slideshow_tab(app, ui, &t),
+                    "slideshow" => slideshow_tab(app, ui, &t, !pinned),
                     "faces" => super::faces::settings_tab(app, ui, &t),
                     "denoise" => super::denoise::settings_tab(app, ui, &t),
                     "sync" => sync_tab(app, ui, &t),
@@ -201,6 +204,39 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_he
         });
         register(ui.ctx(), "settings:pageRoom", scrolled.inner_rect);
     });
+}
+
+/// The share of the page's room the pinned slide preview of the Slideshow section takes.
+const PINNED_PREVIEW_SHARE: f32 = 0.4;
+
+/// What the section's title and blurb, the preview's heading, the hint under the slide, its Photo /
+/// Intro / Ending choice and the rule under it take around the slide.
+const PINNED_CHROME: f32 = 146.0;
+
+/// The least room in which the page below the pinned preview still scrolls.
+const PAGE_MIN_HEIGHT: f32 = 120.0;
+
+/// On Slideshow, the section's title and the slide preview stay above the page, not in it:
+/// hovering a template in the Template Browser previews it there, so it has to stay in view however
+/// far down the templates are scrolled to. It takes [`PINNED_PREVIEW_SHARE`] of the `height` of the
+/// room (at least the least tall slide); where that leaves less than [`PAGE_MIN_HEIGHT`] for the
+/// page, it scrolls with the page instead. Whether it was pinned.
+fn pin_slide_preview(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, tab: &str, height: f32) -> bool {
+    if tab != "slideshow" {
+        return false;
+    }
+    let slide_h = (height * PINNED_PREVIEW_SHARE - PINNED_CHROME).max(super::slide_layout::PREVIEW_MIN_H);
+    if height - (slide_h + PINNED_CHROME) < PAGE_MIN_HEIGHT {
+        return false;
+    }
+    egui::Frame::NONE.inner_margin(Margin { left: 20 + CARD_PAD as i8, right: 10 + CARD_PAD as i8, top: 0, bottom: 0 }).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        page_header(ui, t, tab);
+        super::slide_layout::preview(app, ui, t, slide_h);
+    });
+    ui.add_space(2.0);
+    ui.separator();
+    true
 }
 
 /// The desktop sidebar: a row per section, its icon on a coloured tile (as on the phone's list), the
@@ -308,7 +344,7 @@ fn phone_body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
             "performance" => performance_tab(app, ui, &t),
             "display" => display_tab(app, ui, &t),
             "interface" => interface_tab(app, ui, &t),
-            "slideshow" => slideshow_tab(app, ui, &t),
+            "slideshow" => slideshow_tab(app, ui, &t, true),
             "faces" => super::faces::settings_tab(app, ui, &t),
             "denoise" => super::denoise::settings_tab(app, ui, &t),
             "sync" => sync_tab(app, ui, &t),
@@ -733,20 +769,22 @@ pub(super) fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, add: impl FnOnc
 }
 
 /// `add`'s widgets at the end of the row, in the order they are added. Their width is measured and
-/// kept for the next pass; a pass whose widths changed (the first one, a row that grew) is
-/// discarded, so a row is never seen out of place.
+/// kept for the next pass, with the room the row had then; a pass whose widths changed (the first
+/// one, a row that grew) is discarded, so a row is never seen out of place. A row given more room
+/// than when it was measured is measured afresh: otherwise a path elided to fit a narrow first
+/// frame would stay short in a wide window.
 fn trailing<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     // (the row's own id: rows without a name, or with the same one, are told apart)
     let id = ui.unique_id().with("trailing");
     let room = ui.available_width();
-    let known = ui.data(|d| d.get_temp::<f32>(id));
+    let known = ui.data(|d| d.get_temp::<(f32, f32)>(id)).filter(|(was, _)| (was - room).abs() <= 0.5).map(|(_, used)| used);
     let width = known.unwrap_or(room).min(room);
     ui.add_space((room - width).max(0.0));
     let start = ui.cursor().left();
     let out = add(ui);
     let used = (ui.min_rect().right() - start).max(0.0);
     if known.is_none_or(|w| (w - used).abs() > 0.5) {
-        ui.data_mut(|d| d.insert_temp(id, used));
+        ui.data_mut(|d| d.insert_temp(id, (room, used)));
         ui.ctx().request_discard("a Settings row's width");
     }
     out
@@ -1754,12 +1792,14 @@ fn duration_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, id: &str, key: &s
     }
 }
 
-fn slideshow_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+/// `with_preview` the composed slide is left out: [`pin_slide_preview`] has pinned it above the page.
+fn slideshow_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, with_preview: bool) {
     // one column (the sidebar or the phone's page takes the side): the composed slide first, then the
     // settings
-    // ponytail: upstream's preview stays in view beside the settings; here it scrolls away with the page
-    super::slide_layout::preview(app, ui, t, f32::INFINITY);
-    ui.add_space(6.0);
+    if with_preview {
+        super::slide_layout::preview(app, ui, t, f32::INFINITY);
+        ui.add_space(6.0);
+    }
     super::slide_templates::section(app, ui, t);
     ui.add_space(6.0);
     playback_section(app, ui, t);
