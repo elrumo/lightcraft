@@ -212,7 +212,8 @@ impl ToneMap {
 
     /// [`ToneMap::display`] for an HDR render reaching `peak`: values above SDR white (an HDR
     /// source, e.g. a decoded gain-map image) pass through and roll off softly towards `peak`
-    /// instead of clipping at 1; SDR sources (≤ 1) render as with [`ToneMap::display`].
+    /// instead of clipping at 1 (as far as the edit moves them: neutral sliders keep them as they are, up to
+    /// `peak`); SDR sources (≤ 1) render as with [`ToneMap::display`].
     pub fn display_hdr(contrast: f64, whites: f64, blacks: f64, peak: f32) -> ToneMap {
         let peak = if peak.is_finite() { peak.max(1.0) } else { 1.0 };
         let c = (contrast / 100.0) as f32;
@@ -240,7 +241,7 @@ impl ToneMap {
                 }
                 let mut o = p.max(0.0).powf(2.2);
                 // short shoulder (SDR, edited curves): slope 1 at 0.95, reaching 1.0 at 1.05
-                if peak > 1.0 && o > 0.95 {
+                if peak > 1.0 && o > 0.95 && !neutral {
                     // exponential shoulder: slope 1 at 0.95, asymptote at `peak`
                     let r = peak - 0.95;
                     o = 0.95 + r * (1.0 - (-(o - 0.95) / r).exp());
@@ -457,7 +458,14 @@ mod tests {
             assert!(o >= prev - 1e-6 && o <= 8.0);
             prev = o;
         }
-        assert!(t.apply(3.0) > 2.0 && t.apply(3.0) < 3.0);
+        // (neutral sliders leave a source's own highlights as they are, up to the peak)
+        for y in [1.0f32, 2.0, 3.0, 5.5, 7.5] {
+            assert!((t.apply(y) - y).abs() < 0.02 * y, "{y} -> {}", t.apply(y));
+        }
+        assert_eq!(t.apply(20.0), 8.0, "past the peak it is held there");
+        // an edited curve rolls them off softly towards the peak
+        let e = ToneMap::display_hdr(20.0, 10.0, 0.0, 8.0);
+        assert!(e.apply(3.0) > 2.0 && e.apply(3.0) < 3.0);
     }
 
     #[test]

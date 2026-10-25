@@ -737,6 +737,7 @@ fn load_bytes_now(
                 camera_match: camera_match.map(Arc::new),
                 mattes,
                 local_tone,
+                hdr_gain: None,
                 // (the catalog knows the original's size: `media::source_info`)
                 native_long: None,
             },
@@ -747,10 +748,27 @@ fn load_bytes_now(
     // a Portrait photo's depth map (HEIC, JPEG), oriented like the picture
     let orientation = Orientation::from_exif(d.orientation);
     let depth = lightcraft_codecs::depth::depth(&bytes).map(|z| depth_mattes(z.width, z.height, z.data, orientation));
+    // an HDR photo's gain map (an iPhone HEIC, an Ultra HDR JPEG), turned like the picture
+    let hdr_gain = lightcraft_codecs::gainmap::read(&bytes).map(|g| Arc::new(orient_gain(g, orientation)));
     drop(bytes);
     let img = d.to_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
-    Ok((img.into_oriented(orientation), None, SourceInfo { mattes: depth, ..SourceInfo::default() }, false))
+    Ok((img.into_oriented(orientation), None, SourceInfo { mattes: depth, hdr_gain, ..SourceInfo::default() }, false))
+}
+
+/// A gain map turned by `o`, as the picture it belongs to is (a JPEG's EXIF orientation; a HEIC's is applied already).
+fn orient_gain(mut g: lightcraft_codecs::gainmap::JpegGainMap, o: Orientation) -> lightcraft_codecs::gainmap::JpegGainMap {
+    if o == Orientation::Normal {
+        return g;
+    }
+    let ch = g.gain.channels;
+    let px = |c: &[u8]| if ch == 3 { [f32::from(c[0]), f32::from(c[1]), f32::from(c[2])] } else { [f32::from(c[0]); 3] };
+    let codes = Rgb32f { width: g.gain.width, height: g.gain.height, data: g.gain.data.chunks_exact(ch).map(px).collect() };
+    let turned = codes.into_oriented(o);
+    g.gain.width = turned.width;
+    g.gain.height = turned.height;
+    g.gain.data = turned.data.iter().flat_map(|p| p.iter().take(ch).map(|v| *v as u8)).collect();
+    g
 }
 
 /// Mattes holding only a file's depth map: `w × h` disparity as stored, normalized to nearness and

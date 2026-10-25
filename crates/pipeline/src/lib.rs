@@ -135,6 +135,9 @@ pub struct SourceInfo {
     /// The raw's own local tone mapping (DNG `ProfileGainTableMap`), rendered only when the
     /// photo's Profile option asks for it ([`local_tone`]).
     pub local_tone: Option<Arc<local_tone::LocalTone>>,
+    /// The file's own HDR gain map (an iPhone HEIC, an Ultra HDR JPEG), oriented like the source. The SDR render
+    /// ignores it; the engine builds the source an HDR render starts from out of it (`media::hdr_input`).
+    pub hdr_gain: Option<Arc<lightcraft_codecs::gainmap::JpegGainMap>>,
     /// Long edge (px) of the original photo, when the source handed to the renderer is a smaller
     /// copy of it (the app's thumbnail and preview levels); `None`: the source is the original.
     /// Noise reduction sizes its radii in the original's pixels ([`Plan::detail_scale`]), so a
@@ -156,6 +159,7 @@ impl Default for SourceInfo {
             camera_match: None,
             mattes: None,
             local_tone: None,
+            hdr_gain: None,
             native_long: None,
         }
     }
