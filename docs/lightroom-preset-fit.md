@@ -25,7 +25,7 @@ frame inside 0.8 of the half diagonal. Single settings were removed one at a tim
 | Point Color imported, A6000 distortion applied | 16.0 |
 | A6000 on its own Kelvin scale (white balance, below) | ≈ 10.7 |
 | Dehaze, Highlights and grading responses refitted (below), the build as shipped | 9.2 |
-| The same with the tint Lightroom's scale implies for this body (below) | 8.2 |
+| Lightroom's Kelvin and tint read on this body's scale (below) | 8.0 |
 
 What is left is mostly colour in the greens (Lightroom's are more saturated: a 3 × 3 matrix fitted afterwards on the
 output takes ΔE from 7.6 to 4.7, with a stronger green and negative red/blue cross terms) and the tone of the
@@ -53,12 +53,15 @@ needs a Lightroom export of this raw with nothing applied to separate it from th
   was read on the relative scale around 6500 K (a warm shift of 9 mired against the 63 mired Lightroom makes from its
   as-shot 4800 K); on the Kelvin scale it is 37 mired. Fitting the white balance freely gave 56 mired, so Sony's dial
   still reads this white about 13 % above Lightroom's (5500 K against 4800 K, as the as-shot values show): a
-  Lightroom-to-dial factor would be the next step, and one body is not enough to fix it. The tint has the same
-  kind of offset and it is the largest thing left in the white balance: Lightroom reads this file's as-shot white as
-  4800 K / +15, ours as 5472 K / -1, so the preset's +3 is a tint of -12 on our dial (the fit chose -12 on its own;
-  taking +3 as written costs ΔE 1.0 and leaves the greens too red). Fixing it needs Lightroom-written Kelvin values
-  to be marked as such in a preset (a new white balance scale), because a preset made in the app on the same body is
-  in dial units already.
+  Lightroom-to-dial factor is the next step; see the Lightroom scale below.
+- **Lightroom's Kelvin on this body's scale** (`kelvin_presets::lightroom_scale`, `crs::lightroom_white_to_dial`). An XMP's
+  absolute Kelvin is marked in the settings JSON (`wb.lightroom`, never stored in a photo), and a preset applied
+  to, or a sidecar read for, an ILCE-6000 converts it: Kelvin x 1.02, tint - 18. Lightroom reads this file's as-shot white as
+  4800 K / +15 and Sony's dial as 5472 K / -1 (ratio 1.14, offset 16), but a sweep of Kelvin and tint against the export
+  preferred 7000 K / -16 for the preset's 6900 K / +3, so the constants follow the sweep. Taking +3 as written costs about
+  1 ΔE and leaves the greens too red. Presets saved in the app on the same body are in dial units and carry no marker, so
+  they are left alone. One body measured; others read Lightroom's values as written.
+
 - **Negative Dehaze** (`finish::add_haze`). The haze was a blend towards the airlight in linear light, which lifted the
   darks by 12 L* (the 1st percentile of lightness went from 8.6 to 20.7) where Lightroom's −16 leaves its blacks at 6.7
   and lifts the mids. It now blends in `c^(1/1.4)`, with strength 0.8 (was 0.7).
@@ -71,6 +74,23 @@ needs a Lightroom export of this raw with nothing applied to separate it from th
 
 Each of these is mirrored in the GPU kernel (the constants reach WGSL from the CPU values, `gpu/src/ctx.rs`) and
 `crates/gpu/tests/it/equivalence.rs` renders them on both.
+
+## What is left (ΔE about 8 here)
+
+Measured on the render of the shipped build against the export, by lightness and by hue:
+
+- Mid-tone chroma: ours is 20 to 30 % below Lightroom's from L* 35 to 80 (greens 36 against 44 at L* 40 to 45, the sea
+  and sky 12 against 18), and the greens sit about 10 degrees too yellow-orange in hue. A per-lightness chroma scale
+  fitted afterwards would take ΔE from 9.4 to 7.0; one global scale does almost nothing (9.4 to 9.0).
+- Tone: Lightroom's blacks are 6 L* deeper and its upper mids 6 to 9 L* brighter (sky and sea at L* 60 to 80).
+- Highlights: Lightroom's whites are neutral (b* -0.8), ours are warm (+3.9). Pulling the chroma of the brightest
+  17 % of pixels to neutral gains 0.7 ΔE (and costs 0.08 on default EOS R6 renders), so it was not added.
+- Mapping the tone per channel instead of on luminance (`BETA` in the scratch fit) takes ΔE from 8.05 to 6.83 and
+  accounts for the chroma and the neutral highlights at once, but it raises the error of default EOS R6 renders
+  against Lightroom's own default exports from 5.15 to 7.94 (those were tuned to a luminance map), and applying only
+  the slider tone per channel made this preset worse (8.05 to 8.91). So the gap is the camera's starting look, as with
+  the R6's hue and saturation table: a default Lightroom export of this raw (nothing applied) is what `lightcraft-cli
+  calibrate --references` needs to fit it.
 
 ## Tried and dropped
 

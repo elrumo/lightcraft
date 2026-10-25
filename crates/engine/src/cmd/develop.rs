@@ -1234,6 +1234,11 @@ pub fn specs() -> Vec<CommandSpec> {
                 .filter_map(|(id, d)| {
                     // a preset carries no Upright correction: the photo keeps its own, turned with
                     // it, or solves its own for another mode
+                    // Lightroom's Kelvin is read on this body's own scale
+                    let mut preset = preset.clone();
+                    if let Some(p) = s.catalog.photo(id) {
+                        crate::crs::lightroom_white_to_dial(&mut preset.settings, &p.meta.camera);
+                    }
                     let after = s.preset_look(id, &preset, amount).unwrap_or_else(|| preset.apply(&d, amount));
                     s.develop_op(id, after, &format!("Preset: {}", preset.name))
                 })

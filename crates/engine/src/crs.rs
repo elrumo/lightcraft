@@ -196,6 +196,23 @@ pub fn rel_to_kelvin(r: f64) -> f64 {
     1e6 / (1e6 / 6500.0 - r.clamp(-100.0, 100.0) * 0.8)
 }
 
+/// Convert the white balance of a settings partial that Lightroom wrote (marked `wb.lightroom`, absolute Kelvin and tint) to
+/// the scale of `camera` (make and model joined by a space) when it was measured against Lightroom
+/// ([`lightcraft_raw::kelvin_presets::lightroom_scale`]); the marker is removed whatever the camera.
+pub fn lightroom_white_to_dial(partial: &mut Value, camera: &str) {
+    let Some(wb) = partial.get_mut("wb").and_then(Value::as_object_mut) else { return };
+    if wb.remove("lightroom") != Some(json!(true)) {
+        return;
+    }
+    let Some(scale) = lightcraft_raw::kelvin_presets::lightroom_scale(camera) else { return };
+    if let Some(t) = wb.get("temp").and_then(Value::as_f64) {
+        wb.insert("temp".into(), json!((t * scale.kelvin_ratio).clamp(2000.0, 50000.0)));
+    }
+    if let Some(t) = wb.get("tint").and_then(Value::as_f64) {
+        wb.insert("tint".into(), json!((t - scale.tint_offset).clamp(-150.0, 150.0)));
+    }
+}
+
 /// Parse a point curve stored as an `rdf:Seq` of `"x, y"` strings in 0..255.
 fn curve(props: &Props, k: &str) -> Option<Value> {
     note(k);
@@ -364,6 +381,9 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
             // preset's Kelvin is read as the relative scale on the files that have only that, as before)
             if wb == abs && matches!(target, Target::RawAbsolute | Target::Any) {
                 put(o, "wb.scale", json!("kelvin"));
+                // (a marker of the JSON only, never stored in the settings: Lightroom's Kelvin, which
+                // [`lightroom_white_to_dial`] converts where the body's own scale differs)
+                put(o, "wb.lightroom", json!(true));
             }
         }
         // a custom Kelvin with nothing to shift it from: read on the relative scale it would be a
@@ -1094,7 +1114,7 @@ mod tests {
              crs:WhiteBalance="Custom" crs:Temperature="4650" crs:Tint="+3" crs:AsShotTemperature="5400" crs:AsShotTint="-1"/>"#;
         let p = props(x);
         let a7m3 = Target::for_file(MediaKind::Raw, "ARW", false, "SONY ILCE-7M3");
-        assert_eq!(to_partial(&p, a7m3)["wb"], json!({"mode": "custom", "temp": 4650.0, "tint": 3.0, "scale": "kelvin"}));
+        assert_eq!(to_partial(&p, a7m3)["wb"], json!({"mode": "custom", "temp": 4650.0, "tint": 3.0, "scale": "kelvin", "lightroom": true}));
         let a7m2 = Target::for_file(MediaKind::Raw, "ARW", false, "SONY ILCE-7M2");
         let shifted = to_partial(&p, a7m2);
         assert!(shifted["wb"]["temp"].as_f64().is_some_and(|t| t > 5000.0 && t < 6500.0), "{shifted}");
@@ -1221,6 +1241,29 @@ mod tests {
 
     fn unmapped(x: &str) -> Vec<String> {
         to_partial_report(&props(x), None, Target::Any, 1.5).1
+    }
+
+    #[test]
+    fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
+        let marked =
+            || json!({"wb": {"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin", "lightroom": true}, "light": {"exposure": 0.5}});
+        // the ILCE-6000: Lightroom's 6900 K / +3 is a warmer, greener white on Sony's dial
+        let mut a6000 = marked();
+        lightroom_white_to_dial(&mut a6000, "SONY ILCE-6000");
+        assert_eq!(a6000["wb"], json!({"mode": "custom", "temp": 6900.0 * 1.02, "tint": -15.0, "scale": "kelvin"}));
+        assert_eq!(a6000["light"]["exposure"], 0.5);
+        // a body nobody measured keeps the values as written, and the marker never stays
+        let mut other = marked();
+        lightroom_white_to_dial(&mut other, "Canon Canon EOS R6");
+        assert_eq!(other["wb"], json!({"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin"}));
+        // values that are not Lightroom's (a preset saved on that body, in dial units) are left alone
+        let mut own = json!({"wb": {"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin"}});
+        lightroom_white_to_dial(&mut own, "SONY ILCE-6000");
+        assert_eq!(own["wb"]["temp"], 6900.0);
+        // an XMP says so
+        let x = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+          crs:WhiteBalance="Custom" crs:Temperature="6900" crs:Tint="+3"/></rdf:RDF>"#;
+        assert_eq!(to_partial(&props(x), Target::Any)["wb"]["lightroom"], true);
     }
 
     #[test]

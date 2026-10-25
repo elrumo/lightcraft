@@ -160,6 +160,30 @@ pub fn covers(make: Option<&str>, model: &str) -> bool {
     listed || fuji || olympus || om
 }
 
+/// How Lightroom's white balance reads a body's white next to the camera's own dial ([`KelvinPresets`]): a Kelvin
+/// value Lightroom wrote becomes `kelvin * kelvin_ratio` on the dial and its tint `tint - tint_offset`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightroomScale {
+    pub kelvin_ratio: f64,
+    pub tint_offset: f64,
+}
+
+/// Bodies measured against Lightroom: make, model, and the scale. The ILCE-6000's raw reads 5472 K / -1 on Sony's dial
+/// and 4800 K / +15 in Lightroom (its as-shot `AsShotTemperature` / `AsShotTint`), a Kelvin ratio of 1.14 and a tint
+/// offset of 16; a free fit of the Phoenix 200 preset's white balance against Lightroom's export (the ΔE sweep of
+/// Kelvin and tint, 500 px) wanted 7000 K / -16 for the preset's 6900 K / +3, a ratio of 1.02 and an offset of 19, so
+/// those are used rather than the one white measured: the as-shot white is not where a preset's look is judged.
+const LIGHTROOM: &[(&str, &str, LightroomScale)] = &[("SONY", "ILCE-6000", LightroomScale { kelvin_ratio: 1.02, tint_offset: 18.0 })];
+
+/// The Lightroom scale of this camera (make and model joined by a space), when it was measured.
+pub fn lightroom_scale(camera: &str) -> Option<LightroomScale> {
+    let words: Vec<&str> = camera.split_whitespace().collect();
+    (1..words.len()).find_map(|i| {
+        let (make, model) = (words[..i].join(" "), words[i..].join(" "));
+        LIGHTROOM.iter().find(|(m, name, _)| make.eq_ignore_ascii_case(m) && model.eq_ignore_ascii_case(name)).map(|(_, _, scale)| *scale)
+    })
+}
+
 /// [`covers`] for make and model joined by a space, as the catalog keeps them (`"SONY ILCA-99M2"`).
 pub fn covers_camera(camera: &str) -> bool {
     let words: Vec<&str> = camera.split_whitespace().collect();
