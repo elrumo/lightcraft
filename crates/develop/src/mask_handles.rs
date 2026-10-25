@@ -74,6 +74,12 @@ pub fn body_contains(shape: &MaskShape, at: Point, long: (f64, f64)) -> bool {
 /// keeps a radial's proportions while resizing. Radii snap to a circle within 5 %.
 pub fn moved(shape: &MaskShape, handle: u8, from: Point, at: Point, long: (f64, f64), alt: bool) -> MaskShape {
     let mv = |p: Point| Point::new(p.x + at.x - from.x, p.y + at.y - from.y);
+    // A handle follows the pointer by how far it moved, not to where it is: a press lands up to the reach
+    // (a finger's width) off the handle's centre, and the handle must not jump that far at the first move.
+    let at = match grips(shape, long).into_iter().find(|(h, _)| *h == handle && handle > 0) {
+        Some((_, grip)) => Point::new(at.x + grip.x - from.x, at.y + grip.y - from.y),
+        None => at,
+    };
     match shape.clone() {
         MaskShape::Radial { center, rx, ry, angle, feather, invert } => {
             let dx = (at.x - center.x) / long.0;
@@ -189,6 +195,21 @@ mod tests {
         assert!(matches!(moved_c, MaskShape::Radial { center, .. } if (center.x - 0.6).abs() < 1e-9 && (center.y - 0.4).abs() < 1e-9));
         assert!(body_contains(&radial(), Point::new(0.65, 0.5), long));
         assert!(!body_contains(&radial(), Point::new(0.5, 0.7), long), "ry 0.1 long = 0.15 normalized");
+    }
+
+    /// A press off the handle's centre (a finger) moves the handle by the drag's length: it does not jump to the finger.
+    #[test]
+    fn a_handle_follows_the_drag_not_the_finger() {
+        let long = (1.0, 1.0);
+        // the right edge is at x 0.7; the finger came down 0.02 to its right, and went 0.05 further right
+        let wider = moved(&radial(), 1, Point::new(0.72, 0.51), Point::new(0.77, 0.51), long, false);
+        assert!(matches!(wider, MaskShape::Radial { rx, .. } if (rx - 0.25).abs() < 1e-9), "{wider:?}");
+        let line = MaskShape::Linear { start: Point::new(0.2, 0.2), end: Point::new(0.2, 0.6) };
+        let dragged = moved(&line, 2, Point::new(0.23, 0.58), Point::new(0.23, 0.78), long, false);
+        assert!(matches!(dragged, MaskShape::Linear { end, .. } if (end.x - 0.2).abs() < 1e-9 && (end.y - 0.8).abs() < 1e-9), "{dragged:?}");
+        // the rotation grip: the angle follows where the grip would be
+        let turned = moved(&radial(), 5, Point::new(0.8, 0.52), Point::new(0.52, 0.82), long, false);
+        assert!(matches!(turned, MaskShape::Radial { angle, .. } if (angle - 90.0).abs() < 1e-6), "{turned:?}");
     }
 
     #[test]

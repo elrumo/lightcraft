@@ -2783,7 +2783,6 @@ fn color_range_pick(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Respons
 /// component (click selects its mask, drag moves the component), and brush painting. The mask
 /// itself shows as a rendered overlay ([`view_overlay`]).
 fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, d: &DevelopSettings) {
-    let long = (map.rect.width().max(map.rect.height())) as f64;
     let active = app.session.active_mask;
     let clip = app.canvas_rect.unwrap_or(map.rect);
     let p = &ui.painter_at(clip);
@@ -2911,7 +2910,7 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     }
     // brush tool
     if app.ui.tool == "brush" {
-        let r = (app.ui.brush_size as f64 * long) as f32;
+        let r = (app.ui.brush_size as f64 * long_edge_points(map)) as f32;
         if let Some(h) = resp.hover_pos() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::None);
             p.circle_stroke(h, r, Stroke::new(1.0, Color32::WHITE));
@@ -3061,10 +3060,9 @@ fn mask_keys(app: &mut LightcraftApp, ui: &mut egui::Ui, map: &CanvasMap, d: &De
 /// brush is) and committed as one `lensBlur.brushStroke` when the pointer lifts. ⌥ (Alt) paints
 /// with Erase.
 fn lens_brush(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap) {
-    let long = (map.rect.width().max(map.rect.height())) as f64;
     let clip = app.canvas_rect.unwrap_or(map.rect);
     let p = &ui.painter_at(clip);
-    let r = (app.ui.brush_size as f64 * long) as f32;
+    let r = (app.ui.brush_size as f64 * long_edge_points(map)) as f32;
     if let Some(h) = resp.hover_pos() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::None);
         p.circle_stroke(h, r, Stroke::new(1.0, Color32::WHITE));
@@ -3115,6 +3113,14 @@ fn lens_brush(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response,
     }
 }
 
+/// Screen points in one unit of the photo's long edge: what a brush's or a spot's size is a fraction of. A crop shows only part of
+/// that edge, so it is not the shown picture's own long side (a brush of 0.1 on a photo cropped to half its width has
+/// a radius of a fifth of the picture's width, which is what the render paints).
+fn long_edge_points(map: &CanvasMap) -> f64 {
+    let o = map.screen(Point::new(0.0, 0.0));
+    f64::from(map.screen(Point::new(1.0, 0.0)).distance(o).max(map.screen(Point::new(0.0, 1.0)).distance(o)))
+}
+
 /// Long-edge units → normalized units for x and y.
 fn frame_long_norm(map: &CanvasMap) -> (f64, f64) {
     // derive from the mapping: 1 normalized unit in x and y in screen points
@@ -3149,7 +3155,7 @@ fn pin(p: &egui::Painter, c: Pos2, sel: bool, touch: bool) {
 /// The Tool Overlay mode (Shift+H) says which spots show; a hidden spot can't be grabbed, so a
 /// click there adds a new one.
 fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, d: &DevelopSettings) {
-    let long = (map.rect.width().max(map.rect.height())) as f64;
+    let long = long_edge_points(map);
     let clip = app.canvas_rect.unwrap_or(map.rect);
     let p = ui.painter_at(clip);
     let active = app.session.active_spot.filter(|i| *i < d.spots.len());
@@ -4056,5 +4062,34 @@ mod info_overlay_tests {
         assert_eq!(copies.len(), 2, "the file name and its shadow: {copies:?}");
         assert_eq!(copies[1], Color32::WHITE, "the text on top");
         assert!(copies[0].r() < 64 && copies[0].a() > 0, "the shadow under it is dark: {:?}", copies[0]);
+    }
+}
+
+#[cfg(test)]
+mod brush_size_tests {
+    use super::*;
+
+    /// A brush's size is a fraction of the photo's long edge; the picture shown may be a crop of it. The ring a
+    /// brush draws must be as wide as the stroke the render paints (beta feedback: masks "feel off").
+    #[test]
+    fn the_brush_ring_is_the_size_the_render_paints_on_a_cropped_photo() {
+        let (w, h) = (2000usize, 1000usize);
+        let size = 0.05;
+        for crop_w in [1.0, 0.5, 0.25] {
+            let mut s = DevelopSettings::default();
+            s.crop.geometry.rect = lightcraft_geom::Rect::from_center(Point::new(0.5, 0.5), crop_w, crop_w);
+            let frame = Frame::new(w, h, &s, true);
+            let (out_w, out_h) = frame.fit(800, 800);
+            let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(out_w as f32, out_h as f32));
+            let map = CanvasMap::new(&frame, rect);
+            let ring = size * long_edge_points(&map);
+            // what the render paints at that size, in the shown picture's points
+            let stroke = lightcraft_develop::BrushStroke { points: vec![Point::new(0.5, 0.5)], size, ..Default::default() };
+            let painted = lightcraft_pipeline::masks::brush_dabs(&stroke, &frame, out_w, out_h).r;
+            assert!((ring - painted).abs() < 0.02 * painted, "crop {crop_w}: ring {ring} vs painted {painted}");
+            // the ring used to be a fraction of the shown picture's own long side: too small by the crop
+            let old = size * f64::from(rect.width().max(rect.height()));
+            assert!(crop_w == 1.0 || old < 0.75 * painted, "crop {crop_w}: the old ring {old} vs painted {painted}");
+        }
     }
 }

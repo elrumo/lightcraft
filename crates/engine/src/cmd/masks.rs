@@ -15,16 +15,48 @@ use crate::{Result, Session};
 /// edges are crisper, and a binary mask this size deflates to a few kilobytes).
 const BITMAP_SIDE: usize = 512;
 
-fn shape_from(kind: &str, p: &Value, c: &str) -> Result<MaskShape> {
+/// The picture the active photo shows (its crop, flips and turns), for placing a new gradient in it.
+struct Shown {
+    to_norm: lightcraft_geom::Affine,
+    /// The shown picture's size in the units `to_norm` takes.
+    size: (f64, f64),
+    /// The shown picture's long edge over the whole photo's.
+    long: f64,
+}
+
+impl Shown {
+    fn of(s: &Session) -> Option<Shown> {
+        let id = s.active()?;
+        let photo = s.catalog.photo(id)?;
+        let d = s.develop_of(id)?;
+        let frame = lightcraft_pipeline::geometry::Frame::with_lens(photo.width.max(1) as usize, photo.height.max(1) as usize, &d, true, None);
+        let (w, h) = frame.fit(1000, 1000);
+        let (nw, nh) = frame.native_size();
+        let long = nw.max(nh) / frame.ow.max(frame.oh).max(1e-9);
+        (long.is_finite() && long > 0.0).then(|| Shown { to_norm: frame.out_to_norm(w, h), size: (w as f64, h as f64), long })
+    }
+
+    /// The point `(u, v)` across the shown picture (0..1, top left first) in the photo's normalized coordinates.
+    fn at(&self, u: f64, v: f64) -> Point {
+        let q = self.to_norm.apply(Point::new(u * self.size.0, v * self.size.1));
+        // (no float dust on a photo that is shown whole)
+        Point::new((q.x * 1e9).round() / 1e9, (q.y * 1e9).round() / 1e9)
+    }
+}
+
+fn shape_from(kind: &str, p: &Value, c: &str, shown: Option<&Shown>) -> Result<MaskShape> {
+    // a gradient the caller does not place goes in the middle of what is shown, sized to it
+    let here = |u: f64, v: f64| shown.map_or(Point::new(u, v), |sh| sh.at(u, v));
+    let k = shown.map_or(1.0, |sh| sh.long);
     Ok(match kind {
         "brush" => MaskShape::Brush { strokes: vec![] },
         "linear" => {
-            MaskShape::Linear { start: point(p, "start").unwrap_or(Point::new(0.5, 0.25)), end: point(p, "end").unwrap_or(Point::new(0.5, 0.6)) }
+            MaskShape::Linear { start: point(p, "start").unwrap_or_else(|| here(0.5, 0.25)), end: point(p, "end").unwrap_or_else(|| here(0.5, 0.6)) }
         }
         "radial" => MaskShape::Radial {
-            center: point(p, "center").unwrap_or(Point::new(0.5, 0.5)),
-            rx: f64_or(p, "rx", 0.22),
-            ry: f64_or(p, "ry", 0.16),
+            center: point(p, "center").unwrap_or_else(|| here(0.5, 0.5)),
+            rx: f64_or(p, "rx", 0.22 * k),
+            ry: f64_or(p, "ry", 0.16 * k),
             angle: f64_or(p, "angle", 0.0),
             feather: f64_or(p, "feather", 50.0),
             invert: bool_or(p, "invert", false),
@@ -291,11 +323,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create New Mask",
             [],
             None,
-            "{kind: brush|linear|radial|sky|subject|background|luminanceRange|depthRange|colorRange|object|prompt, ...shape params (start/end, center/rx/ry/angle/feather, lo/hi…; depthRange: lo/hi 0 near … 1 far, feather, needs the photo's depth (its own or Lens Blur's estimate); object: points/exclude [[x,y],…]; prompt: text; object/prompt: seg? a stored segmentation, or bitmap? {width, height, data} a system segmenter's coverage picture, no model needed), name?} — AI kinds need the SAM 3 model; in the app a prompt returns {pending} and the mask appears when found",
+            "{kind: brush|linear|radial|sky|subject|background|luminanceRange|depthRange|colorRange|object|prompt, invert?: bool (the part is taken inverted: Select Background from an object selection), ...shape params (start/end, center/rx/ry/angle/feather, lo/hi…; depthRange: lo/hi 0 near … 1 far, feather, needs the photo's depth (its own or Lens Blur's estimate); object: points/exclude [[x,y],…]; prompt: text; object/prompt: seg? a stored segmentation, or bitmap? {width, height, data} a system segmenter's coverage picture, no model needed), name?} — AI kinds need the SAM 3 model; in the app a prompt returns {pending} and the mask appears when found",
             has_active,
             |s, p| {
                 let kind = str_param(p, "kind").unwrap_or("radial").to_string();
-                let mut shape = shape_from(&kind, p, "mask.add")?;
+                let mut shape = shape_from(&kind, p, "mask.add", Shown::of(s).as_ref())?;
                 let later = resolve_ai(s, &mut shape, "mask.add")?;
                 let name = str_param(p, "name").map(str::to_string);
                 if let Later::Text(text) = &later {
@@ -310,7 +342,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     masks.push(Mask {
                         id: next,
                         name: name.unwrap_or_else(|| format!("Mask {next}")),
-                        components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: false, shape }],
+                        components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: bool_or(p, "invert", false), shape }],
                         adjust,
                         ..Default::default()
                     });
@@ -337,7 +369,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 if !s.develop_of(id).is_some_and(|d| d.masks.iter().any(|m| m.id == mid)) {
                     return Err(bad("mask.addComponent", format!("no mask {mid}")));
                 }
-                let mut shape = shape_from(&kind, p, "mask.addComponent")?;
+                let mut shape = shape_from(&kind, p, "mask.addComponent", Shown::of(s).as_ref())?;
                 let later = resolve_ai(s, &mut shape, "mask.addComponent")?;
                 if let Later::Text(text) = &later {
                     let op = p.get("op").and_then(Value::as_str).unwrap_or("add");
@@ -359,7 +391,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Brush Stroke",
             [],
             None,
-            "{id?: maskId, points: [[x,y],…] normalized, size?: fraction of long edge (0.03), feather?, flow?, density?, erase?: bool, autoMask?: bool, pressure?: [p,…] pen pressure 0..1 per point (scales each dab's size and flow; omitted: full), connect?: bool — start from the last point of the mask's last stroke (⇧-click), size / feather / flow tapering from that stroke's to these} → {activeMask, connected}",
+            "{id?: maskId, component?: index of the brush part to paint into (the last brush part), points: [[x,y],…] normalized, size?: fraction of long edge (0.03), feather?, flow?, density?, erase?: bool (with no paint to erase it does nothing), autoMask?: bool, pressure?: [p,…] pen pressure 0..1 per point (scales each dab's size and flow; omitted: full), connect?: bool — start from the last point of the mask's last stroke (⇧-click), size / feather / flow tapering from that stroke's to these} → {activeMask, connected}",
             has_active,
             |s, p| {
                 let pts: Vec<Point> = p
@@ -385,6 +417,20 @@ pub fn specs() -> Vec<CommandSpec> {
                 let mut connected = false;
                 let next = s.active().and_then(|id| s.develop_of(id)).map(|d| d.next_mask_id()).unwrap_or(1);
                 let want = optional_mask_id(p, "mask.brushStroke")?.or(s.active_mask);
+                let part = optional_index(p, "component", "mask.brushStroke")?;
+                // erasing takes paint away: with none to take, it makes no mask and adds no stroke
+                if stroke.erase {
+                    let painted = s.active().and_then(|id| s.develop_of(id)).is_some_and(|d| {
+                        d.masks
+                            .iter()
+                            .filter(|m| Some(m.id) == want)
+                            .flat_map(|m| m.components.iter())
+                            .any(|c| matches!(&c.shape, MaskShape::Brush { strokes } if strokes.iter().any(|st| !st.erase)))
+                    });
+                    if !painted {
+                        return Ok(json!({"activeMask": s.active_mask, "connected": false}));
+                    }
+                }
                 let adjust = super::mask_effects::new_mask_adjust(s, "brush");
                 let mut out = masks_edit(s, "mask.brushStroke", "Brush", |masks, active| {
                     let i = match want.and_then(|m| masks.iter().position(|x| x.id == m)) {
@@ -396,9 +442,13 @@ pub fn specs() -> Vec<CommandSpec> {
                         }
                     };
                     let m = &mut masks[i];
-                    if let Some(MaskComponent { shape: MaskShape::Brush { strokes }, .. }) =
-                        m.components.iter_mut().rev().find(|c| matches!(c.shape, MaskShape::Brush { .. }))
-                    {
+                    // the brush part asked for, else the last one (the one a new Add / Subtract Brush made)
+                    let target = match part {
+                        Some(k) if matches!(m.components.get(k).map(|c| &c.shape), Some(MaskShape::Brush { .. })) => Some(k),
+                        Some(_) => return Err(bad("mask.brushStroke", "`component` is not a brush part of the mask")),
+                        None => m.components.iter().rposition(|c| matches!(c.shape, MaskShape::Brush { .. })),
+                    };
+                    if let Some(MaskComponent { shape: MaskShape::Brush { strokes }, .. }) = target.and_then(|k| m.components.get_mut(k)) {
                         // the previous stroke's end and its brush values (not its points)
                         let anchor = strokes.last().filter(|_| connect).and_then(|l| {
                             Some((
@@ -1006,6 +1056,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     match action.as_str() {
                         "invert" => comp.invert = !comp.invert,
                         "rename" => comp.name = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).map(str::to_string),
+                        // (the first part is what the others add to, take from or intersect with: it always adds)
+                        "op" if k == 0 => return Err(bad(c, "the first part of a mask always adds")),
                         "op" => comp.op = op.ok_or_else(|| bad(c, "missing op"))?,
                         "duplicate" => {
                             let copy = comp.clone();
@@ -1013,7 +1065,11 @@ pub fn specs() -> Vec<CommandSpec> {
                         }
                         _ => {
                             comps.remove(k);
-                            if comps.is_empty() {
+                            if let Some(first) = comps.first_mut() {
+                                // the render reads the first part as an Add whatever it says: say so, or the "−" on
+                                // the part that took its place would be a lie (it now selects what it took away)
+                                first.op = MaskOp::Add;
+                            } else {
                                 masks.remove(i);
                                 *active = masks.last().map(|m| m.id);
                             }

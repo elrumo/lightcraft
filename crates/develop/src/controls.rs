@@ -219,6 +219,8 @@ const DEPTH_NEAR: ControlSpec = shape("lo", "Range Near", 0.0, 100.0, 0.0, Track
 const DEPTH_FAR: ControlSpec = shape("hi", "Range Far", 0.0, 100.0, 100.0, Track::Gradient { from: "#f0a030", to: "#3050c0" });
 const COLOR_REFINE: ControlSpec = shape("refine", "Refine", 0.0, 100.0, 50.0, Track::Plain);
 const EDGE: ControlSpec = shape("edge", "Edge", -100.0, 100.0, 0.0, Track::Centered);
+/// A radial gradient's Feather: 0 is a hard edge at its outline, 100 fades from its centre.
+const FEATHER: ControlSpec = shape("feather", "Feather", 0.0, 100.0, 50.0, Track::Plain);
 
 /// A mask part's own controls, with their values: a luminance range's bounds (percent) and
 /// smoothness, a colour range's refine, an AI selection's edge (−100 harder … 100 softer). Other
@@ -233,6 +235,7 @@ pub fn shape_controls(shape: &MaskShape) -> Vec<(ControlSpec, f64)> {
         }
         MaskShape::ColorRange { refine, .. } => vec![(COLOR_REFINE, *refine)],
         MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. } => vec![(EDGE, *edge)],
+        MaskShape::Radial { feather, .. } => vec![(FEATHER, *feather)],
         _ => Vec::new(),
     }
 }
@@ -256,6 +259,7 @@ pub fn set_shape_control(shape: &MaskShape, id: &str, v: f64) -> Option<MaskShap
         (MaskShape::DepthRange { feather, .. }, "smoothness") => *feather = v.clamp(0.0, 100.0) / 100.0 * 0.5,
         (MaskShape::ColorRange { refine, .. }, "refine") => *refine = v.clamp(0.0, 100.0),
         (MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. }, "edge") => *edge = v.clamp(-100.0, 100.0),
+        (MaskShape::Radial { feather, .. }, "feather") => *feather = v.clamp(0.0, 100.0),
         _ => return None,
     }
     Some(s)

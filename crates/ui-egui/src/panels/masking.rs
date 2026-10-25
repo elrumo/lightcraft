@@ -623,6 +623,13 @@ pub(super) fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: u
                 }
             }
         }
+        MaskShape::Radial { .. } => {
+            // Feather: a hard edge at the outline (0) … a fade from the centre (100)
+            if let Some((spec, v)) = spec("feather") {
+                let out = slider(ui, &spec, v, true, None);
+                apply_slider_out(app, &spec, out, |app, v| set(app, "feather", v));
+            }
+        }
         MaskShape::Object { .. } | MaskShape::Prompt { .. } => {
             // Edge: how crisp the selection's border is (−100 hard … 0 as computed … 100 soft)
             if let Some((spec, v)) = spec("edge") {
