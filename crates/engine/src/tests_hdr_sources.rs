@@ -117,8 +117,8 @@ fn an_ultra_hdr_jpeg_export_comes_back_with_its_highlights() {
     s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
     s.execute("develop.hdr", &json!({"enabled": true, "maxEv": 3})).unwrap();
     let jpeg = export_photo(&mut s, id, &ExportOptions::from_json(&json!({"longEdge": 320, "hdr": true})), 1).unwrap();
-    let want = export_photo(&mut s, id, &ExportOptions::from_json(&json!({"longEdge": 320, "format": "tiff", "bitDepth": 32, "hdr": true})), 1)
-        .unwrap();
+    let want =
+        export_photo(&mut s, id, &ExportOptions::from_json(&json!({"longEdge": 320, "format": "tiff", "bitDepth": 32, "hdr": true})), 1).unwrap();
     let want = lightcraft_codecs::decode(&want.bytes, Default::default()).unwrap().image.data;
     let path = dir.join("ultra.jpg");
     std::fs::write(&path, &jpeg.bytes).unwrap();

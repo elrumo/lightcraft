@@ -56,7 +56,20 @@ pub struct Spec<'a> {
 
 impl<'a> Spec<'a> {
     pub fn new(width: u32, height: u32, sample: Sampler<'a>) -> Spec<'a> {
-        Spec { width, height, bit_depth: 8, sample, props: Vec::new(), exif: None, alpha: None, thumbnail: None, ignored_aux: Vec::new(), gain: None, gain_size: (0, 0), tmap: None }
+        Spec {
+            width,
+            height,
+            bit_depth: 8,
+            sample,
+            props: Vec::new(),
+            exif: None,
+            alpha: None,
+            thumbnail: None,
+            ignored_aux: Vec::new(),
+            gain: None,
+            gain_size: (0, 0),
+            tmap: None,
+        }
     }
 }
 

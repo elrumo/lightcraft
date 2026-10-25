@@ -1621,8 +1621,6 @@ pub fn json_delta(old: &Value, new: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod tests_hdr_sources;
-#[cfg(test)]
 mod tests_album_order;
 #[cfg(test)]
 mod tests_album_remove;
@@ -1672,6 +1670,8 @@ mod tests_focus_scan;
 mod tests_folders;
 #[cfg(test)]
 mod tests_forget_local;
+#[cfg(test)]
+mod tests_hdr_sources;
 #[cfg(test)]
 mod tests_hidden;
 #[cfg(test)]

@@ -330,7 +330,14 @@ impl DecodedSource {
         let matched = self.camera_matched.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.data.len() * 12);
         let hdr = self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.data.len() * 12);
         let gain = self.info.as_ref().and_then(|i| i.hdr_gain.as_ref()).map_or(0, |g| g.gain.data.len());
-        self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes()) + matched + hdr + gain
+        self.image.data.len() * 12
+            + 64
+            + std::mem::size_of::<SourceInfo>()
+            + mattes
+            + self.denoised.as_ref().map_or(0, |t| t.bytes())
+            + matched
+            + hdr
+            + gain
     }
 
     /// What to render these pixels against: the decoder's facts, else `header` (the catalog's)
@@ -417,7 +424,13 @@ impl SourceRef {
                 // Lanczos, not a box average: a box at 2-3:1 halves the contrast of detail near
                 // the output's resolution limit and aliases what is finer
                 let image = lightcraft_raster::resample::fit(&from.image, *max_edge, *max_edge, lightcraft_raster::resample::Filter::Lanczos3);
-                return Ok(DecodedSource { image: Arc::new(image), denoised: None, camera_matched: Default::default(), hdr_made: Default::default(), ..(**from).clone() });
+                return Ok(DecodedSource {
+                    image: Arc::new(image),
+                    denoised: None,
+                    camera_matched: Default::default(),
+                    hdr_made: Default::default(),
+                    ..(**from).clone()
+                });
             }
             SourceRef::Demo { scene, max_edge } => crate::demo::scene_pixels(scene, *max_edge)?,
             SourceRef::File { path, max_edge, loader, fallback, denoise, reduced } => {
@@ -1284,7 +1297,8 @@ impl RenderJob {
                     let request = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..request };
                     develop_hdr(src, &info, &self.settings, &request, self.stages.as_deref(), gpu)
                 } else {
-                    let (r, f) = develop_reporting_hdr(src, hdr_src.as_ref().unwrap_or(src), &info, &self.settings, &request, self.stages.as_deref(), gpu);
+                    let (r, f) =
+                        develop_reporting_hdr(src, hdr_src.as_ref().unwrap_or(src), &info, &self.settings, &request, self.stages.as_deref(), gpu);
                     (r, f, None)
                 };
                 // for a display profile: the image goes to the display's values, the histogram
