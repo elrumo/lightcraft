@@ -137,25 +137,87 @@ fn vignette(s: &DevelopSettings) -> Option<Vig> {
     })
 }
 
-/// Hash constants of [`grain_noise`] (shared with the GPU kernel).
+/// Hash constants of [`grain_node`] (shared with the GPU kernel).
 pub const GRAIN_HASH: [u32; 4] = [0x8da6_b343, 0xd816_3841, 0xcb1a_b31f, 0x5bd1_e995];
 
+/// Grain lattice spacing in pixels of a 6000 px long edge at Grain Size 0 and per Size point: Lightroom's grain at
+/// Size 25 on a 6000 px export has its power spectrum flat to 0.3 cycles/px and falling steeply after, which is white
+/// noise on a 1.5 px lattice reconstructed with a cubic (`grain_weights`). Only Size 25 was measured; the rest of the
+/// range is extrapolated linearly.
+const GRAIN_CELL_BASE: f32 = 1.0;
+const GRAIN_CELL_PER_SIZE: f32 = 0.02;
+/// The long edge (px) the lattice spacings above are given for; a render's lattice scales with its long edge.
+const GRAIN_REF_LONG: f32 = 6000.0;
+/// Lattice units per output pixel (1 / the Size 25 spacing) up to which the grain keeps its full strength; above it a
+/// pixel averages several lattice cells and the grain loses strength, as Lightroom's full-resolution grain does when
+/// it is downsized.
+const GRAIN_FULL_RES: f32 = 2.0 / 3.0;
+
+/// Grain of an amount (0..1), Size and Roughness (0..1) for a render of `px_per_long` output pixels per long
+/// edge: the strength (std of the noise at mid grey), the lattice spacing in output pixels, and the weight of
+/// a coarser second layer (Roughness above 50 clumps the grain).
+pub fn grain_params(amount: f32, size: f32, roughness: f32, px_per_long: f32) -> (f32, f32, f32) {
+    let cell = (GRAIN_CELL_BASE + GRAIN_CELL_PER_SIZE * size * 100.0) * (0.75 + 0.5 * roughness.min(0.5)) * px_per_long / GRAIN_REF_LONG;
+    let cell = cell.max(1e-4);
+    // averaging `f` lattice cells per pixel leaves 1/sqrt(1 + 0.9 f²) of the strength (measured on the field)
+    let f = 1.0 / cell;
+    let att = ((1.0 + 0.9 * GRAIN_FULL_RES * GRAIN_FULL_RES) / (1.0 + 0.9 * f * f)).sqrt().min(1.0);
+    (amount * att, cell, ((roughness - 0.5) * 0.9).max(0.0))
+}
+
+/// Std of the grain added to an encoded channel value `v` (0..1) at Grain 100, in encoded units: Lightroom's
+/// measured profile (0.066 at the extremes of the range, 0.084 at mid grey).
 #[inline]
-fn grain_noise(x: f32, y: f32, seed: u32) -> f32 {
+pub fn grain_strength(v: f32) -> f32 {
+    let v = v.clamp(0.0, 1.0);
+    0.0575 + 0.106 * v * (1.0 - v)
+}
+
+/// One lattice node's value: unit variance, triangular distribution, from a hash of its cell and the seed.
+#[inline]
+fn grain_node(i: i32, j: i32, seed: u32) -> f32 {
+    let mut v = (i as u32).wrapping_mul(GRAIN_HASH[0]) ^ (j as u32).wrapping_mul(GRAIN_HASH[1]) ^ seed.wrapping_mul(GRAIN_HASH[2]);
+    v ^= v >> 16;
+    v = v.wrapping_mul(GRAIN_HASH[3]);
+    v ^= v >> 13;
+    v = v.wrapping_mul(0x85eb_ca6b);
+    v ^= v >> 16;
+    (((v & 0xffff) + (v >> 16)) as f32 * (1.0 / 32768.0) - 2.0) * 1.224_744_9
+}
+
+/// Weights of the four lattice nodes (one before, the cell's two, one after) at fraction `t` of the cell: the
+/// Mitchell-Netravali cubic with B = 0.1, C = 0.45, which sums to 1 and has the flat-then-steep spectrum of
+/// Lightroom's grain.
+#[inline]
+fn grain_weights(t: f32) -> [f32; 4] {
+    let near = |x: f32| 0.966_667 + x * x * (1.4 * x - 2.35);
+    let far = |x: f32| 1.933_333 + x * (-3.8 + x * (2.35 - 0.466_667 * x));
+    [far(1.0 + t), near(t), near(1.0 - t), far(2.0 - t)]
+}
+
+/// Grain at lattice coordinates `(x, y)`: white noise on the lattice, reconstructed by [`grain_weights`] and
+/// scaled to unit variance at every position.
+#[inline]
+fn grain_field(x: f32, y: f32, seed: u32) -> f32 {
     let (x0, y0) = (x.floor(), y.floor());
-    let (fx, fy) = (x - x0, y - y0);
-    let h = |i: i32, j: i32| {
-        let mut v = (i as u32).wrapping_mul(GRAIN_HASH[0]) ^ (j as u32).wrapping_mul(GRAIN_HASH[1]) ^ seed.wrapping_mul(GRAIN_HASH[2]);
-        v ^= v >> 13;
-        v = v.wrapping_mul(GRAIN_HASH[3]);
-        v ^= v >> 15;
-        (v & 0xffff) as f32 / 32768.0 - 1.0
-    };
+    let (wx, wy) = (grain_weights(x - x0), grain_weights(y - y0));
     let (i, j) = (x0 as i32, y0 as i32);
-    let (u, v) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
-    let a = h(i, j) + (h(i + 1, j) - h(i, j)) * u;
-    let b = h(i, j + 1) + (h(i + 1, j + 1) - h(i, j + 1)) * u;
-    a + (b - a) * v
+    let mut sum = 0.0;
+    for (dj, wj) in wy.iter().enumerate() {
+        for (di, wi) in wx.iter().enumerate() {
+            sum += wi * wj * grain_node(i.wrapping_add(di as i32 - 1), j.wrapping_add(dj as i32 - 1), seed);
+        }
+    }
+    let norm = wx.iter().map(|w| w * w).sum::<f32>() * wy.iter().map(|w| w * w).sum::<f32>();
+    sum / norm.sqrt().max(1e-6)
+}
+
+/// The grain at lattice coordinates `(x, y)`: [`grain_field`] with `coarse` of a second layer three times
+/// coarser (variance kept at 1).
+#[inline]
+fn grain_noise(x: f32, y: f32, coarse: f32, seed: u32) -> f32 {
+    let g = grain_field(x, y, seed);
+    if coarse > 0.0 { g * (1.0 - coarse * coarse).max(0.0).sqrt() + grain_field(x / 3.0, y / 3.0, seed ^ 0x55) * coarse } else { g }
 }
 
 /// Number of per-mask terms in [`mask_terms`].
@@ -251,7 +313,7 @@ pub struct FinishParams {
     pub air_pre: f32,
     pub gain: f32,
     pub ev: f32,
-    /// Grain: amount, cell size (px), roughness, seed.
+    /// Grain: strength, lattice spacing (output px), coarse layer weight, seed (see [`grain_params`]).
     pub grain: Option<(f32, f32, f32, u32)>,
     /// Output px → normalized oriented coordinates.
     pub out_to_norm: lightcraft_geom::Affine,
@@ -289,8 +351,9 @@ impl FinishParams {
         let ev = s.light.exposure as f32;
         let gain = 2f32.powf(ev);
         let grain = (s.grain.amount > 0.0 && effects).then(|| {
-            let cell = (0.0006 + (s.grain.size / 100.0) as f32 * 0.0024) * px_per_long as f32;
-            ((s.grain.amount / 100.0) as f32 * 0.13, cell.max(0.6), (s.grain.roughness / 100.0) as f32, s.grain.seed)
+            let (amt, cell, coarse) =
+                grain_params((s.grain.amount / 100.0) as f32, (s.grain.size / 100.0) as f32, (s.grain.roughness / 100.0) as f32, px_per_long as f32);
+            (amt, cell, coarse, s.grain.seed)
         });
         let calibration = s.section_enabled("calibration");
         let peak = s.hdr.peak();
@@ -709,18 +772,12 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                     e = refine_saturation(e0, e, fp.refine_sat);
                 }
             }
-            if let Some((amt, cell, rough, seed)) = *grain {
+            if let Some((amt, cell, coarse, seed)) = *grain {
                 let n = out_to_norm.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
                 let (gx, gy) = ((n.x * fp.ow) as f32 / long as f32, (n.y * fp.oh) as f32 / long as f32);
                 let sc = fp.px_per_long as f32 / cell;
-                let mut g = grain_noise(gx * sc, gy * sc, seed);
-                g = g * (1.0 - rough * 0.5) + grain_noise(gx * sc * 2.3, gy * sc * 2.3, seed ^ 0x55) * rough * 0.7;
-                let mut lum = 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
-                if hdr {
-                    lum = lum.clamp(0.0, 1.0);
-                }
-                let k = amt * g * (0.35 + 2.6 * lum * (1.0 - lum));
-                e = e.map3(|v| v + k);
+                let g = amt * grain_noise(gx * sc, gy * sc, coarse, seed);
+                e = e.map3(|v| v + g * grain_strength(v));
             }
             let e = match &p_lut {
                 Some((l, k)) => lut_pixel(l, *k, e, lut_sp.as_ref(), hdr),
@@ -835,6 +892,36 @@ fn enc(v: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lightroom's grain at 100 / 25 / 50 on a 6000 px export (measured on its export of the grain test raw):
+    /// noise of unit variance whose neighbouring pixels correlate at 0.52 and whose pixels two apart don't.
+    #[test]
+    fn grain_has_the_statistics_of_lightroom_grain() {
+        let (amt, cell, coarse) = grain_params(1.0, 0.25, 0.5, 6000.0);
+        assert!((amt - 1.0).abs() < 1e-6 && (cell - 1.5).abs() < 1e-6 && coarse == 0.0, "{amt} {cell} {coarse}");
+        let n = 256;
+        let f: Vec<f32> = (0..n * n).map(|i| grain_noise(((i % n) as f32 + 0.5) / cell, ((i / n) as f32 + 0.5) / cell, coarse, 7)).collect();
+        let mean = f.iter().sum::<f32>() / f.len() as f32;
+        let var = f.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / f.len() as f32;
+        let corr = |dx: usize| {
+            let (mut s, mut c) = (0.0, 0);
+            for y in 0..n {
+                for x in 0..n - dx {
+                    s += (f[y * n + x] - mean) * (f[y * n + x + dx] - mean);
+                    c += 1;
+                }
+            }
+            s / c as f32 / var
+        };
+        assert!(mean.abs() < 0.05 && (var.sqrt() - 1.0).abs() < 0.05, "mean {mean} std {}", var.sqrt());
+        assert!((corr(1) - 0.52).abs() < 0.06, "lag 1: {}", corr(1));
+        assert!(corr(2).abs() < 0.08 && corr(3).abs() < 0.1, "lags 2, 3: {} {}", corr(2), corr(3));
+        // strongest at mid grey, 0.066 at the ends; a downsized render keeps less of it, a coarser Size more per cell
+        assert!((grain_strength(0.5) - 0.084).abs() < 1e-3 && (grain_strength(0.0) - 0.0575).abs() < 1e-6);
+        assert!(grain_params(1.0, 0.25, 0.5, 1500.0).0 < 0.6 && grain_params(1.0, 0.25, 0.5, 600.0).0 > 0.0);
+        // a hostile coordinate or seed doesn't panic
+        let _ = (grain_noise(f32::MAX, f32::NAN, 0.5, u32::MAX), grain_noise(f32::INFINITY, -1e30, 0.0, 0));
+    }
 
     #[test]
     fn refine_saturation_restores_the_pre_curve_saturation() {

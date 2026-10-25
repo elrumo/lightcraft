@@ -69,7 +69,7 @@ const FIELDS: &[(&str, usize)] = &[
     ("GRAIN", 1),
     ("GRAIN_AMT", 1),
     ("GRAIN_SC", 1),
-    ("GRAIN_ROUGH", 1),
+    ("GRAIN_COARSE", 1),
     ("GRAIN_SEED", 1),
     ("GRAIN_AFF", 6),
     ("REFINE_SAT", 1),
@@ -305,11 +305,11 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
         p.b("PROOF_DEST_WARN", pp.dest_warning);
         p.b("PROOF_DISP_WARN", pp.display_warning);
     }
-    if let Some((amt, cell, rough, seed)) = fp.grain {
+    if let Some((amt, cell, coarse, seed)) = fp.grain {
         p.b("GRAIN", true);
         p.f("GRAIN_AMT", amt);
         p.f("GRAIN_SC", fp.px_per_long as f32 / cell);
-        p.f("GRAIN_ROUGH", rough);
+        p.f("GRAIN_COARSE", coarse);
         p.u("GRAIN_SEED", seed);
         let long = fp.ow.max(fp.oh);
         let [a, b, c, d, e, f] = fp.out_to_norm.0;

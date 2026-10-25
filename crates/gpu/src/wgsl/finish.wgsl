@@ -342,26 +342,57 @@ fn refine_saturation(before: vec3<f32>, after: vec3<f32>, refine: f32) -> vec3<f
     return y1 + (after - y1) * k;
 }
 
+// Grain (`finish.rs`: grain_node, grain_weights, grain_field, grain_noise, grain_strength).
 fn ghash(i: i32, j: i32, seed: u32) -> f32 {
     var v = (bitcast<u32>(i) * GRAIN_H0) ^ (bitcast<u32>(j) * GRAIN_H1) ^ (seed * GRAIN_H2);
-    v ^= v >> 13u;
+    v ^= v >> 16u;
     v = v * GRAIN_H3;
-    v ^= v >> 15u;
-    return f32(v & 0xffffu) / 32768.0 - 1.0;
+    v ^= v >> 13u;
+    v = v * 0x85ebca6bu;
+    v ^= v >> 16u;
+    return ((f32(v & 0xffffu) + f32(v >> 16u)) * (1.0 / 32768.0) - 2.0) * 1.2247449;
 }
 
-fn grain_noise(x: f32, y: f32, seed: u32) -> f32 {
+fn grain_near(x: f32) -> f32 {
+    return 0.966667 + x * x * (1.4 * x - 2.35);
+}
+
+fn grain_far(x: f32) -> f32 {
+    return 1.933333 + x * (-3.8 + x * (2.35 - 0.466667 * x));
+}
+
+fn grain_weights(t: f32) -> vec4<f32> {
+    return vec4<f32>(grain_far(1.0 + t), grain_near(t), grain_near(1.0 - t), grain_far(2.0 - t));
+}
+
+fn grain_field(x: f32, y: f32, seed: u32) -> f32 {
     let x0 = floor(x);
     let y0 = floor(y);
-    let fx = x - x0;
-    let fy = y - y0;
+    let wx = grain_weights(x - x0);
+    let wy = grain_weights(y - y0);
     let i = i32(x0);
     let j = i32(y0);
-    let u = fx * fx * (3.0 - 2.0 * fx);
-    let v = fy * fy * (3.0 - 2.0 * fy);
-    let a = ghash(i, j, seed) + (ghash(i + 1, j, seed) - ghash(i, j, seed)) * u;
-    let b = ghash(i, j + 1, seed) + (ghash(i + 1, j + 1, seed) - ghash(i, j + 1, seed)) * u;
-    return a + (b - a) * v;
+    var sum = 0.0;
+    for (var dj = 0; dj < 4; dj++) {
+        for (var di = 0; di < 4; di++) {
+            sum += wx[di] * wy[dj] * ghash(i + di - 1, j + dj - 1, seed);
+        }
+    }
+    let norm = dot(wx, wx) * dot(wy, wy);
+    return sum / max(sqrt(norm), 1e-6);
+}
+
+fn grain_noise(x: f32, y: f32, coarse: f32, seed: u32) -> f32 {
+    let g = grain_field(x, y, seed);
+    if (coarse > 0.0) {
+        return g * sqrt(max(1.0 - coarse * coarse, 0.0)) + grain_field(x / 3.0, y / 3.0, seed ^ 0x55u) * coarse;
+    }
+    return g;
+}
+
+fn grain_strength(v: f32) -> f32 {
+    let c = clamp(v, 0.0, 1.0);
+    return 0.0575 + 0.106 * c * (1.0 - c);
 }
 
 // 0 for a NaN or an infinity (by its bits: NaN comparisons may be optimized away).
@@ -717,16 +748,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let gx = pf(F_GRAIN_AFF) * px + pf(F_GRAIN_AFF + 2u) * py + pf(F_GRAIN_AFF + 4u);
         let gy = pf(F_GRAIN_AFF + 1u) * px + pf(F_GRAIN_AFF + 3u) * py + pf(F_GRAIN_AFF + 5u);
         let sc = pf(F_GRAIN_SC);
-        let rough = pf(F_GRAIN_ROUGH);
+        let coarse = pf(F_GRAIN_COARSE);
         let seed = pu(F_GRAIN_SEED);
-        var g = grain_noise(gx * sc, gy * sc, seed);
-        g = g * (1.0 - rough * 0.5) + grain_noise(gx * sc * 2.3, gy * sc * 2.3, seed ^ 0x55u) * rough * 0.7;
-        var lum = 0.2126 * e.x + 0.7152 * e.y + 0.0722 * e.z;
-        if (hdr) {
-            lum = clamp(lum, 0.0, 1.0);
-        }
-        let k = pf(F_GRAIN_AMT) * g * (0.35 + 2.6 * lum * (1.0 - lum));
-        e = e + k;
+        let g = pf(F_GRAIN_AMT) * grain_noise(gx * sc, gy * sc, coarse, seed);
+        e = e + g * vec3<f32>(grain_strength(e.x), grain_strength(e.y), grain_strength(e.z));
     }
     if (pu(F_HAS_LUT) != 0u) {
         // a LUT profile: it sees SDR values, an HDR render keeps what is above SDR white (`finish_with`)
