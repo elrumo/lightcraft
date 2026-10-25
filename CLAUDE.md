@@ -29,6 +29,20 @@ branches can still break each other (e.g. a new struct field vs. a new construct
 `git log main..HEAD` + `git status` for unmerged commits or uncommitted work before starting anything new. Commit small
 and often so a crash loses minutes, not hours.
 
+## HelpBites planning follows the work (LightBites app)
+The LightBites app's tasks live on the HelpBites project's Planning board (project `tb4A2EAxRx`; columns Backlog, Now,
+Next, Later, Done, Canceled). Keep it in step with what you do, with `apps/lightbites-web/scripts/helpbites-roadmap.mjs`
+or the `/v1/admin/board-items` API (same `.env` and keys as the other `helpbites-*.mjs` scripts; see
+`apps/lightbites-web/README.md` → Roadmap):
+- **When asked to do a task** that concerns the LightBites app: first look at the board. If a card for it exists, move it
+  to Now; if not, create one (Now). New work you find on the way (a follow-up, a bug) becomes a card too (Backlog).
+- **When asked to commit** such work: before committing, move the cards the commit completes to Done (cards for work
+  that was dropped go to Canceled), and say which cards moved in your reply.
+- **Every new card is private**: create it with `public: false`, so it does not show on the public roadmap or the site.
+  Only make a card public when the user says so. (`helpbites-roadmap.mjs` files `shared/roadmap.json` entries as public;
+  that file is the published roadmap, so don't add working tasks to it.)
+- If HelpBites can't be reached (no keys, offline), say so in one line and carry on; never block the task or the commit.
+
 ## Never crash (outranks feature work)
 People trust LightCraft with their photo libraries and edits; a crash loses their work. A malformed raw/JPEG/XMP, a bad
 command, control or MCP argument, a corrupt catalog or settings file, or a full disk must produce an error the user (or

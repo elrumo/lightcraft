@@ -2279,6 +2279,8 @@ pub struct ProbeInfo {
     /// capture date of a file whose metadata has none, as Lightroom does (exports saved without
     /// metadata would otherwise all land under "Unknown Date").
     pub file_modified: Option<String>,
+    /// The file has the Read-Only attribute (a camera's protect function sets it): [`lightcraft_catalog::Photo::locked`].
+    pub locked: bool,
     pub meta: lightcraft_catalog::Meta,
     pub as_shot_wb: Option<(f64, f64)>,
     /// Hash of the file's bytes (hex), for duplicate detection. When it is a 32-digit

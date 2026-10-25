@@ -58,6 +58,8 @@ pub struct Filter {
     pub labels: Vec<ColorLabel>,
     pub kind: Option<MediaKind>,
     pub edited: Option<bool>,
+    /// Protected in the camera (`true`) or not (`false`): [`Photo::locked`].
+    pub locked: Option<bool>,
     pub album: Option<AlbumId>,
     /// Show "Recently Deleted" instead of the library.
     pub deleted: bool,
@@ -264,6 +266,9 @@ impl Filter {
         if let Some(e) = self.edited {
             v.push(if e { "edited".into() } else { "unedited".into() });
         }
+        if let Some(l) = self.locked {
+            v.push(if l { "locked".into() } else { "not locked".into() });
+        }
         for (name, val) in [
             ("keyword", &self.keyword),
             ("person", &self.person),
@@ -377,7 +382,7 @@ impl Filter {
         if self.flag.is_some_and(|f| f != p.flag) || self.label.is_some_and(|l| Some(l) != p.label) || self.kind.is_some_and(|k| k != p.kind) {
             return false;
         }
-        if self.edited.is_some_and(|e| e != p.is_edited()) {
+        if self.edited.is_some_and(|e| e != p.is_edited()) || self.locked.is_some_and(|l| l != p.locked) {
             return false;
         }
         if let Some(rs) = &self.rule_set

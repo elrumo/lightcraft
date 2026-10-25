@@ -234,6 +234,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             file_size: bytes.len() as u64,
             captured,
             file_modified: None,
+            locked: false,
             meta,
             as_shot_wb,
             content_hash,
@@ -268,6 +269,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         file_size: bytes.len() as u64,
         captured,
         file_modified: None,
+        locked: false,
         meta,
         as_shot_wb: None,
         content_hash,
@@ -1457,6 +1459,7 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
         if let Some(r) = probe_video_path(path) {
             let mut info = r?;
             info.file_modified = file_modified(path);
+            info.locked = file_locked(path);
             return Ok(info);
         }
         let len = std::fs::metadata(path).map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX)).unwrap_or(0);
@@ -1464,6 +1467,7 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
         let mut info = probe_bytes(path, &bytes)?;
         info.file_modified = file_modified(path);
+        info.locked = file_locked(path);
         Ok(info)
     });
     (loader, probe)
@@ -1526,6 +1530,12 @@ fn file_modified(path: &str) -> Option<String> {
     let t = std::fs::metadata(path).ok()?.modified().ok()?;
     let secs = i64::try_from(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs()).ok()?;
     Some(crate::import::civil(secs))
+}
+
+/// Whether `path` has the Read-Only attribute (cameras set it on the files they protect; cards keep it, and copies of
+/// the file keep it as well). `false` when the filesystem doesn't say.
+fn file_locked(path: &str) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly())
 }
 
 /// Whether the process runs in the macOS App Sandbox (it names its container in the environment).

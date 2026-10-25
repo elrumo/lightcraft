@@ -1620,6 +1620,7 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 p.kind = info.kind;
                 p.duration = info.duration;
                 p.file_size = info.file_size;
+                p.locked = info.locked;
                 // no date in the file or its sidecar: the file's own date, as Lightroom does
                 let dated = info.captured.is_some();
                 p.captured = info.captured.or(info.file_modified);
