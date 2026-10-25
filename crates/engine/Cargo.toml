@@ -72,6 +72,8 @@ rustls-rustcrypto = { workspace = true }
 chrono = { workspace = true }
 
 [features]
+# `lightcraft_engine::testdata`: synthetic files for other crates' tests (the raw crate's).
+testdata = ["lightcraft-raw/testdata"]
 # AI masks with SAM 3 (Object / Describe). Off for the web and CLI builds.
 sam = ["dep:lightcraft-segment"]
 denoise = ["dep:lightcraft-denoise", "lightcraft-denoise/runtime", "lightcraft-gpu/denoise"]

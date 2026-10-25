@@ -1,5 +1,14 @@
 # What's new in LightCraft
 
+## 2026-10-25
+
+### Olympus and OM System files on a sync server
+- A sync server now describes Olympus and OM System files the way the desktop does: a body shot at 3:2, 16:9 or 1:1
+  starts cropped to that frame (an import look, not an edit), whether the photo came from a library folder or from a
+  visitor to a shared album.
+- The upload form of a shared album link offers every file type Import takes, `.ori` and the other raw formats the old
+  hand-written list missed included.
+
 ## 2026-10-24
 
 ### Olympus and OM System files open the way the camera shot them

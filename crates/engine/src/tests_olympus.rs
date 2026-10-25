@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use lightcraft_catalog::MediaKind;
-use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+use lightcraft_raw::testdata::OlympusOrf;
 use serde_json::json;
 
 use crate::Session;
@@ -24,75 +24,16 @@ fn jpeg(w: usize, h: usize) -> Vec<u8> {
     encode_jpeg(&EncodeImage::new(w as u32, h as u32, 3, Samples::U8(&px)), 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap()
 }
 
-/// A new-style Olympus maker note (`OLYMPUS\0II\x03\0`: the IFD at 12, offsets counted from the note's start) whose
-/// CameraSettings directory (0x2020) names `preview` as its PreviewImage (0x0101 start, 0x0102 length) and, when `frame`
-/// is given, whose ImageProcessing directory (0x2040) states the valid area (the sensor, `area`) and that aspect frame
-/// (`AspectFrame`, 0x1113: left, top, right, bottom).
-fn maker_note(preview: &[u8], area: (u32, u32), frame: Option<[u16; 4]>) -> Vec<u8> {
-    let entry = |tag: u16, typ: u16, count: u32, v: u32| {
-        [tag.to_le_bytes().to_vec(), typ.to_le_bytes().to_vec(), count.to_le_bytes().to_vec(), v.to_le_bytes().to_vec()].concat()
-    };
-    let directories = if frame.is_some() { 2 } else { 1 };
-    let camera_settings = 12 + 2 + 12 * directories + 4;
-    let image_processing = camera_settings + 2 + 2 * 12 + 4;
-    // ImageProcessing: the valid area (left, top, width, height), the frame (its four SHORTs follow the directory)
-    let ip_len = 2 + 5 * 12 + 4;
-    let frame_at = image_processing + ip_len;
-    let jpeg_at = if frame.is_some() { frame_at + 8 } else { image_processing };
-    let mut n = b"OLYMPUS\0II\x03\0".to_vec();
-    n.extend((directories as u16).to_le_bytes());
-    n.extend(entry(0x2020, 13, 1, camera_settings as u32));
-    if frame.is_some() {
-        n.extend(entry(0x2040, 13, 1, image_processing as u32));
-    }
-    n.extend(0u32.to_le_bytes());
-    n.extend(2u16.to_le_bytes());
-    n.extend(entry(0x0101, 4, 1, jpeg_at as u32));
-    n.extend(entry(0x0102, 4, 1, preview.len() as u32));
-    n.extend(0u32.to_le_bytes());
-    if let Some(f) = frame {
-        n.extend(5u16.to_le_bytes());
-        n.extend(entry(0x0612, 4, 1, 0));
-        n.extend(entry(0x0613, 4, 1, 0));
-        n.extend(entry(0x0614, 4, 1, area.0));
-        n.extend(entry(0x0615, 4, 1, area.1));
-        n.extend(entry(0x1113, 3, 4, frame_at as u32));
-        n.extend(0u32.to_le_bytes());
-        n.extend(f.iter().flat_map(|v| v.to_le_bytes()));
-    }
-    n.extend(preview);
-    n
-}
-
 /// An Olympus container (the `IIRO` magic) for a `w × h` sensor of `bits`-bit samples whose only strip is `strip`,
 /// shot with the camera turned as `orientation` says, with `preview` as its CameraSettings preview and a few Exif
-/// fields (ISO 200, 1/125 s, an RGGB colour-filter layout).
+/// fields (ISO 200, 1/125 s, an RGGB colour-filter layout): `lightcraft_raw::testdata::OlympusOrf`.
 fn container(w: u32, h: u32, bits: u16, strip: Vec<u8>, orientation: u16, preview: &[u8]) -> Vec<u8> {
     container_framed(w, h, bits, strip, orientation, preview, None)
 }
 
 /// [`container`] shot at an aspect ratio other than 4:3: `frame` is the note's `AspectFrame`.
 fn container_framed(w: u32, h: u32, bits: u16, strip: Vec<u8>, orientation: u16, preview: &[u8], frame: Option<[u16; 4]>) -> Vec<u8> {
-    let mut ifd = IfdBuilder::new();
-    ifd.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
-    ifd.set(t::IMAGE_LENGTH, Value::Long(vec![h]));
-    ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![bits]));
-    ifd.set(t::COMPRESSION, Value::Short(vec![1]));
-    ifd.set(t::PHOTOMETRIC, Value::Short(vec![1]));
-    ifd.set(t::MAKE, Value::Ascii("OLYMPUS IMAGING CORP.".into()));
-    ifd.set(t::MODEL, Value::Ascii("E-M10 Mark II".into()));
-    ifd.set(t::ORIENTATION, Value::Short(vec![orientation]));
-    ifd.set_image(ImageData::Strips { rows_per_strip: h, strips: vec![strip] });
-    let mut exif = IfdBuilder::new();
-    exif.set(t::EXPOSURE_TIME, Value::Rational(vec![(1, 125)]));
-    exif.set(t::ISO_SPEED, Value::Short(vec![200]));
-    exif.set(0xa302, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
-    exif.set(t::MAKER_NOTE, Value::Undefined(maker_note(preview, (w, h), frame)));
-    ifd.set_child(t::EXIF_IFD, exif);
-    let mut b = TiffWriter::new(ByteOrder::Little, false).write(&[ifd]).unwrap();
-    b[2] = b'R';
-    b[3] = b'O';
-    b
+    OlympusOrf { orientation, frame, ..OlympusOrf::new(w, h, bits, strip, preview.to_vec()) }.build()
 }
 
 /// A strip of the compressed coding's size class: far shorter than the sensor's samples, so no uncompressed layout fits.

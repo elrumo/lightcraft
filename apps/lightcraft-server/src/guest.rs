@@ -308,6 +308,8 @@ fn describe(f: &Received, bytes: &[u8], now: &str, who: &str) -> Result<Photo, S
     p.embedded_lens = info.embedded_lens;
     p.preview_only = info.preview_only;
     p.develop = Arc::new(p.camera_defaults());
+    // the crop the file asks for by itself (an Olympus body's aspect-ratio setting): part of the import look, as on a desktop
+    lightcraft_engine::import::apply_default_crop(&mut p, info.default_crop);
     // a raw's own XMP (its edits from the camera's app)
     if p.kind == MediaKind::Raw
         && let Some(x) = info.xmp

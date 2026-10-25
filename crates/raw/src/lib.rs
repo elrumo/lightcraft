@@ -41,6 +41,8 @@ pub mod kelvin_presets;
 pub mod lens_metadata;
 pub mod ljpeg;
 pub(crate) mod llvc;
+#[cfg(feature = "testdata")]
+mod olympus_testdata;
 pub mod opcodes;
 mod preview;
 pub mod profile;
@@ -55,6 +57,7 @@ mod vc5;
 /// Synthetic inputs for other crates' tests.
 #[cfg(feature = "testdata")]
 pub mod testdata {
+    pub use crate::olympus_testdata::{OlympusOrf, PRESET_KELVIN};
     pub use crate::vc5::synthetic_stream as vc5_stream;
 }
 mod vendor;
