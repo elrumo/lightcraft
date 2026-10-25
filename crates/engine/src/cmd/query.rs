@@ -414,6 +414,9 @@ pub fn specs() -> Vec<CommandSpec> {
             let relative = photo.is_some() && !raw;
             let as_shot_rel = d.wb.mode == lightcraft_develop::WbMode::AsShot && photo.is_some_and(|p| p.relative_wb());
             let effective = (raw && photo.is_some()).then(|| active.map(|id| lightcraft_pipeline::local::effective_wb(&s.source_info(id), &d))).flatten();
+            // (a raw's white balance sits back at the white the camera recorded, not at 6500 K / 0: the default a
+            // reset, a detent and a double tap go to)
+            let as_shot = (raw && photo.is_some()).then(|| active.map(|id| s.source_info(id))).flatten().map(|i| (i.as_shot_temp, i.as_shot_tint));
             Ok(Value::Array(
                 CONTROLS
                     .iter()
@@ -428,6 +431,13 @@ pub fn specs() -> Vec<CommandSpec> {
                         };
                         let mut v = serde_json::to_value(spec).unwrap_or_default();
                         v["value"] = json!(value);
+                        if let Some((temp, tint)) = as_shot {
+                            match c.id {
+                                "wb.temp" => v["default"] = json!(c.clamp(temp)),
+                                "wb.tint" => v["default"] = json!(c.clamp(tint)),
+                                _ => {}
+                            }
+                        }
                         v
                     })
                     // indexed controls of the list elements that exist (`pointColor.0.hueShift`, …)

@@ -137,6 +137,14 @@ fn edit_version(s: &mut Session, p: &Value, c: &str, label: &str, f: impl FnOnce
     ok()
 }
 
+/// White balance that has come back to the photo's own as-shot white is As Shot again: a Temp and Tint dragged or
+/// reset to it, and the mode a Reset goes to.
+fn settle_wb(d: &mut DevelopSettings, info: &lightcraft_pipeline::SourceInfo) {
+    if d.wb.mode == WbMode::Custom && d.wb.temp == info.as_shot_temp && d.wb.tint == info.as_shot_tint {
+        d.wb.mode = WbMode::AsShot;
+    }
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -192,6 +200,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             d.wb.mode = WbMode::Custom;
                         }
                     }
+                    settle_wb(d, info);
                     refit_crop_angle(angle, before, d, dims);
                 };
                 if let Some(ids) = p.get("ids").and_then(Value::as_array) {
@@ -236,6 +245,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 let v = controls::get(d, &c).unwrap_or(spec.default);
                 controls::set(d, &c, v + delta);
+                settle_wb(d, &info);
                 refit_crop_angle(c == CROP_ANGLE, before, d, dims);
                 Ok(())
             })
@@ -314,10 +324,23 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("develop.resetControl", "Reset Control", [], None, "{control}", has_active, |s, p| {
             let c = str_param(p, "control").ok_or_else(|| bad("develop.resetControl", "missing control"))?.to_string();
             let spec = controls::find(&c).ok_or_else(|| bad("develop.resetControl", "unknown control"))?;
-            let dims = crop_dims(s, active(s, "develop.resetControl")?);
+            let id = active(s, "develop.resetControl")?;
+            let (dims, info) = (crop_dims(s, id), s.source_info(id));
             edit(s, "develop.resetControl", spec.label, |d| {
                 let before = d.crop.geometry;
-                controls::set(d, &c, spec.default);
+                if c == "wb.temp" || c == "wb.tint" {
+                    // (white balance goes back to the photo's own as-shot white, not to 6500 K / 0: for a raw they differ)
+                    lightcraft_pipeline::local::normalize_wb(d, &info);
+                    if d.wb.mode == WbMode::AsShot {
+                        d.wb.temp = info.as_shot_temp;
+                        d.wb.tint = info.as_shot_tint;
+                    }
+                    controls::set(d, &c, if c == "wb.temp" { info.as_shot_temp } else { info.as_shot_tint });
+                    d.wb.mode = WbMode::Custom;
+                    settle_wb(d, &info);
+                } else {
+                    controls::set(d, &c, spec.default);
+                }
                 refit_crop_angle(c == CROP_ANGLE, before, d, dims);
                 Ok(())
             })
