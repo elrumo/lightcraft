@@ -48,8 +48,8 @@ pub const EXTENSIONS: &[&str] = &[
 /// The camera raw formats among [`EXTENSIONS`] (lower case): sensor data, or for some a preview only (see there).
 /// `library.importFormats` reports them to a file picker.
 pub const RAW_EXTENSIONS: &[&str] = &[
-    "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "ori", "rw2", "rwl", "raw", "pef", "srw", "iiq", "crw", "mrw", "x3f", "kdc",
-    "mos", "erf", "3fr", "fff", "mef", "gpr",
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "ori", "rw2", "rwl", "raw", "pef", "srw", "iiq", "crw", "mrw", "x3f",
+    "kdc", "mos", "erf", "3fr", "fff", "mef", "gpr",
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
