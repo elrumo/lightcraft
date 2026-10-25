@@ -336,3 +336,41 @@ fn corpus_olympus_raws_edit_white_balance_in_kelvin_through_their_presets() {
         assert!(!lightcraft_catalog::relative_wb_camera("ORF", &header.meta.camera), "{}", header.meta.camera);
     }
 }
+
+/// A 40 x 30 JPEG of one green that a wide gamut makes more saturated than sRGB does.
+fn green_jpeg() -> Vec<u8> {
+    use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
+    let px: Vec<u8> = (0..40 * 30).flat_map(|_| [90u8, 170, 90]).collect();
+    encode_jpeg(&EncodeImage::new(40, 30, 3, Samples::U8(&px)), 95, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap()
+}
+
+/// A body set to Adobe RGB writes Exif `ColorSpace` "uncalibrated" without the DCF's Interoperability "R03" and no ICC
+/// profile in the camera JPEG: the only statement of the space is the maker note's `ColorSpace`. The preview is read in
+/// Adobe RGB then (its greens come out more saturated in sRGB than the same pixels read as sRGB), and a file that says sRGB,
+/// Pro Photo RGB (no space of ours) or nothing is read as before.
+#[test]
+fn an_olympus_preview_is_read_in_the_colour_space_the_camera_was_set_to() {
+    use lightcraft_raw::PreviewColorSpace;
+    let file = |color_space: Option<u16>, exif: Option<u16>| {
+        let words: Vec<u8> = (0..48u32 * 36).flat_map(|i| (((200 + i * 37) % 4000) as u16).to_le_bytes()).collect();
+        OlympusOrf { color_space, exif_color_space: exif, ..OlympusOrf::new(48, 36, 16, words, green_jpeg()) }.build()
+    };
+    let green_of = |bytes: &[u8]| {
+        let img = crate::files::embedded_preview_srgb(bytes, 64).expect("the camera JPEG shows");
+        let px = img.data[img.data.len() / 2];
+        (px[0], px[1], px[2])
+    };
+    let adobe = file(Some(1), Some(0xFFFF));
+    let srgb = file(Some(0), Some(1));
+    assert_eq!(lightcraft_raw::embedded_preview_color_space(&adobe), Some(PreviewColorSpace::AdobeRgb));
+    assert_eq!(lightcraft_raw::embedded_preview_color_space(&srgb), Some(PreviewColorSpace::Srgb));
+    let (plain, wide) = (green_of(&srgb), green_of(&adobe));
+    assert!((i32::from(plain.0) - 90).abs() <= 3 && (i32::from(plain.1) - 170).abs() <= 3, "read as sRGB it is the JPEG's own pixel: {plain:?}");
+    assert!(wide.0 + 15 < plain.0 && wide.2 <= plain.2, "read as Adobe RGB the green is more saturated: {wide:?} against {plain:?}");
+    // no statement, one that is not ours, or an Exif one alone: what the JPEG says (sRGB)
+    for (maker, exif) in [(None, Some(0xFFFF)), (None, None), (Some(2), Some(0xFFFF)), (Some(7), None)] {
+        let bytes = file(maker, exif);
+        assert_eq!(lightcraft_raw::embedded_preview_color_space(&bytes), None, "{maker:?} {exif:?}");
+        assert_eq!(green_of(&bytes), plain, "{maker:?} {exif:?}");
+    }
+}

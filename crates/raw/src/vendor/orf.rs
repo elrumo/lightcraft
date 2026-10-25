@@ -51,6 +51,7 @@
 //!   to the green diagonal found from the data, which can't tell red from blue (GRBG or RGGB is assumed).
 
 use super::{cfa_from_exif, white_from_data};
+use crate::PreviewColorSpace;
 use crate::kelvin_presets::KelvinPresets;
 use crate::tiffraw::{Packing, read_image};
 use crate::unpack::unpack_msb;
@@ -63,6 +64,8 @@ use rayon::prelude::*;
 
 pub(crate) const CAMERA_SETTINGS: u16 = 0x2020;
 const IMAGE_PROCESSING: u16 = 0x2040;
+/// CameraSettings `ColorSpace`: the colour space the camera encodes its JPEGs in (0 sRGB, 1 Adobe RGB, 2 Pro Photo RGB).
+const COLOR_SPACE: u16 = 0x0507;
 pub(crate) const PREVIEW_START: u16 = 0x0101;
 pub(crate) const PREVIEW_LENGTH: u16 = 0x0102;
 const WB_RB: u16 = 0x0100;
@@ -391,6 +394,19 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     };
     img.validate_for(mode)?;
     Ok(img)
+}
+
+/// The colour space of the camera's JPEGs, the embedded preview among them, from the maker note's CameraSettings `ColorSpace`
+/// (0 sRGB, 1 Adobe RGB). A body set to Adobe RGB writes Exif `ColorSpace` 0xFFFF ("uncalibrated") without the DCF's
+/// Interoperability "R03" that says which, and no ICC profile in the preview, so this is the only place the file says. The
+/// third value, Pro Photo RGB, has no [`PreviewColorSpace`]: `None`, as for a note that doesn't say.
+pub(crate) fn color_space(bytes: &[u8], tiff: &Tiff) -> Option<PreviewColorSpace> {
+    let mn = maker_note(bytes, tiff)?;
+    match sub_ifd(bytes, &mn, CAMERA_SETTINGS)?.u64(COLOR_SPACE)? {
+        0 => Some(PreviewColorSpace::Srgb),
+        1 => Some(PreviewColorSpace::AdobeRgb),
+        _ => None,
+    }
 }
 
 /// The large preview JPEG referenced by CameraSettings `PreviewImageStart/Length` (relative to the note base).
@@ -863,6 +879,11 @@ mod tests {
     /// A new-style Olympus maker note (`OLYMPUS\0II\x03\0`, offsets counted from the note's start) whose ImageProcessing
     /// directory (0x2040) holds `entries`, SHORT values each.
     fn note_with_image_processing(entries: &[(u16, &[u16])]) -> Vec<u8> {
+        note_with_directory(IMAGE_PROCESSING, entries)
+    }
+
+    /// [`note_with_image_processing`] for the sub-directory `directory` (CameraSettings is 0x2020).
+    fn note_with_directory(directory: u16, entries: &[(u16, &[u16])]) -> Vec<u8> {
         let ip_at = 12 + 2 + 12 + 4;
         let mut values_at = ip_at + 2 + 12 * entries.len() + 4;
         let (mut ifd, mut values) = (Vec::new(), Vec::new());
@@ -882,12 +903,8 @@ mod tests {
         }
         let mut note = b"OLYMPUS\0II\x03\0".to_vec();
         note.extend(1u16.to_le_bytes());
-        for x in [
-            IMAGE_PROCESSING.to_le_bytes().to_vec(),
-            13u16.to_le_bytes().to_vec(),
-            1u32.to_le_bytes().to_vec(),
-            (ip_at as u32).to_le_bytes().to_vec(),
-        ] {
+        for x in [directory.to_le_bytes().to_vec(), 13u16.to_le_bytes().to_vec(), 1u32.to_le_bytes().to_vec(), (ip_at as u32).to_le_bytes().to_vec()]
+        {
             note.extend(x);
         }
         note.extend(0u32.to_le_bytes());
@@ -1108,6 +1125,45 @@ mod tests {
             bad[at + 12 + 2 + 8..at + 12 + 2 + 12].copy_from_slice(&ptr.to_le_bytes());
             let _ = as_shot_kelvin(&bad);
             let _ = crate::decode(&bad);
+        }
+    }
+
+    /// The colour space the camera says its JPEGs are in is CameraSettings `ColorSpace`: 0 sRGB, 1 Adobe RGB. Pro Photo RGB
+    /// (2), a value no one knows, an empty entry and a note without the directory say nothing; so does a file of another
+    /// maker whose note happens to be laid out the same, and no damaged note panics.
+    #[test]
+    fn the_maker_note_says_which_colour_space_the_jpeg_is_in() {
+        use crate::PreviewColorSpace::{AdobeRgb, Srgb};
+        let file =
+            |entries: &[(u16, &[u16])]| orf_with_note(5200, 3900, 16, vec![0; 64], Some(RGGB), Some(note_with_directory(CAMERA_SETTINGS, entries)));
+        let space = |entries: &[(u16, &[u16])]| {
+            let bytes = file(entries);
+            let tiff = Tiff::parse(&bytes).unwrap();
+            let own = color_space(&bytes, &tiff);
+            // what the library asks, which also looks at the maker (Olympus, OM System) and the Exif declaration
+            assert_eq!(crate::embedded_preview_color_space(&bytes), own, "{entries:?}");
+            own
+        };
+        assert_eq!(space(&[(COLOR_SPACE, &[0])]), Some(Srgb));
+        assert_eq!(space(&[(PREVIEW_START, &[40]), (COLOR_SPACE, &[1])]), Some(AdobeRgb));
+        for says_nothing in [&[(COLOR_SPACE, &[2u16][..])][..], &[(COLOR_SPACE, &[7])], &[(COLOR_SPACE, &[])], &[(PREVIEW_START, &[40])], &[]] {
+            assert_eq!(space(says_nothing), None, "{says_nothing:?}");
+        }
+        // another maker's note laid out the same is not read; OM Digital Solutions' is
+        let adobe = file(&[(COLOR_SPACE, &[1])]);
+        let with_make = |make: &[u8]| {
+            let mut b = adobe.clone();
+            let at = b.windows(21).position(|w| w == b"OLYMPUS IMAGING CORP.").unwrap();
+            b[at..at + 21].fill(b' ');
+            b[at..at + make.len()].copy_from_slice(make);
+            crate::embedded_preview_color_space(&b)
+        };
+        assert_eq!(with_make(b"OM Digital Solutions"), Some(AdobeRgb));
+        assert_eq!(with_make(b"OLYMPUS OPTICAL CO."), Some(AdobeRgb));
+        assert_eq!(with_make(b"FUJIFILM"), None);
+        // every truncation reads without a panic
+        for len in 0..adobe.len() {
+            let _ = crate::embedded_preview_color_space(&adobe[..len]);
         }
     }
 }

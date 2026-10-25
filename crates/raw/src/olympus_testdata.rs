@@ -31,12 +31,29 @@ pub struct OlympusOrf {
     pub as_shot: Option<[u16; 2]>,
     /// ImageProcessing `WB_RBLevels<K>` ([`PRESET_KELVIN`] in order): the red and blue gains at each stated temperature.
     pub presets: Option<[[u16; 2]; 12]>,
+    /// CameraSettings `ColorSpace` (0 sRGB, 1 Adobe RGB, 2 Pro Photo RGB).
+    pub color_space: Option<u16>,
+    /// Exif `ColorSpace` (1 sRGB, 0xFFFF uncalibrated).
+    pub exif_color_space: Option<u16>,
 }
 
 impl OlympusOrf {
     /// A `width × height` sensor of `bits`-bit samples whose only strip is `strip`, with `preview` as its camera JPEG.
     pub fn new(width: u32, height: u32, bits: u16, strip: Vec<u8>, preview: Vec<u8>) -> Self {
-        OlympusOrf { width, height, bits, strip, orientation: 1, preview, model: "E-M10 Mark II".into(), frame: None, as_shot: None, presets: None }
+        OlympusOrf {
+            width,
+            height,
+            bits,
+            strip,
+            orientation: 1,
+            preview,
+            model: "E-M10 Mark II".into(),
+            frame: None,
+            as_shot: None,
+            presets: None,
+            color_space: None,
+            exif_color_space: None,
+        }
     }
 
     /// The file's bytes (empty if the TIFF writer refused the container, which a test sees as an unreadable file).
@@ -56,6 +73,9 @@ impl OlympusOrf {
         exif.set(t::EXPOSURE_TIME, Value::Rational(vec![(1, 125)]));
         exif.set(t::ISO_SPEED, Value::Short(vec![200]));
         exif.set(0xa302, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
+        if let Some(space) = self.exif_color_space {
+            exif.set(0xa001, Value::Short(vec![space]));
+        }
         exif.set(t::MAKER_NOTE, Value::Undefined(self.maker_note()));
         ifd.set_child(t::EXIF_IFD, exif);
         let mut bytes = TiffWriter::new(ByteOrder::Little, false).write(&[ifd]).unwrap_or_default();
@@ -85,7 +105,7 @@ impl OlympusOrf {
         processing.sort_by_key(|e| e.tag);
         let directories = if processing.is_empty() { 1 } else { 2 };
         let camera_settings_at = 12 + 2 + 12 * directories + 4;
-        let camera_settings_len = 2 + 2 * 12 + 4;
+        let camera_settings_len = 2 + 12 * (2 + usize::from(self.color_space.is_some())) + 4;
         let processing_at = camera_settings_at + camera_settings_len;
         let processing_bytes = if processing.is_empty() { Vec::new() } else { directory(processing_at, &processing) };
         let preview_at = processing_at + processing_bytes.len();
@@ -95,7 +115,8 @@ impl OlympusOrf {
             main.push(Entry::offset(0x2040, processing_at));
         }
         note.extend(directory(note.len(), &main));
-        let camera_settings = [Entry::long(0x0101, preview_at as u32), Entry::long(0x0102, self.preview.len() as u32)];
+        let mut camera_settings = vec![Entry::long(0x0101, preview_at as u32), Entry::long(0x0102, self.preview.len() as u32)];
+        camera_settings.extend(self.color_space.map(|space| Entry::shorts(0x0507, &[space])));
         note.extend(directory(camera_settings_at, &camera_settings));
         note.extend(processing_bytes);
         note.extend(&self.preview);

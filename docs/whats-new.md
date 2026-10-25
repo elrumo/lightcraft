@@ -17,6 +17,12 @@
   within 1.2 mired of what the camera states. Photos imported earlier keep the scale they were edited on. The compressed
   `.orf` files of the other bodies carry the same table, so they get the scale the day their sensor data can be read.
 
+### Olympus and OM System previews in the colour space the camera was set to
+- An Olympus or OM System body set to Adobe RGB writes its camera JPEG (all there is to see of a compressed `.orf`)
+  in Adobe RGB without saying so in the file's Exif or in the JPEG, only in its maker note. The library read those
+  pictures as sRGB, which made their colours dull; it now reads the maker note (11 of the 70 sample files, from the E-1
+  to the TG-6). Files set to sRGB are as before, and so are the Pro Photo RGB ones.
+
 ## 2026-10-24
 
 ### Olympus and OM System files open the way the camera shot them

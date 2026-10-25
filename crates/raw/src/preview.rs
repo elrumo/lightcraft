@@ -16,7 +16,7 @@ pub enum PreviewColorSpace {
 
 /// The colour space the raw says its embedded JPEG is in, for a JPEG that declares none itself (no ICC profile,
 /// no EXIF), first available first: the Nikon maker-note ColorSpace (0x001e: 1 = sRGB, 2 = Adobe RGB, per Nikon
-/// tag documentation); the raw's own EXIF ColorSpace (0xA001: 1 = sRGB), or Uncalibrated (0xFFFF) with the
+/// tag documentation); the Olympus / OM System maker note's (CameraSettings 0x0507, see `vendor::orf::color_space`); the raw's own EXIF ColorSpace (0xA001: 1 = sRGB), or Uncalibrated (0xFFFF) with the
 /// Interoperability IFD's InteropIndex "R03", the DCF option file for Adobe RGB (as a Sony body shot in Adobe RGB
 /// writes, issue #778; per the Exif and DCF specifications), not for a DNG. This is a fallback only: a JPEG's own ICC/EXIF colour
 /// declaration takes precedence.
@@ -26,6 +26,12 @@ pub fn embedded_preview_color_space(bytes: &[u8]) -> Option<PreviewColorSpace> {
     let exif = tiff.exif()?;
     if make.to_ascii_uppercase().starts_with("NIKON")
         && let Some(space) = nikon_color_space(bytes, &tiff, exif, &make)
+    {
+        return Some(space);
+    }
+    let upper = make.to_ascii_uppercase();
+    if (upper.starts_with("OLYMPUS") || upper.starts_with("OM "))
+        && let Some(space) = crate::vendor::orf::color_space(bytes, &tiff)
     {
         return Some(space);
     }
