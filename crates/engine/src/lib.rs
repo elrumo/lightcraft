@@ -713,6 +713,17 @@ impl Session {
         })
     }
 
+    /// The selected mask is one the active photo has: an undo or redo of "Add Mask", a history restore or a
+    /// paste of settings takes masks away without saying so, and a frontend would go on showing (and painting
+    /// into) a mask that is gone.
+    fn forget_missing_mask(&mut self) {
+        let Some(mask) = self.active_mask else { return };
+        let has = self.active().and_then(|id| self.develop_of(id)).is_some_and(|d| d.masks.iter().any(|m| m.id == mask));
+        if !has {
+            self.active_mask = None;
+        }
+    }
+
     /// Run `f` as command `id` with what [`Session::execute`] does around every command: the
     /// panic guard, auto versions, XMP sidecar auto-write and the durable save (a failed save is
     /// `NotSaved`). Not journaled. The app's import task commits its batches this way.
@@ -727,6 +738,9 @@ impl Session {
         // last-resort guard: a panic in a command is that command's error, not a crash
         let r = guard::catch(&format!("`{id}`"), || f(self)).unwrap_or_else(|e| Err(EngineError::Other(e)));
         self.depth -= 1;
+        if self.depth == 0 {
+            self.forget_missing_mask();
+        }
         if self.depth == 0 && was_active.is_some() && self.active() != was_active {
             // (a photo that is gone, or a library emptied for another account, has nothing to paste settings from: the
             // number could name another photo now)
@@ -1682,6 +1696,8 @@ mod tests_live_photo;
 mod tests_map;
 #[cfg(test)]
 mod tests_mask_effects;
+#[cfg(test)]
+mod tests_mask_feel;
 #[cfg(test)]
 mod tests_merge;
 #[cfg(test)]
