@@ -1,6 +1,6 @@
 # RAW parity: cameras, formats, demosaic, colour and lens profiles
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (a raw whose camera JPEG gives no look to fit starts from its camera's typical colour, the mean of the 52 measured cameras' matrices (leave-one-out CIEDE2000 2.0 from the camera's own best matrix, against 8.7 for camera RGB read as sRGB), and a neutral tone at its maker's exposure: Sony A33, A500, A580 and Samsung NX210, NX1100 ΔE00 to the camera JPEG 6.5–19.8 → 4.2–8.4; `calibrate --references` fits a neutral look (exposure, contrast, hue/saturation table) for any maker and format, not only Canon CR3; `library.importFormats` gives a native frontend's file picker every extension Import takes; upstream v0.13.0 merged: Minolta MRW decoded, 6 bodies verified; Canon ColorData Kelvin; lossy JPEG XL DNG tiles with a non-linear declared transfer curve decode, and DNGs with a look table fit their tone to a 1024 px preview; the EOS R6 neutral tone refitted on vignetting-corrected frames, ΔE00 against Lightroom 3.96 → 3.30; Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (pre-X FinePix and SuperCCD RAFs decode: 11 more Fujifilm models verified (upstream #2316, #2063); a raw whose camera JPEG gives no look to fit starts from its camera's typical colour, the mean of the 52 measured cameras' matrices (leave-one-out CIEDE2000 2.0 from the camera's own best matrix, against 8.7 for camera RGB read as sRGB), and a neutral tone at its maker's exposure: Sony A33, A500, A580 and Samsung NX210, NX1100 ΔE00 to the camera JPEG 6.5–19.8 → 4.2–8.4; `calibrate --references` fits a neutral look (exposure, contrast, hue/saturation table) for any maker and format, not only Canon CR3; `library.importFormats` gives a native frontend's file picker every extension Import takes; upstream v0.13.0 merged: Minolta MRW decoded, 6 bodies verified; Canon ColorData Kelvin; lossy JPEG XL DNG tiles with a non-linear declared transfer curve decode, and DNGs with a look table fit their tone to a 1024 px preview; the EOS R6 neutral tone refitted on vignetting-corrected frames, ΔE00 against Lightroom 3.96 → 3.30; Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
 
 Raw processing is the deepest single dimension of Lightroom parity: a photographer whose camera
 does not decode, or decodes with the wrong colour, cannot switch. This document measures it model by
@@ -21,7 +21,7 @@ ranked in [gaps.md](gaps.md). Details per format: [cr3.md](cr3.md),
 | **Unsupported** (not imported, refused or decodes wrongly) | **37** (3%) | measured |
 | Models added since 2017 (Camera Raw 10+): verified / unverified / preview / unsupported | 182 / 542 / 22 / 8 of 754 | measured |
 | **Share of photographers whose camera fully works** (decodes from sensor data), use-weighted | **~94%** | estimated: measured classes × written usage weights × per-format confidence |
-| …of which on a body we have verified | **~85%** | estimated, same weights |
+| …of which on a body we have verified | **~86%** | estimated, same weights |
 | Camera colour: Adobe profiles vs ours | 1,500 Adobe Standard profiles, 481 models with Camera Matching profiles vs **5 bundled profiles** + per-file fits + 52 spectral matrices (plus same-sensor aliases) | measured (bundle listing, Adobe list, `assets/camera-profiles`) |
 | Lens profiles: Adobe vs ours | **3,635 vs 0** (in-file corrections only) | measured |
 | **RAW readiness** (decoding 60%, colour 25%, lens 15%) | **~60%** (range 54–64%) | estimated, see [Scores](#scores) |
@@ -119,7 +119,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Apple | 113 | 4 | 109 | 0 | 0 | — (DNG / ProRAW) |
 | Panasonic | 104 | 93 | 11 | 0 | 0 | — |
 | Nikon | 99 | 77 | 19 | 0 | 3 | COOLPIX 5700 / 8400 / 8800 decode wrongly (two stacked half-height fields, CMYG read as RGB); HE / HE★ is a per-shot setting, preview-only |
-| Fujifilm | 97 | 65 | 9 | 23 | 0 | pre-X FinePix RAF without a raw IFD (estimated split) |
+| Fujifilm | 97 | 76 | 19 | 2 | 0 | SuperCCD SR bodies (F700, S20 Pro) refused, preview |
 | Google | 88 | 5 | 83 | 0 | 0 | — |
 | Olympus | 71 | 17 | 3 | 51 | 0 | **compressed ORF** |
 | Leica | 61 | 27 | 34 | 0 | 0 | — |
@@ -140,7 +140,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Canon | 33% | 95% | 93% | 18 of the 22 popular bodies write CR3; 26 CR3 bodies verified (raw.pixls.us has a CC0 file for each), the rest at 0.6 |
 | Sony | 27% | 98% | 92% | bulk-checked |
 | Nikon | 16% | 98% | 89% | decoders cover every NEF coding but HE; 77 bodies verified |
-| Fujifilm | 10% | 94% | 92% | |
+| Fujifilm | 10% | 99% | 95% | pre-X FinePix and SuperCCD decode (#2063); F700 and S20 Pro preview |
 | Panasonic | 4% | 100% | 98% | bulk-checked |
 | OM / Olympus | 3% | 6% | 5% | compressed ORF |
 | Phones | 3% | 93% | 4% | DNG |
@@ -182,7 +182,9 @@ checked (the per-model CC0 sweeps of October 2026); compressed ORF (OM / Olympus
 | ARW | ARQ pixel shift | ⬜ | no code |
 | SR2 | DSC-R1 | ✅ | CC0 3221 sample; folder and direct import both decode sensor data |
 | RAF | uncompressed, lossless and lossy compressed; Bayer and X-Trans; GFX 14/16-bit | ✅ | 24 files from 13 bodies exact |
-| RAF | pre-X FinePix without a raw IFD | ⬜ | `raf.rs` refuses (26 Adobe models, estimated split) |
+| RAF | pre-X FinePix without a raw IFD, bare Bayer (S5500, S200EXR in EXR-DR mode) | ✅ | 2 CC0 files, pinned (`body_corpus.rs`); `raf_legacy.rs` |
+| RAF | SuperCCD (rows: S5000 … S9600; lines: S3Pro, S5Pro, S100FS, S6000fd; columns: S2Pro) | 🟡 | 11 CC0 files follow the camera JPEG (`body_corpus.rs`); the decoder demosaics in the 45° frame itself (AHD), so the Demosaic setting and AI Denoise don't apply; the S3Pro and S5Pro are decoded from their primary photodiodes only (their files hold a second, darker block of the same size after the raw block, most likely the low-sensitivity photodiodes, which isn't read); raw blocks longer than their recorded size (a wide-DR second exposure?) refused (#2063) |
+| RAF | SuperCCD SR (F700, F710, S20 Pro), DBP for GX680 | ⬜ | refused, preview (`raf_legacy.rs`; no CC0 SR sample, the GX680's matches no SuperCCD mapping) |
 | ORF | uncompressed 16-bit, 12-bit packed, two-field 12-bit, 12.8 bpp | ✅ | E-1, E-400, XZ-2 corpus; #651 |
 | ORF | **compressed** (every Olympus / OM body since ~2008) | ⬜ | `orf.rs` refuses; the E-M1 and E-M10 III corpus files are `KNOWN_UNSUPPORTED` |
 | RW2 / RWL / RAW | formats 2, 4, 5, 6, 7, 8 and 16-bit words | ✅ | 118 bodies (#215) |
@@ -314,7 +316,7 @@ works, from [raw/usage-weights.tsv](raw/usage-weights.tsv).
 | 3 | ~~Verify popular Nikon, Fujifilm, Canon CR2 and Pentax bodies (one CC0 file each, fix what breaks)~~ done (#1045, #1081) | (+2.0, taken) | — | — | public samples |
 | 4 | Nikon packed 14-bit under a compressed tag (Z 6II uncompressed, #769) | +0.2 | 1–2 | ~0.13 | PR #671 exists |
 | 5 | Sony DSLR-A200…A390 / A850 12-bit compressed ARW | +0.4 | 3–6 | ~0.08 | samples on raw.pixls.us |
-| 6 | Pre-X FinePix RAF | +0.6 | 4–8 | ~0.08 | samples |
+| 6 | ~~Pre-X FinePix RAF~~ done (#2063) except SuperCCD SR (F700, F710, S20 Pro) and the DBP for GX680 | (+0.5, taken) | — | — | SR samples |
 | 7 | Sony A100 regression (#702) and DSC-F828 sensor decoding (preview-only) | +0.1 | 1–2 | ~0.07 | samples on raw.pixls.us |
 | 8 | Canon CRW (2000–2004 bodies) | +1.2 by the uniform tail weight, far less by real use | 6–12 | ≤ 0.1 | samples |
 | 9 | Nikon HE / HE★ NEF (Z 8, Z 9, Z 6III, Z f, Z50II, Z5II set to HE) | +1.1 | 20–40 | ~0.04 | a pure-Rust JPEG XS decoder |
@@ -333,6 +335,7 @@ Beyond decoding:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Pre-X FinePix RAFs without a raw IFD decode (`crates/raw/src/vendor/raf_legacy.rs`, #2063): bare Bayer (S5500, S200EXR) and the three SuperCCD arrangements, turned 45° into a Bayer and back; 13 CC0 files pinned in `body_corpus.rs`; `coverage.py` on the evidence as merged with main: 562 verified (39%), 666 unverified, 181 preview, 37 unsupported; Fujifilm 76 / 19 / 2, use-weighted 94% (86% on a verified body); the Unsupported count and the "Medium format and others" use row now follow `coverage.py` (37; 35% / 11% with the Minolta MRW bodies). The rule that sent every pre-X FinePix to preview also caught the TIFF-wrapped F-series EXR bodies (F505 … F900 EXR), which already decoded |
 | 2026-10-24 | minor | Cameras nobody measured: `spectral::generic` (the mean of the 52 measured cameras' matrices, per maker for Canon, Nikon and Sony) is the colour of a raw whose camera JPEG gives no look, with the neutral tone at the maker's exposure (medians of the CC0 archive's fitted looks); `calibrate --references` fits exposure, contrast and the hue/saturation table of any model against Lightroom renders and a model so fitted starts from its neutral look, whatever its maker; `library.importFormats`; counts and scores unchanged |
 | 2026-10-21 | minor | Canon CR3 neutral tone refitted (1.494 EV / 1.65 → 1.30 EV / 1.80) on frames with the camera's vignetting correction, which had made the 19 EOS R6 photos 2.7 L\* brighter than Lightroom: ΔL\* −0.0, ΔE00 3.96 → 3.30; the R6 table refitted on it |
 | 2026-10-18 | patch | X-T30, X-T30 II, X-Pro3, X100V, X-S10 and X-E4 take the X-T3's spectral matrices (same 26.1 MP X-Trans CMOS 4 sensor): an X-T30 raw with a black-and-white (Acros) camera JPEG no longer opens in the muted neutral fallback |
