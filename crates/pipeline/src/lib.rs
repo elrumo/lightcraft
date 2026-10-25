@@ -830,8 +830,8 @@ mod tests_nr_scale;
 #[cfg(test)]
 mod tests_sharpen;
 #[cfg(test)]
+mod tests_sliders;
+#[cfg(test)]
 mod tests_tone;
 #[cfg(test)]
 mod tests_window;
-#[cfg(test)]
-mod tests_sliders;

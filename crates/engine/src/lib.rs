@@ -1730,13 +1730,13 @@ mod tests_segment;
 #[cfg(test)]
 mod tests_settings_files;
 #[cfg(test)]
+mod tests_slide;
+#[cfg(test)]
 mod tests_sliders;
 #[cfg(test)]
 mod tests_sliders_raw;
 #[cfg(test)]
 mod tests_sliders_store;
-#[cfg(test)]
-mod tests_slide;
 #[cfg(test)]
 mod tests_slideshow_export;
 #[cfg(test)]
