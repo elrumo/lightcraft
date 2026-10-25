@@ -921,15 +921,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "Filter Choices",
             [],
             None,
-            "{field: camera|person|place|keyword} → [{value, count}] the values the filter can pick for `field`, each with how many of the library's photos have it (most first; keywords by name)",
+            "{field: camera|format|person|place|keyword} → [{value, count}] the values the filter can pick for `field` (`format`: the file formats, which no filter picks), each with how many of the library's photos have it (most first; keywords by name)",
             always,
             |s, p| {
                 let values = match str_param(p, "field") {
                     Some("camera") => s.catalog.cameras(),
+                    Some("format") => s.catalog.formats(),
                     Some("person") => s.catalog.people().into_iter().map(|p| (p.name, p.count)).collect(),
                     Some("place") => s.catalog.places(),
                     Some("keyword") => s.catalog.keywords(),
-                    _ => return Err(bad("library.facets", "field must be camera|person|place|keyword")),
+                    _ => return Err(bad("library.facets", "field must be camera|format|person|place|keyword")),
                 };
                 Ok(Value::Array(values.into_iter().map(|(value, count)| json!({"value": value, "count": count})).collect()))
             }

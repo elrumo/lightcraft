@@ -608,6 +608,26 @@ impl Catalog {
         v
     }
 
+    /// The file formats of the library's photos (upper case; `JPG` is `JPEG` and `TIF` is `TIFF`), with how many
+    /// photos each. Most photos first, then by name.
+    pub fn formats(&self) -> Vec<(String, usize)> {
+        let mut m: std::collections::BTreeMap<String, usize> = Default::default();
+        for p in self.photos().filter(|p| p.visible()) {
+            let f = p.format.trim().to_uppercase();
+            let f = match f.as_str() {
+                "JPG" => "JPEG".to_string(),
+                "TIF" => "TIFF".to_string(),
+                _ => f,
+            };
+            if !f.is_empty() {
+                *m.entry(f).or_default() += 1;
+            }
+        }
+        let mut v: Vec<(String, usize)> = m.into_iter().collect();
+        v.sort_by_key(|f| std::cmp::Reverse(f.1));
+        v
+    }
+
     /// All keywords with usage counts, sorted by name.
     pub fn keywords(&self) -> Vec<(String, usize)> {
         let mut m: std::collections::BTreeMap<String, usize> = Default::default();

@@ -114,6 +114,10 @@ fn facets_list_the_filter_choices() {
     assert!(!cams.is_empty());
     let counts: Vec<u64> = cams.iter().map(|c| c["count"].as_u64().unwrap()).collect();
     assert!(counts.windows(2).all(|w| w[0] >= w[1]), "{counts:?}");
+    let fmts = s.execute("library.facets", &json!({"field": "format"})).unwrap();
+    let fmts = fmts.as_array().unwrap();
+    assert!(!fmts.is_empty());
+    assert!(fmts.iter().all(|f| f["value"].as_str().is_some_and(|v| v == v.to_uppercase() && v != "JPG")), "{fmts:?}");
     let kw = s.execute("library.facets", &json!({"field": "keyword"})).unwrap();
     assert!(kw.as_array().unwrap().iter().any(|k| k["value"] == "desert"), "{kw}");
     assert!(s.execute("library.facets", &json!({"field": "colour"})).is_err());
