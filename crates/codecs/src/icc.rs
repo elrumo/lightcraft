@@ -113,6 +113,10 @@ fn trc_to_icc(t: &Trc) -> ToneReprCurve {
         Trc::Rec709 => ToneReprCurve::Parametric(vec![1.0 / 0.45, 1.0 / 1.099, 0.099 / 1.099, 1.0 / 4.5, 0.081]),
         Trc::Parametric(p) => ToneReprCurve::Parametric(p.clone()),
         Trc::Table(v) => ToneReprCurve::Lut(v.clone()),
+        // (an ICC curve spans 0..1 of linear light: the SDR range of the HDR curve, sampled)
+        Trc::Pq | Trc::Hlg => {
+            ToneReprCurve::Lut((0..1024).map(|i| (t.to_linear(i as f32 / 1023.0).clamp(0.0, 1.0) * 65535.0).round() as u16).collect())
+        }
     }
 }
 

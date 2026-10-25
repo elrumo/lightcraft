@@ -1027,7 +1027,9 @@ impl Engine {
                 .then(|| {
                     shown.histogram.as_ref().map(|h| {
                         let mut v = serde_json::to_value(h).unwrap_or_default();
-                        let (lo, hi) = h.clipping();
+                        // (an HDR edit's highlights are clipped at its headroom limit, `Histogram::clipping_at`)
+                        let limit = self.session.develop_of(shown.photo).map_or(f64::NAN, |d| d.hdr.max_ev);
+                        let (lo, hi) = h.clipping_at(limit);
                         v["clipping"] = json!([lo, hi]);
                         v
                     })

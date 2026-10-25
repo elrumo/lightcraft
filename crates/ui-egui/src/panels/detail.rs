@@ -1826,8 +1826,9 @@ pub(crate) fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcra
 
 fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
     // Highlight clipped regions using the histogram's extremes isn't spatial; show a subtle frame hint.
-    if let Some(h) = app.renderer.textures.get(&Slot::Main).and_then(|t| t.histogram.as_ref()) {
-        let (lo, hi) = h.clipping();
+    if let Some((h, photo)) = app.renderer.textures.get(&Slot::Main).and_then(|t| t.histogram.as_ref().map(|h| (h, t.photo))) {
+        let limit = app.session.develop_of(photo).map_or(f64::NAN, |d| d.hdr.max_ev);
+        let (lo, hi) = h.clipping_at(limit);
         if hi > 0.003 {
             p.rect_stroke(r, 0.0, Stroke::new(2.0, Color32::from_rgb(255, 60, 60)), StrokeKind::Outside);
         }

@@ -78,12 +78,21 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     let mut meta = Meta { orientation: Some(1), ..Default::default() };
     // linear sRGB primaries, unclamped, then our own matrix to Rec.2020 (see the module docs)
     let via_srgb = icc.is_none() && !gray && header.metadata.xyb_encoded;
+    // A PQ file (our own HDR export, an HDR10 JPEG XL) is asked for as PQ: asked for as linear, jxl-oxide
+    // tone maps anything declaring a peak above 255 cd/m² down to 255 (a Rec. 2408 SDR rendition), which
+    // dropped the whole range above SDR white. Its PQ values are linearised here, SDR white at 203 cd/m².
+    // (Not for an XYB file, a lossy one: it is rendered through sRGB primaries, see `via_srgb`, where a PQ
+    // target would need negative out-of-gamut samples encoded; those are still tone mapped to 255 cd/m².)
+    let pq = icc.is_none()
+        && !gray
+        && !via_srgb
+        && matches!(&header.metadata.colour_encoding, jxl_oxide::color::ColourEncoding::Enum(e) if matches!(e.tf, TransferFunction::Pq));
     if icc.is_none() {
         img.request_color_encoding(EnumColourEncoding {
             colour_space: if gray { ColourSpace::Grey } else { ColourSpace::Rgb },
             white_point: WhitePoint::D65,
             primaries: if via_srgb { Primaries::Srgb } else { Primaries::Bt2100 },
-            tf: TransferFunction::Linear,
+            tf: if pq { TransferFunction::Pq } else { TransferFunction::Linear },
             rendering_intent: RenderingIntent::Relative,
         });
         let mut s = SourceSpace::named(NamedSpace::Rec2020, SpaceOrigin::Container);
@@ -115,6 +124,11 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
         v.extend_from_slice(&px[..keep.min(ch)]);
         if keep > ch {
             v.push(1.0);
+        }
+        if pq && let Some(rgb) = v.get_mut(start..start + 3) {
+            for c in rgb {
+                *c = Trc::Pq.to_linear(*c);
+            }
         }
         if via_srgb && let Some(rgb) = v.get_mut(start..start + 3) {
             let [r, g, b] = [rgb[0], rgb[1], rgb[2]];

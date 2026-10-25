@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (lossy DNG export; Render to DNG as an export format; PSD write ✅: export and Edit In write flat 8/16-bit PSDs, and what an external editor saves, a Save As as a PSD included, comes back; Render to DNG as an export format) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (gain map JPEG read downgraded to 🟡 (import never applies the gain map); PQ / HLG PNG and lossless PQ JPEG XL decode; lossy DNG export; Render to DNG as an export format; PSD write ✅: export and Edit In write flat 8/16-bit PSDs, and what an external editor saves, a Save As as a PSD included, comes back; Render to DNG as an export format) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 Every format Lightroom reads or writes, with our support, fidelity and tests. Camera raw formats are
 deep enough to have their own document: [raw-parity.md](raw-parity.md).
@@ -27,8 +27,8 @@ import and export formats. Ours come from `crates/codecs/src/sniff.rs`, `crates/
 | DNG (from raw) | ✅ | ✅ incl. lossy, embedded original | ✅ | ✅ uncompressed, LJ92, Deflate or lossy (JPEG tiles, optional long edge); ⬜ embedded original | `crates/raw/src/dngwrite.rs` |
 | Render to DNG (15.5) | — | ✅ | — | ✅ Photo ▸ Render to DNG (stacked with the original) and the "Rendered DNG" export (linear float DNG, edit baked in) | `crates/raw/src/dngwrite.rs` (`write_rendered_dng`) |
 | Original + sidecar | — | ✅ | — | ✅ | |
-| HDR gain map JPEG (ISO 21496-1) | ✅ | ✅ | ✅ (gain map read) | ✅ | `crates/codecs/src/gainmap.rs` |
-| PQ / HLG HDR | ✅ | ✅ AVIF, JXL, TIFF | — | 🟡 PQ AVIF, PQ JPEG XL, float TIFF; no HLG | |
+| HDR gain map JPEG (ISO 21496-1) | ✅ | ✅ | 🟡 the gain map can be parsed and applied (`gainmap::read_jpeg`, `apply`, tested) but import never calls it: a gain map JPEG or an iPhone HEIC opens as its SDR base | ✅ | `crates/codecs/src/gainmap.rs` |
+| PQ / HLG HDR | ✅ | ✅ AVIF, JXL, TIFF | 🟡 PQ / HLG PNG and HEIF `nclx` decode to linear light with SDR white at 203 cd/m² (they were read as sRGB); a lossy PQ JPEG XL is still tone mapped to 255 cd/m² by the decoder; PQ AVIF can't be opened | 🟡 PQ AVIF, HLG AVIF, PQ PNG, PQ JPEG XL, float TIFF | |
 | Contact sheet / print PDF | — | ✅ (Print module: PDF / JPEG / printer) | — | 🟡 paginated contact-sheet PDF (A4 / Letter, 150 dpi, sRGB) | `crates/engine/src/contact_sheet.rs` |
 | Video (MP4, MOV, AVCHD…) | ✅ playback, trim, edit | ✅ export | 🟡 catalogued (kind, duration) | ⬜ | see video gap |
 
@@ -75,6 +75,7 @@ Remaining: **22–39 h** (AVIF decode 8–15 h if a permissive decoder is writte
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | HDR gain map JPEG read 🟡 (the reader and `apply` exist and are tested, import never calls them: a gain map JPEG or iPhone HEIC opens as its SDR base); PQ / HLG HDR read: PNG and HEIF `nclx` (cICP 16 / 18) and lossless PQ JPEG XL decode to linear light, SDR white at 203 cd/m² (they were read as sRGB, or tone mapped down to 255 cd/m²); PQ / HLG write row corrected (HLG AVIF and PQ PNG exist) |
 | 2026-10-13 | minor | PSD write ✅ (it landed with Edit in PhotoCraft, #953; the row still said the round trip wrote TIFF only); the Edit In round trip brings back an editor's Save As beside the file. Remaining hours without PSD write |
 | 2026-10-13 | patch | JPEG write (#1373): Huffman tables made for each image, 12–14 % smaller files at the same pixels; statuses unchanged |
 | 2026-10-12 | minor | Render to DNG: "Rendered DNG" export format (linear 16-bit float DNG of the rendered photo) |

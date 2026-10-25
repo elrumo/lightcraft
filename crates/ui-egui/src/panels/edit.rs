@@ -681,7 +681,9 @@ fn histogram(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             "Left: the standard (SDR) range up to SDR white. Right: the HDR range, one band per stop above SDR white (the orange line: the HDR headroom). With Visualize HDR range on, the bands take its colours.",
         ));
     }
-    let clipping = hist.as_ref().map(|h| h.clipping());
+    // (an HDR edit's highlights are clipped where its render is held at the headroom limit)
+    let limit = app.session.develop_of(id).map_or(f64::NAN, |d| d.hdr.max_ev);
+    let clipping = hist.as_ref().map(|h| h.clipping_at(limit));
     if let Some(h) = hist {
         let smooth = |v: &[u32]| -> Vec<f32> {
             (0..256)
