@@ -1,10 +1,11 @@
 //! DNG `ProfileGainTableMap` (tag 52525, DNG 1.6) and `ProfileGainTableMap2` (tag 52544, DNG 1.7):
 //! a coarse grid of 1D gain tables carrying the maker's local tone mapping. Apple ProRAW has one.
 //!
-//! We read and write the tag (a DNG export keeps it) but don't render it by default: Lightroom
-//! Classic renders Apple ProRAW without the map (see [`crate::profile`]), and so do we. The photo's
-//! "camera local tone mapping" option renders it ([`GainTableMap::gain`], applied by the pipeline),
-//! as the camera itself does.
+//! We read and write the tag (a DNG export keeps it) and render it by default, as the camera itself
+//! does (see [`crate::profile`]: without it an iPhone ProRAW renders far darker than the iPhone shows
+//! it). The photo's "camera local tone mapping" option ([`GainTableMap::gain`], applied by the
+//! pipeline) turns it off, which renders ProRAW as Lightroom Classic does with its default profile;
+//! Lightroom's "Apple ProRaw" look has it on (`crs:ProfileGainTableMap`, read from sidecars).
 //!
 //! Applying it (DNG 1.7.1, `ProfileGainTableMap` → "Description"):
 //!
