@@ -180,6 +180,13 @@ pub fn olympus_aspect_frame(bytes: &[u8]) -> Option<[f64; 4]> {
     vendor::orf::aspect_frame(bytes)
 }
 
+/// The temperature (K) and tint of the white an Olympus / OM System body balanced a shot to, read from its maker note: the
+/// as-shot gains placed on the curve through the body's own white-balance presets (`vendor::orf`). It works on every ORF,
+/// decodable or not; `None` for a file without the presets (the E-10, E-20, C-series and compacts with two fields).
+pub fn olympus_as_shot_kelvin(bytes: &[u8]) -> Option<(f64, f64)> {
+    vendor::orf::as_shot_kelvin(bytes)
+}
+
 /// Recognise a raw file from its first bytes / TIFF structure.
 pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
     if bytes.len() >= 12 && &bytes[4..12] == b"ftypcrx " {

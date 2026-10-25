@@ -2644,6 +2644,38 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/data/Olympus/E-3/E_3__3099164_casco_antiguo_petrer.ORF",
         "ba4605bbd9fe9b77971da444bcdb1698904c0ad4ebdf9dd42dd45ab255f3f6d4",
     ),
+    // Compressed Olympus / OM ORFs shot at a stated white-balance temperature (a preset or the Kelvin setting 5000 to 7500 K): the
+    // maker note's preset table reads it back (crates/raw/tests/it/olympus_kelvin_corpus.rs); raw.pixls.us/data/ paths.
+    (
+        "orf-olympus-e-p3.orf",
+        "https://raw.pixls.us/data/Olympus/E-P3/RAW_OLYMPUS_EP3.ORF",
+        "540edabdd9d4e6ef8602f56443730cc3133d714dc4d3d2c607e2f0aa6be5cbcd",
+    ),
+    (
+        "orf-olympus-e-pl6.orf",
+        "https://raw.pixls.us/data/Olympus/E-PL6/e7169440.orf",
+        "38d3750abbcf847bba58e254b2ab8c57d8c9f3fc48490c29ae2b55c4e84d5f64",
+    ),
+    (
+        "orf-olympus-e-pl7.orf",
+        "https://raw.pixls.us/data/Olympus/E-PL7/fb240007.orf",
+        "e0e138e9d33b0d2a16c0a9378582ddaac71d0b2cf07bc9ed459df275aa025c60",
+    ),
+    (
+        "orf-olympus-e-m10-mark-iiis.orf",
+        "https://raw.pixls.us/data/Olympus/E-M10%20Mark%20IIIs/ilhabela_202110_0082.ORF",
+        "8bc0009eaacdbeacc72606581665702a1242bc6d4b405d1f0b3f149fe6c85e55",
+    ),
+    (
+        "orf-olympus-e-pl10.orf",
+        "https://raw.pixls.us/data/Olympus/E-PL10/P6100030.ORF",
+        "6911f11810545cc2c55882ef6fa6aa2f25d34674865f8ade15e47990865e37ed",
+    ),
+    (
+        "orf-om-system-om-5.orf",
+        "https://raw.pixls.us/data/OM%20System/OM-5/C1291096.ORF",
+        "ee0213ee4899d677d9bd538d8cfa4d0f69bdbacd462c1cf3ca3901036cf2fce7",
+    ),
     // OM Digital Solutions' `.ori` (High Res / Pro Capture originals): an ORF container with the compressed coding
     // (crates/raw/tests/it/olympus_ori_corpus.rs). One per body family; raw.pixls.us/data/ paths.
     (

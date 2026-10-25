@@ -251,3 +251,88 @@ fn a_healed_raw_keeps_its_aspect_crop() {
     assert_eq!(p.develop.crop.geometry.rect, crop, "the frame is still the crop");
     let _ = std::fs::remove_dir_all(&src);
 }
+
+/// The E-1 corpus file's twelve `WB_RBLevels<K>` (red and blue gain against green at 256), at `PRESET_KELVIN`.
+const E1_TABLE: [[u16; 2]; 12] =
+    [[254, 491], [278, 446], [302, 411], [322, 384], [531, 414], [368, 338], [470, 330], [402, 308], [432, 286], [468, 262], [538, 270], [522, 228]];
+
+/// A 48 x 36 uncompressed raw of `model` with [`E1_TABLE`] in its maker note and `as_shot` as its gains.
+fn with_presets(model: &str, as_shot: [u16; 2], seed: u32) -> Vec<u8> {
+    let words: Vec<u8> = (0..48u32 * 36).flat_map(|i| (((200 + i * 37 + seed * 5) % 4000) as u16).to_le_bytes()).collect();
+    OlympusOrf { model: model.into(), as_shot: Some(as_shot), presets: Some(E1_TABLE), ..OlympusOrf::new(48, 36, 16, words, jpeg(40, 30)) }.build()
+}
+
+/// A body whose maker note holds the camera's own white-balance presets edits white balance in Kelvin: the as-shot gains
+/// of a shot at each preset import as that preset's temperature, the photo's scale is Kelvin, and a body without a table
+/// (the E-20) keeps the relative scale. A raw shown from its JPEG has no white balance to change, whatever the camera.
+#[test]
+fn a_body_with_a_preset_table_edits_white_balance_in_kelvin() {
+    use lightcraft_develop::WbScale;
+    use lightcraft_raw::testdata::PRESET_KELVIN;
+    let src = temp_dir("kelvin");
+    let daylight: Vec<(usize, u16)> = PRESET_KELVIN.iter().copied().enumerate().filter(|(_, k)| ![4000, 4500, 6600].contains(k)).collect();
+    for (slot, k) in &daylight {
+        std::fs::write(src.join(format!("e1-{k}.orf")), with_presets("E-1", E1_TABLE[*slot], *slot as u32)).unwrap();
+    }
+    std::fs::write(src.join("e20.orf"), with_presets("E-20,E-20N,E-20P", E1_TABLE[8], 90)).unwrap();
+    std::fs::write(src.join("compressed.orf"), container(5184, 3888, 16, compressed_strip(3), 1, &jpeg(40, 30))).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(daylight.len() + 2), "{r}");
+    let photo = |name: &str| s.catalog.photos().find(|p| p.file_name == name).unwrap_or_else(|| panic!("{name} not imported")).clone();
+    for (_, k) in &daylight {
+        let p = photo(&format!("e1-{k}.orf"));
+        let want = f64::from(*k);
+        assert!(p.develops_raw() && !p.relative_wb(), "{k}");
+        assert_eq!(p.as_shot_wb, Some((want, 0.0)), "{k}: the preset's own temperature");
+        assert_eq!((p.develop.wb.temp, p.develop.wb.tint, p.develop.wb.scale), (want, 0.0, WbScale::Kelvin), "{k}");
+        assert!(!p.is_edited());
+    }
+    let e20 = photo("e20.orf");
+    assert!(e20.develops_raw() && e20.relative_wb(), "no table in the camera's list: relative");
+    assert_eq!(e20.as_shot_wb, Some((6500.0, 0.0)));
+    assert_eq!(e20.develop.wb.scale, WbScale::Legacy);
+    let rendered = photo("compressed.orf");
+    assert!(!rendered.develops_raw() && !rendered.relative_wb() && rendered.as_shot_wb.is_none(), "{:?}", rendered.preview_only);
+    // the same temperature from the loupe's source, and a render goes through
+    let id = photo("e1-5300.orf").id;
+    assert!(s.render_job(id, 48, 36, false, true).unwrap().run().rendered.is_ok());
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// Olympus raws of the corpus that decode: their white balance is in Kelvin through the maker note's presets, the header and
+/// the decode say the same, and the catalog decides the same from the camera's name. The E-1 file was shot on its 5300 K
+/// preset. Skips cleanly without these CC0 files.
+#[test]
+fn corpus_olympus_raws_edit_white_balance_in_kelvin_through_their_presets() {
+    let dir = std::env::var_os("LIGHTCRAFT_CORPUS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+        .join("raw");
+    for (name, kelvin) in [
+        ("orf-olympus-e1.orf", Some(5300.0)),
+        ("orf-olympus-e400.orf", None),
+        ("orf-olympus-e-500.orf", None),
+        ("orf-olympus-xz2.orf", None),
+        ("orf-olympus-pen-f.orf", None),
+    ] {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            lightcraft_testkit::skip!(Corpus, "{name} absent");
+            continue;
+        };
+        let header = crate::files::probe_bytes(name, &bytes).unwrap();
+        let (_, info) = crate::files::load_bytes(&bytes, 400).unwrap();
+        assert_eq!(header.as_shot_wb, Some((info.as_shot_temp, info.as_shot_tint)), "{name}");
+        assert!(info.raw && !info.relative_wb && info.legacy_relative_wb, "{name}: {info:?}");
+        match kelvin {
+            Some(k) => assert!(
+                (info.as_shot_temp - k).abs() <= 20.0 && info.as_shot_tint.abs() <= 2.0,
+                "{name}: {} {}",
+                info.as_shot_temp,
+                info.as_shot_tint
+            ),
+            None => assert!(info.as_shot_temp != 6500.0 && (3000.0..8000.0).contains(&info.as_shot_temp), "{name}: {}", info.as_shot_temp),
+        }
+        assert!(!lightcraft_catalog::relative_wb_camera("ORF", &header.meta.camera), "{}", header.meta.camera);
+    }
+}

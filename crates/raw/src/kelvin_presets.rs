@@ -27,6 +27,10 @@
 //! a black-box `exiftool -v3`). The pair gives a two-point line in the same coordinates; mired is linear along it,
 //! isotherms are perpendicular to it, and tint is scaled by the CIE locus spacing. No other camera's data is used.
 //!
+//! Olympus and OM System bodies from the E-1 (2003) on carry twelve more in the maker note's ImageProcessing directory,
+//! `WB_RBLevels<K>` at 3000 to 7500 K (`vendor::orf`, which lists the evidence: the camera's own stated temperatures are read
+//! back to within 1.2 mired); nine of them, the tungsten and daylight ones, make the curve (`OLYMPUS_MODELS` and `OM_MODELS` list the bodies checked).
+//!
 //! The two constants come from the 14 Sony bodies that have both measured matrices and the presets (one CC0
 //! raw.pixls.us sample each for the presets, a grid of multipliers through `crate::spectral` for the matrices):
 //! the tilt measured 0.59–0.84 (mean 0.74), the tint spacing 0.90–1.04 of the locus's (mean 0.98, taken as 1).
@@ -65,6 +69,70 @@ const MODELS: &[(&str, &str)] = &[
 /// X-T2, X-Pro2, X-E3, X-H1, X100F), the Exif model as Fujifilm writes it.
 const FUJI_MODELS: &[&str] = &["X-T20", "X-T2", "X-Pro2", "X-E3", "X-H1", "X100F"];
 
+/// Olympus bodies whose maker note carries the twelve `WB_RBLevels<K>` entries (`vendor::orf`), the Exif model as the
+/// files write it (the spelling differs from body to body: `E-M10MarkII`, but `E-M10 Mark III`): one CC0 file of each
+/// checked, the E-M5 Mark II on its high-resolution ORF. Those that decode today are the E-1, E-300, E-330, E-400, E-500 and
+/// XZ-2 and the high-resolution files of the E-M5 Mark II and PEN-F; the others have the scale ready for a decoder and edit
+/// as before until then (a raw shown from its JPEG has no white balance to change).
+const OLYMPUS_MODELS: &[&str] = &[
+    "E-1",
+    "E-3",
+    "E-5",
+    "E-30",
+    "E-300",
+    "E-330",
+    "E-400",
+    "E-410",
+    "E-420",
+    "E-450",
+    "E-500",
+    "E-510",
+    "E-520",
+    "E-600",
+    "E-620",
+    "E-M1",
+    "E-M1MarkII",
+    "E-M1MarkIII",
+    "E-M1X",
+    "E-M5",
+    "E-M5MarkII",
+    "E-M5MarkIII",
+    "E-M10",
+    "E-M10MarkII",
+    "E-M10 Mark III",
+    "E-M10MarkIIIS",
+    "E-M10MarkIV",
+    "E-P1",
+    "E-P2",
+    "E-P3",
+    "E-P5",
+    "E-P7",
+    "E-PL1",
+    "E-PL2",
+    "E-PL3",
+    "E-PL5",
+    "E-PL6",
+    "E-PL7",
+    "E-PL8",
+    "E-PL9",
+    "E-PL10",
+    "E-PM1",
+    "E-PM2",
+    "PEN-F",
+    "SH-2",
+    "STYLUS1",
+    "STYLUS1,1s",
+    "TG-4",
+    "TG-5",
+    "TG-6",
+    "XZ-1",
+    "XZ-2",
+    "XZ-10",
+];
+
+/// OM Digital Solutions bodies with the same table (Exif make `OM Digital Solutions`): one CC0 file of each checked.
+const OM_MODELS: &[&str] = &["OM-1", "OM-1MarkII", "OM-3", "OM-5", "OM-5MarkII", "TG-7"];
+
 /// Whether a raw of this Exif make and model is edited in Kelvin through its presets (when it has no colour
 /// matrices of its own or measured: see [`crate::spectral::find`], which comes first), from the file's presets or
 /// built-in ones ([`crate::kelvin_builtin`]).
@@ -83,7 +151,10 @@ pub fn covers(make: Option<&str>, model: &str) -> bool {
     };
     let listed = MODELS.iter().any(|(b, m)| brand.is_none_or(|x| x.eq_ignore_ascii_case(b)) && bare_of(b).eq_ignore_ascii_case(m));
     let fuji = brand.is_none_or(|b| b.eq_ignore_ascii_case("FUJIFILM")) && FUJI_MODELS.iter().any(|m| bare_of("FUJIFILM").eq_ignore_ascii_case(m));
-    listed || fuji
+    let olympus =
+        brand.is_none_or(|b| b.eq_ignore_ascii_case("OLYMPUS")) && OLYMPUS_MODELS.iter().any(|m| bare_of("OLYMPUS").eq_ignore_ascii_case(m));
+    let om = brand.is_none_or(|b| b.eq_ignore_ascii_case("OM")) && OM_MODELS.iter().any(|m| bare_of("OM").eq_ignore_ascii_case(m));
+    listed || fuji || olympus || om
 }
 
 /// [`covers`] for make and model joined by a space, as the catalog keeps them (`"SONY ILCA-99M2"`).
@@ -429,5 +500,43 @@ mod tests {
             assert!(!covers_camera(c), "{c}");
         }
         assert!(covers(Some("SONY"), "ILCA-99M2") && covers(None, "ILCA-99M2") && !covers(Some("NIKON CORPORATION"), "ILCA-99M2"));
+    }
+
+    /// Olympus and OM System bodies whose files carry the preset table are covered, under any of their makes; the older bodies
+    /// without it (E-10, E-20, C-series, SP-series) are not, nor is another maker's model of the same name.
+    #[test]
+    fn olympus_and_om_system_bodies_with_the_table_are_covered() {
+        for c in [
+            "OLYMPUS CORPORATION E-1",
+            "OLYMPUS IMAGING CORP. E-500",
+            "OLYMPUS IMAGING CORP. XZ-2",
+            "OLYMPUS IMAGING CORP. E-M10 Mark III",
+            "OLYMPUS CORPORATION E-M10MarkIV",
+            "OLYMPUS CORPORATION PEN-F",
+            "OLYMPUS IMAGING CORP. STYLUS1,1s",
+            "OM Digital Solutions OM-3",
+            "OM Digital Solutions OM-1MarkII",
+            "olympus imaging corp. e-m5markii",
+        ] {
+            assert!(covers_camera(c), "{c}");
+        }
+        for c in [
+            "OLYMPUS OPTICAL CO.,LTD E-10",
+            "OLYMPUS OPTICAL CO.,LTD E-20,E-20N,E-20P",
+            "OLYMPUS OPTICAL CO.,LTD C5050Z",
+            "OLYMPUS IMAGING CORP. SP550UZ",
+            "OLYMPUS IMAGING CORP. SP350",
+            "OLYMPUS IMAGING CORP. C5060WZ",
+            "Panasonic E-1",
+            "Canon OM-1",
+            "OM Digital Solutions E-1",
+        ] {
+            assert!(!covers_camera(c), "{c}");
+        }
+        assert!(covers(Some("OLYMPUS CORPORATION"), "E-1") && covers(None, "E-1") && !covers(Some("SONY"), "E-1"));
+        for list in [OLYMPUS_MODELS, OM_MODELS] {
+            let mut seen = std::collections::HashSet::new();
+            assert!(list.iter().all(|m| !m.is_empty() && m.trim() == *m && seen.insert(*m)), "a blank or repeated model");
+        }
     }
 }

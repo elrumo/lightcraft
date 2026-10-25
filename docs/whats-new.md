@@ -9,6 +9,14 @@
 - The upload form of a shared album link offers every file type Import takes, `.ori` and the other raw formats the old
   hand-written list missed included.
 
+### Olympus and OM System raws edit white balance in Kelvin
+- The E-1, E-300, E-330, E-400, E-500, XZ-2 and the high-resolution files of the E-M5 Mark II and PEN-F now show their
+  as-shot white balance as a temperature and tint (5300 K, say) and the Temperature slider moves in Kelvin, as for
+  Sony, Canon and Fujifilm bodies before. The scale is the camera's own: the bodies from the E-1 to the OM-3 store
+  the gains they apply at twelve temperatures (the E-10, E-20 and the older compacts do not, and stay as they were), and the shots set to a preset or a Kelvin value of ten files read back
+  within 1.2 mired of what the camera states. Photos imported earlier keep the scale they were edited on. The compressed
+  `.orf` files of the other bodies carry the same table, so they get the scale the day their sensor data can be read.
+
 ## 2026-10-24
 
 ### Olympus and OM System files open the way the camera shot them
