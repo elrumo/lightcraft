@@ -363,5 +363,10 @@
   "Could not read {name}: {e}": "ვერ წაიკითხა {name}: {e}",
   "Added {n} photo{}": "დაემატა ფოტო: {n}{:.0}",
   "Where should the Lightroom catalog “{catalog}” go?": "სად გადავიტანოთ Lightroom-ის კატალოგი „{catalog}“?",
-  "Merge into the open library “{library}” ({count} photo{})": "გაერთიანება ღია ბიბლიოთეკასთან „{library}“ (ფოტოები: {count}){:.0}"
+  "Merge into the open library “{library}” ({count} photo{})": "გაერთიანება ღია ბიბლიოთეკასთან „{library}“ (ფოტოები: {count}){:.0}",
+  "Use {provider}": "{provider}-ის გამოყენება",
+  "Synced {n} min ago": "სინქრონიზდა {n} წთ-ის წინ",
+  "Synced {n} h ago": "სინქრონიზდა {n} სთ-ის წინ",
+  "{status}; waiting for {n} file(s) from the provider": "{status}; ველოდებით პროვაიდერისგან {n} ფაილს",
+  "Can't sync: {error}": "სინქრონიზაცია ვერ ხერხდება: {error}"
 }

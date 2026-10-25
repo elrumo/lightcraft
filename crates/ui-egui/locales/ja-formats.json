@@ -363,5 +363,10 @@
   "Could not read {name}: {e}": "{name} を読み取れませんでした: {e}",
   "Added {n} photo{}": "{n}枚を追加しました{:.0}",
   "Where should the Lightroom catalog “{catalog}” go?": "Lightroom カタログ「{catalog}」をどこに読み込みますか？",
-  "Merge into the open library “{library}” ({count} photo{})": "開いているライブラリ「{library}」に統合（写真{count}枚）{:.0}"
+  "Merge into the open library “{library}” ({count} photo{})": "開いているライブラリ「{library}」に統合（写真{count}枚）{:.0}",
+  "Use {provider}": "{provider} を使用",
+  "Synced {n} min ago": "{n} 分前に同期",
+  "Synced {n} h ago": "{n} 時間前に同期",
+  "{status}; waiting for {n} file(s) from the provider": "{status}、プロバイダからの {n} 個のファイルを待機中",
+  "Can't sync: {error}": "同期できません: {error}"
 }

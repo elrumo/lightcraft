@@ -305,5 +305,10 @@
   "Drop to review {n} item{} for import": "Jatuhkan untuk meninjau {n} item sebelum impor{:.0}",
   "Inside: {names}": "Di dalam: {names}",
   "Where should the Lightroom catalog “{catalog}” go?": "Ke mana katalog Lightroom “{catalog}” diimpor?",
-  "Merge into the open library “{library}” ({count} photo{})": "Gabungkan ke pustaka yang terbuka “{library}” ({count} foto{:.0})"
+  "Merge into the open library “{library}” ({count} photo{})": "Gabungkan ke pustaka yang terbuka “{library}” ({count} foto{:.0})",
+  "Use {provider}": "Gunakan {provider}",
+  "Synced {n} min ago": "Disinkronkan {n} menit lalu",
+  "Synced {n} h ago": "Disinkronkan {n} jam lalu",
+  "{status}; waiting for {n} file(s) from the provider": "{status}; menunggu {n} berkas dari penyedia",
+  "Can't sync: {error}": "Tidak dapat menyinkronkan: {error}"
 }

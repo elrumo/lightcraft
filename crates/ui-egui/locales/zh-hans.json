@@ -2528,5 +2528,14 @@
   "An import is running": "正在导入",
   "An import is running. Drop photos when it has finished": "正在导入。导入完成后再拖放照片",
   "Finish Lightroom catalog import before adding photos": "添加照片前，请先完成 Lightroom 目录的导入",
-  "Supported Cameras": "支持的相机"
+  "Supported Cameras": "支持的相机",
+  "Without a Server": "无需服务器",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "通过 iCloud Drive、Dropbox 或 Google Drive 已在同步的文件夹，让此资料库的预设、设置和编辑与您的其他电脑保持一致。LightCraft 只会写入其中名为 LightCraft Sync 的文件夹。",
+  "Status": "状态",
+  "Sync Now": "立即同步",
+  "Stop Syncing": "停止同步",
+  "Choose Cloud Folder…": "选择云端文件夹…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "在这台电脑上未找到 iCloud Drive、Dropbox 或 Google Drive 文件夹。",
+  "Syncing through the cloud folder": "正在通过云端文件夹同步",
+  "Synced just now": "刚刚同步"
 }

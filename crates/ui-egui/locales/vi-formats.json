@@ -305,5 +305,10 @@
   "Drop to import {n} preset{}": "Thả để nhập {n} thiết lập sẵn{:.0}",
   "Drop to review {n} item{} for import": "Thả để xem lại {n} mục trước khi nhập{:.0}",
   "Where should the Lightroom catalog “{catalog}” go?": "Nhập danh mục Lightroom «{catalog}» vào đâu?",
-  "Merge into the open library “{library}” ({count} photo{})": "Gộp vào thư viện đang mở «{library}» ({count} ảnh{:.0})"
+  "Merge into the open library “{library}” ({count} photo{})": "Gộp vào thư viện đang mở «{library}» ({count} ảnh{:.0})",
+  "Use {provider}": "Dùng {provider}",
+  "Synced {n} min ago": "Đã đồng bộ {n} phút trước",
+  "Synced {n} h ago": "Đã đồng bộ {n} giờ trước",
+  "{status}; waiting for {n} file(s) from the provider": "{status}; đang chờ {n} tệp từ nhà cung cấp",
+  "Can't sync: {error}": "Không thể đồng bộ: {error}"
 }

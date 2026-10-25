@@ -230,6 +230,40 @@ pub(super) fn apply(s: &mut Session, ic: &mut ICloud, take: &[&(String, String, 
     applied
 }
 
+/// How much of a content key a base keeps (16 hex digits: no two photos of a library share them in practice, and a big
+/// album's base stays small).
+const BASE_PREFIX: usize = 16;
+
+fn prefix(k: &str) -> &str {
+    k.get(..BASE_PREFIX).unwrap_or(k)
+}
+
+/// An album record's members, as prefixes: what this device and the cloud last agreed the album held.
+pub(super) fn base_of(data: &str) -> Option<Vec<String>> {
+    let v: Value = serde_json::from_str(data).ok()?;
+    let mut keys: Vec<String> = keys_of(&v, "photos").iter().map(|k| prefix(k).to_string()).collect();
+    keys.sort();
+    keys.dedup();
+    Some(keys)
+}
+
+/// Both devices changed an album: the members are merged against what they last agreed (photos added on either side are
+/// all in, a photo removed on either side is out), the other fields are those of the newer change. `None`: not records
+/// this version reads.
+pub(super) fn merge(base: &[String], ours: &str, theirs: &str, theirs_newer: bool) -> Option<String> {
+    let (o, t): (Value, Value) = (serde_json::from_str(ours).ok()?, serde_json::from_str(theirs).ok()?);
+    let (ok, tk) = (keys_of(&o, "photos"), keys_of(&t, "photos"));
+    let has = |keys: &[String]| -> HashSet<String> { keys.iter().map(|k| prefix(k).to_string()).collect() };
+    let (base, in_o, in_t) = (base.iter().cloned().collect::<HashSet<String>>(), has(&ok), has(&tk));
+    let mut merged: Vec<String> =
+        ok.iter().chain(&tk).filter(|k| !base.contains(prefix(k)) || (in_o.contains(prefix(k)) && in_t.contains(prefix(k)))).cloned().collect();
+    merged.sort();
+    merged.dedup();
+    let mut out = if theirs_newer { t } else { o };
+    out.as_object_mut()?.insert("photos".into(), json!(merged));
+    Some(out.to_string())
+}
+
 /// Keep a record this device couldn't place as the cloud's own (it counts as this device's, so it isn't removed there).
 fn hold(ic: &mut ICloud, name: &str, kind: &str, key: &str, data: Option<&str>) {
     let Some(data) = data else { return };

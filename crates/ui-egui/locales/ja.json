@@ -2684,5 +2684,14 @@
   "An import is running": "読み込み中です",
   "An import is running. Drop photos when it has finished": "読み込み中です。完了してから写真をドロップしてください",
   "Finish Lightroom catalog import before adding photos": "写真を追加する前に Lightroom カタログの読み込みを完了してください",
-  "Supported Cameras": "対応カメラ"
+  "Supported Cameras": "対応カメラ",
+  "Without a Server": "サーバなし",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "iCloud Drive、Dropbox、Google Drive がすでに同期しているフォルダを使って、このライブラリのプリセット、設定、編集内容を他のコンピュータと同期します。LightCraft はそのフォルダ内の「LightCraft Sync」フォルダにのみ書き込みます。",
+  "Status": "状況",
+  "Sync Now": "今すぐ同期",
+  "Stop Syncing": "同期を停止",
+  "Choose Cloud Folder…": "クラウドフォルダを選択…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "このコンピュータには iCloud Drive、Dropbox、Google Drive のフォルダが見つかりませんでした。",
+  "Syncing through the cloud folder": "クラウドフォルダ経由で同期中",
+  "Synced just now": "たった今同期しました"
 }

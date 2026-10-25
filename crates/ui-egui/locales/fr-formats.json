@@ -363,5 +363,10 @@
   "Could not read {name}: {e}": "Impossible de lire {name} : {e}",
   "Added {n} photo{}": "{n} photo{} ajoutée(s)",
   "Where should the Lightroom catalog “{catalog}” go?": "Où importer le catalogue Lightroom « {catalog} » ?",
-  "Merge into the open library “{library}” ({count} photo{})": "Fusionner avec la bibliothèque ouverte « {library} » ({count} photo{})"
+  "Merge into the open library “{library}” ({count} photo{})": "Fusionner avec la bibliothèque ouverte « {library} » ({count} photo{})",
+  "Use {provider}": "Utiliser {provider}",
+  "Synced {n} min ago": "Synchronisé il y a {n} min",
+  "Synced {n} h ago": "Synchronisé il y a {n} h",
+  "{status}; waiting for {n} file(s) from the provider": "{status} ; en attente de {n} fichier(s) du fournisseur",
+  "Can't sync: {error}": "Synchronisation impossible : {error}"
 }

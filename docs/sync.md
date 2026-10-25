@@ -779,8 +779,9 @@ CloudKit host, no account of ours and no server (`crates/engine/src/icloud/folde
 - **Limits.** Every pass reads all the record files (a few thousand small files for a big library; a change list kept
   between passes would avoid it). Tombstones are never deleted. Ratings and the like of photos that are not opened from
   the Photos library or kept in the folder do not travel (only albums, stacks and the other records below do). The
-  egui page offers only the providers' usual folders (no folder picker yet) and is English only. Nothing has been run
-  against a real iCloud Drive, Dropbox or Google Drive folder, only against a plain one.
+  egui page offers the providers' usual folders and *Choose Folder…* (`icloud.chooseFolder`, the system's folder
+  dialog) for any other. Nothing has been run against a real iCloud Drive, Dropbox or Google Drive folder, only
+  against a plain one.
 
 ### Albums, stacks and versions
 
@@ -797,9 +798,12 @@ record of the photos that have one.
   rules, the cover and the members. Not the Quick Collection, and not smart albums whose rules name photos or an album
   (ids mean nothing elsewhere). A stack carries its members top first and whether it is collapsed; it takes the members
   this device has (two at least; one with fewer is held until the photos come).
-- **Merging is by record:** changed on both sides, the newer change wins. Photos added to one album on two devices at
-  once are therefore not both kept, as a server's member-by-member merge would (limit). A removal removes the album or
-  stack on the other devices unless it was changed there; the photos stay. Applying is not an undo step.
+- **Merging:** a record changed on both sides takes the newer change, except an album's **members**, which are merged
+  against what the two last agreed (`icloud.bases` in the library: 16 hex digits of each member's content key): photos
+  added on either side are all in, a photo removed on either side is out, and the merge is sent so both end the same.
+  (An album with no agreed state yet, the first time two devices meet over it, falls back to the newer change.) A stack
+  is one value: the newer change wins. A removal removes the album or stack on the other devices unless it was changed
+  there; the photos stay. Applying is not an undo step.
 - **A library signed in to a server** has them through the server: no `album` or `stack` records travel then.
 
 ### Analysis results

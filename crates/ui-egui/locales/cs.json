@@ -2465,5 +2465,14 @@
   "An import is running": "Import už běží",
   "An import is running. Drop photos when it has finished": "Import už běží. Fotky přetáhněte, až skončí",
   "Finish Lightroom catalog import before adding photos": "Dokončete import katalogu Lightroom, než přidáte fotky",
-  "Supported Cameras": "Podporované fotoaparáty"
+  "Supported Cameras": "Podporované fotoaparáty",
+  "Without a Server": "Bez serveru",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "Udržujte předvolby, nastavení a úpravy této knihovny v souladu s dalšími počítači pomocí složky, kterou už synchronizuje váš iCloud Drive, Dropbox nebo Disk Google. LightCraft zapisuje jen do složky LightCraft Sync uvnitř ní.",
+  "Status": "Stav",
+  "Sync Now": "Synchronizovat nyní",
+  "Stop Syncing": "Zastavit synchronizaci",
+  "Choose Cloud Folder…": "Vybrat složku v cloudu…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Na tomto počítači nebyla nalezena žádná složka iCloud Drive, Dropbox ani Disku Google.",
+  "Syncing through the cloud folder": "Synchronizace přes složku v cloudu",
+  "Synced just now": "Právě synchronizováno"
 }

@@ -1112,3 +1112,23 @@ fn settings_sync_offers_a_cloud_folder_without_a_server() {
     drop(h);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Any folder a provider keeps can be chosen with the system's folder dialog.
+#[test]
+fn a_cloud_folder_can_be_chosen_with_the_folder_dialog() {
+    let (mut h, root) = app("cloud-folder-pick", &[], exec(0, proto::Activity::default()), [1280.0, 800.0]);
+    let shared = root.join("Elsewhere");
+    std::fs::create_dir_all(&shared).unwrap();
+    run(&mut h, "app.settings", json!({"tab": "sync"}));
+    frames(&mut h, 5);
+    assert!(!has(&h, "button:cloudFolderChoose"), "no dialog here: no button");
+    let chosen = shared.to_string_lossy().to_string();
+    h.app.services.pick_folder = Some(Box::new(move || Some(chosen.clone())));
+    frames(&mut h, 5);
+    assert!(has(&h, "button:cloudFolderChoose"));
+    tap(&mut h, "button:cloudFolderChoose");
+    frames(&mut h, 5);
+    assert_eq!(h.app.session.icloud_folder().as_deref(), Some(shared.as_path()));
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}

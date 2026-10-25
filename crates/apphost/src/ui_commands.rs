@@ -200,6 +200,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("file.importFromFiles", "Import from Files…", None, "File"),
     ("file.importFolderFromFiles", "Import Folder from Files…", None, "File"),
     ("file.addFolder", "Import from Folder…", None, "File"),
+    // {path?}: picks the folder a cloud provider syncs, then `icloud.useFolder` (Settings ▸ Sync ▸ Without a Server)
+    ("icloud.chooseFolder", "Choose Cloud Folder…", None, ""),
     // {path?, into?: open | new, name?, location?}: asks where the catalog goes unless `into` (or
     // Settings) says (#2672, `lightroom_destination`)
     ("file.importLightroom", "Import Lightroom Catalog…", None, "File"),

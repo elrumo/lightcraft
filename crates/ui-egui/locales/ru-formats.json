@@ -363,5 +363,10 @@
   "Could not read {name}: {e}": "Не удалось прочитать {name}: {e}",
   "Added {n} photo{}": "Добавлено фото: {n}{:.0}",
   "Where should the Lightroom catalog “{catalog}” go?": "Куда импортировать каталог Lightroom «{catalog}»?",
-  "Merge into the open library “{library}” ({count} photo{})": "Объединить с открытой библиотекой «{library}» (фото: {count}){:.0}"
+  "Merge into the open library “{library}” ({count} photo{})": "Объединить с открытой библиотекой «{library}» (фото: {count}){:.0}",
+  "Use {provider}": "Использовать {provider}",
+  "Synced {n} min ago": "Синхронизировано {n} мин назад",
+  "Synced {n} h ago": "Синхронизировано {n} ч назад",
+  "{status}; waiting for {n} file(s) from the provider": "{status}; ожидание файлов от сервиса: {n}",
+  "Can't sync: {error}": "Не удаётся синхронизировать: {error}"
 }

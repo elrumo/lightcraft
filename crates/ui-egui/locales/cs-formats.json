@@ -363,5 +363,10 @@
   "Could not read {name}: {e}": "Soubor {name} se nepodařilo přečíst: {e}",
   "Added {n} photo{}": "Přidáno fotografií: {n}{:.0}",
   "Where should the Lightroom catalog “{catalog}” go?": "Kam má jít katalog Lightroomu „{catalog}“?",
-  "Merge into the open library “{library}” ({count} photo{})": "Sloučit s otevřenou knihovnou „{library}“ (fotografie: {count}{:.0})"
+  "Merge into the open library “{library}” ({count} photo{})": "Sloučit s otevřenou knihovnou „{library}“ (fotografie: {count}{:.0})",
+  "Use {provider}": "Použít {provider}",
+  "Synced {n} min ago": "Synchronizováno před {n} min",
+  "Synced {n} h ago": "Synchronizováno před {n} h",
+  "{status}; waiting for {n} file(s) from the provider": "{status}; čeká se na soubory od služby: {n}",
+  "Can't sync: {error}": "Synchronizace není možná: {error}"
 }

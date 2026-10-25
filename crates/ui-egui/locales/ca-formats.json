@@ -354,5 +354,10 @@
   "“{to}” is already a person. Combining them makes one person; Undo separates them again.": "“{to}” ja és una persona. Si les combines, en queda una de sola; Desfés les separa de nou.",
   "•  {assumption}": "•  {assumption}",
   "… and {more} more": "… i {more} més",
-  "…and {more} more": "…i {more} més"
+  "…and {more} more": "…i {more} més",
+  "Use {provider}": "Utilitza {provider}",
+  "Synced {n} min ago": "Sincronitzat fa {n} min",
+  "Synced {n} h ago": "Sincronitzat fa {n} h",
+  "{status}; waiting for {n} file(s) from the provider": "{status}; esperant {n} fitxer(s) del proveïdor",
+  "Can't sync: {error}": "No es pot sincronitzar: {error}"
 }

@@ -2791,5 +2791,14 @@
   "An import is running": "იმპორტი მიმდინარეობს",
   "An import is running. Drop photos when it has finished": "იმპორტი მიმდინარეობს. ფოტოები ჩააგდეთ, როცა დასრულდება",
   "Finish Lightroom catalog import before adding photos": "ფოტოების დამატებამდე დაასრულეთ Lightroom-ის კატალოგის იმპორტი",
-  "Supported Cameras": "მხარდაჭერილი კამერები"
+  "Supported Cameras": "მხარდაჭერილი კამერები",
+  "Without a Server": "სერვერის გარეშე",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "შეინახეთ ამ ბიბლიოთეკის პრესეტები, პარამეტრები და რედაქტირებები სხვა კომპიუტერებთან სინქრონულად საქაღალდის მეშვეობით, რომელსაც თქვენი iCloud Drive, Dropbox ან Google Drive უკვე ასინქრონებს. LightCraft წერს მხოლოდ მის შიგნით არსებულ LightCraft Sync საქაღალდეში.",
+  "Status": "სტატუსი",
+  "Sync Now": "ახლავე სინქრონიზაცია",
+  "Stop Syncing": "სინქრონიზაციის შეწყვეტა",
+  "Choose Cloud Folder…": "ღრუბლოვანი საქაღალდის არჩევა…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "ამ კომპიუტერზე iCloud Drive-ის, Dropbox-ის ან Google Drive-ის საქაღალდე ვერ მოიძებნა.",
+  "Syncing through the cloud folder": "სინქრონიზაცია ღრუბლოვანი საქაღალდით",
+  "Synced just now": "ახლახან სინქრონიზდა"
 }

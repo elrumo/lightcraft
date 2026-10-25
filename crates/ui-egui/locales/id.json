@@ -2337,5 +2337,14 @@
   "Dropped Files": "File yang dijatuhkan",
   "Finish Lightroom catalog import before adding photos": "Selesaikan impor katalog Lightroom sebelum menambahkan foto",
   "Import dropped files without review": "Impor file yang dijatuhkan tanpa tinjauan",
-  "Supported Cameras": "Kamera yang didukung"
+  "Supported Cameras": "Kamera yang didukung",
+  "Without a Server": "Tanpa Server",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "Jaga preset, pengaturan, dan suntingan pustaka ini dengan komputer Anda yang lain melalui folder yang sudah disinkronkan iCloud Drive, Dropbox, atau Google Drive Anda. LightCraft hanya menulis ke folder bernama LightCraft Sync di dalamnya.",
+  "Status": "Status",
+  "Sync Now": "Sinkronkan Sekarang",
+  "Stop Syncing": "Berhenti Menyinkronkan",
+  "Choose Cloud Folder…": "Pilih Folder Cloud…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Tidak ditemukan folder iCloud Drive, Dropbox, atau Google Drive di komputer ini.",
+  "Syncing through the cloud folder": "Menyinkronkan melalui folder cloud",
+  "Synced just now": "Baru saja disinkronkan"
 }

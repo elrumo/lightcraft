@@ -2325,5 +2325,14 @@
   "Dropped Files": "Pudotetut tiedostot",
   "Finish Lightroom catalog import before adding photos": "Viimeistele Lightroom-luettelon tuonti ennen kuvien lisäämistä",
   "Import dropped files without review": "Tuo pudotetut tiedostot ilman tarkistusta",
-  "Supported Cameras": "Tuetut kamerat"
+  "Supported Cameras": "Tuetut kamerat",
+  "Without a Server": "Ilman palvelinta",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "Pidä tämän kirjaston esiasetukset, asetukset ja muokkaukset samassa tilassa muiden tietokoneidesi kanssa kansion kautta, jota iCloud Drive, Dropbox tai Google Drive jo synkronoi. LightCraft kirjoittaa vain sen sisällä olevaan LightCraft Sync -kansioon.",
+  "Status": "Tila",
+  "Sync Now": "Synkronoi nyt",
+  "Stop Syncing": "Lopeta synkronointi",
+  "Choose Cloud Folder…": "Valitse pilvikansio…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Tältä tietokoneelta ei löytynyt iCloud Drive-, Dropbox- tai Google Drive -kansiota.",
+  "Syncing through the cloud folder": "Synkronoidaan pilvikansion kautta",
+  "Synced just now": "Synkronoitu juuri nyt"
 }

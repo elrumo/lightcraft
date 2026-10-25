@@ -2445,34 +2445,40 @@ fn cloud_folder_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) 
         return;
     }
     let folders = app.cloud_sync.folders.get_or_insert_with(lightcraft_engine::icloud::folder::detected_cloud_folders).clone();
-    if folders.is_empty() {
+    let can_pick = app.services.pick_folder.is_some() || app.services.picker.is_some();
+    if folders.is_empty() && !can_pick {
         hint(ui, t, crate::i18n::tr("No iCloud Drive, Dropbox or Google Drive folder was found on this computer."));
         return;
     }
     row(ui, t, "", |ui| {
         for (provider, path) in &folders {
             let id = format!("cloudFolder:{provider}");
-            if action(ui, t, &id, &format!("Use {provider}"), true, false) {
+            if action(ui, t, &id, &crate::i18n::tr_format!("Use {provider}", provider = provider), true, false) {
                 sync_cmd(app, ui, "icloud.useFolder", json!({"path": path}));
             }
+        }
+        if can_pick && action(ui, t, "cloudFolderChoose", "Choose Folder…", true, false) {
+            sync_cmd(app, ui, "icloud.chooseFolder", json!({}));
         }
     });
 }
 
 /// How the last pass through the cloud folder went, in words.
 fn cloud_folder_status(last: &Value) -> (String, bool) {
-    let Some(at) = last["at"].as_i64() else { return ("Starting…".into(), false) };
+    let Some(at) = last["at"].as_i64() else { return (crate::i18n::tr("Starting…").to_string(), false) };
     if let Some(e) = last["error"].as_str() {
-        return (format!("Can't sync: {e}"), true);
+        return (crate::i18n::tr_format!("Can't sync: {error}", error = e), true);
     }
     let waiting = last["report"]["waiting"].as_u64().unwrap_or(0);
     let secs = (web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64) - at).max(0) / 1000;
-    let ago = match secs {
-        0..=59 => "just now".to_string(),
-        60..=3599 => format!("{} min ago", secs / 60),
-        _ => format!("{} h ago", secs / 3600),
+    let text = match secs {
+        0..=59 => crate::i18n::tr("Synced just now").to_string(),
+        60..=3599 => crate::i18n::tr_format!("Synced {n} min ago", n = secs / 60),
+        _ => crate::i18n::tr_format!("Synced {n} h ago", n = secs / 3600),
     };
-    let text = if waiting > 0 { format!("Synced {ago}; waiting for {waiting} file(s) from the provider") } else { format!("Synced {ago}") };
+    if waiting > 0 {
+        return (crate::i18n::tr_format!("{status}; waiting for {n} file(s) from the provider", status = text, n = waiting), false);
+    }
     (text, false)
 }
 

@@ -2672,5 +2672,14 @@
   "⌘-drag to straighten, ⇧G Guided Upright, a grid while transforming.": "⌘-arrossega per redreçar, ⇧G Vertical guiat, una quadrícula en transformar.",
   "日本語": "日本語",
   "繁體中文（台灣）": "繁體中文（台灣）",
-  "Supported Cameras": "Càmeres compatibles"
+  "Supported Cameras": "Càmeres compatibles",
+  "Without a Server": "Sense servidor",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "Mantén els ajustos predefinits, els ajustos i les edicions d'aquesta biblioteca sincronitzats amb els teus altres ordinadors mitjançant una carpeta que el teu iCloud Drive, Dropbox o Google Drive ja sincronitza. LightCraft només escriu en una carpeta anomenada LightCraft Sync a dins.",
+  "Status": "Estat",
+  "Sync Now": "Sincronitza ara",
+  "Stop Syncing": "Deixa de sincronitzar",
+  "Choose Cloud Folder…": "Tria la carpeta al núvol…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "No s'ha trobat cap carpeta d'iCloud Drive, Dropbox ni Google Drive en aquest ordinador.",
+  "Syncing through the cloud folder": "Sincronitzant mitjançant la carpeta al núvol",
+  "Synced just now": "Sincronitzat ara mateix"
 }

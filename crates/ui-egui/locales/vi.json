@@ -2233,5 +2233,14 @@
   "Dropped Files": "Tệp đã thả",
   "Finish Lightroom catalog import before adding photos": "Hoàn tất nhập danh mục Lightroom trước khi thêm ảnh",
   "Import dropped files without review": "Nhập các tệp đã thả mà không xem lại",
-  "Supported Cameras": "Máy ảnh được hỗ trợ"
+  "Supported Cameras": "Máy ảnh được hỗ trợ",
+  "Without a Server": "Không dùng máy chủ",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "Giữ các cài đặt sẵn, cài đặt và chỉnh sửa của thư viện này đồng bộ với các máy tính khác của bạn qua một thư mục mà iCloud Drive, Dropbox hoặc Google Drive của bạn đã đồng bộ. LightCraft chỉ ghi vào thư mục có tên LightCraft Sync bên trong đó.",
+  "Status": "Trạng thái",
+  "Sync Now": "Đồng bộ ngay",
+  "Stop Syncing": "Dừng đồng bộ",
+  "Choose Cloud Folder…": "Chọn thư mục đám mây…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Không tìm thấy thư mục iCloud Drive, Dropbox hay Google Drive nào trên máy tính này.",
+  "Syncing through the cloud folder": "Đang đồng bộ qua thư mục đám mây",
+  "Synced just now": "Vừa đồng bộ"
 }

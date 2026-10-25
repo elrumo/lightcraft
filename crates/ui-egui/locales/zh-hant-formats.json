@@ -363,5 +363,10 @@
   "Could not read {name}: {e}": "無法讀取 {name}：{e}",
   "Added {n} photo{}": "已加入 {n} 張照片{:.0}",
   "Where should the Lightroom catalog “{catalog}” go?": "Lightroom 目錄「{catalog}」要匯入到哪裡？",
-  "Merge into the open library “{library}” ({count} photo{})": "合併到目前開啟的照片庫「{library}」（{count} 張照片）{:.0}"
+  "Merge into the open library “{library}” ({count} photo{})": "合併到目前開啟的照片庫「{library}」（{count} 張照片）{:.0}",
+  "Use {provider}": "使用 {provider}",
+  "Synced {n} min ago": "{n} 分鐘前同步",
+  "Synced {n} h ago": "{n} 小時前同步",
+  "{status}; waiting for {n} file(s) from the provider": "{status}；正在等待服務供應商提供 {n} 個檔案",
+  "Can't sync: {error}": "無法同步：{error}"
 }

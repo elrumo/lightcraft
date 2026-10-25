@@ -2427,5 +2427,14 @@
   "Dropped Files": "Släppta filer",
   "Finish Lightroom catalog import before adding photos": "Slutför importen av Lightroom-katalogen innan du lägger till foton",
   "Import dropped files without review": "Importera släppta filer utan granskning",
-  "Supported Cameras": "Kameror som stöds"
+  "Supported Cameras": "Kameror som stöds",
+  "Without a Server": "Utan server",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "Håll det här bibliotekets förinställningar, inställningar och redigeringar i takt med dina andra datorer via en mapp som din iCloud Drive, Dropbox eller Google Drive redan synkar. LightCraft skriver bara i en mapp som heter LightCraft Sync inuti den.",
+  "Status": "Status",
+  "Sync Now": "Synka nu",
+  "Stop Syncing": "Sluta synka",
+  "Choose Cloud Folder…": "Välj molnmapp…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Ingen mapp för iCloud Drive, Dropbox eller Google Drive hittades på den här datorn.",
+  "Syncing through the cloud folder": "Synkar via molnmappen",
+  "Synced just now": "Synkad nyss"
 }

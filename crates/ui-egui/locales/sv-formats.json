@@ -305,5 +305,10 @@
   "Drop to review {n} item{} for import": "Släpp för att granska {n} objekt före import{:.0}",
   "Inside: {names}": "Inuti: {names}",
   "Where should the Lightroom catalog “{catalog}” go?": "Vart ska Lightroom-katalogen ”{catalog}” importeras?",
-  "Merge into the open library “{library}” ({count} photo{})": "Slå samman med det öppna biblioteket ”{library}” ({count} foto{:.0})"
+  "Merge into the open library “{library}” ({count} photo{})": "Slå samman med det öppna biblioteket ”{library}” ({count} foto{:.0})",
+  "Use {provider}": "Använd {provider}",
+  "Synced {n} min ago": "Synkad för {n} min sedan",
+  "Synced {n} h ago": "Synkad för {n} tim sedan",
+  "{status}; waiting for {n} file(s) from the provider": "{status}; väntar på {n} fil(er) från tjänsten",
+  "Can't sync: {error}": "Kan inte synka: {error}"
 }

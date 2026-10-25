@@ -1710,6 +1710,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             let Some(pick) = app.services.host_pick.as_mut() else { return Some(Err("this app has no photo picker".into())) };
             pick(source).map(|()| json!({"picking": true}))
         }
+        "icloud.chooseFolder" => {
+            let path = match p.get("path").and_then(Value::as_str) {
+                Some(x) => Some(x.to_string()),
+                None => match crate::pick::ask(app, id, p, "path", PickRequest::folder(crate::i18n::tr("Choose Cloud Folder…")), |s| {
+                    s.pick_folder.as_mut().and_then(|f| f()).map(|x| vec![x])
+                }) {
+                    Picked::Now(v) => v.into_iter().next(),
+                    Picked::Later | Picked::Unavailable => None,
+                },
+            };
+            match path {
+                Some(path) => app.run("icloud.useFolder", json!({"path": path})),
+                None => Ok(Value::Null),
+            }
+        }
         "file.addFolder" => {
             // a folder (searched recursively) into the import review
             let path = match p.get("path").and_then(Value::as_str) {
@@ -2175,6 +2190,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "view.fullScreenPreview" | "view.infoOverlay" | "view.navigator" => app.session.active().is_some() || app.ui.fullscreen,
         "app.openLibrary" | "app.newLibrary" => app.services.pick_folder.is_some() && crate::panels::settings::can_switch_library(app).is_ok(),
         "file.addFolder" => app.services.pick_folder.is_some() && !crate::lightroom_import::is_running(app),
+        "icloud.chooseFolder" => app.services.pick_folder.is_some(),
         "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => app.services.host_pick.is_some(),
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "app.openLogFolder" => app.services.reveal.is_some() && app.services.log_file.is_some(),

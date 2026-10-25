@@ -1091,3 +1091,35 @@ fn versions_travel_with_a_photos_edit() {
     a.sync(&mut cloud);
     assert!(a.s.catalog.photo(on_a).unwrap().versions.is_empty());
 }
+
+#[test]
+fn photos_added_to_one_album_on_two_devices_are_all_in_it() {
+    use lightcraft_catalog::Op;
+    let root = temp_dir("collections-merge");
+    let mut cloud = Cloud::default();
+    let (mut a, mut b) = (Device::new(&root, "a"), Device::new(&root, "b"));
+    let on_a: Vec<PhotoId> = (1..=4).map(|s| import(&mut a, s)).collect();
+    let on_b: Vec<PhotoId> = (1..=4).map(|s| import(&mut b, s)).collect();
+    make_album(&mut a, "Trip", &on_a[..1], None, false);
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    let album = |d: &Device| album_named(d, "Trip").unwrap();
+
+    // both add a photo offline (a first), and b removes the first one
+    a.at(2_000);
+    a.s.apply_system(Op::SetAlbumPhotos { id: album(&a).id, photos: vec![on_a[0], on_a[1]] }).unwrap();
+    let _ = a.s.icloud_changes();
+    b.at(3_000);
+    b.s.apply_system(Op::SetAlbumPhotos { id: album(&b).id, photos: vec![on_b[2]] }).unwrap();
+    let _ = b.s.icloud_changes();
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    // a's addition and b's addition are both in, the photo b removed is out, and the devices agree
+    assert_eq!(sorted(album(&a).photos), sorted(vec![on_a[1], on_a[2]]));
+    assert_eq!(sorted(album(&b).photos), sorted(vec![on_b[1], on_b[2]]));
+    for d in [&mut a, &mut b] {
+        assert_eq!(d.s.icloud_changes(), Default::default(), "settled");
+    }
+}

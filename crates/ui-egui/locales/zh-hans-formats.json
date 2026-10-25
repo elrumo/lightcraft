@@ -363,5 +363,10 @@
   "Could not read {name}: {e}": "无法读取 {name}：{e}",
   "Added {n} photo{}": "已添加 {n} 张照片{:.0}",
   "Where should the Lightroom catalog “{catalog}” go?": "Lightroom 目录“{catalog}”要导入到哪里？",
-  "Merge into the open library “{library}” ({count} photo{})": "合并到当前打开的图库“{library}”（{count} 张照片）{:.0}"
+  "Merge into the open library “{library}” ({count} photo{})": "合并到当前打开的图库“{library}”（{count} 张照片）{:.0}",
+  "Use {provider}": "使用 {provider}",
+  "Synced {n} min ago": "{n} 分钟前同步",
+  "Synced {n} h ago": "{n} 小时前同步",
+  "{status}; waiting for {n} file(s) from the provider": "{status}；正在等待服务商提供 {n} 个文件",
+  "Can't sync: {error}": "无法同步：{error}"
 }

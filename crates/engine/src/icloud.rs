@@ -60,6 +60,8 @@ pub mod photos;
 pub const STATE: &str = "icloud.json";
 /// The records held for later, in the library.
 pub const HELD: &str = "icloud.held";
+/// What each album held when this device and the cloud last agreed (member prefixes, [`collections::merge`]), in the library.
+pub const BASES: &str = "icloud.bases";
 
 /// The user's develop presets.
 pub const PRESETS: &str = "presets";
@@ -234,6 +236,11 @@ pub struct ICloud {
     coll: BTreeMap<String, String>,
     /// A pass through the cloud folder was asked for (`icloud.folderNow`); the host's next poll runs it.
     folder_now: bool,
+    /// The members of each album record as last agreed with the cloud, by record name.
+    bases: BTreeMap<String, Vec<String>>,
+    bases_dirty: bool,
+    /// The members of the album records handed to the host to send, until it says they were taken.
+    sending: BTreeMap<String, Vec<String>>,
 }
 
 impl ICloud {
@@ -258,6 +265,9 @@ impl ICloud {
             folder_last: None,
             coll: BTreeMap::new(),
             folder_now: false,
+            bases: BTreeMap::new(),
+            bases_dirty: false,
+            sending: BTreeMap::new(),
         }
     }
 
@@ -268,7 +278,9 @@ impl ICloud {
             return None;
         }
         let held = files.read(HELD).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-        Some(ICloud::new(saved, held))
+        let mut ic = ICloud::new(saved, held);
+        ic.bases = files.read(BASES).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        Some(ic)
     }
 
     /// Write what changed (errors are logged: the next save tries again).
@@ -277,6 +289,12 @@ impl ICloud {
             match serde_json::to_vec(&self.held).map_err(|e| e.to_string()).and_then(|b| files.write_atomic(HELD, &b).map_err(|e| e.to_string())) {
                 Ok(()) => self.held_dirty = false,
                 Err(e) => log::error!("library: {HELD}: {e}"),
+            }
+        }
+        if self.bases_dirty {
+            match serde_json::to_vec(&self.bases).map_err(|e| e.to_string()).and_then(|b| files.write_atomic(BASES, &b).map_err(|e| e.to_string())) {
+                Ok(()) => self.bases_dirty = false,
+                Err(e) => log::error!("library: {BASES}: {e}"),
             }
         }
         if self.saved_dirty {
@@ -314,6 +332,10 @@ impl ICloud {
     fn forget(&mut self) {
         self.saved.known.clear();
         self.saved.changed.clear();
+        if !self.bases.is_empty() {
+            self.bases.clear();
+            self.bases_dirty = true;
+        }
         if !self.held.is_empty() {
             self.held.clear();
             self.held_dirty = true;
@@ -750,6 +772,11 @@ impl Session {
                     match found {
                         Some((kind, key, data)) => {
                             let hash = hash_of(&data);
+                            if kind == collections::ALBUM
+                                && let Some(b) = collections::base_of(&data)
+                            {
+                                ic.sending.insert(name.clone(), b);
+                            }
                             if let Some(m) = ic.ours.get_mut(name).filter(|m| m.kind != analysis::ANALYSIS) {
                                 m.hash.clone_from(&hash);
                             }
@@ -776,9 +803,16 @@ impl Session {
                 if parts.is_some() || ic.ours.get(&r.name).is_some_and(|m| m.hash == r.hash) {
                     ic.saved.changed.remove(&r.name);
                 }
+                if let Some(b) = ic.sending.remove(&r.name).filter(|_| r.kind == collections::ALBUM) {
+                    ic.bases.insert(r.name.clone(), b);
+                    ic.bases_dirty = true;
+                }
             }
             for name in deleted.iter().take(BATCH_MAX) {
                 ic.saved.known.remove(name);
+                if ic.bases.remove(name).is_some() {
+                    ic.bases_dirty = true;
+                }
                 if !ic.ours.contains_key(name) {
                     ic.saved.changed.remove(name);
                 }
@@ -802,6 +836,8 @@ impl Session {
         let now = (ic.clock)();
         // (name, kind, key, data): what to take; data `None` removes it here
         let mut take: Vec<(String, String, String, Option<String>)> = Vec::new();
+        // (albums merged with this device's own: they stay to be sent)
+        let mut merged_names: HashSet<String> = HashSet::new();
         for r in records.iter().take(BATCH_MAX) {
             if r.name.len() > NAME_MAX
                 || r.key.is_empty()
@@ -830,6 +866,12 @@ impl Session {
             if mine.is_some_and(|m| m.hash == hash) {
                 // the same as here
                 ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash, local: None, parts: None });
+                if r.kind == collections::ALBUM
+                    && let Some(b) = collections::base_of(&r.data)
+                {
+                    ic.bases.insert(r.name.clone(), b);
+                    ic.bases_dirty = true;
+                }
                 ic.saved.changed.remove(&r.name);
                 continue;
             }
@@ -839,8 +881,24 @@ impl Session {
             }
             let changed_here = ic.differs(&r.name, mine);
             let mine_at = *ic.saved.changed.entry(r.name.clone()).or_insert(now);
-            if !changed_here || r.modified > mine_at {
+            // an album changed on both sides: its members are merged against what they last agreed, and the merge is sent
+            let merged = (r.kind == collections::ALBUM && changed_here)
+                .then(|| ic.bases.get(&r.name).zip(ic.coll.get(&r.name)))
+                .flatten()
+                .and_then(|(base, ours)| collections::merge(base, ours, &r.data, r.modified > mine_at))
+                .filter(|m| hash_of(m) != hash);
+            if let Some(m) = merged {
+                take.push((r.name.clone(), r.kind.clone(), r.key.clone(), Some(m)));
+                ic.saved.changed.insert(r.name.clone(), now.max(r.modified.saturating_add(1)));
+                merged_names.insert(r.name.clone());
+            } else if !changed_here || r.modified > mine_at {
                 take.push((r.name.clone(), r.kind.clone(), r.key.clone(), Some(r.data.clone())));
+            }
+            if r.kind == collections::ALBUM
+                && let Some(b) = collections::base_of(&r.data)
+            {
+                ic.bases.insert(r.name.clone(), b);
+                ic.bases_dirty = true;
             }
             ic.saved.known.insert(r.name.clone(), Known { kind: r.kind.clone(), key: r.key.clone(), hash, local: None, parts: None });
             if !changed_here {
@@ -869,7 +927,7 @@ impl Session {
         ic.seen = Seen::default();
         self.icloud_refresh(ic);
         for (name, kind, _, _) in &take {
-            if kind == analysis::ANALYSIS {
+            if kind == analysis::ANALYSIS || merged_names.contains(name) {
                 continue;
             }
             let mine = ic.ours.get(name).map(|m| m.hash.clone());

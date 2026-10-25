@@ -2535,5 +2535,14 @@
   "An import is running": "Импорт уже выполняется",
   "An import is running. Drop photos when it has finished": "Импорт уже выполняется. Перетащите фото, когда он закончится",
   "Finish Lightroom catalog import before adding photos": "Завершите импорт каталога Lightroom, прежде чем добавлять фото",
-  "Supported Cameras": "Поддерживаемые камеры"
+  "Supported Cameras": "Поддерживаемые камеры",
+  "Without a Server": "Без сервера",
+  "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.": "Синхронизируйте пресеты, настройки и правки этой библиотеки с другими компьютерами через папку, которую уже синхронизирует ваш iCloud Drive, Dropbox или Google Drive. LightCraft пишет только в папку LightCraft Sync внутри неё.",
+  "Status": "Состояние",
+  "Sync Now": "Синхронизировать сейчас",
+  "Stop Syncing": "Остановить синхронизацию",
+  "Choose Cloud Folder…": "Выбрать облачную папку…",
+  "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "На этом компьютере не найдено ни одной папки iCloud Drive, Dropbox или Google Drive.",
+  "Syncing through the cloud folder": "Синхронизация через облачную папку",
+  "Synced just now": "Только что синхронизировано"
 }
