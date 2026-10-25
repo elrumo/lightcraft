@@ -18,6 +18,10 @@ pub(crate) struct Entry {
 }
 
 impl<'a> Tiff<'a> {
+    /// A reader over `data` in a byte order the caller knows (a maker note without its own TIFF header).
+    pub fn with_order(data: &'a [u8], le: bool) -> Tiff<'a> {
+        Tiff { data, le }
+    }
     pub fn new(data: &'a [u8]) -> Option<Tiff<'a>> {
         let le = match data.get(0..2)? {
             b"II" => true,

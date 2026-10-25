@@ -444,6 +444,8 @@ pub struct GainMapImage {
     /// ISO 21496-1 metadata (without the namespace marker) of an ISO tone-map (`tmap`) item; `None`
     /// for Apple's gain map, which the maker note describes.
     pub iso: Option<Vec<u8>>,
+    /// The primary image's EXIF (TIFF structure): Apple's maker note says how bright its gain map goes.
+    pub exif: Option<Vec<u8>>,
 }
 
 /// The primary image's gain map: an `auxl` image whose `auxC` type names Apple's gain map
@@ -459,7 +461,7 @@ pub fn gain_map(bytes: &[u8], options: &Options) -> Result<Option<GainMapImage>,
             p.auxc.filter(|a| a.urn.ends_with("hdrgainmap")).map(|_| (r.from, p))
         });
         if let Some((id, p)) = apple {
-            return Ok(Some(GainMapImage { map: aux_samples(&ctx, id, &p, options)?, iso: None }));
+            return Ok(Some(GainMapImage { map: aux_samples(&ctx, id, &p, options)?, iso: None, exif: metadata(&ctx).0 }));
         }
         // an ISO tone-map item: derived from the SDR image (first) and its gain map (second)
         let tmap = ctx.meta.items.iter().filter(|i| &i.item_type == b"tmap").find_map(|i| {
@@ -469,7 +471,7 @@ pub fn gain_map(bytes: &[u8], options: &Options) -> Result<Option<GainMapImage>,
         let Some((tid, gid)) = tmap else { return Ok(None) };
         let iso = ctx.item_data(tid).map_err(err)?.to_vec();
         let p = ctx.props(gid).map_err(err)?;
-        Ok(Some(GainMapImage { map: aux_samples(&ctx, gid, &p, options)?, iso: Some(iso) }))
+        Ok(Some(GainMapImage { map: aux_samples(&ctx, gid, &p, options)?, iso: Some(iso), exif: None }))
     })
 }
 
