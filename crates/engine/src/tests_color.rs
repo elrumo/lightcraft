@@ -240,3 +240,40 @@ fn point_color_swatches_and_curve_samples() {
     assert_eq!(red["points"].as_array().unwrap().len(), 3);
     assert!(s.execute("curve.sample", &json!({"channel": "luma"})).is_err());
 }
+
+/// A native frontend's curve editor edits through `curve.edit`: a press at the left edge takes the black point (it once
+/// could be double-tapped away, leaving the left of the graph without a handle and the curve flat there), points keep
+/// their order, and the ends are never removed.
+#[test]
+fn curve_edit_keeps_black_and_white_and_the_order() {
+    let mut s = demo();
+    let pts = |r: &serde_json::Value| -> Vec<(f64, f64)> {
+        r["points"].as_array().unwrap().iter().map(|p| (p[0].as_f64().unwrap(), p[1].as_f64().unwrap())).collect()
+    };
+    // a press on the black corner takes it, adds nothing, and lifts it by a move
+    let g = s.execute("curve.edit", &json!({"op": "grab", "x": 0.02, "y": 0.03, "reach": 0.08})).unwrap();
+    assert_eq!((g["index"].as_u64(), g["added"].as_bool(), g["removable"].as_bool()), (Some(0), Some(false), Some(false)), "{g}");
+    let m = s.execute("curve.edit", &json!({"op": "move", "index": 0, "x": -0.4, "y": 0.2})).unwrap();
+    assert_eq!(pts(&m), vec![(0.0, 0.2), (1.0, 1.0)], "{m}");
+    assert!((m["samples"][0].as_f64().unwrap() - 0.2).abs() < 1e-9, "the curve starts at the lifted black point: {m}");
+    // a press beside the left edge, above the black point, adds a point a gap away from it
+    let a = s.execute("curve.edit", &json!({"op": "grab", "x": 0.0, "y": 0.7, "reach": 0.08})).unwrap();
+    assert_eq!(a["added"], true, "{a}");
+    assert_eq!(pts(&a)[0], (0.0, 0.2), "{a}");
+    assert!(pts(&a).windows(2).all(|w| w[1].0 - w[0].0 >= 0.0099), "{a}");
+    // the ends cannot be removed, the middle point can
+    let r = s.execute("curve.edit", &json!({"op": "remove", "index": 0})).unwrap();
+    assert_eq!(pts(&r).len(), 3, "black stays: {r}");
+    let r = s.execute("curve.edit", &json!({"op": "remove", "index": 2})).unwrap();
+    assert_eq!(pts(&r).len(), 3, "white stays: {r}");
+    let r = s.execute("curve.edit", &json!({"op": "remove", "index": 1})).unwrap();
+    assert_eq!(pts(&r), vec![(0.0, 0.2), (1.0, 1.0)], "{r}");
+    // it is the stored curve, and each channel has its own
+    let st = s.execute("curve.sample", &json!({"n": 2})).unwrap();
+    assert_eq!(st["points"], json!([[0.0, 0.2], [1.0, 1.0]]));
+    let b = s.execute("curve.edit", &json!({"channel": "blue", "op": "nudge", "index": 1, "dx": -0.1, "dy": -0.1})).unwrap();
+    assert_eq!(pts(&b)[1], (0.9, 0.9), "{b}");
+    assert!(s.execute("curve.edit", &json!({"op": "move", "index": 1})).is_err());
+    assert!(s.execute("curve.edit", &json!({"op": "dance"})).is_err());
+    assert!(s.execute("curve.edit", &json!({"channel": "luma", "op": "remove", "index": 1})).is_err());
+}
