@@ -49,8 +49,91 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"channel": channel}))
 }
 
+/// The point curve of `channel` in `c`.
+fn channel_points<'a>(c: &'a mut ToneCurve, channel: &str) -> std::result::Result<&'a mut Vec<Point>, String> {
+    match channel {
+        "master" | "rgb" => Ok(&mut c.master),
+        "red" => Ok(&mut c.red),
+        "green" => Ok(&mut c.green),
+        "blue" => Ok(&mut c.blue),
+        other => Err(format!("unknown channel `{other}` (master, red, green or blue)")),
+    }
+}
+
+/// `curve.edit`: one step of editing a point curve by pointer or finger, by the rules every frontend shares
+/// ([`lightcraft_develop::curve_edit`]). `op` grab (press at x, y: takes the point within `reach`, else adds one), move
+/// (point `index` to x, y), nudge (`index` by dx, dy) or remove (`index`; the ends stay). Answers the channel's points,
+/// the point's `index` and `samples` of the curve (what an editor draws) so a drag needs no second request.
+fn edit_point(s: &mut Session, p: &Value) -> Result<Value> {
+    use lightcraft_develop::curve_edit as ce;
+    const C: &str = "curve.edit";
+    let id = s.active().ok_or_else(|| bad(C, "no active photo"))?;
+    let channel = str_param(p, "channel").unwrap_or("master");
+    let num = |k: &str| p.get(k).and_then(Value::as_f64);
+    let index = || p.get("index").and_then(Value::as_u64).map(|i| i as usize).ok_or_else(|| bad(C, "missing `index`"));
+    let mut d = (*s.develop_of(id).unwrap_or_default()).clone();
+    let pts = ce::shown(channel_points(&mut d.curve, channel).map_err(|e| bad(C, e))?);
+    let (next, at, added, changed) = match str_param(p, "op").unwrap_or("") {
+        "grab" => {
+            let g = ce::grab(
+                &pts,
+                num("x").ok_or_else(|| bad(C, "missing `x`"))?,
+                num("y").ok_or_else(|| bad(C, "missing `y`"))?,
+                num("reach").unwrap_or(0.05),
+            );
+            (g.points, g.index, g.added, g.added)
+        }
+        "move" => {
+            let i = index()?;
+            let (x, y) = (num("x").ok_or_else(|| bad(C, "missing `x`"))?, num("y").ok_or_else(|| bad(C, "missing `y`"))?);
+            (ce::move_point(&pts, i, x, y), i, false, true)
+        }
+        "nudge" => {
+            let i = index()?;
+            (ce::nudge(&pts, i, num("dx").unwrap_or(0.0), num("dy").unwrap_or(0.0)), i, false, true)
+        }
+        "remove" => {
+            let i = index()?;
+            match ce::remove(&pts, i) {
+                // (the neighbour before takes the selection)
+                Some(v) => (v, i.saturating_sub(1), false, true),
+                None => (pts, i, false, false),
+            }
+        }
+        other => return Err(bad(C, format!("unknown op `{other}` (grab, move, nudge or remove)"))),
+    };
+    let at = at.min(next.len().saturating_sub(1));
+    if changed {
+        *channel_points(&mut d.curve, channel).map_err(|e| bad(C, e))? = next.clone();
+        s.set_develop(id, d, "Tone Curve")?;
+    }
+    let n = p.get("n").and_then(Value::as_u64).unwrap_or(96).min(1024) as usize;
+    let samples: Vec<f64> = if n < 2 {
+        Vec::new()
+    } else {
+        let curve = lightcraft_color::spline::MonotoneCurve::new(&next.iter().map(|q| (q.x, q.y)).collect::<Vec<_>>());
+        (0..n).map(|i| curve.eval(i as f64 / (n - 1) as f64).clamp(0.0, 1.0)).collect()
+    };
+    Ok(json!({
+        "points": next.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>(),
+        "index": at,
+        "added": added,
+        "removable": at > 0 && at + 1 < next.len(),
+        "samples": samples,
+    }))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(
+            "curve.edit",
+            "Edit Point Curve",
+            [],
+            None,
+            "{channel?: master|red|green|blue, op: grab|move|nudge|remove, x?, y? (grab, move: 0..1, y up), reach? (grab: 0.05), index? (move, nudge, remove: the point in the points returned), dx?, dy? (nudge), n? (samples, 96)} → {points, index, added, removable, samples}: points stay in order at least 0.01 apart, the ends (black, white) are never removed",
+            has_active,
+            edit_point
+        ),
         cmd!(
             "curve.reset",
             "Reset Tone Curve",

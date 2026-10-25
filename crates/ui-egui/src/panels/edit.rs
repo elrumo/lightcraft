@@ -4,8 +4,7 @@
 use egui::epaint::{Mesh, Vertex};
 use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, pos2, vec2};
 use lightcraft_catalog::PhotoId;
-use lightcraft_develop::{ControlSpec, DevelopSettings, WbMode, controls};
-use lightcraft_geom::Point;
+use lightcraft_develop::{ControlSpec, DevelopSettings, WbMode, controls, curve_edit};
 use lightcraft_raster::Histogram;
 use serde_json::{Value, json};
 
@@ -1048,20 +1047,14 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         control(app, ui, d, "curve.refineSaturation", true);
         return;
     }
-    let pts_of = |d: &DevelopSettings| -> Vec<Point> {
-        let v = match ch.as_str() {
-            "red" => &d.curve.red,
-            "green" => &d.curve.green,
-            "blue" => &d.curve.blue,
-            _ => &d.curve.master,
-        };
-        // in the order the curve is drawn (points from a sidecar, a preset or an agent can come
-        // unsorted or not finite): the drag below keeps each point between its neighbours
-        let mut v: Vec<Point> = v.iter().copied().filter(|q| q.x.is_finite() && q.y.is_finite()).collect();
-        v.sort_by(|a, b| a.x.total_cmp(&b.x));
-        if v.len() < 2 { vec![Point::new(0.0, 0.0), Point::new(1.0, 1.0)] } else { v }
-    };
-    let pts = pts_of(d);
+    // in the order the curve is drawn (points from a sidecar, a preset or an agent can come unsorted or not
+    // finite): the drag below keeps each point between its neighbours
+    let pts = curve_edit::shown(match ch.as_str() {
+        "red" => &d.curve.red,
+        "green" => &d.curve.green,
+        "blue" => &d.curve.blue,
+        _ => &d.curve.master,
+    });
     let curve = lightcraft_color::spline::MonotoneCurve::new(&pts.iter().map(|q| (q.x, q.y)).collect::<Vec<_>>());
     let color = match ch.as_str() {
         "red" => hex("#dd3333"),
@@ -1104,72 +1097,47 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         );
     }
     let mut new_pts = None;
+    // (picking, adding, moving and removing points follow the core's rules, shared with the native frontends)
+    let reach_norm = f64::from(reach / r.width().max(1.0));
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
-        && let Some((i, dist)) = nearest(q)
-        && dist < reach
-        && i != 0
-        && i != pts.len() - 1
+        && let Some((i, _)) = nearest(q).filter(|(_, dist)| *dist < reach)
+        && let Some(v) = curve_edit::remove(&pts, i)
     {
-        let mut v = pts.clone();
-        v.remove(i);
         new_pts = Some(v);
     } else if resp.drag_started()
         && let Some(q) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos())
     {
         // pick the point under the press, not where the pointer is once the drag threshold passed
         let _ = app.run("develop.beginInteraction", json!({"label": "Tone Curve"}));
-        match nearest(q) {
-            Some((i, dist)) if dist < reach => dragging = Some(i),
-            _ => {
-                let (x, y) = from_screen(q);
-                let mut v = pts.clone();
-                let i = v.iter().position(|p| p.x > x).unwrap_or(v.len());
-                v.insert(i, Point::new(x, y));
-                dragging = Some(i);
-                new_pts = Some(v);
-            }
+        let (x, y) = from_screen(q);
+        let g = curve_edit::grab(&pts, x, y, reach_norm);
+        dragging = Some(g.index);
+        if g.added {
+            new_pts = Some(g.points);
         }
     } else if resp.dragged()
         && let (Some(i), Some(q)) = (dragging, resp.interact_pointer_pos())
     {
-        let mut v = pts.clone();
         // ⌥-drag = fine adjustment, as in Lightroom: the point moves a tenth of the pointer's
         // motion (relative to where it is, so pressing ⌥ mid-drag doesn't make it jump)
         let fine = ui.input(|i| i.modifiers.alt);
-        let (mut x, y) = match v.get(i) {
+        let (x, y) = match pts.get(i) {
             Some(cur) if fine => {
                 let dd = ui.input(|i| i.pointer.delta());
                 ((cur.x + (dd.x / r.width()) as f64 * 0.1).clamp(0.0, 1.0), (cur.y - (dd.y / r.height()) as f64 * 0.1).clamp(0.0, 1.0))
             }
             _ => from_screen(q),
         };
-        if i < v.len() {
-            let lo = if i == 0 { 0.0 } else { v[i - 1].x + 0.01 };
-            let hi = if i + 1 >= v.len() { 1.0 } else { v[i + 1].x - 0.01 };
-            if i == 0 {
-                x = x.min(hi);
-            } else if i + 1 == v.len() {
-                x = x.max(lo);
-            } else if lo <= hi {
-                x = x.clamp(lo, hi);
-            } else {
-                // neighbours closer than the 0.02 spacing (two clicks side by side, or points
-                // from a file) leave no room: the point stays midway (`clamp` would panic: min above max)
-                x = (v[i - 1].x + v[i + 1].x) / 2.0;
-            }
-            v[i] = Point::new(x, y);
-            new_pts = Some(v);
-        }
+        new_pts = Some(curve_edit::move_point(&pts, i, x, y));
     } else if resp.clicked()
         && let Some(q) = resp.interact_pointer_pos()
-        && nearest(q).is_none_or(|(_, dist)| dist >= reach)
     {
         let (x, y) = from_screen(q);
-        let mut v = pts.clone();
-        let i = v.iter().position(|p| p.x > x).unwrap_or(v.len());
-        v.insert(i, Point::new(x, y));
-        new_pts = Some(v);
+        let g = curve_edit::grab(&pts, x, y, reach_norm);
+        if g.added {
+            new_pts = Some(g.points);
+        }
     }
     if let Some(v) = new_pts {
         let arr: Vec<[f64; 2]> = v.iter().map(|p| [p.x, p.y]).collect();
