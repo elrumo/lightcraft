@@ -36,7 +36,10 @@ It is added with neutral settings (its pixels carry the edits already), so a pre
 - It sharpens and adds plausible detail; it can't recover detail that was never captured, and very smooth photos
   gain little. Judge a result at 100 %.
 - Tones are kept: the enlargement's broad tones are anchored to the original's (the network alone drifts about 1.5 %
-  darker).
+  darker), and so are the black and white points: the network's detail goes below black and above white where the
+  picture is black or white, and cut off it used to lift the blacks (a real black-and-white photo's 1st percentile
+  went from 0 to 1.4 / 255, so its black point looked lower). The anchor is applied again after the clamp
+  (`ANCHOR_PASSES`), taking the difference off the pixels that were not clipped.
 
 ## Managing the model
 
