@@ -498,20 +498,22 @@ pub fn apply(base: &mut [[f32; 3]], width: usize, height: usize, gain: &GainImag
     let weight = if weight.is_finite() { weight.clamp(0.0, 1.0) } else { 1.0 };
     let (sx, sy) = (gain.width as f32 / width as f32, gain.height as f32 / height as f32);
     let inv_gamma = m.gamma.map(|g| 1.0 / g);
-    for (i, p) in base.iter_mut().enumerate().take(n) {
-        let (x, y) = ((i % width) as f32 + 0.5, (i / width) as f32 + 0.5);
-        let (gx, gy) = (x * sx, y * sy);
-        let mut g = [0f32; 3];
-        for (c, gc) in g.iter_mut().enumerate() {
-            let src = if gain.channels == 3 { c } else { 0 };
-            let norm = (gain.sample(gx, gy, src) / 255.0).clamp(0.0, 1.0).powf(inv_gamma[c]);
-            *gc = m.min[c] + (m.max[c] - m.min[c]) * norm;
+    let Some(base) = base.get_mut(..n) else { return Err(Error::Encode("gain map: base and gain map sizes don't match".into())) };
+    lightcraft_raster::par_rows(base, width, |row, px| {
+        for (col, p) in px.iter_mut().enumerate() {
+            let (gx, gy) = ((col as f32 + 0.5) * sx, (row as f32 + 0.5) * sy);
+            let mut g = [0f32; 3];
+            for (c, gc) in g.iter_mut().enumerate() {
+                let src = if gain.channels == 3 { c } else { 0 };
+                let norm = (gain.sample(gx, gy, src) / 255.0).clamp(0.0, 1.0).powf(inv_gamma[c]);
+                *gc = m.min[c] + (m.max[c] - m.min[c]) * norm;
+            }
+            for c in 0..3 {
+                let v = (p[c] + m.base_offset[c]) * (g[c] * weight).exp2() - m.alternate_offset[c];
+                p[c] = v.max(0.0);
+            }
         }
-        for c in 0..3 {
-            let v = (p[c] + m.base_offset[c]) * (g[c] * weight).exp2() - m.alternate_offset[c];
-            p[c] = v.max(0.0);
-        }
-    }
+    });
     Ok(())
 }
 
@@ -651,6 +653,85 @@ pub fn read_jpeg(bytes: &[u8]) -> Option<JpegGainMap> {
         return Some(JpegGainMap { gain: GainImage { width: w, height: h, channels: ch, data: codes }, meta });
     }
     None
+}
+
+/// Apple's gain map parameters for a map that reaches `stops` (log2 headroom of the HDR rendition
+/// over SDR white): the codes span 0..`stops` stops of gain, no offsets, no gamma (how Skia and
+/// Chrome read an iPhone HDR photo).
+pub fn apple_meta(stops: f32) -> Option<GainMapMeta> {
+    let m = GainMapMeta {
+        multichannel: false,
+        use_base_colour_space: true,
+        base_headroom: 0.0,
+        alternate_headroom: stops,
+        min: [0.0; 3],
+        max: [stops; 3],
+        gamma: [1.0; 3],
+        base_offset: [0.0; 3],
+        alternate_offset: [0.0; 3],
+    };
+    m.is_valid().then_some(m)
+}
+
+/// How many stops of headroom an iPhone photo's gain map holds, from its EXIF: Apple's maker note
+/// (EXIF tag 0x927C, "Apple iOS", big-endian IFD whose offsets count from the note's start) keeps
+/// two numbers, tag 33 and tag 48 (signed rationals), that the published recipe turns into stops.
+pub fn apple_stops(exif: &[u8]) -> Option<f32> {
+    use crate::exif::Tiff;
+    let t = Tiff::new(exif)?;
+    let (ifd0, _) = t.ifd(t.first_ifd()?)?;
+    let exif_ifd = t.uint(ifd0.iter().find(|e| e.tag == 0x8769)?)? as usize;
+    let (entries, _) = t.ifd(exif_ifd)?;
+    let note = t.bytes(entries.iter().find(|e| e.tag == 0x927C)?)?;
+    if !note.starts_with(b"Apple iOS\0") || note.get(12..14)? != b"MM" {
+        return None;
+    }
+    let n = Tiff::with_order(note, false);
+    let (tags, _) = n.ifd(14)?;
+    let rational = |tag: u16| -> Option<f32> {
+        let e = tags.iter().find(|e| e.tag == tag && e.typ == 10 && e.count == 1)?;
+        let at = n.u32_at(e.value_pos)? as usize;
+        let (num, den) = (n.u32_at(at)? as i32, n.u32_at(at.checked_add(4)?)? as i32);
+        (den != 0).then(|| num as f32 / den as f32)
+    };
+    let (headroom, gain) = (rational(33)?, rational(48)?);
+    let stops = match (headroom < 1.0, gain <= 0.01) {
+        (true, true) => -20.0 * gain + 1.8,
+        (true, false) => -0.101 * gain + 1.601,
+        (false, true) => -70.0 * gain + 3.0,
+        (false, false) => -0.303 * gain + 2.303,
+    };
+    (stops.is_finite() && stops > 0.0).then_some(stops.min(8.0))
+}
+
+#[cfg(feature = "heif")]
+fn read_heif(bytes: &[u8]) -> Option<JpegGainMap> {
+    let opts = lightcraft_heif::Options { max_pixels: 1 << 24, apply_transforms: true };
+    let g = lightcraft_heif::gain_map(bytes, &opts).ok()??;
+    let (w, h) = (g.map.width as usize, g.map.height as usize);
+    if w == 0 || h == 0 || g.map.data.len() != w.checked_mul(h)? {
+        return None;
+    }
+    let meta = match &g.iso {
+        Some(iso) => GainMapMeta::from_iso(iso)?,
+        None => apple_meta(apple_stops(g.exif.as_deref()?)?)?,
+    };
+    let max = f32::from(g.map.max.max(1));
+    let data = g.map.data.iter().map(|&v| (f32::from(v) / max * 255.0).round().clamp(0.0, 255.0) as u8).collect();
+    Some(JpegGainMap { gain: GainImage { width: w, height: h, channels: 1, data }, meta })
+}
+
+/// The HDR gain map of an image file (`None` when it has none, or it is unusable): a gain map JPEG
+/// (Ultra HDR, Lightroom, cameras: [`read_jpeg`]) or a HEIC (an iPhone photo's Apple gain map, or an
+/// ISO 21496-1 tone-map item). The map is as stored, turned like the picture for a HEIC (the
+/// container's rotation) and not for a JPEG (EXIF orientation: the caller's).
+pub fn read(bytes: &[u8]) -> Option<JpegGainMap> {
+    match crate::sniff(bytes)? {
+        Format::Jpeg => read_jpeg(bytes),
+        #[cfg(feature = "heif")]
+        Format::Heif => read_heif(bytes),
+        _ => None,
+    }
 }
 
 /// Whether `bytes` is a gain map JPEG with a usable gain map (cheap: no pixel decode).

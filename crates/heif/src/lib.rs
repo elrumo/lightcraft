@@ -11,8 +11,8 @@
 //!
 //! HEIF records orientation in the container (`irot`/`imir`, plus a `clap` crop), not in EXIF.
 //! [`Options::apply_transforms`] applies them; with it off, the pixels come back as coded.
-//! A depth auxiliary image (Portrait photos) is read on its own by [`depth`]; HDR gain maps and
-//! other auxiliary images are ignored.
+//! A depth auxiliary image (Portrait photos) is read on its own by [`depth`], an HDR gain map by
+//! [`gain_map`]; other auxiliary images are ignored.
 //!
 //! Never panics: heic-rs is young, so every call into it runs under `catch_unwind` and a panic
 //! inside it becomes [`Error::Malformed`].
@@ -404,29 +404,74 @@ pub fn depth(bytes: &[u8], options: &Options) -> Result<Option<DepthImage>, Erro
             (p.auxc?.kind == heic_rs::props::simple::AuxKind::Depth).then_some((r.from, p))
         });
         let Some((id, p)) = found else { return Ok(None) };
-        let (cw, ch) = ctx.coded_size(id, &p).map_err(err)?;
-        heic_rs::image::check_pixels(cw, ch, options.max_pixels).map_err(err)?;
-        let coded = Coded::decode(&ctx, id, &p, options.max_pixels)?;
-        let planes = coded.planes()?;
-        let (w, h) = planes.size();
-        let mut data = vec![0u16; w * h];
-        for (y, row) in data.chunks_exact_mut(w.max(1)).enumerate().take(h) {
-            planes.luma_row(y, row).ok_or_else(|| Error::Malformed("the depth image is incomplete".into()))?;
+        aux_samples(&ctx, id, &p, options).map(Some)
+    })
+}
+
+/// The luma samples of auxiliary image `id` (one sample per pixel), turned like the primary image.
+fn aux_samples(ctx: &Context<'_>, id: u32, p: &ItemProps<'_>, options: &Options) -> Result<DepthImage, Error> {
+    let primary = ctx.meta.primary;
+    let (cw, ch) = ctx.coded_size(id, p).map_err(err)?;
+    heic_rs::image::check_pixels(cw, ch, options.max_pixels).map_err(err)?;
+    let coded = Coded::decode(ctx, id, p, options.max_pixels)?;
+    let planes = coded.planes()?;
+    let (w, h) = planes.size();
+    let mut data = vec![0u16; w * h];
+    for (y, row) in data.chunks_exact_mut(w.max(1)).enumerate().take(h) {
+        planes.luma_row(y, row).ok_or_else(|| Error::Malformed("the auxiliary image is incomplete".into()))?;
+    }
+    let mut img = orient::Pixels { width: w, height: h, ch: 1, data };
+    if options.apply_transforms {
+        let pp = ctx.props(primary).map_err(err)?;
+        let turns: Vec<_> = pp.transforms.iter().copied().filter(|t| !matches!(t, heic_rs::props::Transform::Crop(_))).collect();
+        img = orient::apply(img, &turns)?;
+    }
+    let xmp = ctx.xmp_item(id).and_then(|x| ctx.item_data(x).ok()).and_then(|d| String::from_utf8(d.into_owned()).ok());
+    Ok(DepthImage {
+        width: u32::try_from(img.width).map_err(|_| Error::Limit("auxiliary image too wide".into()))?,
+        height: u32::try_from(img.height).map_err(|_| Error::Limit("auxiliary image too tall".into()))?,
+        max: ((1u32 << u32::from(planes.bit_depth()).clamp(1, 16)) - 1) as u16,
+        data: img.data,
+        xmp: xmp.map(|x| x.trim_end_matches('\0').to_string()),
+    })
+}
+
+/// The primary image's HDR gain map: an image of samples, and how the file describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GainMapImage {
+    /// The map's samples (luma), turned like the primary image.
+    pub map: DepthImage,
+    /// ISO 21496-1 metadata (without the namespace marker) of an ISO tone-map (`tmap`) item; `None`
+    /// for Apple's gain map, which the maker note describes.
+    pub iso: Option<Vec<u8>>,
+    /// The primary image's EXIF (TIFF structure): Apple's maker note says how bright its gain map goes.
+    pub exif: Option<Vec<u8>>,
+}
+
+/// The primary image's gain map: an `auxl` image whose `auxC` type names Apple's gain map
+/// (`urn:com:apple:photo:2020:aux:hdrgainmap`, an iPhone HDR photo), or the second image of an
+/// ISO tone-map (`tmap`) item that derives from the primary image (with its metadata). `None`
+/// when the file has none.
+pub fn gain_map(bytes: &[u8], options: &Options) -> Result<Option<GainMapImage>, Error> {
+    guarded(|| {
+        let ctx = Context::open(bytes).map_err(err)?;
+        let primary = ctx.meta.primary;
+        let apple = ctx.meta.refs.iter().filter(|r| r.kind == heic_rs::meta::iref::RefKind::Auxl && r.to.contains(&primary)).find_map(|r| {
+            let p = ctx.props(r.from).ok()?;
+            p.auxc.filter(|a| a.urn.ends_with("hdrgainmap")).map(|_| (r.from, p))
+        });
+        if let Some((id, p)) = apple {
+            return Ok(Some(GainMapImage { map: aux_samples(&ctx, id, &p, options)?, iso: None, exif: metadata(&ctx).0 }));
         }
-        let mut img = orient::Pixels { width: w, height: h, ch: 1, data };
-        if options.apply_transforms {
-            let pp = ctx.props(primary).map_err(err)?;
-            let turns: Vec<_> = pp.transforms.iter().copied().filter(|t| !matches!(t, heic_rs::props::Transform::Crop(_))).collect();
-            img = orient::apply(img, &turns)?;
-        }
-        let xmp = ctx.xmp_item(id).and_then(|x| ctx.item_data(x).ok()).and_then(|d| String::from_utf8(d.into_owned()).ok());
-        Ok(Some(DepthImage {
-            width: u32::try_from(img.width).map_err(|_| Error::Limit("depth image too wide".into()))?,
-            height: u32::try_from(img.height).map_err(|_| Error::Limit("depth image too tall".into()))?,
-            max: ((1u32 << u32::from(planes.bit_depth()).clamp(1, 16)) - 1) as u16,
-            data: img.data,
-            xmp: xmp.map(|x| x.trim_end_matches('\0').to_string()),
-        }))
+        // an ISO tone-map item: derived from the SDR image (first) and its gain map (second)
+        let tmap = ctx.meta.items.iter().filter(|i| &i.item_type == b"tmap").find_map(|i| {
+            let r = ctx.meta.refs.iter().find(|r| r.kind == heic_rs::meta::iref::RefKind::Dimg && r.from == i.id)?;
+            (r.to.first() == Some(&primary)).then_some((i.id, *r.to.get(1)?))
+        });
+        let Some((tid, gid)) = tmap else { return Ok(None) };
+        let iso = ctx.item_data(tid).map_err(err)?.to_vec();
+        let p = ctx.props(gid).map_err(err)?;
+        Ok(Some(GainMapImage { map: aux_samples(&ctx, gid, &p, options)?, iso: Some(iso), exif: None }))
     })
 }
 
@@ -440,6 +485,8 @@ fn metadata(ctx: &Context<'_>) -> (Option<Vec<u8>>, Option<String>) {
     (exif, xmp.map(|x| x.trim_end_matches('\0').to_string()))
 }
 
+#[cfg(test)]
+mod tests_gain;
 #[cfg(test)]
 mod tests_synthetic;
 

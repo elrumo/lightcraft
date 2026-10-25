@@ -7,6 +7,8 @@ mod float_tiff;
 mod fuzz;
 mod header;
 #[cfg(feature = "heif")]
+mod hdr_sources;
+#[cfg(feature = "heif")]
 mod heif;
 #[cfg(all(feature = "jxl", not(target_arch = "wasm32")))]
 mod jxl_streaming;
