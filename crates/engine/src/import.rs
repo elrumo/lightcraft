@@ -35,8 +35,8 @@ use crate::media::ProbeInfo;
 /// File extensions offered by import discovery and file pickers (lower case).
 /// This includes preview-only raws; the file probe decides whether sensor decoding is available.
 pub const EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "rw2", "rwl", "raw", "pef",
-    "srw", "psd", "psb", "jxl", "gif", "bmp",
+    "jpg", "jpeg", "png", "tif", "tiff", "webp", "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "ori", "rw2", "rwl", "raw",
+    "pef", "srw", "psd", "psb", "jxl", "gif", "bmp",
     // Decoded when built with the codecs' `heif` feature; otherwise the import reports them as
     // failed with the reason ("HEIC/HEIF support isn't included in this build").
     "heic", "heif", "avif", // no AV1 decoder yet: reported as failed, like a HEIC without the feature
@@ -48,7 +48,7 @@ pub const EXTENSIONS: &[&str] = &[
 /// The camera raw formats among [`EXTENSIONS`] (lower case): sensor data, or for some a preview only (see there).
 /// `library.importFormats` reports them to a file picker.
 pub const RAW_EXTENSIONS: &[&str] = &[
-    "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "rw2", "rwl", "raw", "pef", "srw", "iiq", "crw", "mrw", "x3f", "kdc",
+    "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "ori", "rw2", "rwl", "raw", "pef", "srw", "iiq", "crw", "mrw", "x3f", "kdc",
     "mos", "erf", "3fr", "fff", "mef", "gpr",
 ];
 
@@ -362,6 +362,18 @@ impl ImportDefaults {
         }
         self.raw_preset.as_deref()
     }
+}
+
+/// Give a photo the crop its file asks for ([`crate::media::ProbeInfo::default_crop`]) as part of its import look: the
+/// photo isn't edited by it, Reset returns to it, and the crop tool can widen it to the whole picture the camera
+/// recorded. Call it after [`apply_import_defaults`] (or whatever else sets the photo's starting settings).
+pub fn apply_default_crop(p: &mut Photo, crop: Option<[f64; 4]>) {
+    let Some([x0, y0, x1, y1]) = crop.filter(|c| c.iter().all(|v| v.is_finite()) && c[0] < c[2] && c[1] < c[3]) else { return };
+    let mut d = (*p.develop).clone();
+    d.crop.geometry.rect = lightcraft_geom::Rect::new(x0, y0, x1, y1);
+    let look = std::sync::Arc::new(d);
+    p.develop = look.clone();
+    p.import_look = Some(look);
 }
 
 /// Give a freshly imported photo its default settings: the camera defaults, then the matching
@@ -1617,6 +1629,7 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 p.embedded_lens = info.embedded_lens;
                 p.set_preview_only(info.preview_only.clone());
                 apply_import_defaults(s, &mut p);
+                apply_default_crop(&mut p, info.default_crop);
                 if let Some(sc) = &sidecar {
                     crate::sidecar::merge_into(&mut p, sc, &now);
                     report.sidecars += 1;

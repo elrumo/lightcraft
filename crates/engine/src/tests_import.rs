@@ -2561,7 +2561,9 @@ fn raw_sidecar_rating_and_crop_survive_naming_and_encoding_variants() {
     }
     nef.extend_from_slice(&[0, 0, 0, 0]);
     nef.extend_from_slice(&j);
-    let body = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" xmp:Rating="3" crs:HasCrop="True" crs:CropLeft="0.2" crs:CropTop="0.1" crs:CropRight="0.8" crs:CropBottom="0.9" crs:CropAngle="1.5"/></rdf:RDF></x:xmpmeta>"#;
+    let body = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" xmp:Rating="3" crs:HasCrop="True" crs:CropLeft="0.2" crs:CropTop="0.1" crs:CropRight="0.8" crs:CropBottom="0.9" crs:CropAngle="0"/></rdf:RDF></x:xmpmeta>"#;
+    // (not straightened: a straightened crop is put into the shown frame by the file's orientation, which a preview-only
+    // raw like this one reports too, and moves its edges: `a_preview_only_raw_has_its_stored_frame_for_lightroom_crops`)
     let cases = [
         ("darktable-full", "DSC_0001.NEF.xmp", body.to_string()),
         ("lower-full", "DSC_0001.nef.xmp", body.to_string()),

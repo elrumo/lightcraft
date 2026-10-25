@@ -158,6 +158,15 @@ fn raw_format_name(name: &str, found: lightcraft_raw::RawFormat) -> String {
     .to_string()
 }
 
+/// A preview-only raw's reason. An `.ori` is what OM Digital Solutions writes for the original frames of its High Res
+/// and Pro Capture modes: an ORF container with the same compressed coding, which the decoder names an ORF.
+fn preview_only_reason(name: &str, why: String) -> String {
+    match why.strip_prefix("Olympus compressed ORF") {
+        Some(rest) if ext_upper(name) == "ORI" => format!("Olympus compressed ORI (a High Res or Pro Capture original){rest}"),
+        _ => why,
+    }
+}
+
 /// "unrecognized file format" plus what the file holds (its size and first bytes), so a report names
 /// an empty, placeholder or wrapped file instead of leaving a guess.
 fn unrecognized(bytes: &[u8]) -> String {
@@ -184,7 +193,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             Ok(r) => r,
             Err(Ok(why)) => {
                 // a raw variant we can't decode yet: describe it from its embedded preview
-                let (w, h) = embedded_preview_size(bytes).ok_or(format!("unsupported raw ({why}) without an embedded preview"))?;
+                let (w, h, orientation) = embedded_preview_size(bytes).ok_or(format!("unsupported raw ({why}) without an embedded preview"))?;
                 return Ok(ProbeInfo {
                     width: w,
                     height: h,
@@ -196,7 +205,10 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
                     as_shot_wb: None,
                     content_hash,
                     xmp: lightcraft_meta::embedded(bytes).xmp,
-                    preview_only: Some(why),
+                    preview_only: Some(preview_only_reason(name, why)),
+                    // the preview's own frame: Lightroom's crop edges in a sidecar refer to it, like a decoded raw's
+                    orientation: Some(orientation),
+                    default_crop: (found == lightcraft_raw::RawFormat::Orf).then(|| default_crop_of(bytes, orientation, w, h)).flatten(),
                     ..Default::default()
                 });
             }
@@ -210,8 +222,11 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         let scale = WbScaleOf::new(raw.format, &raw.color, raw.wb_multipliers, &raw.metadata);
         let as_shot_wb = Some(scale.as_shot(lightcraft_raw::color::as_shot_white_xy_of(&raw)));
         let embedded_lens = crate::lens_profiles::for_raw(&raw, || m.clone());
+        // an Olympus / OM body's aspect-ratio setting (3:2, 16:9, 1:1): the whole 4:3 area is developed, the camera's JPEG is cut
+        let default_crop = (found == lightcraft_raw::RawFormat::Orf).then(|| default_crop_of(bytes, raw.orientation, w, h)).flatten();
         return Ok(ProbeInfo {
             embedded_lens,
+            default_crop,
             width: w,
             height: h,
             format: raw_format_name(name, found),
@@ -261,6 +276,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         preview_only: None,
         orientation: Some(o),
         duration: None,
+        default_crop: None,
     })
 }
 
@@ -959,8 +975,8 @@ pub(crate) fn decode_raw_preview(
     }
 }
 
-/// Oriented size of the embedded preview of a raw file.
-fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32)> {
+/// Oriented size of the embedded preview of a raw file, and the orientation that turned it.
+fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32, Orientation)> {
     let jpeg = stand_in_image(bytes, None)?;
     // headers only, as for other images (issue #367): decoding a full-size preview just for its
     // size took about a second per file in an import; a decode remains the fallback
@@ -971,10 +987,25 @@ fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32)> {
             (d.source_width, d.source_height, d.orientation)
         }
     };
-    if preview_orientation(bytes, orientation).swaps_axes() {
+    let orientation = preview_orientation(bytes, orientation);
+    if orientation.swaps_axes() {
         std::mem::swap(&mut w, &mut h);
     }
-    Some((w, h))
+    Some((w, h, orientation))
+}
+
+/// The crop a raw file asks for by itself ([`ProbeInfo::default_crop`]): the frame it states is in the stored picture, so
+/// it goes through the file's `orientation` into the picture shown (`shown_w × shown_h`), as Lightroom's crop edges do
+/// ([`crate::crs::crop_in_frame`]).
+fn default_crop_of(bytes: &[u8], orientation: Orientation, shown_w: u32, shown_h: u32) -> Option<[f64; 4]> {
+    let [x0, y0, x1, y1] = lightcraft_raw::olympus_aspect_frame(bytes)?;
+    let (w, h) = (f64::from(shown_w), f64::from(shown_h));
+    let stored_aspect = if orientation.swaps_axes() { h / w } else { w / h };
+    let mut v = serde_json::json!({"crop": {"geometry": {"rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}, "angle": 0.0}}});
+    crate::crs::crop_in_frame(&mut v, orientation, stored_aspect);
+    let r = v.pointer("/crop/geometry/rect")?;
+    let at = |k: &str| r.get(k).and_then(serde_json::Value::as_f64).filter(|x| x.is_finite());
+    Some([at("x0")?, at("y0")?, at("x1")?, at("y1")?])
 }
 
 /// The embedded preview of a raw file as a working-space image no larger than `max_edge`, oriented.

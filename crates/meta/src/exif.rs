@@ -19,9 +19,10 @@ pub fn try_read_exif(bytes: &[u8]) -> Result<Metadata, TiffError> {
     let data = strip_exif_header(bytes);
     let tiff = Tiff::parse(data)?;
     let mut m = from_tiff(&tiff);
-    // Panasonic writes no LensModel, only the name in its maker note (and in a RW2 that note is not in the raw's own Exif)
+    // Panasonic writes no LensModel, only the name in its maker note (and in a RW2 that note is not in the raw's own Exif);
+    // neither do the Olympus bodies before the E-M5 (E-30, E-5, E-420, E-450, E-520, E-600, E-620, E-P1 to E-PL3, E-PM1)
     if m.lens_model.is_none() {
-        m.lens_model = panasonic_maker_note_lens(data, &tiff);
+        m.lens_model = panasonic_maker_note_lens(data, &tiff).or_else(|| olympus_maker_note_lens(data, &tiff));
     }
     // the maker note's values are offsets into the stream, which `from_tiff` doesn't have
     m.focus = crate::focus::read(data, &tiff, m.make.as_deref(), m.model.as_deref(), m.orientation);
@@ -193,6 +194,28 @@ fn panasonic_jpg_from_raw_lens(tiff: &Tiff) -> Option<String> {
     panasonic_lens(data, &Tiff::parse(data).ok()?)
 }
 
+/// Olympus maker note tag `0x2010` (the Equipment directory in the ExifTool Olympus tag names, an IFD pointer counted from
+/// the note's start) and its tag `0x0203` (LensModel, ASCII).
+const OLYMPUS_EQUIPMENT: u16 = 0x2010;
+const OLYMPUS_LENS_MODEL: u16 = 0x0203;
+
+/// The lens name in the Equipment directory of a new-style Olympus or OM System maker note (`OLYMPUS\0` or `OM SYSTEM\0`) of
+/// this Exif stream (`data` starts at its TIFF header). The older `OLYMP\0` notes name the lens by a type code only.
+pub(crate) fn olympus_maker_note_lens(data: &[u8], tiff: &Tiff) -> Option<String> {
+    let exif = tiff.exif()?;
+    let note = exif.bytes(t::MAKER_NOTE)?;
+    if !(note.starts_with(b"OLYMPUS\0") || note.starts_with(b"OM SYSTEM\0")) {
+        return None;
+    }
+    let e = exif.get(t::MAKER_NOTE)?;
+    let make = tiff.ifds.first().and_then(|i| i.string(t::MAKE)).unwrap_or_default();
+    let mn = lightcraft_tiff::makernote::parse_makernote(data, e.offset, e.count() as u64, tiff.order, &make)?;
+    let at = mn.base.checked_add(mn.ifd.u64(OLYMPUS_EQUIPMENT)?)?;
+    let opts = lightcraft_tiff::ParseOptions { max_ifds: 4, max_depth: 1, follow_children: false, ..Default::default() };
+    let (equipment, _) = lightcraft_tiff::parse_ifd_at(data, at, mn.order, mn.base, false, &opts).ok()?;
+    text(Some(&equipment), OLYMPUS_LENS_MODEL)
+}
+
 /// Nikon maker note tag `0x0084` (Lens in the ExifTool Nikon tag names): shortest and longest focal length, then the
 /// widest aperture at each, as rationals, like Exif LensSpecification. Zero for a lens that doesn't report itself.
 const NIKON_LENS: u16 = 0x0084;
@@ -287,6 +310,81 @@ pub(crate) mod tests {
         assert_eq!(m.lens_model.as_deref(), Some("LUMIX S 85/F1.8"));
         assert_eq!(m.focal_length, Some(85.0));
         assert_eq!(crate::extract(&rw2).lens_model.as_deref(), Some("LUMIX S 85/F1.8"));
+    }
+
+    /// An Exif block from an Olympus body that writes no Exif LensModel: a new-style maker note (`magic` is its header, the
+    /// IFD right after it, offsets counted from the note's start) with the Equipment directory (0x2010) holding the lens
+    /// name in tag 0x0203, or, for `lens` `None`, another entry in its place.
+    fn olympus_exif(magic: &[u8], lens: Option<&str>, lens_model: Option<&str>) -> Vec<u8> {
+        let entry = |tag: u16, typ: u16, count: u32, value: u32| {
+            let mut e = tag.to_le_bytes().to_vec();
+            e.extend(typ.to_le_bytes());
+            e.extend(count.to_le_bytes());
+            e.extend(value.to_le_bytes());
+            e
+        };
+        let equipment_at = magic.len() + 2 + 12 + 4;
+        let name_at = equipment_at + 2 + 12 + 4;
+        let mut note = magic.to_vec();
+        note.extend(1u16.to_le_bytes());
+        note.extend(entry(OLYMPUS_EQUIPMENT, 13, 1, equipment_at as u32));
+        note.extend(0u32.to_le_bytes());
+        assert_eq!(note.len(), equipment_at);
+        note.extend(1u16.to_le_bytes());
+        let name = format!("{}\0", lens.unwrap_or(""));
+        note.extend(match lens {
+            Some(_) => entry(OLYMPUS_LENS_MODEL, 2, name.len() as u32, name_at as u32),
+            None => entry(0x0204, 4, 1, 0),
+        });
+        note.extend(0u32.to_le_bytes());
+        note.extend(name.as_bytes());
+        let mut exif = IfdBuilder::new();
+        exif.set(t::MAKER_NOTE, Value::Undefined(note));
+        exif.set(t::FOCAL_LENGTH, Value::Rational(vec![(12, 1)]));
+        if let Some(l) = lens_model {
+            exif.set(t::LENS_MODEL, Value::Ascii(l.into()));
+        }
+        let mut ifd0 = IfdBuilder::new();
+        ifd0.set(t::MAKE, Value::Ascii("OLYMPUS IMAGING CORP.".into()));
+        ifd0.set_child(t::EXIF_IFD, exif);
+        TiffWriter::new(ByteOrder::Little, false).write(&[ifd0]).unwrap()
+    }
+
+    const OLYMPUS_NOTE: &[u8] = b"OLYMPUS\0II\x03\0";
+    const OM_SYSTEM_NOTE: &[u8] = b"OM SYSTEM\0\0\0II\x04\0";
+
+    #[test]
+    fn olympus_maker_note_names_the_lens_when_exif_does_not() {
+        // E-P2, E-30, E-5 ...: no Exif LensModel, the name only in Equipment; OM System bodies use the same directory
+        for magic in [OLYMPUS_NOTE, OM_SYSTEM_NOTE] {
+            let m = read_exif(&olympus_exif(magic, Some("OLYMPUS M.14-42mm F3.5-5.6"), None));
+            assert_eq!(m.lens_model.as_deref(), Some("OLYMPUS M.14-42mm F3.5-5.6"));
+            assert_eq!(m.focal_length, Some(12.0));
+        }
+        // Exif's own LensModel wins; a note without the tag, or a blank name (an adapted lens), leaves the lens empty
+        let m = read_exif(&olympus_exif(OLYMPUS_NOTE, Some("OLYMPUS M.14-42mm F3.5-5.6"), Some("Other 25mm")));
+        assert_eq!(m.lens_model.as_deref(), Some("Other 25mm"));
+        assert_eq!(read_exif(&olympus_exif(OLYMPUS_NOTE, None, None)).lens_model, None);
+        assert_eq!(read_exif(&olympus_exif(OLYMPUS_NOTE, Some("        "), None)).lens_model, None);
+        // the same bytes under another maker's note header read nothing
+        assert_eq!(read_exif(&olympus_exif(b"Panasonic\0\0\0II\x03\0", Some("not Olympus"), None)).lens_model, None);
+    }
+
+    /// A hostile note (a pointer past the file or to itself, a cut-short file) gives no lens, never a panic.
+    #[test]
+    fn olympus_equipment_pointer_and_truncation_never_panic() {
+        let good = olympus_exif(OLYMPUS_NOTE, Some("OLYMPUS M.12-40mm F2.8"), None);
+        assert_eq!(read_exif(&good).lens_model.as_deref(), Some("OLYMPUS M.12-40mm F2.8"));
+        let at = good.windows(8).position(|w| w == b"OLYMPUS\0").unwrap();
+        // the pointer (the IFD's first entry's value, 12 + 2 + 8 bytes into the note): every extreme
+        for ptr in [0u32, 1, 12, 13, u32::MAX, u32::MAX - 3, 0x7fff_ffff, good.len() as u32, good.len() as u32 + 100] {
+            let mut bad = good.clone();
+            bad[at + 12 + 2 + 8..at + 12 + 2 + 12].copy_from_slice(&ptr.to_le_bytes());
+            let _ = read_exif(&bad);
+        }
+        for len in 0..good.len() {
+            let _ = read_exif(&good[..len]);
+        }
     }
 
     /// An Exif block from a Nikon body whose maker note records the lens (tag 0x0084) and no LensModel or

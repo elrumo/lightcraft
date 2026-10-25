@@ -119,7 +119,7 @@ fn calibrate_discovers_raw_inputs_of_every_maker_without_touching_files() {
     let input = tmp("calibrate-canon-inputs");
     let nested = input.join("nested");
     std::fs::create_dir_all(&nested).unwrap();
-    let extensions = ["ARW", "nef", "NRW", "raf", "CR2", "cr3", "rw2", "rwl", "raw", "pef", "srw", "orf"];
+    let extensions = ["ARW", "nef", "NRW", "raf", "CR2", "cr3", "rw2", "rwl", "raw", "pef", "srw", "orf", "ori"];
     for extension in extensions {
         std::fs::write(nested.join(format!("camera.{extension}")), b"invalid raw fixture").unwrap();
     }
@@ -134,7 +134,7 @@ fn calibrate_discovers_raw_inputs_of_every_maker_without_touching_files() {
     let result = Command::new(BIN).args(["calibrate", "--out"]).arg(&out).arg(&input).output().unwrap();
     assert!(!result.status.success(), "invalid raws cannot produce a profile");
     let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stderr.contains("12 of 12 raw files"), "raw inputs silently ignored: {stderr}");
+    assert!(stderr.contains("13 of 13 raw files"), "raw inputs silently ignored: {stderr}");
     for extension in extensions {
         let name = format!("camera.{extension}");
         assert!(stderr.contains(&name), "{name} was not passed to the decoder: {stderr}");

@@ -370,8 +370,8 @@ pub(crate) fn thumbnail_arrived(device: &str, item: &str, r: Result<Vec<u8>, Str
 
 /// Raw formats by extension (when the device doesn't say).
 const RAW_EXTENSIONS: &[&str] = &[
-    "3fr", "arw", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "iiq", "kdc", "mef", "mos", "mrw", "nef", "nrw", "orf", "pef", "raf", "raw",
-    "rw2", "rwl", "sr2", "srf", "srw", "x3f",
+    "3fr", "arw", "cr2", "cr3", "crw", "dcr", "dng", "erf", "fff", "iiq", "kdc", "mef", "mos", "mrw", "nef", "nrw", "orf", "ori", "pef", "raf",
+    "raw", "rw2", "rwl", "sr2", "srf", "srw", "x3f",
 ];
 
 /// `name` is a raw file by its extension.
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn raw_files_by_extension() {
-        assert!(raw_name("IMG_0001.CR3") && raw_name("dsc.nef") && raw_name("a.b.DNG"));
+        assert!(raw_name("IMG_0001.CR3") && raw_name("dsc.nef") && raw_name("a.b.DNG") && raw_name("P5048183.ORI"));
         assert!(!raw_name("IMG_0001.JPG") && !raw_name("CR3") && !raw_name("x.heic"));
     }
 

@@ -493,6 +493,7 @@ pub(crate) fn heal_preview_only(s: &mut Session, id: lightcraft_catalog::PhotoId
             let mut fresh = (**p).clone();
             (fresh.preview_only, fresh.as_shot_wb, fresh.embedded_lens) = (None, info.as_shot_wb, info.embedded_lens);
             crate::import::apply_import_defaults(s, &mut fresh);
+            crate::import::apply_default_crop(&mut fresh, info.default_crop);
             // ponytail: the catalog keeps no as-shot white balance / lens facts for a healed raw (no op sets them
             // without a catalog format bump), so Reset goes back to the rendered-file defaults; the UI reads the
             // decoder's lens facts instead (`Session::embedded_lens`)

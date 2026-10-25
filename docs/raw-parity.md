@@ -1,6 +1,6 @@
 # RAW parity: cameras, formats, demosaic, colour and lens profiles
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (GoPro GPR (VC-5) decodes (upstream #2787); pre-X FinePix and SuperCCD RAFs decode: 11 more Fujifilm models verified (upstream #2316, #2063); a raw whose camera JPEG gives no look to fit starts from its camera's typical colour, the mean of the 52 measured cameras' matrices (leave-one-out CIEDE2000 2.0 from the camera's own best matrix, against 8.7 for camera RGB read as sRGB), and a neutral tone at its maker's exposure: Sony A33, A500, A580 and Samsung NX210, NX1100 ΔE00 to the camera JPEG 6.5–19.8 → 4.2–8.4; `calibrate --references` fits a neutral look (exposure, contrast, hue/saturation table) for any maker and format, not only Canon CR3; `library.importFormats` gives a native frontend's file picker every extension Import takes; upstream v0.13.0 merged: Minolta MRW decoded, 6 bodies verified; Canon ColorData Kelvin; lossy JPEG XL DNG tiles with a non-linear declared transfer curve decode, and DNGs with a look table fit their tone to a 1024 px preview; the EOS R6 neutral tone refitted on vignetting-corrected frames, ΔE00 against Lightroom 3.96 → 3.30; Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (Olympus family: ORI import, more uncompressed bodies verified, ORF preview details and aspect crop (ORF-ORI, ORF-VERIFY, ORF-PREVIEW, ORF-ASPECT); GoPro GPR (VC-5) decodes (upstream #2787); pre-X FinePix and SuperCCD RAFs decode: 11 more Fujifilm models verified (upstream #2316, #2063); a raw whose camera JPEG gives no look to fit starts from its camera's typical colour, the mean of the 52 measured cameras' matrices (leave-one-out CIEDE2000 2.0 from the camera's own best matrix, against 8.7 for camera RGB read as sRGB), and a neutral tone at its maker's exposure: Sony A33, A500, A580 and Samsung NX210, NX1100 ΔE00 to the camera JPEG 6.5–19.8 → 4.2–8.4; `calibrate --references` fits a neutral look (exposure, contrast, hue/saturation table) for any maker and format, not only Canon CR3; `library.importFormats` gives a native frontend's file picker every extension Import takes; upstream v0.13.0 merged: Minolta MRW decoded, 6 bodies verified; Canon ColorData Kelvin; lossy JPEG XL DNG tiles with a non-linear declared transfer curve decode, and DNGs with a look table fit their tone to a 1024 px preview; the EOS R6 neutral tone refitted on vignetting-corrected frames, ΔE00 against Lightroom 3.96 → 3.30; Canon CR3s apply the vignetting correction measured from their camera JPEG; the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
 
 Raw processing is the deepest single dimension of Lightroom parity: a photographer whose camera
 does not decode, or decodes with the wrong colour, cannot switch. This document measures it model by
@@ -15,9 +15,9 @@ ranked in [gaps.md](gaps.md). Details per format: [cr3.md](cr3.md),
 | Measure | Value | Kind |
 |---|---:|---|
 | Adobe-listed camera models | **1,446** | measured: [raw/adobe-cameras.tsv](raw/adobe-cameras.tsv) |
-| Decoded from sensor data and **verified** on a real file | **551** (38%) | measured: [raw/evidence.tsv](raw/evidence.tsv) |
-| Decoder path should handle it, **unverified** | **656** (45%) | measured from the format rules (631 of them DNG, mostly phones) |
-| **Preview-only** (embedded JPEG) | **202** (14%) | measured |
+| Decoded from sensor data and **verified** on a real file | **556** (38%) | measured: [raw/evidence.tsv](raw/evidence.tsv) |
+| Decoder path should handle it, **unverified** | **653** (45%) | measured from the format rules (631 of them DNG, mostly phones) |
+| **Preview-only** (embedded JPEG) | **200** (14%) | measured |
 | **Unsupported** (not imported, refused or decodes wrongly) | **37** (3%) | measured |
 | Models added since 2017 (Camera Raw 10+): verified / unverified / preview / unsupported | 182 / 542 / 22 / 8 of 754 | measured |
 | **Share of photographers whose camera fully works** (decodes from sensor data), use-weighted | **~94%** | estimated: measured classes × written usage weights × per-format confidence |
@@ -121,7 +121,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Nikon | 99 | 77 | 19 | 0 | 3 | COOLPIX 5700 / 8400 / 8800 decode wrongly (two stacked half-height fields, CMYG read as RGB); HE / HE★ is a per-shot setting, preview-only |
 | Fujifilm | 97 | 76 | 19 | 2 | 0 | SuperCCD SR bodies (F700, S20 Pro) refused, preview |
 | Google | 88 | 5 | 83 | 0 | 0 | — |
-| Olympus | 71 | 17 | 3 | 51 | 0 | **compressed ORF** |
+| Olympus | 71 | 22 | 0 | 49 | 0 | **compressed ORF** |
 | Leica | 61 | 27 | 34 | 0 | 0 | — |
 | Xiaomi, Oppo, LG, Huawei, OnePlus, Motorola, Nokia | 139 | 0 | 139 | 0 | 0 | — (DNG) |
 | Pentax / Ricoh | 60 | 40 | 20 | 0 | 0 | — |
@@ -131,7 +131,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | DJI | 21 | 4 | 17 | 0 | 0 | DNG |
 | OM Digital Solutions | 7 | 0 | 0 | 7 | 0 | **compressed ORF** |
 | Kodak, Konica Minolta, Epson, Sigma, GoPro, Contax, others | 56 | 12 | 16 | 13 | 15 | DCR, GPR not imported; KDC, X3F preview (Epson ERF and Minolta MRW decode) |
-| **All** | **1,446** | **551 (38%)** | **656 (45%)** | **202 (14%)** | **37 (3%)** | |
+| **All** | **1,446** | **556 (38%)** | **653 (45%)** | **200 (14%)** | **37 (3%)** | |
 
 ## By use (estimated)
 
@@ -142,7 +142,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Nikon | 16% | 98% | 89% | decoders cover every NEF coding but HE; 77 bodies verified |
 | Fujifilm | 10% | 99% | 95% | pre-X FinePix and SuperCCD decode (#2063); F700 and S20 Pro preview |
 | Panasonic | 4% | 100% | 98% | bulk-checked |
-| OM / Olympus | 3% | 6% | 5% | compressed ORF |
+| OM / Olympus | 3% | 6% | 6% | compressed ORF |
 | Phones | 3% | 93% | 4% | DNG |
 | Pentax / Ricoh | 1.5% | 99% | 80% | |
 | Leica | 1% | 99% | 72% | the Q3 verified, 13 more bodies pinned on CC0 files |
@@ -185,8 +185,9 @@ checked (the per-model CC0 sweeps of October 2026); compressed ORF (OM / Olympus
 | RAF | pre-X FinePix without a raw IFD, bare Bayer (S5500, S200EXR in EXR-DR mode) | ✅ | 2 CC0 files, pinned (`body_corpus.rs`); `raf_legacy.rs` |
 | RAF | SuperCCD (rows: S5000 … S9600; lines: S3Pro, S5Pro, S100FS, S6000fd; columns: S2Pro) | 🟡 | 11 CC0 files follow the camera JPEG (`body_corpus.rs`); the decoder demosaics in the 45° frame itself (AHD), so the Demosaic setting and AI Denoise don't apply; the S3Pro and S5Pro are decoded from their primary photodiodes only (their files hold a second, darker block of the same size after the raw block, most likely the low-sensitivity photodiodes, which isn't read); raw blocks longer than their recorded size (a wide-DR second exposure?) refused (#2063) |
 | RAF | SuperCCD SR (F700, F710, S20 Pro), DBP for GX680 | ⬜ | refused, preview (`raf_legacy.rs`; no CC0 SR sample, the GX680's matches no SuperCCD mapping) |
-| ORF | uncompressed 16-bit, 12-bit packed, two-field 12-bit, 12.8 bpp | ✅ | E-1, E-400, XZ-2 corpus; #651 |
-| ORF | **compressed** (every Olympus / OM body since ~2008) | ⬜ | `orf.rs` refuses; the E-M1 and E-M10 III corpus files are `KNOWN_UNSUPPORTED` |
+| ORF | uncompressed 16-bit, 12-bit packed, two-field 12-bit, 12.8 bpp (a 3:2, 16:9 or 1:1 setting becomes the import crop, XZ-10) | ✅ | E-1, E-400, XZ-2 corpus and 19 files in `olympus_samsung_corpus.rs` (sensor hash and camera-JPEG check; the E-20, C-5050, C-8080, SP-350 and SP-500 UZ added 2026-10-24); #651 |
+| ORF | **compressed** (every Olympus / OM body since ~2008) | ⬜ | `orf.rs` refuses; the E-M1 and E-M10 III corpus files are `KNOWN_UNSUPPORTED`. Opens as its camera JPEG: the largest complete one (88 files, 70 bodies), turned by the container's orientation, lens name from the maker note when Exif has none, the camera's aspect frame as the import crop (`olympus_preview_corpus.rs`) |
+| ORI | OM Digital Solutions' High Res and Pro Capture originals (`.ori`) | 🟡 | an ORF container with the compressed coding: imports as a preview-only raw whose reason names the ORI, develops from sensor data if its strip is an uncompressed layout; 19 CC0 files from 8 bodies, 4 pinned in `olympus_ori_corpus.rs` |
 | RW2 / RWL / RAW | formats 2, 4, 5, 6, 7, 8 and 16-bit words | ✅ | 118 bodies (#215) |
 | PEF | uncompressed, Huffman, packed 12-bit | ✅ | K10D, K-3, K-5 IIs; files without area tags lose their masked, empty and saturated border lines (#1271: KP, KF, K-3 Mark III, K-70, K-1, K-1 Mark II, K-S1, K-S2, 645Z) |
 | PEF / DNG | Pentax pixel shift | ⬜ | frames not combined |
@@ -380,3 +381,7 @@ The normalizer now subtracts the computed black and scales each DNG sample plane
 | 2026-10-15 | minor | By-maker and by-use tables re-measured with `coverage.py` after batches 36–39 (545 verified, 651 unverified, 212 preview, 38 unsupported; ~94% of photographers' cameras fully work, ~85% on a verified body); rows the per-model PRs had updated are current again |
 | 2026-10-16 | minor | DNG `ProfileToneCurve` renders with per-channel chroma: ProRAW was 74% as colourful as Apple's and Lightroom's render |
 | 2026-10-18 | minor | Minolta MRW decoded (`vendor/mrw.rs`): DiMAGE 7, 7Hi, A1, A2, A200 and Dynax / Maxxum 7D verified; 551 verified, 656 unverified, 201 preview (re-measured with `coverage.py`) |
+| 2026-10-24 | minor | ORF-ORI: `.ori` is an import extension and a raw format (import, pickers, camera cards); an ORI is read like an ORF (same container, compressed strip) and imports as a preview-only raw named in its reason; 19 CC0 ORI files from OM-1, OM-1 Mark II, OM-3, OM-5, OM-5 Mark II, E-M1 Mark II, E-M1 Mark III and E-M5 Mark II checked, 4 pinned (`olympus_ori_corpus.rs`) |
+| 2026-10-24 | minor | ORF-VERIFY: five more uncompressed Olympus bodies verified on one CC0 file each (`olympus_samsung_corpus.rs`: pinned sensor hash and camera-JPEG check): Camedia C-5050 Zoom, Camedia C-8080 Wide Zoom and E-20 (were unverified), SP-350 and SP-500 UZ (were preview-only: both files are the two-field 12-bit layout the SP-510 UZ and SP-570 UZ use, so they decode); 556 verified, 653 unverified, 200 preview (re-measured with `coverage.py`); SP-310, SP-320 and SP-560 UZ stay preview-only (no file to check) |
+| 2026-10-24 | minor | ORF-PREVIEW: preview-only Olympus / OM photos (compressed ORF, ORI) measured on 88 CC0 files from 70 bodies: the JPEG shown is always the largest complete one (3200 x 2400 from the E-5 on, 1600 x 1200 for the 2007 to 2008 DSLRs, 1280 x 960 for the E-1), turned by the container's orientation (the JPEGs carry none: E-30, XZ-10, C-5050 shot upright), metadata complete except the lens of 14 older bodies, whose Exif has no LensModel: it is read from the maker note's Equipment directory. A preview-only raw now reports its orientation to the import (Lightroom crop edges in a sidecar are read in the stored frame, as for a decoded raw: a portrait's crop was read in the shown frame), and an Olympus shot at 3:2, 16:9 or 1:1 (maker note AspectFrame: 5 of the 88 files) takes that frame as its import crop (import look, not an edit); the camera's 4:3 JPEG and sensor area show the whole frame |
+| 2026-10-24 | minor | ORF-ASPECT: a decoded Olympus / OM raw takes the camera's aspect frame as its import crop (the whole 4:3 area is developed, the crop is part of the import look: not an edit, Reset keeps it, the Crop tool can widen it), by the valid-area rule the decoder crops with; the preview-only to decodable heal keeps it; two realistic ORF samples with a new-style maker note join the vendor fuzzers (every truncation, 2000 mutations: no panic found) |
