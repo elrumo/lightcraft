@@ -271,6 +271,10 @@ pub struct Photo {
     /// show it until it is added.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub local: bool,
+    /// The file was protected (locked) in the camera: it carried the file system's Read-Only attribute when it was
+    /// imported. Cameras set it with their protect function; `Filter::locked` finds these photos.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
     /// Video duration in seconds.
     #[serde(default)]
     pub duration: Option<f64>,
@@ -397,6 +401,7 @@ impl Photo {
             deleted: false,
             hidden: false,
             local: false,
+            locked: false,
             duration: None,
             as_shot_wb: None,
             content_hash: None,

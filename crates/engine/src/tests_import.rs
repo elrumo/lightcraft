@@ -203,6 +203,35 @@ fn imported_photos_are_added_the_day_they_were_taken() {
 }
 
 #[test]
+fn files_the_camera_protected_import_as_locked_and_the_filter_finds_them() {
+    let src = temp_dir("locked");
+    write_png(&src.join("protected.png"), 1);
+    write_png(&src.join("open.png"), 2);
+    // the Read-Only attribute a camera's protect function sets
+    let mut perms = std::fs::metadata(src.join("protected.png")).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(src.join("protected.png"), perms).unwrap();
+
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(ids(&r, "imported"), 2, "{r}");
+    let locked = |s: &Session, name: &str| s.catalog.photos().find(|p| p.file_name == name).map(|p| p.locked);
+    assert_eq!(locked(&s, "protected.png"), Some(true));
+    assert_eq!(locked(&s, "open.png"), Some(false));
+
+    assert_eq!(s.execute("library.filter", &json!({"locked": true})).unwrap()["count"], 1);
+    assert_eq!(s.visible().len(), 1);
+    assert_eq!(s.execute("library.filter", &json!({"locked": false})).unwrap()["count"], 1);
+    assert_eq!(s.execute("library.filter", &json!({"locked": null})).unwrap()["count"], 2);
+
+    let mut perms = std::fs::metadata(src.join("protected.png")).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(src.join("protected.png"), perms).unwrap();
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
 fn browsing_again_reads_sidecars_changed_by_another_app() {
     let root = temp_dir("reread");
     let (dir, lib) = (root.join("shoot"), root.join("lib"));

@@ -203,6 +203,9 @@ pub fn filter_chips(f: &Filter, cat: &Catalog) -> Vec<FilterChip> {
     if let Some(e) = f.edited {
         add(if e { "Edited".into() } else { "Unedited".into() }, json!({"edited": Null}));
     }
+    if let Some(l) = f.locked {
+        add(if l { "Locked in camera".into() } else { "Not locked".into() }, json!({"locked": Null}));
+    }
     for (name, key, val) in [
         ("Camera", "camera", &f.camera),
         ("Lens", "lens", &f.lens),
