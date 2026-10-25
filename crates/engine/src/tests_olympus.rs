@@ -25,21 +25,41 @@ fn jpeg(w: usize, h: usize) -> Vec<u8> {
 }
 
 /// A new-style Olympus maker note (`OLYMPUS\0II\x03\0`: the IFD at 12, offsets counted from the note's start) whose
-/// CameraSettings directory (0x2020) names `preview` as its PreviewImage (0x0101 start, 0x0102 length).
-fn maker_note(preview: &[u8]) -> Vec<u8> {
-    let entry = |tag: u16, typ: u16, v: u32| {
-        [tag.to_le_bytes().to_vec(), typ.to_le_bytes().to_vec(), 1u32.to_le_bytes().to_vec(), v.to_le_bytes().to_vec()].concat()
+/// CameraSettings directory (0x2020) names `preview` as its PreviewImage (0x0101 start, 0x0102 length) and, when `frame`
+/// is given, whose ImageProcessing directory (0x2040) states the valid area (the sensor, 5184 × 3888) and that aspect frame
+/// (`AspectFrame`, 0x1113: left, top, right, bottom).
+fn maker_note(preview: &[u8], frame: Option<[u16; 4]>) -> Vec<u8> {
+    let entry = |tag: u16, typ: u16, count: u32, v: u32| {
+        [tag.to_le_bytes().to_vec(), typ.to_le_bytes().to_vec(), count.to_le_bytes().to_vec(), v.to_le_bytes().to_vec()].concat()
     };
-    let camera_settings = 12 + 2 + 12 + 4;
-    let jpeg_at = camera_settings + 2 + 2 * 12 + 4;
+    let directories = if frame.is_some() { 2 } else { 1 };
+    let camera_settings = 12 + 2 + 12 * directories + 4;
+    let image_processing = camera_settings + 2 + 2 * 12 + 4;
+    // ImageProcessing: the valid area (left, top, width, height), the frame (its four SHORTs follow the directory)
+    let ip_len = 2 + 5 * 12 + 4;
+    let frame_at = image_processing + ip_len;
+    let jpeg_at = if frame.is_some() { frame_at + 8 } else { image_processing };
     let mut n = b"OLYMPUS\0II\x03\0".to_vec();
-    n.extend(1u16.to_le_bytes());
-    n.extend(entry(0x2020, 13, camera_settings as u32));
+    n.extend((directories as u16).to_le_bytes());
+    n.extend(entry(0x2020, 13, 1, camera_settings as u32));
+    if frame.is_some() {
+        n.extend(entry(0x2040, 13, 1, image_processing as u32));
+    }
     n.extend(0u32.to_le_bytes());
     n.extend(2u16.to_le_bytes());
-    n.extend(entry(0x0101, 4, jpeg_at as u32));
-    n.extend(entry(0x0102, 4, preview.len() as u32));
+    n.extend(entry(0x0101, 4, 1, jpeg_at as u32));
+    n.extend(entry(0x0102, 4, 1, preview.len() as u32));
     n.extend(0u32.to_le_bytes());
+    if let Some(f) = frame {
+        n.extend(5u16.to_le_bytes());
+        n.extend(entry(0x0612, 4, 1, 0));
+        n.extend(entry(0x0613, 4, 1, 0));
+        n.extend(entry(0x0614, 4, 1, 5184));
+        n.extend(entry(0x0615, 4, 1, 3888));
+        n.extend(entry(0x1113, 3, 4, frame_at as u32));
+        n.extend(0u32.to_le_bytes());
+        n.extend(f.iter().flat_map(|v| v.to_le_bytes()));
+    }
     n.extend(preview);
     n
 }
@@ -48,6 +68,11 @@ fn maker_note(preview: &[u8]) -> Vec<u8> {
 /// shot with the camera turned as `orientation` says, with `preview` as its CameraSettings preview and a few Exif
 /// fields (ISO 200, 1/125 s, an RGGB colour-filter layout).
 fn container(w: u32, h: u32, bits: u16, strip: Vec<u8>, orientation: u16, preview: &[u8]) -> Vec<u8> {
+    container_framed(w, h, bits, strip, orientation, preview, None)
+}
+
+/// [`container`] shot at an aspect ratio other than 4:3: `frame` is the note's `AspectFrame`.
+fn container_framed(w: u32, h: u32, bits: u16, strip: Vec<u8>, orientation: u16, preview: &[u8], frame: Option<[u16; 4]>) -> Vec<u8> {
     let mut ifd = IfdBuilder::new();
     ifd.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
     ifd.set(t::IMAGE_LENGTH, Value::Long(vec![h]));
@@ -62,7 +87,7 @@ fn container(w: u32, h: u32, bits: u16, strip: Vec<u8>, orientation: u16, previe
     exif.set(t::EXPOSURE_TIME, Value::Rational(vec![(1, 125)]));
     exif.set(t::ISO_SPEED, Value::Short(vec![200]));
     exif.set(0xa302, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
-    exif.set(t::MAKER_NOTE, Value::Undefined(maker_note(preview)));
+    exif.set(t::MAKER_NOTE, Value::Undefined(maker_note(preview, frame)));
     ifd.set_child(t::EXIF_IFD, exif);
     let mut b = TiffWriter::new(ByteOrder::Little, false).write(&[ifd]).unwrap();
     b[2] = b'R';
@@ -133,5 +158,87 @@ fn an_ori_with_an_uncompressed_strip_develops_as_a_raw() {
     assert_eq!((p.width, p.height), (16, 8), "the sensor's size, not the preview's");
     assert!(p.develops_raw() && p.relative_wb() && p.fitted_look(), "a raw like an ORF: look fitted to its JPEG, relative white balance");
     assert!(s.render_job(p.id, 16, 8, false, true).unwrap().run().rendered.is_ok());
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// A preview-only raw is described in its preview's frame, the one Lightroom's crop edges in a sidecar refer to: the
+/// probe says how it is turned, and a sidecar's crop of the stored image's left half lands on the top half of the
+/// portrait that shows it (before, the crop was read in the shown frame: the left half of the portrait).
+#[test]
+fn a_preview_only_raw_has_its_stored_frame_for_lightroom_crops() {
+    use crate::media::ProbeInfo;
+    use lightcraft_geom::Orientation;
+    let landscape = container(5184, 3888, 16, compressed_strip(1), 1, &jpeg(40, 30));
+    let portrait = container(5184, 3888, 16, compressed_strip(2), 6, &jpeg(40, 30));
+    let probe = |name: &str, bytes: &[u8]| -> ProbeInfo { crate::files::probe_bytes(name, bytes).unwrap() };
+    assert_eq!(probe("a.orf", &landscape).orientation, Some(Orientation::Normal));
+    let p = probe("b.orf", &portrait);
+    assert_eq!((p.width, p.height, p.orientation), (30, 40, Some(Orientation::Rotate90)));
+    assert_eq!(p.stored_frame().map(|f| (f.width, f.height)), Some((40.0, 30.0)));
+
+    let src = temp_dir("stored-frame");
+    std::fs::write(src.join("b.orf"), &portrait).unwrap();
+    let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:HasCrop="True" crs:CropLeft="0" crs:CropTop="0" crs:CropRight="0.5" crs:CropBottom="1" crs:CropAngle="0"/></rdf:RDF></x:xmpmeta>"#;
+    std::fs::write(src.join("b.xmp"), xmp).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(1), "{r}");
+    let rect = s.catalog.photos().next().unwrap().develop.crop.geometry.rect;
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    assert!(near(rect.x0, 0.0) && near(rect.x1, 1.0) && near(rect.y0, 0.0) && near(rect.y1, 0.5), "{rect:?}");
+    let _ = std::fs::remove_dir_all(&src);
+
+    // a straightened crop is read in the stored frame too: Lightroom turns clockwise, LightCraft's angle is the other way
+    let src = temp_dir("stored-frame-angle");
+    std::fs::write(src.join("c.orf"), &landscape).unwrap();
+    std::fs::write(src.join("c.xmp"), xmp.replace("crs:CropAngle=\"0\"", "crs:CropAngle=\"1.5\"")).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let angle = s.catalog.photos().next().unwrap().develop.crop.geometry.angle;
+    assert!(near(angle, -1.5), "{angle}");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// A shot at 3:2, 16:9 or 1:1 holds the whole 4:3 sensor area and its preview, and says which frame the camera's own
+/// JPEG was cut to. A preview-only photo takes that frame as its crop, as part of its import look (not an edit, Reset
+/// keeps it, the crop tool can widen it) and in the shown frame, turned like the picture. A 4:3 shot, and one whose
+/// frame doesn't fit its area, get no crop.
+#[test]
+fn an_aspect_frame_becomes_the_import_crop_of_a_preview_only_raw() {
+    let src = temp_dir("aspect-frame");
+    // 16:9 of a 5184 x 3888 area: the rows 484 to 3403
+    let wide = [0, 484, 5183, 3403];
+    let write = |name: &str, orientation: u16, seed: u8, frame: Option<[u16; 4]>| {
+        std::fs::write(src.join(name), container_framed(5184, 3888, 16, compressed_strip(seed), orientation, &jpeg(40, 30), frame)).unwrap();
+    };
+    write("landscape.orf", 1, 1, Some(wide));
+    write("portrait.orf", 6, 2, Some(wide));
+    write("four-three.orf", 1, 3, Some([0, 0, 5183, 3887]));
+    write("damaged.orf", 1, 4, Some([0, 484, 6000, 3403]));
+    write("none.orf", 1, 5, None);
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(5), "{r}");
+    let photo = |name: &str| s.catalog.photos().find(|p| p.file_name == name).unwrap().clone();
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    let (top, bottom) = (484.0 / 3888.0, 3404.0 / 3888.0);
+
+    let p = photo("landscape.orf");
+    let r = p.develop.crop.geometry.rect;
+    assert!(near(r.x0, 0.0) && near(r.x1, 1.0) && near(r.y0, top) && near(r.y1, bottom), "{r:?}");
+    assert!(!p.is_edited(), "an import look, not an edit");
+    assert!(p.develop_is(p.import_defaults()));
+
+    // the camera held upright (stored image turned 90 degrees clockwise): the frame's rows become columns
+    let p = photo("portrait.orf");
+    let r = p.develop.crop.geometry.rect;
+    assert!(near(r.y0, 0.0) && near(r.y1, 1.0) && near(r.x0, 1.0 - bottom) && near(r.x1, 1.0 - top), "{r:?}");
+    assert!(!p.is_edited());
+
+    for name in ["four-three.orf", "damaged.orf", "none.orf"] {
+        let p = photo(name);
+        assert_eq!(p.develop.crop.geometry.rect, lightcraft_geom::Rect::UNIT, "{name}");
+        assert!(p.import_look.is_none(), "{name}");
+    }
     let _ = std::fs::remove_dir_all(&src);
 }

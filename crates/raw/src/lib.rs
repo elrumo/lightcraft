@@ -162,6 +162,13 @@ impl RawFormat {
     }
 }
 
+/// The frame an Olympus / OM System body's aspect-ratio setting (3:2, 16:9, 1:1, …) cuts from its 4:3 picture, as `[x0, y0, x1, y1]`
+/// fractions of the picture the sensor data and the embedded JPEG show; `None` for 4:3 and for files that don't say
+/// (`vendor::orf::aspect_frame`). It works on every ORF, decodable or not.
+pub fn olympus_aspect_frame(bytes: &[u8]) -> Option<[f64; 4]> {
+    vendor::orf::aspect_frame(bytes)
+}
+
 /// Recognise a raw file from its first bytes / TIFF structure.
 pub fn probe(bytes: &[u8]) -> Option<RawFormat> {
     if bytes.len() >= 12 && &bytes[4..12] == b"ftypcrx " {

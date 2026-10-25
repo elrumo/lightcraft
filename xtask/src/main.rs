@@ -2551,6 +2551,33 @@ const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/data/Olympus/SP500UZ/RAW_OLYMPUS_SP500UZ.ORF",
         "076d1a979bba1cfb48c3e90410305de60e8ae4f988eabd246d684117f80a9f96",
     ),
+    // Compressed Olympus ORFs, shown from their JPEG: orientation, lens name and aspect frame
+    // (crates/raw/tests/it/olympus_preview_corpus.rs); raw.pixls.us/data/ paths.
+    (
+        "orf-olympus-e-30.orf",
+        "https://raw.pixls.us/data/Olympus/E-30/RAW_OLYMPUS_E30.ORF",
+        "08f1bac42d04b983006784f6f2fc0d604149572db5022d0052901323f0b17562",
+    ),
+    (
+        "orf-olympus-e-p2.orf",
+        "https://raw.pixls.us/data/Olympus/E-P2/P9084305.ORF",
+        "2666a6ed03e8678bc6ce0e5354f39a07284e6f8b200dc696d9b543dc9f82bdd5",
+    ),
+    (
+        "orf-olympus-e-m10-mark-iv.orf",
+        "https://raw.pixls.us/data/Olympus/E-M10%20Mark%20IV/PA040002.ORF",
+        "77b67d898f85d3d738cb16daf9740c0fcf078ce9662c381994604ac540ce36b4",
+    ),
+    (
+        "orf-olympus-tg-6.orf",
+        "https://raw.pixls.us/data/Olympus/TG-6/_6100003.ORF",
+        "edd6f928bc790c79852a17fce56718d26563c7a593894d22970ef0fdb86ba45f",
+    ),
+    (
+        "orf-olympus-e-3.orf",
+        "https://raw.pixls.us/data/Olympus/E-3/E_3__3099164_casco_antiguo_petrer.ORF",
+        "ba4605bbd9fe9b77971da444bcdb1698904c0ad4ebdf9dd42dd45ab255f3f6d4",
+    ),
     // OM Digital Solutions' `.ori` (High Res / Pro Capture originals): an ORF container with the compressed coding
     // (crates/raw/tests/it/olympus_ori_corpus.rs). One per body family; raw.pixls.us/data/ paths.
     (

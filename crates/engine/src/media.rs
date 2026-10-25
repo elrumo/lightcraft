@@ -2249,6 +2249,12 @@ pub struct ProbeInfo {
     pub orientation: Option<lightcraft_geom::Orientation>,
     /// A video clip's length in seconds (`None` for a picture).
     pub duration: Option<f64>,
+    /// A crop the file asks for by itself, `[x0, y0, x1, y1]` as fractions of the picture shown (after
+    /// [`Self::orientation`]): an Olympus / OM System ORF shot at 3:2, 16:9 or 1:1 holds the whole 4:3 sensor area and
+    /// its JPEG preview, and says which frame the camera's own JPEG was cut to
+    /// ([`lightcraft_raw::olympus_aspect_frame`]). Import puts it into the photo's import look
+    /// ([`crate::import::apply_default_crop`]), so it is not an edit and the crop tool can widen it.
+    pub default_crop: Option<[f64; 4]>,
 }
 
 impl ProbeInfo {

@@ -57,6 +57,8 @@ const MN_WB_BLUE: u16 = 0x1018;
 const MN_BLACK: u16 = 0x1012;
 const MN_VALID_BITS: u16 = 0x102c;
 const CROP: [u16; 4] = [0x0612, 0x0613, 0x0614, 0x0615];
+/// ImageProcessing `AspectFrame`: left, top, right and bottom (inclusive) of the frame of the camera's aspect-ratio setting.
+const ASPECT_FRAME: u16 = 0x1113;
 
 /// The Olympus maker note.
 pub(crate) fn maker_note(bytes: &[u8], tiff: &Tiff) -> Option<MakerNote> {
@@ -199,6 +201,15 @@ fn field_rows(strips: &[(u64, u64)], w: usize, h: usize, file_len: usize) -> Opt
     Some(rows)
 }
 
+/// The valid area of a `w × h` sensor from ImageProcessing's `CropLeft`, `CropTop`, `CropWidth` and `CropHeight`
+/// ([`CROP`]); `None` unless all four are there and the area is not empty and inside the sensor. Checked: the tags are
+/// file data, and `x + width` on a hostile value would wrap past the bounds.
+fn valid_area(ip: &Ifd, w: usize, h: usize) -> Option<Rect> {
+    let [x, y, cw, ch] = CROP.map(|tag| ip.u64(tag).and_then(|v| usize::try_from(v).ok()));
+    let (x, y, cw, ch) = (x?, y?, cw?, ch?);
+    (cw > 0 && ch > 0 && x.checked_add(cw)? <= w && y.checked_add(ch)? <= h).then(|| Rect::new(x, y, cw, ch))
+}
+
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
@@ -284,15 +295,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
 
     let mn = maker_note(bytes, &tiff);
     let ip = mn.as_ref().and_then(|m| sub_ifd(bytes, m, IMAGE_PROCESSING));
-    let active = match ip.as_ref().map(|i| CROP.map(|tag| i.u64(tag).map(|v| v as usize))) {
-        // checked: the tags are file data; `x + cw` on a hostile value would wrap past the bounds
-        Some([Some(x), Some(y), Some(cw), Some(ch)])
-            if cw > 0 && ch > 0 && x.checked_add(cw).is_some_and(|end| end <= w) && y.checked_add(ch).is_some_and(|end| end <= h) =>
-        {
-            Rect::new(x, y, cw, ch)
-        }
-        _ => Rect::new(0, 0, w, h),
-    };
+    let active = ip.as_ref().and_then(|i| valid_area(i, w, h)).unwrap_or(Rect::new(0, 0, w, h));
     let cfa = stated.unwrap_or_else(|| cfa_from_data(samples, w, active));
     let black = match ip.as_ref().and_then(|i| i.f64s(BLACK)).as_deref() {
         Some(v @ [_, _, _, _]) => {
@@ -351,6 +354,34 @@ pub(crate) fn preview(bytes: &[u8]) -> Option<&[u8]> {
     let start = mn.base.checked_add(cs.u64(PREVIEW_START)?)? as usize;
     let len = cs.u64(PREVIEW_LENGTH)? as usize;
     bytes.get(start..start.checked_add(len)?.min(bytes.len()))
+}
+
+/// The frame the camera's aspect-ratio setting (3:2, 16:9, 1:1, …) cuts from its 4:3 valid area, as `[x0, y0, x1, y1]`
+/// fractions of that area: ImageProcessing `AspectFrame` (`0x1113`: left, top, right and bottom pixel, inclusive) over the
+/// area the decoder crops to ([`CROP`], whose width and height it needs). The sensor data and the camera's preview JPEG
+/// show the whole area whatever the setting; the camera's own JPEG is cut to this frame.
+///
+/// `None` for a file without the tags, for a frame that is empty or reaches outside the area (a damaged note), and for
+/// the whole area itself (4:3). The area is the one [`decode`] crops to (all four [`CROP`] tags, inside the sensor), so
+/// the frame is in the picture the decoder develops. Never reads outside `bytes`: every number is checked.
+pub fn aspect_frame(bytes: &[u8]) -> Option<[f64; 4]> {
+    let tiff = Tiff::parse(bytes).ok()?;
+    let info = tiff.ifds.first()?.image().ok()?;
+    let mn = maker_note(bytes, &tiff)?;
+    let ip = sub_ifd(bytes, &mn, IMAGE_PROCESSING)?;
+    // the area the decoder crops to, by the same rule
+    let area = valid_area(&ip, usize::try_from(info.width).ok()?, usize::try_from(info.height).ok()?)?;
+    let [left, top, right, bottom] = ip.f64s(ASPECT_FRAME)?.as_slice().try_into().ok()?;
+    let whole_pixel = |v: f64| v.is_finite() && v >= 0.0 && v.fract() == 0.0;
+    if ![left, top, right, bottom].into_iter().all(whole_pixel) {
+        return None;
+    }
+    let (width, height) = (area.width as f64, area.height as f64);
+    if left >= right || top >= bottom || right >= width || bottom >= height {
+        return None;
+    }
+    let frame = [left / width, top / height, (right + 1.0) / width, (bottom + 1.0) / height];
+    (frame != [0.0, 0.0, 1.0, 1.0]).then_some(frame)
 }
 
 #[cfg(test)]
@@ -779,6 +810,114 @@ mod tests {
         let bytes = orf_with(20, 4, 16, pack_blocks(&[5u16; 80]), Some(RGGB));
         for cut in [bytes.len() - 1, bytes.len() - 40, bytes.len() / 2, 100] {
             let _ = crate::decode(&bytes[..cut]);
+        }
+    }
+
+    /// A new-style Olympus maker note (`OLYMPUS\0II\x03\0`, offsets counted from the note's start) whose ImageProcessing
+    /// directory (0x2040) holds `entries`, SHORT values each.
+    fn note_with_image_processing(entries: &[(u16, &[u16])]) -> Vec<u8> {
+        let ip_at = 12 + 2 + 12 + 4;
+        let mut values_at = ip_at + 2 + 12 * entries.len() + 4;
+        let (mut ifd, mut values) = (Vec::new(), Vec::new());
+        for (tag, v) in entries {
+            let bytes: Vec<u8> = v.iter().flat_map(|x| x.to_le_bytes()).collect();
+            ifd.extend(tag.to_le_bytes());
+            ifd.extend(3u16.to_le_bytes());
+            ifd.extend((v.len() as u32).to_le_bytes());
+            if bytes.len() <= 4 {
+                ifd.extend(&bytes);
+                ifd.extend(vec![0u8; 4 - bytes.len()]);
+            } else {
+                ifd.extend((values_at as u32).to_le_bytes());
+                values_at += bytes.len();
+                values.extend(bytes);
+            }
+        }
+        let mut note = b"OLYMPUS\0II\x03\0".to_vec();
+        note.extend(1u16.to_le_bytes());
+        for x in [
+            IMAGE_PROCESSING.to_le_bytes().to_vec(),
+            13u16.to_le_bytes().to_vec(),
+            1u32.to_le_bytes().to_vec(),
+            (ip_at as u32).to_le_bytes().to_vec(),
+        ] {
+            note.extend(x);
+        }
+        note.extend(0u32.to_le_bytes());
+        note.extend((entries.len() as u16).to_le_bytes());
+        note.extend(ifd);
+        note.extend(0u32.to_le_bytes());
+        note.extend(values);
+        note
+    }
+
+    /// An ORF whose ImageProcessing directory holds `entries`; its sensor is 5200 × 3900 (the compressed strip is short, the
+    /// note is all the tests read).
+    fn orf_with_image_processing(entries: &[(u16, &[u16])]) -> Vec<u8> {
+        orf_with_note(5200, 3900, 16, vec![0; 64], Some(RGGB), Some(note_with_image_processing(entries)))
+    }
+
+    /// The valid area (`CROP` tags: left, top, width, height) of a 16:9-shot E-M10 Mark IV and its frame.
+    const AREA: [(u16, &[u16]); 4] = [(0x0612, &[8, 0]), (0x0613, &[8, 0]), (0x0614, &[5184]), (0x0615, &[3888])];
+
+    fn frame_of(area: &[(u16, &[u16])], frame: Option<&[u16]>) -> Option<[f64; 4]> {
+        let mut entries = area.to_vec();
+        entries.extend(frame.map(|f| (ASPECT_FRAME, f)));
+        aspect_frame(&orf_with_image_processing(&entries))
+    }
+
+    /// The frame of a 3:2 / 16:9 / 1:1 setting, as fractions of the valid area; 4:3 (the whole area) and files that say
+    /// nothing give none.
+    #[test]
+    fn aspect_frame_is_the_setting_inside_the_valid_area() {
+        let f = frame_of(&AREA, Some(&[0, 484, 5183, 3403])).unwrap();
+        assert_eq!(f, [0.0, 484.0 / 3888.0, 1.0, 3404.0 / 3888.0]);
+        // 1:1: the centre 3888 columns
+        let f = frame_of(&AREA, Some(&[648, 0, 4535, 3887])).unwrap();
+        assert_eq!(f, [648.0 / 5184.0, 0.0, 4536.0 / 5184.0, 1.0]);
+        assert_eq!(frame_of(&AREA, Some(&[0, 0, 5183, 3887])), None, "4:3");
+        assert_eq!(frame_of(&AREA, None), None, "no frame");
+        assert_eq!(frame_of(&AREA[..3], Some(&[0, 484, 5183, 3403])), None, "no height of the valid area");
+        assert_eq!(aspect_frame(&orf(16, 4, 16, vec![0; 128])), None, "no maker note");
+        assert_eq!(aspect_frame(b"not an ORF"), None);
+    }
+
+    /// A damaged note gives no frame (and never a panic): an empty or inverted frame, one past the valid area, a wrong
+    /// number of values, a zero-sized area.
+    #[test]
+    fn aspect_frame_refuses_numbers_that_do_not_fit() {
+        for frame in [
+            &[0u16, 484, 5184, 3403][..], // right edge is the area's width: one pixel out
+            &[0, 484, 5183, 3888],        // bottom edge is the area's height
+            &[0, 484, u16::MAX, 3403],    // far outside
+            &[u16::MAX, u16::MAX, u16::MAX, u16::MAX],
+            &[100, 484, 100, 3403], // empty
+            &[200, 484, 100, 3403], // inverted
+            &[0, 3000, 5183, 100],
+            &[0, 484, 5183],          // short
+            &[0, 484, 5183, 3403, 7], // long
+            &[],
+        ] {
+            assert_eq!(frame_of(&AREA, Some(frame)), None, "{frame:?}");
+        }
+        for (w, h) in [(0u16, 3888u16), (5184, 0), (0, 0)] {
+            let (cw, ch) = ([w], [h]);
+            let area: [(u16, &[u16]); 4] = [(0x0612, &[8, 0]), (0x0613, &[8, 0]), (0x0614, &cw), (0x0615, &ch)];
+            assert_eq!(frame_of(&area, Some(&[0, 484, 5183, 3403])), None, "area {w}x{h}");
+        }
+        let mut entries = AREA.to_vec();
+        entries.push((ASPECT_FRAME, &[0, 484, 5183, 3403][..]));
+        let good = orf_with_image_processing(&entries);
+        assert!(aspect_frame(&good).is_some());
+        // the directory pointer past the file, onto itself, or into the header; and every truncation
+        let at = good.windows(8).position(|w| w == b"OLYMPUS\0").unwrap();
+        for ptr in [0u32, 1, 12, 30, u32::MAX, u32::MAX - 1, 0x8000_0000, good.len() as u32] {
+            let mut bad = good.clone();
+            bad[at + 12 + 2 + 8..at + 12 + 2 + 12].copy_from_slice(&ptr.to_le_bytes());
+            let _ = aspect_frame(&bad);
+        }
+        for len in 0..good.len() {
+            let _ = aspect_frame(&good[..len]);
         }
     }
 }

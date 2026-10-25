@@ -2,6 +2,14 @@
 
 ## 2026-10-24
 
+### Olympus and OM System files open the way the camera shot them
+- A compressed `.orf` (or `.ori`), which opens from its camera JPEG, now has the lens name of older bodies (E-30, E-5,
+  E-420, E-450, E-520, E-600, E-620, the first PEN cameras) and, for a shot at 3:2, 16:9 or 1:1, starts cropped to that frame; the crop is
+  part of the import look, so it isn't an edit and the Crop tool can widen it to the whole picture.
+- A Lightroom crop that comes with a raw shown from its JPEG (a sidecar next to the file) is now placed the way it is
+  for any other raw: a portrait's crop of its left half no longer lands on the left half of the turned picture, and a
+  straightened crop turns the right way.
+
 ### OM System .ori files import
 - The files OM Digital Solutions cameras write for High Res and Pro Capture shots (`.ori`) now appear in Import, the
   file pickers and camera cards. Like the compressed `.orf` files of the same cameras they open

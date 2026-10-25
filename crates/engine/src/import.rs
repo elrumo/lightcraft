@@ -364,6 +364,18 @@ impl ImportDefaults {
     }
 }
 
+/// Give a photo the crop its file asks for ([`crate::media::ProbeInfo::default_crop`]) as part of its import look: the
+/// photo isn't edited by it, Reset returns to it, and the crop tool can widen it to the whole picture the camera
+/// recorded. Call it after [`apply_import_defaults`] (or whatever else sets the photo's starting settings).
+pub fn apply_default_crop(p: &mut Photo, crop: Option<[f64; 4]>) {
+    let Some([x0, y0, x1, y1]) = crop.filter(|c| c.iter().all(|v| v.is_finite()) && c[0] < c[2] && c[1] < c[3]) else { return };
+    let mut d = (*p.develop).clone();
+    d.crop.geometry.rect = lightcraft_geom::Rect::new(x0, y0, x1, y1);
+    let look = std::sync::Arc::new(d);
+    p.develop = look.clone();
+    p.import_look = Some(look);
+}
+
 /// Give a freshly imported photo its default settings: the camera defaults, then the matching
 /// default preset ([`ImportDefaults::preset_for`]), remembered as the photo's import look.
 pub fn apply_import_defaults(s: &Session, p: &mut Photo) {
@@ -1617,6 +1629,7 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 p.embedded_lens = info.embedded_lens;
                 p.set_preview_only(info.preview_only.clone());
                 apply_import_defaults(s, &mut p);
+                apply_default_crop(&mut p, info.default_crop);
                 if let Some(sc) = &sidecar {
                     crate::sidecar::merge_into(&mut p, sc, &now);
                     report.sidecars += 1;
