@@ -18,7 +18,9 @@
 //!   and half of the brightness of the iPhone's own JPEG (mean 8-bit level 36 / 61 against 108 / 126;
 //!   with it 109 / 126). Lightroom Classic renders ProRAW without it (measured on the iPhone 12 Pro
 //!   corpus file against Lightroom Classic 15.6: with the map, mean ΔE00 19 from Lightroom's
-//!   render); turning the option off renders that way.
+//!   render); turning the option off renders that way. Lightroom's own "Apple ProRaw" look does
+//!   apply it (`ProfileGainTableMap` 100 in the look's parameters, seen in a Lightroom Classic
+//!   sidecar of an iPhone 13 Pro ProRAW): importing such a sidecar turns the option on.
 //!
 //! The data is read from the user's own file at run time; nothing here ships profile data.
 //! Values above 1.0 (highlight headroom) keep their headroom: the table's value scale only ever
