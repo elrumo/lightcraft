@@ -1448,10 +1448,10 @@ pub(crate) fn clamp_local(mut a: LocalAdjustments) -> LocalAdjustments {
         &mut a.sharpness,
         &mut a.noise,
         &mut a.moire,
-        &mut a.defringe,
     ] {
         c(v, -100.0, 100.0);
     }
+    c(&mut a.defringe, 0.0, 100.0);
     c(&mut a.color_hue, 0.0, 360.0);
     c(&mut a.color_sat, 0.0, 100.0);
     c(&mut a.amount, 0.0, 200.0);

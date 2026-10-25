@@ -393,7 +393,10 @@ pub fn nr_params(s: &DevelopSettings, scale: f32) -> (Option<NrLum>, Option<NrCo
     let scale = if scale.is_finite() { scale.clamp(0.0, 1.0) } else { 1.0 };
     let l = (lum > 0.0).then(|| nr_radius((1.0 + 2.5 * lum) * scale)).filter(|&(_, w)| w >= NR_MIN_BLEND).map(|(sigma, w)| {
         let detail = (s.detail.nr_detail / 100.0) as f32;
-        let eps = ((0.002 + lum * lum * 0.25 * (1.0 - 0.7 * detail)) * scale * scale).max(1e-7);
+        // Contrast keeps the contrast of what is not the finest noise: the lower the filter's edge threshold, the
+        // fainter the edges it keeps, at the price of blotchier noise (Lightroom's Luminance Contrast)
+        let contrast = (s.detail.nr_contrast / 100.0).clamp(0.0, 1.0) as f32;
+        let eps = ((0.002 + lum * lum * 0.25 * (1.0 - 0.7 * detail)) * (1.0 - 0.9 * contrast) * scale * scale).max(1e-7);
         NrLum { sigma, eps, k: lum.sqrt() * w }
     });
     let smooth = 1.0 + (s.detail.nr_color_smoothness / 100.0) as f32;

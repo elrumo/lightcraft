@@ -527,7 +527,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     ));
     let lin_key = hash_of((
         pre_nr_key,
-        [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
+        [d.nr_luminance, d.nr_detail, d.nr_contrast, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
         detail_scale.to_bits(),
     ));
     Plan { settings, frame, w, h, px_per_long, src_long, detail_scale, geo, lin_key, pre_nr_key, eyes, fixed_air, keep, mattes, blur, origin }
@@ -831,3 +831,5 @@ mod tests_sharpen;
 mod tests_tone;
 #[cfg(test)]
 mod tests_window;
+#[cfg(test)]
+mod tests_sliders;
