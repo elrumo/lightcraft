@@ -40,7 +40,7 @@ pub const EXTENSIONS: &[&str] = &[
     // Decoded when built with the codecs' `heif` feature; otherwise the import reports them as
     // failed with the reason ("HEIC/HEIF support isn't included in this build").
     "heic", "heif", "avif", // no AV1 decoder yet: reported as failed, like a HEIC without the feature
-    "iiq", "crw", "mrw", "x3f", "kdc", "mos", "erf", "3fr", "fff", "mef",
+    "iiq", "crw", "mrw", "x3f", "kdc", "mos", "erf", "3fr", "fff", "mef", "gpr",
     // Video clips: listed, played and given a poster frame by `lightcraft-video` (H.264 and HEVC in MP4 / MOV).
     "mp4", "m4v", "mov",
 ];
@@ -49,7 +49,7 @@ pub const EXTENSIONS: &[&str] = &[
 /// `library.importFormats` reports them to a file picker.
 pub const RAW_EXTENSIONS: &[&str] = &[
     "dng", "cr2", "cr3", "nef", "nrw", "arw", "sr2", "srf", "raf", "orf", "rw2", "rwl", "raw", "pef", "srw", "iiq", "crw", "mrw", "x3f", "kdc",
-    "mos", "erf", "3fr", "fff", "mef",
+    "mos", "erf", "3fr", "fff", "mef", "gpr",
 ];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

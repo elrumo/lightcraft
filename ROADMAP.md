@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-24 · **Change:** minor (pre-X FinePix and SuperCCD RAFs decode (upstream #2316); upstream merged again, up to v0.13.0 (38f8d2508): Print gains Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺); Minolta MRW decoded, 6 bodies verified; German catalog 91% → 97%; Finnish and Indonesian interfaces; earlier: checklist recount 84.3% of 554 rows after the colour mixer's fit to Lightroom exports and Calibration ✅ → 🟡; a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-24 · **Change:** minor (GoPro GPR decodes (upstream #2787); pre-X FinePix and SuperCCD RAFs decode (upstream #2316); upstream merged again, up to v0.13.0 (38f8d2508): Print gains Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺); Minolta MRW decoded, 6 bodies verified; German catalog 91% → 97%; Finnish and Indonesian interfaces; earlier: checklist recount 84.3% of 554 rows after the colour mixer's fit to Lightroom exports and Calibration ✅ → 🟡; a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -142,6 +142,9 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 - 2026-10-24: Upstream merged again (up to v0.13.0, 38f8d2508; 675 commits). From upstream: Print gains the Japanese photo and
   postcard papers, Minolta MRW decodes, German catalog 97%, Finnish and Indonesian interfaces, a shared CI gate workflow,
   `cargo xtask ci --quick`. This fork keeps its sync server, Generative Expand and Sign Out ahead of it.
+- 2026-10-23: GoPro GPR (VC-5) decodes from sensor data (`crates/raw/src/vc5.rs`, ported from GoPro's
+  Apache-2.0 / MIT GPR SDK); FUSION, HERO5, HERO6, HERO7 and HERO10 Black verified on CC0 files. 556 models
+  verified, 28 unsupported (was 37); 84% of Adobe's models decode (was 83%); use-weighted shares unchanged.
 - 2026-10-22: Print page setup and PDF output gain the Japanese photo and postcard papers — L判
   (89 × 127 mm), 2L判 (127 × 178), KG判 (102 × 152), はがき (100 × 148), 往復はがき (148 × 200),
   六切 (203 × 254), 四切 (254 × 305) and 名刺 (55 × 91) — at their exact metric sizes. The Print dialog
@@ -236,6 +239,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Upstream #2787: GoPro GPR (VC-5) decoded: RAW 83% → 84% of Adobe's models decode, 38% verified; readiness unchanged |
 | 2026-10-24 | minor | Upstream merged again (up to v0.13.0); headline numbers are recounted after the merge |
 | 2026-10-22 | minor | Print: Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺) in the page setup, Print dialog and PDF output; headline numbers unchanged |
 | 2026-10-19 | minor | Indonesian interface (`id`): every plain and formats message, plus 69 command labels, locale, menu command and tests; What's New left in English; Localization ~55% → ~64% (mean of the 12 key languages), 8 of 12 present |

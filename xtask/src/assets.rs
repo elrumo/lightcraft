@@ -42,6 +42,7 @@ const ASSET_EXT: &[&str] = &[
     "raw",
     "pef",
     "srw",
+    "gpr",
     "heic",
     "jxl",
     "psd",

@@ -580,3 +580,8 @@ Fujifilm	FinePix S9000 (FinePix S9500)	verified	corpus: crates/raw/tests/it/body
 Fujifilm	FinePix S9100 (FinePix S9600)	verified	corpus: crates/raw/tests/it/body_corpus.rs (SuperCCD / pre-X FinePix RAF, camera-JPEG check)
 Fujifilm	FinePix S100fs	verified	corpus: crates/raw/tests/it/body_corpus.rs (SuperCCD / pre-X FinePix RAF, camera-JPEG check)
 Fujifilm	FinePix S200 EXR	verified	corpus: crates/raw/tests/it/body_corpus.rs (SuperCCD / pre-X FinePix RAF, camera-JPEG check)
+GoPro	FUSION	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sensor hash, green-pair check)
+GoPro	HERO5 Black	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sensor hash, green-pair check)
+GoPro	HERO6 Black	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sensor hash, green-pair check)
+GoPro	HERO7 Black	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sensor hash, green-pair check)
+GoPro	HERO10 Black	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sensor hash, green-pair check)
