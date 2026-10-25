@@ -281,6 +281,12 @@ from outside the window: the vignette geometry arrives as the `VIG_VIEW` paramet
 noise-reduction size come from the whole frame, and a window that spots or Auto Mask strokes grew is
 cut back after the readback. The tests skip (pass with a note) when no adapter exists.
 
+`every_control_matches_the_cpu_at_both_ends_and_through_the_stage_cache` (FB-SLIDER) renders every develop control
+(`lightcraft_develop::CONTROLS`, 126) at its default, minimum, maximum and default again, on a rendered file and on a
+raw, through one `StageCache` as a slider drag does, and holds each GPU picture to the bounds above against the
+CPU's fresh render (`controls::prepare_to_show` sets what a control needs to show). A control added later is covered
+the day it is added. Run on an Apple M1 Max (Metal, 2026-10-25): all 126 inside the bounds.
+
 `hdr_pictures_match` renders the settings cases (and a camera tone curve) as HDR edits (+1 EV, 3 stops of
 headroom, Display P3) and compares the GPU's HDR picture with the CPU's float render encoded the same way
 (extended sRGB curve, held to the peak), in steps of 1/255 of the encoded value, with the 8-bit bounds above:

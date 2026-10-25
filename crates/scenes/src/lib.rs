@@ -9,11 +9,13 @@
 
 mod noise;
 mod paint;
+mod sweep;
 
 use lightcraft_raster::Rgb32f;
 use serde::Serialize;
 
 pub use paint::render_srgb_linear;
+pub use sweep::sweep_scene;
 
 /// Kinds of scene the generator knows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

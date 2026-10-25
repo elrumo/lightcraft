@@ -120,6 +120,12 @@ says `"scale": "kelvin"`; a partial settings JSON given to `develop.merge` or a 
 **without** `scale` keeps the relative meaning it always had (6500 = as shot) on every raw, so agents that mean
 Kelvin on a Kelvin raw pass `"scale": "kelvin"` or use `develop.set` / `develop.wb`.
 
+A white balance set back to the photo's own as-shot white is As Shot again: `develop.set`, `develop.adjust` and
+`develop.resetControl` on `wb.temp` / `wb.tint` put the mode back to `asShot` once Temp and Tint both equal the
+as-shot values, and `develop.resetControl` sends the control there (not to 6500 K / 0, which on a raw is another
+white). For the same reason `develop.controls` lists the as-shot Kelvin and tint as the `default` of a Kelvin raw's
+`wb.temp` / `wb.tint`, so a double tap, a detent or a tick on the track means the camera's white.
+
 Image navigation is also available directly as the UI command `view.navigate`, with
 `{zoom?: "fit" | "fill" | {"percent": number}, pan?: [x, y]}`. Percentage zoom accepts fractional
 values greater than 0 and at most 800; pan is the normalized image centre, with coordinates from 0 to 1.

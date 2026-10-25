@@ -1254,3 +1254,47 @@ fn soft_proofs_match() {
     };
     assert!(lightcraft_gpu::render(&src, &raw, &DevelopSettings::default(), &req, None).is_none(), "declined: the CPU renders it");
 }
+
+/// FB-SLIDER: every develop control, at both ends of its range, renders the same on the GPU as on the CPU
+/// reference, for a rendered file and for a raw (Kelvin white balance), and keeps doing so as a slider drag moves
+/// it through the stage cache (base, min, max, base again: a setting the GPU's stage keys forget would leave the
+/// slider dead while it is dragged). A slider whose GPU twin is missing or wrong would work in one place and not in
+/// another (a preview on the phone's GPU against an export). Controls that run on the CPU inside the GPU render
+/// anyway (Lens Blur) agree trivially.
+#[test]
+fn every_control_matches_the_cpu_at_both_ends_and_through_the_stage_cache() {
+    if !gpu() {
+        return;
+    }
+    let src = Arc::new(lightcraft_scenes::sweep_scene(384, 256));
+    let req = RenderRequest::fit(384, 256);
+    let mut bad: Vec<String> = Vec::new();
+    for c in lightcraft_develop::CONTROLS {
+        // (the AI denoise picture is mixed in before the render, on both)
+        if c.id == "enhance.denoise" {
+            continue;
+        }
+        let mut base = DevelopSettings::default();
+        lightcraft_develop::controls::prepare_to_show(&mut base, c.id);
+        let at = |v: f64| {
+            let mut s = base.clone();
+            lightcraft_develop::controls::set(&mut s, c.id, v);
+            s
+        };
+        for info in [SourceInfo::default(), SourceInfo { raw: true, ..Default::default() }] {
+            let cache = StageCache::default();
+            for (name, s) in [("default", at(c.default)), ("min", at(c.min)), ("max", at(c.max)), ("default again", at(c.default))] {
+                let cpu = render(&src, &info, &s, &req).image;
+                let Some(gpu) = lightcraft_gpu::render(&src, &info, &s, &req, Some(&cache)) else {
+                    bad.push(format!("{} = {name}: the GPU did not render it", c.id));
+                    continue;
+                };
+                let (mean, max, _) = diff(&cpu, &gpu.image);
+                if mean >= MEAN_LSB || max > MAX_LSB {
+                    bad.push(format!("{} = {name} ({}): mean {mean:.3} LSB, max {max} LSB", c.id, if info.raw { "raw" } else { "rendered" }));
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} controls differ between the CPU and the GPU:\n{}", bad.len(), bad.join("\n"));
+}

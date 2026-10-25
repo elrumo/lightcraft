@@ -1,5 +1,18 @@
 # What's new in LightCraft
 
+## 2026-10-25
+
+### Sliders that do what they say
+- Detail ▸ Noise Reduction ▸ Contrast now does something. It was stored and shown but never read by the render, so
+  the slider had no effect on any photo. At the top it keeps fainter edges and leaves blotchier noise, as Lightroom's does.
+  Edits that carry a Contrast value (imported from Lightroom, say) now render with it, so those photos look different.
+- Resetting Temp or Tint (a double tap on the slider, Reset Control) puts white balance back to the photo's own
+  as-shot white and the As Shot mode. On a raw it went to 6500 K and left the mode on Custom, which is another white.
+  A Temp and Tint dragged back to the as-shot white are As Shot again too.
+- A mask's Defringe slider starts at 0: its negative half never did anything.
+- A test now moves every develop slider (and every mask slider) and fails when one stops changing the picture, when its
+  default doesn't give the untouched picture back, or (on a machine with a GPU) when the CPU and GPU renders differ.
+
 ## 2026-10-24
 
 ### Relative-date filters and smart albums follow the clock

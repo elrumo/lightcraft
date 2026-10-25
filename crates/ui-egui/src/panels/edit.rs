@@ -41,7 +41,11 @@ pub(crate) fn control(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSet
     let Some(spec) = controls::find(id) else { return };
     let v = controls::get(d, id).unwrap_or(spec.default);
     let out = slider(ui, spec, v, enabled, None);
-    apply_slider_out(app, spec, out, |app, v| app.run("develop.set", json!({"control": id, "value": v})));
+    // (a double click puts the control back as the engine knows it: white balance to the photo's own white, not 6500 K)
+    let reset = out.reset;
+    apply_slider_out(app, spec, out, |app, v| {
+        if reset { app.run("develop.resetControl", json!({"control": id})) } else { app.run("develop.set", json!({"control": id, "value": v})) }
+    });
 }
 
 /// Relative temperature scale for rendered (non-raw) files: −100..100 ↔ Kelvin via mired shift
