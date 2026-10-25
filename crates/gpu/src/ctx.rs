@@ -276,6 +276,14 @@ fn constants() -> String {
         crate::params::CURVE_N
     );
     s += &format!("const POINT_WORDS: u32 = {}u;\n", lightcraft_pipeline::colorops::POINT_WORDS);
+    {
+        use lightcraft_pipeline::colorops::GRADING_BLEND_WIDTH;
+        use lightcraft_pipeline::colorops::GRADING_SPLIT;
+        use lightcraft_pipeline::finish::{HIGHLIGHTS_UP, NEG_DEHAZE_GAMMA, NEG_DEHAZE_STRENGTH};
+        s += &format!(
+            "const NEG_DEHAZE_GAMMA: f32 = {NEG_DEHAZE_GAMMA:?};\nconst NEG_DEHAZE_STRENGTH: f32 = {NEG_DEHAZE_STRENGTH:?};\nconst HIGHLIGHTS_UP: f32 = {HIGHLIGHTS_UP:?};\nconst GRADING_SPLIT: f32 = {GRADING_SPLIT:?};\nconst GRADING_BLEND_WIDTH: f32 = {GRADING_BLEND_WIDTH:?};\n"
+        );
+    }
     // an HDR histogram's bins (`lightcraft_raster::HdrBins`, as an HDR edit's histogram has them)
     s += &format!(
         "const HIST_FROM: u32 = {}u;\nconst HIST_STOPS: f32 = {:?};\n",

@@ -38,6 +38,11 @@ const SSHORT: u16 = 8;
 /// geometry). The A7CR uses a separate conversion. ILCE-7RM4 and ILCE-7RM4A are distinct models, not interchangeable
 /// aliases.
 const DISTORTION_MODELS: &[&str] = &["ILCE-7RM4A", "ILCE-7M3"];
+/// APS-C bodies whose 11-sample distortion table (an SSHORT\[12\] headed by 11, padded to the 17 values of the
+/// 16-sample layout) is converted with the same convention as the 16-sample one: the ILCE-6000 with the E PZ 16-50mm
+/// F3.5-5.6 OSS at 16 mm, validated against Lightroom's lens-corrected export of the same raw (gradient correlation of
+/// the frame below the horizon 0.62 uncorrected, 0.83 corrected; the unit 16384 is within the optimum's plateau).
+const DISTORTION_MODELS_11: &[&str] = &["ILCE-6000"];
 /// Most directory entries scanned: a classic TIFF directory's largest count, also bounding a BigTIFF one.
 const MAX_ENTRIES: usize = 1 << 16;
 const SAMPLES: usize = 1024;
@@ -223,6 +228,23 @@ fn parsed_table<const N: usize>(value: &Value) -> Read<[i16; N]> {
     Read::Valid(std::array::from_fn(|i| at(i + 1)))
 }
 
+/// A table of `N` < 16 samples as the TIFF reader parsed it: the 17 values of the 16-sample layout, the first `N`, then
+/// the samples, then zeros (the ILCE-6000's 11 samples).
+fn parsed_table_padded<const N: usize>(value: &Value) -> Read<[i16; N]> {
+    let Value::SShort(v) = value else { return Read::Rejected(SonyFieldError::FieldType(value.field_type() as u16)) };
+    if v.len() != 17 {
+        return Read::Rejected(SonyFieldError::Count(v.len() as u64));
+    }
+    let at = |i: usize| v.get(i).copied().unwrap_or(0);
+    if usize::try_from(at(0)).ok() != Some(N) {
+        return Read::Rejected(SonyFieldError::CountPrefix(at(0)));
+    }
+    if (N + 1..17).any(|i| at(i) != 0) {
+        return Read::Rejected(SonyFieldError::CountPrefix(at(0)));
+    }
+    Read::Valid(std::array::from_fn(|i| at(i + 1)))
+}
+
 /// A setting as the TIFF reader parsed it: SHORT\[1\], or SSHORT\[1\] when not negative (the documented and the stored
 /// type differ).
 fn parsed_setting(value: &Value, kind: Kind) -> Read<SonySetting> {
@@ -301,6 +323,11 @@ pub(super) fn corrections(
     let table16 = |tags: (u16, u16)| combine(raw_copy(raw, p, tags.0, parsed_table::<16>), sr2_copy(s, tags.1, |d, e| d.table::<16>(e)));
     let shading_table = table16(SHADING.table);
     let distortion_table = table16(DISTORTION.table);
+    let distortion_table_11 = if DISTORTION_MODELS_11.contains(&model) {
+        combine(raw_copy(raw, p, DISTORTION.table.0, parsed_table_padded::<11>), Found { read: Read::Absent, repeated: false })
+    } else {
+        combine(Found { read: Read::Absent, repeated: false }, Found { read: Read::Absent, repeated: false })
+    };
     let ca_table = combine(raw_copy(raw, p, CA.table.0, parsed_table::<32>).map(split), sr2_copy(s, CA.table.1, |d, e| d.table::<32>(e)).map(split));
     let setting = |tags: Tags, kind: Kind| {
         combine(raw_copy(raw, p, tags.setting.0, |v| parsed_setting(v, kind)), sr2_copy(s, tags.setting.1, |d, e| d.setting(e, kind)))
@@ -326,7 +353,14 @@ pub(super) fn corrections(
         Some(table) if in_mode && !a7cr => distortion(model, table, Rect::new(0, 0, w, h), geometry.reference),
         _ => None,
     };
+    // the 11-sample layout: the raw IFD's table of a validated APS-C body, in a native 3:2 Bayer frame
+    let warp_11 = match &distortion_table_11.value {
+        Some(table) if in_mode_11(&distortion_table_11, &geometry) => distortion(model, &table[..], Rect::new(0, 0, w, h), geometry.reference),
+        _ => None,
+    };
+    let warp = warp.or(warp_11);
     let distortion_status = match &distortion_table.value {
+        None if warp.is_some() => SonyLensStatus::Applied,
         None => SonyLensStatus::NoTable,
         Some(_) if warp.is_some() => SonyLensStatus::Applied,
         Some(_) if !validated_model => SonyLensStatus::NotValidatedModel,
@@ -345,6 +379,12 @@ pub(super) fn corrections(
         geometry,
     };
     (Some(record), warp)
+}
+
+/// Whether an 11-sample table is read in the mode the conversion was validated in: the raw IFD's copy, a Bayer image
+/// whose crop is native 3:2.
+fn in_mode_11(table: &SonyField<[i16; 11]>, geometry: &SonyLensGeometry) -> bool {
+    !geometry.linear_ycbcr && geometry.native_3_2 && table.source == Some(SonySource::RawIfd)
 }
 
 /// A7CR camera-JPEG convention, measured independently of the ILCE-7RM4A conversion below.
@@ -439,11 +479,13 @@ fn a7cr_distortion(table: &[i16; 16], active: Rect, crop: Rect) -> Option<Opcode
 /// camera models and the 16-entry layout; unknown models and implausible or non-smooth maps are left uncorrected.
 /// See docs/sony-lens-corrections.md. A camera setting of Off does not remove the lens data: the user can enable it
 /// in the developer.
-fn distortion(model: &str, table: &[i16; 16], active: Rect, crop: Rect) -> Option<Opcode> {
+fn distortion(model: &str, table: &[i16], active: Rect, crop: Rect) -> Option<Opcode> {
     // A matching table shape does not establish its scale or radial normalization on another body.
-    if !DISTORTION_MODELS.contains(&model) {
-        return None;
-    }
+    let last = match table.len() {
+        16 if DISTORTION_MODELS.contains(&model) => 15,
+        11 if DISTORTION_MODELS_11.contains(&model) => 10,
+        _ => return None,
+    };
     if table.iter().all(|v| *v == 0) || table.iter().any(|v| !(-4096..=4096).contains(v)) {
         return None;
     }
@@ -458,10 +500,10 @@ fn distortion(model: &str, table: &[i16; 16], active: Rect, crop: Rect) -> Optio
     }
     // Interpolate fractional radial scale at evenly spaced radii from centre to cropped corner.
     let scale = |r: f64| {
-        let at = r.clamp(0.0, 1.0) * 15.0;
-        let i = (at.floor() as usize).min(14);
-        let a = f64::from(table[i]);
-        let b = f64::from(table[i + 1]);
+        let at = r.clamp(0.0, 1.0) * last as f64;
+        let i = (at.floor() as usize).min(last - 1);
+        let a = f64::from(table.get(i).copied().unwrap_or(0));
+        let b = f64::from(table.get(i + 1).copied().unwrap_or(0));
         1.0 + (a + (b - a) * (at - i as f64)) / 16384.0
     };
     let (cw, ch) = (crop.width as f64 - 1.0, crop.height as f64 - 1.0);
@@ -469,7 +511,7 @@ fn distortion(model: &str, table: &[i16; 16], active: Rect, crop: Rect) -> Optio
     // Zoom until the entire rectangular output boundary is inside the source. For a piecewise-linear
     // scale its maximum on that boundary occurs at its nearest radius or at one of the remaining knots.
     let nearest = cw.min(ch) / diagonal;
-    let max_scale = (0..16).map(|i| i as f64 / 15.0).filter(|&r| r >= nearest).map(scale).fold(scale(nearest), f64::max);
+    let max_scale = (0..=last).map(|i| i as f64 / last as f64).filter(|&r| r >= nearest).map(scale).fold(scale(nearest), f64::max);
     let zoom = 1.0 / max_scale;
     let basis = |r: f64| {
         let r2 = r * r;
@@ -1396,6 +1438,29 @@ mod tests {
             let evaluate = |k: &[f64]| r * (k[0] + r * r * (k[1] + r * r * (k[2] + r * r * k[3])));
             assert!((evaluate(&planes[0]) - evaluate(&reference)).abs() < 0.00015);
         }
+    }
+
+    /// The ILCE-6000's raw-IFD distortion table with the E PZ 16-50mm F3.5-5.6 OSS at 16 mm (11 samples of the
+    /// 17-value layout), the lens whose Lightroom export validates the conversion (docs/sony-lens-corrections.md).
+    const A6000: [i16; 11] = [65, -7, -129, -266, -446, -647, -884, -1121, -1387, -1646, -1912];
+
+    #[test]
+    fn ilce_6000_converts_its_eleven_sample_table_and_other_bodies_do_not() {
+        let frame = Rect::new(0, 0, 6000, 4000);
+        let Some(Opcode::WarpRectilinear { planes, center }) = distortion("ILCE-6000", &A6000, frame, frame) else { panic!("warp") };
+        assert_eq!(center, [0.5, 0.5]);
+        let k = &planes[0];
+        let source = |r: f64| r * (k[0] + r * r * (k[1] + r * r * (k[2] + r * r * k[3])));
+        // barrel correction: the corner is drawn from inside the frame, and the map keeps its order
+        assert!((0.88..1.0).contains(&source(1.0)), "{}", source(1.0));
+        assert!((1..=100).all(|i| source(i as f64 / 100.0) > source((i - 1) as f64 / 100.0)));
+        // the table's own shape: the corner's scale is 1 - 1912/16384 before the zoom that keeps the frame inside
+        let scale_at_corner = 1.0 - 1912.0 / 16384.0;
+        assert!((source(1.0) / scale_at_corner - 1.0).abs() < 0.1);
+        // other bodies and other layouts are not read this way
+        assert!(distortion("ILCE-6100", &A6000, frame, frame).is_none());
+        assert!(distortion("ILCE-7M3", &A6000, frame, frame).is_none());
+        assert!(distortion("ILCE-6000", &WIDE, frame, frame).is_none());
     }
 
     // ILCE-7M3 raw-IFD tables (FE 16-35mm F4 ZA OSS at 16 and 35 mm, FE 28-70mm F3.5-5.6 OSS at 70 mm) and the

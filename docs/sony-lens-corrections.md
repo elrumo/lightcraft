@@ -326,6 +326,22 @@ warp sits on the image centre; fitted against the camera, the centre is within 0
 three of these tables within 0.0008 of the half diagonal (2.9 px at 6000 px) of the camera's fitted geometry.
 The photographs stay with their owner; none is committed.
 
+## ILCE-6000 (11-sample APS-C table)
+
+The ILCE-6000 stores its distortion table as 11 samples (`11 65 -7 -129 -266 -446 -647 -884 -1121 -1387 -1646 -1912`
+on the E PZ 16-50mm F3.5-5.6 OSS at 16 mm), padded with zeros to the 17 values of the 16-sample layout. It is converted
+like the 16-sample tables (`1 + sample / 16384` at `i / 10` of the half diagonal of the 6000 x 4000 crop, zoomed so the
+frame stays inside the source) for this body only (`DISTORTION_MODELS_11`), from the raw IFD's copy, in native 3:2.
+
+Evidence: one raw and Lightroom's lens-corrected export of it (the Phoenix 200 preset test,
+[lightroom-preset-fit.md](lightroom-preset-fit.md)). The correlation of the gradient images below the horizon, at 600 px,
+is 0.62 uncorrected and 0.81 to 0.83 with the table at units of 13000 to 16384 (the optimum is flat; 16384 is the A7
+units). The raw's lens vignette is a hard black ring beyond 0.88 of the half diagonal; the correction draws the frame
+from inside it. Not validated: other lenses and focal lengths of this body (the table comes with each shot), the camera
+JPEG's own geometry (its preview is 1616 x 1080 of the 6048 x 4024 sensor, so a registration needs a crop first), and
+shading (the camera JPEG and our render agree to 1 % out to 0.85 of the radius with no correction, so the 11-sample
+shading table's gain function stays undecided).
+
 ## Camera coverage and regression boundary
 
 The model check is exact: `ILCE-7RM4` (A7R IV without the A suffix), unknown/missing

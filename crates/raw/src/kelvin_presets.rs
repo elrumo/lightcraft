@@ -59,6 +59,9 @@ const MODELS: &[(&str, &str)] = &[
     ("SONY", "ILCA-77M2"),
     ("SONY", "ILCA-99M2"),
     ("SONY", "ILCE-3500"),
+    // the user's own raw (E PZ 16-50mm, Auto white balance): presets 2500 to 8500 K, the as-shot white (R 2.75, B 1.68)
+    // between its 4500 K and 6000 K ones
+    ("SONY", "ILCE-6000"),
     ("SONY", "ILCE-7S"),
     ("SONY", "SLT-A33"),
     ("CANON", "PowerShot G1 X Mark III"),

@@ -1658,6 +1658,8 @@ pub(crate) mod tests {
         let (t, tint) = a99m2.as_shot(d65);
         assert!((5000.0..6000.0).contains(&t) && tint.abs() < 10.0 && t.fract() == 0.0, "{t} {tint}");
         assert!(!lightcraft_catalog::relative_wb_camera("ARW", "SONY ILCA-99M2"));
+        // the ILCE-6000 carries the same presets and is edited in Kelvin through them
+        assert!(!lightcraft_catalog::relative_wb_camera("ARW", "SONY ILCE-6000"));
         // a Canon body without matrices, through the presets its ColorData lists (PowerShot G1 X Mark III, a
         // Daylight shot with the camera's white balance shifted towards blue: below Daylight's 5651 K)
         let canon = lightcraft_raw::kelvin_presets::KelvinPresets::from_unordered([

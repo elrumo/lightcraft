@@ -215,9 +215,17 @@ pub struct ColorOps {
     pub skin: f32,
 }
 
+/// OkLab chroma a colour grading wheel adds at saturation 100.
+pub const GRADING_CHROMA: f32 = 0.08;
+/// OkLab lightness where shadows and highlights part at Balance 0: display mid-grey (sRGB 0.5 is OkLab 0.6), where
+/// Lightroom's shadow wheel still tints most of the mids (its Phoenix 200 preset's yellow shadows reach the grass).
+pub const GRADING_SPLIT: f32 = 0.62;
+/// How far Blending (0..1) widens the transition between the ranges, in OkLab lightness.
+pub const GRADING_BLEND_WIDTH: f32 = 0.42;
+
 fn wheel(w: &lightcraft_develop::Wheel) -> WheelK {
     let h = oklch_hue_of_srgb_hue(w.hue);
-    let s = (w.sat / 100.0) as f32 * 0.09;
+    let s = (w.sat / 100.0) as f32 * GRADING_CHROMA;
     WheelK { a: s * h.cos(), b: s * h.sin(), lum: (w.lum / 100.0) as f32 * 0.12 }
 }
 
@@ -324,8 +332,8 @@ impl ColorOps {
     #[inline]
     fn grade(&self, mut lab: [f32; 3]) -> [f32; 3] {
         if let Some((wheels, blending, balance)) = &self.grading {
-            let m = 0.5 - balance * 0.25;
-            let width = 0.15 + blending * 0.5;
+            let m = GRADING_SPLIT - balance * 0.25;
+            let width = 0.15 + blending * GRADING_BLEND_WIDTH;
             let ws = 1.0 - smooth(m - width, m + width * 0.25, lab[0]);
             let wh = smooth(m - width * 0.25, m + width, lab[0]);
             let wm = (1.0 - ws - wh).max(0.0);

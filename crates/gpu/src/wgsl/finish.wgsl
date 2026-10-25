@@ -290,8 +290,8 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     }
     var lab = vec3<f32>(l, c * cos(h), c * sin(h));
     if (pu(F_GRADING) != 0u) {
-        let m = 0.5 - pf(F_BALANCE) * 0.25;
-        let width = 0.15 + pf(F_BLENDING) * 0.5;
+        let m = GRADING_SPLIT - pf(F_BALANCE) * 0.25;
+        let width = 0.15 + pf(F_BLENDING) * GRADING_BLEND_WIDTH;
         let ws = 1.0 - sstep(m - width, m + width * 0.25, lab.x);
         let wh = sstep(m - width * 0.25, m + width, lab.x);
         let wm = max(1.0 - ws - wh, 0.0);
@@ -554,8 +554,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let veil = min(air * (1.0 - t), 0.9 * max(min(c.x, min(c.y, c.z)), 0.0));
             c = max((c - veil) / t, vec3<f32>(0.0));
         } else {
-            let k = min(-dz, 1.0) * 0.7 * (0.35 + 0.65 * d);
-            c = c + (air * 0.9 - c) * k;
+            // (`finish::add_haze`)
+            let k = min(-dz, 1.0) * NEG_DEHAZE_STRENGTH * (0.35 + 0.65 * d);
+            let ig = 1.0 / NEG_DEHAZE_GAMMA;
+            let tg = pow(max(air * 0.9, 0.0), ig);
+            c = pow(pow(max(c, vec3<f32>(0.0)), vec3<f32>(ig)) * (1.0 - k) + vec3<f32>(tg * k), vec3<f32>(NEG_DEHAZE_GAMMA));
         }
     }
 
@@ -583,7 +586,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (hh != 0.0 || ss != 0.0) {
         let ws = 1.0 - sstep(-4.8, 0.3, base);
         let wh = sstep(-1.0, 2.8, base);
-        delta += ss * 1.7 * ws * sqrt(ws) + hh * 1.7 * wh;
+        delta += ss * 1.7 * ws * sqrt(ws) + hh * select(1.7, HIGHLIGHTS_UP, hh > 0.0) * wh;
     }
     if (lt[6] != 0.0) {
         delta += lt[6] * 0.8 * sstep(0.5, 3.0, l1);

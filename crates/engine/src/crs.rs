@@ -215,6 +215,58 @@ fn curve(props: &Props, k: &str) -> Option<Value> {
     Some(if identity { json!([]) } else { Value::Array(pts) })
 }
 
+/// A Point Color sample (hue in radians, HSV saturation, linear luminance, as `crs:PointColors` writes them) as an
+/// OkLCh colour `(L, chroma, hue in degrees)`: the HSV colour whose encoded value is scaled until its luminance is `y`.
+fn point_sample(hue: f64, sat: f64, y: f64) -> (f64, f64, f64) {
+    use lightcraft_color::perceptual::{hsv_to_rgb, lab_to_lch, oklab_from_2020};
+    use lightcraft_color::transfer::srgb_to_linear;
+    let base = hsv_to_rgb(hue.to_degrees().rem_euclid(360.0) as f32, sat.clamp(0.0, 1.0) as f32, 1.0);
+    let luminance = |v: f32| {
+        let l = base.map(|c| srgb_to_linear(c * v));
+        0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2]
+    };
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = 0.5 * (lo + hi);
+        if luminance(mid) < y.clamp(0.0, 1.0) as f32 { lo = mid } else { hi = mid }
+    }
+    let v = 0.5 * (lo + hi);
+    let lin = base.map(|c| srgb_to_linear(c * v));
+    let w = lightcraft_color::SRGB.to_space(&lightcraft_color::REC2020).apply_f32(lin);
+    let [l, c, h] = lab_to_lch(oklab_from_2020(w));
+    (f64::from(l), f64::from(c), f64::from(h).to_degrees().rem_euclid(360.0))
+}
+
+/// `crs:PointColors`: up to eight samples, each 19 numbers: the sample (hue in radians, saturation, linear
+/// luminance), its hue, saturation and luminance shifts (−1..1), the overall range (0..1) and the hue, saturation and
+/// luminance range curves (four points each, left at their defaults here). A slot without a sample is four −1s.
+fn point_colors(props: &Props) -> Option<Value> {
+    let samples: Vec<Value> = props
+        .get("crs:PointColors")?
+        .iter()
+        .filter_map(|item| {
+            let v: Vec<f64> = item.split(',').filter_map(|n| n.trim().parse::<f64>().ok().filter(|x| x.is_finite())).collect();
+            if v.len() < 19 || v[0] < 0.0 {
+                return None;
+            }
+            let (lum, chroma, hue) = point_sample(v[0], v[1], v[2]);
+            let slider = |x: f64| (x * 100.0).clamp(-100.0, 100.0);
+            Some(json!({
+                "lum": lum, "chroma": chroma, "hue": hue,
+                "hue_shift": slider(v[3]), "sat_shift": slider(v[4]), "lum_shift": slider(v[5]),
+                "variance": 0.0, "range": (v[6] * 100.0).clamp(0.0, 100.0),
+                "hue_range": 50.0, "sat_range": 50.0, "lum_range": 50.0
+            }))
+        })
+        .take(lightcraft_develop::MAX_POINT_COLORS)
+        .collect();
+    // a packet of another layout stays in the report of what was not applied
+    (!samples.is_empty()).then(|| {
+        note("crs:PointColors");
+        Value::Array(samples)
+    })
+}
+
 /// Map the `crs:` fields of an XMP packet to a partial develop-settings JSON object.
 ///
 /// `target` decides how the white balance is read (see [`Target`]).
@@ -366,6 +418,10 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
                 }
             }
         }
+    }
+
+    if let Some(points) = point_colors(props) {
+        put(o, "point_colors", points);
     }
 
     // ---- Color grading (split toning fields are shared with the older split-toning panel)
@@ -1165,6 +1221,27 @@ mod tests {
 
     fn unmapped(x: &str) -> Vec<String> {
         to_partial_report(&props(x), None, Target::Any, 1.5).1
+    }
+
+    #[test]
+    fn point_color_samples_are_imported() {
+        // the sample of Harman Phoenix 200's "Orange You Glad" preset: a blue (219 degrees, saturation 0.57, linear
+        // luminance 0.17) pushed +20 hue, -19 saturation, -14 luminance, range 0.54
+        let x = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/">
+        <crs:PointColors><rdf:Seq><rdf:li>3.830170, 0.570402, 0.172164, 0.199497, -0.189478, -0.139857, 0.540000, 0.000000, 0.333333, 0.666667, 1.000000, 0.000000, 0.390402, 0.750402, 1.000000, 0.000000, 0.271869, 0.631869, 1.000000</rdf:li>
+        <rdf:li>-1.000000, -1.000000, -1.000000, -1.000000</rdf:li></rdf:Seq></crs:PointColors></rdf:Description></rdf:RDF>"#;
+        let (partial, report) = to_partial_report(&props(x), None, Target::Any, 1.5);
+        let points = partial["point_colors"].as_array().expect("one sample, the empty slot left out");
+        assert_eq!(points.len(), 1);
+        let p = &points[0];
+        let get = |k: &str| p[k].as_f64().unwrap();
+        assert!((get("hue_shift") - 19.9497).abs() < 1e-3 && (get("sat_shift") + 18.9478).abs() < 1e-3 && (get("lum_shift") + 13.9857).abs() < 1e-3);
+        assert_eq!(get("range"), 54.0);
+        // a saturated blue of mid lightness: OkLCh hue in the blues, chroma well above neutral
+        assert!((230.0..290.0).contains(&get("hue")) && get("chroma") > 0.05 && (0.4..0.8).contains(&get("lum")), "{p}");
+        let applied = apply_partial(&DevelopSettings::default(), &partial, 1.0);
+        assert_eq!(applied.point_colors.len(), 1);
+        assert!(report.is_empty(), "{report:?}");
     }
 
     #[test]

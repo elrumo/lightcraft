@@ -241,6 +241,24 @@ pub fn dehaze_pixel(c: [f32; 3], dz: f32, d: f32, air: f32) -> [f32; 3] {
     c.map(|v| ((v - veil) / t).max(0.0))
 }
 
+/// Negative dehaze (haze added) pulls scene-linear `c` towards the airlight `target` by `k`, in the space of
+/// `c^(1 / NEG_DEHAZE_GAMMA)`: in linear light a few percent of airlight lifted the darks by tens of L\*, where
+/// Lightroom's -16 on the Phoenix 200 preset keeps its blacks and fogs the mids and highlights (measured on its export
+/// of an ILCE-6000 raw). The GPU mirrors it in `finish.wgsl`.
+#[inline]
+pub fn add_haze(c: [f32; 3], target: f32, k: f32) -> [f32; 3] {
+    let t = target.max(0.0).powf(1.0 / NEG_DEHAZE_GAMMA);
+    c.map(|v| (v.max(0.0).powf(1.0 / NEG_DEHAZE_GAMMA) * (1.0 - k) + t * k).powf(NEG_DEHAZE_GAMMA))
+}
+
+/// The gamma of [`add_haze`]'s blend.
+pub const NEG_DEHAZE_GAMMA: f32 = 1.4;
+/// Strength of negative dehaze: the share of the airlight blended in at Dehaze -100 over a fully hazy pixel.
+pub const NEG_DEHAZE_STRENGTH: f32 = 0.8;
+/// Positive Highlights gain (log2 luminance per unit of the slider) over the Shadows' 1.7: Lightroom's +49 lifts bright
+/// areas about 1.5 times as much (fitted to its export of the Phoenix 200 preset, docs/lightroom-preset-fit.md).
+pub const HIGHLIGHTS_UP: f32 = 2.5;
+
 /// A mask's local adjustments as the per-pixel stage uses them (alpha-weighted sums), in order:
 /// exposure, temp, tint, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze,
 /// saturation, hue, sharpness, noise, moiré, defringe, then the colour overlay: on (0/1), cos and
@@ -588,8 +606,8 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 if dz > 0.0 {
                     c = dehaze_pixel(c, dz, d, air);
                 } else {
-                    let k = (-dz).min(1.0) * 0.7 * (0.35 + 0.65 * d);
-                    c = c.map3(|v| v + (air * 0.9 - v) * k);
+                    let k = (-dz).min(1.0) * NEG_DEHAZE_STRENGTH * (0.35 + 0.65 * d);
+                    c = add_haze(c, air * 0.9, k);
                 }
             }
 
@@ -614,7 +632,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             if hh != 0.0 || ss != 0.0 {
                 let ws = 1.0 - smooth(-4.8, 0.3, base);
                 let wh = smooth(-1.0, 2.8, base);
-                delta += ss * 1.7 * ws * ws.sqrt() + hh * 1.7 * wh;
+                delta += ss * 1.7 * ws * ws.sqrt() + hh * if hh > 0.0 { HIGHLIGHTS_UP } else { 1.7 } * wh;
             }
             if l_wh != 0.0 {
                 delta += l_wh * 0.8 * smooth(0.5, 3.0, l1);
