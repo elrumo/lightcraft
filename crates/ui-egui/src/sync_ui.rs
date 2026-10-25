@@ -53,6 +53,8 @@ pub struct SyncDriver {
     pub storage: Storage,
     /// The sign-out question being asked in Settings ▸ Sync (cleared when it no longer applies).
     pub sign_out: Option<SignOutHow>,
+    /// The cloud providers' folders on this computer, looked up when Settings ▸ Sync first shows them.
+    pub folders: Option<Vec<(&'static str, std::path::PathBuf)>>,
 }
 
 impl SyncDriver {
@@ -61,6 +63,7 @@ impl SyncDriver {
     pub fn forget_library(&mut self) {
         self.form = SyncForm::default();
         self.sign_out = None;
+        self.folders = None;
         self.storage = Storage::default();
     }
 }

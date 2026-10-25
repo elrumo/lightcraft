@@ -291,7 +291,7 @@ fn sidebar(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, tab: &mut String)
 fn sync_value(app: &LightcraftApp) -> &'static str {
     if app.session.sync_conflict().is_some() {
         crate::i18n::tr("Choose…")
-    } else if app.session.sync_state().is_some_and(|s| s.signed_in()) {
+    } else if app.session.sync_state().is_some_and(|s| s.signed_in()) || app.session.icloud_folder().is_some() {
         crate::i18n::tr("On")
     } else {
         crate::i18n::tr("Off")
@@ -2412,8 +2412,68 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     ),
                 );
             }
+            // (last: a page that is long already keeps the buttons above in reach)
+            cloud_folder_section(app, ui, t);
         }
     }
+}
+
+/// Syncing through a folder of iCloud Drive, Dropbox or Google Drive instead of a server (`docs/sync.md`).
+fn cloud_folder_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    heading(ui, t, crate::i18n::tr("Without a Server"));
+    hint(
+        ui,
+        t,
+        crate::i18n::tr(
+            "Keep this library's presets, settings and edits in step with your other computers through a folder your own iCloud Drive, Dropbox or Google Drive already syncs. LightCraft writes only to a folder named LightCraft Sync inside it.",
+        ),
+    );
+    if let Some(chosen) = app.session.icloud_folder_info() {
+        let path = chosen["path"].as_str().unwrap_or_default().to_string();
+        info(ui, t, crate::i18n::tr("Folder"), &path, t.text);
+        let (text, problem) = cloud_folder_status(&chosen["last"]);
+        let r = info(ui, t, crate::i18n::tr("Status"), &text, if problem { t.caution } else { t.text });
+        register(ui.ctx(), "label:cloudFolderStatus", r);
+        row(ui, t, "", |ui| {
+            if action(ui, t, "cloudFolderNow", "Sync Now", true, false) {
+                app.cloud_sync.driver.sync_folder_now();
+            }
+            if action(ui, t, "cloudFolderStop", "Stop Syncing", true, true) {
+                sync_cmd(app, ui, "icloud.useFolder", json!({"path": null}));
+            }
+        });
+        return;
+    }
+    let folders = app.cloud_sync.folders.get_or_insert_with(lightcraft_engine::icloud::folder::detected_cloud_folders).clone();
+    if folders.is_empty() {
+        hint(ui, t, crate::i18n::tr("No iCloud Drive, Dropbox or Google Drive folder was found on this computer."));
+        return;
+    }
+    row(ui, t, "", |ui| {
+        for (provider, path) in &folders {
+            let id = format!("cloudFolder:{provider}");
+            if action(ui, t, &id, &format!("Use {provider}"), true, false) {
+                sync_cmd(app, ui, "icloud.useFolder", json!({"path": path}));
+            }
+        }
+    });
+}
+
+/// How the last pass through the cloud folder went, in words.
+fn cloud_folder_status(last: &Value) -> (String, bool) {
+    let Some(at) = last["at"].as_i64() else { return ("Starting…".into(), false) };
+    if let Some(e) = last["error"].as_str() {
+        return (format!("Can't sync: {e}"), true);
+    }
+    let waiting = last["report"]["waiting"].as_u64().unwrap_or(0);
+    let secs = (web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64) - at).max(0) / 1000;
+    let ago = match secs {
+        0..=59 => "just now".to_string(),
+        60..=3599 => format!("{} min ago", secs / 60),
+        _ => format!("{} h ago", secs / 3600),
+    };
+    let text = if waiting > 0 { format!("Synced {ago}; waiting for {waiting} file(s) from the provider") } else { format!("Synced {ago}") };
+    (text, false)
 }
 
 /// What a sign-out button asked, asked back: what the answer does, then the answer. `sync.signOut` takes

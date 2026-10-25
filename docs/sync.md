@@ -745,6 +745,41 @@ on each device with `icloud.folder {path}`, its own iCloud Drive container on Ap
 A library signed in to a server keeps its photos there: *Keep Photos in iCloud Drive* can't be turned on, and an import
 puts its originals in `Originals/` again while signed in.
 
+### Through a cloud folder (iCloud Drive, Dropbox, Google Drive)
+
+The same records can travel through any folder a cloud provider carries to the person's other devices, with no
+CloudKit host, no account of ours and no server (`crates/engine/src/icloud/folder.rs`).
+
+- **Turning it on:** Settings ▸ Sync, under the server form ("Without a Server"), offers the iCloud Drive, Dropbox and
+  Google Drive folders found on the computer (`icloud.cloudFolders`); *Use iCloud Drive* (and so on) is
+  `icloud.useFolder {path}`, which turns the iCloud sync on for the library and keeps the folder in the library's
+  `icloud.json`. The folder is per device (each computer names its own). Another folder is another cloud: the
+  library's records all go there, and nothing is removed from the first. The page shows the folder, how long ago
+  the last pass ran (or what went wrong), *Sync Now* and *Stop Syncing* (`icloud.useFolder {path: null}`, which turns
+  the sync off again). A library signed in to a server doesn't show it: the server carries everything.
+- **The passes run by themselves** (`crates/apphost/src/sync.rs`, shared by the desktop app and the engine host): at
+  least every 30 s, sooner (but not closer than 5 s) after something changed here or the app came to the front, and
+  at once while a pass left records to write (at most 2000 a pass). The file work runs on a thread of its own; the
+  engine's half is applied on the next frame, held back during a slider drag. A pass that takes more than a second has
+  a row in the activity stack ("Syncing through the cloud folder").
+- **One pass** is `icloud.syncFolder {path?}` (the CLI, tests; the chosen folder by default): it writes what changed
+  here, then reads what the other devices wrote and merges it as for CloudKit. `{changed, sent, removed, skipped,
+  waiting, more}`.
+- **One writer per file.** A provider can't order writes, and two devices writing one file make it keep "conflicted
+  copies". So a device writes only `<folder>/LightCraft Sync/<device>/<record>.json`, and the cloud's version of a record
+  is the newest file of that name in all the device directories (`modified`, then the device name, so every device picks
+  the same one). A removal is a tombstone in place of the record, so an older file of another device can't bring it back.
+- **Safe to read.** Files are checked like records from CloudKit: a name that isn't the record's, a file that isn't JSON or is
+  too large, a link, or a directory name that isn't a plain device name is left out (`skipped`). A file the provider has
+  not brought yet (`.icloud` placeholder) counts as `waiting`; a later pass has it.
+- **Use one transport per library**: the folder or a CloudKit host, not both (they share the engine's record of what the
+  cloud has).
+- **Limits.** Every pass reads all the record files (a few thousand small files for a big library; a change list kept
+  between passes would avoid it). Tombstones are never deleted. The records are the ones above: albums, stacks, versions
+  and ratings of photos that are not opened from the Photos library or kept in the folder do not travel yet. The page
+  offers only the providers' usual folders (no folder picker yet) and is English only. Nothing has been run against a
+  real iCloud Drive, Dropbox or Google Drive folder, only against a plain one.
+
 ### Analysis results
 
 A Mac finds faces, reads text, and computes the search vectors and sensitive scores of every photo; a phone may lack

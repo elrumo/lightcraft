@@ -52,6 +52,7 @@ use crate::cmd::{CommandSpec, always, bad, cmd};
 use crate::{EngineError, Result, Session};
 
 pub mod analysis;
+pub mod folder;
 pub mod photos;
 
 /// The sync state, in the library.
@@ -121,6 +122,10 @@ pub struct Saved {
     pub photos: bool,
     /// Changes whenever this device forgets what the cloud has: the host then fetches everything again.
     epoch: u64,
+    /// This library's name in a shared cloud folder ([`folder`]); kept when sync is turned off and on.
+    device: String,
+    /// The folder this library syncs through ([`folder`]; `icloud.useFolder`).
+    folder: Option<String>,
     /// The library was signed in to a server when last looked at (signing out forgets, so it fetches again).
     linked: bool,
     known: BTreeMap<String, Known>,
@@ -216,6 +221,8 @@ pub struct ICloud {
     moving: Option<(crate::activity::TaskGuard, u64)>,
     /// What [`analysis`] last saw of the search indexes (their sizes): a change makes it look again.
     analysis_seen: Option<[usize; 4]>,
+    /// How the last pass through the cloud folder went (not kept).
+    folder_last: Option<folder::Last>,
 }
 
 impl ICloud {
@@ -237,6 +244,7 @@ impl ICloud {
             bringing: None,
             moving: None,
             analysis_seen: None,
+            folder_last: None,
         }
     }
 
@@ -390,9 +398,10 @@ impl Session {
                 // (past the epoch it had when it was turned off: one from the clock alone could come back equal to
                 // the one the host had while it was on, turned on again within the millisecond or after the clock
                 // went back, and the host would not fetch everything again)
-                let last = lib.files_mut().read(STATE).ok().flatten().and_then(|b| serde_json::from_slice::<Saved>(&b).ok()).map_or(0, |s| s.epoch);
-                let epoch = last.wrapping_add(1).max(now_ms().unsigned_abs());
-                let mut ic = ICloud::new(Saved { on: true, epoch, ..Saved::default() }, BTreeMap::new());
+                let last = lib.files_mut().read(STATE).ok().flatten().and_then(|b| serde_json::from_slice::<Saved>(&b).ok());
+                let epoch = last.as_ref().map_or(0, |s| s.epoch).wrapping_add(1).max(now_ms().unsigned_abs());
+                let device = last.map(|s| s.device).unwrap_or_default();
+                let mut ic = ICloud::new(Saved { on: true, epoch, device, ..Saved::default() }, BTreeMap::new());
                 ic.saved_dirty = true;
                 ic.held_dirty = true;
                 ic.save(lib.files_mut());
@@ -743,7 +752,10 @@ impl Session {
                     ic.saved.changed.remove(name);
                 }
             }
-            ic.bump();
+            // (a pass that wrote nothing changes nothing: a host that runs a pass when this changes would never rest)
+            if !saved.is_empty() || !deleted.is_empty() {
+                ic.bump();
+            }
         });
     }
 
@@ -1105,6 +1117,11 @@ impl Session {
             o.insert("inFolder".into(), json!(photos::in_folder(self, &folder).len()));
             let (movable, bytes) = self.icloud_movable_count();
             o.insert("movable".into(), json!({"photos": movable, "bytes": bytes}));
+        }
+        if let Some(f) = Session::folder_status(ic)
+            && let Some(o) = out.as_object_mut()
+        {
+            o.insert("cloudFolder".into(), f);
         }
         if transport && let Some(o) = out.as_object_mut() {
             o.insert("transport".into(), json!(ic.saved.transport));

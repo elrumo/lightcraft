@@ -188,6 +188,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(browse::specs());
         v.extend(crate::photo_library::specs());
         v.extend(crate::icloud::specs());
+        v.extend(crate::icloud::folder::specs());
         v.extend(crate::live_photo::specs());
         v.extend(missing::specs());
         v.extend(recheck::specs());

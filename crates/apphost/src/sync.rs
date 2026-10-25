@@ -8,7 +8,17 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use lightcraft_engine::Session;
+use lightcraft_engine::activity::{Cancel, TaskGuard};
 use lightcraft_engine::cloud_sync::{Done, POLL, Task};
+use lightcraft_engine::icloud::folder::FolderDone;
+use web_time::Instant;
+
+/// A cloud-folder pass runs at least this often (the provider brings the other devices' files whenever it likes) ...
+const FOLDER_POLL: Duration = Duration::from_secs(30);
+/// ... and sooner after something changed here or the app came to the front, but never closer than this.
+const FOLDER_MIN: Duration = Duration::from_secs(5);
+/// A pass that takes longer than this gets a row in the activity stack.
+const FOLDER_ROW_AFTER: Duration = Duration::from_secs(1);
 
 /// What one [`Driver::poll`] asks of the frontend.
 #[derive(Debug, Default, PartialEq)]
@@ -34,20 +44,52 @@ pub struct Driver {
     /// The conflict choice was put to the user (once per sign-in: it can be put off, and is offered
     /// again from the cloud button and Settings).
     conflict_asked: bool,
+    folder: FolderPoll,
 }
 
 impl Default for Driver {
     fn default() -> Self {
         let (tx, rx) = channel();
-        Driver { tx, rx, in_flight: 0, focused: false, conflict_asked: false }
+        Driver { tx, rx, in_flight: 0, focused: false, conflict_asked: false, folder: FolderPoll::default() }
     }
 }
 
+/// The passes through the cloud folder the library syncs through (`icloud.useFolder`, `docs/sync.md`): the file work
+/// runs on a thread of its own, the engine's half of it here.
+#[derive(Default)]
+struct FolderPoll {
+    /// The pass on its thread: its answer, when it started, and its row in the activity stack (made when it runs long).
+    pass: Option<(Receiver<FolderDone>, Instant, Option<TaskGuard>)>,
+    /// An answer waiting for a slider drag to end (nothing from the other devices is applied during one).
+    held: Option<FolderDone>,
+    last_start: Option<Instant>,
+    /// What `icloud_rev` was when the last pass started.
+    rev: Option<u64>,
+    /// The last pass left records to write: another is due at once.
+    more: bool,
+    focused: bool,
+}
+
 impl Driver {
+    /// Run the cloud-folder pass at the next poll (Settings ▸ Sync ▸ Sync Now).
+    pub fn sync_folder_now(&mut self) {
+        self.folder.last_start = None;
+    }
+
     /// Hand finished tasks to the engine and start the next ones on `exec` (cheap when there is
     /// nothing to do). `focused`: the app is in front. Without `exec` (no network on this
     /// platform) answers are still applied and nothing new starts.
     pub fn poll(&mut self, session: &mut Session, focused: bool, exec: Option<&dyn Fn(Task, Sender<Done>)>) -> Polled {
+        let mut out = self.poll_server(session, focused, exec);
+        let folder = self.folder.poll(session, focused);
+        out.again = match (out.again, folder) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        out
+    }
+
+    fn poll_server(&mut self, session: &mut Session, focused: bool, exec: Option<&dyn Fn(Task, Sender<Done>)>) -> Polled {
         let mut out = Polled::default();
         while let Ok(d) = self.rx.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
@@ -76,6 +118,76 @@ impl Driver {
         let busy = self.in_flight > 0 || session.sync_state().is_some_and(|st| matches!(st.state(), "syncing" | "signingOut"));
         out.again = Some(if busy { Duration::from_millis(500) } else { POLL });
         out
+    }
+}
+
+impl FolderPoll {
+    /// Take a finished pass, start the next when it is due. Answers when to come back (`None`: no cloud folder).
+    fn poll(&mut self, session: &mut Session, focused: bool) -> Option<Duration> {
+        let Some(dir) = session.icloud_folder() else {
+            *self = FolderPoll::default();
+            return None;
+        };
+        if let Some((rx, started, guard)) = &mut self.pass {
+            match rx.try_recv() {
+                Ok(done) => {
+                    self.pass = None;
+                    self.held = Some(done);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    if guard.is_none() && started.elapsed() >= FOLDER_ROW_AFTER {
+                        *guard = Some(session.activity.start("cloudFolder", "Syncing through the cloud folder", Cancel::No));
+                    }
+                    return Some(Duration::from_millis(250));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    log::warn!("cloud folder: the pass's thread ended without an answer");
+                    self.pass = None;
+                }
+            }
+        }
+        if self.held.is_some() {
+            if session.interaction.is_some() {
+                return Some(Duration::from_millis(250));
+            }
+            if let Some(done) = self.held.take() {
+                self.more = session.icloud_folder_done(done).more;
+            }
+        }
+        let now = Instant::now();
+        let since = self.last_start.map(|t| now.saturating_duration_since(t));
+        let came_back = focused && !self.focused;
+        self.focused = focused;
+        let rev = session.icloud_rev();
+        let due = since.is_none_or(|d| {
+            d >= FOLDER_POLL || (d >= FOLDER_MIN && (rev != self.rev || came_back)) || (self.more && d >= Duration::from_millis(500))
+        });
+        if !due {
+            return Some(Duration::from_secs(1));
+        }
+        self.last_start = Some(now);
+        self.rev = rev;
+        let task = match session.icloud_folder_task(Some(&dir)) {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("cloud folder: {e}");
+                return Some(FOLDER_POLL);
+            }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (tx, rx) = channel();
+            let spawned = std::thread::Builder::new().name("lc-cloud-folder".into()).spawn(move || {
+                let _ = tx.send(lightcraft_engine::icloud::folder::run(task));
+            });
+            match spawned {
+                Ok(_) => self.pass = Some((rx, now, None)),
+                Err(e) => log::warn!("cloud folder: can't start a thread: {e}"),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = task;
+        Some(Duration::from_millis(250))
     }
 }
 
@@ -132,5 +244,57 @@ mod tests {
         assert_eq!(out, Polled::default());
         assert_eq!(ran.get(), 0);
         assert!(summary(&s).is_none());
+    }
+
+    fn session_in(dir: &std::path::Path) -> Session {
+        let mut s = Session::new().with_fs();
+        s.open_library(dir, false).unwrap();
+        s
+    }
+
+    /// Poll until `done` says so (the passes run on threads of their own).
+    fn poll_until(d: &mut Driver, s: &mut Session, mut done: impl FnMut(&mut Session) -> bool) {
+        for _ in 0..400 {
+            d.poll(s, true, None);
+            if done(s) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the cloud folder pass did not finish");
+    }
+
+    // A library with a cloud folder runs passes by itself: its preset reaches the other library, and a long pass shows in the
+    // activity stack only while it runs
+    #[test]
+    fn a_library_with_a_cloud_folder_syncs_by_itself() {
+        let root = std::env::temp_dir().join(format!("lc-apphost-cloud-folder-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let shared = root.join("Dropbox");
+        std::fs::create_dir_all(&shared).unwrap();
+        let (mut a, mut b) = (session_in(&root.join("a")), session_in(&root.join("b")));
+        let (mut da, mut db) = (Driver::default(), Driver::default());
+        // without a folder: nothing to come back to
+        assert_eq!(da.poll(&mut a, true, None).again, None);
+
+        a.presets.push(lightcraft_develop::Preset {
+            id: "warm".into(),
+            name: "Warm".into(),
+            group: "Mine".into(),
+            settings: serde_json::json!({"light": {"exposure": 0.3}}),
+            favorite: false,
+            builtin: false,
+        });
+        a.icloud_use_folder(Some(&shared)).unwrap();
+        b.icloud_use_folder(Some(&shared)).unwrap();
+        assert!(da.poll(&mut a, true, None).again.is_some());
+        poll_until(&mut da, &mut a, |s| s.icloud_status(false)["cloudFolder"]["last"].is_object());
+        poll_until(&mut db, &mut b, |s| s.presets.iter().any(|p| p.id == "warm"));
+        assert_eq!(b.icloud_status(false)["cloudFolder"]["last"]["report"]["changed"], 1);
+        assert!(b.activity.list().is_empty());
+
+        // stopping turns the sync off and the driver rests
+        b.icloud_use_folder(None).unwrap();
+        assert_eq!(db.poll(&mut b, true, None).again, None);
     }
 }

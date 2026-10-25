@@ -142,9 +142,10 @@ pub struct HostState {
     /// Face recognition's background scan while it is on: `{pendingPhotos, indexedFaces}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub faces: Option<Value>,
-    /// iCloud sync while it is on for this library (`lightcraft_engine::icloud`): `{rev, epoch}`. A new `rev`: there
+    /// iCloud sync while it is on for this library (`lightcraft_engine::icloud`): `{rev, epoch, folder}`. A new `rev`: there
     /// may be records to send (`icloud.changes`); a new `epoch`: the engine forgot what the cloud has, so the host's
-    /// own sync state goes too and it fetches everything again.
+    /// own sync state goes too and it fetches everything again. `folder`: the library syncs through a cloud folder
+    /// (`icloud.useFolder`), whose passes this host runs itself: a CloudKit transport stays out of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icloud: Option<Value>,
 }

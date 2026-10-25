@@ -1065,3 +1065,50 @@ mod sign_out {
         let _ = std::fs::remove_dir_all(&root);
     }
 }
+
+/// Without a server, Settings ▸ Sync offers a folder of the person's cloud provider: choosing one starts the passes by
+/// themselves (the status says how the last went), Sync Now runs one at once, Stop turns it off.
+#[test]
+fn settings_sync_offers_a_cloud_folder_without_a_server() {
+    let (mut h, root) = app("cloud-folder", &[], exec(0, proto::Activity::default()), [1280.0, 800.0]);
+    run(&mut h, "app.settings", json!({"tab": "sync"}));
+    frames(&mut h, 10);
+    assert!(has(&h, "button:syncSignIn"), "the server form is still there");
+    assert!(!has(&h, "button:cloudFolderStop"));
+    assert!(h.app.session.icloud_folder().is_none());
+
+    let shared = root.join("Dropbox");
+    std::fs::create_dir_all(&shared).unwrap();
+    run(&mut h, "icloud.useFolder", json!({"path": shared.to_string_lossy()}));
+    for _ in 0..60 {
+        frames(&mut h, 5);
+        if h.app.session.icloud_folder_info().is_some_and(|i| i["last"].is_object()) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    frames(&mut h, 5);
+    let last = h.app.session.icloud_folder_info().unwrap()["last"].clone();
+    assert!(last["error"].is_null() && last["report"]["skipped"] == 0, "{last}");
+    assert!(has(&h, "button:cloudFolderNow") && has(&h, "button:cloudFolderStop") && has(&h, "label:cloudFolderStatus"));
+    assert!(shared.join("LightCraft Sync").is_dir());
+
+    let first = last["at"].as_i64().unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    tap(&mut h, "button:cloudFolderNow");
+    for _ in 0..60 {
+        frames(&mut h, 5);
+        if h.app.session.icloud_folder_info().is_some_and(|i| i["last"]["at"].as_i64() > Some(first)) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(h.app.session.icloud_folder_info().unwrap()["last"]["at"].as_i64() > Some(first), "Sync Now ran a pass");
+
+    tap(&mut h, "button:cloudFolderStop");
+    frames(&mut h, 5);
+    assert!(h.app.session.icloud_folder().is_none() && !h.app.session.icloud_on());
+    assert!(!has(&h, "button:cloudFolderStop"));
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}

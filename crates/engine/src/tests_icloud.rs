@@ -828,3 +828,133 @@ fn a_device_that_found_more_fills_the_cloud_in_and_keeps_its_own() {
     a.s.icloud_fetched(&[junk], &[]);
     assert_eq!(parts(&a, &key) & VECTOR, VECTOR);
 }
+
+// ---- the folder transport (a cloud provider's folder instead of CloudKit) ----
+
+fn folder_pass(d: &mut Device, shared: &Path) -> crate::icloud::folder::FolderReport {
+    d.s.icloud_sync_folder(Some(shared)).unwrap()
+}
+
+#[test]
+fn presets_travel_through_a_cloud_folder_and_a_removal_sticks() {
+    let root = temp_dir("folder-presets");
+    let shared = root.join("Dropbox");
+    std::fs::create_dir_all(&shared).unwrap();
+    let (mut a, mut b) = (Device::new(&root, "a"), Device::new(&root, "b"));
+    a.add_preset("warm", "Warm", 0.3);
+    let r = folder_pass(&mut a, &shared);
+    assert!(r.sent >= 1, "{r:?}");
+    folder_pass(&mut b, &shared);
+    assert_eq!(b.user_presets(), vec![("warm".into(), "Warm".into(), json!({"light": {"exposure": 0.3}}))]);
+
+    // changed on b, later
+    b.at(2_000);
+    b.s.presets.iter_mut().filter(|p| p.id == "warm").for_each(|p| p.name = "Warmer".into());
+    folder_pass(&mut b, &shared);
+    folder_pass(&mut a, &shared);
+    assert_eq!(a.user_presets()[0].1, "Warmer");
+
+    // removed on a: an older file of b's can't bring it back
+    a.at(3_000);
+    a.s.presets.retain(|p| p.id != "warm");
+    let r = folder_pass(&mut a, &shared);
+    assert!(r.removed >= 1, "{r:?}");
+    folder_pass(&mut b, &shared);
+    assert!(b.user_presets().is_empty(), "{:?}", b.user_presets());
+    folder_pass(&mut a, &shared);
+    assert!(a.user_presets().is_empty());
+    for d in [&mut a, &mut b] {
+        assert_eq!(d.s.icloud_changes(), Default::default());
+    }
+}
+
+#[test]
+fn the_newer_change_wins_through_a_cloud_folder_too() {
+    let root = temp_dir("folder-conflict");
+    let shared = root.join("Drive");
+    std::fs::create_dir_all(&shared).unwrap();
+    let (mut a, mut b) = (Device::new(&root, "a"), Device::new(&root, "b"));
+    a.add_preset("p", "P", 0.1);
+    folder_pass(&mut a, &shared);
+    folder_pass(&mut b, &shared);
+    a.at(2_000);
+    a.s.presets.iter_mut().filter(|p| p.id == "p").for_each(|p| p.settings = json!({"light": {"exposure": 0.5}}));
+    b.at(3_000);
+    b.s.presets.iter_mut().filter(|p| p.id == "p").for_each(|p| p.settings = json!({"light": {"exposure": 0.9}}));
+    // both write before either reads
+    folder_pass(&mut a, &shared);
+    folder_pass(&mut b, &shared);
+    folder_pass(&mut a, &shared);
+    let exposure = |d: &Device| d.user_presets()[0].2["light"]["exposure"].clone();
+    assert_eq!((exposure(&a), exposure(&b)), (json!(0.9), json!(0.9)));
+}
+
+#[test]
+fn files_that_are_not_what_their_name_says_are_left_out() {
+    let root = temp_dir("folder-hostile");
+    let shared = root.join("iCloud");
+    let mut b = Device::new(&root, "b");
+    let other = shared.join("LightCraft Sync").join("evil");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("presets.0000.json"), br#"{"name":"another","modified":1,"kind":"presets","key":"x","data":"{}"}"#).unwrap();
+    std::fs::write(other.join("garbage.json"), b"\x00\x01 not json").unwrap();
+    std::fs::write(shared.join("LightCraft Sync").join("..bad"), b"x").unwrap();
+    let r = folder_pass(&mut b, &shared);
+    assert_eq!(r.skipped, 2, "{r:?}");
+    assert!(b.user_presets().is_empty());
+}
+
+#[test]
+fn cloud_folders_lists_the_providers_that_exist() {
+    let home = temp_dir("folder-home");
+    for d in ["Library/Mobile Documents/com~apple~CloudDocs", "Dropbox", "Library/CloudStorage/GoogleDrive-me@x.com/My Drive"] {
+        std::fs::create_dir_all(home.join(d)).unwrap();
+    }
+    let found: Vec<&str> = crate::icloud::folder::cloud_folders(&home).into_iter().map(|(p, _)| p).collect();
+    assert_eq!(found, ["iCloud Drive", "Dropbox", "Google Drive"]);
+}
+
+#[test]
+fn choosing_a_cloud_folder_turns_sync_on_and_changing_it_sends_everything_again() {
+    let root = temp_dir("folder-use");
+    let (one, two) = (root.join("Dropbox"), root.join("Drive"));
+    for d in [&one, &two] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let mut a = Device::new(&root, "a");
+    a.s.icloud_use_folder(None).unwrap(); // (nothing chosen: nothing to stop)
+    assert!(a.s.icloud_folder().is_none() && a.s.icloud_on());
+    assert!(a.s.icloud_use_folder(Some(&root.join("missing"))).is_err());
+    assert!(a.s.execute("icloud.syncFolder", &json!({})).is_err(), "no folder chosen yet");
+
+    a.add_preset("warm", "Warm", 0.3);
+    a.s.execute("icloud.useFolder", &json!({"path": one.to_string_lossy()})).unwrap();
+    assert_eq!(a.s.icloud_folder().as_deref(), Some(one.as_path()));
+    a.s.execute("icloud.syncFolder", &json!({})).unwrap();
+    let st = a.s.execute("icloud.status", &json!({})).unwrap();
+    assert_eq!(st["cloudFolder"]["path"], one.to_string_lossy().as_ref());
+    assert!(st["cloudFolder"]["last"]["report"]["sent"].as_u64().unwrap() >= 1, "{st}");
+    assert_eq!(st["pending"], 0);
+
+    // another folder is another cloud: the preset goes there too
+    a.s.icloud_use_folder(Some(&two)).unwrap();
+    let r = a.s.icloud_sync_folder(None).unwrap();
+    assert!(r.sent >= 1, "{r:?}");
+    let mut b = Device::new(&root, "b");
+    b.s.icloud_sync_folder(Some(&two)).unwrap();
+    assert_eq!(b.user_presets().len(), 1);
+
+    // a pass with nothing to do changes nothing, so a host that runs one when `rev` changes rests
+    a.s.icloud_sync_folder(None).unwrap(); // (b's files are new to it)
+    b.s.icloud_sync_folder(None).unwrap_err(); // (b has no folder of its own)
+    b.s.icloud_sync_folder(Some(&two)).unwrap();
+    a.s.icloud_sync_folder(None).unwrap();
+    let rev = a.s.icloud_rev();
+    let r = a.s.icloud_sync_folder(None).unwrap();
+    assert_eq!((r.sent, r.removed, r.changed), (0, 0, 0));
+    assert_eq!(a.s.icloud_rev(), rev);
+
+    // stopping turns the sync off (it was only on for the folder)
+    a.s.icloud_use_folder(None).unwrap();
+    assert!(!a.s.icloud_on() && a.s.icloud_folder().is_none());
+}
