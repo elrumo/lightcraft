@@ -47,11 +47,16 @@ pub struct Spec<'a> {
     pub thumbnail: Option<Sampler<'a>>,
     /// Auxiliary images of these types the decoder must ignore (HDR gain map, depth…).
     pub ignored_aux: Vec<&'static str>,
+    /// An HDR gain map (monochrome) of `gain_size` (0 × 0: the picture's size): Apple's auxiliary image, or, with
+    /// `tmap` (ISO 21496-1 metadata), the second image of an ISO tone-map item.
+    pub gain: Option<&'a dyn Fn(u32, u32) -> u16>,
+    pub gain_size: (u32, u32),
+    pub tmap: Option<Vec<u8>>,
 }
 
 impl<'a> Spec<'a> {
     pub fn new(width: u32, height: u32, sample: Sampler<'a>) -> Spec<'a> {
-        Spec { width, height, bit_depth: 8, sample, props: Vec::new(), exif: None, alpha: None, thumbnail: None, ignored_aux: Vec::new() }
+        Spec { width, height, bit_depth: 8, sample, props: Vec::new(), exif: None, alpha: None, thumbnail: None, ignored_aux: Vec::new(), gain: None, gain_size: (0, 0), tmap: None }
     }
 }
 
@@ -526,6 +531,25 @@ pub fn build(spec: &Spec<'_>) -> Vec<u8> {
     };
     if let Some(alpha) = spec.alpha {
         aux(&mut f, "urn:mpeg:hevc:2015:auxid:1", &|x, y| [alpha(x, y), 0, 0]);
+    }
+    if let Some(gain) = spec.gain {
+        let (gw, gh) = if spec.gain_size == (0, 0) { (spec.width, spec.height) } else { spec.gain_size };
+        let sample = |x: u32, y: u32| [gain(x, y), 0, 0];
+        match &spec.tmap {
+            None => {
+                let id = f.image(gw, gh, bd, true, &sample);
+                let auxc = f.prop(full_box(b"auxC", 0, &[b"urn:com:apple:photo:2020:aux:hdrgainmap".as_slice(), &[0]].concat()));
+                if let Some(it) = f.items.iter_mut().find(|i| i.id == id) {
+                    it.props.push((auxc, true));
+                }
+                f.refs.push((b"auxl", id, vec![primary]));
+            }
+            Some(iso) => {
+                let id = f.image(gw, gh, bd, true, &sample);
+                let tmap = f.add(b"tmap", iso.clone(), Vec::new());
+                f.refs.push((b"dimg", tmap, vec![primary, id]));
+            }
+        }
     }
     for urn in &spec.ignored_aux {
         aux(&mut f, urn, &|x, y| [((x + y) % 256) as u16, 0, 0]);

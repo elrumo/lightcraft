@@ -62,7 +62,7 @@ impl SettingsHashes {
 }
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 79;
+pub const RENDER_CACHE_VERSION: u64 = 80;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -214,6 +214,9 @@ pub struct DecodedSource {
     pub denoised: Option<Arc<Twin>>,
     /// The picture last developed in the camera's own look, and the one it was made from ([`Self::develop_input`]).
     pub camera_matched: Arc<std::sync::Mutex<Option<(Arc<Rgb32f>, Arc<Rgb32f>)>>>,
+    /// The picture an HDR render starts from, made from the file's gain map, and the one it was made from
+    /// ([`Self::hdr_input`]).
+    pub hdr_made: Arc<std::sync::Mutex<Option<(Arc<Rgb32f>, Arc<Rgb32f>)>>>,
     /// These pixels came from the photo's smart preview (an offline original), not from its file.
     /// A refresh must never rebuild a proxy from itself: that would stamp its older look as current.
     pub from_proxy: bool,
@@ -232,6 +235,7 @@ impl DecodedSource {
             local_tone: None,
             denoised: None,
             camera_matched: Default::default(),
+            hdr_made: Default::default(),
             from_proxy: false,
             reduced: false,
         }
@@ -274,6 +278,23 @@ impl DecodedSource {
         (matched, info)
     }
 
+    /// The picture an HDR render of `image` (what [`Self::develop_input`] gave) starts from. A source with an HDR gain
+    /// ([`SourceInfo::hdr_gain`]: an iPhone HEIC, an Ultra HDR JPEG) gets the highlights its gain map holds, up to the
+    /// file's own headroom; any other source is its own HDR input. The SDR render never uses it, so the SDR look is the
+    /// base picture's. Made once and kept while `image` stays.
+    pub fn hdr_input(&self, image: &Arc<Rgb32f>, info: &SourceInfo) -> Arc<Rgb32f> {
+        let Some(gain) = &info.hdr_gain else { return image.clone() };
+        let kept = || self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let hit = kept().as_ref().filter(|(from, _)| Arc::ptr_eq(from, image)).map(|(_, made)| made.clone());
+        if let Some(made) = hit {
+            return made;
+        }
+        let Some(made) = hdr_from_gain(image, gain) else { return image.clone() };
+        let made = Arc::new(made);
+        *kept() = Some((image.clone(), made.clone()));
+        made
+    }
+
     /// The picture to develop for a Denoise `amount` (0 to 1, see [`DevelopSettings::denoise_amount`]): the plain one,
     /// the denoised one, or a mix of the two. A mix is made once per amount and kept, so the stages after it are
     /// reused until the amount changes.
@@ -307,7 +328,9 @@ impl DecodedSource {
         let local_tone = self.info.as_ref().and_then(|i| i.local_tone.as_ref()).or(self.local_tone.as_ref());
         let mattes = mattes + local_tone.map_or(0, |t| t.map.gains.len() * 4);
         let matched = self.camera_matched.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.data.len() * 12);
-        self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes()) + matched
+        let hdr = self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.data.len() * 12);
+        let gain = self.info.as_ref().and_then(|i| i.hdr_gain.as_ref()).map_or(0, |g| g.gain.data.len());
+        self.image.data.len() * 12 + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes()) + matched + hdr + gain
     }
 
     /// What to render these pixels against: the decoder's facts, else `header` (the catalog's)
@@ -324,6 +347,14 @@ impl DecodedSource {
             },
         }
     }
+}
+
+/// `image` (linear working light) with its file's gain map applied in full: the HDR rendition, SDR white = 1 and the
+/// highlights above it up to the headroom the file declares. `None` when the map is unusable.
+pub fn hdr_from_gain(image: &Rgb32f, gain: &lightcraft_codecs::gainmap::JpegGainMap) -> Option<Rgb32f> {
+    let mut hdr = image.clone();
+    lightcraft_codecs::gainmap::apply(&mut hdr.data, hdr.width, hdr.height, &gain.gain, &gain.meta, 1.0).ok()?;
+    Some(hdr)
 }
 
 #[derive(Clone)]
@@ -386,7 +417,7 @@ impl SourceRef {
                 // Lanczos, not a box average: a box at 2-3:1 halves the contrast of detail near
                 // the output's resolution limit and aliases what is finer
                 let image = lightcraft_raster::resample::fit(&from.image, *max_edge, *max_edge, lightcraft_raster::resample::Filter::Lanczos3);
-                return Ok(DecodedSource { image: Arc::new(image), denoised: None, camera_matched: Default::default(), ..(**from).clone() });
+                return Ok(DecodedSource { image: Arc::new(image), denoised: None, camera_matched: Default::default(), hdr_made: Default::default(), ..(**from).clone() });
             }
             SourceRef::Demo { scene, max_edge } => crate::demo::scene_pixels(scene, *max_edge)?,
             SourceRef::File { path, max_edge, loader, fallback, denoise, reduced } => {
@@ -1236,8 +1267,12 @@ impl RenderJob {
             Ok(source) => {
                 // the plain picture, or (Denoise amount above 0 and a denoised picture cached) the mix the amount asks for,
                 // in the camera's own look for the Camera Matching profile
-                let (src, info) = source.develop_input(&self.settings, self.info);
-                let src = &src;
+                let (sdr_src, info) = source.develop_input(&self.settings, self.info);
+                // An HDR render (the loupe's HDR picture, an HDR export) of a file with a gain map starts from the
+                // highlights that map holds; an SDR render, and every other source, from the base picture.
+                let wants_hdr = self.hdr_view || self.request.depth == lightcraft_pipeline::OutputDepth::F32Hdr;
+                let hdr_src = (wants_hdr || self.settings.hdr.enabled).then(|| source.hdr_input(&sdr_src, &info));
+                let src = if wants_hdr { hdr_src.as_ref().unwrap_or(&sdr_src) } else { &sdr_src };
                 // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
                 // the GPU when there is one.
                 let gpu = self.cache.is_none();
@@ -1249,7 +1284,7 @@ impl RenderJob {
                     let request = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..request };
                     develop_hdr(src, &info, &self.settings, &request, self.stages.as_deref(), gpu)
                 } else {
-                    let (r, f) = develop_reporting(src, &info, &self.settings, &request, self.stages.as_deref(), gpu);
+                    let (r, f) = develop_reporting_hdr(src, hdr_src.as_ref().unwrap_or(src), &info, &self.settings, &request, self.stages.as_deref(), gpu);
                     (r, f, None)
                 };
                 // for a display profile: the image goes to the display's values, the histogram
@@ -1375,9 +1410,23 @@ pub fn develop_reporting(
     stages: Option<&StageCache>,
     gpu: bool,
 ) -> (Rendered, Option<String>) {
+    develop_reporting_hdr(src, src, info, s, req, stages, gpu)
+}
+
+/// [`develop_reporting`] for a source that has an HDR picture of its own (`hdr_src`, see
+/// [`DecodedSource::hdr_input`]): the render is of `src`, the HDR histogram of an HDR edit's preview measures `hdr_src`.
+pub fn develop_reporting_hdr(
+    src: &Arc<Rgb32f>,
+    hdr_src: &Arc<Rgb32f>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    req: &RenderRequest,
+    stages: Option<&StageCache>,
+    gpu: bool,
+) -> (Rendered, Option<String>) {
     let (mut rendered, fallback) = develop_image(src, info, s, req, stages, gpu);
     // an HDR edit's preview is its SDR rendition: its histogram shows the HDR range instead
-    if let Some(h) = lightcraft_pipeline::hdr_histogram(src, info, s, req) {
+    if let Some(h) = lightcraft_pipeline::hdr_histogram(hdr_src, info, s, req) {
         rendered.histogram = h;
     }
     (rendered, fallback)

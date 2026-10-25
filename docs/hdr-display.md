@@ -1,6 +1,6 @@
 # HDR display (LR-VIEW-HDR-DISPLAY)
 
-> **Last updated:** 2026-10-19 · **Change:** the HDR picture renders on the GPU (half floats and the HDR histogram from the GPU pipeline), and the draft budget learns HDR drafts apart: HDR drags at or near full size
+> **Last updated:** 2026-10-25 · **Change:** HDR sources: an iPhone HEIC's and an Ultra HDR JPEG's gain map give the HDR render its highlights (FB-HDR-6); before: the HDR picture renders on the GPU (half floats and the HDR histogram from the GPU pipeline), and the draft budget learns HDR drafts apart: HDR drags at or near full size
 
 When **Edit ▸ Light ▸ HDR** is on and the screen can show more than SDR white, the loupe draws the photo
 in HDR: highlights go past white, up to the edit's headroom limit (`hdr.maxEv`). Every other view, and a
@@ -38,6 +38,32 @@ never shown wrong.
 
 Windows (scRGB / HDR10 swap chains), Wayland (the colour-management protocol) and the web are not driven
 yet and report SDR (`display: SDR (…)` in the log).
+
+## HDR sources
+
+A photo that carries its own HDR rendition opens with it. Import (`files::load_bytes_now`) reads the file's gain map
+(`lightcraft_codecs::gainmap::read`) and keeps it, turned like the picture, in `SourceInfo::hdr_gain`:
+
+- **Ultra HDR / ISO 21496-1 JPEG** (Pixel, Samsung, Lightroom, LightCraft's own HDR export): the second MPF image with its
+  ISO 21496-1 or `hdrgm` XMP metadata (per-channel or single-channel maps, min / max content boost, gamma, offsets, base and
+  alternate headroom).
+- **iPhone HEIC**: the auxiliary image `urn:com:apple:photo:2020:aux:hdrgainmap` (`lightcraft_heif::gain_map`), sized by Apple's
+  maker note (EXIF tags 33 and 48 turned into stops with the published recipe: the map's codes span 0 to that many stops, no
+  offsets). A HEIC with an ISO `tmap` item brings its ISO 21496-1 metadata instead. A gain map that cannot be sized or parsed
+  leaves the file SDR; nothing panics.
+
+The HDR render (`RenderJob` with an HDR view or an `F32Hdr` export, and the HDR histogram of an HDR edit's preview) develops
+`DecodedSource::hdr_input` instead of the base: the base picture with the gain map applied in full (`gainmap::apply`, bilinear
+upsample of a lower-resolution map, kept per source like the camera-matched picture), so every edit, crop, rotation and lens
+correction treats the highlights as it treats the rest, and values above SDR white reach the `hdr.maxEv` limit. A neutral tone
+map passes those values through as they are (it used to roll them off from 0.95 up). The SDR render never sees it: the SDR
+look is the base picture's, bit for bit (`tests_hdr_sources`: SDR exports of a HEIC with and without a gain map are equal).
+
+Limits: the gain applies in the working primaries (Rec. 2020), not the base's own, which only matters for a map with
+per-channel gain and offsets; a smart preview does not keep the map (an offline original renders SDR); the HDR range overlay
+of an SDR preview and a HEIC whose primary item is the `tmap` itself are not covered; Apple's maker-note recipe and
+real iPhone, Pixel and Lightroom files were not available to check against, only synthetic ones and LightCraft's own HDR
+JPEG export read back (peak and mean luminance above white within a few percent).
 
 ## The desktop window's surface
 
