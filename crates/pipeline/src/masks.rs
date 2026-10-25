@@ -925,6 +925,11 @@ pub(crate) fn brush_alpha(strokes: &[BrushStroke], frame: &Frame, w: usize, h: u
 /// Stamp brush strokes into `out` (max-combine; erase strokes subtract). Auto Mask strokes weight
 /// each dab by [`auto_similarity`] to the pixel under its centre and are refined with
 /// [`guided_cross`] on log luminance.
+///
+/// A stroke is painted row by row in parallel: each pixel meets the dabs in their order, as one dab
+/// after the other would, so the coverage is the same, and only the box the dabs reach is combined
+/// into `out` (a stroke is a small part of a photo; a mask of many strokes was a pass over the whole
+/// photo per stroke, and the dabs of one stroke were painted on one core).
 fn rasterize_brush(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, out: &mut Plane) {
     if w == 0 || h == 0 {
         return;
@@ -932,39 +937,83 @@ fn rasterize_brush(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, i
     for s in strokes {
         let bd = brush_dabs(s, frame, w, h);
         let (dens, erase, auto) = (bd.density, bd.erase, bd.auto);
+        // each dab: its radius, hard core and flow (pen pressure applied), the colour under its centre for Auto
+        // Mask, and the columns and rows it reaches
+        struct Dab {
+            at: Point,
+            r: f64,
+            hard: f64,
+            flow: f32,
+            reference: Option<(f32, [f32; 3])>,
+            cols: std::ops::Range<usize>,
+            rows: std::ops::Range<usize>,
+        }
+        let dabs: Vec<Dab> = bd
+            .dabs
+            .iter()
+            .enumerate()
+            .map(|(k, d)| {
+                let (r, hard, flow) = bd.dab(k);
+                let reference = if auto {
+                    let j = dab_pixel(*d, w, h);
+                    log_l.data.get(j).zip(img.data.get(j)).map(|(l, c)| (*l, chromaticity(*c)))
+                } else {
+                    None
+                };
+                let cols = ((d.x - r).floor().max(0.0)) as usize..((d.x + r).ceil().max(0.0) as usize).min(w);
+                let rows = ((d.y - r).floor().max(0.0)) as usize..((d.y + r).ceil().max(0.0) as usize).min(h);
+                Dab { at: *d, r, hard, flow, reference, cols, rows }
+            })
+            .collect();
+        // the box the dabs reach
+        let (mut bx0, mut by0, mut bx1, mut by1) = (w, h, 0usize, 0usize);
+        for d in dabs.iter().filter(|d| d.cols.start < d.cols.end && d.rows.start < d.rows.end) {
+            (bx0, by0, bx1, by1) = (bx0.min(d.cols.start), by0.min(d.rows.start), bx1.max(d.cols.end), by1.max(d.rows.end));
+        }
         let mut stroke_alpha = Plane::new(w, h);
-        for (k, d) in bd.dabs.iter().enumerate() {
-            let (r, hard, flow) = bd.dab(k);
-            let refc = auto.then(|| {
-                let j = dab_pixel(*d, w, h);
-                (log_l.data[j], chromaticity(img.data[j]))
-            });
-            let (x0, x1) = (((d.x - r).floor().max(0.0)) as usize, ((d.x + r).ceil().max(0.0) as usize).min(w));
-            let (y0, y1) = (((d.y - r).floor().max(0.0)) as usize, ((d.y + r).ceil().max(0.0) as usize).min(h));
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    let dd = Point::new(x as f64 + 0.5, y as f64 + 0.5).dist(*d);
-                    if dd > r {
+        for_rows(&mut stroke_alpha.data, w, |y, row| {
+            if y < by0 || y >= by1 {
+                return;
+            }
+            for d in dabs.iter().filter(|d| d.rows.contains(&y)) {
+                for x in d.cols.clone() {
+                    let dd = Point::new(x as f64 + 0.5, y as f64 + 0.5).dist(d.at);
+                    if dd > d.r {
                         continue;
                     }
-                    let mut a = dab_alpha(dd, r, hard);
-                    let i = y * w + x;
-                    if let Some((rl, rch)) = refc {
-                        a *= auto_similarity(log_l.data[i], chromaticity(img.data[i]), rl, rch);
+                    let mut a = dab_alpha(dd, d.r, d.hard);
+                    if let Some((rl, rch)) = d.reference {
+                        let i = y * w + x;
+                        if let (Some(l), Some(c)) = (log_l.data.get(i), img.data.get(i)) {
+                            a *= auto_similarity(*l, chromaticity(*c), rl, rch);
+                        }
                     }
-                    let v = &mut stroke_alpha.data[i];
                     // flow accumulates within a stroke up to density
-                    *v = accumulate(*v, a, flow, dens);
+                    if let Some(v) = row.get_mut(x) {
+                        *v = accumulate(*v, a, d.flow, dens);
+                    }
                 }
             }
-        }
+        });
         if auto {
             let (sigma, eps) = auto_refine(bd.r);
             let q = guided_cross(log_l, &stroke_alpha, sigma, eps);
-            // the refinement fills gaps along edges; it never takes paint away
+            // the refinement fills gaps along edges (past the dabs); it never takes paint away
             stroke_alpha = stroke_alpha.zip_map(&q, f32::max);
+            (bx0, by0, bx1, by1) = (0, 0, w, h);
         }
-        zip_rows(out, &stroke_alpha, |o, a| *o = if erase { *o * (1.0 - a) } else { o.max(a) });
+        if bx0 >= bx1 || by0 >= by1 {
+            continue;
+        }
+        for_rows(&mut out.data, w, |y, row| {
+            if y < by0 || y >= by1 {
+                return;
+            }
+            let (Some(dst), Some(src)) = (row.get_mut(bx0..bx1), stroke_alpha.data.get(y * w + bx0..y * w + bx1)) else { return };
+            for (o, a) in dst.iter_mut().zip(src) {
+                *o = if erase { *o * (1.0 - a) } else { o.max(*a) };
+            }
+        });
     }
 }
 
@@ -1230,6 +1279,82 @@ mod tests {
         assert!(a.get(40, 50) > 0.9, "{}", a.get(40, 50));
         assert!(a.get(100, 50) < 0.05, "erased centre {}", a.get(100, 50));
         assert!(a.get(40, 5) < 0.01);
+    }
+
+    /// A brush mask is stroke after stroke combined by their box: the same coverage as every stroke laid over the whole
+    /// photo, strokes that run off the frame, hit its corners or are erased included.
+    #[test]
+    fn strokes_combine_the_same_inside_their_box_as_over_the_whole_photo() {
+        let (w, h) = (97, 61);
+        let f = frame(w, h);
+        let (img, l) = (Rgb32f::new(w, h), Plane::new(w, h));
+        let stroke = |pts: &[(f64, f64)], size: f64, erase: bool, feather: f64, flow: f64| BrushStroke {
+            points: pts.iter().map(|p| Point::new(p.0, p.1)).collect(),
+            size,
+            erase,
+            feather,
+            flow,
+            ..Default::default()
+        };
+        let strokes = vec![
+            stroke(&[(0.1, 0.2), (0.9, 0.3)], 0.08, false, 40.0, 100.0),
+            stroke(&[(-0.2, 0.5), (0.05, 0.6)], 0.1, false, 100.0, 30.0),
+            stroke(&[(1.1, 1.1), (0.95, 0.97)], 0.07, false, 0.0, 100.0),
+            stroke(&[(0.5, 0.25)], 0.05, true, 50.0, 100.0),
+            stroke(&[(3.0, 3.0)], 0.05, false, 50.0, 100.0),
+            stroke(&[(0.3, 0.3), (0.7, 0.8)], 0.04, false, 70.0, 60.0),
+        ];
+        let got = shape_alpha(&MaskShape::Brush { strokes: strokes.clone() }, &f, w, h, &img, &l, 0.0, None);
+        // every stroke over the whole photo
+        let mut want = Plane::new(w, h);
+        for s in &strokes {
+            let bd = brush_dabs(s, &f, w, h);
+            let mut one = Plane::new(w, h);
+            for (k, d) in bd.dabs.iter().enumerate() {
+                let (r, hard, flow) = bd.dab(k);
+                for y in 0..h {
+                    for x in 0..w {
+                        let dd = Point::new(x as f64 + 0.5, y as f64 + 0.5).dist(*d);
+                        if dd <= r {
+                            let v = &mut one.data[y * w + x];
+                            *v = accumulate(*v, dab_alpha(dd, r, hard), flow, bd.density);
+                        }
+                    }
+                }
+            }
+            for (o, a) in want.data.iter_mut().zip(&one.data) {
+                *o = if bd.erase { *o * (1.0 - a) } else { o.max(*a) };
+            }
+        }
+        assert_eq!(got.data, want.data);
+        assert!(got.data.iter().any(|v| *v > 0.5) && got.get(48, 15) < 0.5, "the erase took paint away");
+    }
+
+    /// `cargo test --release -p lightcraft-pipeline brush_cost -- --ignored --nocapture`: milliseconds (best of 7) to evaluate a
+    /// brush mask of 1, 10 and 40 strokes on a 1800 × 1200 render.
+    #[test]
+    #[ignore]
+    fn brush_cost_by_stroke_count() {
+        let (w, h) = (1800, 1200);
+        let f = frame(w, h);
+        let (img, l) = (Rgb32f::new(w, h), Plane::new(w, h));
+        let stroke = |i: usize| {
+            let y = 0.05 + 0.9 * (i % 20) as f64 / 20.0;
+            BrushStroke { points: vec![Point::new(0.1, y), Point::new(0.5, y + 0.02), Point::new(0.9, y)], size: 0.03, ..Default::default() }
+        };
+        for n in [1, 10, 40] {
+            let shape = MaskShape::Brush { strokes: (0..n).map(stroke).collect() };
+            // (the fastest of several: the machine may be busy)
+            let best = (0..7)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    let a = shape_alpha(&shape, &f, w, h, &img, &l, 0.0, None);
+                    assert!(a.data.iter().any(|v| *v > 0.5));
+                    t.elapsed()
+                })
+                .min();
+            eprintln!("{n:>3} strokes: {best:?}");
+        }
     }
 
     /// #518: holding the brush still adds no coverage. A press plus any number of stationary
