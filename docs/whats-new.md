@@ -13,6 +13,27 @@
 - A test now moves every develop slider (and every mask slider) and fails when one stops changing the picture, when its
   default doesn't give the untouched picture back, or (on a machine with a GPU) when the CPU and GPU renders differ.
 
+### Olympus and OM System files on a sync server
+- A sync server now describes Olympus and OM System files the way the desktop does: a body shot at 3:2, 16:9 or 1:1
+  starts cropped to that frame (an import look, not an edit), whether the photo came from a library folder or from a
+  visitor to a shared album.
+- The upload form of a shared album link offers every file type Import takes, `.ori` and the other raw formats the old
+  hand-written list missed included.
+
+### Olympus and OM System raws edit white balance in Kelvin
+- The E-1, E-300, E-330, E-400, E-500, XZ-2 and the high-resolution files of the E-M5 Mark II and PEN-F now show their
+  as-shot white balance as a temperature and tint (5300 K, say) and the Temperature slider moves in Kelvin, as for
+  Sony, Canon and Fujifilm bodies before. The scale is the camera's own: the bodies from the E-1 to the OM-3 store
+  the gains they apply at twelve temperatures (the E-10, E-20 and the older compacts do not, and stay as they were), and the shots set to a preset or a Kelvin value of ten files read back
+  within 1.2 mired of what the camera states. Photos imported earlier keep the scale they were edited on. The compressed
+  `.orf` files of the other bodies carry the same table, so they get the scale the day their sensor data can be read.
+
+### Olympus and OM System previews in the colour space the camera was set to
+- An Olympus or OM System body set to Adobe RGB writes its camera JPEG (all there is to see of a compressed `.orf`)
+  in Adobe RGB without saying so in the file's Exif or in the JPEG, only in its maker note. The library read those
+  pictures as sRGB, which made their colours dull; it now reads the maker note (11 of the 70 sample files, from the E-1
+  to the TG-6). Files set to sRGB are as before, and so are the Pro Photo RGB ones.
+
 ## 2026-10-24
 
 ### Olympus and OM System files open the way the camera shot them

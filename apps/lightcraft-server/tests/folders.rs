@@ -879,3 +879,82 @@ fn video_clips_in_a_library_folder_are_listed_with_posters() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A synthetic Olympus file (`lightcraft_engine::testdata`): a 48 x 36 sensor, shot at the aspect ratio `frame` states.
+/// `compressed` is a strip of the compressed coding's size class (preview-only), else uncompressed 16-bit words (a raw);
+/// `seed` makes the content differ (the library keeps one photo of a content).
+fn olympus(compressed: bool, frame: Option<[u16; 4]>, seed: u32) -> Vec<u8> {
+    use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
+    let px: Vec<u8> = (0..40 * 30).flat_map(|i| [(i % 251) as u8, 128, 200]).collect();
+    let preview = encode_jpeg(&EncodeImage::new(40, 30, 3, Samples::U8(&px)), 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+    let strip: Vec<u8> = if compressed {
+        [&[0u8, 0, 0, 0, 1, 0, 0][..], &[seed as u8; 57]].concat()
+    } else {
+        (0..48u32 * 36).flat_map(|i| (((200 + i * 37 + seed * 5) % 4000) as u16).to_le_bytes()).collect()
+    };
+    lightcraft_engine::testdata::OlympusOrf { frame, ..lightcraft_engine::testdata::OlympusOrf::new(48, 36, 16, strip, preview) }.build()
+}
+
+/// `.ori` files are found in a library folder, and an Olympus body's aspect-ratio setting becomes the photo's import crop
+/// there as it does on a desktop (the same `ProbeInfo::default_crop`, applied by `import::apply_default_crop`): the crop
+/// is part of the photo's import look, not an edit, and reaches the devices.
+#[test]
+fn olympus_originals_in_a_library_folder_keep_the_cameras_aspect_crop() {
+    let root = temp("olympus");
+    let photos = root.join("photos");
+    std::fs::create_dir_all(&photos).unwrap();
+    // 16:9 of the 48 x 36 area: rows 4 to 30
+    let wide = Some([0, 4, 47, 30]);
+    let files = [
+        ("wide.ori", olympus(false, wide, 1)),
+        ("wide-compressed.ORI", olympus(true, wide, 2)),
+        ("wide.orf", olympus(false, wide, 3)),
+        ("plain.ori", olympus(false, None, 4)),
+        ("plain.orf", olympus(true, None, 5)),
+    ];
+    for (name, bytes) in &files {
+        std::fs::write(photos.join(name), bytes).unwrap();
+    }
+    // the desktop's own import of the same files, for comparison
+    let mut desktop = Session::new().with_fs();
+    desktop.execute("library.import", &json!({"paths": [photos.to_string_lossy()]})).unwrap();
+    assert_eq!(desktop.catalog.len(), files.len());
+
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    let server = Server::start(cfg).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
+    server.scan("ann");
+    let st = scanned(&server, 0);
+    assert_eq!((st.files, st.added, st.failed), (files.len(), files.len(), 0), "{st:?}");
+    let mut dev = Session::new().with_fs();
+    dev.open_library(root.join("device"), false).unwrap();
+    let url = format!("http://{}", server.addr());
+    dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
+    sync(&mut dev);
+    assert_eq!(dev.catalog.len(), files.len());
+    let whole = |p: &lightcraft_engine::catalog::Photo| {
+        let r = p.develop.crop.geometry.rect;
+        (r.x0, r.y0, r.x1, r.y1) == (0.0, 0.0, 1.0, 1.0)
+    };
+    for (name, _) in &files {
+        let on_server = by_place(&dev, &format!("Photos/{name}")).unwrap_or_else(|| panic!("{name} is not in the library"));
+        let on_desktop = desktop.catalog.photos().find(|p| p.file_name == *name).unwrap();
+        assert_eq!(on_server.format, on_desktop.format, "{name}");
+        assert_eq!(on_server.preview_only.is_some(), on_desktop.preview_only.is_some(), "{name}");
+        assert_eq!(on_server.develop.crop.geometry.rect, on_desktop.develop.crop.geometry.rect, "{name}: the desktop's crop");
+        assert_eq!(on_server.import_look.is_some(), on_desktop.import_look.is_some(), "{name}");
+        let framed = name.starts_with("wide");
+        assert_eq!(!whole(on_server), framed, "{name}: {:?}", on_server.develop.crop.geometry.rect);
+        assert!(!on_server.is_edited(), "{name}: an import look, not an edit");
+    }
+    let wide = by_place(&dev, "Photos/wide.ori").unwrap();
+    let r = wide.develop.crop.geometry.rect;
+    assert!(wide.develops_raw() && (wide.width, wide.height) == (48, 36), "the whole area is developed");
+    assert!((r.x0, r.x1) == (0.0, 1.0) && (r.y0 - 4.0 / 36.0).abs() < 1e-9 && (r.y1 - 31.0 / 36.0).abs() < 1e-9, "{r:?}");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}

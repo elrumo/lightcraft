@@ -124,3 +124,48 @@ fn a_decoded_olympus_raw_states_its_aspect_frame_too() {
         }
     }
 }
+
+/// The colour space the camera was set to is in the maker note (CameraSettings `ColorSpace`), and only there: a body set to Adobe
+/// RGB writes Exif `ColorSpace` 0xFFFF without the Interoperability "R03", and its JPEG has no ICC profile. Of the 70 Olympus
+/// files checked by hand 11 are Adobe RGB (E-1, E-3, E-5, E-400, E-500, E-620, E-P3, E-M1 Mark II, E-M1 Mark III, E-M10 Mark
+/// IIIs, TG-6), every one of them with Exif 0xFFFF, and none of the other 59 is. The camera's own colour matrix (maker note
+/// `ColorMatrix`, read with exiftool run as a black-box tool) agrees: those 11 bodies' matrices have the shape of their sRGB
+/// siblings' converted to Adobe RGB primaries (the E-P3's first row against the E-PL3's, 246 48 -38 against 364 -64 -44
+/// converted to 245 61 -50), so the JPEG the pipeline makes, the preview included, is in Adobe RGB.
+#[test]
+fn the_colour_space_the_camera_was_set_to_is_read_from_the_maker_note() {
+    use lightcraft_raw::PreviewColorSpace::{AdobeRgb, Srgb};
+    let cases = [
+        ("orf-olympus-e1.orf", AdobeRgb),
+        ("orf-olympus-e400.orf", AdobeRgb),
+        ("orf-olympus-e-500.orf", AdobeRgb),
+        ("orf-olympus-e-3.orf", AdobeRgb),
+        ("orf-olympus-tg-6.orf", AdobeRgb),
+        ("orf-olympus-e-p3.orf", AdobeRgb),
+        ("orf-olympus-e-m10-mark-iiis.orf", AdobeRgb),
+        ("orf-olympus-e-300.orf", Srgb),
+        ("orf-olympus-e-330.orf", Srgb),
+        ("orf-olympus-xz2.orf", Srgb),
+        ("orf-olympus-e-30.orf", Srgb),
+        ("orf-olympus-e-p2.orf", Srgb),
+        ("orf-olympus-e-m10-mark-iv.orf", Srgb),
+        ("orf-olympus-e-pl6.orf", Srgb),
+        ("orf-olympus-e-pl7.orf", Srgb),
+        ("orf-olympus-e-pl10.orf", Srgb),
+        ("orf-om-system-om-5.orf", Srgb),
+    ];
+    let mut seen = 0;
+    for (name, want) in cases {
+        let path = corpus().join("raw").join(name);
+        let Ok(bytes) = std::fs::read(&path) else {
+            lightcraft_testkit::skip!(Corpus, "{} absent", path.display());
+            continue;
+        };
+        assert_eq!(lightcraft_raw::embedded_preview_color_space(&bytes), Some(want), "{name}");
+        // the JPEG itself says nothing: no ICC profile, no Exif of its own
+        let jpeg = embedded_preview(&bytes).unwrap_or_else(|| panic!("{name}: no camera JPEG"));
+        assert!(lightcraft_meta::extract(&jpeg).orientation.is_none() && !jpeg.windows(11).any(|w| w == b"ICC_PROFILE"), "{name}");
+        seen += 1;
+    }
+    eprintln!("Olympus colour spaces checked: {seen}");
+}

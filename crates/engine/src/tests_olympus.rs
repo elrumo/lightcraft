@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use lightcraft_catalog::MediaKind;
-use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+use lightcraft_raw::testdata::OlympusOrf;
 use serde_json::json;
 
 use crate::Session;
@@ -24,75 +24,16 @@ fn jpeg(w: usize, h: usize) -> Vec<u8> {
     encode_jpeg(&EncodeImage::new(w as u32, h as u32, 3, Samples::U8(&px)), 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap()
 }
 
-/// A new-style Olympus maker note (`OLYMPUS\0II\x03\0`: the IFD at 12, offsets counted from the note's start) whose
-/// CameraSettings directory (0x2020) names `preview` as its PreviewImage (0x0101 start, 0x0102 length) and, when `frame`
-/// is given, whose ImageProcessing directory (0x2040) states the valid area (the sensor, `area`) and that aspect frame
-/// (`AspectFrame`, 0x1113: left, top, right, bottom).
-fn maker_note(preview: &[u8], area: (u32, u32), frame: Option<[u16; 4]>) -> Vec<u8> {
-    let entry = |tag: u16, typ: u16, count: u32, v: u32| {
-        [tag.to_le_bytes().to_vec(), typ.to_le_bytes().to_vec(), count.to_le_bytes().to_vec(), v.to_le_bytes().to_vec()].concat()
-    };
-    let directories = if frame.is_some() { 2 } else { 1 };
-    let camera_settings = 12 + 2 + 12 * directories + 4;
-    let image_processing = camera_settings + 2 + 2 * 12 + 4;
-    // ImageProcessing: the valid area (left, top, width, height), the frame (its four SHORTs follow the directory)
-    let ip_len = 2 + 5 * 12 + 4;
-    let frame_at = image_processing + ip_len;
-    let jpeg_at = if frame.is_some() { frame_at + 8 } else { image_processing };
-    let mut n = b"OLYMPUS\0II\x03\0".to_vec();
-    n.extend((directories as u16).to_le_bytes());
-    n.extend(entry(0x2020, 13, 1, camera_settings as u32));
-    if frame.is_some() {
-        n.extend(entry(0x2040, 13, 1, image_processing as u32));
-    }
-    n.extend(0u32.to_le_bytes());
-    n.extend(2u16.to_le_bytes());
-    n.extend(entry(0x0101, 4, 1, jpeg_at as u32));
-    n.extend(entry(0x0102, 4, 1, preview.len() as u32));
-    n.extend(0u32.to_le_bytes());
-    if let Some(f) = frame {
-        n.extend(5u16.to_le_bytes());
-        n.extend(entry(0x0612, 4, 1, 0));
-        n.extend(entry(0x0613, 4, 1, 0));
-        n.extend(entry(0x0614, 4, 1, area.0));
-        n.extend(entry(0x0615, 4, 1, area.1));
-        n.extend(entry(0x1113, 3, 4, frame_at as u32));
-        n.extend(0u32.to_le_bytes());
-        n.extend(f.iter().flat_map(|v| v.to_le_bytes()));
-    }
-    n.extend(preview);
-    n
-}
-
 /// An Olympus container (the `IIRO` magic) for a `w × h` sensor of `bits`-bit samples whose only strip is `strip`,
 /// shot with the camera turned as `orientation` says, with `preview` as its CameraSettings preview and a few Exif
-/// fields (ISO 200, 1/125 s, an RGGB colour-filter layout).
+/// fields (ISO 200, 1/125 s, an RGGB colour-filter layout): `lightcraft_raw::testdata::OlympusOrf`.
 fn container(w: u32, h: u32, bits: u16, strip: Vec<u8>, orientation: u16, preview: &[u8]) -> Vec<u8> {
     container_framed(w, h, bits, strip, orientation, preview, None)
 }
 
 /// [`container`] shot at an aspect ratio other than 4:3: `frame` is the note's `AspectFrame`.
 fn container_framed(w: u32, h: u32, bits: u16, strip: Vec<u8>, orientation: u16, preview: &[u8], frame: Option<[u16; 4]>) -> Vec<u8> {
-    let mut ifd = IfdBuilder::new();
-    ifd.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
-    ifd.set(t::IMAGE_LENGTH, Value::Long(vec![h]));
-    ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![bits]));
-    ifd.set(t::COMPRESSION, Value::Short(vec![1]));
-    ifd.set(t::PHOTOMETRIC, Value::Short(vec![1]));
-    ifd.set(t::MAKE, Value::Ascii("OLYMPUS IMAGING CORP.".into()));
-    ifd.set(t::MODEL, Value::Ascii("E-M10 Mark II".into()));
-    ifd.set(t::ORIENTATION, Value::Short(vec![orientation]));
-    ifd.set_image(ImageData::Strips { rows_per_strip: h, strips: vec![strip] });
-    let mut exif = IfdBuilder::new();
-    exif.set(t::EXPOSURE_TIME, Value::Rational(vec![(1, 125)]));
-    exif.set(t::ISO_SPEED, Value::Short(vec![200]));
-    exif.set(0xa302, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
-    exif.set(t::MAKER_NOTE, Value::Undefined(maker_note(preview, (w, h), frame)));
-    ifd.set_child(t::EXIF_IFD, exif);
-    let mut b = TiffWriter::new(ByteOrder::Little, false).write(&[ifd]).unwrap();
-    b[2] = b'R';
-    b[3] = b'O';
-    b
+    OlympusOrf { orientation, frame, ..OlympusOrf::new(w, h, bits, strip, preview.to_vec()) }.build()
 }
 
 /// A strip of the compressed coding's size class: far shorter than the sensor's samples, so no uncompressed layout fits.
@@ -309,4 +250,127 @@ fn a_healed_raw_keeps_its_aspect_crop() {
     assert!(p.develops_raw(), "healed");
     assert_eq!(p.develop.crop.geometry.rect, crop, "the frame is still the crop");
     let _ = std::fs::remove_dir_all(&src);
+}
+
+/// The E-1 corpus file's twelve `WB_RBLevels<K>` (red and blue gain against green at 256), at `PRESET_KELVIN`.
+const E1_TABLE: [[u16; 2]; 12] =
+    [[254, 491], [278, 446], [302, 411], [322, 384], [531, 414], [368, 338], [470, 330], [402, 308], [432, 286], [468, 262], [538, 270], [522, 228]];
+
+/// A 48 x 36 uncompressed raw of `model` with [`E1_TABLE`] in its maker note and `as_shot` as its gains.
+fn with_presets(model: &str, as_shot: [u16; 2], seed: u32) -> Vec<u8> {
+    let words: Vec<u8> = (0..48u32 * 36).flat_map(|i| (((200 + i * 37 + seed * 5) % 4000) as u16).to_le_bytes()).collect();
+    OlympusOrf { model: model.into(), as_shot: Some(as_shot), presets: Some(E1_TABLE), ..OlympusOrf::new(48, 36, 16, words, jpeg(40, 30)) }.build()
+}
+
+/// A body whose maker note holds the camera's own white-balance presets edits white balance in Kelvin: the as-shot gains
+/// of a shot at each preset import as that preset's temperature, the photo's scale is Kelvin, and a body without a table
+/// (the E-20) keeps the relative scale. A raw shown from its JPEG has no white balance to change, whatever the camera.
+#[test]
+fn a_body_with_a_preset_table_edits_white_balance_in_kelvin() {
+    use lightcraft_develop::WbScale;
+    use lightcraft_raw::testdata::PRESET_KELVIN;
+    let src = temp_dir("kelvin");
+    let daylight: Vec<(usize, u16)> = PRESET_KELVIN.iter().copied().enumerate().filter(|(_, k)| ![4000, 4500, 6600].contains(k)).collect();
+    for (slot, k) in &daylight {
+        std::fs::write(src.join(format!("e1-{k}.orf")), with_presets("E-1", E1_TABLE[*slot], *slot as u32)).unwrap();
+    }
+    std::fs::write(src.join("e20.orf"), with_presets("E-20,E-20N,E-20P", E1_TABLE[8], 90)).unwrap();
+    std::fs::write(src.join("compressed.orf"), container(5184, 3888, 16, compressed_strip(3), 1, &jpeg(40, 30))).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(daylight.len() + 2), "{r}");
+    let photo = |name: &str| s.catalog.photos().find(|p| p.file_name == name).unwrap_or_else(|| panic!("{name} not imported")).clone();
+    for (_, k) in &daylight {
+        let p = photo(&format!("e1-{k}.orf"));
+        let want = f64::from(*k);
+        assert!(p.develops_raw() && !p.relative_wb(), "{k}");
+        assert_eq!(p.as_shot_wb, Some((want, 0.0)), "{k}: the preset's own temperature");
+        assert_eq!((p.develop.wb.temp, p.develop.wb.tint, p.develop.wb.scale), (want, 0.0, WbScale::Kelvin), "{k}");
+        assert!(!p.is_edited());
+    }
+    let e20 = photo("e20.orf");
+    assert!(e20.develops_raw() && e20.relative_wb(), "no table in the camera's list: relative");
+    assert_eq!(e20.as_shot_wb, Some((6500.0, 0.0)));
+    assert_eq!(e20.develop.wb.scale, WbScale::Legacy);
+    let rendered = photo("compressed.orf");
+    assert!(!rendered.develops_raw() && !rendered.relative_wb() && rendered.as_shot_wb.is_none(), "{:?}", rendered.preview_only);
+    // the same temperature from the loupe's source, and a render goes through
+    let id = photo("e1-5300.orf").id;
+    assert!(s.render_job(id, 48, 36, false, true).unwrap().run().rendered.is_ok());
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// Olympus raws of the corpus that decode: their white balance is in Kelvin through the maker note's presets, the header and
+/// the decode say the same, and the catalog decides the same from the camera's name. The E-1 file was shot on its 5300 K
+/// preset. Skips cleanly without these CC0 files.
+#[test]
+fn corpus_olympus_raws_edit_white_balance_in_kelvin_through_their_presets() {
+    let dir = std::env::var_os("LIGHTCRAFT_CORPUS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+        .join("raw");
+    for (name, kelvin) in [
+        ("orf-olympus-e1.orf", Some(5300.0)),
+        ("orf-olympus-e400.orf", None),
+        ("orf-olympus-e-500.orf", None),
+        ("orf-olympus-xz2.orf", None),
+        ("orf-olympus-pen-f.orf", None),
+    ] {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            lightcraft_testkit::skip!(Corpus, "{name} absent");
+            continue;
+        };
+        let header = crate::files::probe_bytes(name, &bytes).unwrap();
+        let (_, info) = crate::files::load_bytes(&bytes, 400).unwrap();
+        assert_eq!(header.as_shot_wb, Some((info.as_shot_temp, info.as_shot_tint)), "{name}");
+        assert!(info.raw && !info.relative_wb && info.legacy_relative_wb, "{name}: {info:?}");
+        match kelvin {
+            Some(k) => assert!(
+                (info.as_shot_temp - k).abs() <= 20.0 && info.as_shot_tint.abs() <= 2.0,
+                "{name}: {} {}",
+                info.as_shot_temp,
+                info.as_shot_tint
+            ),
+            None => assert!(info.as_shot_temp != 6500.0 && (3000.0..8000.0).contains(&info.as_shot_temp), "{name}: {}", info.as_shot_temp),
+        }
+        assert!(!lightcraft_catalog::relative_wb_camera("ORF", &header.meta.camera), "{}", header.meta.camera);
+    }
+}
+
+/// A 40 x 30 JPEG of one green that a wide gamut makes more saturated than sRGB does.
+fn green_jpeg() -> Vec<u8> {
+    use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
+    let px: Vec<u8> = (0..40 * 30).flat_map(|_| [90u8, 170, 90]).collect();
+    encode_jpeg(&EncodeImage::new(40, 30, 3, Samples::U8(&px)), 95, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap()
+}
+
+/// A body set to Adobe RGB writes Exif `ColorSpace` "uncalibrated" without the DCF's Interoperability "R03" and no ICC
+/// profile in the camera JPEG: the only statement of the space is the maker note's `ColorSpace`. The preview is read in
+/// Adobe RGB then (its greens come out more saturated in sRGB than the same pixels read as sRGB), and a file that says sRGB,
+/// Pro Photo RGB (no space of ours) or nothing is read as before.
+#[test]
+fn an_olympus_preview_is_read_in_the_colour_space_the_camera_was_set_to() {
+    use lightcraft_raw::PreviewColorSpace;
+    let file = |color_space: Option<u16>, exif: Option<u16>| {
+        let words: Vec<u8> = (0..48u32 * 36).flat_map(|i| (((200 + i * 37) % 4000) as u16).to_le_bytes()).collect();
+        OlympusOrf { color_space, exif_color_space: exif, ..OlympusOrf::new(48, 36, 16, words, green_jpeg()) }.build()
+    };
+    let green_of = |bytes: &[u8]| {
+        let img = crate::files::embedded_preview_srgb(bytes, 64).expect("the camera JPEG shows");
+        let px = img.data[img.data.len() / 2];
+        (px[0], px[1], px[2])
+    };
+    let adobe = file(Some(1), Some(0xFFFF));
+    let srgb = file(Some(0), Some(1));
+    assert_eq!(lightcraft_raw::embedded_preview_color_space(&adobe), Some(PreviewColorSpace::AdobeRgb));
+    assert_eq!(lightcraft_raw::embedded_preview_color_space(&srgb), Some(PreviewColorSpace::Srgb));
+    let (plain, wide) = (green_of(&srgb), green_of(&adobe));
+    assert!((i32::from(plain.0) - 90).abs() <= 3 && (i32::from(plain.1) - 170).abs() <= 3, "read as sRGB it is the JPEG's own pixel: {plain:?}");
+    assert!(wide.0 + 15 < plain.0 && wide.2 <= plain.2, "read as Adobe RGB the green is more saturated: {wide:?} against {plain:?}");
+    // no statement, one that is not ours, or an Exif one alone: what the JPEG says (sRGB)
+    for (maker, exif) in [(None, Some(0xFFFF)), (None, None), (Some(2), Some(0xFFFF)), (Some(7), None)] {
+        let bytes = file(maker, exif);
+        assert_eq!(lightcraft_raw::embedded_preview_color_space(&bytes), None, "{maker:?} {exif:?}");
+        assert_eq!(green_of(&bytes), plain, "{maker:?} {exif:?}");
+    }
 }

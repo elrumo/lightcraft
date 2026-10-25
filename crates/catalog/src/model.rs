@@ -714,4 +714,42 @@ mod edited_tests {
             assert!(!p.is_edited());
         }
     }
+
+    /// Olympus and OM System bodies whose files carry the camera's white-balance presets edit in Kelvin
+    /// (`lightcraft_raw::kelvin_presets`); the older ones without a table stay on the relative scale. A raw shown from its
+    /// JPEG is a rendered image whatever the camera.
+    #[test]
+    fn olympus_bodies_with_a_preset_table_use_kelvin_white_balance() {
+        for (camera, format, relative) in [
+            ("OLYMPUS CORPORATION E-1", "ORF", false),
+            ("OLYMPUS IMAGING CORP. E-500", "ORF", false),
+            ("OLYMPUS IMAGING CORP. XZ-2", "ORF", false),
+            ("OLYMPUS IMAGING CORP. E-M5MarkII", "orf", false),
+            ("OLYMPUS CORPORATION PEN-F", "ORF", false),
+            ("OM Digital Solutions OM-3", "ORI", false),
+            ("OLYMPUS OPTICAL CO.,LTD E-10", "ORF", true),
+            ("OLYMPUS OPTICAL CO.,LTD E-20,E-20N,E-20P", "ORF", true),
+            ("OLYMPUS IMAGING CORP. SP550UZ", "ORF", true),
+            ("OLYMPUS IMAGING CORP. C5060WZ", "ORF", true),
+            ("", "ORF", true),
+        ] {
+            let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.orf", format, 10, 10, "2026-10-01T00:00:00");
+            p.kind = MediaKind::Raw;
+            p.meta.camera = camera.into();
+            p.as_shot_wb = Some((5300.0, 0.0));
+            assert_eq!(p.relative_wb(), relative, "{camera}");
+            assert_eq!(relative_wb_camera(format, camera), relative, "{camera}");
+            let wb = p.camera_defaults().wb;
+            assert_eq!((wb.temp, wb.tint), if relative { (6500.0, 0.0) } else { (5300.0, 0.0) }, "{camera}");
+            assert_eq!(wb.scale, if relative { WbScale::Legacy } else { WbScale::Kelvin }, "{camera}");
+            // a photo from before the Kelvin scale: stored As Shot on the relative scale, still not an edit
+            p.develop = Arc::new(DevelopSettings::for_raw(6500.0, 0.0));
+            assert!(!p.is_edited(), "{camera}: old As Shot values are not an edit");
+            p.as_shot_wb = Some((6500.0, 0.0));
+            assert_eq!(p.camera_defaults().wb.mode, WbMode::AsShot, "{camera}");
+            assert!(!p.is_edited(), "{camera}");
+            p.preview_only = Some("Olympus compressed ORF".into());
+            assert!(!p.relative_wb(), "{camera}: shown from its JPEG");
+        }
+    }
 }

@@ -590,6 +590,84 @@ fn visitors_add_photos_to_an_album_whose_link_takes_them() {
     let _ = std::fs::remove_dir_all(&fx.root);
 }
 
+/// A synthetic Olympus file (`lightcraft_engine::testdata`): a 48 x 36 sensor, shot at the aspect ratio `frame` states.
+/// `compressed` is a strip of the compressed coding's size class (preview-only), else uncompressed 16-bit words (a raw);
+/// `seed` makes the content differ (the library keeps one photo of a content).
+fn olympus(compressed: bool, frame: Option<[u16; 4]>, seed: u32) -> Vec<u8> {
+    use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
+    let px: Vec<u8> = (0..40 * 30).flat_map(|i| [(i % 251) as u8, 128, 200]).collect();
+    let preview = encode_jpeg(&EncodeImage::new(40, 30, 3, Samples::U8(&px)), 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
+    let strip: Vec<u8> = if compressed {
+        [&[0u8, 0, 0, 0, 1, 0, 0][..], &[seed as u8; 57]].concat()
+    } else {
+        (0..48u32 * 36).flat_map(|i| (((200 + i * 37 + seed * 5) % 4000) as u16).to_le_bytes()).collect()
+    };
+    lightcraft_engine::testdata::OlympusOrf { frame, ..lightcraft_engine::testdata::OlympusOrf::new(48, 36, 16, strip, preview) }.build()
+}
+
+/// The upload form offers every extension Import takes (the engine's list: before, a hand-written one that knew neither `.ori`
+/// nor `.rwl`, `.mos`, `.fff`, `.mef` and `.gpr`), and what a visitor adds of an Olympus body is read as a desktop reads it: an
+/// `.ori` is a raw, and the aspect-ratio setting of the camera becomes the photo's import crop (not an edit).
+#[test]
+fn visitors_can_add_olympus_originals_and_they_keep_the_cameras_aspect_crop() {
+    let mut fx = fixture("guests-olympus");
+    let (_, share) = fx.share(json!({"album": fx.trip, "upload": true}));
+    let token = share["token"].as_str().unwrap().to_string();
+    let page = text(fx.page(&format!("/s/{token}")).1);
+    let accept = page.split("accept=\"").nth(1).and_then(|rest| rest.split('"').next()).expect("the form's accept list").to_string();
+    assert_eq!(accept, format!("image/*,video/*,{}", lightcraft_engine::import::accept_list()));
+    let offered: Vec<&str> = accept.split(',').collect();
+    for ext in lightcraft_engine::import::RAW_EXTENSIONS {
+        assert!(offered.contains(&format!(".{ext}").as_str()), "the form doesn't offer .{ext}: {accept}");
+        assert!(offered.contains(&format!(".{}", ext.to_uppercase()).as_str()), "the form doesn't offer .{}: {accept}", ext.to_uppercase());
+    }
+
+    // 16:9 of the 48 x 36 area: rows 4 to 30
+    let wide = Some([0, 4, 47, 30]);
+    let files = [
+        ("wide.ori", olympus(false, wide, 1)),
+        ("wide-compressed.ORI", olympus(true, wide, 2)),
+        ("wide.orf", olympus(false, wide, 3)),
+        ("plain.ori", olympus(false, None, 4)),
+        ("plain.orf", olympus(true, None, 5)),
+    ];
+    let boundary = "----lcTestBoundary7MA4YWxkTrZu0gW";
+    let ctype = format!("multipart/form-data; boundary={boundary}");
+    let parts: Vec<(&str, Option<&str>, &[u8])> = files.iter().map(|(n, b)| ("photos", Some(*n), b.as_slice())).collect();
+    let (s, _, hs) = send("POST", &format!("{}/s/{token}/upload", fx.base), &[("Content-Type", &ctype)], Some(&multipart(boundary, &parts)));
+    assert_eq!(s, 303);
+    assert_eq!(header(&hs, "location"), Some(format!("/s/{token}?added=5&skipped=0").as_str()));
+    fx.device.execute("sync.now", &json!({"wait": true})).unwrap();
+
+    // the same files imported on a desktop
+    let dir = fx.root.join("desktop-in");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, bytes) in &files {
+        std::fs::write(dir.join(name), bytes).unwrap();
+    }
+    let mut desktop = Session::new().with_fs();
+    desktop.execute("library.import", &json!({"paths": [dir.to_string_lossy()]})).unwrap();
+    let whole = |p: &lightcraft_engine::catalog::Photo| {
+        let r = p.develop.crop.geometry.rect;
+        (r.x0, r.y0, r.x1, r.y1) == (0.0, 0.0, 1.0, 1.0)
+    };
+    for (name, _) in &files {
+        let sent = fx.device.catalog.photos().find(|p| p.file_name == *name).unwrap_or_else(|| panic!("{name} didn't arrive"));
+        let there = desktop.catalog.photos().find(|p| p.file_name == *name).unwrap();
+        assert_eq!((sent.kind, sent.format.as_str()), (there.kind, there.format.as_str()), "{name}");
+        assert_eq!((sent.width, sent.height), (there.width, there.height), "{name}");
+        assert_eq!(sent.preview_only, there.preview_only, "{name}");
+        assert_eq!(sent.develop.crop.geometry.rect, there.develop.crop.geometry.rect, "{name}: the desktop's crop");
+        assert_eq!(sent.import_look.is_some(), there.import_look.is_some(), "{name}");
+        assert_eq!(!whole(sent), name.starts_with("wide"), "{name}: {:?}", sent.develop.crop.geometry.rect);
+        assert!(!sent.is_edited(), "{name}: an import look, not an edit");
+    }
+    let wide_raw = fx.device.catalog.photos().find(|p| p.file_name == "wide.ori").unwrap();
+    assert!(wide_raw.develops_raw() && (wide_raw.width, wide_raw.height) == (48, 36), "an .ori is a raw, the whole area developed");
+    fx.server.take();
+    let _ = std::fs::remove_dir_all(&fx.root);
+}
+
 #[test]
 fn a_storage_limit_stops_uploads_from_devices_and_visitors_and_devices_are_told() {
     let mut fx = fixture("quota");

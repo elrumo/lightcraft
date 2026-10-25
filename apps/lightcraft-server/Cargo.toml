@@ -41,6 +41,8 @@ lightcraft-video = { workspace = true }
 [dev-dependencies]
 lightcraft-video = { workspace = true, features = ["testdata"] }
 lightcraft-codecs = { workspace = true }
+# synthetic Olympus files (tests/folders.rs, tests/shares.rs)
+lightcraft-engine = { workspace = true, features = ["testdata"] }
 lightcraft-vision = { workspace = true, features = ["siglip", "onnx", "testing"] }
 lightcraft-raster = { workspace = true }
 ureq = { workspace = true }

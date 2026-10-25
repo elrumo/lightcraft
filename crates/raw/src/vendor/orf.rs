@@ -30,6 +30,20 @@
 //!   and PEN-F files were only checked for smoothness, not for CFA anchoring or black level.
 //! - Olympus's compressed ORF (most interchangeable-lens bodies since ~2008) is not decoded: no permissively
 //!   licensed description exists. It reports [`RawError::Unsupported`]; the embedded preview still works.
+//! - White balance in Kelvin. ImageProcessing holds, next to the as-shot gains, twelve more `WB_RBLevels<K>` entries
+//!   (`0x0102` to `0x010d`: 3000, 3300, 3600, 3900, 4000, 4300, 4500, 4800, 5300, 6000, 6600 and 7500 K; tag numbers and
+//!   names from `exiftool -H` run as a black-box tool on the CC0 files, no ExifTool source read, which also gave the
+//!   camera's own stated `WhiteBalanceTemperature` for the shots set to one). Each is a red and a blue gain against
+//!   green at 256, the gains the body applies at that temperature. Read on 58 files from 58
+//!   bodies (E-1 of 2003 to OM-3 of 2025; the compacts with a two-field layout, the E-10, E-20 and the C-series have no
+//!   table): the as-shot gains of the 10 files whose camera states a temperature, and of the E-1 file shot on its 5300 K
+//!   preset, are the table's entry (5300, 6000, 7500 K) or lie between two entries where mired (1e6 / K) is linear (5000,
+//!   5600, 6400 K, within 1.2 mired of what the camera states). Three slots, 4000, 4500 and 6600 K, sit off the curve
+//!   the other nine make on most bodies (51 of 58 files for all three; white of fluorescent lights is off the daylight
+//!   locus, as these are), so they are left out; the nine others are monotone (red rising, blue falling with the
+//!   temperature) on every body but the four TG cameras, whose 4300 K entry is off the curve too and is dropped by [`KelvinPresets::from_unordered`]. [`kelvin_presets`] builds the scale from them; `decode` carries it as
+//!   [`ColorData::kelvin_presets`], and [`as_shot_kelvin`] reads it from the maker note alone, so a file whose sensor data
+//!   is not decoded (every compressed ORF) has the same temperature to show once a decoder exists.
 //! - The colour-filter layout is the file's Exif `CFAPattern`: GRBG on the E-1 and E-400, RGGB on the XZ-2, where
 //!   the colours of the decoded mosaic follow the embedded JPEG best with exactly that layout
 //!   (`corpus_orf_cfa_patterns`). The samples' active areas start at even offsets, so they can't tell whether the
@@ -37,6 +51,8 @@
 //!   to the green diagonal found from the data, which can't tell red from blue (GRBG or RGGB is assumed).
 
 use super::{cfa_from_exif, white_from_data};
+use crate::PreviewColorSpace;
+use crate::kelvin_presets::KelvinPresets;
 use crate::tiffraw::{Packing, read_image};
 use crate::unpack::unpack_msb;
 use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
@@ -48,6 +64,8 @@ use rayon::prelude::*;
 
 pub(crate) const CAMERA_SETTINGS: u16 = 0x2020;
 const IMAGE_PROCESSING: u16 = 0x2040;
+/// CameraSettings `ColorSpace`: the colour space the camera encodes its JPEGs in (0 sRGB, 1 Adobe RGB, 2 Pro Photo RGB).
+const COLOR_SPACE: u16 = 0x0507;
 pub(crate) const PREVIEW_START: u16 = 0x0101;
 pub(crate) const PREVIEW_LENGTH: u16 = 0x0102;
 const WB_RB: u16 = 0x0100;
@@ -59,6 +77,19 @@ const MN_VALID_BITS: u16 = 0x102c;
 const CROP: [u16; 4] = [0x0612, 0x0613, 0x0614, 0x0615];
 /// ImageProcessing `AspectFrame`: left, top, right and bottom (inclusive) of the frame of the camera's aspect-ratio setting.
 const ASPECT_FRAME: u16 = 0x1113;
+/// ImageProcessing `WB_RBLevels<K>` entries the Kelvin scale is made of, as (tag, K). The slots `0x0106` (4000 K),
+/// `0x0108` (4500 K) and `0x010c` (6600 K) are off the curve the others make and left out (see the module docs).
+const WB_PRESETS: [(u16, f32); 9] = [
+    (0x0102, 3000.0),
+    (0x0103, 3300.0),
+    (0x0104, 3600.0),
+    (0x0105, 3900.0),
+    (0x0107, 4300.0),
+    (0x0109, 4800.0),
+    (0x010a, 5300.0),
+    (0x010b, 6000.0),
+    (0x010d, 7500.0),
+];
 
 /// The Olympus maker note.
 pub(crate) fn maker_note(bytes: &[u8], tiff: &Tiff) -> Option<MakerNote> {
@@ -210,6 +241,30 @@ fn valid_area(ip: &Ifd, w: usize, h: usize) -> Option<Rect> {
     (cw > 0 && ch > 0 && x.checked_add(cw)? <= w && y.checked_add(ch)? <= h).then(|| Rect::new(x, y, cw, ch))
 }
 
+/// White-balance multipliers `[red, 1, blue]` from a `WB_RBLevels` value (red and blue gain against green at 256); `None`
+/// unless both are positive.
+fn rb_gains(v: &[f64]) -> Option<[f32; 3]> {
+    match *v {
+        [red, blue, ..] if red > 0.0 && blue > 0.0 => Some([(red / 256.0) as f32, 1.0, (blue / 256.0) as f32]),
+        _ => None,
+    }
+}
+
+/// The camera's own white balance at its stated temperatures, ImageProcessing `WB_RBLevels<K>` ([`WB_PRESETS`]): a Kelvin
+/// scale for the as-shot gains. `None` without three usable entries that make a curve; an entry that turns the curve back
+/// is left out ([`KelvinPresets::from_unordered`]).
+fn kelvin_presets(ip: &Ifd) -> Option<KelvinPresets> {
+    KelvinPresets::from_unordered(WB_PRESETS.iter().filter_map(|&(tag, kelvin)| Some((kelvin, rb_gains(&ip.f64s(tag)?)?))))
+}
+
+/// The temperature (K) and tint of the white the body balanced the shot to, read through the preset table of the maker note
+/// ([`kelvin_presets`]) from its as-shot gains. Works on every ORF, decodable or not; `None` for a file without both.
+pub fn as_shot_kelvin(bytes: &[u8]) -> Option<(f64, f64)> {
+    let tiff = Tiff::parse(bytes).ok()?;
+    let ip = sub_ifd(bytes, &maker_note(bytes, &tiff)?, IMAGE_PROCESSING)?;
+    kelvin_presets(&ip)?.temp_tint(rb_gains(&ip.f64s(WB_RB)?)?)
+}
+
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
@@ -305,18 +360,13 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         }
         _ => BlackLevel::uniform(mn.as_ref().filter(|_| ip.is_none()).and_then(|m| maker_note_black(m, bits)).unwrap_or(0.0)),
     };
-    let wb = ip
-        .as_ref()
-        .and_then(|i| i.f64s(WB_RB))
-        .filter(|v| v.len() >= 2 && v[0] > 0.0 && v[1] > 0.0)
-        .map(|v| [(v[0] / 256.0) as f32, 1.0, (v[1] / 256.0) as f32])
-        .or_else(|| {
-            // the red and blue gains lead the main note's entries 0x1017/0x1018 on the two-field compacts and on
-            // the E-10 (16-bit words, no ImageProcessing; 384 and 406 on its CC0 file 5424)
-            let m = mn.as_ref().filter(|_| two_field || ip.is_none())?;
-            let g = |tag| m.ifd.f64s(tag).and_then(|v| v.first().copied()).filter(|g| *g > 25.6 && *g < 2560.0);
-            Some([(g(MN_WB_RED)? / 256.0) as f32, 1.0, (g(MN_WB_BLUE)? / 256.0) as f32])
-        });
+    let wb = ip.as_ref().and_then(|i| rb_gains(&i.f64s(WB_RB)?)).or_else(|| {
+        // the red and blue gains lead the main note's entries 0x1017/0x1018 on the two-field compacts and on
+        // the E-10 (16-bit words, no ImageProcessing; 384 and 406 on its CC0 file 5424)
+        let m = mn.as_ref().filter(|_| two_field || ip.is_none())?;
+        let g = |tag| m.ifd.f64s(tag).and_then(|v| v.first().copied()).filter(|g| *g > 25.6 && *g < 2560.0);
+        Some([(g(MN_WB_RED)? / 256.0) as f32, 1.0, (g(MN_WB_BLUE)? / 256.0) as f32])
+    });
     let white = white_from_data(samples, bits);
     let mut metadata = lightcraft_meta::from_tiff(&tiff);
     metadata.width = Some(active.width as u32);
@@ -334,7 +384,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         active_area: active,
         crop: Rect::new(0, 0, active.width, active.height),
         orientation: Orientation::from_exif(ifd0.u16(t::ORIENTATION).unwrap_or(1)),
-        color: ColorData::default(),
+        color: ColorData { kelvin_presets: ip.as_ref().and_then(kelvin_presets), ..Default::default() },
         wb_multipliers: wb,
         linearized: false,
         pixel_aspect: 1.0,
@@ -344,6 +394,19 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     };
     img.validate_for(mode)?;
     Ok(img)
+}
+
+/// The colour space of the camera's JPEGs, the embedded preview among them, from the maker note's CameraSettings `ColorSpace`
+/// (0 sRGB, 1 Adobe RGB). A body set to Adobe RGB writes Exif `ColorSpace` 0xFFFF ("uncalibrated") without the DCF's
+/// Interoperability "R03" that says which, and no ICC profile in the preview, so this is the only place the file says. The
+/// third value, Pro Photo RGB, has no [`PreviewColorSpace`]: `None`, as for a note that doesn't say.
+pub(crate) fn color_space(bytes: &[u8], tiff: &Tiff) -> Option<PreviewColorSpace> {
+    let mn = maker_note(bytes, tiff)?;
+    match sub_ifd(bytes, &mn, CAMERA_SETTINGS)?.u64(COLOR_SPACE)? {
+        0 => Some(PreviewColorSpace::Srgb),
+        1 => Some(PreviewColorSpace::AdobeRgb),
+        _ => None,
+    }
 }
 
 /// The large preview JPEG referenced by CameraSettings `PreviewImageStart/Length` (relative to the note base).
@@ -816,6 +879,11 @@ mod tests {
     /// A new-style Olympus maker note (`OLYMPUS\0II\x03\0`, offsets counted from the note's start) whose ImageProcessing
     /// directory (0x2040) holds `entries`, SHORT values each.
     fn note_with_image_processing(entries: &[(u16, &[u16])]) -> Vec<u8> {
+        note_with_directory(IMAGE_PROCESSING, entries)
+    }
+
+    /// [`note_with_image_processing`] for the sub-directory `directory` (CameraSettings is 0x2020).
+    fn note_with_directory(directory: u16, entries: &[(u16, &[u16])]) -> Vec<u8> {
         let ip_at = 12 + 2 + 12 + 4;
         let mut values_at = ip_at + 2 + 12 * entries.len() + 4;
         let (mut ifd, mut values) = (Vec::new(), Vec::new());
@@ -835,12 +903,8 @@ mod tests {
         }
         let mut note = b"OLYMPUS\0II\x03\0".to_vec();
         note.extend(1u16.to_le_bytes());
-        for x in [
-            IMAGE_PROCESSING.to_le_bytes().to_vec(),
-            13u16.to_le_bytes().to_vec(),
-            1u32.to_le_bytes().to_vec(),
-            (ip_at as u32).to_le_bytes().to_vec(),
-        ] {
+        for x in [directory.to_le_bytes().to_vec(), 13u16.to_le_bytes().to_vec(), 1u32.to_le_bytes().to_vec(), (ip_at as u32).to_le_bytes().to_vec()]
+        {
             note.extend(x);
         }
         note.extend(0u32.to_le_bytes());
@@ -918,6 +982,188 @@ mod tests {
         }
         for len in 0..good.len() {
             let _ = aspect_frame(&good[..len]);
+        }
+    }
+
+    /// The E-1 corpus file's twelve `WB_RBLevels<K>` (red and blue gain against green at 256), at [`SLOTS_K`]: the file was shot on
+    /// the 5300 K preset, so its as-shot gains are the ninth entry.
+    const E1_TABLE: [[u16; 2]; 12] = [
+        [254, 491],
+        [278, 446],
+        [302, 411],
+        [322, 384],
+        [531, 414],
+        [368, 338],
+        [470, 330],
+        [402, 308],
+        [432, 286],
+        [468, 262],
+        [538, 270],
+        [522, 228],
+    ];
+    /// The TG-6's: its 4300 K entry is off the curve the daylight ones make (blue rises from 3900 K).
+    const TG6_TABLE: [[u16; 2]; 12] = [
+        [290, 772],
+        [342, 614],
+        [364, 564],
+        [386, 526],
+        [452, 618],
+        [414, 540],
+        [444, 518],
+        [444, 494],
+        [468, 458],
+        [504, 412],
+        [510, 416],
+        [550, 346],
+    ];
+    const SLOTS_K: [u16; 12] = [3000, 3300, 3600, 3900, 4000, 4300, 4500, 4800, 5300, 6000, 6600, 7500];
+
+    /// An ORF whose ImageProcessing directory holds the as-shot gains (when given) and the twelve `WB_RBLevels<K>` entries (when
+    /// given); a 16 x 4 sensor of uncompressed 12-bit words, or the compressed kind (a short strip, nothing decodes).
+    fn kelvin_file(as_shot: Option<[u16; 2]>, table: Option<[[u16; 2]; 12]>, uncompressed: bool) -> Vec<u8> {
+        let mut entries: Vec<(u16, Vec<u16>)> = Vec::new();
+        entries.extend(as_shot.map(|[red, blue]| (WB_RB, vec![red, blue, 256, 256])));
+        for (slot, [red, blue]) in table.iter().flatten().enumerate() {
+            entries.push((0x0102 + slot as u16, vec![*red, *blue, 256, 256]));
+        }
+        let refs: Vec<(u16, &[u16])> = entries.iter().map(|(tag, v)| (*tag, v.as_slice())).collect();
+        if uncompressed {
+            let words: Vec<u8> = (0..16u32 * 4).flat_map(|i| (((200 + i * 37) % 4096) as u16).to_le_bytes()).collect();
+            orf_with_note(16, 4, 16, words, Some(RGGB), Some(note_with_image_processing(&refs)))
+        } else {
+            orf_with_image_processing(&refs)
+        }
+    }
+
+    fn gains([red, blue]: [u16; 2]) -> [f32; 3] {
+        [f32::from(red) / 256.0, 1.0, f32::from(blue) / 256.0]
+    }
+
+    /// The table becomes the decoded raw's Kelvin scale: each of the nine daylight entries reads as its own temperature
+    /// with no tint, the three fluorescent ones (4000, 4500 and 6600 K: left out) read off the curve, a white between two
+    /// entries is at the mean of their mired, and the header probe carries the same scale.
+    #[test]
+    fn the_preset_table_is_the_decoded_raws_kelvin_scale() {
+        let bytes = kelvin_file(Some(E1_TABLE[8]), Some(E1_TABLE), true);
+        let r = crate::decode(&bytes).unwrap();
+        assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
+        assert_eq!(r.wb_multipliers, Some(gains(E1_TABLE[8])));
+        let presets = r.color.kelvin_presets.as_ref().unwrap();
+        for (entry, k) in E1_TABLE.iter().zip(SLOTS_K) {
+            let (t, tint) = presets.temp_tint(gains(*entry)).unwrap();
+            if [4000, 4500, 6600].contains(&k) {
+                assert!((t - f64::from(k)).abs() > 100.0 || tint.abs() > 3.0, "{k} K is off the curve: {t} {tint}");
+            } else {
+                assert!((t - f64::from(k)).abs() < 1.0 && tint.abs() < 0.1, "{k} K: {t} {tint}");
+            }
+        }
+        // the geometric mean of the gains at 5300 K and 6000 K is the mean of their mired
+        let mid = [(432.0f32 * 468.0).sqrt() / 256.0, 1.0, (286.0f32 * 262.0).sqrt() / 256.0];
+        let (t, tint) = presets.temp_tint(mid).unwrap();
+        let want = 1e6 / ((1e6 / 5300.0 + 1e6 / 6000.0) / 2.0);
+        assert!((t - want).abs() < 1.0 && tint.abs() < 0.1, "{t} {tint}");
+        // the maker note alone gives the as-shot reading
+        assert_eq!(as_shot_kelvin(&bytes), presets.temp_tint(gains(E1_TABLE[8])));
+        let (t, tint) = as_shot_kelvin(&bytes).unwrap();
+        assert!((t - 5300.0).abs() < 1.0 && tint.abs() < 0.1, "{t} {tint}");
+    }
+
+    /// A compressed ORF decodes no sensor data, but its maker note has the table and the gains: the same reading, for the
+    /// day a decoder gives the photo a raw to edit.
+    #[test]
+    fn the_maker_note_alone_gives_a_compressed_orf_its_temperature() {
+        let bytes = kelvin_file(Some(E1_TABLE[3]), Some(E1_TABLE), false);
+        assert!(matches!(crate::decode(&bytes), Err(RawError::Unsupported(_))));
+        let (t, tint) = as_shot_kelvin(&bytes).unwrap();
+        assert!((t - 3900.0).abs() < 1.0 && tint.abs() < 0.1, "{t} {tint}");
+        assert_eq!(crate::olympus_as_shot_kelvin(&bytes), Some((t, tint)));
+    }
+
+    /// An entry that turns the curve back is left out, not the whole scale (the TG cameras' 4300 K entry); a table without
+    /// three usable entries, or without as-shot gains, gives no reading.
+    #[test]
+    fn a_scale_needs_a_curve_and_gains() {
+        let bytes = kelvin_file(Some([480, 438]), Some(TG6_TABLE), true);
+        let r = crate::decode(&bytes).unwrap();
+        let (t, tint) = r.color.kelvin_presets.as_ref().unwrap().temp_tint(r.wb_multipliers.unwrap()).unwrap();
+        assert!((5500.0..5580.0).contains(&t) && tint.abs() < 3.0, "{t} {tint}");
+        // entries of zeros (a body that states none), two usable entries, no table: no scale, the gains stay
+        let mut two = [[0u16; 2]; 12];
+        two[0] = E1_TABLE[0];
+        two[8] = E1_TABLE[8];
+        for table in [Some([[0u16; 2]; 12]), Some(two), None] {
+            let bytes = kelvin_file(Some([432, 286]), table, true);
+            let r = crate::decode(&bytes).unwrap();
+            assert!(r.color.kelvin_presets.is_none() && r.wb_multipliers == Some(gains([432, 286])), "{table:?}");
+            assert_eq!(as_shot_kelvin(&bytes), None, "{table:?}");
+        }
+        // no as-shot gains (or one value): the scale is there, nothing to read
+        let r = crate::decode(&kelvin_file(None, Some(E1_TABLE), true)).unwrap();
+        assert!(r.color.kelvin_presets.is_some() && r.wb_multipliers.is_none());
+        assert_eq!(as_shot_kelvin(&kelvin_file(None, Some(E1_TABLE), false)), None);
+        // an entry of one value, or an entry of zero gains, is skipped
+        let mut entries: Vec<(u16, Vec<u16>)> = vec![(WB_RB, vec![432, 286, 256, 256]), (0x0102, vec![254]), (0x0103, vec![0, 446, 256, 256])];
+        for (slot, entry) in E1_TABLE.iter().enumerate().skip(2) {
+            entries.push((0x0102 + slot as u16, vec![entry[0], entry[1], 256, 256]));
+        }
+        let refs: Vec<(u16, &[u16])> = entries.iter().map(|(tag, v)| (*tag, v.as_slice())).collect();
+        let (t, _) = as_shot_kelvin(&orf_with_image_processing(&refs)).unwrap();
+        assert!((t - 5300.0).abs() < 1.0, "{t}");
+    }
+
+    /// Every truncation of a file with a table, and a directory pointer anywhere, reads without a panic.
+    #[test]
+    fn hostile_tables_do_not_panic() {
+        let bytes = kelvin_file(Some(E1_TABLE[8]), Some(E1_TABLE), true);
+        for len in 0..bytes.len() {
+            let _ = as_shot_kelvin(&bytes[..len]);
+            let _ = crate::decode(&bytes[..len]);
+        }
+        let at = bytes.windows(8).position(|w| w == b"OLYMPUS\0").unwrap();
+        for ptr in [0u32, 1, 12, 30, u32::MAX, u32::MAX - 1, 0x8000_0000, bytes.len() as u32] {
+            let mut bad = bytes.clone();
+            bad[at + 12 + 2 + 8..at + 12 + 2 + 12].copy_from_slice(&ptr.to_le_bytes());
+            let _ = as_shot_kelvin(&bad);
+            let _ = crate::decode(&bad);
+        }
+    }
+
+    /// The colour space the camera says its JPEGs are in is CameraSettings `ColorSpace`: 0 sRGB, 1 Adobe RGB. Pro Photo RGB
+    /// (2), a value no one knows, an empty entry and a note without the directory say nothing; so does a file of another
+    /// maker whose note happens to be laid out the same, and no damaged note panics.
+    #[test]
+    fn the_maker_note_says_which_colour_space_the_jpeg_is_in() {
+        use crate::PreviewColorSpace::{AdobeRgb, Srgb};
+        let file =
+            |entries: &[(u16, &[u16])]| orf_with_note(5200, 3900, 16, vec![0; 64], Some(RGGB), Some(note_with_directory(CAMERA_SETTINGS, entries)));
+        let space = |entries: &[(u16, &[u16])]| {
+            let bytes = file(entries);
+            let tiff = Tiff::parse(&bytes).unwrap();
+            let own = color_space(&bytes, &tiff);
+            // what the library asks, which also looks at the maker (Olympus, OM System) and the Exif declaration
+            assert_eq!(crate::embedded_preview_color_space(&bytes), own, "{entries:?}");
+            own
+        };
+        assert_eq!(space(&[(COLOR_SPACE, &[0])]), Some(Srgb));
+        assert_eq!(space(&[(PREVIEW_START, &[40]), (COLOR_SPACE, &[1])]), Some(AdobeRgb));
+        for says_nothing in [&[(COLOR_SPACE, &[2u16][..])][..], &[(COLOR_SPACE, &[7])], &[(COLOR_SPACE, &[])], &[(PREVIEW_START, &[40])], &[]] {
+            assert_eq!(space(says_nothing), None, "{says_nothing:?}");
+        }
+        // another maker's note laid out the same is not read; OM Digital Solutions' is
+        let adobe = file(&[(COLOR_SPACE, &[1])]);
+        let with_make = |make: &[u8]| {
+            let mut b = adobe.clone();
+            let at = b.windows(21).position(|w| w == b"OLYMPUS IMAGING CORP.").unwrap();
+            b[at..at + 21].fill(b' ');
+            b[at..at + make.len()].copy_from_slice(make);
+            crate::embedded_preview_color_space(&b)
+        };
+        assert_eq!(with_make(b"OM Digital Solutions"), Some(AdobeRgb));
+        assert_eq!(with_make(b"OLYMPUS OPTICAL CO."), Some(AdobeRgb));
+        assert_eq!(with_make(b"FUJIFILM"), None);
+        // every truncation reads without a panic
+        for len in 0..adobe.len() {
+            let _ = crate::embedded_preview_color_space(&adobe[..len]);
         }
     }
 }

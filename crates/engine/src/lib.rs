@@ -14,6 +14,10 @@
 #[cfg(not(feature = "denoise"))]
 extern crate lightcraft_denoise_core as lightcraft_denoise;
 
+/// Synthetic files for other crates' tests (the `testdata` feature): the raw crate's.
+#[cfg(feature = "testdata")]
+pub use lightcraft_raw::testdata;
+
 pub mod about;
 pub mod activity;
 #[cfg(not(target_arch = "wasm32"))]

@@ -609,11 +609,13 @@ fn gallery(st: &State, req: &Request, token: &str, user: &str, link: &Link, q: &
         h.push_str("</div></section>");
     }
     if share.upload {
+        // (what a picker offers is what Import takes: the engine's list, so a new raw format needs no edit here)
+        let accept = lightcraft_engine::import::accept_list();
         h.push_str(&format!(
             "<form class=\"add\" id=\"add\" method=\"post\" action=\"/s/{token}/upload\" enctype=\"multipart/form-data\">\
              <b>Add your photos to this album</b>\
              <label for=\"photos\">Photos and videos<input id=\"photos\" type=\"file\" name=\"photos\" multiple required \
-             accept=\"image/*,video/*,.dng,.cr2,.cr3,.crw,.nef,.nrw,.arw,.srf,.sr2,.raf,.orf,.rw2,.raw,.pef,.srw,.x3f,.3fr,.iiq,.erf,.kdc,.dcr,.mrw,.heic,.heif,.avif,.jxl,.psd\"></label>\
+             accept=\"image/*,video/*,{accept}\"></label>\
              <label for=\"who\">Your name (optional)<input id=\"who\" name=\"name\" maxlength=\"64\" autocomplete=\"name\"></label>\
              <button class=\"btn primary\" type=\"submit\">Upload</button></form>"
         ));

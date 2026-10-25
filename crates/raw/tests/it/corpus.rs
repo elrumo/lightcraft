@@ -26,6 +26,13 @@ const KNOWN_UNSUPPORTED: &[&str] = &[
     "orf-olympus-e-p2.",
     "orf-olympus-e-m10-mark-iv.",
     "orf-olympus-tg-6.",
+    // compressed ORFs shot at a stated temperature, pinned for their preset table (olympus_kelvin_corpus.rs)
+    "orf-olympus-e-p3.",
+    "orf-olympus-e-pl6.",
+    "orf-olympus-e-pl7.",
+    "orf-olympus-e-m10-mark-iiis.",
+    "orf-olympus-e-pl10.",
+    "orf-om-system-om-5.",
     "-he.nef", // Nikon High Efficiency (HE / HE★) NEF, issue #193
     "sraw",    // Canon sRAW / mRAW
 ];
