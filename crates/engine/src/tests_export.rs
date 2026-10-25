@@ -1225,3 +1225,70 @@ fn a_rendered_export_taken_apart_encodes_to_the_same_file() {
     assert!(crate::export::prepare_export(&mut s, id, &original, 1).unwrap().render_parts().is_none(), "a copy renders nothing");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A gain map JPEG's base and map rebuild the HDR render the file was made from: the highlights come back
+/// to the render's peak, and the luminance of what is above SDR white is within a few percent on average.
+#[test]
+fn a_gain_map_jpeg_rebuilds_the_hdr_render() {
+    use lightcraft_codecs::gainmap;
+    let mut s = Session::with_demo();
+    let id = sunset(&mut s);
+    s.execute("develop.hdr", &json!({"enabled": true, "maxEv": 3})).unwrap();
+    let jpeg = export_photo(&mut s, id, &ExportOptions::from_json(&json!({"longEdge": 320, "hdr": true})), 1).unwrap();
+    let tiff =
+        export_photo(&mut s, id, &ExportOptions::from_json(&json!({"longEdge": 320, "format": "tiff", "bitDepth": 32, "hdr": true})), 1).unwrap();
+    let gm = gainmap::read_jpeg(&jpeg.bytes).unwrap();
+    let mut base = lightcraft_codecs::decode(&jpeg.bytes, Default::default()).unwrap();
+    let want = lightcraft_codecs::decode(&tiff.bytes, Default::default()).unwrap();
+    let (w, h) = (base.image.width, base.image.height);
+    gainmap::apply(&mut base.image.data, w, h, &gm.gain, &gm.meta, 1.0).unwrap();
+    let y = |p: &[f32; 3]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+    let (mut n, mut sum) = (0, 0.0f32);
+    let (mut max_got, mut max_want) = (0.0f32, 0.0f32);
+    for (a, b) in base.image.data.iter().zip(&want.image.data) {
+        (max_got, max_want) = (max_got.max(y(a)), max_want.max(y(b)));
+        if y(b) > 1.0 {
+            sum += ((y(a) - y(b)) / y(b)).abs();
+            n += 1;
+        }
+    }
+    assert!(n > 100, "the sun is above white ({n})");
+    assert!((max_got / max_want - 1.0).abs() < 0.05, "peak {max_got} rebuilt, {max_want} rendered");
+    assert!(sum / (n as f32) < 0.1, "mean luminance error above white {}", sum / n as f32);
+}
+
+/// Real iPhone ProRAWs: an HDR edit leaves every SDR export as it was, the HDR render equals the SDR one
+/// through the midtones and is never darker than it.
+#[test]
+fn hdr_edits_of_iphone_proraws_keep_the_sdr_export_and_the_midtones() {
+    let corpus = std::env::var("LIGHTCRAFT_CORPUS").unwrap_or_else(|_| "corpus".into());
+    let files = ["raw/dng-apple-iphone17pro-proraw-jxl.dng", "depth/iphone-proraw-IMG_8921.dng", "iphone-proraw-IMG_8921.dng"];
+    let found: Vec<_> = files.iter().map(|f| std::path::Path::new(&corpus).join(f)).filter(|p| p.exists()).collect();
+    if found.is_empty() {
+        lightcraft_testkit::skip!(Corpus, "no iPhone ProRAW in the corpus ({corpus})");
+        return;
+    }
+    for path in found {
+        let mut s = Session::new().with_fs();
+        s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+        let id = s.catalog.photos().next().unwrap().id;
+        s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+        let tiff = |s: &mut Session, hdr: bool| {
+            let o = ExportOptions::from_json(&json!({"longEdge": 480, "format": "tiff", "bitDepth": 32, "hdr": hdr}));
+            lightcraft_codecs::decode(&export_photo(s, id, &o, 1).unwrap().bytes, Default::default()).unwrap().image.data
+        };
+        let sdr_before = tiff(&mut s, false);
+        s.execute("develop.hdr", &json!({"enabled": true, "maxEv": 3})).unwrap();
+        let sdr_after = tiff(&mut s, false);
+        let hdr = tiff(&mut s, true);
+        let moved = sdr_before.iter().zip(&sdr_after).flat_map(|(a, b)| (0..3).map(move |k| (a[k] - b[k]).abs())).fold(0.0f32, f32::max);
+        assert!(moved < 1e-4, "{}: HDR editing moved the SDR rendition by {moved}", path.display());
+        let y = |p: &[f32; 3]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+        for (a, b) in sdr_after.iter().zip(&hdr) {
+            assert!(y(b) >= y(a) - 1e-3, "{}: HDR {b:?} darker than SDR {a:?}", path.display());
+            if y(a) < 0.3 {
+                assert!((y(b) - y(a)).abs() < 2e-3, "{}: {b:?} vs {a:?}", path.display());
+            }
+        }
+    }
+}

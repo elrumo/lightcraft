@@ -170,3 +170,89 @@ fn hdr_histogram_shows_the_range_above_sdr_white_on_a_fixed_scale() {
     // the SDR rendition's own histogram has nothing above white
     assert!(render(&src, &raw(), &hdr_on(3.0), &req).histogram.hdr.is_none());
 }
+
+/// Luminance with Rec. 2020 weights (renders into Rec. 2020).
+fn luma(p: &[f32; 3]) -> f32 {
+    0.2627 * p[0] + 0.678 * p[1] + 0.0593 * p[2]
+}
+
+/// Luminance with sRGB weights (renders into sRGB, the default).
+fn luma709(p: &[f32; 3]) -> f32 {
+    0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]
+}
+
+/// For every tone control, the HDR render and the SDR render of the same edit agree wherever the SDR
+/// render is a midtone or darker, and the HDR render is never darker than the SDR one (colour above
+/// white legitimately differs: SDR desaturates towards white, HDR keeps it).
+#[test]
+fn hdr_follows_the_sdr_render_for_every_tone_edit() {
+    type Edit = (&'static str, fn(&mut DevelopSettings));
+    let edits: [Edit; 12] = [
+        ("exposure +1", |s| s.light.exposure = 1.0),
+        ("exposure -1", |s| s.light.exposure = -1.0),
+        ("contrast +50", |s| s.light.contrast = 50.0),
+        ("highlights -80", |s| s.light.highlights = -80.0),
+        ("shadows +80", |s| s.light.shadows = 80.0),
+        ("whites +60", |s| s.light.whites = 60.0),
+        ("whites -60", |s| s.light.whites = -60.0),
+        ("blacks -60", |s| s.light.blacks = -60.0),
+        ("saturation +60", |s| s.color.saturation = 60.0),
+        ("clarity +50", |s| s.effects.clarity = 50.0),
+        ("vignette -50", |s| s.vignette.amount = -50.0),
+        ("vignette +50", |s| s.vignette.amount = 50.0),
+    ];
+    let src = sunset();
+    for (name, edit) in edits {
+        for max_ev in [1.0, 3.0, 5.0] {
+            let mut sdr_edit = DevelopSettings::default();
+            edit(&mut sdr_edit);
+            let mut hdr_edit = sdr_edit.clone();
+            hdr_edit.hdr.enabled = true;
+            hdr_edit.hdr.max_ev = max_ev;
+            let (hdr, sdr) = (deep(&src, &hdr_edit, OutputDepth::F32Hdr), deep(&src, &sdr_edit, OutputDepth::F32Linear));
+            let (mut n, mut above) = (0, 0);
+            for (h, s) in hdr.as_chunks::<3>().0.iter().zip(sdr.as_chunks::<3>().0) {
+                assert!(luma709(h) >= luma709(s) - 1e-3, "{name} at {max_ev} EV: HDR {h:?} darker than SDR {s:?}");
+                if luma709(s) < 0.3 {
+                    assert!((luma709(h) - luma709(s)).abs() < 2e-3, "{name} at {max_ev} EV: {h:?} vs {s:?}");
+                    n += 1;
+                }
+                above += usize::from(h.iter().any(|v| *v > 1.0));
+            }
+            assert!(n > 100, "{name}: the scene has midtones and shadows ({n})");
+            assert!(above > 0 || name == "exposure -1", "{name} at {max_ev} EV: nothing above SDR white");
+        }
+    }
+}
+
+/// A rendered (display-referred) source, a JPEG: an HDR edit renders it as the SDR edit up to white, and
+/// what an edit pushes past white (exposure, whites) survives instead of clipping.
+#[test]
+fn hdr_edit_of_a_display_referred_source_follows_the_sdr_render() {
+    let mut src = sunset();
+    src.data.iter_mut().for_each(|p| *p = p.map(|v| v.clamp(0.0, 1.0)));
+    let jpeg = SourceInfo::default();
+    // (Rec. 2020 output: the clamped source is inside that gamut, so no gamut mapping is in the way)
+    let req = |depth| RenderRequest { depth, space: crate::OutputSpace::Rec2020, ..RenderRequest::fit(240, 240) };
+    let get = |s: &DevelopSettings, d| match render(&src, &jpeg, s, &req(d)).deep.map(|d| d.samples) {
+        Some(DeepSamples::F32(v)) => v,
+        other => panic!("expected float samples, got {other:?}"),
+    };
+    for (name, exposure) in [("neutral", 0.0), ("+0.5 EV", 0.5), ("-0.5 EV", -0.5)] {
+        let mut sdr_edit = DevelopSettings::default();
+        sdr_edit.light.exposure = exposure;
+        let mut hdr_edit = sdr_edit.clone();
+        hdr_edit.hdr.enabled = true;
+        hdr_edit.hdr.max_ev = 3.0;
+        let (hdr, sdr) = (get(&hdr_edit, OutputDepth::F32Hdr), get(&sdr_edit, OutputDepth::F32Linear));
+        let mut above = 0;
+        for (h, s) in hdr.as_chunks::<3>().0.iter().zip(sdr.as_chunks::<3>().0) {
+            assert!(luma(h) >= luma(s) - 1e-3, "{name}: HDR {h:?} darker than SDR {s:?}");
+            if luma(s) < 0.5 {
+                assert!((luma(h) - luma(s)).abs() < 2e-3, "{name}: {h:?} vs {s:?}");
+            }
+            above += usize::from(h.iter().any(|v| *v > 1.001));
+        }
+        assert_eq!(above > 0, exposure > 0.0, "{name}: only an edit that pushes past white has anything above it ({above})");
+    }
+}
