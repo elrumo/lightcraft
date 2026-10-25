@@ -234,3 +234,56 @@ fn the_enlargement_keeps_the_tones_of_its_input() {
     assert!(without > 0.1, "the synthetic model should stray from its input's tones ({without})");
     assert!(with < without / 4.0, "broad tones moved by {with} with the anchor, {without} without");
 }
+
+/// A network's detail goes below black (and above white) where the picture is black (or white); cut
+/// off, it used to leave the blacks lifted and the whites dimmed: a black-and-white photo lost its
+/// black point (FB-UPSCALE). A fake network output (the input enlarged plus zero-mean grain, as a
+/// sharpening network gives) must come out with the input's black and white levels.
+#[test]
+fn clipped_detail_does_not_lift_the_blacks_or_dim_the_whites() {
+    let (w, h, s) = (48usize, 32usize, 2usize);
+    // left third black, right third white, a ramp between; the same in all three channels (B&W)
+    let plane: Vec<f32> = (0..w * h).map(|i| ((i % w) as f32 / (w as f32 / 3.0) - 1.0).clamp(0.0, 1.0)).collect();
+    let input: Vec<f32> = plane.iter().chain(&plane).chain(&plane).copied().collect();
+    let (rw, rh) = (w * s, h * s);
+    let grain = crate::testing::noise(3 * rw * rh, 11);
+    let up = crate::tile::bicubic(&plane, (w, h), s);
+    let mut result: Vec<f32> = (0..3 * rw * rh).map(|i| up[i % (rw * rh)] + 0.03 * grain[i]).collect();
+    crate::tile::anchor_tones(&mut result, &input, (w, h), s);
+    // away from the borders and the ramp: the black third and the white third
+    let mean = |x0: usize, x1: usize| {
+        let (mut acc, mut n) = (0f64, 0f64);
+        for c in 0..3 {
+            for y in 16..rh - 16 {
+                for x in x0..x1 {
+                    acc += f64::from(result[c * rw * rh + y * rw + x]);
+                    n += 1.0;
+                }
+            }
+        }
+        acc / n
+    };
+    let (black, white) = (mean(16, 20) * 255.0, mean(rw - 20, rw - 16) * 255.0);
+    assert!(black < 0.5, "the blacks were lifted to {black} / 255");
+    assert!(white > 254.5, "the whites were dimmed to {white} / 255");
+}
+
+/// A black-and-white picture (R = G = B) stays one: the network's channels differ (a different mean
+/// is subtracted from each), and the tint it left in the shadows moved the black point.
+#[test]
+fn a_neutral_picture_stays_neutral() {
+    let span = model(8, 2, 5);
+    let grey = Rgb32f::from_fn(40, 30, |x, y| {
+        let v = (x as f32 / 40.0 * 0.7 + (y % 5) as f32 * 0.02).clamp(0.0, 1.0);
+        [v, v, v]
+    });
+    let out = span.upscale(&grey, &Options::default(), &mut |_| true).unwrap();
+    assert!(out.data.iter().all(|p| p[0] == p[1] && p[1] == p[2]), "a grey picture came out tinted");
+    // a picture with colour is left alone
+    let tinted = Rgb32f::from_fn(40, 30, |x, y| {
+        let v = (x as f32 / 40.0 * 0.7 + (y % 5) as f32 * 0.02).clamp(0.0, 1.0);
+        [v, v, (v + 0.1).min(1.0)]
+    });
+    let out = span.upscale(&tinted, &Options::default(), &mut |_| true).unwrap();
+    assert!(out.data.iter().any(|p| p[0] != p[2]), "a coloured picture was made grey");
+}

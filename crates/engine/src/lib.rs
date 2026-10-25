@@ -1559,6 +1559,8 @@ mod tests_describe;
 #[cfg(test)]
 mod tests_enhance;
 #[cfg(test)]
+mod tests_enhance_levels;
+#[cfg(test)]
 mod tests_expand;
 #[cfg(test)]
 mod tests_export;
