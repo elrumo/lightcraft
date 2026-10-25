@@ -47,7 +47,7 @@ phase #85, duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 | Dimension | Breadth | Ready for real work | Remaining | Doc |
 |---|---:|---:|---:|---|
 | Features (weighted areas below) | ~77% (checklist 84.3%, measured) | ~61% | 600–1,100 h | [Features](#features) |
-| ↳ RAW cameras, colour and lens profiles (part of features) | 85% of Adobe's 1,446 models decode (39% verified), measured | ~56% | 255–480 h | [raw-parity.md](raw-parity.md) |
+| ↳ RAW cameras, colour and lens profiles (part of features) | 86% of Adobe's 1,446 models decode (40% verified), measured | ~56% | 255–480 h | [raw-parity.md](raw-parity.md) |
 | UI/UX fidelity | ~85% | ~70% | 32–54 h | [ui-parity.md](ui-parity.md) |
 | File formats (non-raw: images, sidecars, presets, catalogs) | ~85% | ~70% | 30–55 h | [file-format-parity.md](file-format-parity.md) |
 | Hardware | ~50% | ~40% | 40–80 h (+ tethering and printing, counted under Classic modules) | [hardware-parity.md](hardware-parity.md) |
@@ -307,6 +307,7 @@ P2 items 12–25 h; look tuning, performance, packaging, hardening 25–45 h.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Camera support from community pull requests integrated (X-Trans III Kelvin #2514, Blackmagic DNG #1305, two-field Coolpix #672, pre-X FinePix #2316, GoPro GPR #2787) and the Olympus family work (ORI files, five more uncompressed bodies verified, ORF preview details, aspect crop); Coolpix 5700, 8400 and 8800 move from unsupported to verified; RAW: 86% of Adobe's models decode, 40% verified (575), use-weighted share unchanged at ~94% (86% on a verified body); Canon CRW (#2512) and Nikon HE (#896) held back on clean-room provenance |
 | 2026-10-25 | minor | Upstream #2787: GoPro GPR (VC-5) decoded (raw-parity.md): 556 verified, 28 unsupported; 84% of Adobe's models decode (was 83%); rounded readiness numbers unchanged |
 | 2026-10-24 | minor | Upstream merged again (up to v0.13.0); CI is the shared gate workflow on Linux x64, so the Stability row no longer counts the macOS and Windows jobs; percentages as in each entry |
 | 2026-10-20 | minor | Checklist recount 84.3% of 554 rows (P0 98.0%, P1 93.9%, P2 61.2%); colour mixer fitted to Lightroom exports, Calibration ✅ → 🟡 |

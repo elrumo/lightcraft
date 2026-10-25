@@ -15,11 +15,11 @@ ranked in [gaps.md](gaps.md). Details per format: [cr3.md](cr3.md),
 | Measure | Value | Kind |
 |---|---:|---|
 | Adobe-listed camera models | **1,446** | measured: [raw/adobe-cameras.tsv](raw/adobe-cameras.tsv) |
-| Decoded from sensor data and **verified** on a real file | **556** (38%) | measured: [raw/evidence.tsv](raw/evidence.tsv) |
-| Decoder path should handle it, **unverified** | **653** (45%) | measured from the format rules (631 of them DNG, mostly phones) |
-| **Preview-only** (embedded JPEG) | **200** (14%) | measured |
-| **Unsupported** (not imported, refused or decodes wrongly) | **37** (3%) | measured |
-| Models added since 2017 (Camera Raw 10+): verified / unverified / preview / unsupported | 182 / 542 / 22 / 8 of 754 | measured |
+| Decoded from sensor data and **verified** on a real file | **575** (40%) | measured: [raw/evidence.tsv](raw/evidence.tsv) |
+| Decoder path should handle it, **unverified** | **667** (46%) | measured from the format rules (631 of them DNG, mostly phones) |
+| **Preview-only** (embedded JPEG) | **179** (12%) | measured |
+| **Unsupported** (not imported, refused or decodes wrongly) | **25** (2%) | measured |
+| Models added since 2017 (Camera Raw 10+): verified / unverified / preview / unsupported | 186 / 546 / 22 / 0 of 754 | measured |
 | **Share of photographers whose camera fully works** (decodes from sensor data), use-weighted | **~94%** | estimated: measured classes × written usage weights × per-format confidence |
 | …of which on a body we have verified | **~86%** | estimated, same weights |
 | Camera colour: Adobe profiles vs ours | 1,500 Adobe Standard profiles, 481 models with Camera Matching profiles vs **5 bundled profiles** + per-file fits + 52 spectral matrices (plus same-sensor aliases) | measured (bundle listing, Adobe list, `assets/camera-profiles`) |
@@ -118,7 +118,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Samsung | 128 | 10 | 109 | 9 | 0 | compressed SRW (NX1, NX30, NX300, NX500, NX2000, NX3000, NX3300, NX mini, Galaxy NX) |
 | Apple | 113 | 4 | 109 | 0 | 0 | — (DNG / ProRAW) |
 | Panasonic | 104 | 93 | 11 | 0 | 0 | — |
-| Nikon | 99 | 77 | 19 | 0 | 3 | COOLPIX 5700 / 8400 / 8800 decode wrongly (two stacked half-height fields, CMYG read as RGB); HE / HE★ is a per-shot setting, preview-only |
+| Nikon | 99 | 80 | 19 | 0 | 0 | HE / HE★ is a per-shot setting, preview-only (the Coolpix 5700 / 8400 / 8800 decode since #672) |
 | Fujifilm | 97 | 76 | 19 | 2 | 0 | SuperCCD SR bodies (F700, S20 Pro) refused, preview |
 | Google | 88 | 5 | 83 | 0 | 0 | — |
 | Olympus | 71 | 22 | 0 | 49 | 0 | **compressed ORF** |
@@ -130,8 +130,8 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Casio | 26 | 0 | 26 | 0 | 0 | — (DNG) |
 | DJI | 21 | 4 | 17 | 0 | 0 | DNG |
 | OM Digital Solutions | 7 | 0 | 0 | 7 | 0 | **compressed ORF** |
-| Kodak, Konica Minolta, Epson, Sigma, GoPro, Contax, others | 56 | 12 | 16 | 13 | 15 | DCR, GPR not imported; KDC, X3F preview (Epson ERF and Minolta MRW decode) |
-| **All** | **1,446** | **556 (38%)** | **653 (45%)** | **200 (14%)** | **37 (3%)** | |
+| Kodak, Konica Minolta, Epson, Sigma, GoPro, Contax, others | 56 | 17 | 20 | 13 | 6 | DCR not imported; KDC, X3F preview (Epson ERF, Minolta MRW and GoPro GPR decode) |
+| **All** | **1,446** | **575 (40%)** | **667 (46%)** | **179 (12%)** | **25 (2%)** | |
 
 ## By use (estimated)
 
@@ -139,7 +139,7 @@ two patents and sample files, because a decoder written from memory of GPL decod
 |---|---:|---:|---:|---|
 | Canon | 33% | 95% | 93% | 18 of the 22 popular bodies write CR3; 26 CR3 bodies verified (raw.pixls.us has a CC0 file for each), the rest at 0.6 |
 | Sony | 27% | 98% | 92% | bulk-checked |
-| Nikon | 16% | 98% | 89% | decoders cover every NEF coding but HE; 77 bodies verified |
+| Nikon | 16% | 99% | 90% | decoders cover every NEF coding but HE; 80 bodies verified |
 | Fujifilm | 10% | 99% | 95% | pre-X FinePix and SuperCCD decode (#2063); F700 and S20 Pro preview |
 | Panasonic | 4% | 100% | 98% | bulk-checked |
 | OM / Olympus | 3% | 6% | 6% | compressed ORF |
@@ -147,8 +147,8 @@ two patents and sample files, because a decoder written from memory of GPL decod
 | Pentax / Ricoh | 1.5% | 99% | 80% | |
 | Leica | 1% | 99% | 72% | the Q3 verified, 13 more bodies pinned on CC0 files |
 | DJI | 1% | 96% | 19% | |
-| Medium format and others | 0.5% | 35% | 11% | IIQ, 3FR, X3F |
-| **Weighted** | 100% | **94%** | **85%** | |
+| Medium format and others | 0.5% | 39% | 14% | IIQ, 3FR, X3F |
+| **Weighted** | 100% | **94%** | **86%** | |
 
 About 19 in 20 raw photographers' cameras decode, and about 5 in 6 use a body we have actually
 checked (the per-model CC0 sweeps of October 2026); compressed ORF (OM / Olympus) is the largest gap left.
@@ -336,6 +336,7 @@ Beyond decoding:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Camera support from community pull requests integrated (X-Trans III Kelvin #2514, Blackmagic DNG #1305, two-field Coolpix #672, pre-X FinePix #2316, GoPro GPR #2787) and the Olympus family work (ORI files, five more uncompressed bodies verified, ORF preview details, aspect crop); Coolpix 5700, 8400 and 8800 move from unsupported to verified; RAW: 86% of Adobe's models decode, 40% verified (575), use-weighted share unchanged at ~94% (86% on a verified body); Canon CRW (#2512) and Nikon HE (#896) held back on clean-room provenance |
 | 2026-10-25 | minor | Upstream #2787: GoPro GPR (VC-5) decoded (`vc5.rs`, ported from GoPro's GPR SDK, Apache-2.0 / MIT); FUSION, HERO5, HERO6, HERO7 and HERO10 Black verified on CC0 files (HERO8, HERO9 and HERO11 files also pinned; not in Adobe's list): 556 verified, 660 unverified, 202 preview, 28 unsupported; every model added since 2017 now decodes or opens as a preview; use-weighted share unchanged (94%, 85%) |
 | 2026-10-25 | minor | Pre-X FinePix RAFs without a raw IFD decode (`crates/raw/src/vendor/raf_legacy.rs`, #2063): bare Bayer (S5500, S200EXR) and the three SuperCCD arrangements, turned 45° into a Bayer and back; 13 CC0 files pinned in `body_corpus.rs`; `coverage.py` on the evidence as merged with main: 562 verified (39%), 666 unverified, 181 preview, 37 unsupported; Fujifilm 76 / 19 / 2, use-weighted 94% (86% on a verified body); the Unsupported count and the "Medium format and others" use row now follow `coverage.py` (37; 35% / 11% with the Minolta MRW bodies). The rule that sent every pre-X FinePix to preview also caught the TIFF-wrapped F-series EXR bodies (F505 … F900 EXR), which already decoded |
 | 2026-10-24 | minor | Cameras nobody measured: `spectral::generic` (the mean of the 52 measured cameras' matrices, per maker for Canon, Nikon and Sony) is the colour of a raw whose camera JPEG gives no look, with the neutral tone at the maker's exposure (medians of the CC0 archive's fitted looks); `calibrate --references` fits exposure, contrast and the hue/saturation table of any model against Lightroom renders and a model so fitted starts from its neutral look, whatever its maker; `library.importFormats`; counts and scores unchanged |

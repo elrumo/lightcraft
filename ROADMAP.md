@@ -45,7 +45,7 @@ Hours are calibrated on this repo's PR history; see
 | Dimension | Ready | Breadth | Remaining | Doc |
 |---|---:|---:|---:|---|
 | Features | ~61% | ~77% (checklist 84.3%) | 600–1,100 h | [target-app-parity](docs/target-app-parity.md#features) |
-| ↳ RAW cameras, colour, lens profiles | ~60% | 85% of 1,446 Adobe models decode, 39% verified | 255–480 h | [raw-parity](docs/raw-parity.md) |
+| ↳ RAW cameras, colour, lens profiles | ~60% | 86% of 1,446 Adobe models decode, 40% verified | 255–480 h | [raw-parity](docs/raw-parity.md) |
 | UI/UX fidelity | ~70% | ~85% | 32–54 h | [ui-parity](docs/ui-parity.md) |
 | File formats (non-raw) | ~70% | ~85% | 30–55 h | [file-format-parity](docs/file-format-parity.md) |
 | Hardware | ~40% | ~50% | 40–80 h | [hardware-parity](docs/hardware-parity.md) |
@@ -239,6 +239,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Camera support from community pull requests integrated (X-Trans III Kelvin #2514, Blackmagic DNG #1305, two-field Coolpix #672, pre-X FinePix #2316, GoPro GPR #2787) and the Olympus family work (ORI files, five more uncompressed bodies verified, ORF preview details, aspect crop); Coolpix 5700, 8400 and 8800 move from unsupported to verified; RAW: 86% of Adobe's models decode, 40% verified (575), use-weighted share unchanged at ~94% (86% on a verified body); Canon CRW (#2512) and Nikon HE (#896) held back on clean-room provenance |
 | 2026-10-25 | minor | Upstream #2787: GoPro GPR (VC-5) decoded: RAW 83% → 84% of Adobe's models decode, 38% verified; readiness unchanged |
 | 2026-10-24 | minor | Upstream merged again (up to v0.13.0); headline numbers are recounted after the merge |
 | 2026-10-22 | minor | Print: Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺) in the page setup, Print dialog and PDF output; headline numbers unchanged |

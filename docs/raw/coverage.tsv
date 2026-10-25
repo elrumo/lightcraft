@@ -689,10 +689,10 @@ Nikon	1 V2	NEF	2012	verified	corpus: crates/raw/tests/it/body_corpus.rs (pinned 
 Nikon	1 V3	NEF	2013	verified	corpus: crates/raw/tests/it/body_corpus.rs (pinned sensor hash, camera-JPEG check)
 Nikon	COOLPIX 5000	NEF	2003	unverified	NEF decoder (uncompressed, lossless, lossy, lossy after split); HE / HE* setting preview-only
 Nikon	COOLPIX 5400	NEF	2003	unverified	NEF decoder (uncompressed, lossless, lossy, lossy after split); HE / HE* setting preview-only
-Nikon	COOLPIX 5700	NEF	2003	unsupported	bulk: raw.pixls.us CC0 file decodes wrongly (two stacked half-height fields, CMYG mosaic read as RGB; green vs camera JPEG r 0.12-0.36)
-Nikon	COOLPIX 8400	NEF	2005	unsupported	bulk: raw.pixls.us CC0 file decodes wrongly (two stacked half-height fields, CMYG mosaic read as RGB; green vs camera JPEG r 0.12-0.36)
+Nikon	COOLPIX 5700	NEF	2003	verified	bulk: raw.pixls.us CC0 file decodes since the two-field Coolpix reader (upstream #672; render vs camera JPEG E5700 CYGM, dE00 4.24, was 32 to 44)
+Nikon	COOLPIX 8400	NEF	2005	verified	bulk: raw.pixls.us CC0 file decodes since the two-field Coolpix reader (upstream #672; render vs camera JPEG E8400, dE00 2.45, was 32 to 44)
 Nikon	COOLPIX 8700	NEF	2003	unverified	NEF decoder (uncompressed, lossless, lossy, lossy after split); HE / HE* setting preview-only
-Nikon	COOLPIX 8800	NEF	2005	unsupported	bulk: raw.pixls.us CC0 file decodes wrongly (two stacked half-height fields, CMYG mosaic read as RGB; green vs camera JPEG r 0.12-0.36)
+Nikon	COOLPIX 8800	NEF	2005	verified	bulk: raw.pixls.us CC0 file decodes since the two-field Coolpix reader (upstream #672; render vs camera JPEG E8800, dE00 1.86, was 32 to 44)
 Nikon	COOLPIX A	NEF	2012	verified	corpus: crates/raw/tests/it/body_corpus.rs (pinned sensor hash, camera-JPEG check)
 Nikon	COOLPIX A1000	NRW	2018	verified	corpus: crates/raw/tests/it/body_corpus.rs (pinned sensor hash, camera-JPEG check)
 Nikon	COOLPIX B700	NRW	2015	verified	corpus: crates/raw/tests/it/corpus.rs (xtask RAW_SAMPLES)
