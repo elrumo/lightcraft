@@ -190,7 +190,8 @@ pub const LOCAL: &[ControlSpec] = &[
     local("sharpness", "Sharpness", -100.0, 100.0, 1.0, 0, Track::Centered),
     local("noise", "Noise", -100.0, 100.0, 1.0, 0, Track::Centered),
     local("moire", "Moiré", -100.0, 100.0, 1.0, 0, Track::Centered),
-    local("defringe", "Defringe", -100.0, 100.0, 1.0, 0, Track::Centered),
+    // (only a positive Defringe removes fringes; a negative one never did anything, so the slider starts at 0)
+    local("defringe", "Defringe", 0.0, 100.0, 1.0, 0, Track::Plain),
 ];
 
 /// How strongly a mask applies its adjustments (`mask.adjust {amount}`, percent).
@@ -219,6 +220,8 @@ const DEPTH_NEAR: ControlSpec = shape("lo", "Range Near", 0.0, 100.0, 0.0, Track
 const DEPTH_FAR: ControlSpec = shape("hi", "Range Far", 0.0, 100.0, 100.0, Track::Gradient { from: "#f0a030", to: "#3050c0" });
 const COLOR_REFINE: ControlSpec = shape("refine", "Refine", 0.0, 100.0, 50.0, Track::Plain);
 const EDGE: ControlSpec = shape("edge", "Edge", -100.0, 100.0, 0.0, Track::Centered);
+/// A radial gradient's Feather: 0 is a hard edge at its outline, 100 fades from its centre.
+const FEATHER: ControlSpec = shape("feather", "Feather", 0.0, 100.0, 50.0, Track::Plain);
 
 /// A mask part's own controls, with their values: a luminance range's bounds (percent) and
 /// smoothness, a colour range's refine, an AI selection's edge (−100 harder … 100 softer). Other
@@ -233,6 +236,7 @@ pub fn shape_controls(shape: &MaskShape) -> Vec<(ControlSpec, f64)> {
         }
         MaskShape::ColorRange { refine, .. } => vec![(COLOR_REFINE, *refine)],
         MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. } => vec![(EDGE, *edge)],
+        MaskShape::Radial { feather, .. } => vec![(FEATHER, *feather)],
         _ => Vec::new(),
     }
 }
@@ -256,6 +260,7 @@ pub fn set_shape_control(shape: &MaskShape, id: &str, v: f64) -> Option<MaskShap
         (MaskShape::DepthRange { feather, .. }, "smoothness") => *feather = v.clamp(0.0, 100.0) / 100.0 * 0.5,
         (MaskShape::ColorRange { refine, .. }, "refine") => *refine = v.clamp(0.0, 100.0),
         (MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. }, "edge") => *edge = v.clamp(-100.0, 100.0),
+        (MaskShape::Radial { feather, .. }, "feather") => *feather = v.clamp(0.0, 100.0),
         _ => return None,
     }
     Some(s)
@@ -624,6 +629,67 @@ pub fn indexed_instances(s: &DevelopSettings) -> Vec<(String, &'static ControlSp
 
 pub fn in_section(section: Section) -> impl Iterator<Item = &'static ControlSpec> {
     CONTROLS.iter().filter(move |c| c.section == section)
+}
+
+/// Puts `s` in the state in which control `id` shows when it moves: the other controls it only modulates (Grain
+/// Size does nothing at a Grain amount of 0, Midpoint at a Vignette of 0), and the switches in front of it (the
+/// B&W Mixer needs the B&W treatment, Temp the Custom white balance, Lens Blur its depth). The slider sweep tests
+/// (`lightcraft-pipeline`, `lightcraft-gpu`, `lightcraft-engine`) call it before they move a control; a control
+/// that needs more than this, a lens or a model, is listed there with its reason.
+pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
+    use crate::settings::{Treatment, WbMode};
+    use lightcraft_geom::Point;
+    let put = |s: &mut DevelopSettings, id: &str, v: f64| {
+        set(s, id, v);
+    };
+    match id {
+        "wb.temp" | "wb.tint" => s.wb.mode = WbMode::Custom,
+        "profile.amount" => s.profile.id = "lc.vivid".into(),
+        "hdr.maxEv" | "hdr.sdrBrightness" | "hdr.sdrContrast" | "hdr.sdrHighlights" | "hdr.sdrShadows" | "hdr.sdrWhites" | "hdr.sdrClarity" => {
+            s.hdr.enabled = true
+        }
+        "curve.splitShadows" | "curve.splitMid" | "curve.splitHighlights" => {
+            for k in ["curve.highlights", "curve.lights", "curve.darks", "curve.shadows"] {
+                put(s, k, 60.0);
+            }
+        }
+        "curve.refineSaturation" => s.curve.master = vec![Point::new(0.0, 0.0), Point::new(0.25, 0.12), Point::new(0.75, 0.9), Point::new(1.0, 1.0)],
+        _ if id.starts_with("bw.") => s.treatment = Treatment::Bw,
+        "grading.blending" | "grading.balance" => {
+            for w in ["shadows", "midtones", "highlights"] {
+                put(s, &format!("grading.{w}.sat"), 60.0);
+            }
+            put(s, "grading.shadows.hue", 220.0);
+            put(s, "grading.highlights.hue", 40.0);
+        }
+        // (a wheel's hue is the colour of its tint: at saturation 0 there is none)
+        _ if id.starts_with("grading.") && id.ends_with(".hue") => put(s, &id.replace(".hue", ".sat"), 60.0),
+        "vignette.midpoint" | "vignette.roundness" | "vignette.feather" | "vignette.highlights" => put(s, "vignette.amount", -60.0),
+        "grain.size" | "grain.roughness" => put(s, "grain.amount", 60.0),
+        "detail.sharpenRadius" | "detail.sharpenDetail" | "detail.sharpenMasking" => put(s, "detail.sharpenAmount", 80.0),
+        "detail.nrDetail" | "detail.nrContrast" => put(s, "detail.nrLuminance", 50.0),
+        "detail.nrColorDetail" | "detail.nrColorSmoothness" => put(s, "detail.nrColor", 50.0),
+        "optics.vignettingMidpoint" => put(s, "optics.vignetting", 50.0),
+        "optics.defringePurpleHueLo" | "optics.defringePurpleHueHi" => put(s, "optics.defringePurple", 20.0),
+        "optics.defringeGreenHueLo" | "optics.defringeGreenHueHi" => put(s, "optics.defringeGreen", 20.0),
+        "optics.profileDistortion" | "optics.profileVignetting" => s.optics.lens_profile = true,
+        "lensBlur.amount" | "lensBlur.focalDistance" | "lensBlur.focalRange" | "lensBlur.boost" => {
+            // a depth that runs from near (left) to far (right), a focal range in the middle
+            let ramp: Vec<f32> = (0..16 * 8).map(|i| 1.0 - (i % 16) as f32 / 15.0).collect();
+            s.lens_blur.enabled = true;
+            s.lens_blur.depth = crate::DepthMap::from_nearness(16, 8, &ramp);
+            if id != "lensBlur.amount" {
+                s.lens_blur.amount = 60.0;
+            }
+            if id != "lensBlur.focalDistance" {
+                s.lens_blur.focal_distance = 50.0;
+            }
+            if id != "lensBlur.focalRange" {
+                s.lens_blur.focal_range = 10.0;
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]

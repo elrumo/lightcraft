@@ -19,7 +19,16 @@ pub enum Trc {
     Parametric(Vec<f32>),
     /// Sampled curve over `[0, 1]` (ICC `curv` with ≥ 2 entries), linearly interpolated.
     Table(Vec<u16>),
+    /// SMPTE ST 2084 (PQ), absolute: the linear value is relative to SDR white at 203 cd/m²
+    /// (ITU-R BT.2408, as [`crate::HDR_REFERENCE_WHITE_NITS`] writes it), so highlights go above 1.
+    Pq,
+    /// ITU-R BT.2100 HLG: the signal's display light on the 1000 cd/m² reference display (the OOTF's system
+    /// gamma of 1.2 applied to each channel), relative to SDR white at 203 cd/m², so signal 0.75 is 1.
+    Hlg,
 }
+
+/// SDR white in an HDR file, cd/m² ([`crate::HDR_REFERENCE_WHITE_NITS`]).
+const SDR_WHITE_NITS: f64 = crate::HDR_REFERENCE_WHITE_NITS as f64;
 
 impl Trc {
     /// Encoded value → linear. Negative values are mirrored and values above 1 are extrapolated,
@@ -47,6 +56,8 @@ impl Trc {
             }
             Trc::Parametric(p) => eval_parametric(p, v),
             Trc::Table(t) => eval_table(t, v),
+            Trc::Pq => (lightcraft_color::transfer::pq_decode(f64::from(v)) * 10_000.0 / SDR_WHITE_NITS) as f32,
+            Trc::Hlg => (lightcraft_color::transfer::hlg_decode(f64::from(v.min(1.0))).powf(1.2) * 1000.0 / SDR_WHITE_NITS) as f32,
         }
     }
 
@@ -72,6 +83,8 @@ impl Trc {
                     1.099 * v.powf(0.45) - 0.099
                 }
             }
+            Trc::Pq => lightcraft_color::transfer::pq_encode(f64::from(v) * SDR_WHITE_NITS / 10_000.0) as f32,
+            Trc::Hlg => lightcraft_color::transfer::hlg_encode((f64::from(v) * SDR_WHITE_NITS / 1000.0).powf(1.0 / 1.2)) as f32,
             Trc::Parametric(_) | Trc::Table(_) => {
                 // Monotone curves: bisection on [0, max(1, v)].
                 let (mut lo, mut hi) = (0.0f32, 1.0f32);
@@ -269,6 +282,9 @@ impl SourceSpace {
             1 | 6 | 14 | 15 => Trc::Rec709,
             8 => Trc::Linear,
             4 => Trc::Gamma(2.2),
+            // HDR: PQ and HLG (a PQ PNG, such as our own HDR export, was read as sRGB: flat and washed out)
+            16 => Trc::Pq,
+            18 => Trc::Hlg,
             _ => return None,
         };
         let mut s = SourceSpace::named(named, SpaceOrigin::Container);

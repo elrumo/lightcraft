@@ -655,6 +655,56 @@ mod hlg_tests {
         }
     }
 
+    /// Our own HDR PNG (16-bit Rec. 2020 PQ, SDR white at 203 cd/m², `cICP` 9/16) was read as sRGB when
+    /// opened again: flat and washed out, with nothing above white. It decodes to linear light now.
+    #[test]
+    fn a_pq_png_decodes_to_linear_light_above_sdr_white() {
+        let lin = [0.25f32, 1.0, 4.0];
+        let rgb: Vec<f32> = lin.iter().flat_map(|v| [*v; 3]).collect();
+        let png = encode_png_pq(3, 1, &rgb, &EncodeMeta::default()).unwrap();
+        let d = crate::decode(&png, Default::default()).unwrap();
+        for (i, want) in lin.iter().enumerate() {
+            let got = d.image.data[i];
+            for c in got {
+                assert!(((c - want) / want).abs() < 0.02, "pixel {i}: {got:?} for {want}");
+            }
+        }
+    }
+
+    /// The same for our lossless HDR JPEG XL (Rec. 2020 PQ, SDR white at 203 cd/m²). Asked for as linear light,
+    /// jxl-oxide tone maps a file declaring a peak above 255 cd/m² down to 255, which cost the whole range above SDR
+    /// white. (A lossy file is XYB coded and is still read that way: see `jxl::decode`.)
+    #[test]
+    fn a_lossless_pq_jpeg_xl_decodes_to_linear_light_above_sdr_white() {
+        let lin = [0.25f32, 1.0, 4.0];
+        let (w, h) = (48usize, 16usize);
+        let rgb: Vec<f32> = (0..w * h).flat_map(|i| [lin[i % w / 16]; 3]).collect();
+        let e = EncodeImage::new(w as u32, h as u32, 3, Samples::F32(&rgb));
+        let o = crate::JxlOptions { lossless: true, colour: crate::JxlColour::Rec2020Pq, ..Default::default() };
+        let jxl = crate::encode_jxl(&e, &o, &EncodeMeta::default()).unwrap();
+        let d = crate::decode(&jxl, Default::default()).unwrap();
+        for (k, want) in lin.iter().enumerate() {
+            let got = d.image.data[8 * w + 16 * k + 8];
+            assert!(((got[1] - want) / want).abs() < 0.1, "stripe {k}: {got:?} for {want}");
+        }
+    }
+
+    #[test]
+    fn hdr_transfer_curves_are_relative_to_sdr_white() {
+        use crate::space::Trc;
+        for trc in [Trc::Pq, Trc::Hlg] {
+            // SDR white round trips, and the curve carries on above it
+            for v in [0.01f32, 0.18, 1.0, 3.0] {
+                let back = trc.to_linear(trc.from_linear(v));
+                assert!(((back - v) / v).abs() < 0.01, "{trc:?} {v} -> {back}");
+            }
+            assert!(trc.to_linear(1.0) > 2.0, "{trc:?}: full signal is brighter than SDR white");
+            // below black stays below black
+            assert!(trc.to_linear(-0.5) <= 0.0);
+        }
+        assert!((Trc::Hlg.from_linear(1.0) - 0.75).abs() < 0.005, "BT.2408: SDR white at 75 % HLG");
+    }
+
     #[test]
     fn hdr_avif_rejects_short_buffers() {
         let m = EncodeMeta::default();

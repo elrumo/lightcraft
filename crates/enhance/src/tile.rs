@@ -10,6 +10,13 @@
 //! tile's result are replaced by those of the input enlarged by bicubic interpolation
 //! (`out + blur(up) − blur(out)`); the network's detail is untouched. The blur is local, so
 //! tiles still match a pass over the whole image.
+//!
+//! **Clamping.** The result must stay within 0…1, and the network's detail goes below 0 in
+//! black areas (ringing, noise that crossed black): clipped, that detail leaves a positive mean, so
+//! the blacks of a photo come back lifted (a black-and-white photo with crushed blacks loses its
+//! black point: 0 → 1.4 / 255 at the 1st percentile on a real one). So the anchor is applied again
+//! after the clamp, [`ANCHOR_PASSES`] times in all, each pass pulling the clipped mean back to the
+//! input's.
 
 use candle_core::Tensor;
 use lightcraft_raster::Rgb32f;
@@ -18,11 +25,18 @@ use crate::span::Span;
 use crate::{Error, Result};
 
 /// Context around each tile, in input pixels: SPAN's 21-pixel receptive field, plus what the
-/// tone anchor reads (its blur and the bicubic kernel), rounded up.
-pub const HALO: usize = 32;
+/// tone anchor reads (the bicubic kernel, and a blur for each of its [`ANCHOR_PASSES`]), rounded up.
+pub const HALO: usize = 40;
 
 /// Radius of the tone anchor's blur, in input pixels.
 const ANCHOR_RADIUS: usize = 4;
+
+/// Least share of a neighbourhood a correction is spread over (so a nearly all-clipped one doesn't
+/// throw the few pixels that are not far off).
+const MIN_SHARE: f32 = 0.25;
+
+/// How many times the tone anchor is applied (each after clamping to 0…1 the one before).
+const ANCHOR_PASSES: usize = 3;
 
 /// Tiling and size limits.
 #[derive(Clone, Copy, Debug)]
@@ -125,6 +139,9 @@ impl Span {
             if result.len() != 3 * rw * rh {
                 return Err(Error::Model(format!("the network returned {} values for a {rw} × {rh} tile", result.len())));
             }
+            if is_neutral(&planes, ww * wh) {
+                make_neutral(&mut result);
+            }
             anchor_tones(&mut result, &planes, (ww, wh), s);
             for y in y0 * s..y1 * s {
                 for x in x0 * s..x1 * s {
@@ -144,6 +161,29 @@ impl Span {
     }
 }
 
+/// Whether the three planes of `planes` (each `n` values) are the same: a black-and-white picture.
+fn is_neutral(planes: &[f32], n: usize) -> bool {
+    match (planes.get(..n), planes.get(n..2 * n), planes.get(2 * n..3 * n)) {
+        (Some(r), Some(g), Some(b)) => r == g && g == b,
+        _ => false,
+    }
+}
+
+/// Give the three planes of `result` their mean. The network treats the channels differently (it
+/// subtracts a different mean from each), so a black-and-white picture would come out tinted, most
+/// of all in the shadows, where a tint moves the blacks.
+fn make_neutral(result: &mut [f32]) {
+    let n = result.len() / 3;
+    for i in 0..n {
+        let mean = (at(result, i) + at(result, n + i) + at(result, 2 * n + i)) / 3.0;
+        for c in 0..3 {
+            if let Some(v) = result.get_mut(c * n + i) {
+                *v = mean;
+            }
+        }
+    }
+}
+
 /// Value of `v[i]`, 0 outside (indices here are computed from sizes this module chose, but a
 /// slip must not panic).
 fn at(v: &[f32], i: usize) -> f32 {
@@ -151,14 +191,34 @@ fn at(v: &[f32], i: usize) -> f32 {
 }
 
 /// Move the broad tones of `result` (planar RGB, `s` times the size of `input`) to those of
-/// `input` enlarged by bicubic interpolation: `result += blur(up) − blur(result)`.
-fn anchor_tones(result: &mut [f32], input: &[f32], (w, h): (usize, usize), s: usize) {
+/// `input` enlarged by bicubic interpolation: `result += blur(up) − blur(result)`, clamped to 0…1.
+/// The clamp moves the broad tones again where detail was cut off at black or white, so
+/// [`ANCHOR_PASSES`] − 1 more passes undo that: the difference is taken off the pixels that were not
+/// clipped, the only ones that can move that way.
+pub(crate) fn anchor_tones(result: &mut [f32], input: &[f32], (w, h): (usize, usize), s: usize) {
     let (rw, rh) = (w * s, h * s);
+    let r = ANCHOR_RADIUS * s;
+    let clamp01 = |v: f32| if v > 0.0 { v.min(1.0) } else { 0.0 };
     for (out, inp) in result.chunks_exact_mut(rw * rh).zip(input.chunks_exact(w * h)) {
-        let low_up = box_blur(&bicubic(inp, (w, h), s), (rw, rh), ANCHOR_RADIUS * s);
-        let low_out = box_blur(out, (rw, rh), ANCHOR_RADIUS * s);
+        let low_up = box_blur(&bicubic(inp, (w, h), s), (rw, rh), r);
+        let low_out = box_blur(out, (rw, rh), r);
         for (o, (u, l)) in out.iter_mut().zip(low_up.iter().zip(&low_out)) {
-            *o += u - l;
+            *o = clamp01(*o + u - l);
+        }
+        for _ in 1..ANCHOR_PASSES {
+            let low_out = box_blur(out, (rw, rh), r);
+            // (the share of each neighbourhood that can still go down, and up)
+            let above: Vec<f32> = out.iter().map(|v| f32::from(*v > 0.0)).collect();
+            let below: Vec<f32> = out.iter().map(|v| f32::from(*v < 1.0)).collect();
+            let (can_down, can_up) = (box_blur(&above, (rw, rh), r), box_blur(&below, (rw, rh), r));
+            for (i, o) in out.iter_mut().enumerate() {
+                let excess = at(&low_out, i) - at(&low_up, i);
+                if excess > 0.0 && *o > 0.0 {
+                    *o = clamp01(*o - excess / at(&can_down, i).max(MIN_SHARE));
+                } else if excess < 0.0 && *o < 1.0 {
+                    *o = clamp01(*o - excess / at(&can_up, i).max(MIN_SHARE));
+                }
+            }
         }
     }
 }

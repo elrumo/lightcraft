@@ -124,12 +124,20 @@ pub fn preview_only_explanation(reason: &str) -> String {
     )
 }
 
+/// What was clicked on a [`preview_only_notice`].
+#[derive(Default, Clone, Copy)]
+pub struct PreviewOnlyClicks {
+    pub reload: bool,
+    pub cameras: bool,
+}
+
 /// A panel notice for a raw shown from its embedded preview (Edit, Info): an amber info icon,
-/// "Preview only", the explanation and a Reload from Disk button (`button:reloadPreviewOnly:{key}`:
-/// for a file a newer version can decode that was offline when its library opened). Registered as
-/// `notice:previewOnly:{key}`. `true` when the button was clicked.
-pub fn preview_only_notice(ui: &mut Ui, key: &str, reason: &str) -> bool {
-    let mut reload = false;
+/// "Preview only", the explanation, a Reload from Disk button (`button:reloadPreviewOnly:{key}`:
+/// for a file a newer version can decode that was offline when its library opened) and a Supported
+/// Cameras button (`button:supportedCameras:{key}`: the website's list of every camera and its state).
+/// Registered as `notice:previewOnly:{key}`. Says which of the buttons was clicked.
+pub fn preview_only_notice(ui: &mut Ui, key: &str, reason: &str) -> PreviewOnlyClicks {
+    let mut clicks = PreviewOnlyClicks::default();
     let t = Tokens::get(ui.ctx());
     let r = egui::Frame::NONE
         .fill(t.canvas)
@@ -146,13 +154,16 @@ pub fn preview_only_notice(ui: &mut Ui, key: &str, reason: &str) -> bool {
             ui.add_space(2.0);
             ui.label(egui::RichText::new(preview_only_explanation(reason)).size(11.5).color(t.text_label));
             ui.add_space(6.0);
-            reload = text_button(ui, &format!("reloadPreviewOnly:{key}"), "Reload from Disk", false).clicked();
+            ui.horizontal_wrapped(|ui| {
+                clicks.reload = text_button(ui, &format!("reloadPreviewOnly:{key}"), "Reload from Disk", false).clicked();
+                clicks.cameras = text_button(ui, &format!("supportedCameras:{key}"), "Supported Cameras", false).clicked();
+            });
         })
         .response;
     let r = r.on_hover_text(crate::i18n::tr_format!("Decoder: {reason}", reason = reason));
     r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, crate::i18n::tr("Preview only: editing the camera's embedded JPEG")));
     register(ui.ctx(), format!("notice:previewOnly:{key}"), r.rect);
-    reload
+    clicks
 }
 
 // ------------------------------------------------------------------ colour helpers

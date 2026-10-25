@@ -289,11 +289,12 @@ fn a_crs_change_after_a_read_is_taken_with_auto_write_on() {
 }
 
 /// Lightroom's default profiles (`Adobe Standard`, `Adobe Color`) are named by nearly every sidecar
-/// and our own starting look stands in for them: importing one gives no camera-profile warning.
+/// and our own starting look stands in for them: importing one gives no camera-profile warning. Neither does the
+/// profile a DNG carries (an iPhone ProRAW's "Apple Embedded Color Profile"): that is the one we render.
 #[test]
 fn default_lightroom_profiles_are_not_reported() {
     let src = temp_dir("xmp-default-profile");
-    for (i, name) in ["Adobe Standard", "Adobe Color"].into_iter().enumerate() {
+    for (i, name) in ["Adobe Standard", "Adobe Color", "Apple Embedded Color Profile", "Embedded"].into_iter().enumerate() {
         let photo = src.join(format!("p{i}.png"));
         write_png(&photo, 6);
         let xmp = format!(

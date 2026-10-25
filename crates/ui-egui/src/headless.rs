@@ -2986,6 +2986,18 @@ mod tests {
         h.settle(SETTLE);
         assert!(ids(&mut h, "notice:previewOnly:").contains(&"notice:previewOnly:info".to_string()));
         assert_eq!(ids(&mut h, "button:reloadPreviewOnly:"), vec!["button:reloadPreviewOnly:info".to_string()]);
+        // and a button to the website's list of supported cameras
+        assert_eq!(ids(&mut h, "button:supportedCameras:"), vec!["button:supportedCameras:info".to_string()]);
+        let opened = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let o = opened.clone();
+        h.app.services.open_url = Some(Box::new(move |u: &str| {
+            o.lock().unwrap().push(u.to_string());
+            Ok(())
+        }));
+        let r = h.request("ui.clickWidget", json!({"id": "button:supportedCameras:info"}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+        assert_eq!(opened.lock().unwrap().as_slice(), [crate::links::CAMERAS]);
         // …which re-reads the file and says what came of it (a demo photo has none to re-read)
         let r = h.request("ui.clickWidget", json!({"id": "button:reloadPreviewOnly:info"}), t);
         assert_eq!(r["ok"], true, "{r}");

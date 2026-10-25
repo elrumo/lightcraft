@@ -16,6 +16,8 @@ pub const APP_PAGE: &str = "https://getartcraft.com/apps/lightcraft";
 pub const GITHUB: &str = "https://github.com/storytold/lightcraft";
 /// The user documentation (docs/ in the repository).
 pub const HELP: &str = "https://github.com/storytold/lightcraft/tree/main/docs";
+/// The LightBites page listing every camera and whether its raw files are developed or only opened from their preview.
+pub const CAMERAS: &str = "https://lightbites.app/cameras";
 /// Where feedback and bug reports go.
 pub const FEEDBACK: &str = "https://github.com/storytold/lightcraft/issues/new";
 

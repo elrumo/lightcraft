@@ -64,6 +64,11 @@ const CRS_BANDS: [&str; 8] = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue"
 const NON_ADJUSTMENT: &[&str] = &[
     "crs:Version",
     "crs:ProcessVersion",
+    // Lightroom's own bookkeeping: the minimum version that reads the packet, a digest of the camera profile it was
+    // made with, and the seed of its grain pattern
+    "crs:CompatibleVersion",
+    "crs:CameraProfileDigest",
+    "crs:GrainSeed",
     "crs:Name",
     "crs:ShortName",
     "crs:Group",
@@ -109,9 +114,15 @@ const NON_ADJUSTMENT: &[&str] = &[
 
 /// Lightroom's default profiles are named by nearly every sidecar and preset pack (as `CameraProfile`
 /// or as a stubbed `Look`). LightCraft's own starting look stands in for them, so naming one is not
-/// worth a warning; any other profile or look is.
+/// worth a warning; any other profile or look is. The profile a DNG carries itself is one too: Lightroom names it
+/// by the file's `ProfileName` (Apple ProRAW: "Apple Embedded Color Profile", whose look is "Apple ProRaw"; Adobe's
+/// converter: "Embedded") and LightCraft renders exactly that profile, so warning that it "was not applied" is wrong.
+// ponytail: matched by name, not against the file's own ProfileName (the sidecar parse has no file); add that when a
+// phone writes another name.
 pub fn is_default_profile(name: &str) -> bool {
-    matches!(name.trim(), "Adobe Standard" | "Adobe Color")
+    let name = name.trim();
+    let lower = name.to_ascii_lowercase();
+    matches!(name, "Adobe Standard" | "Adobe Color") || lower == "embedded" || lower == "apple proraw" || lower.ends_with("embedded color profile")
 }
 
 /// True if the packet carries any `crs:` adjustment (not just bookkeeping fields).
@@ -422,6 +433,17 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     n(o, "DefringeGreenAmount", "optics.defringe_green_amount");
     n(o, "DefringeGreenHueLo", "optics.defringe_green_hue_lo");
     n(o, "DefringeGreenHueHi", "optics.defringe_green_hue_hi");
+
+    // ---- Profile: Apple ProRAW's local tone mapping (`ProfileGainTableMap`, 0..100). Lightroom's "Apple ProRaw" look
+    // sets it to 100 (its `Parameters`, scaled by the look's `Amount`); a look without it, or a packet that says 0,
+    // renders the file without the map. We only have it on or off.
+    let map = num(props, "crs:ProfileGainTableMap").or_else(|| {
+        let look = num(props, "crs:Look/crs:Parameters/crs:ProfileGainTableMap")?;
+        Some(look * num(props, "crs:Look/crs:Amount").unwrap_or(1.0).clamp(0.0, 1.0))
+    });
+    if let Some(amount) = map {
+        put(o, "profile.camera_local_tone", json!(amount > 0.0));
+    }
 
     // ---- Calibration
     n(o, "ShadowTint", "calibration.shadows_tint");
@@ -1060,6 +1082,54 @@ mod tests {
             {extra_elems}
           </rdf:Description></rdf:RDF></x:xmpmeta>"#
         )
+    }
+
+    /// A sidecar of an iPhone ProRAW as Lightroom writes it (the shape of a real one): the DNG's own profile
+    /// by name, the "Apple ProRaw" look with its gain table map, and Lightroom's bookkeeping fields.
+    fn proraw_packet(top: &str, amount: &str, gain: &str) -> String {
+        format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Version="15.0"
+             crs:CompatibleVersion="251658240" crs:ProcessVersion="11.0" crs:Exposure2012="+0.50"
+             crs:CameraProfile="Apple Embedded Color Profile" crs:CameraProfileDigest="9458C05CA86C15028DC6A37B944DC357"
+             crs:GrainSeed="1836665265" crs:HasSettings="True" {top}>
+            <crs:Look><rdf:Description crs:Name="Apple ProRaw" crs:Amount="{amount}" crs:UUID="D866CAE82BD24C3F896B6762BDDA6C50"
+                crs:SupportsMonochrome="false" crs:SupportsOutputReferred="false" crs:Copyright="Adobe">
+              <crs:Parameters crs:Version="15.0" crs:ProcessVersion="11.0" crs:ProfileGainTableMap="{gain}"
+                crs:ConvertToGrayscale="False" crs:CameraProfile="Apple Embedded Color Profile"/>
+            </rdf:Description></crs:Look>
+          </rdf:Description></rdf:RDF></x:xmpmeta>"#
+        )
+    }
+
+    /// Lightroom's "Apple ProRaw" look turns Apple's local tone mapping on (`ProfileGainTableMap` 100 in its
+    /// parameters, scaled by its amount) and a packet that says 0 turns it off, as `crs:` fields of its own do first;
+    /// and it is not reported as a profile or look we did not apply: the DNG's own profile is what we render.
+    #[test]
+    fn apple_proraw_look_carries_the_gain_table_map_and_is_not_a_foreign_profile() {
+        let local_tone = |top: &str, amount: &str, gain: &str| {
+            to_partial(&props(&proraw_packet(top, amount, gain)), Target::RawAbsolute).pointer("/profile/camera_local_tone").and_then(Value::as_bool)
+        };
+        assert_eq!(local_tone("", "1", "100"), Some(true), "the look's gain table map");
+        assert_eq!(local_tone("", "1", "0"), Some(false));
+        assert_eq!(local_tone("", "0", "100"), Some(false), "a look at amount 0 adds nothing");
+        assert_eq!(local_tone(r#"crs:ProfileGainTableMap="0""#, "1", "100"), Some(false), "the packet's own field comes first");
+        assert_eq!(local_tone(r#"crs:ProfileGainTableMap="40""#, "1", "0"), Some(true));
+        let none = to_partial(&props(SIDECAR), Target::RawAbsolute);
+        assert!(none.pointer("/profile").is_none(), "a packet that says nothing leaves the photo's own default: {none}");
+
+        let xmp = proraw_packet("", "1", "100");
+        let d = lightcraft_meta::parse_xmp(&xmp).unwrap();
+        let (_, unmapped) = to_partial_report(&d.properties, Some(&d.values), Target::RawAbsolute, crate::crs_masks::DEFAULT_ASPECT);
+        assert!(unmapped.is_empty(), "nothing to report: {unmapped:?}");
+        let sidecar = crate::sidecar::parse_sidecar(&xmp, Target::RawAbsolute).unwrap();
+        assert!(sidecar.warnings.is_empty(), "{:?}", sidecar.warnings);
+        for name in ["Apple Embedded Color Profile", "Embedded", "apple proraw", "Adobe Color"] {
+            assert!(is_default_profile(name), "{name}");
+        }
+        for name in ["Camera Faithful", "Color", "", "Embedded Color Profile Plus", "é"] {
+            assert!(!is_default_profile(name), "{name}");
+        }
     }
 
     #[test]

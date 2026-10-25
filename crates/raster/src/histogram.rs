@@ -163,6 +163,25 @@ impl Histogram {
         (lo, hi)
     }
 
+    /// [`Self::clipping`] for an edit whose HDR render stops `limit_ev` stops above SDR white
+    /// (`develop.hdr.maxEv`). An HDR histogram's last bin is five stops up, which no render of an edit
+    /// with a lower limit reaches, so its highlight warning never lit: here the highlights count as
+    /// clipped where the render is held at its limit (within a bin, ~0.04 stop, for rounding). A
+    /// non-finite limit means the whole scale; an SDR histogram is [`Self::clipping`] as it was.
+    pub fn clipping_at(&self, limit_ev: f64) -> (f32, f32) {
+        let (lo, hi) = self.clipping();
+        let Some(b) = self.hdr else { return (lo, hi) };
+        if self.total == 0 {
+            return (lo, 0.0);
+        }
+        let scale = if b.stops.is_finite() { f64::from(b.stops.max(0.0)) } else { 0.0 };
+        let ev = if limit_ev.is_finite() { limit_ev.clamp(0.0, scale) } else { scale };
+        let top = b.bin((ev as f32).exp2()).saturating_sub(1);
+        let held = |v: &[u32]| v.iter().skip(top).map(|n| u64::from(*n)).sum::<u64>();
+        let n = held(&self.r).max(held(&self.g)).max(held(&self.b));
+        (lo, n as f32 / self.total as f32)
+    }
+
     /// Mean luma in 0..1.
     pub fn mean_luma(&self) -> f32 {
         if self.total == 0 {
@@ -238,6 +257,32 @@ mod tests {
         bad[1025] = 100; // NaN stops fall back to something drawable
         assert_eq!(Histogram::from_words(&bad).unwrap().hdr.unwrap().stops, 1.0);
     }
+    /// An HDR edit's highlights are clipped where the render is held at its headroom limit, not at the
+    /// scale's last bin (five stops up), which a lower limit never reaches: `clipping` never lit for
+    /// them.
+    #[test]
+    fn hdr_highlight_clipping_is_the_headroom_limit() {
+        // a 3-stop edit: a quarter of the pixels sit at its cap (8), the rest below
+        let mut px = vec![[0.5, 0.5, 0.5]; 6];
+        px.extend([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]]);
+        px.extend([[8.0, 3.0, 8.0]; 2]);
+        let h = Histogram::of_hdr(&px, 5.0);
+        assert_eq!(h.clipping().1, 0.0, "the old warning: nothing in the last bin");
+        let (lo, hi) = h.clipping_at(3.0);
+        assert_eq!(lo, 0.0);
+        assert!((hi - 0.2).abs() < 1e-6, "{hi}");
+        // nothing reaches a limit above the render's range
+        assert_eq!(h.clipping_at(4.5).1, 0.0);
+        // a lower limit: what sits above it counts too (the render would have held it there)
+        assert!((h.clipping_at(1.0).1 - 0.3).abs() < 1e-6, "{}", h.clipping_at(1.0).1);
+        // junk limits fall back to the scale, an empty histogram and an SDR one are as they were
+        assert_eq!(h.clipping_at(f64::NAN).1, 0.0);
+        assert_eq!(Histogram::of_hdr(&[], 5.0).clipping_at(3.0), (0.0, 0.0));
+        let img = Rgba8::from_fn(4, 1, |x, _| if x < 2 { [0, 0, 0, 255] } else { [255, 255, 255, 255] });
+        let sdr = Histogram::of_srgb8(&img);
+        assert_eq!(sdr.clipping_at(3.0), sdr.clipping());
+    }
+
     /// A hand-built split outside the bins (any `from`, any `stops`) never panics and stays in range.
     #[test]
     fn hdr_bins_with_any_split_stay_in_range() {

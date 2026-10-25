@@ -1,6 +1,6 @@
 //! Community and project links (Help menu, About dialog, top-bar Discord button).
 
-pub use lightcraft_engine::about::{APP, APP_PAGE, DISCORD, FEEDBACK, GITHUB, HELP, LINKS, WEBSITE, url_of};
+pub use lightcraft_engine::about::{APP, APP_PAGE, CAMERAS, DISCORD, FEEDBACK, GITHUB, HELP, LINKS, WEBSITE, url_of};
 
 /// Open `url` in the user's browser (through the host's `open_url` service).
 pub fn open(app: &mut crate::LightcraftApp, url: &str) -> Result<serde_json::Value, String> {
