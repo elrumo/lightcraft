@@ -693,8 +693,12 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         camera_card(ui, &p);
         ui.add_space(6.0);
         if let Some(why) = &p.preview_only {
-            if crate::widgets::preview_only_notice(ui, "info", why) {
+            let clicks = crate::widgets::preview_only_notice(ui, "info", why);
+            if clicks.reload {
                 crate::panels::edit::reload_preview_only(app, ui.ctx(), id);
+            }
+            if clicks.cameras {
+                let _ = crate::links::open(app, crate::links::CAMERAS);
             }
             ui.add_space(6.0);
         }

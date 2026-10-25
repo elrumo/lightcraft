@@ -123,12 +123,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
     }
     if let Some(why) = &preview_only {
-        let reload = egui::Frame::NONE
+        let clicks = egui::Frame::NONE
             .inner_margin(crate::widgets::margin(ui.ctx(), if compact { 12 } else { 0 }, 12))
             .show(ui, |ui| crate::widgets::preview_only_notice(ui, "edit", why))
             .inner;
-        if reload {
+        if clicks.reload {
             reload_preview_only(app, ui.ctx(), id);
+        }
+        if clicks.cameras {
+            let _ = crate::links::open(app, crate::links::CAMERAS);
         }
     }
     let n = app.session.selection.ids.len();
