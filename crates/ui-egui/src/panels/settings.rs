@@ -2436,7 +2436,7 @@ fn cloud_folder_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) 
         register(ui.ctx(), "label:cloudFolderStatus", r);
         row(ui, t, "", |ui| {
             if action(ui, t, "cloudFolderNow", "Sync Now", true, false) {
-                app.cloud_sync.driver.sync_folder_now();
+                sync_cmd(app, ui, "icloud.folderNow", json!({}));
             }
             if action(ui, t, "cloudFolderStop", "Stop Syncing", true, true) {
                 sync_cmd(app, ui, "icloud.useFolder", json!({"path": null}));

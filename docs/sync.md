@@ -689,6 +689,7 @@ commands); the frontend only moves records between it and CloudKit, and turns it
 |---|---|
 | user develop presets, and the settings a server shares too: export, metadata, filter and curve presets, colour-label and keyword sets, LUT profiles, the import defaults that don't name a place, the order of the preset groups, the hidden presets and groups, the Hidden password's hash and Blur Sensitive Photos | photos imported into the library, unless *Keep Photos in iCloud Drive* is on ([below](#photos-through-icloud-drive)): then they travel through iCloud Drive, not CloudKit |
 | the sync server a library is signed in to (its address and user name, which the person's other devices offer when they sign in) | the password and the device's token: every device signs in itself |
+| **albums, folders, smart albums and stacks**, and the **versions** of the photos that travel ([below](#albums-stacks-and-versions)) | the Quick Collection, History |
 | **edits of photos opened from the Photos library** (develop settings, rating, flag, colour label, title, caption, keywords and the other metadata an XMP sidecar carries), by the content hash of the picture's original; the same for photos kept in iCloud Drive, with Recently Deleted and Hidden | edits of photos whose original stays on the device, History, versions |
 | **what the analysis found** in those photos: faces (where, and their face vectors), the text read in them, their search vectors and sensitive scores ([below](#analysis-results)) | names given to people, which faces are whose (each device groups them itself) |
 
@@ -774,11 +775,32 @@ CloudKit host, no account of ours and no server (`crates/engine/src/icloud/folde
   not brought yet (`.icloud` placeholder) counts as `waiting`; a later pass has it.
 - **Use one transport per library**: the folder or a CloudKit host, not both (they share the engine's record of what the
   cloud has).
+- **Sync Now** is `icloud.folderNow`: the host's next poll runs a pass at once.
 - **Limits.** Every pass reads all the record files (a few thousand small files for a big library; a change list kept
-  between passes would avoid it). Tombstones are never deleted. The records are the ones above: albums, stacks, versions
-  and ratings of photos that are not opened from the Photos library or kept in the folder do not travel yet. The page
-  offers only the providers' usual folders (no folder picker yet) and is English only. Nothing has been run against a
-  real iCloud Drive, Dropbox or Google Drive folder, only against a plain one.
+  between passes would avoid it). Tombstones are never deleted. Ratings and the like of photos that are not opened from
+  the Photos library or kept in the folder do not travel (only albums, stacks and the other records below do). The
+  egui page offers only the providers' usual folders (no folder picker yet) and is English only. Nothing has been run
+  against a real iCloud Drive, Dropbox or Google Drive folder, only against a plain one.
+
+### Albums, stacks and versions
+
+Albums, folders, smart albums and stacks travel too, one `album` or `stack` record each
+(`crates/engine/src/icloud/collections.rs`), through CloudKit or a cloud folder alike; **versions** travel in the `edit`
+record of the photos that have one.
+
+- **By content, not by id.** A record names its album or stack by a uid this device made when it first sent it (in
+  `icloud.json`), and its photos by their content key, so another device puts them on the photos it has whatever way
+  they got there (opened from the Photos library, kept in iCloud Drive, or imported from the same file on two
+  computers). Members this device has no photo for yet are kept and go back with the record, so they are never lost
+  here, and join the album when the photo comes.
+- **What an album carries:** name, folder or not, the folder it is in, its place among its siblings, a smart album's
+  rules, the cover and the members. Not the Quick Collection, and not smart albums whose rules name photos or an album
+  (ids mean nothing elsewhere). A stack carries its members top first and whether it is collapsed; it takes the members
+  this device has (two at least; one with fewer is held until the photos come).
+- **Merging is by record:** changed on both sides, the newer change wins. Photos added to one album on two devices at
+  once are therefore not both kept, as a server's member-by-member merge would (limit). A removal removes the album or
+  stack on the other devices unless it was changed there; the photos stay. Applying is not an undo step.
+- **A library signed in to a server** has them through the server: no `album` or `stack` records travel then.
 
 ### Analysis results
 

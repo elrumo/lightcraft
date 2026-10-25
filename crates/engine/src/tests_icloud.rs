@@ -954,7 +954,140 @@ fn choosing_a_cloud_folder_turns_sync_on_and_changing_it_sends_everything_again(
     assert_eq!((r.sent, r.removed, r.changed), (0, 0, 0));
     assert_eq!(a.s.icloud_rev(), rev);
 
+    // Sync Now is a request the host's next poll takes once
+    assert!(!a.s.icloud_take_folder_now());
+    a.s.execute("icloud.folderNow", &json!({})).unwrap();
+    assert!(a.s.icloud_take_folder_now() && !a.s.icloud_take_folder_now());
+
     // stopping turns the sync off (it was only on for the folder)
     a.s.icloud_use_folder(None).unwrap();
     assert!(!a.s.icloud_on() && a.s.icloud_folder().is_none());
+}
+
+// ---- albums, stacks and versions ----
+
+fn make_album(
+    d: &mut Device,
+    name: &str,
+    photos: &[PhotoId],
+    parent: Option<lightcraft_catalog::AlbumId>,
+    folder: bool,
+) -> lightcraft_catalog::AlbumId {
+    let id = d.s.catalog.alloc_album_id();
+    let mut a = lightcraft_catalog::Album::new(id, name);
+    (a.photos, a.parent, a.folder) = (photos.to_vec(), parent, folder);
+    d.s.apply_system(lightcraft_catalog::Op::AddAlbum { album: a }).unwrap();
+    id
+}
+
+fn album_named(d: &Device, name: &str) -> Option<lightcraft_catalog::Album> {
+    d.s.catalog.albums().find(|a| a.name == name).cloned()
+}
+
+fn sorted(mut v: Vec<PhotoId>) -> Vec<PhotoId> {
+    v.sort();
+    v
+}
+
+#[test]
+fn albums_and_stacks_travel_to_a_device_that_has_the_same_photos() {
+    use lightcraft_catalog::{Op, Stack};
+    let root = temp_dir("collections");
+    let mut cloud = Cloud::default();
+    let (mut a, mut b) = (Device::new(&root, "a"), Device::new(&root, "b"));
+    let on_a: Vec<PhotoId> = (1..=3).map(|s| import(&mut a, s)).collect();
+    let on_b: Vec<PhotoId> = (1..=3).map(|s| import(&mut b, s)).collect();
+    let trips = make_album(&mut a, "Trips", &[], None, true);
+    let spain = make_album(&mut a, "Spain", &on_a[..2], Some(trips), false);
+    let stack = a.s.catalog.alloc_stack_id();
+    a.s.apply_system(Op::AddStack { stack: Stack { id: stack, photos: vec![on_a[1], on_a[2]], collapsed: true } }).unwrap();
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+
+    // the folder, the album in it with b's photos of the same pictures, and the stack, top first
+    let (folder, album) = (album_named(&b, "Trips").unwrap(), album_named(&b, "Spain").unwrap());
+    assert!(folder.folder && album.parent == Some(folder.id));
+    assert_eq!(sorted(album.photos), sorted(vec![on_b[0], on_b[1]]));
+    let st = b.s.catalog.stack_of(on_b[1]).unwrap();
+    assert_eq!((st.photos.clone(), st.collapsed), (vec![on_b[1], on_b[2]], true));
+    for d in [&mut a, &mut b] {
+        assert_eq!(d.s.icloud_changes(), Default::default(), "nothing goes back and forth");
+    }
+
+    // renamed on b (later), changed on a's side too: the newer wins; photos added on b come to a
+    b.at(2_000);
+    b.s.apply_system(Op::RenameAlbum { id: album.id, name: "Spain 2024".into() }).unwrap();
+    b.s.apply_system(Op::SetAlbumPhotos { id: album.id, photos: on_b.clone() }).unwrap();
+    b.sync(&mut cloud);
+    a.sync(&mut cloud);
+    let on_a_now = album_named(&a, "Spain 2024").unwrap();
+    assert_eq!(sorted(on_a_now.photos), sorted(on_a.clone()));
+
+    // removed on a: gone on b (the folder and the photos stay)
+    a.at(3_000);
+    a.s.apply_system(Op::RemoveAlbum { id: spain }).unwrap();
+    a.s.apply_system(Op::RemoveStack { id: stack }).unwrap();
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    assert!(album_named(&b, "Spain 2024").is_none() && album_named(&b, "Trips").is_some());
+    assert!(b.s.catalog.stack_of(on_b[1]).is_none());
+    assert_eq!(b.s.catalog.len(), 3);
+    for d in [&mut a, &mut b] {
+        assert_eq!(d.s.icloud_changes(), Default::default());
+    }
+}
+
+#[test]
+fn members_a_device_has_no_photo_for_are_kept_and_join_when_the_photo_comes() {
+    let root = temp_dir("collections-waiting");
+    let mut cloud = Cloud::default();
+    let (mut a, mut b) = (Device::new(&root, "a"), Device::new(&root, "b"));
+    let on_a: Vec<PhotoId> = (1..=2).map(|s| import(&mut a, s)).collect();
+    let first_b = import(&mut b, 1);
+    make_album(&mut a, "Pair", &on_a, None, false);
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    assert_eq!(album_named(&b, "Pair").unwrap().photos, vec![first_b], "b has only one of them");
+    // b's record still says both: a keeps the second
+    b.at(2_000);
+    b.s.apply_system(lightcraft_catalog::Op::RenameAlbum { id: album_named(&b, "Pair").unwrap().id, name: "Pair!".into() }).unwrap();
+    b.sync(&mut cloud);
+    a.sync(&mut cloud);
+    assert_eq!(sorted(album_named(&a, "Pair!").unwrap().photos), sorted(on_a.clone()));
+    // the second photo comes to b: it joins the album, and nothing is sent for it
+    let second_b = import(&mut b, 2);
+    let _ = b.s.icloud_changes();
+    assert_eq!(sorted(album_named(&b, "Pair!").unwrap().photos), sorted(vec![first_b, second_b]));
+    b.sync(&mut cloud);
+    a.sync(&mut cloud);
+    assert_eq!(a.s.icloud_changes(), Default::default());
+    assert_eq!(b.s.icloud_changes(), Default::default());
+}
+
+#[test]
+fn versions_travel_with_a_photos_edit() {
+    let root = temp_dir("versions");
+    let mut cloud = Cloud::default();
+    let (mut a, mut b) = (with_drive(&root, "a"), with_drive(&root, "b"));
+    let on_a = import(&mut a, 7);
+    let v = lightcraft_catalog::Version {
+        name: "Warm".into(),
+        created: "2026-10-25T10:00:00".into(),
+        settings: std::sync::Arc::new(lightcraft_develop::DevelopSettings::default()),
+        auto: false,
+    };
+    a.s.apply_system(lightcraft_catalog::Op::SetVersions { id: on_a, versions: vec![v.clone()] }).unwrap();
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    drive_sync(&[&a, &b]);
+    bring(&mut b);
+    let on_b = b.s.catalog.photos().find(|p| p.in_library()).map(|p| p.id).unwrap();
+    assert_eq!(b.s.catalog.photo(on_b).unwrap().versions, vec![v]);
+    assert_eq!(b.s.icloud_changes(), Default::default());
+    // deleted on b: gone on a
+    b.at(2_000);
+    b.s.apply_system(lightcraft_catalog::Op::SetVersions { id: on_b, versions: Vec::new() }).unwrap();
+    b.sync(&mut cloud);
+    a.sync(&mut cloud);
+    assert!(a.s.catalog.photo(on_a).unwrap().versions.is_empty());
 }

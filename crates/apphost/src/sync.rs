@@ -71,11 +71,6 @@ struct FolderPoll {
 }
 
 impl Driver {
-    /// Run the cloud-folder pass at the next poll (Settings ▸ Sync ▸ Sync Now).
-    pub fn sync_folder_now(&mut self) {
-        self.folder.last_start = None;
-    }
-
     /// Hand finished tasks to the engine and start the next ones on `exec` (cheap when there is
     /// nothing to do). `focused`: the app is in front. Without `exec` (no network on this
     /// platform) answers are still applied and nothing new starts.
@@ -159,9 +154,11 @@ impl FolderPoll {
         let came_back = focused && !self.focused;
         self.focused = focused;
         let rev = session.icloud_rev();
-        let due = since.is_none_or(|d| {
-            d >= FOLDER_POLL || (d >= FOLDER_MIN && (rev != self.rev || came_back)) || (self.more && d >= Duration::from_millis(500))
-        });
+        let asked = session.icloud_take_folder_now();
+        let due = asked
+            || since.is_none_or(|d| {
+                d >= FOLDER_POLL || (d >= FOLDER_MIN && (rev != self.rev || came_back)) || (self.more && d >= Duration::from_millis(500))
+            });
         if !due {
             return Some(Duration::from_secs(1));
         }

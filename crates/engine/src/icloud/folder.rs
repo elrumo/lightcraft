@@ -307,6 +307,18 @@ impl Session {
         Ok(self.icloud_folder_done(done))
     }
 
+    /// Ask for a pass through the cloud folder now (the host's next poll runs it).
+    pub fn icloud_folder_now(&mut self) {
+        if let Some(ic) = self.icloud.as_mut() {
+            ic.folder_now = true;
+        }
+    }
+
+    /// Whether a pass was asked for since this was last called.
+    pub fn icloud_take_folder_now(&mut self) -> bool {
+        self.icloud.as_mut().is_some_and(|ic| std::mem::take(&mut ic.folder_now))
+    }
+
     /// The chosen folder and how the last pass went (`{path, last: {at, report, error} | null}`), for a frontend's settings.
     pub fn icloud_folder_info(&self) -> Option<Value> {
         Session::folder_status(self.icloud.as_ref()?)
@@ -378,6 +390,14 @@ fn sync_folder_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(serde_json::to_value(report).unwrap_or_default())
 }
 
+fn folder_now_cmd(s: &mut Session, _: &Value) -> Result<Value> {
+    if s.icloud_folder().is_none() {
+        return Err(bad("icloud.folderNow", "no cloud folder is chosen"));
+    }
+    s.icloud_folder_now();
+    Ok(json!({}))
+}
+
 fn use_folder_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "icloud.useFolder";
     match p.get("path") {
@@ -396,6 +416,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "icloud.useFolder", "Sync Through a Cloud Folder", [], None,
             "{path: string | null}: keep this library's presets, settings and edits in step with the other devices through the folder `path` (one from icloud.cloudFolders, or any folder a provider carries to them), in `path/LightCraft Sync/`; turns iCloud sync on. A frontend then runs a pass now and then (apphost does). null stops, and turns the sync off. Answers icloud.status, whose `cloudFolder` has the path and how the last pass went",
             super::always, use_folder_cmd),
+        cmd!(query "icloud.folderNow", "Sync Now Through the Cloud Folder", [], None,
+            "{}: run a pass through the chosen cloud folder at the host's next poll (a frontend that runs the passes: apphost does); answers {}. icloud.status's cloudFolder.last says when it ended",
+            super::on, folder_now_cmd),
         cmd!(query "icloud.syncFolder", "Sync Now Through the Cloud Folder", [], None,
             "{path?}: one whole pass of the iCloud record sync through the folder `path` (default: the one icloud.useFolder chose): writes what changed here, then takes what the other devices wrote. {changed, sent, removed, skipped, waiting, more}. Not for a CloudKit host",
             super::on_and_idle, sync_folder_cmd),

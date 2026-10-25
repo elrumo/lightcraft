@@ -52,6 +52,7 @@ use crate::cmd::{CommandSpec, always, bad, cmd};
 use crate::{EngineError, Result, Session};
 
 pub mod analysis;
+pub mod collections;
 pub mod folder;
 pub mod photos;
 
@@ -126,6 +127,10 @@ pub struct Saved {
     device: String,
     /// The folder this library syncs through ([`folder`]; `icloud.useFolder`).
     folder: Option<String>,
+    /// The uid of each album (`a<id>`) and stack (`s<id>`) of this library that has been sent ([`collections`]).
+    uids: BTreeMap<String, String>,
+    /// Members of an album the cloud has that this device has no photo for yet, by album uid.
+    pending: BTreeMap<String, Vec<String>>,
     /// The library was signed in to a server when last looked at (signing out forgets, so it fetches again).
     linked: bool,
     known: BTreeMap<String, Known>,
@@ -186,6 +191,8 @@ struct Seen {
     /// The server record's key ("" for none).
     server: Option<String>,
     linked: Option<bool>,
+    /// Albums and stacks: worked out (`Some`) until an op that touches them.
+    collections: Option<()>,
 }
 
 /// Milliseconds since 1970 now.
@@ -223,6 +230,10 @@ pub struct ICloud {
     analysis_seen: Option<[usize; 4]>,
     /// How the last pass through the cloud folder went (not kept).
     folder_last: Option<folder::Last>,
+    /// This device's `album` and `stack` records' data, by record name ([`collections`]).
+    coll: BTreeMap<String, String>,
+    /// A pass through the cloud folder was asked for (`icloud.folderNow`); the host's next poll runs it.
+    folder_now: bool,
 }
 
 impl ICloud {
@@ -245,6 +256,8 @@ impl ICloud {
             moving: None,
             analysis_seen: None,
             folder_last: None,
+            coll: BTreeMap::new(),
+            folder_now: false,
         }
     }
 
@@ -276,6 +289,9 @@ impl ICloud {
 
     /// An op was applied: the photos it touches are looked at again.
     pub(crate) fn note(&mut self, op: &Op) {
+        if collections::touches(op, 0) && self.seen.collections.take().is_some() {
+            self.rev = self.rev.wrapping_add(1);
+        }
         let before = self.dirty.len();
         touched(op, &mut self.dirty, 0);
         if self.dirty.len() != before {
@@ -340,6 +356,7 @@ fn touched(op: &Op, out: &mut HashSet<PhotoId>, depth: usize) {
         | Op::SetMeta { id, .. }
         | Op::SetCaptured { id, .. }
         | Op::SetDeleted { id, .. }
+        | Op::SetVersions { id, .. }
         | Op::SetLocal { id, .. }
         | Op::SetContent { id, .. }
         | Op::RemovePhoto { id } => {
@@ -364,7 +381,8 @@ fn hash_of(data: &str) -> String {
 
 /// A kind this engine syncs: the presets, a shared document, a server or an edit.
 fn known_kind(kind: &str) -> bool {
-    matches!(kind, PRESETS | SERVER | EDIT | analysis::ANALYSIS) || crate::cloud_sync::shared_doc_names().any(|n| n == kind)
+    matches!(kind, PRESETS | SERVER | EDIT | analysis::ANALYSIS | collections::ALBUM | collections::STACK)
+        || crate::cloud_sync::shared_doc_names().any(|n| n == kind)
 }
 
 /// Kinds a library signed in to a server leaves to it.
@@ -494,6 +512,7 @@ impl Session {
             "xmp": crate::sidecar::sidecar_packet(p, &self.catalog),
             "name": p.file_name,
             "asset": cloud,
+            "versions": p.versions,
         });
         if let Some(o) = data.as_object_mut() {
             if let Some(file) = file {
@@ -562,6 +581,15 @@ impl Session {
         if ic.seen.server.as_ref() != Some(&server_key) {
             Self::set_ours(ic, SERVER, server);
             ic.seen.server = Some(server_key);
+        }
+        // albums and stacks (a library signed in to a server has them there)
+        if linked {
+            ic.ours.retain(|_, m| !collections::is_collection(&m.kind));
+            ic.coll.clear();
+            ic.seen.collections = None;
+        } else if ic.seen.collections.is_none() && self.interaction.is_none() {
+            collections::refresh(self, ic);
+            ic.seen.collections = Some(());
         }
         // edits: every photo-library photo once, then the ones that changed (never mid-drag: the catalog holds a preview)
         if linked {
@@ -709,6 +737,9 @@ impl Session {
                         Some(m) if m.kind == analysis::ANALYSIS => found_in.remove(&m.key).map(|v| (m.kind.clone(), m.key.clone(), v.to_string())),
                         Some(m) if m.kind == PRESETS || m.kind == SERVER => {
                             s.setting_data(m).map(|d| (m.kind.clone(), m.key.clone(), d)).or_else(held)
+                        }
+                        Some(m) if collections::is_collection(&m.kind) => {
+                            ic.coll.get(name).map(|d| (m.kind.clone(), m.key.clone(), d.clone())).or_else(held)
                         }
                         Some(m) => {
                             let items = docs.entry(m.kind.clone()).or_insert_with(|| s.doc_records(&m.kind));
@@ -891,6 +922,11 @@ impl Session {
                 ic.analysis_seen = None;
             }
         }
+        // albums and stacks
+        let coll: Vec<_> = take.iter().filter(|t| collections::is_collection(&t.1)).collect();
+        if !coll.is_empty() {
+            applied += collections::apply(self, ic, &coll);
+        }
         // servers and edits
         for (name, kind, key, data) in take.iter().filter(|t| t.1 == SERVER || t.1 == EDIT) {
             let Some(data) = data else {
@@ -1009,6 +1045,12 @@ impl Session {
         }
         if flag("hidden") != p.hidden {
             ops.push(Op::SetHidden { id, hidden: flag("hidden") });
+        }
+        // (a record from a version that didn't send them leaves this device's as they are)
+        if let Some(versions) = v.get("versions").and_then(|x| serde_json::from_value::<Vec<lightcraft_catalog::Version>>(x.clone()).ok())
+            && versions != p.versions
+        {
+            ops.push(Op::SetVersions { id, versions });
         }
         if ops.is_empty() {
             return Ok(());
