@@ -12,6 +12,9 @@
 //!   worked out as the web console does ([`search`]).
 //! - `host.admin.signOut` — forget the session (the server is told, best effort).
 //! - `host.admin.session` — `{signedIn, server, user}`.
+//! - `host.sync.checkLogin {server, user, password}` — not an admin call, kept here for its worker: signs in
+//!   as a new device (`POST /api/login`) to see that the server takes the sign-in, then signs that device
+//!   out again. Answers `{user, server}`; nothing is kept, so a sheet can check before it makes a library.
 //!
 //! The admin session is not the sync device's: the server keeps them apart (a device token gets 401
 //! on `/api/admin/*`), so the user types the admin password here. A request runs on a worker thread
@@ -54,6 +57,11 @@ pub(super) enum Kind {
     /// `GET /api/admin/search`, answered with its `progress` (signed in).
     Search,
     SignOut,
+    /// `host.sync.checkLogin`: the device the server signed in is forgotten again ([`Change::Forget`]).
+    CheckLogin {
+        server: String,
+        user: String,
+    },
 }
 
 /// What `host.admin.*` request does.
@@ -70,6 +78,8 @@ pub(super) enum Change {
     Keep,
     Set(Login),
     Clear,
+    /// A device signed in by a connection check: signed out again, the session untouched.
+    Forget(Login),
 }
 
 /// The session and the requests in flight.
@@ -138,6 +148,17 @@ pub(super) fn plan(id: u64, method: &str, p: &Value, login: Option<&Login>) -> R
             let body = Body::Json(json!({"user": user, "password": password}).to_string());
             let task = http("POST", &server, "login", "", body);
             Ok(Plan::Send(Kind::SignIn { server, user: user.to_string() }, task))
+        }
+        "host.sync.checkLogin" => {
+            let server = text(p, "server")
+                .and_then(cloud_sync::server_address)
+                .ok_or_else(|| ErrorBody::new("badParams", "That is not a server address: use one like https://photos.example.com."))?;
+            let user = text(p, "user").ok_or_else(|| bad(method, "missing `user`"))?;
+            let password = p.get("password").and_then(Value::as_str).filter(|s| !s.is_empty()).ok_or_else(|| bad(method, "missing `password`"))?;
+            let body = Body::Json(json!({"user": user, "password": password, "device": "LightBites connection check"}).to_string());
+            let url = format!("{server}/api/login");
+            let task = Task::Http { id, method: "POST", url, token: String::new(), body, save_to: None };
+            Ok(Plan::Send(Kind::CheckLogin { server, user: user.to_string() }, task))
         }
         "host.admin.signOut" => Ok(match login {
             Some(l) => Plan::Send(Kind::SignOut, http("POST", &l.server, "logout", &l.token, Body::Empty)),
@@ -210,6 +231,13 @@ pub(super) fn finish(kind: Kind, done: &Done) -> (Result<Value, ErrorBody>, Chan
                 None => (Err(misread()), Change::Keep),
             }
         }
+        Kind::CheckLogin { server, user } if ok => {
+            let token = parsed().and_then(|b| b["token"].as_str().filter(|t| !t.is_empty()).map(str::to_string));
+            match token {
+                Some(token) => (Ok(json!({"user": user, "server": server})), Change::Forget(Login { server, token, user })),
+                None => (Err(misread()), Change::Keep),
+            }
+        }
         Kind::Call { .. } if ok => (parsed().ok_or_else(misread), Change::Keep),
         Kind::Search if ok => {
             let answer = parsed().map(|mut s| {
@@ -225,6 +253,16 @@ pub(super) fn finish(kind: Kind, done: &Done) -> (Result<Value, ErrorBody>, Chan
         Kind::Call { .. } if done.status == 412 => (Err(ErrorBody::new("conflict", why())), Change::Keep),
         _ => (Err(ErrorBody::new("other", why())), Change::Keep),
     }
+}
+
+/// Sign out the device a connection check signed in, on a worker nobody waits for: the server keeps the
+/// id space it gave it, but no device stays signed in. (A failure leaves that one device listed.)
+fn forget_device(login: Login) {
+    let task =
+        Task::Http { id: 0, method: "POST", url: format!("{}/api/logout", login.server), token: login.token, body: Body::Empty, save_to: None };
+    let _ = std::thread::Builder::new().name("lc-admin".into()).spawn(move || {
+        let _ = cloud_sync::run(&task);
+    });
 }
 
 impl Engine {
@@ -271,6 +309,7 @@ impl Engine {
                 Change::Keep => {}
                 Change::Set(login) => self.admin.login = Some(login),
                 Change::Clear => self.admin.login = None,
+                Change::Forget(login) => forget_device(login),
             }
             let event = match result {
                 Ok(v) => Event::ok(p.id, v),
@@ -368,6 +407,23 @@ mod tests {
         let (result, change) = finish(kind, &done);
         assert_eq!(result.ok(), Some(json!({"user": "Ann", "server": "http://nas:8080"})));
         assert_eq!(change, Change::Set(Login { server: "http://nas:8080".into(), token: "abc".into(), user: "Ann".into() }));
+    }
+
+    // A connection check signs in as a device and forgets it again: the session is never touched
+    #[test]
+    fn checking_a_login_keeps_no_session() {
+        let p = json!({"server": "nas:8080", "user": "ann", "password": "secret!!"});
+        let (kind, task) = sent(plan(1, "host.sync.checkLogin", &p, None));
+        assert_eq!(url_and_token(&task), ("http://nas:8080/api/login", ""));
+        let done = Done { id: 1, status: 200, body: r#"{"token":"abc","device":3,"space":1,"library":""}"#.into() };
+        let (result, change) = finish(kind, &done);
+        assert_eq!(result.ok(), Some(json!({"user": "ann", "server": "http://nas:8080"})));
+        assert_eq!(change, Change::Forget(Login { server: "http://nas:8080".into(), token: "abc".into(), user: "ann".into() }));
+        let (kind, _) = sent(plan(2, "host.sync.checkLogin", &p, None));
+        let wrong = Done { id: 2, status: 401, body: r#"{"error":"wrong user name or password"}"#.into() };
+        let (result, change) = finish(kind, &wrong);
+        assert_eq!(result.err().map(|e| e.message), Some("Wrong user name or password".into()));
+        assert_eq!(change, Change::Keep);
     }
 
     // A wrong password is the server's own words and keeps nothing; a signed-in 401 ends the session

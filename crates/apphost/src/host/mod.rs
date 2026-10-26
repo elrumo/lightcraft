@@ -25,6 +25,7 @@
 //!   albumName?}` — import in the background (answered when it ends: what it added).
 //! - `host.admin.signIn | call | search | signOut | session` — the sync server's admin API, on worker threads
 //!   ([`admin`]: a native frontend's Server Administration screens).
+//! - `host.sync.checkLogin` — whether the server takes a sign-in, before a library exists (a worker, as admin's).
 //! - `host.libraries {recent?}` — the libraries to offer; `host.library.open {path} | new {name} | delete {path}` —
 //!   another library without a restart, a new one, one deleted ([`libraries`]).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
@@ -672,7 +673,7 @@ impl Engine {
             return self.list_subfolders(id, call, &req.params);
         }
         // the server's admin API (`host.admin.*`): on a worker, answered when the server has
-        if req.method.starts_with("host.admin.") {
+        if req.method.starts_with("host.admin.") || req.method == "host.sync.checkLogin" {
             return lightcraft_engine::guard::catch(&format!("`{}`", req.method), || self.start_admin(id, call, &req.method, &req.params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
