@@ -1,7 +1,7 @@
 //! Render to DNG: a linear DNG of a rendered image reads back as the same pixels and colours.
 
 use lightcraft_color::{Mat3, PROPHOTO, REC2020, SRGB};
-use lightcraft_raw::{Method, color, write_rendered_dng};
+use lightcraft_raw::{LinearDngLook, Method, color, write_linear_dng, write_rendered_dng};
 
 fn image(w: usize, h: usize) -> Vec<f32> {
     (0..w * h).flat_map(|i| [(i % w) as f32 / w as f32, (i / w) as f32 / h as f32, 0.25 + (i % 7) as f32 * 0.25]).collect()
@@ -47,4 +47,68 @@ fn rendered_dng_rejects_bad_input_without_panicking() {
     let raw = lightcraft_raw::decode(&write_rendered_dng(2, 1, &odd, &SRGB, &m, None).unwrap()).unwrap();
     let dev = raw.develop(Method::Bilinear).unwrap();
     assert!(dev.data.iter().flatten().all(|v| v.is_finite() && *v >= 0.0));
+}
+
+#[test]
+fn linear_dng_keeps_highlights_above_white_and_says_how_to_read_them() {
+    let (w, h) = (64usize, 16usize);
+    // a ramp that runs to 5.5 (scene-referred highlights), as a decoder's linear output can
+    let rgb: Vec<f32> = (0..w * h).flat_map(|i| [i as f32 / (w * h) as f32 * 5.5; 3]).collect();
+    let meta = lightcraft_meta::Metadata::default();
+    let look = LinearDngLook { baseline_exposure: 0.5, identity_tone: false, headroom: true, preview: None, compact: false };
+    let raw = lightcraft_raw::decode(&write_linear_dng(w, h, &rgb, &SRGB, &meta, None, look).unwrap()).unwrap();
+    // stored divided by 8 (the smallest power of two above 5.5), the stops put back in BaselineExposure
+    assert!((raw.color.baseline_exposure - 3.5).abs() < 1e-9, "{}", raw.color.baseline_exposure);
+    assert!(raw.color.profile.tone_curve.is_none());
+    let dev = raw.develop(Method::Ahd).unwrap();
+    for (p, q) in rgb.as_chunks::<3>().0.iter().zip(&dev.data) {
+        // nothing clipped at the white level: value x 8 is what went in (half-float precision)
+        assert!((q[0] * 8.0 - p[0]).abs() <= p[0] * 2e-3 + 1e-3, "{p:?} {q:?}");
+    }
+    // without headroom the same ramp clips at 1 and no stops are added
+    let flat = LinearDngLook { baseline_exposure: 0.0, identity_tone: true, headroom: false, preview: None, compact: false };
+    let raw = lightcraft_raw::decode(&write_linear_dng(w, h, &rgb, &SRGB, &meta, None, flat).unwrap()).unwrap();
+    assert!(raw.color.baseline_exposure.abs() < 1e-9 && raw.color.profile.tone_curve.is_some());
+    // a baseline exposure that isn't a number is not written
+    let nan = LinearDngLook { baseline_exposure: f64::NAN, identity_tone: true, headroom: true, preview: None, compact: false };
+    let raw = lightcraft_raw::decode(&write_linear_dng(2, 1, &[0.5; 6], &SRGB, &meta, None, nan).unwrap()).unwrap();
+    assert!(raw.color.baseline_exposure.is_finite());
+}
+
+#[test]
+fn compact_linear_dng_keeps_the_pixels_and_carries_a_preview() {
+    let (w, h) = (512usize, 256usize);
+    // a ramp with sensor-like noise
+    let mut seed = 12345u32;
+    let mut noise = move || {
+        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        1.0 + ((seed >> 16) as f32 / 65535.0 - 0.5) * 0.06
+    };
+    let rgb: Vec<f32> =
+        (0..w * h).flat_map(|i| [(i % w) as f32 / w as f32 * 3.0 * noise(), (i / w) as f32 / h as f32 * 3.0 * noise(), 0.4 * noise()]).collect();
+    let meta = lightcraft_meta::Metadata::default();
+    let jpeg = {
+        let px: Vec<u8> = (0..16 * 12).flat_map(|i| [(i % 16 * 15) as u8, 90, 160]).collect();
+        let mut out = Vec::new();
+        jpeg_encoder::Encoder::new(&mut out, 90).encode(&px, 16, 12, jpeg_encoder::ColorType::Rgb).unwrap();
+        out
+    };
+    let look = |compact| LinearDngLook { baseline_exposure: 0.0, identity_tone: false, headroom: true, preview: Some(&jpeg), compact };
+    let float = write_linear_dng(w, h, &rgb, &SRGB, &meta, None, look(false)).unwrap();
+    let ints = write_linear_dng(w, h, &rgb, &SRGB, &meta, None, look(true)).unwrap();
+    let raw = lightcraft_raw::decode(&ints).unwrap();
+    assert!((raw.color.baseline_exposure - 2.0).abs() < 1e-9, "peak 3 is stored under 4: {}", raw.color.baseline_exposure);
+    let dev = raw.develop(Method::Ahd).unwrap();
+    for (p, q) in rgb.as_chunks::<3>().0.iter().zip(&dev.data) {
+        for k in 0..3 {
+            assert!((q[k] * 4.0 - p[k]).abs() <= 4.0 / 65535.0 * 2.0 + p[k] * 1e-4, "{p:?} {q:?}");
+        }
+    }
+    // the preview is the JPEG that went in, found where readers look, in both
+    for bytes in [&ints, &float] {
+        assert_eq!(lightcraft_raw::embedded_preview(bytes).as_deref(), Some(jpeg.as_slice()));
+    }
+    // something that isn't a JPEG is refused, not embedded
+    let bad = LinearDngLook { preview: Some(b"nope"), ..look(true) };
+    assert!(write_linear_dng(w, h, &rgb, &SRGB, &meta, None, bad).is_err());
 }

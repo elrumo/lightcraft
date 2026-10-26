@@ -48,6 +48,7 @@ mod query;
 pub mod recheck;
 pub mod reload;
 mod slideshow;
+mod stand_in;
 mod sync;
 mod video;
 mod vision;
@@ -172,6 +173,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(mask_effects::specs());
         v.extend(cull::specs());
         v.extend(convert::specs());
+        v.extend(stand_in::specs());
         v.extend(convert::edit_specs());
         v.extend(merge::specs());
         v.extend(query::specs());

@@ -166,6 +166,12 @@ fn rat_vec(v: &[f64]) -> Value {
 
 /// Serialise `raw` as a DNG.
 pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
+    write_dng_with_preview(raw, opts, None)
+}
+
+/// [`write_dng`] with a JPEG preview (a rendering of the same picture, any size, sRGB) in a reduced-resolution sub-IFD,
+/// where converters and [`crate::embedded_preview`] look for it.
+fn write_dng_with_preview(raw: &RawImage, opts: &DngWriteOptions, preview: Option<&[u8]>) -> Result<Vec<u8>> {
     raw.validate()?;
     let lossy;
     let raw = match opts.compression {
@@ -481,12 +487,47 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
             }
         }
     }
+    if let Some(jpeg) = preview {
+        let (pw, ph, components) =
+            crate::preview::jpeg_frame(jpeg).ok_or_else(|| RawError::Corrupt("the preview is not a baseline or progressive JPEG".into()))?;
+        let mut sub = IfdBuilder::new();
+        sub.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![1]));
+        sub.set(t::IMAGE_WIDTH, Value::Long(vec![pw]));
+        sub.set(t::IMAGE_LENGTH, Value::Long(vec![ph]));
+        sub.set(t::BITS_PER_SAMPLE, Value::Short(vec![8; usize::from(components)]));
+        sub.set(t::COMPRESSION, Value::Short(vec![compression::JPEG]));
+        sub.set(t::PHOTOMETRIC, Value::Short(vec![if components == 1 { photometric::BLACK_IS_ZERO } else { photometric::YCBCR }]));
+        sub.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![u16::from(components)]));
+        sub.set(t::PLANAR_CONFIGURATION, Value::Short(vec![1]));
+        sub.set_image(ImageData::Strips { rows_per_strip: ph, strips: vec![jpeg.to_vec()] });
+        ifd.add_sub_ifd(sub);
+    }
     Ok(TiffWriter::new(opts.order, false).write(&[ifd])?)
 }
 
 /// Exif `LightSource` code of a white point the rendered DNG writer knows (D65 = 21, D50 = 23).
 fn illuminant_of(white: lightcraft_color::Xy) -> u16 {
     if (white.x - lightcraft_color::D50.x).abs() < 1e-3 && (white.y - lightcraft_color::D50.y).abs() < 1e-3 { 23 } else { 21 }
+}
+
+/// How a linear DNG made from developed pixels ([`write_linear_dng`]) is read back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LinearDngLook<'a> {
+    /// DNG `BaselineExposure` in stops, on top of the data as given: a converter brightens it by this much.
+    pub baseline_exposure: f64,
+    /// An identity `ProfileToneCurve`: the pixels already carry their tone, so a converter adds no default one.
+    /// `false`: none is written and the reader gives the data its own default raw look.
+    pub identity_tone: bool,
+    /// The samples may exceed 1 (scene-referred highlights): they are stored divided by the smallest power of two
+    /// that holds the largest, and `BaselineExposure` is raised by that many stops, so a reader that clips at
+    /// `WhiteLevel` 1 neither clips nor mistakes them for blown highlights. `false`: stored as given (above 1 clips).
+    pub headroom: bool,
+    /// A JPEG rendering of the same picture in sRGB (any size, upright): a reader that fits a default tone to a DNG's
+    /// preview (this engine does, for a linear DNG without a tone curve) gives the data that look.
+    pub preview: Option<&'a [u8]>,
+    /// 16-bit integer samples under lossless JPEG (a half to a third of float's size) instead of half floats under
+    /// deflate. The range is the data's own (1 with `headroom` the largest sample's power of two, else white), in 65535 steps.
+    pub compact: bool,
 }
 
 /// Render to DNG: a linear DNG (`LinearRaw`, 16-bit float Deflate tiles) of an already rendered,
@@ -503,12 +544,50 @@ pub fn write_rendered_dng(
     metadata: &lightcraft_meta::Metadata,
     xmp: Option<String>,
 ) -> Result<Vec<u8>> {
+    write_linear_dng(
+        width,
+        height,
+        rgb,
+        space,
+        metadata,
+        xmp,
+        LinearDngLook { baseline_exposure: 0.0, identity_tone: true, headroom: false, preview: None, compact: false },
+    )
+}
+
+/// [`write_rendered_dng`] with the reader's look chosen: a linear development of a raw that [`LinearDngLook`] describes
+/// (another decoder's output, standing in for a raw this one can't decode).
+pub fn write_linear_dng(
+    width: usize,
+    height: usize,
+    rgb: &[f32],
+    space: &lightcraft_color::RgbSpace,
+    metadata: &lightcraft_meta::Metadata,
+    xmp: Option<String>,
+    look: LinearDngLook<'_>,
+) -> Result<Vec<u8>> {
     let n = width.checked_mul(height).and_then(|p| p.checked_mul(3)).ok_or(RawError::Limit("image too large"))?;
     if width == 0 || height == 0 || width > u32::MAX as usize || height > u32::MAX as usize {
         return Err(RawError::Corrupt(format!("cannot write a {width}×{height} DNG")));
     }
     let src = rgb.get(..n).ok_or_else(|| RawError::Corrupt(format!("{} samples for a {width}×{height} RGB image", rgb.len())))?;
-    let data: Vec<f32> = src.iter().map(|&v| if v.is_finite() { v.clamp(0.0, 65504.0) } else { 0.0 }).collect();
+    let mut data: Vec<f32> = src.iter().map(|&v| if v.is_finite() { v.clamp(0.0, 65504.0) } else { 0.0 }).collect();
+    let mut baseline = if look.baseline_exposure.is_finite() { look.baseline_exposure } else { 0.0 };
+    if look.headroom {
+        let peak = data.iter().copied().fold(1.0f32, f32::max);
+        let shift = peak.log2().ceil().clamp(0.0, 12.0) as i32;
+        if shift > 0 {
+            let k = 0.5f32.powi(shift);
+            data.iter_mut().for_each(|v| *v *= k);
+            baseline += f64::from(shift);
+        }
+    }
+    let (data, white, compression) = if look.compact {
+        let ints = data.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0).round() as u16).collect();
+        (RawData::U16(ints), 65535.0, DngCompression::Lj92 { tile: 256 })
+    } else {
+        (RawData::F32(data), 1.0, DngCompression::Deflate { tile: 256, half: true })
+    };
     let full = crate::Rect::new(0, 0, width, height);
     let forward = lightcraft_color::bradford(space.white, lightcraft_color::D50).mul(&space.to_xyz());
     let color = crate::ColorData {
@@ -516,8 +595,9 @@ pub fn write_rendered_dng(
         color_matrix: [Some(space.from_xyz()), None],
         forward_matrix: [Some(forward), None],
         as_shot_neutral: Some([1.0; 3]),
+        baseline_exposure: baseline,
         profile: crate::profile::ProfileLook {
-            tone_curve: Some(crate::profile::ToneCurve { points: vec![[0.0, 0.0], [1.0, 1.0]] }),
+            tone_curve: look.identity_tone.then(|| crate::profile::ToneCurve { points: vec![[0.0, 0.0], [1.0, 1.0]] }),
             ..Default::default()
         },
         ..Default::default()
@@ -527,11 +607,11 @@ pub fn write_rendered_dng(
         width,
         height,
         cpp: 3,
-        data: RawData::F32(data),
+        data,
         cfa: None,
         bits: 16,
         black: crate::BlackLevel::uniform(0.0),
-        white: vec![1.0],
+        white: vec![white],
         active_area: full,
         crop: full,
         orientation: lightcraft_geom::Orientation::Normal,
@@ -544,5 +624,5 @@ pub fn write_rendered_dng(
         lens_metadata: Default::default(),
     };
     let order = ByteOrder::Little;
-    write_dng(&raw, &DngWriteOptions { compression: DngCompression::Deflate { tile: 256, half: true }, order, xmp })
+    write_dng_with_preview(&raw, &DngWriteOptions { compression, order, xmp }, look.preview)
 }

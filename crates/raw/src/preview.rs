@@ -103,7 +103,7 @@ fn is_dct_jpeg(b: &[u8]) -> bool {
 }
 
 /// Width, height and component count of a displayable (DCT) JPEG, from its frame header.
-fn jpeg_frame(b: &[u8]) -> Option<(u32, u32, u8)> {
+pub(crate) fn jpeg_frame(b: &[u8]) -> Option<(u32, u32, u8)> {
     let (_, i) = first_frame(b).filter(|(m, _)| matches!(m, 0xc0..=0xc2))?;
     let at = |k: usize| b.get(i.checked_add(k)?).copied();
     let be16 = |k: usize| Some(u32::from(u16::from_be_bytes([at(k)?, at(k + 1)?])));

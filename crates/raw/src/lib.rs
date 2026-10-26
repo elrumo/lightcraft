@@ -64,7 +64,7 @@ mod vendor;
 mod wb_estimate;
 
 pub use demosaic::{Method, demosaic};
-pub use dngwrite::{DngCompression, DngWriteOptions, write_dng, write_rendered_dng};
+pub use dngwrite::{DngCompression, DngWriteOptions, LinearDngLook, write_dng, write_linear_dng, write_rendered_dng};
 #[cfg(feature = "jxl")]
 pub use jxl::set_max_parallel_tiles;
 /// Without the `jxl` feature no JPEG XL tile is decoded, so there is nothing to cap.
