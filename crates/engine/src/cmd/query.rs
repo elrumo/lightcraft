@@ -346,11 +346,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "Get Develop Settings",
             [],
             None,
-            "{id?, slim?: bool (the pictures the settings store, an AI Remove fill, a model's selection, a depth map, an expanded area, come as empty strings, their sizes and places kept: a frontend that only draws or lists the edit has no use for them, and a photo with many AI strokes has megabytes of them)} → the photo's develop settings",
+            "{id?, slim?: bool (the pictures the settings store, an AI Remove fill, a model's selection, a depth map, an expanded area, come as empty strings, their sizes and places kept: a frontend that only draws or lists the edit has no use for them, and a photo with many AI strokes has megabytes of them)} → the photo's develop settings, including its rendering process (develop.updateProcess)",
             always,
             |s, p| {
                 let id = photo_arg(s, p, "develop.get")?;
-                let mut v = s.develop_of(id).map(|d| d.to_json()).unwrap_or(Value::Null);
+                let mut v = s.develop_of(id).map(|d| {
+                    let mut v = d.to_json();
+                    if let Some(o) = v.as_object_mut() { o.insert("process".into(), json!(d.process)); }
+                    v
+                }).unwrap_or(Value::Null);
                 if p.get("slim").and_then(Value::as_bool) == Some(true) {
                     blank_blobs(&mut v, 0);
                 }

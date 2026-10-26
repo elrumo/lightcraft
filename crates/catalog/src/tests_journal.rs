@@ -369,34 +369,45 @@ fn failed_streamed_write_keeps_the_old_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A rendering process number in a saved photo (snapshot or log), written when LightCraft had several
-/// processes, is ignored, whatever it holds, and costs nothing else: the photo and its edits load.
+/// A damaged rendering process in a saved photo (snapshot or log) reads as V1 and costs nothing
+/// else: the photo and its edits load (`docs/process-versions.md`).
 #[test]
-fn an_old_process_value_in_a_saved_photo_is_ignored_with_the_edits_kept() {
+fn a_damaged_process_value_loads_as_v1_with_the_edits() {
+    use lightcraft_develop::ProcessVersion;
     let mut c = Catalog::new();
     let id = c.alloc_photo_id();
     let mut p = Photo::new(id, Source::Demo { scene: 1 }, "a.jpg", "JPEG", 10, 10, "2026-10-09T00:00:00");
-    p.develop = Arc::new(DevelopSettings { light: lightcraft_develop::Light { exposure: 0.5, ..Default::default() }, ..Default::default() });
+    p.develop = Arc::new(DevelopSettings {
+        process: ProcessVersion(7),
+        light: lightcraft_develop::Light { exposure: 0.5, ..Default::default() },
+        ..Default::default()
+    });
     c.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
     let snapshot = c.to_snapshot();
-    assert!(snapshot.contains(r#""light":{"#));
+    assert!(snapshot.contains(r#""process":7"#));
     let snapshot = format!(
         "{{\"format\":\"lightcraft-catalog\",\"version\":{},\"seq\":0,\"catalog\":{}}}\n",
         crate::journal::VERSION,
-        snapshot.replacen(r#""light":{"#, r#""process":-1,"light":{"#, 1)
+        snapshot.replace(r#""process":7"#, r#""process":-1"#)
     );
     let m = MemStore::new();
     m.set(SNAPSHOT, snapshot.into_bytes());
     let (_, loaded, _) = open(&m);
-    assert_eq!(loaded.photo(id).unwrap().develop.light.exposure, 0.5);
+    let d = &loaded.photo(id).unwrap().develop;
+    assert_eq!((d.process, d.light.exposure), (ProcessVersion::V1, 0.5));
     // and in a (CRC-valid) log record
-    let edit = DevelopSettings { light: lightcraft_develop::Light { exposure: 0.8, ..Default::default() }, ..Default::default() };
+    let edit = DevelopSettings {
+        process: ProcessVersion(7),
+        light: lightcraft_develop::Light { exposure: 0.8, ..Default::default() },
+        ..Default::default()
+    };
     let op = Op::SetDevelop { id, settings: Arc::new(edit), label: "Edit".into(), edited: None };
-    let body = serde_json::to_string(&op).unwrap().replacen(r#""light":{"#, r#""process":"seven","light":{"#, 1);
+    let body = serde_json::to_string(&op).unwrap().replace(r#""process":7"#, r#""process":"seven""#);
     assert!(body.contains("seven"));
     m.set(LOG, format!("{{\"seq\":1,\"crc\":{},\"op\":{body}}}\n", crc32fast::hash(body.as_bytes())).into_bytes());
     let (_, loaded, _) = open(&m);
-    assert_eq!(loaded.photo(id).unwrap().develop.light.exposure, 0.8);
+    let d = &loaded.photo(id).unwrap().develop;
+    assert_eq!((d.process, d.light.exposure), (ProcessVersion::V1, 0.8));
 }
 
 /// A snapshot whose `seq` is near `u64::MAX` is refused as corrupt: the next record's seq would

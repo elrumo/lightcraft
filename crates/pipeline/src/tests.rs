@@ -953,6 +953,52 @@ fn custom_white_balance_redevelops_in_camera_space() {
     assert!(wb_matrix_for(&info, &s).is_none());
 }
 
+/// Every stored process number renders with a process this build knows: settings saved before
+/// the fork restored process versions exactly as its migration process V5, and a number from a newer LightCraft exactly as the
+/// latest process here (`docs/process-versions.md`). Raw (base tone curve), camera-tone and
+/// rendered sources, plain and edited, 8-bit and 16-bit.
+#[test]
+fn stored_process_numbers_render_with_a_known_process() {
+    use lightcraft_develop::{Process, ProcessVersion};
+    let src = scene();
+    let curve = crate::tone::CameraTone::new(std::array::from_fn(|i| {
+        let x = 0.004 * 1.18f32.powi(i as i32);
+        [x, 1.0 - (-2.0 * x).exp()]
+    }))
+    .unwrap();
+    let infos = [
+        SourceInfo::default(),
+        SourceInfo { raw: true, as_shot_temp: 5200.0, as_shot_tint: 4.0, ..Default::default() },
+        SourceInfo { raw: true, relative_wb: true, camera_tone: Some(curve), ..Default::default() },
+    ];
+    let mut edited = DevelopSettings::for_raw(5200.0, 4.0);
+    for (id, v) in [("light.exposure", 0.4), ("light.contrast", 30.0), ("light.highlights", -60.0), ("light.whites", 15.0), ("light.blacks", -20.0)] {
+        controls::set(&mut edited, id, v);
+    }
+    let legacy = |s: &DevelopSettings| {
+        let mut v = s.to_json();
+        v.as_object_mut().unwrap().remove("process");
+        DevelopSettings::from_json(&v).unwrap()
+    };
+    let with = |s: &DevelopSettings, p: ProcessVersion| DevelopSettings { process: p, ..s.clone() };
+    let deep = RenderRequest { depth: crate::OutputDepth::U16, ..RenderRequest::fit(96, 96) };
+    for info in &infos {
+        for s in [DevelopSettings::default(), edited.clone()] {
+            for req in [RenderRequest::fit(96, 96), deep] {
+                let out = |s: &DevelopSettings| {
+                    let r = render(&src, info, s, &req);
+                    (r.image.data, r.deep)
+                };
+                let migrated = out(&with(&s, Process::V5.version()));
+                assert_eq!(legacy(&s).process, Process::V5.version());
+                assert!(out(&legacy(&s)) == migrated, "unversioned fork settings keep their V5 rendering");
+                let latest = out(&with(&s, Process::LATEST.version()));
+                assert!(out(&with(&s, ProcessVersion(Process::LATEST.version().0 + 7))) == latest, "newer than this build: as the latest");
+            }
+        }
+    }
+}
+
 /// A crop a hair wide (or of no size, as a command or a sidecar can set) shown to fit made the
 /// tone, clarity and dehaze stages blur with sigmas of millions of pixels (infinite for no size):
 /// the box width's square overflowed (a panic in debug builds, a radius of billions of pixels and

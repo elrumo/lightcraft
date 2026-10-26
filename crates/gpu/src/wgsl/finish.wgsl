@@ -545,20 +545,28 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // pixel's own minimum channel, or dark pixels next to bright ones crush to black (#2504)
         let air = pf(F_AIR);
         let cmin = min(c.x, min(c.y, c.z));
-        let d = clamp(min(select(0.0, dark[i] / pf(F_AIR_PRE), pf(F_AIR_PRE) > 0.0), select(0.0, cmin / air, air > 0.0)), 0.0, 1.0);
-        if (dz > 0.0) {
-            // (`finish::dehaze_pixel`)
+        let raw_d = select(0.0, dark[i] / pf(F_AIR_PRE), pf(F_AIR_PRE) > 0.0);
+        let d = clamp(select(raw_d, min(raw_d, select(0.0, cmin / air, air > 0.0)), pu(F_FORK_REFINEMENTS) != 0u), 0.0, 1.0);
+        if (dz > 0.0 && pu(F_DEHAZE_V4) != 0u) {
+            // (`finish::dehaze_v4_pixel`)
             let k0 = clamp(dz, 0.0, 1.0);
             let k = k0 * (0.4 + 0.6 * k0);
             let t = max(1.0 - 0.95 * k * d, 0.15);
             let veil = min(air * (1.0 - t), 0.9 * max(min(c.x, min(c.y, c.z)), 0.0));
             c = max((c - veil) / t, vec3<f32>(0.0));
+        } else if (dz > 0.0) {
+            let t = max(1.0 - 0.95 * min(dz, 1.0) * d, 0.12);
+            c = max((c - air * (1.0 - t)) / t, vec3<f32>(0.0));
         } else {
             // (`finish::add_haze`)
             let k = min(-dz, 1.0) * NEG_DEHAZE_STRENGTH * (0.35 + 0.65 * d);
             let ig = 1.0 / NEG_DEHAZE_GAMMA;
             let tg = pow(max(air * 0.9, 0.0), ig);
-            c = pow(pow(max(c, vec3<f32>(0.0)), vec3<f32>(ig)) * (1.0 - k) + vec3<f32>(tg * k), vec3<f32>(NEG_DEHAZE_GAMMA));
+            if (pu(F_FORK_REFINEMENTS) != 0u) {
+                c = pow(pow(max(c, vec3<f32>(0.0)), vec3<f32>(ig)) * (1.0 - k) + vec3<f32>(tg * k), vec3<f32>(NEG_DEHAZE_GAMMA));
+            } else {
+                c = c + (vec3<f32>(air * 0.9) - c) * k;
+            }
         }
     }
 
@@ -586,7 +594,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (hh != 0.0 || ss != 0.0) {
         let ws = 1.0 - sstep(-4.8, 0.3, base);
         let wh = sstep(-1.0, 2.8, base);
-        delta += ss * 1.7 * ws * sqrt(ws) + hh * select(1.7, HIGHLIGHTS_UP, hh > 0.0) * wh;
+        delta += ss * 1.7 * ws * sqrt(ws) + hh * select(1.7, HIGHLIGHTS_UP, hh > 0.0 && pu(F_FORK_REFINEMENTS) != 0u) * wh;
     }
     if (lt[6] != 0.0) {
         delta += lt[6] * 0.8 * sstep(0.5, 3.0, l1);
@@ -606,11 +614,23 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let tx = pf(F_TEX) + lt[8];
     let sp = lt[13] * 0.6 + pf(F_SHARPEN);
-    // (sharpening has its own plane, after the texture plane: capture sharpening below)
-    if (tx != 0.0 && pu(F_HAS_TEX) != 0u) {
+    // (before V3 sharpening reads the texture band; from V3 its own plane, after the texture plane)
+    var sp_band = 0.0;
+    if (pu(F_BAND_SHARPEN) != 0u) {
+        sp_band = sp;
+    }
+    if ((tx != 0.0 || sp_band != 0.0) && pu(F_HAS_TEX) != 0u) {
         let det = l_pre - tex[i];
         let tame = 1.0 - 0.6 * sstep(0.4, 1.6, abs(det));
         delta += tx * 1.1 * clamp(det, -1.0, 1.0) * tame;
+        if (sp_band != 0.0) {
+            let sm = pf(F_SHARPEN_MASK);
+            var mk = 1.0;
+            if (sm > 0.0) {
+                mk = sstep(sm * 0.25, sm * 0.25 + 0.15, abs(det));
+            }
+            delta += sp_band * 1.3 * clamp(det, -0.8, 0.8) * mk;
+        }
     }
     // capture sharpening (`finish::capture_delta`)
     if (sp != 0.0 && pu(F_HAS_SHARP) != 0u) {

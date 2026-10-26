@@ -5,7 +5,7 @@ use lightcraft_color::Mat3;
 use lightcraft_color::luminance_2020;
 use lightcraft_color::spline::{Lut1, MonotoneCurve};
 use lightcraft_color::transfer::{linear_to_srgb, srgb_to_linear};
-use lightcraft_develop::{DevelopSettings, LocalAdjustments, ToneCurve, VignetteStyle};
+use lightcraft_develop::{DevelopSettings, LocalAdjustments, Process, ToneCurve, VignetteStyle};
 use lightcraft_geom::Point;
 use lightcraft_raster::Rgba8;
 
@@ -16,7 +16,7 @@ use crate::output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc}
 use crate::tone::ToneMap;
 use crate::{Prepared, SourceInfo, for_rows};
 
-/// Capture sharpening's change of log2 luminance for `det`, log luminance less its
+/// Capture sharpening's change of log2 luminance (process V3) for `det`, log luminance less its
 /// blur ([`crate::local::Capture`], weighted): `sp` the amount (and a mask's Sharpness), `detail`
 /// the Detail slider (0..1: what strong edges get of it, where halos would show; fine texture gets
 /// all), `mask` the Masking slider (0..1: only edges stronger than it). The GPU kernel mirrors it.
@@ -226,14 +226,15 @@ pub const MASK_TERMS: usize = 21;
 /// Number of alpha-weighted terms at the start of [`mask_terms`].
 pub const MASK_SUMS: usize = 17;
 
-/// Positive dehaze (#1237) of scene-linear `c`: `dz` the strength (0..1, with a local adjustment's
-/// added), `d` the dark channel over the airlight (0..1), `air` the airlight. The strength eases in
-/// (`dz·(0.4 + 0.6·dz)`), the transmission is floored at 0.15, and the veil removed never exceeds
-/// 90 % of the pixel's darkest channel, so no pixel is pushed to black. The GPU mirrors it in
+/// Positive dehaze from process V4 (#1237; upstream's "V3") of scene-linear `c`: `dz` the strength (0..1, with a
+/// local adjustment's added), `d` the dark channel over the airlight (0..1), `air` the airlight.
+/// The strength eases in (`dz·(0.4 + 0.6·dz)`: +10 acts at about half V1's), the transmission is
+/// floored at 0.15, and the veil removed never exceeds 90 % of the pixel's darkest channel, so no
+/// pixel is pushed to black (V1 clipped shadows next to bright sky from +10). The GPU mirrors it in
 /// `finish.wgsl`. Sources: He, Sun, Tang, "Single Image Haze Removal Using Dark Channel Prior"
 /// (CVPR 2009), with own easing and veil limit.
 #[inline]
-pub fn dehaze_pixel(c: [f32; 3], dz: f32, d: f32, air: f32) -> [f32; 3] {
+pub fn dehaze_v4_pixel(c: [f32; 3], dz: f32, d: f32, air: f32) -> [f32; 3] {
     let k = dz.clamp(0.0, 1.0);
     let k = k * (0.4 + 0.6 * k);
     let t = (1.0 - 0.95 * k * d).max(0.15);
@@ -322,9 +323,15 @@ pub struct FinishParams {
     pub clar: f32,
     pub tex: f32,
     pub dehaze: f32,
+    /// Dehaze's process-V4 response ([`dehaze_v4_pixel`]) instead of V1's.
+    pub dehaze_v4: bool,
+    /// Refinements made while the fork had no process versions, pinned to V5.
+    pub fork_refinements: bool,
     pub sharpen: f32,
     pub sharpen_mask: f32,
-    /// Capture sharpening's parameters (when the render has its plane: the GPU kernel's).
+    /// Sharpening reads the texture band (before process V3); from V3 it reads the capture plane.
+    pub band_sharpen: bool,
+    /// Capture sharpening's parameters (from V3, when the render has its plane: the GPU kernel's).
     pub capture: Option<crate::local::Capture>,
     /// Airlight after and before exposure, exposure gain and EV (see [`crate::Prepared`]).
     pub air: f32,
@@ -394,8 +401,11 @@ impl FinishParams {
             clar,
             tex,
             dehaze,
+            dehaze_v4: matches!(s.process.process(), Process::V4 | Process::V5),
+            fork_refinements: s.process.process() == Process::V5,
             sharpen: (s.detail.sharpen_amount / 150.0) as f32,
             sharpen_mask: (s.detail.sharpen_masking / 100.0) as f32,
+            band_sharpen: !crate::local::capture_process(s),
             capture: None,
             air: air_pre * gain,
             air_pre,
@@ -422,16 +432,22 @@ impl FinishParams {
     }
 }
 
-/// The base tone map (scene → display luminance, with Contrast, Whites and Blacks) of `s`. CPU and
-/// GPU both take it from here. `peak` is the HDR render's peak relative to SDR white
-/// ([`lightcraft_develop::Hdr::peak`]); at 1.0 (SDR) it is the SDR tone map. An HDR render keeps the camera's look through the midtones and
+/// The base tone map (scene → display luminance, with Contrast, Whites and Blacks) of `s`'s
+/// rendering process. This is where a new tone model branches: a retuned default tone curve (issue
+/// #146) is a new [`Process`] with its own arm here, and V1's arm stays as it is, so photos edited
+/// under V1 keep their look (`docs/process-versions.md`). CPU and GPU both take it from here.
+/// `peak` is the HDR render's peak relative to SDR white ([`lightcraft_develop::Hdr::peak`]); at 1.0 (SDR)
+/// every arm is the SDR tone map. An HDR render keeps the camera's look through the midtones and
 /// lifts its highlights past white ([`ToneMap::camera_hdr`]), so it matches the SDR render below them.
 pub fn base_tone(s: &DevelopSettings, info: &SourceInfo, peak: f32) -> ToneMap {
     let l = &s.light;
-    match info.camera_tone.as_ref().filter(|_| info.raw) {
-        Some(curve) => ToneMap::camera_hdr(curve, l.contrast, l.whites, l.blacks, peak),
-        None if info.raw => ToneMap::hdr(l.contrast, l.whites, l.blacks, peak),
-        None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
+    match s.process.process() {
+        // V2 changes the Highlights/Shadows base (`local::tone_base`), V3 sharpening, V4 dehaze: not the tone map
+        Process::V1 | Process::V2 | Process::V3 | Process::V4 | Process::V5 => match info.camera_tone.as_ref().filter(|_| info.raw) {
+            Some(curve) => ToneMap::camera_hdr(curve, l.contrast, l.whites, l.blacks, peak),
+            None if info.raw => ToneMap::hdr(l.contrast, l.whites, l.blacks, peak),
+            None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
+        },
     }
 }
 
@@ -524,8 +540,11 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
         clar,
         tex,
         dehaze,
+        dehaze_v4,
+        fork_refinements,
         sharpen,
         sharpen_mask,
+        band_sharpen,
         air,
         air_pre,
         gain,
@@ -533,6 +552,9 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
         grain,
         ..
     } = fp;
+    let band_sharpen = *band_sharpen;
+    let dehaze_v4 = *dehaze_v4;
+    let fork_refinements = *fork_refinements;
     let (hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev) =
         (*hl, *sh, *clar, *tex, *dehaze, *sharpen, *sharpen_mask, *air, *air_pre, *gain, *ev);
     let terms: Vec<[f32; MASK_TERMS]> = p.masks.iter().map(|m| mask_terms(&m.adjust)).collect();
@@ -602,12 +624,16 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 // frame's airlight), so the subtraction went past zero and crushed them to black
                 // (#2504). Never attribute more veil than the pixel's own minimum channel.
                 let c_min = c[0].min(c[1]).min(c[2]);
-                let d = (if air_pre > 0.0 { dark.data[i] / air_pre } else { 0.0 }).min(if air > 0.0 { c_min / air } else { 0.0 }).clamp(0.0, 1.0);
-                if dz > 0.0 {
-                    c = dehaze_pixel(c, dz, d, air);
+                let raw_d = if air_pre > 0.0 { dark.data[i] / air_pre } else { 0.0 };
+                let d = if fork_refinements { raw_d.min(if air > 0.0 { c_min / air } else { 0.0 }) } else { raw_d }.clamp(0.0, 1.0);
+                if dz > 0.0 && dehaze_v4 {
+                    c = dehaze_v4_pixel(c, dz, d, air);
+                } else if dz > 0.0 {
+                    let t = (1.0 - 0.95 * dz.min(1.0) * d).max(0.12);
+                    c = c.map3(|v| ((v - air * (1.0 - t)) / t).max(0.0));
                 } else {
                     let k = (-dz).min(1.0) * NEG_DEHAZE_STRENGTH * (0.35 + 0.65 * d);
-                    c = add_haze(c, air * 0.9, k);
+                    c = if fork_refinements { add_haze(c, air * 0.9, k) } else { c.map3(|v| v + (air * 0.9 - v) * k) };
                 }
             }
 
@@ -632,7 +658,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             if hh != 0.0 || ss != 0.0 {
                 let ws = 1.0 - smooth(-4.8, 0.3, base);
                 let wh = smooth(-1.0, 2.8, base);
-                delta += ss * 1.7 * ws * ws.sqrt() + hh * if hh > 0.0 { HIGHLIGHTS_UP } else { 1.7 } * wh;
+                delta += ss * 1.7 * ws * ws.sqrt() + hh * if hh > 0.0 && fork_refinements { HIGHLIGHTS_UP } else { 1.7 } * wh;
             }
             if l_wh != 0.0 {
                 delta += l_wh * 0.8 * smooth(0.5, 3.0, l1);
@@ -653,13 +679,18 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             }
             let tx = tex + l_tex;
             let sp = l_sharp * 0.6 + sharpen;
-            // (sharpening has its own plane, `Capture`, below)
-            if tx != 0.0
+            // (before V3 sharpening reads the texture band; from V3 its own plane, `Capture`)
+            let sp_band = if band_sharpen { sp } else { 0.0 };
+            if (tx != 0.0 || sp_band != 0.0)
                 && let Some(b) = &p.texture_blur
             {
                 let det = l_pre - b.data[i];
                 let tame = 1.0 - 0.6 * smooth(0.4, 1.6, det.abs());
                 delta += tx * 1.1 * det.clamp(-1.0, 1.0) * tame;
+                if sp_band != 0.0 {
+                    let m = sharpen_mask_weight(sharpen_mask, det);
+                    delta += sp_band * 1.3 * det.clamp(-0.8, 0.8) * m;
+                }
             }
             if sp != 0.0
                 && let Some((cap, b)) = &p.sharpen

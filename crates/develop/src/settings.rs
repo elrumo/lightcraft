@@ -1,18 +1,132 @@
 //! The develop settings schema. Every field has a neutral default; serde uses `#[serde(default)]` so
-//! older/newer files load (unknown fields are ignored, missing fields take defaults). There is one
-//! rendering: files written when LightCraft had several rendering processes (a `process` number) load
-//! and are rendered by today's.
+//! older/newer files load (unknown fields are ignored, missing fields take defaults). The one
+//! exception is `process`: missing means the fork rendering in use when versioning was restored
+//! (V5); malformed explicit numbers fall back to V1. Every saved setting records its process.
 
 use lightcraft_geom::{CropGeometry, Homography, Orientation, Point};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// The rendering process a photo's settings are interpreted by (what Lightroom calls the process
+/// version). A change that would alter how existing settings render ships as a new process, so a
+/// photo keeps its look until someone updates it (`develop.updateProcess`). See
+/// `docs/process-versions.md`.
+///
+/// Stored as a plain number: one written by a newer LightCraft loads, is kept as it is, and
+/// renders with the newest process this build knows ([`ProcessVersion::process`]). Reading is
+/// lenient: a whole number from 0 to 2^32 - 1 (also written as `2.0`) is that process; anything
+/// else (negative, fractional, too large, text, null, a list…) reads as V1,
+/// so a damaged value never costs the rest of the settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ProcessVersion(pub u32);
+
+impl<'de> Deserialize<'de> for ProcessVersion {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Whole(u64),
+            Number(f64),
+            Other(serde::de::IgnoredAny),
+        }
+        Ok(match Wire::deserialize(d)? {
+            Wire::Whole(n) => u32::try_from(n).map_or_else(|_| ProcessVersion::legacy(), ProcessVersion),
+            Wire::Number(x) if x.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&x) => ProcessVersion(x as u32),
+            Wire::Number(_) | Wire::Other(_) => ProcessVersion::legacy(),
+        })
+    }
+}
+
+impl ProcessVersion {
+    /// The first process: LightCraft's rendering from before process versions existed. Frozen.
+    pub const V1: ProcessVersion = Process::V1.version();
+    /// The process new photos and Reset get.
+    pub const LATEST: ProcessVersion = Process::LATEST.version();
+
+    /// The historical V1 process; also the fallback for a malformed explicit process number.
+    pub fn legacy() -> ProcessVersion {
+        ProcessVersion::V1
+    }
+
+    /// Settings written by this fork while process versions were disabled used its current
+    /// rendering. Pin that rendering on load rather than silently reverting them to V1.
+    pub fn unversioned() -> ProcessVersion {
+        Process::V5.version()
+    }
+
+    /// Whether this is the historical V1 process. All versions are serialized explicitly.
+    pub fn is_legacy(&self) -> bool {
+        *self == ProcessVersion::legacy()
+    }
+
+    /// The process this build renders with: the newest one it knows that isn't newer than this
+    /// number (a number from a newer LightCraft renders with [`Process::LATEST`]; one below V1,
+    /// which no LightCraft writes, with V1).
+    pub fn process(self) -> Process {
+        Process::ALL.into_iter().rev().find(|p| p.version() <= self).unwrap_or(Process::V1)
+    }
+
+    /// A process this build implements.
+    pub fn is_known(self) -> bool {
+        Process::ALL.iter().any(|p| p.version() == self)
+    }
+
+    /// Older than [`Self::LATEST`]: Update to Current Process applies.
+    pub fn is_outdated(self) -> bool {
+        self < ProcessVersion::LATEST
+    }
+}
+
+/// A rendering process this build implements. Matches on it are exhaustive, so adding a process
+/// makes the compiler point at every stage whose behaviour depends on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Process {
+    /// The rendering of LightCraft before process versions existed (2026-10).
+    V1,
+    /// Highlights and Shadows keep the local contrast of the tones they move: their edge-aware base
+    /// is taken of a fine median of log luminance (issue #632).
+    V2,
+    /// Sharpening is capture sharpening, as in Lightroom: its Radius is in the original's pixels and
+    /// Detail holds back halos on strong edges, instead of a band at 0.18 % of the long edge (about
+    /// 10 px on a 24 MP photo) that drew halos at every size, the fitted view included.
+    V3,
+    /// Dehaze estimates haze from a patch-minimum dark channel, eases in, and never pushes a pixel
+    /// below a tenth of its darkest channel (issue #1237); everything else renders as in V3 (upstream's
+    /// own "V3" is this process: the fork's V3 is capture sharpening, so a photo already on V3 keeps
+    /// the dehaze it was made with).
+    V4,
+    /// The fork's rendering immediately before process versions were restored. Unversioned
+    /// fork settings use this process so restoring versioning does not revert their look.
+    V5,
+}
+
+impl Process {
+    /// Every process, oldest first.
+    pub const ALL: [Process; 5] = [Process::V1, Process::V2, Process::V3, Process::V4, Process::V5];
+    pub const LATEST: Process = Process::V5;
+
+    pub const fn version(self) -> ProcessVersion {
+        match self {
+            Process::V1 => ProcessVersion(1),
+            Process::V2 => ProcessVersion(2),
+            Process::V3 => ProcessVersion(3),
+            Process::V4 => ProcessVersion(4),
+            Process::V5 => ProcessVersion(5),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DevelopSettings {
-    /// Schema version of this structure.
+    /// Schema version of this structure (not the rendering process, see `process`).
     pub version: u32,
+    /// The rendering process: latest for new settings, fixed V5 for saved settings without
+    /// the field, and V1 for malformed explicit process values.
+    #[serde(default = "ProcessVersion::unversioned")]
+    pub process: ProcessVersion,
     pub profile: Profile,
     pub treatment: Treatment,
     pub wb: WhiteBalance,
@@ -60,6 +174,7 @@ impl Default for DevelopSettings {
     fn default() -> Self {
         Self {
             version: SCHEMA_VERSION,
+            process: ProcessVersion::LATEST,
             profile: Profile::default(),
             treatment: Treatment::Color,
             wb: WhiteBalance::default(),
