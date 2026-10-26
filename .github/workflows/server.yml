@@ -160,7 +160,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      PUBLISH: ${{ needs.version.outputs.publish }}
+      # no Docker Hub account set up (DOCKERHUB_USERNAME): build the image, push nothing
+      PUBLISH: ${{ needs.version.outputs.publish == 'true' && vars.DOCKERHUB_USERNAME != '' }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
       IMAGE: ${{ vars.DOCKERHUB_IMAGE || format('{0}/lightcraft-server', vars.DOCKERHUB_USERNAME) }}
     steps:
@@ -222,7 +223,7 @@ jobs:
 
   release:
     name: Draft release
-    needs: [version, binaries, docker]
+    needs: [version, binaries]
     if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
