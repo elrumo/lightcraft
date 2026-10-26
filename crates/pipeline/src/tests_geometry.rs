@@ -138,7 +138,7 @@ fn profile_corrections_use_embedded_lens_only_when_enabled() {
     let (w, h) = (300usize, 200usize);
     let src = synth(w, h, |p| p, |p| [grid_value(p, 30.0); 3]);
     let lens = EmbeddedLens {
-        warp: Some(EmbeddedWarp { planes: [[1.0, -0.08, 0.0, 0.0, 0.0, 0.0]; 3], center: Point::new(0.5, 0.5), radius: 0.6 }),
+        warp: Some(EmbeddedWarp { planes: [[1.0, 0.3, 0.0, 0.0, 0.0, 0.0]; 3], center: Point::new(0.5, 0.5), radius: 0.6 }),
         vignette: Some(EmbeddedVignette { k: [0.5, 0.0, 0.0, 0.0, 0.0], center: Point::new(0.5, 0.5), radius: 0.6 }),
         ..Default::default()
     };
@@ -156,6 +156,22 @@ fn profile_corrections_use_embedded_lens_only_when_enabled() {
     s.optics.profile_vignetting = 0.0;
     let zero = render(&src, &info, &s, &RenderRequest::fit(w, h)).image;
     assert_eq!(zero.data, off.data, "0 % = no correction");
+}
+
+#[test]
+fn profile_corrections_crop_the_blank_edges_they_leave() {
+    let lens = EmbeddedLens {
+        warp: Some(EmbeddedWarp { planes: [[1.0, 0.3, 0.0, 0.0, 0.0, 0.0]; 3], center: Point::new(0.5, 0.5), radius: 0.6 }),
+        ..Default::default()
+    };
+    let mut s = DevelopSettings::default();
+    let whole = crate::geometry::Frame::with_lens(300, 200, &s, true, Some(&lens)).crop.rect;
+    s.optics.lens_profile = true;
+    let cropped = crate::geometry::Frame::with_lens(300, 200, &s, true, Some(&lens)).crop.rect;
+    assert!(cropped.width() < whole.width() - 1e-3 && cropped.height() < whole.height() - 1e-3, "{cropped:?} vs {whole:?}");
+    s.disabled_sections.push("optics".into());
+    let off = crate::geometry::Frame::with_lens(300, 200, &s, true, Some(&lens)).crop.rect;
+    assert_eq!(off, whole, "an optics section switched off crops nothing");
 }
 
 fn mean_abs_diff_downscaled(small: &Rgba8, big: &Rgba8) -> f32 {

@@ -1146,12 +1146,12 @@ impl Session {
     /// is left, so the Crop tool shows what the render keeps. An edit of the crop itself is left as
     /// drawn (the render still constrains it).
     fn fit_constrained_crop(&self, id: PhotoId, mut d: DevelopSettings) -> DevelopSettings {
-        if !d.geometry.constrain_crop {
+        if !d.constrains_crop() {
             return d;
         }
         let Some(photo) = self.catalog.photo(id) else { return d };
         let before = &photo.develop;
-        let turned_on = !before.geometry.constrain_crop;
+        let turned_on = !before.constrains_crop();
         let warp_changed = before.geometry != d.geometry
             || before.optics != d.optics
             || before.orientation != d.orientation

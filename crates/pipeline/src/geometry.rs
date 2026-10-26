@@ -90,7 +90,7 @@ impl Frame {
             expand,
         };
         // (with Expand, area past the warped photo is what the fill is for)
-        if apply_crop && s.geometry.constrain_crop && !s.crop.expand {
+        if apply_crop && s.constrains_crop() && !s.crop.expand {
             f.constrain_to_image();
         }
         f

@@ -105,6 +105,13 @@ impl DevelopSettings {
         !self.disabled_sections.iter().any(|s| s == section)
     }
 
+    /// Whether the crop is kept inside the warped photo ("Constrain Crop"). Enable Profile Corrections
+    /// does it too: its lens warp leaves blank edges just as a Geometry warp does, and the photo is
+    /// cropped to them.
+    pub fn constrains_crop(&self) -> bool {
+        self.geometry.constrain_crop || (self.optics.lens_profile && self.section_enabled("optics"))
+    }
+
     /// The settings as rendered: an Edit-panel section whose eye is off contributes nothing (issue
     /// #316). Light (with its tone curve), Color (white balance, presence, the mixers, colour grading
     /// and point colour) and Detail are reset to their defaults here; Effects, Optics, Geometry and
