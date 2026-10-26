@@ -255,8 +255,12 @@ mod tests {
         std::fs::write(&preview, jpeg(32, 24)).unwrap();
         let undo = s.undo.len();
 
-        let r =
-            s.execute("photo.attachDecoded", &json!({"id": id.0, "path": tiff.to_string_lossy(), "previewPath": preview.to_string_lossy()})).unwrap();
+        let r = s
+            .execute(
+                "photo.attachDecoded",
+                &json!({"id": id.0, "path": tiff.to_string_lossy(), "previewPath": preview.to_string_lossy(), "whiteXY": [0.40, 0.38]}),
+            )
+            .unwrap();
         assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(64), Some(48)), "{r}");
         let out = r["path"].as_str().unwrap().to_string();
         assert!(out.contains("Derived") && std::path::Path::new(&out).is_file(), "{out}");
@@ -272,6 +276,9 @@ mod tests {
         // the DNG keeps what was above white and says how to read it: peak 3 is stored under 4 with two stops added
         let raw = lightcraft_raw::decode(&std::fs::read(&out).unwrap()).unwrap();
         assert!((raw.color.baseline_exposure - 2.0).abs() < 1e-9, "{}", raw.color.baseline_exposure);
+        // the white the host balanced for is the as-shot white, so white balance edits start from the camera's own
+        let white = lightcraft_raw::color::as_shot_white_xy(&raw);
+        assert!((white.x - 0.40).abs() < 2e-3 && (white.y - 0.38).abs() < 2e-3, "{white:?}");
         // the preview travels in it, for the engine's tone fit
         let embedded = lightcraft_raw::embedded_preview(&std::fs::read(&out).unwrap()).expect("the DNG carries the host's preview");
         assert_eq!(lightcraft_codecs::read_header(&embedded).map(|h| (h.width, h.height)).unwrap(), (32, 24));
@@ -315,6 +322,10 @@ mod tests {
         std::fs::write(&junk, b"II*\0not a tiff at all").unwrap();
         assert!(s.execute("photo.attachDecoded", &json!({"id": other.0, "path": junk.to_string_lossy()})).is_err());
         assert!(s.execute("photo.attachDecoded", &json!({"id": other.0})).is_err(), "no path");
+        for white in [json!([0.3]), json!([2.0, 2.0]), json!("warm"), json!([null, 0.3])] {
+            let p = json!({"id": other.0, "path": tiff.to_string_lossy(), "whiteXY": white});
+            assert!(s.execute("photo.attachDecoded", &p).is_err(), "{white}");
+        }
         let not_jpeg = dir.join("preview.jpg");
         std::fs::write(&not_jpeg, b"definitely not a jpeg").unwrap();
         let bad_preview = json!({"id": other.0, "path": tiff.to_string_lossy(), "previewPath": not_jpeg.to_string_lossy()});

@@ -601,7 +601,7 @@ pub fn write_linear_dng(
         .filter(|n| n.iter().all(|v| v.is_finite() && *v > 1e-4));
     if let Some(n) = neutral {
         let k = n.map(|v| v as f32);
-        data.chunks_exact_mut(3).for_each(|px| px.iter_mut().zip(k).for_each(|(v, k)| *v *= k));
+        data.as_chunks_mut::<3>().0.iter_mut().for_each(|px| px.iter_mut().zip(k).for_each(|(v, k)| *v *= k));
     }
     if look.headroom {
         let peak = data.iter().copied().fold(1.0f32, f32::max);
