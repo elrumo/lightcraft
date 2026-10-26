@@ -22,11 +22,13 @@ fn derived_dir(library: &Path, id_part: &str) -> std::path::PathBuf {
     library.join("Derived").join(id_part)
 }
 
-/// `photo.attachDecoded {id, path, previewPath?, baselineExposure?, force?}`: `path` is the host's linear development of
+/// `photo.attachDecoded {id, path, previewPath?, whiteXY?, baselineExposure?, force?}`: `path` is the host's linear development of
 /// the photo's original (a float TIFF in linear light of any primaries, white = 1, values above it are highlights);
 /// `previewPath` the same picture rendered the host's default way (a JPEG, any size, sRGB), which gives the raw its
 /// starting look: the engine fits its default tone to it, as it does for a DNG with a preview. The host deletes
-/// both afterwards. Photos with edits are refused unless `force` (their settings were made on the camera's JPEG,
+/// both afterwards. `whiteXY` is the scene white `[x, y]` the host balanced the picture for (its as-shot white): the
+/// DNG then holds the picture as the raw it came from, so white balance edits work as on any raw (true Kelvin and tint,
+/// As Shot, Auto). Photos with edits are refused unless `force` (their settings were made on the camera's JPEG,
 /// a display-referred picture, and mean something else on a linear one).
 fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.attachDecoded";
@@ -55,6 +57,17 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
         Some(path) => Some(std::fs::read(path).map_err(|e| bad(C, format!("{path}: {e}")))?),
         None => None,
     };
+    let white = match p.get("whiteXY") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(xy)) => match xy.as_slice() {
+            [x, y] => match (x.as_f64(), y.as_f64()) {
+                (Some(x), Some(y)) if (0.05..0.8).contains(&x) && (0.05..0.8).contains(&y) => Some(lightcraft_color::Xy::new(x, y)),
+                _ => return Err(bad(C, "`whiteXY`: two chromaticity coordinates between 0.05 and 0.8")),
+            },
+            _ => return Err(bad(C, "`whiteXY`: [x, y]")),
+        },
+        Some(_) => return Err(bad(C, "`whiteXY`: [x, y]")),
+    };
     let baseline = p.get("baselineExposure").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(-8.0, 8.0);
 
     let _task = s.activity.start("develop", "Developing a raw", crate::activity::Cancel::No);
@@ -81,7 +94,7 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     // (16-bit integers under lossless JPEG, or half floats under deflate: which is smaller depends on the picture)
     let compact = p.get("compact").and_then(Value::as_bool).unwrap_or(true);
     let look =
-        lightcraft_raw::LinearDngLook { baseline_exposure: baseline, identity_tone: false, headroom: true, preview: preview.as_deref(), compact };
+        lightcraft_raw::LinearDngLook { baseline_exposure: baseline, identity_tone: false, headroom: true, preview: preview.as_deref(), compact, as_shot_white: white };
     let dng = lightcraft_raw::write_linear_dng(rgb.width, rgb.height, rgb.data.as_flattened(), &lightcraft_color::REC2020, &meta, None, look)
         .map_err(|e| bad(C, e.to_string()))?;
     let (width, height) = (rgb.width, rgb.height);
@@ -128,7 +141,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Develop with System Decoder",
         [],
         None,
-        "{id, path, previewPath?, baselineExposure?, compact?, force?} — a raw shown from its embedded preview (no decoder here) becomes a raw again: `path` is a float TIFF of its linear development by the host's own decoder (on Apple platforms: Core Image's), `previewPath` a JPEG of the same picture as the host renders it (the starting look), written as a LinearRaw DNG in the library's Derived folder and linked like Convert to DNG (the original stays). Refused for a photo with edits unless `force` → {id, path, original, width, height}",
+        "{id, path, previewPath?, whiteXY?, baselineExposure?, compact?, force?} — a raw shown from its embedded preview (no decoder here) becomes a raw again: `path` is a float TIFF of its linear development by the host's own decoder (on Apple platforms: Core Image's), `previewPath` a JPEG of the same picture as the host renders it (the starting look), `whiteXY` the scene white it balanced for (the as-shot white), written as a LinearRaw DNG in the library's Derived folder and linked like Convert to DNG (the original stays). Refused for a photo with edits unless `force` → {id, path, original, width, height}",
         has_selection,
         attach
     )]

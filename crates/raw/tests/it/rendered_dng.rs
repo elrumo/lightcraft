@@ -55,7 +55,7 @@ fn linear_dng_keeps_highlights_above_white_and_says_how_to_read_them() {
     // a ramp that runs to 5.5 (scene-referred highlights), as a decoder's linear output can
     let rgb: Vec<f32> = (0..w * h).flat_map(|i| [i as f32 / (w * h) as f32 * 5.5; 3]).collect();
     let meta = lightcraft_meta::Metadata::default();
-    let look = LinearDngLook { baseline_exposure: 0.5, identity_tone: false, headroom: true, preview: None, compact: false };
+    let look = LinearDngLook { baseline_exposure: 0.5, identity_tone: false, headroom: true, preview: None, compact: false, as_shot_white: None };
     let raw = lightcraft_raw::decode(&write_linear_dng(w, h, &rgb, &SRGB, &meta, None, look).unwrap()).unwrap();
     // stored divided by 8 (the smallest power of two above 5.5), the stops put back in BaselineExposure
     assert!((raw.color.baseline_exposure - 3.5).abs() < 1e-9, "{}", raw.color.baseline_exposure);
@@ -66,11 +66,11 @@ fn linear_dng_keeps_highlights_above_white_and_says_how_to_read_them() {
         assert!((q[0] * 8.0 - p[0]).abs() <= p[0] * 2e-3 + 1e-3, "{p:?} {q:?}");
     }
     // without headroom the same ramp clips at 1 and no stops are added
-    let flat = LinearDngLook { baseline_exposure: 0.0, identity_tone: true, headroom: false, preview: None, compact: false };
+    let flat = LinearDngLook { baseline_exposure: 0.0, identity_tone: true, headroom: false, preview: None, compact: false, as_shot_white: None };
     let raw = lightcraft_raw::decode(&write_linear_dng(w, h, &rgb, &SRGB, &meta, None, flat).unwrap()).unwrap();
     assert!(raw.color.baseline_exposure.abs() < 1e-9 && raw.color.profile.tone_curve.is_some());
     // a baseline exposure that isn't a number is not written
-    let nan = LinearDngLook { baseline_exposure: f64::NAN, identity_tone: true, headroom: true, preview: None, compact: false };
+    let nan = LinearDngLook { baseline_exposure: f64::NAN, identity_tone: true, headroom: true, preview: None, compact: false, as_shot_white: None };
     let raw = lightcraft_raw::decode(&write_linear_dng(2, 1, &[0.5; 6], &SRGB, &meta, None, nan).unwrap()).unwrap();
     assert!(raw.color.baseline_exposure.is_finite());
 }
@@ -93,7 +93,7 @@ fn compact_linear_dng_keeps_the_pixels_and_carries_a_preview() {
         jpeg_encoder::Encoder::new(&mut out, 90).encode(&px, 16, 12, jpeg_encoder::ColorType::Rgb).unwrap();
         out
     };
-    let look = |compact| LinearDngLook { baseline_exposure: 0.0, identity_tone: false, headroom: true, preview: Some(&jpeg), compact };
+    let look = |compact| LinearDngLook { baseline_exposure: 0.0, identity_tone: false, headroom: true, preview: Some(&jpeg), compact, as_shot_white: None };
     let float = write_linear_dng(w, h, &rgb, &SRGB, &meta, None, look(false)).unwrap();
     let ints = write_linear_dng(w, h, &rgb, &SRGB, &meta, None, look(true)).unwrap();
     let raw = lightcraft_raw::decode(&ints).unwrap();
@@ -111,4 +111,32 @@ fn compact_linear_dng_keeps_the_pixels_and_carries_a_preview() {
     // something that isn't a JPEG is refused, not embedded
     let bad = LinearDngLook { preview: Some(b"nope"), ..look(true) };
     assert!(write_linear_dng(w, h, &rgb, &SRGB, &meta, None, bad).is_err());
+}
+
+#[test]
+fn linear_dng_keeps_the_scene_white_it_was_balanced_for() {
+    let (w, h) = (32usize, 8usize);
+    let grey = vec![0.5f32; w * h * 3];
+    let meta = lightcraft_meta::Metadata::default();
+    let warm = lightcraft_color::Xy::new(0.40, 0.38);
+    let look = |white| LinearDngLook { baseline_exposure: 0.0, identity_tone: false, headroom: false, preview: None, compact: false, as_shot_white: white };
+    // balanced (white D65): grey stays grey and the as-shot white is D65
+    let plain = lightcraft_raw::decode(&write_linear_dng(w, h, &grey, &SRGB, &meta, None, look(None)).unwrap()).unwrap();
+    assert!((color::as_shot_white_xy(&plain).x - lightcraft_color::D65.x).abs() < 1e-3);
+    // a picture balanced for a warm light is stored as the raw it came from: the as-shot white is that light, the grey is
+    // not grey any more, and the reader's white balance turns it back to grey
+    let raw = lightcraft_raw::decode(&write_linear_dng(w, h, &grey, &SRGB, &meta, None, look(Some(warm))).unwrap()).unwrap();
+    let white = color::as_shot_white_xy(&raw);
+    assert!((white.x - warm.x).abs() < 2e-3 && (white.y - warm.y).abs() < 2e-3, "{white:?}");
+    let px = raw.develop(Method::Bilinear).unwrap().data[0];
+    assert!((px[0] - px[2]).abs() > 0.1, "stored unbalanced: {px:?}");
+    let t = color::camera_transform(&raw, white);
+    let balanced = [px[0] * t.wb[0], px[1] * t.wb[1], px[2] * t.wb[2]];
+    let spread = balanced.iter().cloned().fold(f32::MIN, f32::max) - balanced.iter().cloned().fold(f32::MAX, f32::min);
+    assert!(spread < 0.01 * balanced[1], "{balanced:?}");
+    // a white that is not a colour is ignored, not written
+    for bad in [lightcraft_color::Xy::new(f64::NAN, 0.3), lightcraft_color::Xy::new(0.0, 0.0), lightcraft_color::Xy::new(0.3, 5.0)] {
+        let raw = lightcraft_raw::decode(&write_linear_dng(w, h, &grey, &SRGB, &meta, None, look(Some(bad))).unwrap()).unwrap();
+        assert!((color::as_shot_white_xy(&raw).x - lightcraft_color::D65.x).abs() < 1e-3, "{bad:?}");
+    }
 }

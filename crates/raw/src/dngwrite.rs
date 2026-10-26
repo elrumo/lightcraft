@@ -528,6 +528,11 @@ pub struct LinearDngLook<'a> {
     /// 16-bit integer samples under lossless JPEG (a half to a third of float's size) instead of half floats under
     /// deflate. The range is the data's own (1 with `headroom` the largest sample's power of two, else white), in 65535 steps.
     pub compact: bool,
+    /// The scene white (`xy`) the picture was white balanced for, when the decoder knows it. The picture is then stored
+    /// as the raw it came from, not yet balanced (multiplied back by that white's neutral), under `AsShotNeutral`, so
+    /// the reader's white balance works as on a raw: the true as-shot temperature and tint, As Shot, Auto, and moves
+    /// that start from the camera's own white instead of D65. `None`: stored balanced, the as-shot white is D65.
+    pub as_shot_white: Option<lightcraft_color::Xy>,
 }
 
 /// Render to DNG: a linear DNG (`LinearRaw`, 16-bit float Deflate tiles) of an already rendered,
@@ -551,7 +556,7 @@ pub fn write_rendered_dng(
         space,
         metadata,
         xmp,
-        LinearDngLook { baseline_exposure: 0.0, identity_tone: true, headroom: false, preview: None, compact: false },
+        LinearDngLook { baseline_exposure: 0.0, identity_tone: true, headroom: false, preview: None, compact: false, as_shot_white: None },
     )
 }
 
@@ -573,6 +578,19 @@ pub fn write_linear_dng(
     let src = rgb.get(..n).ok_or_else(|| RawError::Corrupt(format!("{} samples for a {width}×{height} RGB image", rgb.len())))?;
     let mut data: Vec<f32> = src.iter().map(|&v| if v.is_finite() { v.clamp(0.0, 65504.0) } else { 0.0 }).collect();
     let mut baseline = if look.baseline_exposure.is_finite() { look.baseline_exposure } else { 0.0 };
+    // balanced -> as the raw was: the white's neutral (largest 1, so brightness stays) multiplies each channel back
+    let neutral = look
+        .as_shot_white
+        .filter(|w| w.x.is_finite() && w.y.is_finite() && (0.05..0.8).contains(&w.x) && (0.05..0.8).contains(&w.y))
+        .map(|w| {
+            let probe = crate::ColorData { illuminant: [illuminant_of(space.white), 0], color_matrix: [Some(space.from_xyz()), None], ..Default::default() };
+            crate::color::camera_neutral(&probe, w)
+        })
+        .filter(|n| n.iter().all(|v| v.is_finite() && *v > 1e-4));
+    if let Some(n) = neutral {
+        let k = n.map(|v| v as f32);
+        data.chunks_exact_mut(3).for_each(|px| px.iter_mut().zip(k).for_each(|(v, k)| *v *= k));
+    }
     if look.headroom {
         let peak = data.iter().copied().fold(1.0f32, f32::max);
         let shift = peak.log2().ceil().clamp(0.0, 12.0) as i32;
@@ -594,7 +612,7 @@ pub fn write_linear_dng(
         illuminant: [illuminant_of(space.white), 0],
         color_matrix: [Some(space.from_xyz()), None],
         forward_matrix: [Some(forward), None],
-        as_shot_neutral: Some([1.0; 3]),
+        as_shot_neutral: Some(neutral.unwrap_or([1.0; 3])),
         baseline_exposure: baseline,
         profile: crate::profile::ProfileLook {
             tone_curve: look.identity_tone.then(|| crate::profile::ToneCurve { points: vec![[0.0, 0.0], [1.0, 1.0]] }),

@@ -33,6 +33,25 @@ version. It builds the web app once, then:
   and `:latest`, and the same without the web app as `…-lite` / `:lite` (prereleases get only their exact version);
 - a draft GitHub release `LightCraft Server v<version>` with the zips and `SHA256SUMS-server.txt`.
 
+### From your own Mac instead
+
+[`tools/release-server.sh`](../tools/release-server.sh) builds the same release on a Mac, from the committed code
+(`HEAD`), with no GitHub Actions minutes and no secrets:
+
+```sh
+tools/release-server.sh                      # builds the zips in dist/release/server (nothing leaves the Mac)
+tools/release-server.sh --upload             # also puts them on a draft release server-v<version>
+tools/release-server.sh --upload --publish   # also publishes it: the Mac installer downloads published releases
+tools/release-server.sh --docker             # also builds and pushes the Docker image (log in with `docker login` first)
+```
+
+It builds macOS arm64 and x86_64 with cargo, and Linux x86_64 and aarch64 inside Docker (the image's own cross-build),
+checks that the Mac build starts and serves, and writes `SHA256SUMS-server.txt`. It has no Windows build: run the
+workflow by hand (Actions > Server > Run workflow, "publish") afterwards to add the Windows zips; the workflow
+merges its checksums with the ones already on the release (and replaces the zips it also builds). A tag push for a
+release that is already published from a Mac does nothing, so publishing from the Mac does not start a second build.
+Options: `--version`, `--image`, `--skip-linux`, `--skip-intel`.
+
 Set once in the repository settings: the secret `DOCKERHUB_TOKEN` (a Docker Hub access token that can write the
 repository) and the variables `DOCKERHUB_USERNAME` and, if the image isn't `<username>/lightcraft-server`,
 `DOCKERHUB_IMAGE`. A manual run without "publish" only builds (the dry run). The binaries are unsigned: on a Mac the
