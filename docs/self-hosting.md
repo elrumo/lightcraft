@@ -104,6 +104,34 @@ container as `healthy`; `docker logs lightcraft` shows the setup code. On a Syno
 
 ### The program (macOS, Linux, Windows)
 
+#### On a Mac: one command
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/elrumo/lightcraft/main/apps/lightcraft-server/install.sh | sh
+```
+
+It downloads the newest server release for your Mac (Apple silicon or Intel), checks its checksum and installs it:
+the program and the web app go to `~/Library/Application Support/LightCraft Server`, and a launchd agent starts the
+server at every login and restarts it if it stops. It prints the admin page's address
+(`http://localhost:8080/admin`, reachable from your other devices at `http://<this Mac's name>.local:8080`) and the
+one-time setup code. Data is kept in `~/Library/Application Support/LightCraft Server/data`, the log in
+`~/Library/Logs/LightCraft Server/server.log`. macOS may ask once to let it accept network connections: allow it.
+
+Already downloaded the zip? Unzip it, clear the download flag once and run the same installer from inside it
+(`--data DIR`, `--listen HOST:PORT` and `--web DIR` change where it keeps data, what it listens on and which web app
+it serves; the default is `0.0.0.0:8080`, for a home network):
+
+```sh
+xattr -dr com.apple.quarantine lightcraft-server-*-macos-*
+./lightcraft-server-*-macos-*/lightcraft-server install
+```
+
+Remove it with `~/Library/Application\ Support/LightCraft\ Server/program/lightcraft-server uninstall`: it stops the
+server and removes the agent and the program, and keeps your data. The Mac must be awake and logged in for the server
+to answer (System Settings ▸ Energy: prevent automatic sleeping on a Mac used as a server).
+
+#### By hand
+
 Unzip a download from the Releases page and run it from a terminal (Windows: PowerShell). On a Mac, if Gatekeeper
 refuses the program ("cannot be verified"), clear the download flag once: `xattr -dr com.apple.quarantine lightcraft-server-*`.
 
@@ -126,23 +154,7 @@ front of it (see the checklist at the end). A library folder's path is then the 
 To keep it running, start it as a service:
 
 - **Linux (systemd):** the unit [below](#run-it-as-a-service-linux-systemd).
-- **macOS (launchd):** save as `~/Library/LaunchAgents/ai.lightcraft.server.plist`, then
-  `launchctl load ~/Library/LaunchAgents/ai.lightcraft.server.plist` (starts at login and restarts it if it stops):
-
-  ```xml
-  <?xml version="1.0" encoding="UTF-8"?>
-  <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-  <plist version="1.0"><dict>
-    <key>Label</key><string>ai.lightcraft.server</string>
-    <key>ProgramArguments</key><array>
-      <string>/usr/local/lightcraft-server/lightcraft-server</string><string>serve</string>
-      <string>--data</string><string>/Users/you/lightcraft-data</string>
-    </array>
-    <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-    <key>StandardErrorPath</key><string>/Users/you/lightcraft-data/server.log</string>
-  </dict></plist>
-  ```
-
+- **macOS:** `./lightcraft-server install` (below) does it: no service file to write.
 - **Windows (Task Scheduler):** runs at start-up, without a window, and restarts after a failure. In an
   administrator PowerShell:
 

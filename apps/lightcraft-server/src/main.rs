@@ -19,6 +19,8 @@
 //! lightcraft-server check [NAME]
 //! lightcraft-server gc [--dry-run]
 //! lightcraft-server health
+//! lightcraft-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: a launchd agent, see `install`)
+//! lightcraft-server uninstall
 //! ```
 //!
 //! Admins also manage users and devices from the server's web page, `/admin` (until the first
@@ -34,6 +36,8 @@ use std::io::{BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
+
+mod install;
 
 use lightcraft_server::{Config, Server, accounts, folders, gc};
 
@@ -60,6 +64,8 @@ const USAGE: &str = "usage:
   lightcraft-server gc [--dry-run]
   lightcraft-server health                     (is the server answering? exit status)
   lightcraft-server version
+  lightcraft-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: run the server at every login, as a launchd agent)
+  lightcraft-server uninstall                  (macOS: stop it and remove the agent; the data stays)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
 ";
 
@@ -423,6 +429,12 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("the running server finds them within a minute");
             Ok(())
         }
+        ["install"] => install::install(
+            option(args, "--data").map(PathBuf::from),
+            &option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "0.0.0.0:8080".into()),
+            option(args, "--web").map(PathBuf::from),
+        ),
+        ["uninstall"] => install::uninstall(),
         ["version"] => {
             println!("lightcraft-server {}", env!("LIGHTCRAFT_BUILD_VERSION"));
             Ok(())
