@@ -29,6 +29,9 @@ while [ $# -gt 0 ]; do
 done
 [ "$publish" = 0 ] || [ "$upload" = 1 ] || { echo "--publish needs --upload" >&2; exit 1; }
 
+# this checkout has several remotes (origin, upstream): tell gh which repository the release is on
+export GH_REPO=${GH_REPO:-elrumo/lightcraft}
+
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 [ -n "$version" ] || version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
