@@ -52,6 +52,7 @@ pub mod limits;
 pub mod multipart;
 pub mod render;
 pub mod sensitive;
+pub mod telemetry;
 pub mod server_presets;
 pub mod shares;
 mod stats;

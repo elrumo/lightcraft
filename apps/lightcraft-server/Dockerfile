@@ -50,11 +50,11 @@ RUN apt-get update \
  && printf '[target.x86_64-unknown-linux-gnu]\nlinker = "x86_64-linux-gnu-gcc"\n[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' >> "$CARGO_HOME/config.toml"
 WORKDIR /src
 COPY . .
-ARG TARGETARCH LIGHTCRAFT_VERSION LIGHTCRAFT_COMMIT
+ARG TARGETARCH LIGHTCRAFT_VERSION LIGHTCRAFT_COMMIT LIGHTBITES_BUGSINK_DSN
 RUN --mount=type=cache,id=lightcraft-registry-$TARGETARCH,target=/usr/local/cargo/registry \
     --mount=type=cache,id=lightcraft-target-$TARGETARCH,target=/src/target \
     case "$TARGETARCH" in amd64) t=x86_64-unknown-linux-gnu ;; arm64) t=aarch64-unknown-linux-gnu ;; *) echo "unsupported platform: $TARGETARCH" >&2; exit 1 ;; esac \
- && cargo build --release --target "$t" -p lightcraft-server \
+ && LIGHTBITES_BUGSINK_DSN="$LIGHTBITES_BUGSINK_DSN" cargo build --release --target "$t" -p lightcraft-server \
  && mkdir -p /out \
  && cp "target/$t/release/lightcraft-server" /out/
 

@@ -78,6 +78,7 @@ pub(crate) fn raw_json(status: u16, body: String) -> Resp {
 }
 
 pub(crate) fn error(status: u16, msg: impl std::fmt::Display) -> Resp {
+    crate::telemetry::server_error(status);
     json(status, &json!({"error": msg.to_string()}))
 }
 

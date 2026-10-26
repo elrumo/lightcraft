@@ -1,14 +1,13 @@
-# Server release: the sync server as a Docker image on Docker Hub and as downloads for macOS, Linux and
-# Windows (a zip each: the program and the web app it serves). See docs/self-hosting.md and docs/releasing.md.
+# LightBites Server release: the lite Docker image and macOS, Linux and Windows downloads. Source and
+# workflow live in LightCraft; release assets go to elrumo/lightbites-server.
 #
 #   git tag server-v0.14.0 && git push origin server-v0.14.0
 #
 # or run it by hand (Actions > Server > Run workflow) with a version; a manual run only pushes the image
 # and creates the release when "publish" is ticked, so it can dry-run the builds.
 #
-# Needs, in the repository's settings: the secret DOCKERHUB_TOKEN (a Docker Hub access token with write access)
-# and the variables DOCKERHUB_USERNAME and (optionally) DOCKERHUB_IMAGE, the image's name
-# (default: <DOCKERHUB_USERNAME>/lightcraft-server).
+# Needs: DOCKERHUB_TOKEN (Docker Hub write access) and LIGHTBITES_SERVER_RELEASE_TOKEN
+# (contents:write on elrumo/lightbites-server). The Bugsink DSN is a public ingest key.
 name: Server
 
 on:
@@ -65,7 +64,7 @@ jobs:
           echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "not a version: $v"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
           built=false
-          if [ "$GITHUB_REF_TYPE" = tag ] && gh release view "server-v$v" --repo "$GITHUB_REPOSITORY" --json isDraft,assets --jq 'select(.isDraft == false and (.assets | length) >= 4)' 2>/dev/null | grep -q .; then built=true; fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && gh release view "server-v$v" --repo elrumo/lightbites-server --json isDraft,assets --jq 'select(.isDraft == false and (.assets | length) >= 4)' 2>/dev/null | grep -q .; then built=true; fi
           echo "built=$built" >> "$GITHUB_OUTPUT"
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           case "$v" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;; *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;; esac
@@ -114,6 +113,7 @@ jobs:
         shell: bash
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      LIGHTBITES_BUGSINK_DSN: ${{ vars.LIGHTBITES_BUGSINK_DSN || 'https://864779c6953e435696525549a16dae9c@bugs.eliasruiz.com/11' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
@@ -170,10 +170,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      # no Docker Hub account set up (DOCKERHUB_USERNAME): build the image, push nothing
-      PUBLISH: ${{ needs.version.outputs.publish == 'true' && vars.DOCKERHUB_USERNAME != '' }}
+      # Without a Docker Hub token, build the image without pushing.
+      PUBLISH: ${{ needs.version.outputs.publish == 'true' && secrets.DOCKERHUB_TOKEN != '' }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
-      IMAGE: ${{ vars.DOCKERHUB_IMAGE || format('{0}/lightcraft-server', vars.DOCKERHUB_USERNAME) }}
+      IMAGE: elrumo/lightbites-server
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-qemu-action@v3
@@ -181,22 +181,19 @@ jobs:
       - uses: docker/login-action@v3
         if: env.PUBLISH == 'true'
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
+          username: elrumo
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Tags
         id: tags
         run: |
           set -euo pipefail
           t="$IMAGE:$VERSION"
-          tl="$IMAGE:$VERSION-lite"
           if [ "$PRERELEASE" = false ]; then
             major_minor="${VERSION%.*}"
             t="$t,$IMAGE:$major_minor,$IMAGE:latest"
-            tl="$tl,$IMAGE:$major_minor-lite,$IMAGE:lite"
           fi
-          echo "full=$t" >> "$GITHUB_OUTPUT"
-          echo "lite=$tl" >> "$GITHUB_OUTPUT"
-      # The lite image (server + admin page, no web app) first: BuildKit then reuses its server stage for the full one.
+          echo "tags=$t" >> "$GITHUB_OUTPUT"
+      # Publish the lite target (server + admin page, no bundled web client).
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -204,26 +201,11 @@ jobs:
           target: lite
           platforms: linux/amd64,linux/arm64
           push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ steps.tags.outputs.lite }}
+          tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             LIGHTCRAFT_VERSION=${{ env.VERSION }}
             LIGHTCRAFT_COMMIT=${{ github.sha }}
-          labels: |
-            org.opencontainers.image.version=${{ env.VERSION }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.licenses=MIT OR Apache-2.0
-          cache-from: type=gha,scope=server
-          cache-to: type=gha,scope=server,mode=max
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/lightcraft-server/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ steps.tags.outputs.full }}
-          build-args: |
-            LIGHTCRAFT_VERSION=${{ env.VERSION }}
-            LIGHTCRAFT_COMMIT=${{ github.sha }}
+            LIGHTBITES_BUGSINK_DSN=${{ vars.LIGHTBITES_BUGSINK_DSN || 'https://864779c6953e435696525549a16dae9c@bugs.eliasruiz.com/11' }}
           labels: |
             org.opencontainers.image.version=${{ env.VERSION }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -241,7 +223,8 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.LIGHTBITES_SERVER_RELEASE_TOKEN }}
+      RELEASE_REPO: elrumo/lightbites-server
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -253,7 +236,7 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum *.zip > new.txt
-          if gh release download "server-v$VERSION" --repo "$GITHUB_REPOSITORY" -p SHA256SUMS-server.txt -O old.txt 2>/dev/null; then
+          if gh release download "server-v$VERSION" --repo "$RELEASE_REPO" -p SHA256SUMS-server.txt -O old.txt 2>/dev/null; then
             awk 'NR == FNR { new[$2] = 1; next } !($2 in new)' new.txt old.txt > keep.txt
           else
             : > keep.txt
@@ -266,12 +249,12 @@ jobs:
         run: |
           set -euo pipefail
           tag="server-v$VERSION"
-          title="LightCraft Server v$VERSION"
+          title="LightBites Server v$VERSION"
           flags=(); [ "$PRERELEASE" = true ] && flags+=(--prerelease)
-          notes="Self-hosted sync server. Docker: \`docker pull ${{ vars.DOCKERHUB_IMAGE || format('{0}/lightcraft-server', vars.DOCKERHUB_USERNAME) }}:$VERSION\`. Install guide: https://github.com/${{ github.repository }}/blob/main/docs/self-hosting.md"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$tag" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          notes="Self-hosted LightBites sync server. Docker: \`docker pull elrumo/lightbites-server:$VERSION\`. Setup and troubleshooting guides: https://lightbites.app/server"
+          if gh release view "$tag" --repo "$RELEASE_REPO" > /dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber --repo "$RELEASE_REPO"
           else
             gh release create "$tag" dist/* --draft "${flags[@]}" --title "$title" --notes "$notes" \
-              --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+              --target main --repo "$RELEASE_REPO"
           fi

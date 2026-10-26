@@ -6,6 +6,17 @@ dist
 log
 .git
 .claude
+# These sibling projects and their local corpora/build outputs are not server build inputs.
+apps/lightbites-*
+/temp
+**/node_modules
+**/.output
+**/brag-output
+**/test-raws
+**/temp-tests
+**/build-verify
+**/xcode/build
+**/.git
 # SwiftPM / xtool build output of the native apps (gigabytes; gitignored, so REF= builds never had it)
 **/.build
 **/.rust

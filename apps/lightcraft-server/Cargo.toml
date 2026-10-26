@@ -35,6 +35,8 @@ log = { workspace = true }
 lightcraft-sysmem = { workspace = true }
 # sizing the thread pool decodes and develops run on (`limits`)
 rayon = { workspace = true }
+# Optional Sentry-compatible reporting to Bugsink. Rustls keeps the client pure Rust.
+sentry = { version = "0.49.3", default-features = false, features = ["ureq", "rustls"] }
 # the lighter copies of videos (`video`): reading a clip's header, encoding it again when no Mac helper does
 lightcraft-video = { workspace = true }
 

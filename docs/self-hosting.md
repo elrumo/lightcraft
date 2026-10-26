@@ -29,6 +29,14 @@ Sync is optional: LightCraft works without an account or a server, and nothing l
 The server itself speaks plain HTTP. **Never open its port (8080) to the internet**: passwords and photos would
 travel in the clear. Put it behind Caddy (A), keep it on a tailnet (B), or keep it on your home network (C).
 
+### Anonymous telemetry
+
+Official builds send one anonymous install event per data directory, aggregate user and signed-in-device counts when
+the server starts, and sanitized HTTP 5xx error events to Bugsink. Events include the server version and do not
+include account or device names, photos, file paths, or request bodies. Bugsink receives the server's network address
+as part of the connection. Set `LIGHTBITES_TELEMETRY=0` in the server environment to disable reporting; the
+`.lightbites-telemetry-installed` marker in `/data` prevents duplicate install events.
+
 ## 2. Deploy the server
 
 You need a machine that stays on — a home server, a NAS that runs Docker, a small VPS — with:
@@ -43,11 +51,11 @@ You need a machine that stays on — a home server, a NAS that runs Docker, a sm
 
 Two ways to get it, both prebuilt for 64-bit Intel/AMD and ARM (Apple silicon, Raspberry Pi 4 and newer, most NASes):
 
-- **The Docker image** on Docker Hub, [`elrumo/lightcraft-server`](https://hub.docker.com/r/elrumo/lightcraft-server)
-  (server and web app; `:latest`, or a version such as `:0.14.0`, or `:0.14`). `elrumo/lightcraft-server:lite` leaves
-  out the web app (the server and its admin page, for people who only use the apps).
+- **The Docker image** on Docker Hub, [`elrumo/lightbites-server`](https://hub.docker.com/r/elrumo/lightbites-server)
+  (the server and admin page; `:latest`, or a version such as `:0.14.0`, or `:0.14`). The browser editor is not
+  bundled in this lightweight image; use the LightBites apps to browse and edit the library.
 - **The program**, a zip per system from the
-  [Releases page](https://github.com/elrumo/lightcraft/releases?q=server): `lightcraft-server-<version>-<system>.zip`
+  [LightBites Server Releases](https://github.com/elrumo/lightbites-server/releases): `lightcraft-server-<version>-<system>.zip`
   for `macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, `windows-x86_64` and `windows-arm64`. It holds
   `lightcraft-server` (`.exe` on Windows) and a `web` folder next to it, which the server serves by itself.
 
@@ -69,7 +77,8 @@ Two ways to get it, both prebuilt for 64-bit Intel/AMD and ARM (Apple silicon, R
    `LIGHTCRAFT_PHOTOS=…` on the next, `LIGHTCRAFT_BIND=127.0.0.1` and `COMPOSE_PROFILES=https`) and run
    `docker compose -f docker-compose.hub.yml up -d` from then on.
 3. Check that it runs: `docker compose -f docker-compose.hub.yml ps` shows the server as `healthy`, and
-   `https://photos.example.com` opens the web app.
+   `https://photos.example.com/admin` opens the server's admin page. Open the [LightBites server guides](https://lightbites.app/server)
+   to connect the apps or use the browser client.
 4. Get the one-time setup code: `docker compose -f docker-compose.hub.yml logs lightcraft` →
    `… enter the setup code ABCD-1234`.
 
@@ -82,7 +91,7 @@ Then go on with [first-run setup](#3-first-run-setup). (Every `docker compose �
 
 ```sh
 docker run -d --name lightcraft --restart unless-stopped -p 127.0.0.1:8080:8080 \
-  -v lightcraft-data:/data -v /srv/photos:/photos:ro elrumo/lightcraft-server
+  -v lightcraft-data:/data -v /srv/photos:/photos:ro elrumo/lightbites-server
 tailscale serve --bg 8080          # → https://<this machine>.<your tailnet>.ts.net
 ```
 
@@ -93,7 +102,7 @@ the tailnet address instead — `-p 100.x.y.z:8080:8080` — and use `http://<ma
 
 ```sh
 docker run -d --name lightcraft --restart unless-stopped -p 8080:8080 \
-  -v lightcraft-data:/data -v /srv/photos:/photos:ro elrumo/lightcraft-server
+  -v lightcraft-data:/data -v /srv/photos:/photos:ro elrumo/lightbites-server
 ```
 
 and use `http://<the machine's address>:8080` (allow port 8080 in its firewall).
@@ -340,7 +349,7 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 ## 5. Running it
 
 - **Updating:** `docker compose -f docker-compose.hub.yml pull && docker compose -f docker-compose.hub.yml up -d`
-  (plain Docker: `docker pull elrumo/lightcraft-server`, remove the container and run it again; the program: replace
+  (plain Docker: `docker pull elrumo/lightbites-server`, remove the container and run it again; the program: replace
   it with the new release's; from source: `git pull` and rebuild). The data stays in its volume; the library is upgraded on open. **Update the apps too:** a
   newer server's library can be one an older app can't read.
 - **Backups:** everything the server keeps is in its data folder (the `lightcraft-data` volume, `/srv/lightcraft`

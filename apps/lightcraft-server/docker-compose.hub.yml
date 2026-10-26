@@ -18,10 +18,12 @@ name: lightcraft
 
 services:
   lightcraft:
-    image: ${LIGHTCRAFT_IMAGE:-elrumo/lightcraft-server:latest}
+    image: ${LIGHTCRAFT_IMAGE:-elrumo/lightbites-server:latest}
     restart: unless-stopped
     environment:
       LIGHTCRAFT_LOG: info
+      # Anonymous install, aggregate usage, and sanitized server error events; set to 0 to disable.
+      LIGHTBITES_TELEMETRY: ${LIGHTBITES_TELEMETRY:-1}
       # minutes between scans of the library folders (0: at start and from the admin page only)
       LIGHTCRAFT_SCAN_INTERVAL: "15"
     volumes:

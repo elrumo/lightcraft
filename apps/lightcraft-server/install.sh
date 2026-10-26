@@ -10,8 +10,8 @@
 # file needs no Gatekeeper approval for).
 set -eu
 
-repo=elrumo/lightcraft
-[ "$(uname -s)" = Darwin ] || { echo "This installer is for macOS. For Linux, Windows and Docker see https://github.com/$repo/blob/main/docs/self-hosting.md" >&2; exit 1; }
+repo=elrumo/lightbites-server
+[ "$(uname -s)" = Darwin ] || { echo "This installer is for macOS. For Linux, Windows and Docker see https://lightbites.app/server" >&2; exit 1; }
 case "$(uname -m)" in
   arm64) system=macos-arm64 ;;
   x86_64) system=macos-x86_64 ;;

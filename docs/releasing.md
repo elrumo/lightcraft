@@ -29,9 +29,10 @@ version. It builds the web app once, then:
 - a zip per system (`macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, `windows-x86_64`,
   `windows-arm64`) holding `lightcraft-server`, its `web` folder and the licences, each smoke-tested (starts, answers
   `/health`, serves the web app);
-- the multi-platform Docker image (`linux/amd64`, `linux/arm64`) on Docker Hub as `<image>:<version>`, `:<major.minor>`
-  and `:latest`, and the same without the web app as `…-lite` / `:lite` (prereleases get only their exact version);
-- a draft GitHub release `LightCraft Server v<version>` with the zips and `SHA256SUMS-server.txt`.
+- the multi-platform lite image (`linux/amd64`, `linux/arm64`) on Docker Hub as
+  `elrumo/lightbites-server:<version>`, `:<major.minor>` and `:latest` (prereleases get only their exact version);
+- a draft GitHub release `LightBites Server v<version>` in `elrumo/lightbites-server`, with the zips and
+  `SHA256SUMS-server.txt`.
 
 ### From your own Mac instead
 
@@ -52,9 +53,10 @@ merges its checksums with the ones already on the release (and replaces the zips
 release that is already published from a Mac does nothing, so publishing from the Mac does not start a second build.
 Options: `--version`, `--image`, `--skip-linux`, `--skip-intel`.
 
-Set once in the repository settings: the secret `DOCKERHUB_TOKEN` (a Docker Hub access token that can write the
-repository) and the variables `DOCKERHUB_USERNAME` and, if the image isn't `<username>/lightcraft-server`,
-`DOCKERHUB_IMAGE`. A manual run without "publish" only builds (the dry run). The binaries are unsigned: on a Mac the
+Set repository secret `DOCKERHUB_TOKEN` (write access to `elrumo/lightbites-server`) and
+`LIGHTBITES_SERVER_RELEASE_TOKEN` (contents write access to `elrumo/lightbites-server`). The workflow embeds the
+public Bugsink ingest DSN, overridable with the `LIGHTBITES_BUGSINK_DSN` repository variable. A manual run without
+"publish" only builds (the dry run). The binaries are unsigned: on a Mac the
 download needs `xattr -dr com.apple.quarantine` once (documented in [self-hosting.md](self-hosting.md)). Keep the
 version at or above the app's in `Cargo.toml`: the apps and the server are updated together.
 

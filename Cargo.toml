@@ -1,12 +1,13 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
-# the patched egui-wgpu is a path dependency, not one of ours to lint and test; apps/lightbites-web is
-# a web project checked out under apps/ (no Cargo.toml), which the `apps/*` glob would otherwise take
-exclude = ["third_party", "apps/lightbites-web"]
+# the patched egui-wgpu is a path dependency, not one of ours to lint and test; apps/lightbites-web and
+# apps/lightbites-server are their own repositories checked out under apps/ (no Cargo.toml), which the
+# `apps/*` glob would otherwise take
+exclude = ["third_party", "apps/lightbites-web", "apps/lightbites-server"]
 
 [workspace.package]
-version = "0.13.0"
+version = "0.13.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"

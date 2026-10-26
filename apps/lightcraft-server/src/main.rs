@@ -162,6 +162,7 @@ fn run(args: &[String]) -> Result<(), String> {
     let pos = if args.iter().any(|a| a == "--version") { vec!["version"] } else { pos };
     match pos.as_slice() {
         ["serve"] => {
+            let _telemetry = lightcraft_server::telemetry::start(&data);
             let listen = option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into());
             // `--web`, `$LIGHTCRAFT_WEB`, else the `web` folder next to the program (a downloaded release ships one)
             let web = option(args, "--web")

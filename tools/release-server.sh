@@ -6,14 +6,14 @@
 #   tools/release-server.sh --upload              # and puts them on a DRAFT GitHub release server-v<version>
 #   tools/release-server.sh --upload --publish    # and publishes it (the release the macOS installer downloads)
 #   tools/release-server.sh --docker              # and builds + pushes the Docker image (amd64 + arm64) to Docker Hub
-#   --version 0.14.0   --image user/name (default elrumo/lightcraft-server)   --skip-linux   --skip-intel
+#   --version 0.14.0   --image user/name (default elrumo/lightbites-server)   --skip-linux   --skip-intel
 #
 # Builds: macOS arm64 and x86_64 (cargo, here), Linux x86_64 and aarch64 (cross-built in Docker, the image's own
 # server stage). No Windows (needs a Windows toolchain: use the workflow). Needs: rust (+ wasm32 target and
 # wasm-bindgen-cli, as for `cargo xtask web`), docker (OrbStack/Docker Desktop) for Linux and --docker, gh for --upload.
 set -eu
 
-version="" image=elrumo/lightcraft-server upload=0 publish=0 docker_push=0 linux=1 intel=1
+version="" image=elrumo/lightbites-server upload=0 publish=0 docker_push=0 linux=1 intel=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version=$2; shift ;;
@@ -30,7 +30,7 @@ done
 [ "$publish" = 0 ] || [ "$upload" = 1 ] || { echo "--publish needs --upload" >&2; exit 1; }
 
 # this checkout has several remotes (origin, upstream): tell gh which repository the release is on
-export GH_REPO=${GH_REPO:-elrumo/lightcraft}
+export GH_REPO=${GH_REPO:-elrumo/lightbites-server}
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
@@ -49,6 +49,7 @@ echo "== LightCraft Server $version from commit $commit"
 
 # the version and commit the admin page shows (there is no .git in the archive)
 export LIGHTCRAFT_VERSION=$version LIGHTCRAFT_COMMIT=$commit
+export LIGHTBITES_BUGSINK_DSN=${LIGHTBITES_BUGSINK_DSN:-https://864779c6953e435696525549a16dae9c@bugs.eliasruiz.com/11}
 target_dir=${CARGO_TARGET_DIR:-$src/target}
 
 echo "== web app"
@@ -113,42 +114,40 @@ if [ "$docker_push" = 1 ]; then
   minor=${version%.*}
   common="--platform linux/amd64,linux/arm64 -f apps/lightcraft-server/Dockerfile --build-arg LIGHTCRAFT_VERSION=$version --build-arg LIGHTCRAFT_COMMIT=$commit --label org.opencontainers.image.version=$version --label org.opencontainers.image.source=https://github.com/elrumo/lightcraft"
   case "$version" in
-    *-*) lite_tags="-t $image:$version-lite"; full_tags="-t $image:$version" ;; # a prerelease: its own version only
-    *) lite_tags="-t $image:$version-lite -t $image:$minor-lite -t $image:lite"; full_tags="-t $image:$version -t $image:$minor -t $image:latest" ;;
+    *-*) lite_tags="-t $image:$version" ;; # a prerelease: its own version only
+    *) lite_tags="-t $image:$version -t $image:$minor -t $image:latest" ;;
   esac
   # shellcheck disable=SC2086
-  docker buildx build $common --target lite $lite_tags --push "$src"
-  # shellcheck disable=SC2086
-  docker buildx build $common $full_tags --push "$src"
+  docker buildx build $common --build-arg "LIGHTBITES_BUGSINK_DSN=$LIGHTBITES_BUGSINK_DSN" --target lite $lite_tags --push "$src"
 fi
 
 if [ "$upload" = 1 ]; then
   echo "== GitHub release $tag"
   git branch -r --contains HEAD | grep -q . || echo "   note: commit $commit is not pushed yet; the release's tag will point at the remote's default branch"
   mergedsums=$(mktemp)
-  if gh release view "$tag" >/dev/null 2>&1; then
+  if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
     # a release that exists (a draft, or Windows zips from the workflow): add to it, keeping the checksums of its other zips
     old=$(mktemp)
-    if gh release download "$tag" -p SHA256SUMS-server.txt -O "$old" 2>/dev/null; then
+    if gh release download "$tag" --repo "$GH_REPO" -p SHA256SUMS-server.txt -O "$old" 2>/dev/null; then
       awk 'NR == FNR { new[$2] = 1; next } !($2 in new)' "$out/SHA256SUMS-server.txt" "$old" > "$mergedsums"
     fi
     rm -f "$old"
     cat "$out/SHA256SUMS-server.txt" >> "$mergedsums"
     sort -k2 "$mergedsums" > "$out/SHA256SUMS-server.txt"
-    gh release upload "$tag" "$out"/* --clobber
+    gh release upload "$tag" "$out"/* --clobber --repo "$GH_REPO"
   else
-    notes="Self-hosted sync server. Docker: \`docker pull $image:$version\`. Mac: \`curl -fsSL https://raw.githubusercontent.com/elrumo/lightcraft/main/apps/lightcraft-server/install.sh | sh\`. Install guide: https://github.com/elrumo/lightcraft/blob/main/docs/self-hosting.md"
+    notes="Self-hosted LightBites sync server. Docker: \`docker pull $image:$version\`. Mac: \`curl -fsSL https://raw.githubusercontent.com/elrumo/lightcraft/main/apps/lightcraft-server/install.sh | sh\`. Setup and troubleshooting: https://lightbites.app/server"
     flags="--draft"
     case "$version" in *-*) flags="$flags --prerelease" ;; esac
     # shellcheck disable=SC2086
-    gh release create "$tag" "$out"/* $flags --title "LightCraft Server v$version" --notes "$notes"
+    gh release create "$tag" "$out"/* $flags --title "LightBites Server v$version" --notes "$notes" --repo "$GH_REPO"
   fi
   rm -f "$mergedsums"
   if [ "$publish" = 1 ]; then
     gh release edit "$tag" --draft=false
-    echo "   published: https://github.com/elrumo/lightcraft/releases/tag/$tag"
+    echo "   published: https://github.com/$GH_REPO/releases/tag/$tag"
   else
-    echo "   draft created: https://github.com/elrumo/lightcraft/releases (open it and click Publish, or re-run with --publish)"
+    echo "   draft created: https://github.com/$GH_REPO/releases (open it and click Publish, or re-run with --publish)"
   fi
 fi
 echo "== done: $out"
