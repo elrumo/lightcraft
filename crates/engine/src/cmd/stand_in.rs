@@ -17,6 +17,49 @@ use crate::{Result, Session};
 /// (the decoded picture, its working-space copy, the DNG's samples).
 const MAX_PIXELS: u64 = 150_000_000;
 
+/// Long edges the look is fitted at, tried in turn (the fit's verdict depends a little on the picture's size; a
+/// DNG that carries the curve it fitted here gives the same look at every render size).
+const FIT_EDGES: [usize; 3] = [1600, 1000, 600];
+
+/// The tone curve that takes the host's linear picture `rgb` to its own rendering `preview` (a JPEG), fitted the way a
+/// DNG with a preview is fitted when it opens, but once, on small copies, and written into the DNG. `None` when no copy
+/// fits (then the DNG keeps the preview and the reader fits it when it opens).
+fn fitted_tone(
+    rgb: &lightcraft_raster::Rgb32f,
+    meta: &lightcraft_meta::Metadata,
+    white: Option<lightcraft_color::Xy>,
+    baseline: f64,
+    preview: &[u8],
+) -> Option<lightcraft_raw::profile::ToneCurve> {
+    for edge in FIT_EDGES {
+        let small = if rgb.width.max(rgb.height) > edge {
+            lightcraft_raster::resample::fit(rgb, edge, edge, lightcraft_raster::resample::Filter::Box)
+        } else {
+            rgb.clone()
+        };
+        let look = lightcraft_raw::LinearDngLook {
+            baseline_exposure: baseline,
+            identity_tone: false,
+            headroom: true,
+            preview: Some(preview),
+            compact: false,
+            as_shot_white: white,
+            tone_curve: None,
+        };
+        let Ok(bytes) =
+            lightcraft_raw::write_linear_dng(small.width, small.height, small.data.as_flattened(), &lightcraft_color::REC2020, meta, None, look)
+        else {
+            continue;
+        };
+        let Ok(mut raw) = lightcraft_raw::decode(&bytes) else { continue };
+        let (_, _, look, _) = crate::camera_preview::starting_colour(&mut raw, &bytes, None, None);
+        if let Some(curve) = look.and_then(|l| crate::camera_preview::dng_tone_curve(&l.tone)) {
+            return Some(curve);
+        }
+    }
+    None
+}
+
 /// The folder of a library's stand-in DNGs.
 fn derived_dir(library: &Path, id_part: &str) -> std::path::PathBuf {
     library.join("Derived").join(id_part)
@@ -91,10 +134,18 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     if rgb.width == 0 || rgb.height == 0 {
         return Err(bad(C, format!("{src}: an empty picture")));
     }
+    let curve = preview.as_deref().and_then(|jpeg| fitted_tone(&rgb, &meta, white, baseline, jpeg));
     // (16-bit integers under lossless JPEG, or half floats under deflate: which is smaller depends on the picture)
     let compact = p.get("compact").and_then(Value::as_bool).unwrap_or(true);
-    let look =
-        lightcraft_raw::LinearDngLook { baseline_exposure: baseline, identity_tone: false, headroom: true, preview: preview.as_deref(), compact, as_shot_white: white };
+    let look = lightcraft_raw::LinearDngLook {
+        baseline_exposure: baseline,
+        identity_tone: false,
+        headroom: true,
+        preview: preview.as_deref(),
+        compact,
+        as_shot_white: white,
+        tone_curve: curve.as_ref(),
+    };
     let dng = lightcraft_raw::write_linear_dng(rgb.width, rgb.height, rgb.data.as_flattened(), &lightcraft_color::REC2020, &meta, None, look)
         .map_err(|e| bad(C, e.to_string()))?;
     let (width, height) = (rgb.width, rgb.height);

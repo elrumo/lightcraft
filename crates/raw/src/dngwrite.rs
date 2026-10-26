@@ -533,6 +533,9 @@ pub struct LinearDngLook<'a> {
     /// the reader's white balance works as on a raw: the true as-shot temperature and tint, As Shot, Auto, and moves
     /// that start from the camera's own white instead of D65. `None`: stored balanced, the as-shot white is D65.
     pub as_shot_white: Option<lightcraft_color::Xy>,
+    /// A `ProfileToneCurve` to write (the look fitted to the host's rendering) in place of the identity curve or none.
+    /// A reader then needs no fit of its own, which could answer differently at another render size.
+    pub tone_curve: Option<&'a crate::profile::ToneCurve>,
 }
 
 /// Render to DNG: a linear DNG (`LinearRaw`, 16-bit float Deflate tiles) of an already rendered,
@@ -556,7 +559,15 @@ pub fn write_rendered_dng(
         space,
         metadata,
         xmp,
-        LinearDngLook { baseline_exposure: 0.0, identity_tone: true, headroom: false, preview: None, compact: false, as_shot_white: None },
+        LinearDngLook {
+            baseline_exposure: 0.0,
+            identity_tone: true,
+            headroom: false,
+            preview: None,
+            compact: false,
+            as_shot_white: None,
+            tone_curve: None,
+        },
     )
 }
 
@@ -583,7 +594,8 @@ pub fn write_linear_dng(
         .as_shot_white
         .filter(|w| w.x.is_finite() && w.y.is_finite() && (0.05..0.8).contains(&w.x) && (0.05..0.8).contains(&w.y))
         .map(|w| {
-            let probe = crate::ColorData { illuminant: [illuminant_of(space.white), 0], color_matrix: [Some(space.from_xyz()), None], ..Default::default() };
+            let probe =
+                crate::ColorData { illuminant: [illuminant_of(space.white), 0], color_matrix: [Some(space.from_xyz()), None], ..Default::default() };
             crate::color::camera_neutral(&probe, w)
         })
         .filter(|n| n.iter().all(|v| v.is_finite() && *v > 1e-4));
@@ -615,7 +627,10 @@ pub fn write_linear_dng(
         as_shot_neutral: Some(neutral.unwrap_or([1.0; 3])),
         baseline_exposure: baseline,
         profile: crate::profile::ProfileLook {
-            tone_curve: look.identity_tone.then(|| crate::profile::ToneCurve { points: vec![[0.0, 0.0], [1.0, 1.0]] }),
+            tone_curve: look
+                .tone_curve
+                .cloned()
+                .or_else(|| look.identity_tone.then(|| crate::profile::ToneCurve { points: vec![[0.0, 0.0], [1.0, 1.0]] })),
             ..Default::default()
         },
         ..Default::default()

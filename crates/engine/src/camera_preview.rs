@@ -452,7 +452,7 @@ fn declaring(xy: Xy, neutral: [f64; 3]) -> Option<Mat3> {
 
 /// A camera tone curve as a DNG `ProfileToneCurve` (linear in, linear out, 1 = white): sampled densely over the
 /// 12 stops below white, the range the curve is read back over (`files::dng_tone_curve`).
-fn dng_tone_curve(tone: &CameraTone) -> Option<ToneCurve> {
+pub(crate) fn dng_tone_curve(tone: &CameraTone) -> Option<ToneCurve> {
     const N: usize = 256;
     let samples = (0..=N).map(|i| {
         let x = 2f32.powf(-12.0 + 12.0 * i as f32 / N as f32);
