@@ -49,10 +49,10 @@ lightcraft-video = { path = "crates/video" }
 # FilmCraft (same organisation, Apache-2.0, clean-room, pure Rust): the MP4/MOV demuxer and the H.264 / HEVC decoders
 # behind lightcraft-video. One rev for all of them (they move together, docs/video.md), and no `filmcraft-codecs`
 # (it pulls symphonia, MPL-2.0).
-filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
-filmcraft-h264 = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
-filmcraft-hevc = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
-filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "d643a886650bfbf16f24762274054575aa1e8f20" }
+filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "8fda2f232198c4c79ff9cfe5b6a347bb1375fa9e" }
+filmcraft-h264 = { git = "https://github.com/storytold/filmcraft", rev = "8fda2f232198c4c79ff9cfe5b6a347bb1375fa9e" }
+filmcraft-hevc = { git = "https://github.com/storytold/filmcraft", rev = "8fda2f232198c4c79ff9cfe5b6a347bb1375fa9e" }
+filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "8fda2f232198c4c79ff9cfe5b6a347bb1375fa9e" }
 lightcraft-segment = { path = "crates/segment" }
 lightcraft-diffuse = { path = "crates/diffuse" }
 lightcraft-enhance = { path = "crates/enhance" }
