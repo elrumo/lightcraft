@@ -191,7 +191,7 @@ pub fn recent_list(recent: &[String], open: Option<&Path>) -> Vec<Value> {
 
 /// A library described without opening it: `{name, exists, library (its catalog is there), open,
 /// modified (when its catalog last changed, Unix seconds), sync}`. `sync` is `null` for a library
-/// that never synced, else `{server, user, signedIn, joined (it is a copy of the account's
+/// that never synced (`icloud`: it keeps its photos in iCloud Drive), else `{server, user, signedIn, joined (it is a copy of the account's
 /// library)}`, from its `sync.json` (the open library's from `session`, which is newer). Reads a
 /// few small files: the folder isn't listed.
 pub fn describe(dir: &Path, session: &Session) -> Value {
@@ -204,6 +204,15 @@ pub fn describe(dir: &Path, session: &Session) -> Value {
             sync_json(&c, signed_in)
         })
     };
+    // (kept in iCloud Drive: iCloud sync on with its photos, from `icloud.json` for a library that isn't open)
+    let icloud = if open {
+        session.icloud_keeps_photos()
+    } else {
+        std::fs::read(dir.join(lightcraft_engine::icloud::STATE))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<lightcraft_engine::icloud::Saved>(&b).ok())
+            .is_some_and(|s| s.on && s.photos)
+    };
     json!({
         "name": name(dir),
         "exists": dir.is_dir(),
@@ -211,6 +220,7 @@ pub fn describe(dir: &Path, session: &Session) -> Value {
         "open": open,
         "modified": modified(dir),
         "sync": sync,
+        "icloud": icloud,
     })
 }
 
@@ -456,6 +466,12 @@ mod tests {
         assert!(!d.to_string().contains("secret"));
         let d = describe(&a, &s);
         assert_eq!((d["open"].as_bool(), d["sync"].is_null()), (Some(true), true), "{d}");
+        // kept in iCloud Drive: iCloud sync on with its photos (one with only its presets synced is a plain library)
+        assert_eq!((d["icloud"].as_bool(), describe(&b, &s)["icloud"].as_bool()), (Some(false), Some(false)));
+        std::fs::write(b.join(lightcraft_engine::icloud::STATE), br#"{"on": true, "photos": false}"#).unwrap();
+        assert_eq!(describe(&b, &s)["icloud"], false);
+        std::fs::write(b.join(lightcraft_engine::icloud::STATE), br#"{"on": true, "photos": true}"#).unwrap();
+        assert_eq!(describe(&b, &s)["icloud"], true);
         let gone = describe(&root.join("gone"), &s);
         assert_eq!((gone["exists"].as_bool(), gone["library"].as_bool(), gone["modified"].is_null()), (Some(false), Some(false), true));
         // signed out and emptied (`{}`): never synced

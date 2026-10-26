@@ -413,6 +413,11 @@ fn server_keeps(kind: &str) -> bool {
 }
 
 impl Session {
+    /// Whether this library keeps its photos in iCloud Drive (iCloud sync on, *Keep Photos in iCloud Drive* on).
+    pub fn icloud_keeps_photos(&self) -> bool {
+        self.icloud.as_ref().is_some_and(|ic| ic.saved.photos)
+    }
+
     /// Whether iCloud sync is on for this library.
     pub fn icloud_on(&self) -> bool {
         self.icloud.is_some()
