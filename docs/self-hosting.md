@@ -33,56 +33,56 @@ travel in the clear. Put it behind Caddy (A), keep it on a tailnet (B), or keep 
 
 You need a machine that stays on — a home server, a NAS that runs Docker, a small VPS — with:
 
-- **Docker** (with Compose) for options A and B; or a Rust toolchain to [build it yourself](#without-docker).
+- **Docker** (with Compose) for the image, or nothing but the downloaded program for a Mac, Linux or Windows
+  computer ([below](#the-program-macos-linux-windows)); a Rust toolchain only to [build it yourself](#from-source).
 - **Disk** for what the server keeps: photos uploaded from devices (their originals), plus previews of every photo
   (~1 MB each) and the library itself. Library folders cost only their previews.
 - **Memory**: 2 GB at least; 4 GB or more for big raw files (the server decodes each photo once to build its
   previews). The server sizes its work to the machine (CPU threads, previews and renders at once, from the cores and
   memory it sees, container limits included); change the numbers on the admin page under Overview → Limits.
 
-There is no prebuilt server image yet: the steps below build it from the source (the first build takes 10–20 minutes).
+Two ways to get it, both prebuilt for 64-bit Intel/AMD and ARM (Apple silicon, Raspberry Pi 4 and newer, most NASes):
 
-```sh
-git clone https://github.com/elrumo/lightcraft
-cd lightcraft
-```
+- **The Docker image** on Docker Hub, [`elrumo/lightcraft-server`](https://hub.docker.com/r/elrumo/lightcraft-server)
+  (server and web app; `:latest`, or a version such as `:0.14.0`, or `:0.14`). `elrumo/lightcraft-server:lite` leaves
+  out the web app (the server and its admin page, for people who only use the apps).
+- **The program**, a zip per system from the
+  [Releases page](https://github.com/elrumo/lightcraft/releases?q=server): `lightcraft-server-<version>-<system>.zip`
+  for `macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, `windows-x86_64` and `windows-arm64`. It holds
+  `lightcraft-server` (`.exe` on Windows) and a `web` folder next to it, which the server serves by itself.
 
 ### A. Docker Compose with HTTPS on your own domain
 
 1. Point a DNS name (`photos.example.com`) at the machine, and make ports **80 and 443** reachable from the internet
    (Caddy needs both to get its certificate).
-2. Start the server and Caddy. `LIGHTCRAFT_PHOTOS` is optional: a folder of photos already on this machine, mounted
-   read-only at `/photos` inside the container for [library folders](#add-library-folders-optional).
+2. Download the compose file and start the server and Caddy. `LIGHTCRAFT_PHOTOS` is optional: a folder of photos
+   already on this machine, mounted read-only at `/photos` inside the container for
+   [library folders](#add-library-folders-optional).
 
    ```sh
-   cd apps/lightcraft-server
-   LIGHTCRAFT_DOMAIN=photos.example.com LIGHTCRAFT_PHOTOS=/srv/photos docker compose up -d --build
+   curl -LO https://raw.githubusercontent.com/elrumo/lightcraft/main/apps/lightcraft-server/docker-compose.hub.yml
+   LIGHTCRAFT_BIND=127.0.0.1 LIGHTCRAFT_DOMAIN=photos.example.com LIGHTCRAFT_PHOTOS=/srv/photos \
+     docker compose -f docker-compose.hub.yml --profile https up -d
    ```
 
-   To keep these settings, put them in `apps/lightcraft-server/.env` (`LIGHTCRAFT_DOMAIN=…` on one line,
-   `LIGHTCRAFT_PHOTOS=…` on the next) and run `docker compose up -d --build` from then on.
-3. Check that it runs: `docker compose ps` shows the server as `healthy`, and
+   To keep these settings, put them in a `.env` file next to the compose file (`LIGHTCRAFT_DOMAIN=…` on one line,
+   `LIGHTCRAFT_PHOTOS=…` on the next, `LIGHTCRAFT_BIND=127.0.0.1` and `COMPOSE_PROFILES=https`) and run
+   `docker compose -f docker-compose.hub.yml up -d` from then on.
+3. Check that it runs: `docker compose -f docker-compose.hub.yml ps` shows the server as `healthy`, and
    `https://photos.example.com` opens the web app.
-4. Get the one-time setup code: `docker compose logs lightcraft` → `… enter the setup code ABCD-1234`.
+4. Get the one-time setup code: `docker compose -f docker-compose.hub.yml logs lightcraft` →
+   `… enter the setup code ABCD-1234`.
 
-Then go on with [first-run setup](#3-first-run-setup).
+Then go on with [first-run setup](#3-first-run-setup). (Every `docker compose …` below needs the same
+`-f docker-compose.hub.yml`, or rename the file to `compose.yaml`.)
 
 ### B. Docker with Tailscale (or on your home network)
-
-Build the image once, from the repository's root:
-
-```sh
-docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .
-```
-
-Only using the apps, never the web client? Add `--target lite`: the image then holds the server and its admin page
-but no web client, and builds faster.
 
 **On a tailnet**, with HTTPS from Tailscale (turn on MagicDNS and HTTPS certificates in the tailnet's admin console):
 
 ```sh
 docker run -d --name lightcraft --restart unless-stopped -p 127.0.0.1:8080:8080 \
-  -v lightcraft-data:/data -v /srv/photos:/photos:ro lightcraft-server
+  -v lightcraft-data:/data -v /srv/photos:/photos:ro elrumo/lightcraft-server
 tailscale serve --bg 8080          # → https://<this machine>.<your tailnet>.ts.net
 ```
 
@@ -93,15 +93,83 @@ the tailnet address instead — `-p 100.x.y.z:8080:8080` — and use `http://<ma
 
 ```sh
 docker run -d --name lightcraft --restart unless-stopped -p 8080:8080 \
-  -v lightcraft-data:/data -v /srv/photos:/photos:ro lightcraft-server
+  -v lightcraft-data:/data -v /srv/photos:/photos:ro elrumo/lightcraft-server
 ```
 
 and use `http://<the machine's address>:8080` (allow port 8080 in its firewall).
 
 In both cases: leave out `-v /srv/photos:/photos:ro` if you have no photo folders to add; `docker ps` shows the
-container as `healthy`; `docker logs lightcraft` shows the setup code.
+container as `healthy`; `docker logs lightcraft` shows the setup code. On a Synology or QNAP NAS, create a project
+(Container Manager) or a container from the same image; the volume that holds `/data` must be writable by uid 10001.
 
-### Without Docker
+### The program (macOS, Linux, Windows)
+
+Unzip a download from the Releases page and run it from a terminal (Windows: PowerShell). On a Mac, if Gatekeeper
+refuses the program ("cannot be verified"), clear the download flag once: `xattr -dr com.apple.quarantine lightcraft-server-*`.
+
+```sh
+cd lightcraft-server-0.14.0-macos-arm64
+./lightcraft-server --version
+./lightcraft-server serve --data ~/lightcraft-data       # http://127.0.0.1:8080 : this computer only
+```
+
+```powershell
+cd lightcraft-server-0.14.0-windows-x86_64
+.\lightcraft-server.exe serve --data C:\lightcraft-data
+```
+
+It serves the `web` folder beside it at `/` (or the one `--web DIR` / `LIGHTCRAFT_WEB` names), keeps everything in the
+data folder, and prints the setup code in the terminal. To let your other devices reach it, listen on the network
+(`--listen 0.0.0.0:8080`) **only on a home network or tailnet**; for the internet put Caddy or `tailscale serve` in
+front of it (see the checklist at the end). A library folder's path is then the folder's real path (`/Volumes/Photos/ann`, `D:\Photos\ann`).
+
+To keep it running, start it as a service:
+
+- **Linux (systemd):** the unit [below](#run-it-as-a-service-linux-systemd).
+- **macOS (launchd):** save as `~/Library/LaunchAgents/ai.lightcraft.server.plist`, then
+  `launchctl load ~/Library/LaunchAgents/ai.lightcraft.server.plist` (starts at login and restarts it if it stops):
+
+  ```xml
+  <?xml version="1.0" encoding="UTF-8"?>
+  <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+  <plist version="1.0"><dict>
+    <key>Label</key><string>ai.lightcraft.server</string>
+    <key>ProgramArguments</key><array>
+      <string>/usr/local/lightcraft-server/lightcraft-server</string><string>serve</string>
+      <string>--data</string><string>/Users/you/lightcraft-data</string>
+    </array>
+    <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+    <key>StandardErrorPath</key><string>/Users/you/lightcraft-data/server.log</string>
+  </dict></plist>
+  ```
+
+- **Windows (Task Scheduler):** runs at start-up, without a window, and restarts after a failure. In an
+  administrator PowerShell:
+
+  ```powershell
+  $a = New-ScheduledTaskAction -Execute "C:\lightcraft-server\lightcraft-server.exe" -Argument "serve --data C:\lightcraft-data" -WorkingDirectory "C:\lightcraft-server"
+  $t = New-ScheduledTaskTrigger -AtStartup
+  $s = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit 0
+  Register-ScheduledTask -TaskName "LightCraft Server" -Action $a -Trigger $t -Settings $s -User "SYSTEM" -RunLevel Highest
+  Start-ScheduledTask -TaskName "LightCraft Server"
+  ```
+
+  The setup code is then in the terminal only when you run the server by hand once first, or from the command line
+  instead of the admin page: `lightcraft-server.exe user add ann --admin --data C:\lightcraft-data`.
+
+Updating the program: stop it, replace `lightcraft-server` and the `web` folder with the new release's, start it.
+The data folder stays.
+
+### From source
+
+```sh
+git clone https://github.com/elrumo/lightcraft
+cd lightcraft
+```
+
+Docker: `docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .` (`--target lite` leaves out the web
+app; the first build takes 10–20 minutes), or `cd apps/lightcraft-server && LIGHTCRAFT_DOMAIN=photos.example.com
+docker compose up -d --build` for the Caddy setup from source. Without Docker:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -112,7 +180,10 @@ sudo install -m 755 target/release/lightcraft-server /usr/local/bin/
 sudo mkdir -p /opt/lightcraft && sudo cp -r target/web-site /opt/lightcraft/web
 ```
 
-Run it as a service (Linux, systemd), on this machine only, behind Caddy or `tailscale serve`:
+### Run it as a service (Linux, systemd)
+
+On this machine only, behind Caddy or `tailscale serve`. With a downloaded zip, put the program and its `web` folder in
+`/opt/lightcraft` and point `ExecStart` there.
 
 ```ini
 # /etc/systemd/system/lightcraft.service
@@ -256,8 +327,9 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 
 ## 5. Running it
 
-- **Updating:** pull the source and rebuild — `git pull && docker compose up -d --build` (or `docker build …` and
-  re-run the container). The data stays in its volume; the library is upgraded on open. **Update the apps too:** a
+- **Updating:** `docker compose -f docker-compose.hub.yml pull && docker compose -f docker-compose.hub.yml up -d`
+  (plain Docker: `docker pull elrumo/lightcraft-server`, remove the container and run it again; the program: replace
+  it with the new release's; from source: `git pull` and rebuild). The data stays in its volume; the library is upgraded on open. **Update the apps too:** a
   newer server's library can be one an older app can't read.
 - **Backups:** everything the server keeps is in its data folder (the `lightcraft-data` volume, `/srv/lightcraft`
   without Docker); your library folders stay where they are, so back them up as you already do. A consistent copy:

@@ -1,0 +1,68 @@
+# LightCraft sync server from Docker Hub: one file, nothing to build or clone. See docs/self-hosting.md.
+#
+#   curl -LO https://raw.githubusercontent.com/elrumo/lightcraft/main/apps/lightcraft-server/docker-compose.hub.yml
+#
+# Home network or Tailscale (plain HTTP on port 8080; never expose that port to the internet):
+#   docker compose -f docker-compose.hub.yml up -d
+#
+# Your own domain, with automatic HTTPS (DNS name pointing here, ports 80 and 443 reachable):
+#   LIGHTCRAFT_BIND=127.0.0.1 LIGHTCRAFT_DOMAIN=photos.example.com docker compose -f docker-compose.hub.yml --profile https up -d
+#
+# Then `docker compose -f docker-compose.hub.yml logs lightcraft` shows the one-time setup code for /admin.
+# Settings you want to keep go in a `.env` file next to this one (LIGHTCRAFT_DOMAIN=…, LIGHTCRAFT_PHOTOS=…).
+#
+# Everything the server keeps is in the lightcraft-data volume; photo folders stay where they are.
+# Updating: docker compose -f docker-compose.hub.yml pull && docker compose -f docker-compose.hub.yml up -d
+
+name: lightcraft
+
+services:
+  lightcraft:
+    image: ${LIGHTCRAFT_IMAGE:-elrumo/lightcraft-server:latest}
+    restart: unless-stopped
+    environment:
+      LIGHTCRAFT_LOG: info
+      # minutes between scans of the library folders (0: at start and from the admin page only)
+      LIGHTCRAFT_SCAN_INTERVAL: "15"
+    volumes:
+      - lightcraft-data:/data
+      # photo folders already on this machine, read in place (readable by uid 10001); change :ro to :rw
+      # only to let the server write XMP sidecars or file uploads there
+      - ${LIGHTCRAFT_PHOTOS:-./photos}:/photos:ro
+    # Without HTTPS the port is published on this machine's network. With the https profile (or `tailscale serve`)
+    # set LIGHTCRAFT_BIND=127.0.0.1, so only this machine reaches it.
+    ports:
+      - "${LIGHTCRAFT_BIND:-0.0.0.0}:${LIGHTCRAFT_PORT:-8080}:8080"
+
+  caddy:
+    profiles: [https]
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      lightcraft:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      LIGHTCRAFT_DOMAIN: ${LIGHTCRAFT_DOMAIN:?set LIGHTCRAFT_DOMAIN to this server's domain name}
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+
+configs:
+  caddyfile:
+    content: |
+      {$$LIGHTCRAFT_DOMAIN} {
+        header Strict-Transport-Security "max-age=31536000"
+        reverse_proxy lightcraft:8080
+      }
+
+volumes:
+  lightcraft-data:
+  caddy-data:
+  caddy-config:

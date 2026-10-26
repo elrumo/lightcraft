@@ -1,0 +1,254 @@
+# Server release: the sync server as a Docker image on Docker Hub and as downloads for macOS, Linux and
+# Windows (a zip each: the program and the web app it serves). See docs/self-hosting.md and docs/releasing.md.
+#
+#   git tag server-v0.14.0 && git push origin server-v0.14.0
+#
+# or run it by hand (Actions > Server > Run workflow) with a version; a manual run only pushes the image
+# and creates the release when "publish" is ticked, so it can dry-run the builds.
+#
+# Needs, in the repository's settings: the secret DOCKERHUB_TOKEN (a Docker Hub access token with write access)
+# and the variables DOCKERHUB_USERNAME and (optionally) DOCKERHUB_IMAGE, the image's name
+# (default: <DOCKERHUB_USERNAME>/lightcraft-server).
+name: Server
+
+on:
+  push:
+    tags: ["server-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, e.g. 0.14.0 or 0.14.0-rc.1 (empty: Cargo.toml)"
+        type: string
+        default: ""
+      publish:
+        description: "Push the Docker image and create the draft release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: v
+        env:
+          INPUT: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            v="${GITHUB_REF_NAME#server-v}"
+            publish=true
+          else
+            v="$INPUT"
+            [ -n "$v" ] || v=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+            publish="$PUBLISH"
+          fi
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "not a version: $v"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          case "$v" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;; *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;; esac
+
+  # The web app the server serves at /, the same for every platform.
+  web:
+    name: Web app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: wasm-bindgen-cli (the version Cargo.lock pins)
+        run: |
+          v=$(sed -n '/^name = "wasm-bindgen"$/{n;s/version = "\(.*\)"/\1/p;}' Cargo.lock)
+          cargo install wasm-bindgen-cli --locked --version "$v"
+      - run: cargo xtask web
+      - run: test -f target/web-site/index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: target/web-site
+          if-no-files-found: error
+
+  binaries:
+    name: ${{ matrix.target }}
+    needs: [version, web]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, target: aarch64-apple-darwin, name: macos-arm64 }
+          - { os: macos-13, target: x86_64-apple-darwin, name: macos-x86_64 }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, name: linux-x86_64 }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, name: linux-aarch64 }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc, name: windows-x86_64 }
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc, name: windows-arm64 }
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: server-${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked -p lightcraft-server --target ${{ matrix.target }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: web
+      - name: Smoke test (starts, answers /health, serves the web app)
+        run: |
+          exe=target/${{ matrix.target }}/release/lightcraft-server
+          [ -f "$exe.exe" ] && exe="$exe.exe"
+          "$exe" --version
+          LIGHTCRAFT_DATA="$RUNNER_TEMP/data" LIGHTCRAFT_LISTEN=127.0.0.1:18080 LIGHTCRAFT_WEB=web "$exe" serve &
+          pid=$!
+          for _ in $(seq 1 30); do "$exe" health --listen 127.0.0.1:18080 && break; sleep 1; done
+          "$exe" health --listen 127.0.0.1:18080
+          curl -fsS http://127.0.0.1:18080/ | grep -qi '<html'
+          kill $pid || true
+      - name: Package
+        run: |
+          name="lightcraft-server-$VERSION-${{ matrix.name }}"
+          mkdir -p "dist/$name"
+          exe=target/${{ matrix.target }}/release/lightcraft-server
+          if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
+          cp "$exe" "dist/$name/"
+          cp -R web "dist/$name/web"
+          cp LICENSE-MIT LICENSE-APACHE NOTICE "dist/$name/"
+          cp docs/self-hosting.md "dist/$name/README-self-hosting.md"
+          cd dist
+          if [ "${{ runner.os }}" = Windows ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          elif [ "${{ runner.os }}" = macOS ]; then
+            ditto -c -k --keepParent "$name" "$name.zip"
+          else
+            zip -qr "$name.zip" "$name"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.name }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  docker:
+    name: Docker Hub image
+    needs: [version, web]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PUBLISH: ${{ needs.version.outputs.publish }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      IMAGE: ${{ vars.DOCKERHUB_IMAGE || format('{0}/lightcraft-server', vars.DOCKERHUB_USERNAME) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.PUBLISH == 'true'
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Tags
+        id: tags
+        run: |
+          set -euo pipefail
+          t="$IMAGE:$VERSION"
+          tl="$IMAGE:$VERSION-lite"
+          if [ "$PRERELEASE" = false ]; then
+            major_minor="${VERSION%.*}"
+            t="$t,$IMAGE:$major_minor,$IMAGE:latest"
+            tl="$tl,$IMAGE:$major_minor-lite,$IMAGE:lite"
+          fi
+          echo "full=$t" >> "$GITHUB_OUTPUT"
+          echo "lite=$tl" >> "$GITHUB_OUTPUT"
+      # The lite image (server + admin page, no web app) first: BuildKit then reuses its server stage for the full one.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/lightcraft-server/Dockerfile
+          target: lite
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.tags.outputs.lite }}
+          build-args: |
+            LIGHTCRAFT_VERSION=${{ env.VERSION }}
+            LIGHTCRAFT_COMMIT=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT OR Apache-2.0
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,scope=server,mode=max
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/lightcraft-server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.tags.outputs.full }}
+          build-args: |
+            LIGHTCRAFT_VERSION=${{ env.VERSION }}
+            LIGHTCRAFT_COMMIT=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT OR Apache-2.0
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,scope=server,mode=max
+
+  release:
+    name: Draft release
+    needs: [version, binaries, docker]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum *.zip > SHA256SUMS-server.txt && cat SHA256SUMS-server.txt
+      - name: Create or update the draft release
+        run: |
+          set -euo pipefail
+          tag="server-v$VERSION"
+          title="LightCraft Server v$VERSION"
+          flags=(); [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          notes="Self-hosted sync server. Docker: \`docker pull ${{ vars.DOCKERHUB_IMAGE || format('{0}/lightcraft-server', vars.DOCKERHUB_USERNAME) }}:$VERSION\`. Install guide: https://github.com/${{ github.repository }}/blob/main/docs/self-hosting.md"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" dist/* --draft "${flags[@]}" --title "$title" --notes "$notes" \
+              --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+          fi

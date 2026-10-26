@@ -59,6 +59,7 @@ const USAGE: &str = "usage:
   lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--sensitive] [--sensitive-large] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0; --sensitive adds the model that flags photos that might be sensitive: about 87 MB, Falcons.ai's Apache License 2.0; --sensitive-large adds a larger, more accurate one that replaces it once installed: about 89 MB, AdamCodd's Apache License 2.0, but several times slower)
   lightcraft-server gc [--dry-run]
   lightcraft-server health                     (is the server answering? exit status)
+  lightcraft-server version
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
 ";
 
@@ -152,10 +153,16 @@ fn mode_note(f: &accounts::LibraryFolder) -> &'static str {
 fn run(args: &[String]) -> Result<(), String> {
     let data = PathBuf::from(option(args, "--data").or_else(|| std::env::var("LIGHTCRAFT_DATA").ok()).unwrap_or_else(|| "lightcraft-data".into()));
     let pos = positional(args);
+    let pos = if args.iter().any(|a| a == "--version") { vec!["version"] } else { pos };
     match pos.as_slice() {
         ["serve"] => {
             let listen = option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into());
-            let web = option(args, "--web").or_else(|| std::env::var("LIGHTCRAFT_WEB").ok()).map(PathBuf::from).filter(|w| w.is_dir());
+            // `--web`, `$LIGHTCRAFT_WEB`, else the `web` folder next to the program (a downloaded release ships one)
+            let web = option(args, "--web")
+                .or_else(|| std::env::var("LIGHTCRAFT_WEB").ok())
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("web"))))
+                .filter(|w| w.is_dir());
             if let Some(w) = web.as_ref().filter(|w| !w.join("index.html").is_file()) {
                 log::warn!("the web build {} has no index.html: `/` will answer 404 (`cargo xtask web` writes it to target/web-site)", w.display());
             }
@@ -414,6 +421,10 @@ fn run(args: &[String]) -> Result<(), String> {
                 );
             }
             println!("the running server finds them within a minute");
+            Ok(())
+        }
+        ["version"] => {
+            println!("lightcraft-server {}", env!("LIGHTCRAFT_BUILD_VERSION"));
             Ok(())
         }
         ["health"] => {

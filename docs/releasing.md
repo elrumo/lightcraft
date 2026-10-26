@@ -20,6 +20,25 @@ still apply.
 The workflow replaces assets when it updates an existing draft. It stops rather than overwriting a
 release that has already been published, so bump the version before producing another release.
 
+## Releasing the server
+
+The sync server has its own pipeline, [`.github/workflows/server.yml`](../.github/workflows/server.yml): push a tag
+`server-v<version>` (for example `git tag server-v0.14.0 && git push origin server-v0.14.0`) or run it by hand with a
+version. It builds the web app once, then:
+
+- a zip per system (`macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, `windows-x86_64`,
+  `windows-arm64`) holding `lightcraft-server`, its `web` folder and the licences, each smoke-tested (starts, answers
+  `/health`, serves the web app);
+- the multi-platform Docker image (`linux/amd64`, `linux/arm64`) on Docker Hub as `<image>:<version>`, `:<major.minor>`
+  and `:latest`, and the same without the web app as `…-lite` / `:lite` (prereleases get only their exact version);
+- a draft GitHub release `LightCraft Server v<version>` with the zips and `SHA256SUMS-server.txt`.
+
+Set once in the repository settings: the secret `DOCKERHUB_TOKEN` (a Docker Hub access token that can write the
+repository) and the variables `DOCKERHUB_USERNAME` and, if the image isn't `<username>/lightcraft-server`,
+`DOCKERHUB_IMAGE`. A manual run without "publish" only builds (the dry run). The binaries are unsigned: on a Mac the
+download needs `xattr -dr com.apple.quarantine` once (documented in [self-hosting.md](self-hosting.md)). Keep the
+version at or above the app's in `Cargo.toml`: the apps and the server are updated together.
+
 ## Builds and artifacts
 
 Release jobs build macOS universal, Windows x86/x64/ARM64, Linux x86_64/aarch64/riscv64, FreeBSD x86_64,
