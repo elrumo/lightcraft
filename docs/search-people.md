@@ -70,7 +70,7 @@ Traditional), Japanese and 46 other languages. It is a separate, opt-in step wit
   forms don't matter, hiragana and katakana are the same, one wrong letter in a word of five or more still matches, and
   Chinese/Japanese match as phrases or when most of their character pairs are there. Text search works without the
   description model.
-- **On the server:** with the models installed (the admin page's **Processing ▸ Words in photos**, or `lightcraft-server model download --accept-licences --text`; `model disable --text` or the switch turns it off, keeping what was read) the server reads
+- **On the server:** with the models installed (the admin page's **Processing ▸ Words in photos**, or `lightbites-server model download --accept-licences --text`; `model disable --text` or the switch turns it off, keeping what was read) the server reads
   each photo's smart preview, 25 photos at a time so new photos are never kept waiting, and `GET /api/search` merges the
   words and the looks; a desktop can send what it read (`vision.share`, same opt-in as the vectors) — the server keeps text
   for photos of that user's library only and refuses another reader's or a damaged upload whole. A server that only has text
@@ -121,8 +121,8 @@ on the admin page (**Processing ▸ People**: download the models after reading 
 before it turns on) or from a shell:
 
 ```sh
-lightcraft-server model download --accept-licences --faces
-lightcraft-server user faces ann on        # and `off`; `user list` shows who has it
+lightbites-server model download --accept-licences --faces
+lightbites-server user faces ann on        # and `off`; `user list` shows who has it
 ```
 
 The server then looks at that user's smart previews (25 photos at a time) and lists the people for devices that find
@@ -169,14 +169,14 @@ POST /api/index/embeddings         vectors a device computed (checked whole; see
 
 An admin turns search on for everyone from the admin page (**Processing**): the switch shows the model's size and licence,
 downloads it onto the server after the admin agrees (resumable, SHA-256-checked, it keeps going if the page is closed)
-and turns search on. The page's **AI Models** list shows every model (description, words, people, sensitive content) with Download, Cancel and, once installed, Remove: it asks, then deletes only that model's files (`DELETE /api/admin/search/models/<search|text|faces|sensitive>`); what the model found stays, and downloading again resumes. **Reprocess** forgets what a model found for every user (`DELETE /api/admin/search/results/<part>`) and has every photo done again, by the server or by the devices that do it for their users; the model stays. A signed-in user can do the same for their own results (`DELETE /api/index/<embeddings|text|faces|sensitive>`, `vision.reprocess` with `scope` `server`, `device` or `both`; Settings ▸ AI Models ▸ Server Data). Standalone clients remove theirs in Settings ▸ AI Models (`models.delete`). The same from a shell (never without the flag; Docker: `docker compose exec lightcraft-server …`):
+and turns search on. The page's **AI Models** list shows every model (description, words, people, sensitive content) with Download, Cancel and, once installed, Remove: it asks, then deletes only that model's files (`DELETE /api/admin/search/models/<search|text|faces|sensitive>`); what the model found stays, and downloading again resumes. **Reprocess** forgets what a model found for every user (`DELETE /api/admin/search/results/<part>`) and has every photo done again, by the server or by the devices that do it for their users; the model stays. A signed-in user can do the same for their own results (`DELETE /api/index/<embeddings|text|faces|sensitive>`, `vision.reprocess` with `scope` `server`, `device` or `both`; Settings ▸ AI Models ▸ Server Data). Standalone clients remove theirs in Settings ▸ AI Models (`models.delete`). The same from a shell (never without the flag; Docker: `docker compose exec lightbites-server …`):
 
 ```sh
-lightcraft-server model status
-lightcraft-server model download --accept-licences      # about 1.5 GB, Google's Apache License 2.0
-lightcraft-server model disable                         # off for every device; the files and vectors stay
-lightcraft-server model enable
-lightcraft-server model disable --text                  # the same for reading the text in photos
+lightbites-server model status
+lightbites-server model download --accept-licences      # about 1.5 GB, Google's Apache License 2.0
+lightbites-server model disable                         # off for every device; the files and vectors stay
+lightbites-server model enable
+lightbites-server model disable --text                  # the same for reading the text in photos
 ```
 
 The switches are `<data>/search.json` (`{"enabled": bool, "text": bool}`; no file means on, so a server that already had the model keeps
@@ -245,7 +245,7 @@ While a part is moved, the server's worker **skips it for that user** (`GET/PUT 
 `<data>/users/<name>/offload.json`; a device adds and removes only its own parts), so a part with no device online
 waits instead of loading the NAS. Admin switches still rule: a part the admin turned off, or faces for a user who
 isn't allowed them, is refused (`refused` in the claim's answer), and so is a part the admin **paused** (or limited to hours): Pause on the admin page holds back the devices too. `vision.helperOnce {part}` takes a part up only until a claim comes back empty, then gives it back to the server by itself (Settings ▸ Sync ▸ Server Work ▸ Build Missing Previews Once; `once` in `vision.helper`). A device can pause its own part (`vision.setHelperPaused`, kept with the library: the part stays its, nothing is claimed) from Settings ▸ AI Models ▸ Server Work. What devices send counts in the admin page's pace and last-done time, and a user's row says a device does that part (`work.<part>.device.seenSecs`, `deviceSecs`). The helper is one thread, a row in the activity
-stack, started again after a sign-in or a failure, and ends on sign-out. `lightcraft-server` needs no model for a part
+stack, started again after a sign-in or a failure, and ends on sign-out. `lightbites-server` needs no model for a part
 that is moved.
 
 An admin can **take a part back** (Continue here under a user's bar, or Start now for users whose devices haven't claimed

@@ -63,11 +63,11 @@ hidden. It only suggests: nothing is hidden or changed until the person chooses.
 - **Blur:** **Blur Sensitive Photos** (on by default; the bar above the list, Settings ▸ General) obscures the flagged photos in the grid, the filmstrip and the map. Opening a photo shows it.
   `library.setBlurSensitive {on}`; the choice syncs with the library.
 - **On the server:** an admin turns it on for everyone (admin page ▸ Processing ▸ Sensitive content, or
-  `lightcraft-server model download --accept-licences --sensitive`). The server checks each user's smart previews and
+  `lightbites-server model download --accept-licences --sensitive`). The server checks each user's smart previews and
   devices without the model (iOS, the web) list its flags (`GET /api/sensitive`).
 
 **Large model.** Settings ▸ AI Models ▸ NSFW Image Detection (Large) (about 89 MB, AdamCodd's `vit-base-nsfw-detector`,
-Apache License 2.0; `models.download {id: "nsfw-large"}`; on a server `lightcraft-server model download
+Apache License 2.0; `models.download {id: "nsfw-large"}`; on a server `lightbites-server model download
 --accept-licences --sensitive-large`) is a larger-input model (384 px instead of 224) with fewer false alarms. Once it is
 installed it checks photos instead of the compact one (a **Run On** choice of CPU or GPU keeps the compact one), on the
 CPU, about four times slower per photo, unless its GPU weights are installed too (Settings ▸ AI Models ▸ NSFW Image

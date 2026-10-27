@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 # LightCraft sync server + the web build it serves at /.
 #
-#   docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .
-#   docker run -d --name lightcraft -p 8080:8080 -v lightcraft-data:/data lightcraft-server
-#   docker exec -i lightcraft lightcraft-server user add ann     # then type the password
+#   docker build -f apps/lightcraft-server/Dockerfile -t lightbites-server .
+#   docker run -d --name lightcraft -p 8080:8080 -v lightcraft-data:/data lightbites-server
+#   docker exec -i lightcraft lightbites-server user add ann     # then type the password
 #
 # Plain HTTP on 8080: put a TLS reverse proxy (Caddy) in front, or reach it over Tailscale.
 # See docs/sync.md.
@@ -56,19 +56,19 @@ RUN --mount=type=cache,id=lightcraft-registry-$TARGETARCH,target=/usr/local/carg
     case "$TARGETARCH" in amd64) t=x86_64-unknown-linux-gnu ;; arm64) t=aarch64-unknown-linux-gnu ;; *) echo "unsupported platform: $TARGETARCH" >&2; exit 1 ;; esac \
  && LIGHTBITES_BUGSINK_DSN="$LIGHTBITES_BUGSINK_DSN" cargo build --release --target "$t" -p lightcraft-server \
  && mkdir -p /out \
- && cp "target/$t/release/lightcraft-server" /out/
+ && cp "target/$t/release/lightbites-server" /out/
 
 # `--target lite` (`make push-server-lite`): the server and its admin page only, for people who use the apps and not
 # the web client. BuildKit builds just the stages a target needs, so the web stage above is skipped.
 FROM debian:bookworm-slim AS lite
 RUN useradd --system --uid 10001 --home-dir /data lightcraft && mkdir -p /data && chown lightcraft /data
-COPY --from=server /out/lightcraft-server /usr/local/bin/lightcraft-server
+COPY --from=server /out/lightbites-server /usr/local/bin/lightbites-server
 ENV LIGHTCRAFT_DATA=/data LIGHTCRAFT_LISTEN=0.0.0.0:8080
 VOLUME /data
 EXPOSE 8080
 USER lightcraft
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["lightcraft-server", "health"]
-ENTRYPOINT ["lightcraft-server"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["lightbites-server", "health"]
+ENTRYPOINT ["lightbites-server"]
 CMD ["serve"]
 
 # the default image: lite plus the web build at /

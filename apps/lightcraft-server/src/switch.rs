@@ -5,7 +5,7 @@
 //! without downloading anything. The switches are `<data>/search.json`
 //! (`{"enabled": bool, "text": bool}`; missing, or damaged, means on: a server that had the models
 //! installed before there were switches keeps working). They are read each time they matter, so
-//! `lightcraft-server model disable` takes effect in a running server too. People has no switch
+//! `lightbites-server model disable` takes effect in a running server too. People has no switch
 //! here: it is per user (`user faces NAME on`), because faces are personal data.
 //!
 //! A download is the CLI's (`model download`: resumable, pinned sizes and SHA-256) run on a

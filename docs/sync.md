@@ -41,7 +41,7 @@ in the container, for [library folders](#library-folders-photos-already-on-the-s
 
 Open `https://photos.example.com/admin`, enter the setup code, create your admin account and add users there
 ([the admin page](#the-admin-page)); or from the command line:
-`docker compose exec -it lightcraft lightcraft-server user add ann` (type the password; it isn't shown).
+`docker compose exec -it lightcraft lightbites-server user add ann` (type the password; it isn't shown).
 
 `apps/lightcraft-server/docker-compose.yml` and its `Caddyfile` are all there is to it; everything the server keeps is
 in the `lightcraft-data` volume. Then [connect your devices](#connect-your-devices) to `https://photos.example.com`.
@@ -49,25 +49,25 @@ in the `lightcraft-data` volume. Then [connect your devices](#connect-your-devic
 ### Docker
 
 ```sh
-docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .
+docker build -f apps/lightcraft-server/Dockerfile -t lightbites-server .
 docker run -d --name lightcraft --restart unless-stopped -p 8080:8080 \
-  -v lightcraft-data:/data -v /srv/photos:/photos:ro lightcraft-server
-docker exec -i lightcraft lightcraft-server user add ann        # type the password, then Enter
-docker exec lightcraft lightcraft-server folder add ann /photos/ann --name Photos   # optional
+  -v lightcraft-data:/data -v /srv/photos:/photos:ro lightbites-server
+docker exec -i lightcraft lightbites-server user add ann        # type the password, then Enter
+docker exec lightcraft lightbites-server folder add ann /photos/ann --name Photos   # optional
 ```
 
 The image holds the server and the web build; everything it keeps is in the `/data` volume (the photo folders
 mounted at `/photos` stay where they are). If everyone uses the apps and nobody the web client, add `--target lite`
 to the build (`make push-server-lite` pushes it as `…/lightcraft-lite`): the server and its admin page only, built
 without the web client, so it builds faster. It runs as uid 10001, which must be able to read the photo folders, and
-reports its health to Docker (`lightcraft-server health`).
+reports its health to Docker (`lightbites-server health`).
 
 ### Without Docker
 
 ```sh
 cargo build --release -p lightcraft-server
-printf '%s\n' 'a long password' | target/release/lightcraft-server user add ann --data /srv/lightcraft
-target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1:8080 [--web target/web-site]
+printf '%s\n' 'a long password' | target/release/lightbites-server user add ann --data /srv/lightcraft
+target/release/lightbites-server serve --data /srv/lightcraft --listen 127.0.0.1:8080 [--web target/web-site]
 ```
 
 | Command | What it does |
@@ -112,7 +112,7 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 
 ```text
 <data>/users.json                              users: argon2id password hash, library id, admin, storage limit
-<data>/server-presets.json                     presets shared with every user, built-in ones hidden for all { version, items }
+<data>/server-presets.json                     presets shared with every user (some disabled), built-in ones hidden for all { version, items }
 <data>/video.json                              lighter videos: on or off, format, size, quality, who makes them (admin page)
 <data>/users/<name>/library/catalog.log        every change from every device, in order
 <data>/users/<name>/blobs/<kind>/<xx>/<hash>   photo files by content: original | smart | mini | video (a clip's lighter copy)
@@ -167,10 +167,19 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
     library ask first.
 - **Presets:** develop presets every user gets, beside their own. **Import presets** takes LightCraft (`.lcpreset`),
   XMP and Lightroom (`.lrtemplate`) presets and zips of them (the same reader as a device's Import Presets; a preset
-  already there is skipped); then rename a preset, move it to another group, delete it, or rename or delete a whole
-  group. Below, a switch per built-in group and preset hides it from every user. Devices get the changes the next time
-  they sync and show these presets like the built-in ones: users can favourite and hide them, not change them. Two
-  admins changing them at once: the second is told and shown the first one's change.
+  already there is skipped). Then, per preset: rename it, move it to another group, or delete it; per group: rename or
+  delete it. To move a preset, **drag its row onto another group** (the group's rows light up; a row at the end,
+  *Drop here to move it to a new group*, appears while dragging and asks for the new group's name), or use **Move**
+  (touch screens and the keyboard). Each preset and each group also has an **Enabled** switch: switched off, the preset
+  goes from every user's devices at their next sync but stays on this page (dimmed, *Disabled*) with its settings, and
+  comes back when switched on. A group is disabled when all its presets are, and a preset moved or imported into a
+  disabled group starts disabled, so the group stays off. Below, a switch per built-in group and preset hides it from
+  every user. Devices get the changes the next time they sync and show these presets like the built-in ones: users can
+  favourite and hide them, not change them (a device forgets a favourite on a preset while it is disabled). Two admins
+  changing them at once: the second is told and shown the first one's change. The LightBites app's Settings ▸ Server
+  Administration ▸ Presets does the same except for dragging (swipe or long-press a preset: Rename, Move, Disable, Delete;
+  the group's … menu). A step-by-step version for server owners is the
+  [Manage presets for your users](https://lightbites.app/server/presets) guide.
 - **Search:** what the server does with each user's photos so their devices don't have to. A switch turns search by
   description on for every device that signs in (the web app, iPhone, other computers find photos by describing them
   without downloading the model); another does the same for finding photos by the words printed in them; **People**
@@ -199,7 +208,7 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
 **First run:** while no user is an admin, the server prints a one-time **setup code** to its log
 (`docker compose logs lightcraft`, or the terminal running `serve`). The admin page asks for it before it creates the
 first admin, so a server that is already on the internet can't be claimed by whoever finds it first; ten wrong codes
-replace it with a new one (logged again). Already have users? `lightcraft-server user admin ann on` (or
+replace it with a new one (logged again). Already have users? `lightbites-server user admin ann on` (or
 `user add NAME --admin`) instead.
 
 Admins sign in to the page with their user name and password. That opens an admin session of its own (not a device:
@@ -227,7 +236,7 @@ device's.
 ### Storage limits
 
 An admin can limit what the server keeps for a user, as a family plan's share of a cloud service: admin page ›
-Users › the user › **Storage limit**, or `lightcraft-server user quota ann 200G` (`off` lifts it). What counts is
+Users › the user › **Storage limit**, or `lightbites-server user quota ann 200G` (`off` lifts it). What counts is
 what the server stores for them: the originals their devices upload, smart and small previews, and photos visitors
 add through their [album links](#share-an-album). **Library folders don't count** (they are the admin's folders,
 read in place).
@@ -243,16 +252,16 @@ read in place).
 
 The server can also search each user's photos by what is in them, so the web build, iOS and other
 computers need no model: `GET /api/search?q=…`, an index of vectors per user that devices may add to, and the admin
-page's **Processing** search switch (or `lightcraft-server model download --accept-licences`) to install the model (about 1.5 GB,
-loaded on first use, ~1.9 GB of memory while loaded). `lightcraft-server model disable|enable [--text]` are the switches from a shell. It can also read the text in photos (`model download --text`) and, for a user an admin allows
-(`lightcraft-server user faces NAME on`, after `model download --faces`), find the people in their photos for devices to
+page's **Processing** search switch (or `lightbites-server model download --accept-licences`) to install the model (about 1.5 GB,
+loaded on first use, ~1.9 GB of memory while loaded). `lightbites-server model disable|enable [--text]` are the switches from a shell. It can also read the text in photos (`model download --text`) and, for a user an admin allows
+(`lightbites-server user faces NAME on`, after `model download --faces`), find the people in their photos for devices to
 name. Routes, privacy and limits: [`search-people.md`](search-people.md).
 
 ## Library folders: photos already on the server
 
 A self-hosted server usually sits next to the photos: a NAS share, a backup disk, folders of past years. An admin
 can make such folders a user's **library folders** (admin page › Users › the user › Library folders, or
-`lightcraft-server folder add ann /photos/ann --name Photos`). The server reads them in place:
+`lightbites-server folder add ann /photos/ann --name Photos`). The server reads them in place:
 
 - **Nothing in them is copied, moved or changed.** Mount them read-only (`-v /srv/photos:/photos:ro`). The server
   keeps only the previews it builds and an index (`folders.json`); a photo's original is sent to a device straight
@@ -271,7 +280,7 @@ can make such folders a user's **library folders** (admin page › Users › the
   Read Metadata from File does. Edits made on a device stay until the sidecar changes. The index keeps each
   sidecar's time; an index written by an older server only notes them on its first scan.
 - **Writable folders (opt-in, per folder).** An admin can let the server write in a library folder (admin page ›
-  the user › Library folders › **Writing**, or `lightcraft-server folder writable ann Photos on`; add
+  the user › Library folders › **Writing**, or `lightbites-server folder writable ann Photos on`; add
   `--writable` / `--imports` to `folder add`). The folder must be mounted read-write, writable by the server's user
   (uid 10001 in the image; `:rw` in the compose file); the server tries a file before it says yes, and the admin
   page shows when a folder that should be writable isn't. Three things then happen, and nothing else:
@@ -293,7 +302,7 @@ can make such folders a user's **library folders** (admin page › Users › the
     temporary name and linked into place; if the server stops in between, the next scan recognises the file by its
     content. Previews stay in the server's store.
 - **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
-  (the admin page's **Scan for changes**, `lightcraft-server scan`). Files whose size and time didn't change aren't read
+  (the admin page's **Scan for changes**, `lightbites-server scan`). Files whose size and time didn't change aren't read
   again, and neither are the ones that couldn't be read, until the server restarts. The admin page's **Rescan
   everything** (`POST /api/admin/users/{name}/rescan`) reads every file again, changed or not, and tries again the ones
   that couldn't be read: it finds a file whose content changed but whose size and time didn't, and it takes as long
@@ -310,7 +319,7 @@ can make such folders a user's **library folders** (admin page › Users › the
 - **Files cut short.** A copy or download that stopped part-way keeps the start of a photo and loses its end. It
   still opens (a raw shows its camera JPEG, a DNG or CR2 develops what is left), so it looks wrong rather than broken.
   The admin page's **Check files** (the user › Library folders, `POST /api/admin/users/{name}/check`, or
-  `lightcraft-server check [NAME]`) checks every original of the user, in their library folders and in the server's
+  `lightbites-server check [NAME]`) checks every original of the user, in their library folders and in the server's
   store, from each file's structure, reading only its headers: every box of a CR3 / HEIC / MP4 / MOV and every strip
   and tile of a DNG / CR2 / NEF / ARW / TIFF must end inside the file, a JPEG / PNG / GIF must end with its end
   marker, a WebP or PSD must be as long as it says. It lists each damaged file with what is missing and its photos,
@@ -322,7 +331,7 @@ can make such folders a user's **library folders** (admin page › Users › the
   and shown as such on the admin page. A photo removed from the library on a device isn't added back by the next
   scan (unless its file changes). Removing a library folder keeps its photos in the library.
 - **Names you choose are skipped too** (admin page › the user › Library folders › **Skipped names**, or
-  `lightcraft-server folder ignore ann '*.fcpbundle' 'Proxy Media'`). A pattern is one file or folder name, not a
+  `lightbites-server folder ignore ann '*.fcpbundle' 'Proxy Media'`). A pattern is one file or folder name, not a
   path: `*` stands for any run of characters, `?` for one, capitals don't matter, and anything inside a skipped
   folder goes with it, so `*.fcpbundle` leaves out every Final Cut Pro bundle (and its `Original Media`) wherever it
   is. The list belongs to the user and covers all their library folders; the next scan (started when it is saved)
@@ -336,9 +345,9 @@ can make such folders a user's **library folders** (admin page › Users › the
 
 Every client needs the same three things: the **server address** (`https://photos.example.com`, or
 `http://machine-name:8080` on a tailnet), a **user name** and its **password**, as added on
-[the admin page](#the-admin-page) or with `lightcraft-server user add`. The password goes to the server once; the
+[the admin page](#the-admin-page) or with `lightbites-server user add`. The password goes to the server once; the
 device gets its own token (kept in the library's `sync.json`), which revoking the device (admin page or
-`lightcraft-server device revoke`) or [Sign Out](#signing-out) ends. A bare `photos.example.com` means `https://photos.example.com`;
+`lightbites-server device revoke`) or [Sign Out](#signing-out) ends. A bare `photos.example.com` means `https://photos.example.com`;
 a bare address at home or on a tailnet (`localhost`, a private or Tailscale IP address, a one-word name such as `nas`,
 `*.local`, `*.lan`) means `http://` (type `https://` to say otherwise).
 The device is listed on the server under the computer's name (`$LIGHTCRAFT_DEVICE` to choose another).
@@ -357,7 +366,7 @@ Users and devices are managed on the server: on [the admin page](#the-admin-page
 
 The server serves the web build itself, at its own address, and that needs nothing more. A web build hosted somewhere
 else (a static host or CDN) can sign in to the server too, if the server is told that site may call it from a browser:
-`lightcraft-server serve --cors-origin https://photos-app.example.com` (once per site, or `$LIGHTCRAFT_CORS`). Then
+`lightbites-server serve --cors-origin https://photos-app.example.com` (once per site, or `$LIGHTCRAFT_CORS`). Then
 type the server's address in Settings ▸ Sync on that site. Two things stay the browser's own rules: a page served over
 `https://` can only call an `https://` server (no `http://` on a home network), and the library and sign-in live in
 that site's browser storage, so each site is a separate device. The admin page is never callable from another site.
@@ -865,14 +874,14 @@ Big JSON answers (the library, pulled changes, the presets; 16 KiB and up) come 
 | `GET /s/{token}`, `GET /s/{token}/{photo}[?play=1]`, `GET /s/{token}/{photo}/{thumb\|view\|original}`, `GET /s/{token}/download` | **no sign-in**: the album's page, a photo's page (`play`: the slideshow), the pictures, and Download All (a ZIP of the originals) ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` or `download` on a link that doesn't offer them), `401` until a link's password was typed, `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
 | `POST /s/{token}/unlock`, `POST /s/{token}/upload` | **no sign-in**: a link's password (`password=…`, a form; the answer sets the cookie that opens the link), and photos a visitor adds (`multipart/form-data`, field `photos`, optional `name`; `303` back to the album with `?added=N&skipped=M`; `403` on a link that doesn't take photos, `507` over the owner's [storage limit](#storage-limits)) |
 | `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups), `hidden-presets` (the presets and groups the user hid, one item each: `{id: "preset:<id>"}`, `{id: "group:<name>"}`): `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
-| `GET /api/docs/server-presets` | the presets an admin shares with every user ([admin page](#the-admin-page) → Presets): `{version, items}`, each preset `{id: "srv.…", name, group, settings}` and one item `{id: "hidden", presets, groups}` (built-in presets and groups hidden for everyone). Read-only (`PUT` → `403`); its version comes with every pull (`docs`) once an admin has written it. Devices take it as it is, never merge or send it |
+| `GET /api/docs/server-presets` | the presets an admin shares with every user ([admin page](#the-admin-page) → Presets): `{version, items}`, each preset `{id: "srv.…", name, group, settings}` and one item `{id: "hidden", presets, groups}` (built-in presets and groups hidden for everyone). The presets the admin disabled (`disabled: true` on the admin's copy) are left out, so older devices need nothing to respect it. Read-only (`PUT` → `403`); its version comes with every pull (`docs`) once an admin has written it. Devices take it as it is, never merge or send it |
 | `POST /api/admin/login`, `POST /api/admin/logout` | the admin session ([above](#the-admin-page)): `login {user, password, remember?, cookie?}` → `{token, user}`, or with `cookie: true` (the page) `{user}` and a `Set-Cookie: lc_admin=…`; `remember` keeps it for weeks and across restarts; `logout` ends it (and clears the cookie). Anything else under `/api/admin/` takes the token as a bearer or the cookie (with `X-LightCraft-Admin` on what changes something) |
 | `GET /api/admin/usage` | (admin session) the Overview's numbers ([`usage.rs`](../apps/lightcraft-server/src/usage.rs)): `{since, supported, cores, memory, history: [{at, cpu, machineCpu, rss, memUsed, requests, out}], users: [{name, devices: [{id, name, requests, in, out, busyMs, lastSeen}]}]}`. `history` is a sample of the machine every 30 s for the last 24 h, averaged to at most 240 points (`cpu`: the server's CPU in cores, `machineCpu`: the whole machine's, 0 to 1, `rss` and `memUsed`: the server's memory and what the machine or container uses, `requests` and `out`: the devices' requests and the bytes sent to them since the point before); `null` where the platform doesn't say (`supported` is false off Linux). The counts are in memory and start again with the server |
 | `GET /api/admin/users` | (admin session) every user for the Users and Storage pages (and a native frontend's admin screens, through the same route): `{name, admin, photos, videos, albums, devices, bytes, folderBytes, quota, shares, folders, scan}` plus the videos' numbers `videoBytes` / `videoFiles` (their own files by the sizes the library knows), `videoCopies` / `videoCopyBytes` (the lighter copies the server keeps) and `videoSaved`. `photos` and `videos` leave out Recently Deleted and virtual copies. `bytes` is `null` while the server is still counting the files it keeps |
 | `GET`/`POST /api/admin/users/{name}/check` | (admin session) the check of the user's originals for files cut short: `POST` starts one (`409` while one runs), `GET` answers `{running, done, total, report}`, `report` the last finished check (`{finished, files, unchecked, cut: [{path, size, missing?, why, photos}], unreadable}`; `path` is a library-folder place, or `uploads/<hash>` for the server's own copy) |
 | `POST /api/admin/users/{name}/scan`, `…/rescan`, `…/previews/{generate\|rebuild\|pause\|resume}` | (admin session) the user's library folders: `scan` reads the files that are new or changed; `rescan` reads every file again; `previews/generate` builds the previews that are missing (and tries again the ones that failed); `previews/rebuild` builds every preview again, replacing the ones there only as each new one is written (so a photo that can't be read keeps its preview); `pause`/`resume` stop and go on, for every user. The answer is the user's folders with their scan status (`full`: this scan reads every file; `previewsRebuilding`) |
 | `GET`/`PUT /api/admin/video`, `POST /api/admin/video/{apply\|pause\|resume\|retry-failed}` | (admin session) lighter videos ([`video.rs`](../apps/lightcraft-server/src/video.rs), [docs/video.md](video.md#lighter-copies)). `GET` answers `{settings: {enabled, codec: "h264"\|"hevc", maxHeight: "original"\|1080\|720\|480, quality: "smaller"\|"balanced"\|"better", skipIfSmaller, serverFallback, helper}, state: "off"\|"idle"\|"paused"\|"encoding"\|"waiting", waitingFor: "helper"\|"nothing"\|null, paused, total, have, efficient, failed, noOriginal, left, queuedAgain, etaSecs, perMinute, bytes: {originals, encoded, saved}, serverCanEncode, helper: {seen, there}, encoding: [{user, name, done, total}], users: [{name, total, have, efficient, failed, noOriginal, left}], failures: [{user, hash, name, kind: "unsupported"\|"unreadable"\|"encoder", reason, at}]}`. `PUT` takes the fields to change (a field that is not one, or a value that is not one of its choices, is `400` and names it) and answers the same; the settings are kept in `<data>/video.json`, and a damaged file means the defaults. `apply` makes the copies again that were made with other settings (and the clips judged already efficient under other ones, or with *Keep only copies at least 15% smaller* since turned off) and looks again for originals the server did not have (`409` while lighter videos are off); `pause` and `resume` stop and go on (a pause stops the video being made, which starts again); `retry-failed` puts the failed videos back in the queue. Each answers the same as `GET` |
-| `GET`/`PUT /api/admin/presets`, `POST /api/admin/presets/import` | (admin session) the shared presets plus the built-in list (`builtin: [{id, name, group}]`); `PUT {version, items}` replaces them (`412` with the current document when stale; `400` naming a bad item); `import {files: [{name, data: base64}], group?}` → `{version, added, skipped, failed}` |
+| `GET`/`PUT /api/admin/presets`, `POST /api/admin/presets/import` | (admin session) the shared presets plus the built-in list (`builtin: [{id, name, group}]`); `PUT {version, items}` replaces them (a preset may carry `disabled: true`: kept here, not served to devices; `412` with the current document when stale; `400` naming a bad item); `import {files: [{name, data: base64}], group?}` → `{version, added, skipped, failed}` |
 | `POST /api/render` | `{hash, name, settings, export}` → the encoded image (`X-LightCraft-Size: WxH`): the photo with this original, rendered with these edits and [export options](#exporting-on-the-server) · `404` no such original (or a server older than the route) · `422` can't be rendered · `503` busy, `Retry-After` |
 | `GET /api/health` | `{ok, version}` (no sign-in) |
 | `GET /…` | the web build (`--web`) |

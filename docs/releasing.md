@@ -27,7 +27,7 @@ The sync server has its own pipeline, [`.github/workflows/server.yml`](../.githu
 version. It builds the web app once, then:
 
 - a zip per system (`macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, `windows-x86_64`,
-  `windows-arm64`) holding `lightcraft-server`, its `web` folder and the licences, each smoke-tested (starts, answers
+  `windows-arm64`) holding `lightbites-server`, its `web` folder and the licences, each smoke-tested (starts, answers
   `/health`, serves the web app);
 - the multi-platform lite image (`linux/amd64`, `linux/arm64`) on Docker Hub as
   `elrumo/lightbites-server:<version>`, `:<major.minor>` and `:latest` (prereleases get only their exact version);

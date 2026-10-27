@@ -43,7 +43,7 @@ CDN bucket.
 - **HTTPS:** browser storage for the library (OPFS), module workers and the clipboard need a
   secure context: `https://`, or `http://localhost` for testing. The app can't be opened from
   `file://`.
-- **Sync to a server on another site** works only if that server lists this site: start `lightcraft-server` with
+- **Sync to a server on another site** works only if that server lists this site: start `lightbites-server` with
   `--cors-origin https://your.site` (or `LIGHTCRAFT_CORS`). A server that serves the web build itself (`--web`) needs
   nothing, and a plain `http://` server can't be reached from an `https://` page (the browser blocks it).
 - **Isolation headers are optional.** The current build doesn't use `SharedArrayBuffer`, so

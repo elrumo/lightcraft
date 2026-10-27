@@ -163,7 +163,7 @@ catalog's albums and folders of albums into the open library, holding the photos
 **already has**. No photo is added, and no rating, keyword or existing edit changes (one exception: the
 [develop settings](#develop-settings-of-a-lightroom-cloud-catalog) of a photo that has no edits here): the
 albums are made in one undo step (`library.importLightroom {"path": …, "albumsOnly": true}`). On a library synced with
-`lightcraft-server` the albums are ordinary album changes, so they reach the other devices; run the
+`lightbites-server` the albums are ordinary album changes, so they reach the other devices; run the
 import on any device of the library.
 
 Two kinds of catalog give albums:
@@ -200,7 +200,7 @@ when the photo has no edits in the library yet:
   as `<name>.xmp` (the library's sidecar naming), so other programs and a later *Read Metadata from File*
   see it. A sidecar already there is never replaced.
 
-On a library synced with `lightcraft-server`, a photo that has no file on this computer gets its edit as an
+On a library synced with `lightbites-server`, a photo that has no file on this computer gets its edit as an
 ordinary change and, as a file, `PUT /api/companions/<content hash>?name=<file name>`: the server keeps it under
 `blobs/companion/<hash>/` and puts it beside the photo when a library folder it may write in holds the photo
 (never over a file that is there, either sidecar naming); a photo only in the server's own store has no folder,

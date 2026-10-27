@@ -20,13 +20,13 @@
 //!
 //! Vectors are filed by content hash, from a neutral (unedited) rendering of the mini preview, in
 //! `<data>/users/<name>/search/<model>.bin`: derived data, safe to delete. The model is not part
-//! of LightCraft: an admin installs it from the admin page (Processing) or with `lightcraft-server
+//! of LightCraft: an admin installs it from the admin page (Processing) or with `lightbites-server
 //! model download --accept-licences`, and can turn it off again ([`crate::switch`]; `installed` is
 //! false while it is off). It loads on first use and unloads when idle (~1.5 GB while loaded).
 //! Until then every route says so instead of failing.
 //!
 //! Faces are personal data and off by default: an admin turns finding people on for a user
-//! (`lightcraft-server user faces NAME on`) after installing the face models (`model download
+//! (`lightbites-server user faces NAME on`) after installing the face models (`model download
 //! --faces`); then the server finds the faces in that user's smart previews, and devices ask for
 //! the people it grouped them into (`GET /api/people/clusters`) to show and name them (names are
 //! ordinary catalog edits, made on the device). A user can delete everything the server found
@@ -218,7 +218,7 @@ impl Search {
         }
         if !self.faces_installed() {
             return Err(format!(
-                "the face models are not installed on this server (run `lightcraft-server model download --accept-licences --faces`, or put them in {})",
+                "the face models are not installed on this server (run `lightbites-server model download --accept-licences --faces`, or put them in {})",
                 self.faces_dir().display()
             ));
         }
@@ -315,7 +315,7 @@ impl Search {
         }
         if !self.text_installed() {
             return Err(format!(
-                "the text-reading models are not installed on this server (run `lightcraft-server model download --accept-licences --text`, or put them in {})",
+                "the text-reading models are not installed on this server (run `lightbites-server model download --accept-licences --text`, or put them in {})",
                 self.text_dir().display()
             ));
         }
@@ -561,7 +561,7 @@ impl Search {
         }
         if !self.installed() {
             return Err(format!(
-                "the search model is not installed on this server (run `lightcraft-server model download --accept-licences`, or put model.safetensors and tokenizer.json in {})",
+                "the search model is not installed on this server (run `lightbites-server model download --accept-licences`, or put model.safetensors and tokenizer.json in {})",
                 self.dir.display()
             ));
         }
@@ -1326,7 +1326,7 @@ fn faces_refused(st: &State, user: &str) -> Option<Resp> {
     (!on).then(|| {
         api::json(
             403,
-            &json!({"error": "finding people is off for this user: an admin turns it on with `lightcraft-server user faces NAME on`", "enabled": false}),
+            &json!({"error": "finding people is off for this user: an admin turns it on with `lightbites-server user faces NAME on`", "enabled": false}),
         )
     })
 }
@@ -1463,7 +1463,7 @@ pub(crate) fn face_delete(st: &State, user: &str) -> Resp {
     api::json(200, &json!({"faces": faces, "photos": photos}))
 }
 
-/// `lightcraft-server model download --faces`: fetches the face models into `<dir>/faces`.
+/// `lightbites-server model download --faces`: fetches the face models into `<dir>/faces`.
 pub fn download_face_models(dir: &Path, mirrors_file: Option<&Path>) -> Result<(), String> {
     use lightcraft_vision::models::{self, Options, Progress};
     let env = std::env::var(models::MIRRORS_ENV).ok();
@@ -1481,7 +1481,7 @@ pub fn download_face_models(dir: &Path, mirrors_file: Option<&Path>) -> Result<(
     Ok(())
 }
 
-/// `lightcraft-server model download --sensitive[-large]`: fetches the sensitive-content model (the `large` one,
+/// `lightbites-server model download --sensitive[-large]`: fetches the sensitive-content model (the `large` one,
 /// when asked) into `<dir>/nsfw`.
 pub fn download_sensitive_model(dir: &Path, mirrors_file: Option<&Path>, large: bool) -> Result<(), String> {
     use lightcraft_vision::models::{self, Options, Progress};
@@ -1506,7 +1506,7 @@ pub fn download_sensitive_model(dir: &Path, mirrors_file: Option<&Path>, large: 
     Ok(())
 }
 
-/// What `lightcraft-server model status` says.
+/// What `lightbites-server model status` says.
 pub fn model_status(dir: &Path) -> String {
     let (name, url) = lightcraft_vision::models::SIGLIP_LICENCE;
     let (tname, turl) = lightcraft_vision::models::OCR_LICENCE;
@@ -1528,7 +1528,7 @@ pub fn model_status(dir: &Path) -> String {
     )
 }
 
-/// `lightcraft-server model download --text`: fetches the text-reading models into `<dir>/ocr`.
+/// `lightbites-server model download --text`: fetches the text-reading models into `<dir>/ocr`.
 pub fn download_text_models(dir: &Path, mirrors_file: Option<&Path>) -> Result<(), String> {
     use lightcraft_vision::models::{self, Options, Progress};
     let env = std::env::var(models::MIRRORS_ENV).ok();
@@ -1551,7 +1551,7 @@ pub fn mirrors_file(dir: &Path) -> Option<PathBuf> {
     dir.parent().map(|p| p.join("siglip2-mirrors.txt"))
 }
 
-/// `lightcraft-server model download`: fetches the model into `dir` (resuming, verified).
+/// `lightbites-server model download`: fetches the model into `dir` (resuming, verified).
 pub fn download_model(dir: &Path, mirrors_file: Option<&Path>) -> Result<(), String> {
     use lightcraft_vision::models::{self, Options, Progress};
     let env = std::env::var(models::MIRRORS_ENV).ok();

@@ -1,26 +1,27 @@
-//! `lightcraft-server`: the self-hosted LightCraft sync server (see `docs/sync.md`).
+//! `lightbites-server`: the self-hosted LightCraft sync server (see `docs/sync.md`).
 //!
 //! ```text
-//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
-//! lightcraft-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
-//! lightcraft-server user passwd NAME
-//! lightcraft-server user admin NAME on|off
-//! lightcraft-server user quota NAME SIZE|off
-//! lightcraft-server user remove NAME
-//! lightcraft-server user list
-//! lightcraft-server device list NAME
-//! lightcraft-server device revoke NAME ID
-//! lightcraft-server folder add NAME PATH [--name FOLDER] [--writable] [--imports]
-//! lightcraft-server folder writable|imports NAME FOLDER on|off
-//! lightcraft-server folder remove NAME FOLDER
-//! lightcraft-server folder list [NAME]
-//! lightcraft-server folder ignore NAME [PATTERN…]
-//! lightcraft-server scan [NAME]
-//! lightcraft-server check [NAME]
-//! lightcraft-server gc [--dry-run]
-//! lightcraft-server health
-//! lightcraft-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: a launchd agent, see `install`)
-//! lightcraft-server uninstall
+//! lightbites-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
+//! lightbites-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
+//! lightbites-server user passwd NAME
+//! lightbites-server user admin NAME on|off
+//! lightbites-server user quota NAME SIZE|off
+//! lightbites-server user remove NAME
+//! lightbites-server user list
+//! lightbites-server device list NAME
+//! lightbites-server device revoke NAME ID
+//! lightbites-server folder add NAME PATH [--name FOLDER] [--writable] [--imports]
+//! lightbites-server folder writable|imports NAME FOLDER on|off
+//! lightbites-server folder remove NAME FOLDER
+//! lightbites-server folder list [NAME]
+//! lightbites-server folder ignore NAME [PATTERN…]
+//! lightbites-server scan [NAME]
+//! lightbites-server check [NAME]
+//! lightbites-server gc [--dry-run]
+//! lightbites-server health
+//! lightbites-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: a launchd agent, see `install`)
+//! lightbites-server uninstall
+//! lightbites-server start | stop | status       (macOS: the installed launchd agent)
 //! ```
 //!
 //! Admins also manage users and devices from the server's web page, `/admin` (until the first
@@ -42,30 +43,31 @@ mod install;
 use lightcraft_server::{Config, Server, accounts, folders, gc};
 
 const USAGE: &str = "usage:
-  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
-  lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
-  lightcraft-server user passwd|remove NAME
-  lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
-  lightcraft-server user faces NAME on|off    (find the people in NAME's photos; needs `model download --faces`)
-  lightcraft-server user quota NAME SIZE|off  (the most the server keeps for NAME: 500M, 50G, 1T; library folders don't count)
-  lightcraft-server user list
-  lightcraft-server device list NAME
-  lightcraft-server device revoke NAME ID
-  lightcraft-server folder add NAME PATH [--name FOLDER] [--writable] [--imports]   (a photo folder on this server, read in place;
+  lightbites-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
+  lightbites-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
+  lightbites-server user passwd|remove NAME
+  lightbites-server user admin NAME on|off    (admins manage the server at /admin)
+  lightbites-server user faces NAME on|off    (find the people in NAME's photos; needs `model download --faces`)
+  lightbites-server user quota NAME SIZE|off  (the most the server keeps for NAME: 500M, 50G, 1T; library folders don't count)
+  lightbites-server user list
+  lightbites-server device list NAME
+  lightbites-server device revoke NAME ID
+  lightbites-server folder add NAME PATH [--name FOLDER] [--writable] [--imports]   (a photo folder on this server, read in place;
                                                       --writable: the server writes XMP sidecars there; --imports: devices' uploads are filed there)
-  lightcraft-server folder writable|imports NAME FOLDER on|off
-  lightcraft-server folder remove NAME FOLDER
-  lightcraft-server folder list [NAME]
-  lightcraft-server folder ignore NAME [PATTERN…]   (names the scan skips, like '*.fcpbundle'; none: show them, '': clear)
-  lightcraft-server scan [NAME]                (read the library folders now)
-  lightcraft-server check [NAME]               (look for photo files cut short, such as copies that stopped part-way; changes nothing)
-  lightcraft-server model enable|disable [--text|--sensitive]   (search by description, or with --text reading the text in photos, or with --sensitive checking photos for sensitive content, for every device that signs in; on once the models are installed, off keeps the files)
-  lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--sensitive] [--sensitive-large] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0; --sensitive adds the model that flags photos that might be sensitive: about 87 MB, Falcons.ai's Apache License 2.0; --sensitive-large adds a larger, more accurate one that replaces it once installed: about 89 MB, AdamCodd's Apache License 2.0, but several times slower)
-  lightcraft-server gc [--dry-run]
-  lightcraft-server health                     (is the server answering? exit status)
-  lightcraft-server version
-  lightcraft-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: run the server at every login, as a launchd agent)
-  lightcraft-server uninstall                  (macOS: stop it and remove the agent; the data stays)
+  lightbites-server folder writable|imports NAME FOLDER on|off
+  lightbites-server folder remove NAME FOLDER
+  lightbites-server folder list [NAME]
+  lightbites-server folder ignore NAME [PATTERN…]   (names the scan skips, like '*.fcpbundle'; none: show them, '': clear)
+  lightbites-server scan [NAME]                (read the library folders now)
+  lightbites-server check [NAME]               (look for photo files cut short, such as copies that stopped part-way; changes nothing)
+  lightbites-server model enable|disable [--text|--sensitive]   (search by description, or with --text reading the text in photos, or with --sensitive checking photos for sensitive content, for every device that signs in; on once the models are installed, off keeps the files)
+  lightbites-server model status|download [--accept-licences] [--text] [--faces] [--sensitive] [--sensitive-large] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0; --sensitive adds the model that flags photos that might be sensitive: about 87 MB, Falcons.ai's Apache License 2.0; --sensitive-large adds a larger, more accurate one that replaces it once installed: about 89 MB, AdamCodd's Apache License 2.0, but several times slower)
+  lightbites-server gc [--dry-run]
+  lightbites-server health                     (is the server answering? exit status)
+  lightbites-server version
+  lightbites-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: run the server at every login, as a launchd agent)
+  lightbites-server uninstall                  (macOS: stop it and remove the agent; the data stays)
+  lightbites-server start|stop|status          (macOS: the installed server; stop keeps it stopped, also after a login, until start)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
 ";
 
@@ -175,7 +177,7 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let users = accounts::read_users(&data)?;
             if users.users.is_empty() {
-                log::warn!("no users yet: add them on the admin page (/admin) or with `lightcraft-server user add NAME --data {}`", data.display());
+                log::warn!("no users yet: add them on the admin page (/admin) or with `lightbites-server user add NAME --data {}`", data.display());
             }
             // minutes between scans of the library folders (0: at start and on demand only)
             let minutes = option(args, "--scan-interval")
@@ -436,8 +438,11 @@ fn run(args: &[String]) -> Result<(), String> {
             option(args, "--web").map(PathBuf::from),
         ),
         ["uninstall"] => install::uninstall(),
+        ["start"] => install::start(),
+        ["stop"] => install::stop(),
+        ["status"] => install::status(),
         ["version"] => {
-            println!("lightcraft-server {}", env!("LIGHTCRAFT_BUILD_VERSION"));
+            println!("lightbites-server {}", env!("LIGHTCRAFT_BUILD_VERSION"));
             Ok(())
         }
         ["health"] => {
@@ -512,7 +517,7 @@ fn check(data: &Path, user: &str) -> Result<usize, String> {
 fn scan(data: &Path, user: &str) -> Result<(), String> {
     let lib_dir = accounts::user_dir(data, user).join("library");
     std::fs::create_dir_all(&lib_dir).map_err(|e| format!("{}: {e}", lib_dir.display()))?;
-    if lightcraft_engine::catalog::LibraryLock::acquire(&lib_dir, "lightcraft-server scan").is_err() {
+    if lightcraft_engine::catalog::LibraryLock::acquire(&lib_dir, "lightbites-server scan").is_err() {
         request_scan(data, user);
         println!("{user}: the server is running: it scans the library folders within a few seconds (progress on the admin page)");
         return Ok(());

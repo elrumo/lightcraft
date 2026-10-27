@@ -1,7 +1,7 @@
 //! Library folders: a user's photo folders on the server, read in place.
 //!
 //! An admin gives a user folders that are already on the server — a NAS share, a backup disk,
-//! years of `2019/Holidays/…` — and they stay exactly where they are (`lightcraft-server folder
+//! years of `2019/Holidays/…` — and they stay exactly where they are (`lightbites-server folder
 //! add ann /photos/ann`, or the admin page). The server walks them, adds each photo it finds to
 //! the user's library, so every device sees it in its folder ([`Photo::server_path`]) and can put
 //! it in albums, builds its smart and mini previews, and serves its original straight from the
@@ -12,7 +12,7 @@
 //!   (`users/<name>/folders.json`) only remembers each file's size, time and content hash, so a
 //!   file that didn't change isn't read again, and which photo it became.
 //! - **Scans** run at start, every [`Scanner::interval`], and on demand (the admin page,
-//!   `lightcraft-server scan`). A new file becomes a photo, with what its XMP sidecar (or the
+//!   `lightbites-server scan`). A new file becomes a photo, with what its XMP sidecar (or the
 //!   raw's own XMP) says: rating, label, keywords, title, Lightroom edits. A file that moved keeps
 //!   its photo (same content, its old place gone); one changed in place keeps its photo and edits
 //!   and gets new previews; a file a device uploaded already becomes that photo's place. A sidecar
@@ -46,7 +46,7 @@ use crate::api::UserLib;
 
 /// The index of a user's library folders, in their folder.
 pub const INDEX: &str = "folders.json";
-/// Left in a user's folder by `lightcraft-server scan` while the server runs: scan them soon.
+/// Left in a user's folder by `lightbites-server scan` while the server runs: scan them soon.
 pub const REQUEST: &str = "scan.request";
 /// The id space of the photos the server adds (no device is given it).
 pub const SPACE: u32 = crate::MAX_SPACE;
@@ -1288,7 +1288,7 @@ pub(crate) fn run_scanner(st: &Arc<State>) {
         sc.request(&u);
     }
     while !sc.stop.load(Ordering::SeqCst) {
-        // asked from the command line (`lightcraft-server scan` while the server runs)
+        // asked from the command line (`lightbites-server scan` while the server runs)
         for u in users_with_folders(&st.data) {
             let req = accounts::user_dir(&st.data, &u).join(REQUEST);
             if req.exists() {

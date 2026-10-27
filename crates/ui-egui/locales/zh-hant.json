@@ -1561,7 +1561,7 @@
   "Describe what you're looking for, for example “a dog on a beach at sunset”, and press Return.": "描述你要找的照片，例如「日落時海灘上的一隻狗」，然後按 Return。",
   "The search model is installed: describe a photo to find it.": "搜尋模型已安裝：描述一張照片即可尋找。",
   "Your server can search by description, but its search model isn't installed yet.": "你的伺服器支援依描述搜尋，但尚未安裝搜尋模型。",
-  "Whoever runs the server installs it with: lightcraft-server model download --accept-licences": "伺服器管理員可用以下指令安裝：lightcraft-server model download --accept-licences",
+  "Whoever runs the server installs it with: lightbites-server model download --accept-licences": "伺服器管理員可用以下指令安裝：lightbites-server model download --accept-licences",
   "It keeps going in the background; search the ones that are ready now.": "它會在背景繼續處理；已準備好的照片現在就可以搜尋。",
   "Send the search data to my server, so my other devices can search too": "將搜尋資料傳送到我的伺服器，讓我的其他裝置也能搜尋",
   "Search: describe photos on this device instead of my server": "搜尋：在此裝置而非我的伺服器上分析相片內容",

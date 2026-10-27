@@ -5,8 +5,13 @@
 //! write it: on a device they are presets like the built-in ones, which the user can favourite and hide.
 //!
 //! `<data>/server-presets.json`: a [`Doc`] whose items are the presets (`{id: "srv.…", name, group,
-//! settings}`) and at most one item `{id: "hidden", presets: [built-in id], groups: [built-in group]}`.
+//! settings, disabled?}`) and at most one item `{id: "hidden", presets: [built-in id], groups: [built-in group]}`.
 //! A `PUT` names the version it changed; a stale one gets `412` with the current document.
+//!
+//! A preset with `disabled: true` stays here (the admin page lists it, dimmed, and can enable it again) but
+//! isn't served to devices ([`for_devices`]): to them it is as if it were deleted, until it is enabled. A
+//! group is disabled when all its presets are; a preset imported into one starts disabled too. (A flag on the
+//! preset, not an item of its own: an older admin app that saves the list keeps it.)
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -88,6 +93,8 @@ impl ServerPresets {
         let mut items: Vec<Value> = self.doc.items.as_array().cloned().unwrap_or_default();
         let mut ids: HashSet<String> = items.iter().filter_map(|v| v["id"].as_str().map(str::to_string)).collect();
         let (mut added, mut skipped) = (0usize, r["skipped"].as_u64().unwrap_or(0) as usize);
+        // (the groups whose presets are all disabled: what is imported into them starts disabled)
+        let off: HashSet<String> = off_groups(&items);
         for p in s.presets.iter().filter(|p| !p.builtin) {
             if items.iter().any(|v| v["name"] == p.name.as_str() && v["group"] == p.group.as_str() && v["settings"] == p.settings) {
                 skipped += 1;
@@ -101,7 +108,11 @@ impl ServerPresets {
                 n += 1;
             }
             ids.insert(id.clone());
-            items.push(json!({"id": id, "name": p.name, "group": p.group, "settings": p.settings}));
+            let mut item = json!({"id": id, "name": p.name, "group": p.group, "settings": p.settings});
+            if off.contains(&p.group) {
+                item["disabled"] = json!(true);
+            }
+            items.push(item);
             added += 1;
         }
         let failed = r["failed"].clone();
@@ -117,11 +128,32 @@ impl ServerPresets {
     }
 }
 
+/// The presets of `doc` that devices get: the ones not disabled, and the `hidden` item.
+pub fn for_devices(doc: &Doc) -> Doc {
+    let items = doc.items.as_array().map(Vec::as_slice).unwrap_or_default();
+    Doc { version: doc.version, items: Value::Array(items.iter().filter(|v| !is_disabled(v)).cloned().collect()) }
+}
+
+fn is_disabled(item: &Value) -> bool {
+    item.get("disabled").and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// The groups of `items` in which every preset is disabled.
+fn off_groups(items: &[Value]) -> HashSet<String> {
+    let mut groups: std::collections::HashMap<&str, bool> = std::collections::HashMap::new();
+    for v in items.iter().filter(|v| v["id"] != HIDDEN) {
+        let Some(g) = v["group"].as_str() else { continue };
+        let all = groups.entry(g).or_insert(true);
+        *all = *all && is_disabled(v);
+    }
+    groups.into_iter().filter(|(_, all)| *all).map(|(g, _)| g.to_string()).collect()
+}
+
 fn short(s: &str) -> bool {
     !s.trim().is_empty() && s.chars().count() <= NAME_MAX
 }
 
-/// The items as kept: each preset `{id: "srv.…", name, group, settings: {…}}` (ids unique), and at most one
+/// The items as kept: each preset `{id: "srv.…", name, group, settings: {…}, disabled?: true}` (ids unique), and at most one
 /// [`HIDDEN`] item of names. Anything else is refused, saying which item.
 pub fn check(items: &[Value]) -> Result<Vec<Value>, String> {
     if items.len() > MAX_PRESETS {
@@ -155,7 +187,14 @@ pub fn check(items: &[Value]) -> Result<Vec<Value>, String> {
         let Some(settings) = v.get("settings").filter(|s| s.is_object()) else {
             return Err(format!("item {i} (`{id}`): `settings` must be an object"));
         };
-        out.push(json!({"id": id, "name": name, "group": group, "settings": settings}));
+        let mut item = json!({"id": id, "name": name, "group": group, "settings": settings});
+        match v.get("disabled") {
+            None | Some(Value::Null) => {}
+            Some(Value::Bool(true)) => item["disabled"] = json!(true),
+            Some(Value::Bool(false)) => {}
+            Some(_) => return Err(format!("item {i} (`{id}`): `disabled` must be true or false")),
+        }
+        out.push(item);
     }
     Ok(out)
 }
@@ -200,6 +239,37 @@ mod tests {
             ])
             .is_err()
         );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn disabled_presets_are_kept_but_not_served_to_devices() {
+        let d = temp("disabled");
+        let mut p = ServerPresets::load(&d);
+        let items = vec![
+            json!({"id": "srv.a", "name": "A", "group": "Team", "settings": {}, "disabled": true}),
+            json!({"id": "srv.b", "name": "B", "group": "Team", "settings": {}, "disabled": false}),
+            json!({"id": "srv.c", "name": "C", "group": "Old", "settings": {}, "disabled": true}),
+            json!({"id": "hidden", "presets": ["lc.moody"], "groups": []}),
+        ];
+        assert_eq!(p.put(0, &items).unwrap(), Ok(1));
+        let kept = p.doc().items.as_array().unwrap();
+        assert_eq!(kept[0]["disabled"], true, "kept for the admin");
+        assert!(kept[1].get("disabled").is_none(), "false is the same as absent");
+        let served = for_devices(p.doc());
+        let ids: Vec<&str> = served.items.as_array().unwrap().iter().filter_map(|v| v["id"].as_str()).collect();
+        assert_eq!((ids, served.version), (vec!["srv.b", "hidden"], 1), "devices get what is enabled, and the hidden built-ins");
+        assert!(check(&[json!({"id": "srv.a", "name": "A", "group": "G", "settings": {}, "disabled": "yes"})]).is_err());
+        // a preset imported into a group that is all disabled starts disabled; into one that is not, enabled
+        let file = |group: &str| {
+            let f = json!({"format": "lightcraft.preset", "version": 1, "presets": [{"id": "x", "name": group, "group": group, "settings": {"light": {"exposure": 0.7}}}]});
+            lightcraft_engine::inline_files::to_param([("F.lcpreset", f.to_string().as_bytes())]).as_array().unwrap().clone()
+        };
+        for (group, off) in [("Old", true), ("Team", false), ("New", false)] {
+            p.import(file(group), None).unwrap();
+            let it = p.doc().items.as_array().unwrap().iter().find(|v| v["name"] == group).unwrap().clone();
+            assert_eq!(it["disabled"] == true, off, "{group}: {it}");
+        }
         let _ = std::fs::remove_dir_all(&d);
     }
 
