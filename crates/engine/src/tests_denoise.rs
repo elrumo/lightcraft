@@ -413,6 +413,9 @@ fn an_export_makes_its_picture_when_the_queue_has_not_and_never_comes_out_withou
     assert!(e.contains("no denoise model is chosen") && e.contains("ramp.dng"), "{e}");
     set_amount(&mut x.s, 0.0);
     assert!(export_photo(&mut x.s, id, &o, 1).is_ok(), "without an amount nothing is asked of the model");
+    // an amount that the Amount control shows as 0 (a fraction of a point, from a drag) is no amount either
+    set_amount(&mut x.s, 0.4);
+    assert!(export_photo(&mut x.s, id, &o, 1).is_ok(), "a fraction of a point shows as 0, so nothing is asked of the model");
     let _ = std::fs::remove_dir_all(&x.dir);
 }
 

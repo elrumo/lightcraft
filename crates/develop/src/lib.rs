@@ -142,7 +142,11 @@ impl DevelopSettings {
     /// section is switched off or the value is not a number.
     pub fn denoise_amount(&self) -> f32 {
         let a = self.enhance.denoise;
-        if a.is_finite() && self.enhance.denoise_enabled() && self.section_enabled("detail") { (a / 100.0).clamp(0.0, 1.0) as f32 } else { 0.0 }
+        if a.is_finite() && a >= settings::Enhance::DENOISE_SHOWN && self.enhance.denoise_enabled() && self.section_enabled("detail") {
+            (a / 100.0).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        }
     }
 
     pub fn set_section_enabled(&mut self, section: &str, on: bool) {
@@ -377,5 +381,19 @@ mod tests {
         assert!(s.enhance.denoise_enabled());
         s.reset_section(Section::Detail);
         assert_eq!(s.enhance.denoise_on, None);
+    }
+
+    #[test]
+    fn an_amount_that_shows_as_zero_is_off() {
+        let mut s = DevelopSettings::default();
+        // the Amount control shows whole points: 0.4 reads 0, so it is off, even when the switch is on
+        controls::set(&mut s, "enhance.denoise", 0.4);
+        assert_eq!(controls::get(&s, "enhance.denoise"), Some(0.4));
+        assert!(!s.enhance.denoise_enabled());
+        assert_eq!(s.denoise_amount(), 0.0);
+        s.enhance.denoise_on = Some(true);
+        assert_eq!(s.denoise_amount(), 0.0);
+        controls::set(&mut s, "enhance.denoise", 0.5);
+        assert!((s.denoise_amount() - 0.005).abs() < 1e-6);
     }
 }

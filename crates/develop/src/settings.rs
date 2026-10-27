@@ -1225,8 +1225,12 @@ pub struct Enhance {
 }
 
 impl Enhance {
+    /// The smallest Denoise amount that shows as more than 0 (the Amount control shows whole points). A smaller one is
+    /// off too, so an export never asks for a denoise the screen shows as none.
+    pub const DENOISE_SHOWN: f64 = 0.5;
+
     pub fn denoise_enabled(&self) -> bool {
-        self.denoise_on.unwrap_or(self.denoise > 0.0)
+        self.denoise_on.unwrap_or(self.denoise >= Self::DENOISE_SHOWN)
     }
 }
 

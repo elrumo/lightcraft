@@ -565,7 +565,11 @@ fn toggle(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // The switch is its own setting: the Amount stays where it is (0 included) when it is flipped, so flipping compares
     // with and without. A photo that never had an Amount starts at 50 the first time.
-    let amount = if on && d.enhance.denoise_on.is_none() && d.enhance.denoise <= 0.0 { 50.0 } else { d.enhance.denoise };
+    let amount = if on && d.enhance.denoise_on.is_none() && d.enhance.denoise < lightcraft_develop::settings::Enhance::DENOISE_SHOWN {
+        50.0
+    } else {
+        d.enhance.denoise
+    };
     if d.enhance.denoise != amount || d.enhance.denoise_on != Some(on) {
         s.end_interaction()?;
         d.enhance.denoise = amount;
