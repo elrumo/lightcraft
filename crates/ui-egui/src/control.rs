@@ -320,6 +320,7 @@ pub(crate) fn widget_target_visible(ctx: &egui::Context, hit: Option<crate::widg
         return false;
     }
     let at_layer = ctx.layer_id_at(at);
+    eprintln!("DBG state={:?} vis={} modal={:?} above={}", egui::AreaState::load(ctx, hit.layer_id.id), ctx.memory(|m| m.areas().is_visible(&hit.layer_id)), top_modal, above_modal);
     eprintln!("DBG visible hit_layer={:?} at_layer={:?} allows={} at={:?} rect={:?}", hit.layer_id, at_layer, allows_interaction, at, interact_rect);
     if at_layer == Some(hit.layer_id) {
         return allows_interaction;
