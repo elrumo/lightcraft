@@ -63,7 +63,7 @@ pub fn scene_log_mean(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> O
     // the mean of the valid pixels under each proxy pixel
     let kept: Vec<[f32; 3]> = img.data.iter().zip(&weight.data).filter(|(_, w)| w[0] > 1e-6).map(|(p, w)| p.map(|v| v / w[0])).collect();
     let mut kept = Rgb32f { width: kept.len(), height: 1, data: kept };
-    let base = DevelopSettings { wb: s.wb, ..DevelopSettings::default() };
+    let base = DevelopSettings { wb: s.wb, process: s.process, ..DevelopSettings::default() };
     // (white balance is per pixel: the valid pixels can be balanced in a row of their own)
     crate::local::scene_linear_pre(&mut kept, info, &base);
     let (mut sum, mut n) = (0f64, 0usize);
@@ -109,7 +109,7 @@ pub fn auto_tone(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> AutoTo
 pub fn auto_bw_mix(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> [f64; 8] {
     use lightcraft_color::perceptual::{lab_to_lch, oklab_from_2020};
     let mut img = lightcraft_raster::resample::fit(src, 512, 512, lightcraft_raster::resample::Filter::Box);
-    let base = DevelopSettings { wb: s.wb, light: s.light, ..DevelopSettings::default() };
+    let base = DevelopSettings { wb: s.wb, light: s.light, process: s.process, ..DevelopSettings::default() };
     crate::local::scene_linear_pre(&mut img, info, &base);
     let gain = 2f32.powf(base.light.exposure as f32);
     let (mut mass, mut sum_l) = ([0f64; 8], [0f64; 8]);

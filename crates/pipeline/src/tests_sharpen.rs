@@ -1,15 +1,15 @@
-//! Capture sharpening ([`local::Capture`]): its radius is in the original's pixels, so it sharpens
-//! the finest detail without wide halos, fades in previews (as the full-size render scaled down
-//! does), and Detail holds back what strong edges get.
+//! Process V3's capture sharpening ([`local::Capture`]): its radius is in the original's pixels, so it
+//! sharpens the finest detail without the wide halos the texture band drew before, fades in previews
+//! (as the full-size render scaled down does), and Detail holds back what strong edges get.
 
-use lightcraft_develop::{DevelopSettings, LocalAdjustments, Mask};
+use lightcraft_develop::{DevelopSettings, LocalAdjustments, Mask, Process};
 use lightcraft_raster::{Rgb32f, Rgba8};
 
 use crate::{RenderRequest, SourceInfo, local, render};
 
-/// Settings with Lightroom's raw sharpening defaults (Amount 40, Radius 1, Detail 25).
-fn on() -> DevelopSettings {
-    let mut s = DevelopSettings::default();
+/// `p`'s settings with Lightroom's raw sharpening defaults (Amount 40, Radius 1, Detail 25).
+fn on(p: Process) -> DevelopSettings {
+    let mut s = DevelopSettings { process: p.version(), ..DevelopSettings::default() };
     s.detail.sharpen_amount = 40.0;
     s
 }
@@ -31,34 +31,37 @@ fn diff(img: &Rgba8, base: &Rgba8) -> Vec<i32> {
 
 #[test]
 fn halos_stay_at_the_edge_at_full_size() {
-    // a 24 MP photo's long edge
+    // a 24 MP photo's long edge: the texture band V2 sharpened with is 0.18 % of it, about 10 px
     let w = 6000;
     let src = edge(w, 0.03, 0.18);
-    let none = {
-        let mut s = on();
+    let none = |p: Process| {
+        let mut s = on(p);
         s.detail.sharpen_amount = 0.0;
         shot(&src, &s, w)
     };
-    let d = diff(&shot(&src, &on(), w), &none);
-    let at = |off: usize| d[w / 2 + off];
-    // it brightens the bright side right at the edge
-    assert!(at(0) > 0, "edge: {}", at(0));
-    // and is gone a few pixels away (the old texture band still brightened 12 px away)
-    assert!((6..40).all(|o| at(o) == 0), "past 6 px: {:?}", &d[w / 2..w / 2 + 40]);
+    let (v2, v3) = (diff(&shot(&src, &on(Process::V2), w), &none(Process::V2)), diff(&shot(&src, &on(Process::V3), w), &none(Process::V3)));
+    let at = |d: &[i32], off: usize| d[w / 2 + off];
+    // both brighten the bright side right at the edge
+    assert!(at(&v3, 0) > 0 && at(&v2, 0) > 0, "edge: V2 {} V3 {}", at(&v2, 0), at(&v3, 0));
+    // V2's band still brightens 12 px away; capture sharpening is gone there
+    assert!(at(&v2, 12) >= 2, "V2 at 12 px: {}", at(&v2, 12));
+    assert!((6..40).all(|o| at(&v3, o) == 0), "V3 past 6 px: {:?}", &v3[w / 2..w / 2 + 40]);
 }
 
 #[test]
 fn a_preview_shows_what_the_full_size_render_scaled_down_shows() {
     // the fitted view of a 6000 px photo: one output pixel is ten of the original's, and a 1 px radius
-    // leaves almost nothing
+    // leaves almost nothing (V2 drew its halo at every size)
     let src = edge(6000, 0.03, 0.18);
-    let flat = {
-        let mut s = on();
+    let flat = |p: Process| {
+        let mut s = on(p);
         s.detail.sharpen_amount = 0.0;
         shot(&src, &s, 600)
     };
-    let d = diff(&shot(&src, &on(), 600), &flat);
-    assert!(d.iter().all(|d| d.abs() <= 1), "{:?}", &d[290..310]);
+    let v3 = diff(&shot(&src, &on(Process::V3), 600), &flat(Process::V3));
+    assert!(v3.iter().all(|d| d.abs() <= 1), "{:?}", &v3[290..310]);
+    let v2 = diff(&shot(&src, &on(Process::V2), 600), &flat(Process::V2));
+    assert!(v2.iter().any(|d| d.abs() >= 2), "{:?}", &v2[290..310]);
 }
 
 #[test]
@@ -66,12 +69,12 @@ fn detail_holds_back_strong_edges() {
     let w = 2000;
     let src = edge(w, 0.004, 0.6);
     let with = |detail: f64| {
-        let mut s = on();
+        let mut s = on(Process::V3);
         s.detail.sharpen_amount = 100.0;
         s.detail.sharpen_detail = detail;
         shot(&src, &s, w)
     };
-    let mut flat = on();
+    let mut flat = on(Process::V3);
     flat.detail.sharpen_amount = 0.0;
     let flat = shot(&src, &flat, w);
     let overshoot = |img: &Rgba8| diff(img, &flat)[w / 2];
@@ -81,8 +84,9 @@ fn detail_holds_back_strong_edges() {
 
 #[test]
 fn radius_detail_and_scale_give_the_parameters() {
-    let v3 = on();
-    let full = local::capture_sharpen(&v3, 1.0).expect("at full size");
+    let v3 = on(Process::V3);
+    assert_eq!(local::capture_sharpen(&on(Process::V2), 1.0), None, "V2 sharpens with the texture band");
+    let full = local::capture_sharpen(&v3, 1.0).expect("V3 at full size");
     assert_eq!((full.sigma, full.w, full.detail), (1.0, 1.0, 0.25));
     // a radius in the original's pixels: half size halves it, and below the smallest blur it fades
     let mut wide = v3.clone();
@@ -106,7 +110,8 @@ fn radius_detail_and_scale_give_the_parameters() {
 }
 
 #[test]
-fn the_texture_band_is_left_to_texture() {
-    // sharpening has its own plane: Amount alone asks for no texture band
-    assert_eq!(local::plane_sigmas(&on(), 6000.0, crate::Quality::Full).texture, None);
+fn the_texture_band_is_left_to_texture_from_v3() {
+    let sig = |p: Process| local::plane_sigmas(&on(p), 6000.0, crate::Quality::Full).texture;
+    assert!(sig(Process::V2).is_some(), "V2 sharpens with it");
+    assert_eq!(sig(Process::V3), None, "V3 sharpens with its own plane");
 }
