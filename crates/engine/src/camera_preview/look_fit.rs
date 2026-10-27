@@ -164,7 +164,7 @@ pub(super) fn clip_mask(camera: &Rgb32f) -> Rgb32f {
 /// Lightroom's default export: near-neutral pixels within 1.3 L* of it in every band of Lightroom's lightness
 /// (`docs/camera-preview-colour.md`; first set to 1.494 / 1.65 on frames without the correction, which then rendered
 /// 2.7 L* too bright). Lightroom's output was measured, nothing of Adobe's read.
-const NEUTRAL_TONE: (f32, f32) = (1.30, 1.80);
+pub(super) const NEUTRAL_TONE: (f32, f32) = (1.30, 1.80);
 /// Width of the neutral tone's soft black point: `o` becomes `soft(o)`, `soft(v) = (v + √(v² + w²)) / 2` renormalised
 /// so 0 and 1 stay put (`ToneMap::hdr`'s toe at its zero offset), which darkens the deepest shadows a little.
 const NEUTRAL_TOE: f32 = 0.004;
@@ -175,7 +175,7 @@ const NEUTRAL_CHROMA: (f32, f32) = (0.926, 0.765);
 
 /// LightCraft's neutral starting look on a Canon camera's measured matrices ([`neutral_look_for`] for Canon).
 #[cfg(test)]
-fn neutral_look(model: Option<&str>) -> Option<CameraLook> {
+pub(super) fn neutral_look(model: Option<&str>) -> Option<CameraLook> {
     neutral_look_for(model, Some("Canon"))
 }
 
@@ -198,7 +198,7 @@ fn neutral_value(x: f32, e: f32, c: f32) -> f32 {
 }
 
 /// The neutral tone at exposure `e` EV and contrast `c` with [`NEUTRAL_CHROMA`] and no table.
-fn neutral_curve(e: f32, c: f32) -> Option<CameraLook> {
+pub(super) fn neutral_curve(e: f32, c: f32) -> Option<CameraLook> {
     use lightcraft_pipeline::tone::{GREY, channel_chroma};
     let (mut e, mut c) = (e, c);
     if let Ok(v) = std::env::var("LC_NEUTRAL_TONE") {
@@ -225,7 +225,7 @@ fn neutral_curve(e: f32, c: f32) -> Option<CameraLook> {
 /// Samsung 6 0.67, Epson 3 0.68, Minolta 3 0.49; 354 files 1.12) and it assumes the camera JPEG stands to
 /// Lightroom's rendering as Canon's does (Sony's, measured on 24 ILCE-7CR photos with DRO off, does:
 /// Lightroom is +0.15 L* from the camera JPEG). An estimate, until a maker's own Lightroom exports are fitted.
-fn maker_exposure(make: Option<&str>) -> f32 {
+pub(super) fn maker_exposure(make: Option<&str>) -> f32 {
     let make = make.unwrap_or_default().to_uppercase();
     let has = |names: &[&str]| names.iter().any(|n| make.contains(n));
     let median = if has(&["CANON"]) {
@@ -319,7 +319,7 @@ const MIN_REFERENCE_ALIGNMENT: f64 = 0.05;
 /// A displayed colour with `tone`'s chroma curve undone: the colour that, scaled by the curve's chroma at its
 /// luminance, displays as `y`. The same luminance and hue; `None` where the curve keeps too little chroma to undo
 /// (near white) or the colour is black or white.
-fn without_chroma(y: [f64; 3], tone: &ToneMap) -> Option<[f64; 3]> {
+pub(super) fn without_chroma(y: [f64; 3], tone: &ToneMap) -> Option<[f64; 3]> {
     let o = luma(y);
     let k = f64::from(tone.chroma_scale(o as f32));
     (o > 0.0 && o < 1.0 && k >= 0.25).then(|| y.map(|v| o + (v - o) / k))
@@ -349,7 +349,7 @@ pub(crate) fn fit_neutral(pairs: &[([f64; 3], [f64; 3])], make: Option<&str>) ->
 /// luminance of the render per quarter stop of scene luminance (bins of at least 25 pairs, 8 or more of them), compared
 /// with the tone's at the bin's centre over a grid of exposures (-0.5 to 3 EV) and contrasts (1 to 2.6). That is how
 /// the Canon values were first set, by hand, against 19 EOS R6 photos. `None` when the pairs do not span the tones.
-fn fit_neutral_tone(pairs: &[([f64; 3], [f64; 3])]) -> Option<(f32, f32)> {
+pub(super) fn fit_neutral_tone(pairs: &[([f64; 3], [f64; 3])]) -> Option<(f32, f32)> {
     let encoded = |v: f64| v.max(0.0).powf(1.0 / 2.2);
     let mut bins: std::collections::BTreeMap<i32, Vec<f64>> = Default::default();
     for (x, y) in pairs {

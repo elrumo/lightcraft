@@ -163,7 +163,7 @@ fn scan_notice(ui: &mut egui::Ui, t: &Tokens, ready: &crate::sync::SyncReady, wi
                 });
                 let (rect, resp) = ui.allocate_exact_size(vec2(CROSS, CROSS), Sense::click());
                 paint(ui.painter(), rect.shrink(2.0), Icon::Close, if resp.hovered() { t.text } else { t.icon });
-                register(ui.ctx(), "activity:scanReady:dismiss", rect);
+                register(ui, "activity:scanReady:dismiss", rect);
                 dismissed = resp.on_hover_text(tr("Dismiss")).clicked();
             });
             // (the part below the ✕'s line takes the click, so the two never overlap)
@@ -175,11 +175,11 @@ fn scan_notice(ui: &mut egui::Ui, t: &Tokens, ready: &crate::sync::SyncReady, wi
                 })
                 .response;
             let click = ui.interact(body.rect, egui::Id::new("activity-scan-ready"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
-            register(ui.ctx(), "activity:scanReady:review", body.rect);
+            register(ui, "activity:scanReady:review", body.rect);
             reviewed = click.on_hover_text(tr("Open Synchronize Folder with what the scan found")).clicked();
         })
         .response;
-    register(ui.ctx(), "activity:scanReady", r.rect);
+    register(ui, "activity:scanReady", r.rect);
     if dismissed {
         return Some(Notice::Dismiss);
     }

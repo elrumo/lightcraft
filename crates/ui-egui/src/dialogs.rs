@@ -19,8 +19,9 @@ pub use confirm::confirm_dialog;
 pub use cull::{MAX_BURST_GAP, clamp_cull_burst, cull_params, fmt_gap, parse_gap};
 use export::group_checklist;
 pub use frame::{ConfirmStyle, confirm_style, list_height, prompt};
+pub(crate) use frame::{choices, field, num, trailing_button_row};
 use frame::{
-    DIALOG_CHROME_GUESS, DIALOG_MIN_BODY, DIALOG_SCREEN_MARGIN, choices, clicked_backdrop, dialog_body, dialog_field, field, just_opened, only_shows,
+    DIALOG_CHROME_GUESS, DIALOG_MIN_BODY, DIALOG_SCREEN_MARGIN, clicked_backdrop, dialog_body, dialog_field, just_opened, only_shows,
     return_confirms,
 };
 pub(crate) use rename::rename_preview;

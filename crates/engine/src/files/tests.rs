@@ -1,3 +1,5 @@
+use super::colour::stream_bin_factor;
+use super::fs::load_weight;
 /// Keywords from a file keep their hierarchy: the paths of `lr:hierarchicalSubject`, not the
 /// flat names of `dc:subject` that LightCraft's exports (and Lightroom Classic) write besides
 /// them; an exported `travel|Italy|Rome` comes back as itself.

@@ -159,7 +159,7 @@ pub fn fs_pair_loader() -> PairLoader {
 /// rule of thumb for compressed images; for a raw, what its decode allocates — the samples (16 bits each), some
 /// tiles in flight, and unless the load bins the mosaic ([`bin_factor`]) the full-size normalised and RGB float
 /// images.
-fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
+pub(super) fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
     let factor = if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 3 } else { 6 };
     let by_size = bytes.len().saturating_mul(factor);
     let Ok(info) = lightcraft_raw::probe_info(bytes) else { return by_size };

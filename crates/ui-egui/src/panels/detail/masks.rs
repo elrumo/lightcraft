@@ -327,7 +327,7 @@ pub(super) fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &eg
             let _ = app.run("mask.select", json!({"id": mid}));
         }
         app.gesture = None;
-        super::mobile::open_menu(ui.ctx(), "maskPin", Rect::from_center_size(at, vec2(28.0, 28.0)));
+        crate::panels::mobile::open_menu(ui.ctx(), "maskPin", Rect::from_center_size(at, vec2(28.0, 28.0)));
         return;
     }
     // brush tool

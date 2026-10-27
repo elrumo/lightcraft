@@ -33,7 +33,7 @@ use crop::{flipped_corners, outside_crop_mesh, rotate_cursor_turn};
 use filmstrip::film_label;
 #[cfg(test)]
 pub(crate) use filmstrip::film_spoken;
-pub(crate) use filmstrip::filmstrip;
+pub(crate) use filmstrip::{film_height, filmstrip, filmstrip_rising};
 use filmstrip::navigator;
 pub use geometry::CanvasMap;
 #[cfg(test)]

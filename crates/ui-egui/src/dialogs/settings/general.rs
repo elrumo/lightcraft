@@ -3,76 +3,94 @@ use super::*;
 
 // ------------------------------------------------------------------------------------- General
 
-pub(super) fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
-    row(ui, t, crate::i18n::tr("Language"), |ui| {
-        let languages: Vec<_> = crate::i18n::Locale::for_picker().into_iter().map(|language| (language, language.name())).collect();
-        // Thirteen language names do not fit one line in a narrow window: wrap them.
-        ui.horizontal_wrapped(|ui| {
-            choices(ui, "settingsLanguage", &languages, &mut app.ui.language);
+pub(crate) fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    let languages: Vec<_> = crate::i18n::Locale::for_picker().into_iter().map(|language| (language, language.name())).collect();
+    pick(ui, t, "settingsLanguage", crate::i18n::tr("Language"), &languages, &mut app.ui.language);
+    crate::i18n::set_language(app.ui.language);
+    if !IOS {
+        heading(ui, t, crate::i18n::tr("Library"));
+        let location = match &app.session.library {
+            Some(l) => l.dir.display().to_string(),
+            None => crate::i18n::tr("In memory — nothing is saved").to_string(),
+        };
+        row(ui, t, crate::i18n::tr("Location"), |ui| {
+            path_label(ui, "settingsLocation", &location, egui::TextStyle::Body.resolve(ui.style()), t.text_label);
         });
-        crate::i18n::set_language(app.ui.language);
-    });
-    heading(ui, t, crate::i18n::tr("Library"));
-    let location = match &app.session.library {
-        Some(l) => l.dir.display().to_string(),
-        None => crate::i18n::tr("In memory — nothing is saved").to_string(),
-    };
-    row(ui, t, crate::i18n::tr("Location"), |ui| {
-        path_label(ui, "settingsLocation", &location, egui::TextStyle::Body.resolve(ui.style()), t.text, 0.0);
-    });
-    row(ui, t, "", |ui| {
-        let can = app.services.pick_folder.is_some();
-        let r = ui.add_enabled(can, egui::Button::new(crate::i18n::tr("Open Library…")));
-        register(ui, "button:settingsOpenLibrary", r.rect);
-        if r.clicked() {
-            let _ = app.run("app.openLibrary", json!({}));
-        }
-        let r = ui.add_enabled(can, egui::Button::new(crate::i18n::tr("New Library…")));
-        register(ui, "button:settingsNewLibrary", r.rect);
-        if r.clicked() {
-            let _ = app.run("app.newLibrary", json!({}));
-        }
-        if !can {
-            hint(ui, t, crate::i18n::tr("not available here"));
-        }
-    });
-    // where libraries are folders to choose from (not in the browser, which keeps one)
-    if app.services.pick_folder.is_some() {
-        use crate::state::LaunchLibrary;
-        row(ui, t, crate::i18n::tr("At launch"), |ui| {
-            choices(
+        row(ui, t, "", |ui| {
+            let can = app.services.pick_folder.is_some();
+            if action(ui, t, "settingsOpenLibrary", "Open Library…", can, false) {
+                let _ = app.run("app.openLibrary", json!({}));
+            }
+            if action(ui, t, "settingsNewLibrary", "New Library…", can, false) {
+                let _ = app.run("app.newLibrary", json!({}));
+            }
+            if !can {
+                hint(ui, t, crate::i18n::tr("not available here"));
+            }
+        });
+        // where libraries are folders to choose from (not in the browser, which keeps one)
+        if app.services.pick_folder.is_some() {
+            use crate::state::LaunchLibrary;
+            pick(
                 ui,
+                t,
                 "settingsAtLaunch",
+                crate::i18n::tr("At launch"),
                 &[(LaunchLibrary::Last, "Open the last library"), (LaunchLibrary::Ask, "Ask me")],
                 &mut app.ui.settings.at_launch,
             );
-        });
-        hint(ui, t, crate::i18n::tr("Ask me lists your recent libraries at launch. Holding Alt (Option on a Mac) as the window appears asks once."));
+            hint(
+                ui,
+                t,
+                crate::i18n::tr("Ask me lists your recent libraries at launch. Holding Alt (Option on a Mac) as the window appears asks once."),
+            );
+        }
+        // File ▸ Import Lightroom Catalog… (#2672): the window that asks where a catalog goes, or not
+        {
+            use crate::state::LightroomImport;
+            pick(
+                ui,
+                t,
+                "settingsLightroomImport",
+                crate::i18n::tr("When importing a Lightroom catalog"),
+                &[(LightroomImport::Ask, "Ask where to import it"), (LightroomImport::AlwaysMerge, "Always merge into the open library")],
+                &mut app.ui.settings.lightroom_import,
+            );
+        }
     }
-    // File ▸ Import Lightroom Catalog… (#2672): the window that asks where a catalog goes, or not
-    ui.label(RichText::new(crate::i18n::tr("When importing a Lightroom catalog")).color(t.text_label));
+    heading(ui, t, crate::i18n::tr("Hidden"));
     row(ui, t, "", |ui| {
-        use crate::state::LightroomImport;
-        choices(
-            ui,
-            "settingsLightroomImport",
-            &[(LightroomImport::Ask, "Ask where to import it"), (LightroomImport::AlwaysMerge, "Always merge into the open library")],
-            &mut app.ui.settings.lightroom_import,
-        );
+        let label = if app.session.hidden.has_password() { "Change Hidden Password…" } else { "Set Hidden Password…" };
+        if action(ui, t, "settingsHiddenPassword", label, true, false) {
+            crate::panels::dialogs::change_hidden_password(app);
+        }
     });
+    hint(
+        ui,
+        t,
+        crate::i18n::tr("The password that opens the Hidden album on every device of this library (Face ID or Touch ID on an iPhone, iPad or Mac)."),
+    );
+    // (the photos the sensitive-content model flagged, Settings ▸ AI Models)
+    let mut blur = app.session.blur_sensitive;
+    if ui.checkbox(&mut blur, crate::i18n::tr("Blur photos that might be sensitive in the grid")).changed() {
+        let _ = app.run("library.setBlurSensitive", json!({"on": blur}));
+    }
     heading(ui, t, crate::i18n::tr("Startup"));
-    row(ui, t, crate::i18n::tr("Open in"), |ui| {
-        choices(
-            ui,
-            "settingsStartup",
-            &[(StartupView::Last, "Last view"), (StartupView::Grid, "Photo Grid"), (StartupView::Detail, "Detail View")],
-            &mut app.ui.settings.startup_view,
-        );
-    });
+    pick(
+        ui,
+        t,
+        "settingsStartup",
+        crate::i18n::tr("Open in"),
+        &[(StartupView::Last, "Last view"), (StartupView::Grid, "Photo Grid"), (StartupView::Detail, "Detail View")],
+        &mut app.ui.settings.startup_view,
+    );
     heading(ui, t, crate::i18n::tr("Culling"));
     check(ui, "settings.autoAdvance", &mut app.ui.auto_advance, "Auto Advance: move to the next photo after rating or flagging");
     check(ui, "settings.confirmDelete", &mut app.ui.settings.confirm_delete, "Confirm before moving photos to Recently Deleted");
     check(ui, "settings.askBeforeMove", &mut app.ui.settings.ask_before_move, "Confirm before moving photos to another folder on disk");
+    if IOS {
+        return;
+    }
     heading(ui, t, crate::i18n::tr("Dialogs"));
     check(ui, "settings.closeDialogsOutside", &mut app.ui.settings.close_dialogs_outside, "Close a dialog by clicking outside it");
     heading(ui, t, crate::i18n::tr("External Editing"));
@@ -108,14 +126,14 @@ pub(super) fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens
 }
 
 /// The file Edit In hands an editor: format, colour space and bit depth (`button:{id}Format-…`).
-fn edit_file_rows(ui: &mut egui::Ui, t: &Tokens, id: &str, file: &mut crate::state::EditFile) {
+pub(crate) fn edit_file_rows(ui: &mut egui::Ui, t: &Tokens, id: &str, file: &mut crate::state::EditFile) {
     use crate::state::{EditFormat, EditSpace};
-    row(ui, t, "", |ui| {
+    row(ui, t, crate::i18n::tr("Format"), |ui| {
         choices(ui, &format!("{id}Format"), &[(EditFormat::Psd, "PSD"), (EditFormat::Tiff, "TIFF")], &mut file.format);
         ui.separator();
         choices(ui, &format!("{id}Depth"), &[(16u8, "16-bit"), (8, "8-bit")], &mut file.bit_depth);
     });
-    row(ui, t, "", |ui| {
+    row(ui, t, crate::i18n::tr("Color space"), |ui| {
         choices(
             ui,
             &format!("{id}Space"),
@@ -127,10 +145,11 @@ fn edit_file_rows(ui: &mut egui::Ui, t: &Tokens, id: &str, file: &mut crate::sta
 
 // -------------------------------------------------------------------------------------- Import
 
-/// A preset picker: `None` = `none_label`. Returns the new choice when it changed.
-pub(super) fn preset_combo(
+/// A labelled preset picker: `None` = `none_label`. Returns the new choice when it changed.
+pub(crate) fn preset_combo(
     app: &LightcraftApp,
     ui: &mut egui::Ui,
+    t: &Tokens,
     id: &str,
     label: &str,
     current: Option<&str>,
@@ -146,16 +165,14 @@ pub(super) fn preset_combo(
     };
     let text = current.map(name).unwrap_or_else(|| crate::i18n::tr(none_label).to_string());
     let mut out = None;
-    let r = crate::widgets::combo_box(id).width(240.0).selected_text(text).show_ui(ui, |ui| {
-        if ui.selectable_label(current.is_none(), crate::i18n::tr(none_label)).clicked() {
+    select(ui, t, id, label, text, |ui| {
+        if option(ui, id, 0, current.is_none(), crate::i18n::tr(none_label)) {
             out = Some(None);
         }
         if let Some(pid) = crate::panels::presets::picker_rows(ui, id, &app.session.presets, current) {
             out = Some(Some(pid));
         }
     });
-    crate::widgets::name_combo(&r.response, label);
-    register(ui, format!("combo:{id}"), r.response.rect);
     out.filter(|v| v.as_deref() != current)
 }
 

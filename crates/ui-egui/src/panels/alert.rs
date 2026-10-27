@@ -58,7 +58,7 @@ pub fn show(ctx: &egui::Context, a: &Alert) -> (bool, bool) {
             let message = text(a.message, t.font(15.0), t.text_label);
             let text_h = PAD + 4.0 + title.size().y + if a.message.is_empty() { 0.0 } else { 6.0 + message.size().y } + 20.0;
             let (card, _) = ui.allocate_exact_size(vec2(width, text_h + BUTTON_H + PAD), Sense::hover());
-            crate::widgets::register(ctx, format!("alert:{}", a.id), card);
+            crate::widgets::register_geometry(ctx, format!("alert:{}", a.id), card);
             let painter = ui.painter();
             crate::glass::paint(painter, card, RADIUS, Some(crate::glass::menu_fill(ctx)), 0.0);
             painter.galley(pos2(card.left() + PAD, card.top() + PAD + 4.0), title.clone(), t.text);
@@ -72,7 +72,7 @@ pub fn show(ctx: &egui::Context, a: &Alert) -> (bool, bool) {
                 let r = Rect::from_min_size(pos2(card.left() + PAD + i as f32 * (half + GAP), row_top), vec2(half, BUTTON_H));
                 let resp = ui.interact(r, id.with(("button", i)), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(label)));
-                crate::widgets::register(ctx, if i == 0 { "button:alertCancel" } else { "button:alertOk" }, r);
+                crate::widgets::register_geometry(ctx, if i == 0 { "button:alertCancel" } else { "button:alertOk" }, r);
                 let k = crate::glass::press(ctx, &resp);
                 let pill = r.expand(2.0 * k);
                 let (fill, ink) = match (strong, red) {

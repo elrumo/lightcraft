@@ -173,9 +173,9 @@ fn lift(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, id: u64) 
         return;
     }
     let held = ui.input(|i| i.pointer.press_start_time().map(|t| i.time - t)).unwrap_or(0.0);
-    if held < super::grid::LONG_PRESS_SECS {
+    if held < crate::panels::grid::LONG_PRESS_SECS {
         // nothing else may come in while the finger rests: wake up when the time is up
-        ui.ctx().request_repaint_after(std::time::Duration::try_from_secs_f64(super::grid::LONG_PRESS_SECS - held).unwrap_or_default());
+        ui.ctx().request_repaint_after(std::time::Duration::try_from_secs_f64(crate::panels::grid::LONG_PRESS_SECS - held).unwrap_or_default());
         return;
     }
     ui.data_mut(|d| d.insert_temp(egui::Id::unique(LIFTED), true));
@@ -449,7 +449,7 @@ pub fn album_drag_feedback(app: &mut LightcraftApp, ctx: &egui::Context) {
                 ui.label(egui::RichText::new(name).color(egui::Color32::WHITE).font(t.semibold(size)));
             });
         });
-    register_geometry(ctx, "drag:album", chip.response.rect);
+    crate::widgets::register_geometry(ctx, "drag:album", chip.response.rect);
 }
 
 /// An album row while photos are dragged from the grid: highlighted under the pointer; a

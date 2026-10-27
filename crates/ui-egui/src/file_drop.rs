@@ -269,7 +269,7 @@ fn paint_tile(ui: &egui::Ui, p: &egui::Painter, t: &Tokens, r: Rect, i: usize, t
     badge(ui, p, t, pos2(r.center().x, r.center().y - 8.0), tile.state);
     let stem = tile.name.rsplit_once('.').map_or(tile.name.as_str(), |(stem, _)| stem);
     p.with_clip_rect(r.shrink2(vec2(6.0, 0.0))).text(pos2(r.center().x, r.bottom() - 14.0), Align2::CENTER_CENTER, stem, t.font(10.5), t.text_dim);
-    crate::widgets::register(ui.ctx(), format!("pending:{i}"), r);
+    crate::widgets::register(ui, format!("pending:{i}"), r);
     let what = match tile.state {
         State::Waiting => crate::i18n::tr("Waiting to be added"),
         State::Adding => crate::i18n::tr("Adding to the library"),

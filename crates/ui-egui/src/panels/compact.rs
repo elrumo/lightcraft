@@ -261,7 +261,7 @@ fn add_button(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens) {
     egui::Area::new(egui::Id::new("compact_add")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         let (r, resp) = ui.allocate_exact_size(vec2(ADD_D, ADD_D), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Add Photos")));
-        crate::widgets::register(ui.ctx(), "button:addPhotos", r);
+        crate::widgets::register(ui, "button:addPhotos", r);
         let p = ui.painter();
         // prominent (accent-tinted) glass, swelling under the finger as iOS 26's does
         let k = glass::press(ui.ctx(), &resp);
@@ -313,7 +313,7 @@ fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: boo
             let resp = ui.interact(seg, egui::Id::new(("span", span.id())), if shown { Sense::click() } else { Sense::hover() });
             let on = app.ui.grid_span == span;
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(span.label())));
-            crate::widgets::register(ui.ctx(), format!("button:span-{}", span.id()), seg);
+            crate::widgets::register(ui, format!("button:span-{}", span.id()), seg);
             if on {
                 chosen = Some(seg);
             }
@@ -508,7 +508,7 @@ fn undo_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let cell = egui::Rect::from_min_size(row.min + vec2(i as f32 * w / 2.0, 0.0), vec2(w / 2.0, row.height()));
         let resp = ui.interact(cell, egui::Id::new(("undo-menu", id)), if enabled { Sense::click() } else { Sense::hover() });
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
-        crate::widgets::register(&ctx, format!("button:{id}"), cell);
+        crate::widgets::register_geometry(&ctx, format!("button:{id}"), cell);
         if enabled && resp.is_pointer_button_down_on() {
             let spot = cell.shrink2(vec2(10.0, 4.0));
             ui.painter().rect_filled(
@@ -680,8 +680,8 @@ fn overlays(app: &mut LightcraftApp, ctx: &egui::Context) {
     super::second::show(app, &ctx);
     super::notices::show(app, &ctx);
     super::sync_status::show(app, &ctx);
-    super::dialogs::show(app, &ctx);
-    super::library_problem::show(app, &ctx);
+    super::dialogs::show(app, &ctx, false);
+    super::library_problem::show(app, &ctx, false);
     crate::import::progress(app, &ctx);
     crate::import::scan_progress(app, &ctx);
     crate::export_task::poll(app, &ctx);
@@ -706,7 +706,7 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
             // tap on the status bar does in iOS's lists (the buttons, added after, take their own taps)
             if matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) && !app.ui.select_mode {
                 let bar = ui.interact(full, egui::Id::new("compact-top-tap"), Sense::click());
-                crate::widgets::register(ui.ctx(), "bar:top", full);
+                crate::widgets::register(ui, "bar:top", full);
                 if bar.clicked() {
                     let _ = app.run("view.scrollToTop", json!({}));
                 }
@@ -768,7 +768,7 @@ fn cloud_button(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens) -> egui::Res
     let unsaved = app.session.unsaved().is_some();
     let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip.clone()));
-    crate::widgets::register(ui.ctx(), "icon:cloud", r);
+    crate::widgets::register(ui, "icon:cloud", r);
     let k = glass::press(ui.ctx(), &resp);
     let circle = egui::Rect::from_center_size(r.center(), vec2(H, H) * (1.0 + 0.1 * k));
     let tint = if problem || unsaved {
@@ -910,7 +910,7 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
         // (the whole name, where there is a pointer to rest on it)
         resp = resp.on_hover_text(title);
     }
-    crate::widgets::register(ui.ctx(), "button:collections", title_r);
+    crate::widgets::register(ui, "button:collections", title_r);
     let color = if resp.is_pointer_button_down_on() { t.text_dim } else { t.text };
     ui.painter().galley(pos2(title_r.left(), hr.center().y - galley.size().y / 2.0), galley.clone(), color);
     crate::icons::paint(
@@ -990,7 +990,7 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
             }
             let resp = ui.interact(cell, egui::Id::new(("compact-tool", id)), if has_photo { Sense::click() } else { Sense::hover() });
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, has_photo, on, crate::i18n::tr(tip)));
-            crate::widgets::register(ui.ctx(), format!("icon:{id}"), cell);
+            crate::widgets::register(ui, format!("icon:{id}"), cell);
             // iOS's tab bar: the open tool's icon and name are tinted, the others the label colour
             let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
             let color = if !has_photo {
@@ -1129,7 +1129,7 @@ fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) ->
     let label = crate::i18n::tr(label);
     let (r, resp) = ui.allocate_exact_size(vec2(GROUP_W, GROUP_H - 4.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
+    crate::widgets::register(ui, format!("button:{id}"), r);
     let color = if on || resp.is_pointer_button_down_on() { t.text } else { t.text_dim };
     // (icon and name close together, so that the pill has room round them)
     crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center() - vec2(0.0, 8.0), vec2(19.0, 19.0)), icon, color);
@@ -1210,7 +1210,7 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
         |ui| {
             let (g, resp) = ui.allocate_exact_size(vec2(ui.available_width(), GRABBER_H), Sense::click_and_drag());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Resize Panel")));
-            crate::widgets::register(ui.ctx(), "sheet:grabber", g);
+            crate::widgets::register(ui, "sheet:grabber", g);
             let pill = if resp.is_pointer_button_down_on() { t.text_dim } else { t.track };
             ui.painter().rect_filled(egui::Rect::from_center_size(g.center() + vec2(0.0, 1.0), vec2(36.0, 5.0)), 2.5, pill);
             if resp.dragged() {
@@ -1380,7 +1380,7 @@ fn action_cell(ui: &mut egui::Ui, id: &str, icon: Icon, w: f32, enabled: bool, t
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(w, ui.available_height()), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
-    crate::widgets::register(ui.ctx(), format!("icon:{id}"), r);
+    crate::widgets::register(ui, format!("icon:{id}"), r);
     let k = glass::press(ui.ctx(), &resp);
     if k > 0.0 {
         let spot = egui::Rect::from_center_size(r.center(), vec2(w - 2.0, r.height() - 8.0));
@@ -1395,7 +1395,7 @@ fn action_cell(ui: &mut egui::Ui, id: &str, icon: Icon, w: f32, enabled: bool, t
 /// A finger-sized menu row (`button:<id>`); true when tapped.
 fn menu_row(ui: &mut egui::Ui, id: &str, label: &str, on: bool) -> bool {
     let b = ui.add(egui::Button::selectable(on, label.to_string()).min_size(vec2(220.0, 40.0)));
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), b.rect);
+    crate::widgets::register(ui, format!("button:{id}"), b.rect);
     b.clicked()
 }
 
@@ -1418,7 +1418,7 @@ fn common<T: PartialEq + Copy>(app: &LightcraftApp, ids: &[u64], f: impl Fn(&lig
 fn row_cell(ui: &mut egui::Ui, id: &str, tip: &str, on: bool) -> (egui::Rect, egui::Response) {
     let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(tip)));
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
+    crate::widgets::register(ui, format!("button:{id}"), r);
     let t = Tokens::get(ui.ctx());
     // (a round highlight, as iOS marks the chosen one of a row of symbols)
     if on || resp.is_pointer_button_down_on() {

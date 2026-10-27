@@ -295,7 +295,7 @@ fn card(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
         .response
         .rect;
     ui.painter().set(under, egui::epaint::RectShape::filled(r, CARD_R, card_fill(ui.ctx())));
-    register(ui.ctx(), format!("section:{id}"), r);
+    register(ui, format!("section:{id}"), r);
 }
 
 /// What a row's disc shows.
@@ -437,7 +437,7 @@ fn banner(ui: &mut egui::Ui, t: &Tokens, id: &str, tint: Color32, title: &str, w
         .response
         .rect;
     ui.painter().set(under, egui::epaint::RectShape::filled(r, CARD_R, wash(ui.ctx(), tint)));
-    register(ui.ctx(), format!("banner:{id}"), r);
+    register(ui, format!("banner:{id}"), r);
 }
 
 /// The server's disk is nearly full: less than 1 GB or 2 % left.
@@ -460,7 +460,7 @@ fn capsule(ui: &mut egui::Ui, t: &Tokens, rect: Rect, id: &str, label: &str, fac
     let label = crate::i18n::tr(label);
     let resp = ui.interact(rect, egui::Id::new(("sync-status", id)), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    register(ui.ctx(), format!("button:{id}"), rect);
+    register(ui, format!("button:{id}"), rect);
     let dark = Tokens::is_dark(ui.ctx());
     let (fill, ink) = if prominent { (t.accent, Color32::WHITE) } else { (card_fill(ui.ctx()), t.text) };
     let p = ui.painter();

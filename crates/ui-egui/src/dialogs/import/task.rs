@@ -1,11 +1,6 @@
 use super::scan::{busy_synchronizing, running};
 use super::*;
 
-/// Files per batch in the browser build (each batch joins the catalog as it is ready, so the
-/// progress window updates); the desktop's worker uses [`lightcraft_engine::import::batch_size`].
-#[cfg(target_arch = "wasm32")]
-const BATCH: usize = 8;
-
 /// A running import (see the module docs). The file-system work — expanding folders, probing,
 /// reading sidecars, copying or placing files — runs on a worker thread
 /// ([`lightcraft_engine::import::ImportJob`]); each batch it readies is added to the catalog on the
@@ -17,20 +12,9 @@ pub struct ImportTask {
     pub total: usize,
     pub done: usize,
     params: Value,
-    pub imported: usize,
-    /// Brought back from Recently Deleted (`onDeleted: restore`).
-    pub restored: usize,
-    pub duplicates: usize,
-    /// The library photos the skipped duplicates match (shown when nothing new was added).
-    existing: Vec<u64>,
-    pub failed: usize,
-    /// Move: originals moved, and sources left in place (reported by the engine with a reason).
-    pub moved: usize,
-    pub kept: usize,
-    /// Structured diagnostics from foreign XMP develop settings.
-    pub warnings: Vec<ImportWarning>,
+    /// What the batches added so far (shared with the engine host).
+    pub tally: lightcraft_apphost::import::Tally,
     undo0: usize,
-    first: Option<u64>,
     /// Reading a folder for the Local view: the photos stay out of the library, and nothing is
     /// selected or announced as added.
     pub(super) browse: bool,
@@ -45,9 +29,15 @@ pub struct ImportTask {
     left: Option<(lightcraft_engine::Selection, lightcraft_engine::LibrarySource)>,
     /// The user chose another photo or view while the import ran.
     moved_on: bool,
-    run: Option<ImportRun>,
+    run: Option<lightcraft_apphost::import::Run>,
     /// The import's row in the activity stack (its ✕ and `activity.cancel` set the run's cancel flag).
     guard: Option<lightcraft_engine::activity::TaskGuard>,
+    /// Photos dropped on the window: the grid holds a tile for each until it is in the catalog
+    /// ([`crate::file_drop`]).
+    pending: Option<crate::file_drop::Pendings>,
+    /// A staging folder of the app's own the files were copied into (off a camera): removed
+    /// when the import ends (what is left there are duplicates and failures, still on the camera).
+    pub cleanup: Option<std::path::PathBuf>,
 }
 
 impl ImportTask {
@@ -62,140 +52,57 @@ impl ImportTask {
         self
     }
 
-    /// `{done, total, imported, cancelled}` for `ui.inspect`.
+    /// `{done, total, imported, cancelled, pending}` for `ui.inspect`.
     pub fn status(&self) -> Value {
-        json!({"done": self.done, "total": self.total, "imported": self.imported, "cancelled": self.cancelled})
+        let pending = self.pending.as_ref().map_or(0, |p| p.len());
+        json!({"done": self.done, "total": self.total, "imported": self.tally.imported, "cancelled": self.cancelled, "pending": pending})
+    }
+
+    /// The dropped photos not in the catalog yet (none for an import that wasn't a drop).
+    pub fn pending(&self) -> Option<&crate::file_drop::Pendings> {
+        self.pending.as_ref()
+    }
+
+    /// The album the photos are added to.
+    pub fn album(&self) -> Option<u64> {
+        self.params["album"].as_u64()
     }
 }
 
-/// Where an import's batches are readied: a worker thread, or (browser build: no threads, and no
-/// slow drives) inline, one batch per frame.
-enum Runner {
-    #[cfg(not(target_arch = "wasm32"))]
-    Thread(std::sync::mpsc::Receiver<lightcraft_engine::import::Prepared>),
-    #[cfg(target_arch = "wasm32")]
-    Inline { job: Box<lightcraft_engine::import::ImportJob>, queue: Vec<String>, files: Option<std::collections::VecDeque<String>> },
+/// Tells the grid's tiles for dropped photos how the import's worker goes, and wakes the window
+/// when a batch is ready.
+struct DropWatch {
+    pending: Option<crate::file_drop::Pendings>,
+    ctx: egui::Context,
 }
 
-struct ImportRun {
-    runner: Runner,
-    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    total: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    done: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    opts: lightcraft_engine::import::ImportOptions,
-    now: String,
-    album: Option<u64>,
-    album_name: Option<String>,
-}
-
-impl std::fmt::Debug for ImportRun {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ImportRun").field("cancel", &self.cancel.load(Ordering::Relaxed)).finish()
-    }
-}
-
-impl Drop for ImportRun {
-    /// A dropped import (replaced, or the app closing) stops its worker at the next file.
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-}
-
-impl ImportRun {
-    fn start(
-        job: lightcraft_engine::import::ImportJob,
-        queue: Vec<String>,
-        album: Option<u64>,
-        album_name: Option<String>,
-        ctx: &egui::Context,
-    ) -> Result<Self, String> {
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (total, done) = (job.total.clone(), job.done.clone());
-        let (opts, now) = (job.opts.clone(), job.now().to_string());
-        let runner = Self::spawn(job, queue, cancel.clone(), ctx)?;
-        Ok(ImportRun { runner, cancel, total, done, opts, now, album, album_name })
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn spawn(
-        mut job: lightcraft_engine::import::ImportJob,
-        queue: Vec<String>,
-        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-        ctx: &egui::Context,
-    ) -> Result<Runner, String> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let ctx = ctx.clone();
-        let work = move || {
-            let files = job.expand(&queue);
-            for chunk in files.chunks(lightcraft_engine::import::batch_size()) {
-                if cancel.load(Ordering::Relaxed) {
-                    break;
-                }
-                let prepared = match lightcraft_engine::guard::catch("import", || job.prepare_files(chunk.to_vec(), &cancel)) {
-                    Ok(p) => p,
-                    Err(_) => break, // logged; the files readied so far are added
-                };
-                if let Err(unsent) = tx.send(prepared) {
-                    // the import was dropped: nothing will add these, so take back what a Move placed
-                    unsent.0.rollback();
-                    break;
-                }
-                ctx.request_repaint();
-            }
-            ctx.request_repaint();
-        };
-        std::thread::Builder::new().name("lc-import".into()).spawn(work).map(|_| Runner::Thread(rx)).map_err(|e| format!("could not start: {e}"))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn spawn(
-        job: lightcraft_engine::import::ImportJob,
-        queue: Vec<String>,
-        _cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-        _ctx: &egui::Context,
-    ) -> Result<Runner, String> {
-        Ok(Runner::Inline { job: Box::new(job), queue, files: None })
-    }
-
-    /// Readied batches (at most a few per frame). `None` once the worker is done.
-    fn next_batches(&mut self) -> Option<Vec<lightcraft_engine::import::Prepared>> {
-        match &mut self.runner {
-            #[cfg(not(target_arch = "wasm32"))]
-            Runner::Thread(rx) => {
-                let mut out = Vec::new();
-                while out.len() < 4 {
-                    match rx.try_recv() {
-                        Ok(p) => out.push(p),
-                        Err(std::sync::mpsc::TryRecvError::Empty) => return Some(out),
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => return if out.is_empty() { None } else { Some(out) },
-                    }
-                }
-                Some(out)
-            }
-            #[cfg(target_arch = "wasm32")]
-            Runner::Inline { job, queue, files } => {
-                if self.cancel.load(Ordering::Relaxed) {
-                    return None;
-                }
-                if files.is_none() {
-                    *files = Some(job.expand(queue).into());
-                    return Some(Vec::new());
-                }
-                let Some(files) = files.as_mut() else { return None };
-                if files.is_empty() {
-                    return None;
-                }
-                let n = files.len().min(BATCH);
-                let batch: Vec<String> = files.drain(..n).collect();
-                Some(vec![job.prepare_files(batch, &self.cancel)])
-            }
+impl lightcraft_apphost::import::Watch for DropWatch {
+    fn listed(&self, files: &[String]) {
+        // (the files of dropped folders are known now)
+        if let Some(p) = &self.pending {
+            p.set(files);
+            self.ctx.request_repaint();
         }
     }
+
+    fn readying(&self, n: usize) {
+        if let Some(p) = &self.pending {
+            p.start(n);
+        }
+    }
+
+    fn ready(&self) {
+        self.ctx.request_repaint();
+    }
 }
 
-/// Start importing the dialog's checked files (the dialog's OK / `ui.dialog.confirm`). Refused while another
-/// import runs: replacing `app.import` would stop its worker.
+/// Start importing the dialog's checked files (the dialog's OK / `ui.dialog.confirm`); on a camera,
+/// copying them off it first ([`crate::camera_import::start`]). Refused while another import runs:
+/// replacing `app.import` would stop its worker.
 pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String> {
+    if d.camera.is_some() {
+        return crate::camera_import::start(app, d);
+    }
     busy_synchronizing(app)?;
     if !d.in_library(app) {
         return Err("another library was opened since the photos were scanned: nothing was imported".into());
@@ -209,12 +116,23 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
         return Err("no photos selected".into());
     }
     let undo0 = app.session.undo.len();
+    let params = import_params(app, d)?;
+    let total = queue.len();
+    app.import = Some(ImportTask::new(queue, params, undo0, false));
+    app.renderer.forget_imports();
+    Ok(json!({"importing": total}))
+}
+
+/// The `library.import` params (without `paths`) the review's choices make, creating the new
+/// album it names.
+pub(crate) fn import_params(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String> {
     let mut album = d.album;
     if album.is_none() && !d.new_album.trim().is_empty() {
         let r = app.session.execute("album.create", &json!({"name": d.new_album.trim()})).map_err(|e| e.to_string())?;
         album = r["id"].as_u64();
     }
     let mode = match (d.copy, d.move_files) {
+        _ if d.staged => "move",
         (false, _) => "add",
         (true, false) => "copy",
         (true, true) => "move",
@@ -232,7 +150,7 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
     if !d.metadata_preset.is_empty() {
         params["metadataPreset"] = json!(d.metadata_preset);
     }
-    if d.copy {
+    if d.copy || d.staged {
         if !d.destination.trim().is_empty() {
             params["destination"] = json!(d.destination.trim());
         }
@@ -247,21 +165,39 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
             params["dng"] = json!(true);
         }
     }
-    let total = queue.len();
-    app.import = Some(ImportTask::new(queue, params, undo0, false));
-    app.renderer.forget_imports();
-    Ok(json!({"importing": total}))
+    Ok(params)
 }
 
-/// Start importing `paths` (files or folders) in the background, e.g. dropped on the window.
+/// Start importing `paths` (files or folders) in the background.
 pub fn start_paths(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String> {
+    start_with(app, paths, None, false)
+}
+
+/// Start importing `paths` dropped on the window, into `album` when one is given. The grid shows a
+/// tile for each photo from the moment of the drop until it is in the catalog.
+pub fn start_dropped(app: &mut LightcraftApp, paths: Vec<String>, album: Option<u64>) -> Result<Value, String> {
+    start_with(app, paths, album, true)
+}
+
+fn start_with(app: &mut LightcraftApp, paths: Vec<String>, album: Option<u64>, tiles: bool) -> Result<Value, String> {
     busy_synchronizing(app)?;
     if running(app) {
         return Err(crate::i18n::tr("An import is running").to_string());
     }
     let undo0 = app.session.undo.len();
     let total = paths.len();
-    app.import = Some(ImportTask::new(paths, json!({"mode": "add"}), undo0, false));
+    let mut params = json!({"mode": "add"});
+    if let Some(a) = album {
+        params["album"] = json!(a);
+    }
+    let mut task = ImportTask::new(paths, params, undo0, false);
+    if tiles {
+        // the files named are known at once; a dropped folder's are listed by the worker once it has read it
+        let pending = crate::file_drop::Pendings::default();
+        pending.set(task.queue.iter().filter(|p| !std::path::Path::new(p).is_dir()));
+        task.pending = Some(pending);
+    }
+    app.import = Some(task);
     Ok(json!({"importing": total}))
 }
 
@@ -270,12 +206,9 @@ pub fn start_paths(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value,
 pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(mut task) = app.import.take() else { return };
     if task.run.is_none() {
-        let mut p = task.params.clone();
-        p["paths"] = json!(task.queue);
-        let started = lightcraft_engine::cmd::library::import_params(&app.session, &p)
-            .and_then(|req| Ok((lightcraft_engine::import::ImportJob::new(&mut app.session, req.opts)?, req.album, req.album_name)))
-            .map_err(|e| e.to_string())
-            .and_then(|(job, album, name)| ImportRun::start(job, std::mem::take(&mut task.queue), album, name, ctx));
+        let watch: std::sync::Arc<dyn lightcraft_apphost::import::Watch> =
+            std::sync::Arc::new(DropWatch { pending: task.pending.clone(), ctx: ctx.clone() });
+        let started = lightcraft_apphost::import::Run::begin(&mut app.session, std::mem::take(&mut task.queue), &task.params, Some(watch));
         if task.auto {
             task.keep_selection = Some(app.session.selection.clone());
         }
@@ -331,38 +264,18 @@ pub fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
 
 /// Add one readied batch to the catalog (an undo step merged into the import's at the end).
 fn commit_batch(app: &mut LightcraftApp, task: &mut ImportTask, prepared: lightcraft_engine::import::Prepared) {
-    let Some(run) = task.run.as_ref() else { return };
+    let Some(run) = task.run.as_mut() else { return };
     let n = prepared.len();
-    let (opts, now, album, album_name) = (&run.opts, run.now.as_str(), run.album, run.album_name.clone());
-    let r = app.session.execute_fn("library.import", |s| {
-        let report = lightcraft_engine::import::commit_prepared(s, opts, now, prepared)?;
-        lightcraft_engine::cmd::library::import_batch_done(s, report, album, album_name.as_deref())
-    });
+    let r = lightcraft_apphost::import::commit(&mut app.session, run, prepared);
+    // the batch's photos are in the catalog (or not coming): their tiles give way in the same frame
+    if let Some(p) = &task.pending {
+        p.added(n);
+    }
     match r {
-        Ok(v) => {
-            // a new album (named in the params) is created with the first photos; later batches join it
-            if let (Some(a), Some(run)) = (v["album"].as_u64(), task.run.as_mut()) {
-                run.album = Some(a);
-            }
-            let len = |k: &str| v[k].as_array().map_or(0, Vec::len);
-            task.imported += len("imported");
-            task.restored += len("restored");
-            task.duplicates += len("duplicates");
-            task.existing.extend(v["duplicates"].as_array().into_iter().flatten().filter_map(|d| d["existing"].as_u64()));
-            task.failed += len("failed");
-            task.moved += len("moved");
-            task.kept += len("kept");
-            task.warnings.extend(v["warnings"].as_array().into_iter().flatten().filter_map(|warning| serde_json::from_value(warning.clone()).ok()));
-            for k in v["kept"].as_array().into_iter().flatten() {
-                log::warn!("import: kept {}: {}", k["path"].as_str().unwrap_or(""), k["reason"].as_str().unwrap_or(""));
-            }
-            if task.first.is_none() {
-                task.first = ["imported", "restored"].iter().find_map(|k| v[*k].as_array().and_then(|a| a.first()).and_then(Value::as_u64));
-            }
-        }
+        Ok(v) => task.tally.add(&v),
         Err(e) => {
             log::warn!("import: {e}");
-            task.failed += n;
+            task.tally.failed += n;
         }
     }
 }
@@ -425,33 +338,41 @@ fn xmp_warnings_text(warnings: &[ImportWarning]) -> String {
 /// The import is done (or cancelled): one undo step, show and select the first photo (unless the
 /// user chose another meanwhile), say what happened.
 fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
+    if let Some(dir) = &task.cleanup
+        && let Err(e) = std::fs::remove_dir_all(dir)
+    {
+        log::warn!("{}: {e}", dir.display());
+    }
     let steps = app.session.undo.len().saturating_sub(task.undo0);
     let plural = |n: usize| if n == 1 { "" } else { "s" };
-    let label = if task.imported == 0 && task.restored > 0 {
-        crate::i18n::tr_format!("Restore {} Photo{}", task.restored, plural(task.restored))
-    } else if task.restored > 0 {
-        crate::i18n::tr_format!("Add {} Photo{}, restore {}", task.imported, plural(task.imported), task.restored)
+    let label = if task.tally.imported == 0 && task.tally.restored > 0 {
+        crate::i18n::tr_format!("Restore {} Photo{}", task.tally.restored, plural(task.tally.restored))
+    } else if task.tally.restored > 0 {
+        crate::i18n::tr_format!("Add {} Photo{}, restore {}", task.tally.imported, plural(task.tally.imported), task.tally.restored)
     } else {
-        crate::i18n::tr_format!("Add {} Photo{}", task.imported, if task.imported == 1 { "" } else { "s" })
+        crate::i18n::tr_format!("Add {} Photo{}", task.tally.imported, if task.tally.imported == 1 { "" } else { "s" })
     };
     app.session.merge_undo(steps, &label);
     if task.auto {
-        if !task.warnings.is_empty() {
-            app.toast_for(ctx, xmp_warnings_text(&task.warnings), 8.0);
-        } else if task.imported > 0 {
-            app.toast(ctx, crate::i18n::tr_format!("Auto Import: added {} photo{}", task.imported, if task.imported == 1 { "" } else { "s" }));
+        if !task.tally.warnings.is_empty() {
+            app.toast_for(ctx, xmp_warnings_text(&task.tally.warnings), 8.0);
+        } else if task.tally.imported > 0 {
+            app.toast(
+                ctx,
+                crate::i18n::tr_format!("Auto Import: added {} photo{}", task.tally.imported, if task.tally.imported == 1 { "" } else { "s" }),
+            );
         }
         return;
     }
     if task.browse {
-        if !task.warnings.is_empty() {
-            app.toast_for(ctx, xmp_warnings_text(&task.warnings), 8.0);
-        } else if task.failed > 0 {
-            app.toast(ctx, crate::i18n::tr_format!("{} photo{} not readable", task.failed, if task.failed == 1 { "" } else { "s" }));
+        if !task.tally.warnings.is_empty() {
+            app.toast_for(ctx, xmp_warnings_text(&task.tally.warnings), 8.0);
+        } else if task.tally.failed > 0 {
+            app.toast(ctx, crate::i18n::tr_format!("{} photo{} not readable", task.tally.failed, if task.tally.failed == 1 { "" } else { "s" }));
         }
         return;
     }
-    if let Some(f) = task.first.filter(|_| !task.moved_on) {
+    if let Some(f) = task.tally.first.filter(|_| !task.moved_on) {
         // a view the new photos aren't in (an album, Picks, a Local folder) would leave the active
         // photo off screen: show All Photos, as Lightroom shows the import's own collection (#1446)
         if !app.session.visible().contains(&lightcraft_catalog::PhotoId(f)) {
@@ -462,46 +383,50 @@ fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     // nothing new, only files the library already has: show where they are (Recently Deleted is
     // easy to miss, and the side panel that lists it starts collapsed)
-    if task.imported == 0
-        && task.restored == 0
-        && task.failed == 0
-        && task.warnings.is_empty()
+    if task.tally.imported == 0
+        && task.tally.restored == 0
+        && task.tally.failed == 0
+        && task.tally.warnings.is_empty()
         && !task.cancelled
-        && show_existing(app, ctx, &task.existing)
+        && show_existing(app, ctx, &task.tally.existing)
     {
         return;
     }
     let mut msg = if task.cancelled {
-        crate::i18n::tr_format!("Import cancelled · {} photo{} added", task.imported, plural(task.imported))
-    } else if task.imported == 0 && task.restored > 0 {
-        crate::i18n::tr_format!("Restored {} photo{} from Recently Deleted", task.restored, plural(task.restored))
+        crate::i18n::tr_format!("Import cancelled · {} photo{} added", task.tally.imported, plural(task.tally.imported))
+    } else if task.tally.imported == 0 && task.tally.restored > 0 {
+        crate::i18n::tr_format!("Restored {} photo{} from Recently Deleted", task.tally.restored, plural(task.tally.restored))
     } else {
-        crate::i18n::tr_format!("Imported {} photo{}", task.imported, plural(task.imported))
+        crate::i18n::tr_format!("Imported {} photo{}", task.tally.imported, plural(task.tally.imported))
     };
-    if task.restored > 0 && (task.imported > 0 || task.cancelled) {
-        msg.push_str(&crate::i18n::tr_format!(" · {} restored from Recently Deleted", task.restored));
+    if task.tally.restored > 0 && (task.tally.imported > 0 || task.cancelled) {
+        msg.push_str(&crate::i18n::tr_format!(" · {} restored from Recently Deleted", task.tally.restored));
+    }
+    // (dropped on an album you are not looking at: this is what says where the photos went)
+    if let Some(name) = task.album().and_then(|a| app.session.catalog.album(lightcraft_catalog::AlbumId(a))).map(|a| a.name.clone()) {
+        msg.push_str(&format!(" · {} “{name}”", crate::i18n::tr("in album")));
     }
     if task.params["mode"] == "move" {
-        msg.push_str(&crate::i18n::tr_format!(" · {} moved", task.moved));
-        if task.kept > 0 {
-            msg.push_str(&crate::i18n::tr_format!(" · {} original{} left at the source", task.kept, plural(task.kept)));
+        msg.push_str(&crate::i18n::tr_format!(" · {} moved", task.tally.moved));
+        if task.tally.kept > 0 {
+            msg.push_str(&crate::i18n::tr_format!(" · {} original{} left at the source", task.tally.kept, plural(task.tally.kept)));
         }
     }
-    if task.duplicates > 0 {
-        msg.push_str(&crate::i18n::tr_format!(" · {} duplicate{} skipped", task.duplicates, if task.duplicates == 1 { "" } else { "s" }));
-        let deleted = deleted_of(app, &task.existing).len();
+    if task.tally.duplicates > 0 {
+        msg.push_str(&crate::i18n::tr_format!(" · {} duplicate{} skipped", task.tally.duplicates, if task.tally.duplicates == 1 { "" } else { "s" }));
+        let deleted = deleted_of(app, &task.tally.existing).len();
         if deleted > 0 {
             msg.push_str(&crate::i18n::tr_format!(" ({} in Recently Deleted)", deleted));
         }
     }
-    if task.failed > 0 {
-        msg.push_str(&crate::i18n::tr_format!(" · {} not readable", task.failed));
+    if task.tally.failed > 0 {
+        msg.push_str(&crate::i18n::tr_format!(" · {} not readable", task.tally.failed));
     }
-    if task.warnings.is_empty() {
+    if task.tally.warnings.is_empty() {
         app.toast(ctx, msg);
     } else {
         msg.push_str("\n\n");
-        msg.push_str(&xmp_warnings_text(&task.warnings));
+        msg.push_str(&xmp_warnings_text(&task.tally.warnings));
         app.toast_for(ctx, msg, 8.0);
     }
 }
@@ -541,4 +466,38 @@ fn show_existing(app: &mut LightcraftApp, ctx: &egui::Context, existing: &[u64])
     };
     app.toast_for(ctx, msg, 6.0);
     true
+}
+
+/// The phone layout's progress window while an import runs, with Cancel (files already copied or
+/// added stay; nothing new is started). The desktop shows the import's row in the activity stack.
+pub fn progress(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(task) = &app.import else { return };
+    let t = Tokens::get(ctx);
+    let frac = task.done as f32 / task.total.max(1) as f32;
+    let text = if task.cancelled {
+        crate::i18n::tr("Stopping…").to_string()
+    } else if task.browse {
+        crate::i18n::tr_format!("Reading photos… {} of {}", task.done, task.total)
+    } else {
+        crate::i18n::tr_format!("Adding photos… {} of {}", task.done, task.total)
+    };
+    let mut cancel = false;
+    egui::Window::new(crate::i18n::tr("Importing"))
+        .title_bar(false)
+        .resizable(false)
+        .anchor(Align2::CENTER_BOTTOM, [0.0, -80.0])
+        .fixed_size([340.0, 80.0])
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new(text).color(t.text));
+            ui.add(egui::ProgressBar::new(frac).desired_width(320.0));
+            let r = ui.add_enabled(!task.cancelled, egui::Button::new(crate::i18n::tr("Cancel")));
+            crate::widgets::register_geometry(ctx, "button:importCancel", r.rect);
+            cancel = r.clicked();
+        });
+    if cancel && let Some(task) = app.import.as_mut() {
+        task.cancelled = true;
+        if let Some(run) = &task.run {
+            run.cancel.store(true, Ordering::Relaxed);
+        }
+    }
 }

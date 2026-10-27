@@ -153,7 +153,7 @@ pub fn draw(app: &LightcraftApp, p: &egui::Painter, photo: Rect) {
         }
         let alpha = (li.opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
         p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::from_white_alpha(alpha));
-        register_geometry(&ctx, "canvas:layoutImage", r.intersect(p.clip_rect()));
+        crate::widgets::register_geometry(&ctx, "canvas:layoutImage", r.intersect(p.clip_rect()));
     }
     ctx.data_mut(|d| d.insert_temp(id, cache));
 }
@@ -173,7 +173,7 @@ fn note(p: &egui::Painter, why: &str) {
         p.galley(at, g, Color32::WHITE);
         y -= 3.0;
     }
-    register_geometry(p.ctx(), "canvas:layoutImageError", Rect::from_min_max(pos2(canvas.left(), y), pos2(canvas.left() + 360.0, canvas.bottom())));
+    crate::widgets::register_geometry(p.ctx(), "canvas:layoutImageError", Rect::from_min_max(pos2(canvas.left(), y), pos2(canvas.left() + 360.0, canvas.bottom())));
 }
 
 #[cfg(test)]

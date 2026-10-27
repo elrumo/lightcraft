@@ -343,7 +343,7 @@ fn show_header_button(app: &mut LightcraftApp, ui: &mut egui::Ui, header: Rect, 
         // (a phone's Albums + opens the Create New sheet: `new_album_rows`)
         HeaderAction::Menu(_) if button.id == "albumNew" && crate::is_compact(ui.ctx()) => {
             if resp.clicked() {
-                super::mobile::open_actions(ui.ctx(), "newAlbum");
+                crate::panels::mobile::open_actions(ui.ctx(), "newAlbum");
             }
         }
         HeaderAction::Menu(items) => {

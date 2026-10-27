@@ -118,7 +118,7 @@ pub(super) fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             if let Some(e) = app.ui.people_error.clone() {
                 ui.label(egui::RichText::new(&e).color(Color32::from_rgb(230, 90, 80)));
                 let r = ui.button(crate::i18n::tr("OK"));
-                register(ui.ctx(), "button:peopleDismiss", r.rect);
+                register(ui, "button:peopleDismiss", r.rect);
                 if r.clicked() {
                     app.ui.people_error = None;
                 }
@@ -126,9 +126,9 @@ pub(super) fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let (done, total) = (downloading["done"].as_u64().unwrap_or(0), downloading["total"].as_u64().unwrap_or(0));
                 let frac = if total > 0 { done as f64 / total as f64 } else { 0.0 };
                 let r = ui.add(egui::ProgressBar::new(frac as f32).text(format!("{:.1} / {:.1} MB", done as f64 / 1e6, total as f64 / 1e6)));
-                register(ui.ctx(), "progress:peopleDownload", r.rect);
+                register(ui, "progress:peopleDownload", r.rect);
                 let r = ui.button(crate::i18n::tr("Cancel Download"));
-                register(ui.ctx(), "button:peopleCancel", r.rect);
+                register(ui, "button:peopleCancel", r.rect);
                 if r.clicked() {
                     app.session.vision.cancel_faces_download();
                 }
@@ -143,7 +143,7 @@ pub(super) fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     .color(t.text_dim),
                 );
                 let r = ui.button(crate::i18n::tr("Find People…"));
-                register(ui.ctx(), "button:peopleFind", r.rect);
+                register(ui, "button:peopleFind", r.rect);
                 if r.clicked() {
                     if installed {
                         turn_on(app);
@@ -159,9 +159,9 @@ pub(super) fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     crate::i18n::tr_format!("Getting your photos ready to search: {done} of {total}", done = done, total = total)
                 };
                 let r = ui.add(egui::ProgressBar::new(frac).text(text));
-                register(ui.ctx(), "progress:peopleScan", r.rect);
+                register(ui, "progress:peopleScan", r.rect);
                 let r = ui.button(crate::i18n::tr("Stop"));
-                register(ui.ctx(), "button:peopleStop", r.rect);
+                register(ui, "button:peopleStop", r.rect);
                 if r.clicked() {
                     let _ = app.run("vision.indexCancel", json!({}));
                 }
@@ -176,7 +176,7 @@ pub(super) fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     ui.label(crate::i18n::tr_format!("{faces} faces found in {photos} photos.", faces = found_n, photos = scanned));
                     if scanned < photos {
                         let r = ui.button(crate::i18n::tr("Look in the Rest"));
-                        register(ui.ctx(), "button:peopleScanRest", r.rect);
+                        register(ui, "button:peopleScanRest", r.rect);
                         if r.clicked()
                             && let Err(e) = app.run("vision.index", json!({}))
                         {
@@ -184,12 +184,12 @@ pub(super) fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         }
                     }
                     let r = ui.button(crate::i18n::tr("Turn Off"));
-                    register(ui.ctx(), "button:peopleOff", r.rect);
+                    register(ui, "button:peopleOff", r.rect);
                     if r.clicked() {
                         let _ = app.run("vision.setFaces", json!({"on": false}));
                     }
                     let r = ui.button(crate::i18n::tr("Forget All Faces"));
-                    register(ui.ctx(), "button:peopleForget", r.rect);
+                    register(ui, "button:peopleForget", r.rect);
                     if r.clicked() {
                         let _ = app.run("vision.setFaces", json!({"on": false}));
                         if let Err(e) = app.run("people.deleteData", json!({})) {
@@ -216,7 +216,7 @@ fn offer(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("{} {name}", crate::i18n::tr("Licence:"))).color(t.text_label));
             let r = ui.link(crate::i18n::tr("Read the licence")).on_hover_text(url);
-            register(ui.ctx(), format!("link:peopleLicense:{url}"), r.rect);
+            register(ui, format!("link:peopleLicense:{url}"), r.rect);
             if r.clicked() {
                 let _ = crate::links::open(app, url);
             }
@@ -230,7 +230,7 @@ fn offer(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     );
     ui.horizontal(|ui| {
         let r = ui.button(crate::i18n::tr("Download and Turn On"));
-        register(ui.ctx(), "button:peopleDownload", r.rect);
+        register(ui, "button:peopleDownload", r.rect);
         if r.clicked() {
             match app.run("vision.faces.download", json!({"acknowledged": true})) {
                 Ok(_) => {
@@ -242,7 +242,7 @@ fn offer(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             }
         }
         let r = ui.button(crate::i18n::tr("Not Now"));
-        register(ui.ctx(), "button:peopleLater", r.rect);
+        register(ui, "button:peopleLater", r.rect);
         if r.clicked() {
             app.ui.faces_offer = false;
         }
@@ -494,7 +494,7 @@ fn found_card(app: &mut LightcraftApp, ui: &mut egui::Ui, p: &Value, r: Rect, ed
     let Some(id) = p["id"].as_str() else { return };
     let face = Rect::from_min_size(r.min, vec2(edge, edge));
     let resp = ui.interact(face, egui::Id::new(("found-card", id)), Sense::click());
-    register(ui.ctx(), format!("person:found:{id}"), r);
+    register(ui, format!("person:found:{id}"), r);
     let (photo, rect) = (p["cover"]["photo"].as_u64().map(lightcraft_catalog::PhotoId), &p["cover"]["rect"]);
     let num = |k: &str| rect[k].as_f64().unwrap_or(0.0);
     if let Some(photo) = photo {
@@ -515,7 +515,7 @@ fn found_card(app: &mut LightcraftApp, ui: &mut egui::Ui, p: &Value, r: Rect, ed
             let b = Rect::from_min_size(pos2(r.left(), face.bottom() + 28.0), vec2(edge, 26.0));
             let text = crate::i18n::tr_format!("Confirm {pending} more", pending = pending);
             let res = ui.put(b, egui::Button::new(text));
-            register(ui.ctx(), format!("button:peopleConfirm:{id}"), res.rect);
+            register(ui, format!("button:peopleConfirm:{id}"), res.rect);
             if res.clicked()
                 && let Err(e) = app.run("people.name", json!({"cluster": id, "name": name}))
             {
@@ -528,7 +528,7 @@ fn found_card(app: &mut LightcraftApp, ui: &mut egui::Ui, p: &Value, r: Rect, ed
             let mut text = app.ui.people_names.get(id).cloned().unwrap_or_default();
             let res =
                 ui.put(b, egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("Who is this?")).margin(egui::Margin::symmetric(8, 4)));
-            register(ui.ctx(), format!("field:personName:{id}"), res.rect);
+            register(ui, format!("field:personName:{id}"), res.rect);
             app.ui.people_names.insert(id.to_string(), text.clone());
             if res.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
                 match app.run("people.name", json!({"cluster": id, "name": text.trim()})) {

@@ -30,15 +30,17 @@ mod task;
 pub(crate) use body::grid_height;
 #[cfg(test)]
 use body::{DEFAULT_BELOW_GRID, badge_rect, dup_counts};
-pub use body::{DEFAULT_FOLDER_TEMPLATE, body, example_destination, source_summary};
+pub use body::{DEFAULT_FOLDER_TEMPLATE, body, example_destination, mobile_body, source_summary};
 pub(crate) use body::{DIALOG_SIZE, note_dialog_bottom};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use scan::cards_seen;
-pub use scan::{ScanTask, browse, open, poll_scan, running};
+pub use scan::{ScanTask, browse, open, open_staged, poll_scan, running, scan_progress};
 #[cfg(test)]
 pub(crate) use scan::{stall_scan, stall_scan_of};
+pub(crate) use scan::busy_synchronizing;
+pub(crate) use task::import_params;
 pub(crate) use tags::{tag_field_width, tag_help, tag_toggle, unknown_tags_warning};
-pub use task::{ImportTask, start, start_paths, tick};
+pub use task::{ImportTask, progress, start, start_dropped, start_paths, tick};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -72,6 +74,10 @@ pub struct ImportDialog {
     pub metadata_preset: String,
     /// Copy: raws are copied as DNG.
     pub dng: bool,
+    /// The files are the host's temporary copies (iOS pickers hand over copies in the app's tmp
+    /// folder, which the system may empty): they are always moved into the library's Originals/,
+    /// never added in place.
+    pub staged: bool,
     /// Per candidate: the library already has it in Recently Deleted ([`ImportDialog::set_trashed`]).
     pub trashed: Vec<bool>,
     /// What to do with those: `restore` (the default: the photo comes back with its edits), `fresh`
@@ -80,10 +86,52 @@ pub struct ImportDialog {
     /// The candidate clicked last: where a Shift-click range starts ([`ImportDialog::click`]).
     #[serde(skip)]
     pub last_clicked: Option<usize>,
+    /// The photos are on a camera, phone or card the host reads itself (`Services::cameras`): the
+    /// candidates' paths are its files' ids, and Import copies the checked ones off it first
+    /// ([`crate::camera_import`]).
+    pub camera: Option<crate::camera_import::CameraSource>,
+    /// The camera or card the photos are on, by name ("" = not a device): the review shows it
+    /// above the photos, with a box that checks all of them.
+    pub device: String,
     /// The library the scan was made in ([`lightcraft_engine::Session::library_generation`]): its duplicate
     /// decisions and album ids belong to that catalog, so the review is not shown or confirmed in another.
     #[serde(skip)]
     pub library: Option<u64>,
+}
+
+/// A run of candidates taken on the same day (the review lists them by day, newest first).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DayGroup {
+    /// `2026-10-03`; `None`: no capture date.
+    pub day: Option<String>,
+    pub range: std::ops::Range<usize>,
+}
+
+/// The day a candidate was taken, if it says.
+fn candidate_day(c: &ImportCandidate) -> Option<&str> {
+    lightcraft_engine::devices::capture_day(c.captured.as_deref())
+}
+
+/// Raw formats, as a candidate's format or extension names them (its "Raw" tag).
+const RAW_FORMATS: &[&str] = &[
+    "3FR", "ARW", "CR2", "CR3", "CRW", "DCR", "DNG", "ERF", "FFF", "IIQ", "KDC", "MEF", "MOS", "MRW", "NEF", "NRW", "ORF", "ORI", "PEF", "RAF",
+    "RAW", "RW2", "RWL", "SR2", "SRF", "SRW", "X3F",
+];
+
+/// The candidate is a raw file.
+pub fn is_raw(c: &ImportCandidate) -> bool {
+    RAW_FORMATS.contains(&file_type(c).as_str())
+}
+
+/// Order candidates by the day they were taken, newest day first (undated last), keeping their
+/// order within a day (a camera numbers its files as it takes them).
+pub fn sort_by_day(candidates: &mut [ImportCandidate]) {
+    candidates.sort_by(|a, b| match (candidate_day(a), candidate_day(b)) {
+        (Some(x), Some(y)) => y.cmp(x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
 }
 
 /// A candidate's file type, as the review groups them: its format, or its extension when the
@@ -159,6 +207,78 @@ impl ImportDialog {
                 *c = on && importable;
             }
         }
+    }
+    /// The candidates in runs of the same day ([`sort_by_day`] makes one run per day).
+    pub fn groups(&self) -> Vec<DayGroup> {
+        let mut out: Vec<DayGroup> = Vec::new();
+        for (i, c) in self.candidates.iter().enumerate() {
+            let day = candidate_day(c);
+            match out.last_mut() {
+                Some(g) if g.day.as_deref() == day => g.range.end = i + 1,
+                _ => out.push(DayGroup { day: day.map(str::to_string), range: i..i + 1 }),
+            }
+        }
+        out
+    }
+    /// Candidate `i` counts for a day's (or the device's) box: one Check All would check, or one
+    /// checked by hand (a file in Recently Deleted with "Leave them").
+    fn in_box(&self, i: usize) -> bool {
+        self.checked_by_default(i) || self.importable(i) && self.checked.get(i).copied().unwrap_or(false)
+    }
+    /// Whether a box over `range` can be clicked: it has a candidate to check or uncheck.
+    pub fn range_enabled(&self, range: std::ops::Range<usize>) -> bool {
+        range.into_iter().any(|i| self.in_box(i))
+    }
+    /// Whether the candidates in `range` that count for its box are checked: all (`Some(true)`),
+    /// none (`Some(false)`) or some (`None`). None count: `Some(false)`.
+    pub fn range_checked(&self, range: std::ops::Range<usize>) -> Option<bool> {
+        let (mut on, mut off) = (false, false);
+        for i in range.filter(|i| self.in_box(*i)) {
+            if self.checked.get(i).copied().unwrap_or(false) {
+                on = true;
+            } else {
+                off = true;
+            }
+        }
+        match (on, off) {
+            (true, true) => None,
+            (true, false) => Some(true),
+            _ => Some(false),
+        }
+    }
+    /// A day's (or the whole device's) box: checks the candidates in `range` as Check All does, or
+    /// unchecks them all when they are all checked.
+    pub fn toggle_range(&mut self, range: std::ops::Range<usize>) {
+        let on = self.range_checked(range.clone()) != Some(true);
+        for i in range {
+            let importable = self.checked_by_default(i);
+            if let Some(c) = self.checked.get_mut(i) {
+                *c = on && importable;
+            }
+        }
+    }
+    /// A camera's files as the candidates (as it catalogues them, again and again): supported
+    /// formats only, by day, those `existing` finds in the library not importable. Checks made
+    /// earlier stay; new files arrive checked when they can be imported.
+    pub fn set_camera_files(
+        &mut self,
+        files: Vec<lightcraft_engine::devices::CameraFile>,
+        existing: impl Fn(&lightcraft_engine::devices::CameraFile) -> Option<u64>,
+    ) {
+        let was = crate::camera_import::checked_by_id(self);
+        let mut candidates: Vec<ImportCandidate> = files
+            .into_iter()
+            .filter(|f| lightcraft_engine::import::is_supported(std::path::Path::new(&f.name)))
+            .map(|f| {
+                let found = existing(&f);
+                crate::camera_import::candidate(f, found)
+            })
+            .collect();
+        sort_by_day(&mut candidates);
+        self.checked = candidates.iter().map(|c| c.duplicate.is_none() && was.get(&c.path).copied().unwrap_or(true)).collect();
+        self.trashed = vec![false; candidates.len()];
+        self.candidates = candidates;
+        self.last_clicked = None;
     }
     /// Candidate `i` is a file whose photo is in Recently Deleted.
     pub fn is_trashed(&self, i: usize) -> bool {
@@ -241,6 +361,98 @@ mod tests {
         assert_eq!(grid_height(700.0, -50.0, 142.0), 700.0);
         assert_eq!(grid_height(700.0, f32::NAN, 142.0), 700.0);
         assert_eq!(grid_height(f32::INFINITY, 300.0, 142.0), DIALOG_SIZE[1] - DEFAULT_BELOW_GRID);
+    }
+
+    fn dated(name: &str, captured: Option<&str>) -> ImportCandidate {
+        ImportCandidate {
+            path: format!("/card/{name}"),
+            name: name.into(),
+            format: "JPG".into(),
+            captured: captured.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// Candidates are listed by day, newest first, undated last; each day's box checks or unchecks
+    /// the day's importable photos, and says when only some are checked.
+    #[test]
+    fn candidates_are_grouped_by_day() {
+        let mut c = vec![
+            dated("a.jpg", Some("2026-08-03T09:00:00")),
+            dated("x.jpg", None),
+            dated("b.jpg", Some("2026-10-03T10:00:00")),
+            dated("c.jpg", Some("2026-08-03T09:05:00")),
+            dated("d.jpg", Some("2026-10-03 11:00:00")),
+        ];
+        sort_by_day(&mut c);
+        let names: Vec<&str> = c.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["b.jpg", "d.jpg", "a.jpg", "c.jpg", "x.jpg"], "newest day first, order kept within a day");
+        c[3].duplicate = Some("library".into());
+        let mut d = ImportDialog::new(c);
+        let g = d.groups();
+        assert_eq!(
+            g.iter().map(|g| (g.day.clone(), g.range.clone())).collect::<Vec<_>>(),
+            [(Some("2026-10-03".to_string()), 0..2), (Some("2026-08-03".to_string()), 2..4), (None, 4..5)]
+        );
+        assert_eq!(d.range_checked(2..4), Some(true), "the duplicate doesn't count");
+        d.toggle_range(2..4);
+        assert_eq!(d.checked, [true, true, false, false, true]);
+        d.click(0, false);
+        assert_eq!(d.range_checked(0..2), None, "some");
+        d.toggle_range(0..2);
+        assert_eq!(d.range_checked(0..2), Some(true), "some: the box checks them all");
+        d.toggle_range(3..4);
+        assert!(!d.checked[3], "a duplicate is never checked");
+        assert!(is_raw(&ImportCandidate { path: "/card/x.CR3".into(), ..Default::default() }) && !is_raw(&d.candidates[0]));
+        // OM Digital Solutions' High Res / Pro Capture originals
+        assert!(is_raw(&ImportCandidate { path: "/card/P5048183.ORI".into(), ..Default::default() }));
+    }
+
+    /// A day's box checks as Check All does: with "Leave them", a file in Recently Deleted stays out
+    /// unless it was clicked, and the box still reads as all checked (issue #1285).
+    #[test]
+    fn a_days_box_leaves_out_recently_deleted_files_as_check_all_does() {
+        let mut d = ImportDialog::new(vec![dated("a.jpg", Some("2026-08-03T09:00:00")), dated("b.jpg", Some("2026-08-03T09:05:00"))]);
+        d.candidates[1].duplicate = Some("content".into());
+        d.set_trashed(vec![false, true]);
+        d.set_on_deleted("");
+        assert_eq!(d.checked, [true, false]);
+        assert_eq!(d.range_checked(0..2), Some(true), "the left-out file doesn't count");
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [false, false]);
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [true, false], "the box doesn't pick it");
+        d.click(1, false);
+        assert_eq!(d.range_checked(0..2), Some(true), "picked by hand, it counts");
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [false, false], "and the box unchecks it");
+        assert!(!d.range_enabled(1..2), "a box over it alone has nothing to check");
+        d.click(1, false);
+        assert!(d.range_enabled(1..2), "once it is clicked, the box can uncheck it");
+    }
+
+    /// A camera's files as they arrive: supported formats only, by day; the user's checks stay as
+    /// more arrive; files the library has are not importable.
+    #[test]
+    fn camera_files_keep_their_checks_as_more_arrive() {
+        let file = |name: &str, day: &str| lightcraft_engine::devices::CameraFile {
+            id: format!("id-{name}"),
+            name: name.into(),
+            size: 10,
+            captured: Some(format!("{day}T10:00:00")),
+            ..Default::default()
+        };
+        let mut d = ImportDialog::new(Vec::new());
+        d.set_camera_files(vec![file("A.JPG", "2026-08-03"), file("B.JPG", "2026-08-03")], |_| None);
+        d.click(0, false);
+        assert_eq!(d.selected_paths(), ["id-B.JPG"]);
+        let all = vec![file("A.JPG", "2026-08-03"), file("B.JPG", "2026-08-03"), file("C.CR3", "2026-10-03"), file("MVI_0001.THM", "2026-10-03")];
+        d.set_camera_files(all, |f| (f.name == "B.JPG").then_some(7));
+        let names: Vec<&str> = d.candidates.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["C.CR3", "A.JPG", "B.JPG"]);
+        assert_eq!(d.selected_paths(), ["id-C.CR3"], "A stays unchecked, B is in the library, C arrives checked");
+        assert_eq!(d.candidates[2].existing, Some(7));
+        assert!(!d.importable(2));
     }
 
     /// Six candidates, all checked; candidate 3 is a duplicate (unchecked, not importable).

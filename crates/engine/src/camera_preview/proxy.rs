@@ -54,7 +54,7 @@ pub(crate) fn jpeg_vignetting(raw: &RawImage, bytes: &[u8], transform: &CameraTr
 /// (centred, so the orientation doesn't matter). `None` with too few usable pixels near the corners, or a gain that
 /// brightens the corners by less than [`MIN_CORNER_GAIN`] or more than [`MAX_CORNER_GAIN`], or doesn't explain
 /// held-out pixels clearly better than no gain ([`MAX_VIGNETTE_HOLDOUT`]).
-fn vignetting_from_proxies(sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool]) -> Option<lightcraft_develop::EmbeddedLens> {
+pub(super) fn vignetting_from_proxies(sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool]) -> Option<lightcraft_develop::EmbeddedLens> {
     let (w, h) = (sensor.width, sensor.height);
     if (reference.width, reference.height) != (w, h) || w < 16 || h < 16 || clipped.len() != w * h {
         return None;
@@ -375,7 +375,7 @@ pub(super) fn proxies(
 
 /// What [`proxies`] pairs before any colour transform: the camera JPEG decoded to fit `edge` (working space), its
 /// long edge as stored, and the sensor's binned proxy at `edge` with its clip mask (and the binning factor).
-struct ProxyBase {
+pub(super) struct ProxyBase {
     key: (usize, usize, u32, usize, usize),
     reference: Rgb32f,
     source_long: usize,
@@ -384,7 +384,7 @@ struct ProxyBase {
 
 thread_local! {
     /// The [`ProxyBase`] of the decode in a [`sharing_proxies`] scope on this thread.
-    static PROXY_BASE: std::cell::RefCell<Option<std::rc::Rc<ProxyBase>>> = const { std::cell::RefCell::new(None) };
+    pub(super) static PROXY_BASE: std::cell::RefCell<Option<std::rc::Rc<ProxyBase>>> = const { std::cell::RefCell::new(None) };
     static SHARING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -407,7 +407,7 @@ pub(crate) fn sharing_proxies<T>(f: impl FnOnce() -> T) -> T {
 }
 
 /// What a raw's colour fits gave at its decode ([`decode_fits`]).
-struct Fits {
+pub(super) struct Fits {
     xy: Xy,
     t: CameraTransform,
     look: Option<CameraLook>,
@@ -424,7 +424,7 @@ const FITS_KEPT: usize = 64;
 /// Keyed by the file, the decoded size and the profile database generation (its camera and lens profiles feed the fits).
 type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize, u64), std::sync::Arc<Fits>>;
 
-fn fits_cache() -> &'static std::sync::Mutex<FitsCache> {
+pub(super) fn fits_cache() -> &'static std::sync::Mutex<FitsCache> {
     static CACHE: std::sync::OnceLock<std::sync::Mutex<FitsCache>> = std::sync::OnceLock::new();
     CACHE.get_or_init(|| std::sync::Mutex::new(lightcraft_preview::Lru::new(FITS_KEPT)))
 }
@@ -436,7 +436,7 @@ pub(crate) fn forget_fits() {
 
 /// A file told apart from others cheaply: its length, first 64 KiB (the tags) and 64 blocks of 4 KiB spread evenly
 /// to its end (0.1 ms for a 23 MB CR3 on an M1 Max, where hashing it all takes 8 ms).
-fn fingerprint(bytes: &[u8]) -> lightcraft_preview::Hash128 {
+pub(super) fn fingerprint(bytes: &[u8]) -> lightcraft_preview::Hash128 {
     const BLOCK: usize = 4096;
     const BLOCKS: usize = 64;
     let mut h = lightcraft_preview::Hasher128::new();

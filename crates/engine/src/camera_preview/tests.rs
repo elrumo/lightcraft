@@ -1,4 +1,7 @@
 use super::*;
+use super::colour::{camera_match, spectral};
+use super::proxy::{PROXY_BASE, fingerprint, fits_cache, vignetting_from_proxies};
+use super::look_fit::{NEUTRAL_TONE, fit_neutral_tone, maker_exposure, neutral_curve, neutral_look, prior, typical_look, without_chroma};
 
 fn steep_toe_scene() -> (Rgb32f, Rgb32f) {
     let mut sensor = Rgb32f::new(96, 64);

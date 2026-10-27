@@ -234,7 +234,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         return;
     }
     let resp = ui.allocate_rect(rect, Sense::click_and_drag());
-    register(ui.ctx(), "map", rect);
+    register(ui, "map", rect);
     app.canvas_rect = Some(rect);
 
     // the viewport follows the panel's size
@@ -555,7 +555,7 @@ fn header(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             .font(t.font(13.0))
             .text_color(t.text),
     );
-    register(ui.ctx(), "map:search", sr);
+    register(ui, "map:search", sr);
     paint(ui.painter(), Rect::from_min_size(pos2(sr.left() + 10.0, sr.center().y - 7.0), vec2(14.0, 14.0)), Icon::Search, t.text_dim);
     let hits = if app.map.search.trim().chars().count() >= 2 { place_hits(&app.map.search) } else { vec![] };
     if edit.has_focus() && !hits.is_empty() {
@@ -623,7 +623,7 @@ fn overlays(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &Viewport
     let r = Rect::from_min_size(pos2(rect.right() - g.size().x - 16.0, rect.bottom() - 22.0), vec2(g.size().x + 10.0, 18.0));
     pill(ui, r);
     ui.painter().galley(r.min + vec2(5.0, 2.0), g, Color32::from_gray(40));
-    register(&ctx, "map:attribution", r);
+    crate::widgets::register_geometry(&ctx, "map:attribution", r);
     if let Some(url) = url {
         let resp = ui.interact(r, egui::Id::new("map-attribution"), Sense::click()).on_hover_text(url);
         if resp.clicked()
@@ -654,7 +654,7 @@ fn overlays(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &Viewport
     for (i, (label, id)) in [("+", "map:zoomIn"), ("−", "map:zoomOut"), ("", "map:fit")].into_iter().enumerate() {
         let b = Rect::from_min_size(col.min + vec2(0.0, i as f32 * 33.0), vec2(32.0, 33.0));
         let resp = ui.interact(b, egui::Id::new(id), Sense::click());
-        register(ui.ctx(), id, b);
+        register(ui, id, b);
         let c = if resp.hovered() { t.text } else { t.text_label };
         if id == "map:fit" {
             fit_glyph(ui.painter(), b.center(), c);
@@ -760,7 +760,7 @@ fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
         let n = c.count();
         let any_selected = c.members.iter().any(|i| points.get(*i as usize).is_some_and(|p| selected.contains(&p.id)));
         let resp = ui.interact(r, egui::Id::new(("map-marker", front.0, n)), Sense::click());
-        register(ui.ctx(), format!("marker:{}", front.0), r);
+        register(ui, format!("marker:{}", front.0), r);
         if resp.hovered() {
             hovered = Some((r, ci));
         }

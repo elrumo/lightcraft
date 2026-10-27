@@ -140,7 +140,7 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
             }
             let img_area = Rect::from_min_max(cr.min + vec2(10.0, 22.0), cr.max - vec2(10.0, 8.0));
             crate::panels::grid::request_thumb(app, *id, (256.0 * ppp.min(2.0) / 2.0) as usize * 2, 8);
-            let blur = super::grid::obscured(app, *id);
+            let blur = crate::panels::grid::obscured(app, *id);
             let thumb = app.renderer.thumb(*id);
             if thumb.is_none() {
                 p.rect_filled(img_area, 0.0, t.skeleton);
@@ -154,7 +154,7 @@ pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
                 let fr = Rect::from_center_size(img_area.center(), vec2(tw as f32 * s, th as f32 * s));
                 let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
                 if blur {
-                    super::grid::paint_obscured(p, tex.tex.id(), fr, full, 1.0);
+                    crate::panels::grid::paint_obscured(p, tex.tex.id(), fr, full, 1.0);
                 } else {
                     p.image(tex.tex.id(), fr, full, Color32::WHITE);
                 }

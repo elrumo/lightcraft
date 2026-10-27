@@ -541,6 +541,7 @@ fn group_rects(layout: &Layout<Panel>, bodies: &[(Panel, egui::Rect)], tab_h: f3
                     }
                 }
             }
+            _ => {}
         }
     }
     out

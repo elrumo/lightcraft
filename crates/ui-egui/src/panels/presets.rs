@@ -132,13 +132,13 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let more = icon_button(&mut hdr, "presetMore", Icon::More, vec2(28.0, 28.0), false, true, crate::i18n::tr("More preset options"));
     egui::Popup::menu(&more).show(|ui| {
         let r = crate::widgets::check(ui, &mut app.ui.preset_thumbs, crate::i18n::tr("Show Thumbnails"));
-        register(ui.ctx(), "presetMenu:thumbnails", r.rect);
+        register(ui, "presetMenu:thumbnails", r.rect);
         let r = crate::widgets::check(ui, &mut app.ui.show_hidden_presets, crate::i18n::tr("Show Hidden Presets"));
-        register(ui.ctx(), "presetMenu:showHidden", r.rect);
+        register(ui, "presetMenu:showHidden", r.rect);
         ui.separator();
         // (a failure is said, never dropped: a button that does nothing looks broken)
         let r = ui.button(crate::i18n::tr("Import Presets…"));
-        register(ui.ctx(), "presetMenu:import", r.rect);
+        register(ui, "presetMenu:import", r.rect);
         if r.clicked()
             && let Err(e) = app.run("file.importPresets", json!({}))
         {
@@ -215,7 +215,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.allocate_exact_size(vec2(ui.available_width(), 32.0), if favorites { Sense::click() } else { Sense::click_and_drag() });
             crate::widgets::announce(&resp, g.to_string());
             // outside the `presetGroup:` ids, which a user group of any name can take
-            register(ui.ctx(), if favorites { "presetFavorites".to_string() } else { format!("presetGroup:{g}") }, r);
+            register(ui, if favorites { "presetFavorites".to_string() } else { format!("presetGroup:{g}") }, r);
             if !favorites {
                 headers.push((g.clone(), r));
             }
@@ -259,10 +259,10 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
                 crate::widgets::announce(&resp, name.clone());
                 // a starred preset is listed twice: in Favorites and in its group
-                register(ui.ctx(), if favorites { format!("presetFavorite:{pid}") } else { format!("preset:{pid}") }, r);
+                register(ui, if favorites { format!("presetFavorite:{pid}") } else { format!("preset:{pid}") }, r);
                 let is_last = marked.as_deref() == Some(pid.as_str());
                 if is_last {
-                    register(ui.ctx(), "presetApplied", r);
+                    register(ui, "presetApplied", r);
                     ui.painter().rect_filled(r, 0.0, t.tool_active);
                 } else if resp.hovered() {
                     ui.painter().rect_filled(r, 0.0, t.hover.gamma_multiply(0.7));
@@ -421,7 +421,7 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
             for pr in items {
                 let name = crate::i18n::builtin_label(&pr.name, pr.builtin).to_string();
                 let (r, resp) = ui.allocate_exact_size(vec2(TILE, TILE + 24.0), Sense::click());
-                register(ui.ctx(), format!("preset:{}", pr.id), r);
+                register(ui, format!("preset:{}", pr.id), r);
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
                 let img = Rect::from_min_size(r.min, vec2(TILE, TILE));
                 let mut uv_texture = None;

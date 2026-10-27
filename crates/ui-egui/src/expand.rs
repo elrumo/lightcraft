@@ -219,7 +219,7 @@ pub fn panel(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Develo
     let mut on = d.crop.expand;
     let r = crate::widgets::check(ui, &mut on, crate::i18n::tr_ctx("crop", "Expand"))
         .on_hover_text(tr("Let the crop reach past the photo's edges and paint the new area on this computer"));
-    crate::widgets::register(ui.ctx(), "check:cropExpand", r.rect);
+    crate::widgets::register(ui, "check:cropExpand", r.rect);
     if r.changed() {
         set_expand(app, on);
     }

@@ -236,7 +236,7 @@ pub(crate) fn previewless_tone(
 /// table) into the ones `from` with `look` on top develops: `start`'s table undone, then one 3×3 (same camera RGB in,
 /// so one matrix carries the change of matrices and white balance), `look`'s table and tone curve (none: the default
 /// tone map). `None` when the starting colour can't be inverted.
-fn camera_match(start: (&CameraTransform, Option<&CameraLook>), from: &CameraTransform, look: Option<CameraLook>) -> Option<CameraMatch> {
+pub(super) fn camera_match(start: (&CameraTransform, Option<&CameraLook>), from: &CameraTransform, look: Option<CameraLook>) -> Option<CameraMatch> {
     let develops = |t: &CameraTransform, m: Mat3| {
         let gain = 2f64.powf(t.baseline_exposure);
         let [r, g, b] = t.wb.map(|w| f64::from(w) * gain);

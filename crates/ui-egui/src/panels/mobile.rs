@@ -90,7 +90,7 @@ fn glass_end(ui: &mut egui::Ui, id: &str, tip: &str, face: Face, tint: Option<Co
     // (two pages can be up at once with the same buttons: the id is the page's own)
     let resp = ui.interact(hit, ui.id().with(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), hit);
+    crate::widgets::register(ui, format!("button:{id}"), hit);
     let k = crate::glass::press(ui.ctx(), &resp);
     let glass = glass.expand(2.0 * k);
     crate::glass::paint(ui.painter(), glass, glass.height() / 2.0, tint, k);
@@ -222,8 +222,8 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
         let _ = ui.allocate_rect(full, Sense::hover());
         // (its colour goes on under the home indicator: the area's own clip stops at the safe area)
         ui.set_clip_rect(full);
-        crate::widgets::register(ctx, format!("sheet:{id}"), full);
-        crate::widgets::register(ctx, "dialog:window", full);
+        crate::widgets::register_geometry(ctx, format!("sheet:{id}"), full);
+        crate::widgets::register_geometry(ctx, "dialog:window", full);
         ui.painter().rect_filled(full, CornerRadius { nw: PAGE_R, ne: PAGE_R, sw: 0, se: 0 }, t.chrome);
         let bar_r = Rect::from_min_size(full.min, vec2(w, ROW_H));
         let galley = ui.painter().layout(crate::i18n::tr(bar_spec.title).to_string(), t.semibold(17.0), t.text, (w - 200.0).max(80.0));
@@ -250,7 +250,7 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
         let (top, inner) = ctx.data(|d| d.get_temp::<(bool, Id)>(sid.with("inner"))).unwrap_or((true, out.id));
         ctx.data_mut(|d| {
             d.insert_temp(sid.with("scroll-ids"), [out.id, inner]);
-            d.insert_temp(sid.with("at-top"), out.state.offset.y <= 0.5 && top);
+            d.insert_temp(sid.with("at-top"), out.state.unclamped_offset().y <= 0.5 && top);
             d.remove::<(bool, Id)>(sid.with("inner"));
         });
     });
@@ -260,7 +260,7 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
 /// A page's body that scrolls a list of its own (the albums) says where that list is, so that a
 /// pull down on it closes the page only from its top. Call while drawing the page `id`.
 pub fn scrolled<R>(ctx: &egui::Context, id: &str, list: &egui::scroll_area::ScrollAreaOutput<R>) {
-    let at = (list.state.offset.y <= 0.5, list.id);
+    let at = (list.state.unclamped_offset().y <= 0.5, list.id);
     ctx.data_mut(|d| d.insert_temp(Id::new(("lc-sheet", id)).with("inner"), at));
 }
 
@@ -528,7 +528,7 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
             glass(ui, &mut |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(w, ROW_H - 8.0), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Cancel")));
-                crate::widgets::register(ctx, "button:actionsCancel", r);
+                crate::widgets::register_geometry(ctx, "button:actionsCancel", r);
                 let color = if resp.is_pointer_button_down_on() { t.accent.gamma_multiply(0.6) } else { t.accent };
                 ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr("Cancel"), t.semibold(17.0), color);
                 if resp.clicked() {
@@ -546,7 +546,7 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
     // pressed to the front and keeps that order when both show again, so after a tap outside closed
     // it the menu would open under its own dim, greyed, every tap on it closing it)
     ctx.set_sublayer(dim.response.layer_id, shown.response.layer_id);
-    crate::widgets::register(ctx, format!("actions:{id}"), shown.response.rect);
+    crate::widgets::register_geometry(ctx, format!("actions:{id}"), shown.response.rect);
     ctx.data_mut(|d| d.insert_temp(h_id, shown.response.rect.height()));
     if !closing && (close || ctx.input(|i| i.key_pressed(egui::Key::Escape))) {
         close_actions(ctx);
@@ -571,10 +571,10 @@ fn row_inked(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, enabl
     let w = ui.available_width();
     let (r, resp) = ui.allocate_exact_size(vec2(w, 44.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| match checked {
-        Some(c) => egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, c, label),
+        Some(c) => egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, c, label),
         None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label),
     });
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
+    crate::widgets::register(ui, format!("button:{id}"), r);
     let p = ui.painter();
     if resp.is_pointer_button_down_on() {
         let spot = r.shrink2(vec2(6.0, 1.0));
@@ -645,7 +645,7 @@ pub fn all_commands_page(app: &mut LightcraftApp, ctx: &egui::Context) {
             ui,
             egui::TextEdit::singleline(&mut query).hint_text(crate::i18n::tr("Search")).desired_width(f32::INFINITY),
         ));
-        crate::widgets::register(ui.ctx(), "field:allCommandsSearch", r.rect);
+        crate::widgets::register(ui, "field:allCommandsSearch", r.rect);
         let q = query.to_lowercase();
         let t = Tokens::get(ui.ctx());
         let mut section = String::new();
@@ -704,15 +704,15 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
     // is on screen (a page slides in from below), so for a moment it doesn't: report the field's own rect then.
     if let Some(field) = focused
         && ctx.input(|i| i.has_touch_screen())
-        && ctx.output(|o| o.ime).is_none()
+        && ctx.output(|o| o.ime.is_none())
         && let Some(r) = ctx.read_response(field)
     {
         let rect = ctx.layer_transform_to_global(r.layer_id).unwrap_or_default() * r.rect;
         ctx.output_mut(|o| {
-            o.ime = Some(egui::output::IMEOutput { purpose: egui::IMEPurpose::Normal, rect, cursor_rect: rect, should_interrupt_composition: false });
+            o.ime = Some(egui::output::IMEOutput::new(field, 1, egui::IMEPurpose::Normal, rect, rect));
         });
     }
-    let ime = ctx.output(|o| o.ime);
+    let ime = ctx.output(|o| o.ime.clone());
     let (Some(field), Some(ime), true) = (focused, ime, ctx.input(|i| i.has_touch_screen())) else {
         ctx.data_mut(|d| d.remove::<Id>(id));
         ctx.options_mut(|o| o.input_options.surrender_focus_on = egui::SurrenderFocusOn::Clicks);
@@ -824,7 +824,7 @@ fn edit_menu_bar(ctx: &egui::Context, id: Id, items: &[(&'static str, &str)], cu
             let r = Rect::from_min_size(pos2(left, bar.top()), vec2(galley.size().x + 28.0, H));
             let resp = ui.interact(r, id.with(*key), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(label)));
-            crate::widgets::register(ctx, format!("button:edit-{key}"), r);
+            crate::widgets::register_geometry(ctx, format!("button:edit-{key}"), r);
             if resp.is_pointer_button_down_on() {
                 p.rect_filled(r.shrink(3.0), (H - 6.0) / 2.0, t.pressed);
             }

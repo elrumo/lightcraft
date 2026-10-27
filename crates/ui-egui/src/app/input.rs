@@ -33,7 +33,7 @@ impl LightcraftApp {
         // the next pass. A drop made outside the barrier keeps the deliberate "close the
         // dialog"/"An import is running" refusal below.
         if self.deferred_dropped_file_count > 0
-            && (self.ui.dialog.is_some() || self.lightroom.is_some() || self.sync_run.is_some() || import::running(self))
+            && (self.ui.dialog.is_some() || self.lightroom.running() || self.sync_run.is_some() || import::running(self))
         {
             // Only the earlier barrier-held prefix waits. Fresh drops must still be handled
             // under the current dialog/import policy instead of inheriting that protection.

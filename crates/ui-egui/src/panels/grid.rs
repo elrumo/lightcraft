@@ -497,7 +497,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let mut visited = 0u64;
     // a wheel notch scrolls a third of the grid's height
     let scroll_rect = ui.available_rect_before_wrap();
-    crate::widgets::register(ui.ctx(), "grid:scroll", scroll_rect);
+    crate::widgets::register(ui, "grid:scroll", scroll_rect);
     let wheel = wheel_step(ui, egui::Id::new("grid-wheel"), scroll_rect, scroll_rect.height(), false);
     // a phone: a finger's drag scrolls the grid (its cells take only taps), except while a
     // sideways drag is choosing photos (`drag_choose`)
@@ -866,7 +866,7 @@ fn scrubber(app: &LightcraftApp, ui: &mut egui::Ui, viewport: Rect, content_h: f
     let live = shown > 0.3 || st.grab.is_some();
     if live {
         let resp = ui.interact(hit, key.with("drag"), Sense::drag());
-        register(ui.ctx(), "grid:scrubber", hit);
+        register(ui, "grid:scrubber", hit);
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ScrollBar, true, crate::i18n::tr("Scroll")));
         let pointer = ui.input(|i| i.pointer.interact_pos());
         if resp.drag_started()
@@ -1202,7 +1202,7 @@ fn sensitive_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, n: usize) {
         ui.label(egui::RichText::new(text).color(t.text_dim));
         if n > 0 {
             let r = ui.button(crate::i18n::tr("Hide All"));
-            register(ui.ctx(), "button:hideSensitive", r.rect);
+            register(ui, "button:hideSensitive", r.rect);
             if r.clicked()
                 && let Err(e) = app.run("library.hideSensitive", json!({}))
             {
@@ -1211,7 +1211,7 @@ fn sensitive_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, n: usize) {
         }
         let mut blur = app.session.blur_sensitive;
         let r = ui.checkbox(&mut blur, crate::i18n::tr("Blur Sensitive Photos"));
-        register(ui.ctx(), "check:blurSensitive", r.rect);
+        register(ui, "check:blurSensitive", r.rect);
         if r.changed()
             && let Err(e) = app.run("library.setBlurSensitive", json!({"on": blur}))
         {
@@ -1250,12 +1250,12 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
     // (the photo is out of its place: in the loupe being pulled down, or flying back)
     if lifted(app, ui.ctx()) == Some(id) {
-        register(ui.ctx(), format!("thumb:{}", id.0), r);
+        register(ui, format!("thumb:{}", id.0), r);
         return;
     }
     // (a phone's cells take only taps and long presses: a drag scrolls the grid)
     let resp = ui.interact(r, egui::Id::new(("cell", id.0)), if app.compact { Sense::click() } else { Sense::click_and_drag() });
-    register(ui.ctx(), format!("thumb:{}", id.0), r);
+    register(ui, format!("thumb:{}", id.0), r);
     let state = app.session.selection.state_of(id);
     let selected = state != lightcraft_engine::SelectionState::NotSelected;
     // screen readers: the file, then rating / flag / label
@@ -1304,7 +1304,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         // (Blur Sensitive Photos: a photo the sensitive-content model flagged)
         if blur {
             paint_obscured(p, tex.tex.id(), fit, uv, fade);
-            register(ui.ctx(), format!("blurred:{}", id.0), fit);
+            register(ui, format!("blurred:{}", id.0), fit);
         } else {
             p.image(tex.tex.id(), fit, uv, Color32::WHITE.gamma_multiply(fade));
         }
@@ -1550,7 +1550,7 @@ fn folder_header(app: &mut LightcraftApp, ui: &mut egui::Ui, b: &lightcraft_engi
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             let mut sub = b.subfolders;
             let c = crate::widgets::check(ui, &mut sub, crate::i18n::tr("Include subfolders"));
-            register(ui.ctx(), "check:includeSubfolders", c.rect);
+            register(ui, "check:includeSubfolders", c.rect);
             if c.changed() {
                 let _ = app.run("library.browse", json!({"path": b.path, "subfolders": sub}));
             }
@@ -2009,7 +2009,7 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     // into the Hidden album, or back out of it
     let (hide, label) = if crate::menubar::selection_hidden(app) { ("photo.unhide", "Unhide Photo") } else { ("photo.hide", "Hide Photo") };
     let r = ui.button(crate::i18n::tr(label));
-    register(ui.ctx(), "button:contextHide", r.rect);
+    register(ui, "button:contextHide", r.rect);
     if r.clicked()
         && let Err(e) = app.run(hide, json!({}))
     {
@@ -2026,13 +2026,13 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         // in a (non-smart) album: out of the album (⌫), or out of the library (⌘⌫, after asking)
         if let Some(aid) = crate::menus::removable_album(app) {
             let remove = ui.button(crate::i18n::tr("Remove from Album"));
-            register(ui.ctx(), "button:contextRemoveFromAlbum", remove.rect);
+            register(ui, "button:contextRemoveFromAlbum", remove.rect);
             if remove.clicked() {
                 let _ = app.run("album.removePhotos", json!({"id": aid.0}));
             }
         }
         let delete = ui.button(crate::i18n::tr("Delete Photo"));
-        register(ui.ctx(), "button:contextDeletePhoto", delete.rect);
+        register(ui, "button:contextDeletePhoto", delete.rect);
         if delete.clicked() && !crate::menus::confirm_delete(app) {
             let _ = app.run("photo.delete", json!({}));
         }

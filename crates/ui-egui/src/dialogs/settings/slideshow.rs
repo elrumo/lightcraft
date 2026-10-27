@@ -2,10 +2,10 @@ use super::display::duration_slider;
 use super::widgets::{check, choices, heading, hint, row};
 use super::*;
 
-/// The Slideshow tab: the slide preview, then the settings, in one column the width of the page
-/// (the page scrolls; a column beside the preview would be wider than the window). Without
-/// `with_preview` the preview is left out: [`window`] has pinned it above the page.
-pub(super) fn slideshow_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, with_preview: bool) {
+/// `with_preview` the composed slide is left out: [`pin_slide_preview`] has pinned it above the page.
+pub(crate) fn slideshow_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, with_preview: bool) {
+    // one column (the sidebar or the phone's page takes the side): the composed slide first, then the
+    // settings
     if with_preview {
         crate::panels::slide_layout::preview(app, ui, t, f32::INFINITY);
         ui.add_space(6.0);
@@ -24,18 +24,16 @@ pub(super) fn slideshow_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Toke
 }
 
 /// Export: PDF, JPEG sequence or video of the slideshow (View ▸ Export Slideshow…).
-fn export_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+pub(crate) fn export_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     heading(ui, t, crate::i18n::tr("Export"));
     let running = app.session.slideshow_export.as_ref().is_some_and(|r| r.running());
-    ui.horizontal_wrapped(|ui| {
+    row(ui, t, "", |ui| {
         for (id, label, format) in [
             ("slideshowExportPdf", "Export PDF…", "pdf"),
             ("slideshowExportJpeg", "Export JPEG…", "jpeg"),
             ("slideshowExportVideo", "Export Video…", "video"),
         ] {
-            let r = ui.add_enabled(!running, egui::Button::new(crate::i18n::tr(label)));
-            register(ui, format!("button:{id}"), r.rect);
-            if r.clicked() {
+            if action(ui, t, id, label, !running, false) {
                 let _ = app.run("dialog.slideshowExport", json!({"format": format}));
             }
         }
@@ -43,7 +41,7 @@ fn export_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     hint(ui, t, crate::i18n::tr("The photos in view as slides, with the settings above. Progress shows in the activity stack."));
 }
 
-fn playback_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+pub(crate) fn playback_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     use lightcraft_engine::slideshow::{FADE_MAX, SLIDE_MAX, SLIDE_MIN};
     heading(ui, t, crate::i18n::tr("Playback"));
     let s = app.session.slideshow.clone();
@@ -59,40 +57,40 @@ fn playback_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         duration_slider(app, ui, "slideshowFade", "fadeDuration", s.fade_duration, 0.0..=FADE_MAX.min(s.slide_duration))
     });
     hint(ui, t, crate::i18n::tr("A slide stays up for its duration, its fade in included. A fade of 0 cuts."));
-    row(ui, t, crate::i18n::tr("Fade"), |ui| {
-        #[derive(Clone, Copy, PartialEq)]
-        enum Fade {
-            Cross,
-            Black,
-            White,
-            Color,
-        }
-        let mut f = match s.fade_color {
-            None => Fade::Cross,
-            Some([0, 0, 0]) => Fade::Black,
-            Some([255, 255, 255]) => Fade::White,
-            Some(_) => Fade::Color,
+    #[derive(Clone, Copy, PartialEq)]
+    enum Fade {
+        Cross,
+        Black,
+        White,
+        Color,
+    }
+    let mut f = match s.fade_color {
+        None => Fade::Cross,
+        Some([0, 0, 0]) => Fade::Black,
+        Some([255, 255, 255]) => Fade::White,
+        Some(_) => Fade::Color,
+    };
+    let opts = [(Fade::Cross, "Crossfade"), (Fade::Black, "Through black"), (Fade::White, "Through white"), (Fade::Color, "Through a colour")];
+    if pick(ui, t, "settingsSlideshowFade", crate::i18n::tr("Fade"), &opts, &mut f) {
+        let c = match f {
+            Fade::Cross => Value::Null,
+            Fade::Black => json!("#000000"),
+            Fade::White => json!("#ffffff"),
+            Fade::Color => json!([64, 64, 64]),
         };
-        let opts = [(Fade::Cross, "Crossfade"), (Fade::Black, "Through black"), (Fade::White, "Through white"), (Fade::Color, "Through a colour")];
-        if choices(ui, "settingsSlideshowFade", &opts, &mut f) {
-            let c = match f {
-                Fade::Cross => Value::Null,
-                Fade::Black => json!("#000000"),
-                Fade::White => json!("#ffffff"),
-                Fade::Color => json!([64, 64, 64]),
-            };
-            let _ = app.run("slideshow.playback", json!({"fadeColor": c}));
-        }
-        if f == Fade::Color
-            && let Some(mut c) = s.fade_color
-        {
+        let _ = app.run("slideshow.playback", json!({"fadeColor": c}));
+    }
+    if f == Fade::Color
+        && let Some(mut c) = s.fade_color
+    {
+        row(ui, t, crate::i18n::tr("Fade color"), |ui| {
             let r = egui::color_picker::color_edit_button_srgb(ui, &mut c);
             register(ui, "button:slideshowFadeColor", r.rect);
             if r.changed() {
                 let _ = app.run("slideshow.playback", json!({"fadeColor": c}));
             }
-        }
-    });
+        });
+    }
     let mut v = s.random_order;
     if check(ui, "settings.slideshowRandom", &mut v, "Random order") {
         let _ = app.run("slideshow.playback", json!({"randomOrder": v}));

@@ -29,7 +29,8 @@ use keywords::{keyword_rows, server_folders_section};
 pub(crate) use local::{fs_cached, fs_cached_running, same_folder};
 use local::{local_now, local_rows};
 #[cfg(test)]
-pub(crate) use rows::{INDENT_STEP, MIN_INDENT_STEP, OPENED_AT};
+pub(crate) use rows::{INDENT_STEP, MIN_INDENT_STEP};
+pub(crate) use rows::OPENED_AT;
 use rows::{LIBFOLDER_REVEALED, SCROLL_TO_ROW, SCROLL_UNTIL, ask_scroll, row, set_tree_open};
 pub(crate) use rows::{content_width, indent_step, step_for};
 pub(crate) use sections::PlacedSection;

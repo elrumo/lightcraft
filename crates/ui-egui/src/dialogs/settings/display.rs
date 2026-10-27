@@ -6,7 +6,7 @@ use super::*;
 
 /// The monitor profile (`app.displayProfile`): previews are shown through the display's ICC
 /// profile, so wide-gamut and calibrated displays show colours as they are.
-pub(super) fn display_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+pub(crate) fn display_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     heading(ui, t, crate::i18n::tr("Monitor profile"));
     let current = app.renderer.display().cloned();
     let screen = current.as_ref().is_some_and(|d| d.path == crate::SCREEN_PROFILE);
@@ -47,7 +47,7 @@ pub(super) fn display_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens
         let info = d.describe();
         if !screen {
             row(ui, t, crate::i18n::tr("File"), |ui| {
-                path_label(ui, "settingsDisplayFile", &d.path, egui::FontId::proportional(11.0), t.text_dim, 0.0);
+                path_label(ui, "settingsDisplayFile", &d.path, egui::FontId::proportional(11.5), t.text_dim);
             });
         }
         row(ui, t, crate::i18n::tr("Type"), |ui| {
@@ -75,21 +75,33 @@ pub(super) fn display_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens
     hint(ui, t, crate::i18n::tr("Profiles assigned in your desktop's colour settings are usually in ~/.local/share/icc."));
 }
 
-pub(super) fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
-    let system = app.system_theme(ui.ctx());
-    appearance(ui, t, &mut app.ui.settings, system);
-    heading(ui, t, crate::i18n::tr("Filmstrip"));
-    check(ui, "settings.filmNames", &mut app.ui.settings.film_names, "Show file names");
-    check(ui, "settings.filmBadges", &mut app.ui.settings.film_badges, "Show ratings, flags and edit badges");
+pub(crate) fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    // (the phone and tablet layouts are drawn light, dark or as the system is; the desktop's has
+    // its themes)
+    if app.compact {
+        heading(ui, t, crate::i18n::tr("Appearance"));
+        let items: Vec<(Appearance, &str)> = Appearance::ALL.iter().map(|a| (*a, a.label())).collect();
+        pick(ui, t, "settingsAppearance", crate::i18n::tr("Appearance"), &items, &mut app.ui.appearance);
+        hint(ui, t, crate::i18n::tr("System follows the device's Display & Brightness setting."));
+    } else {
+        let system = app.system_theme(ui.ctx());
+        appearance(ui, t, &mut app.ui.settings, system);
+    }
+    // (the compact layout has no filmstrip)
+    if !crate::is_compact(ui.ctx()) {
+        heading(ui, t, crate::i18n::tr("Filmstrip"));
+        check(ui, "settings.filmNames", &mut app.ui.settings.film_names, "Show file names");
+        check(ui, "settings.filmBadges", &mut app.ui.settings.film_badges, "Show ratings, flags and edit badges");
+    }
     heading(ui, t, crate::i18n::tr("Grid"));
-    row(ui, t, crate::i18n::tr("Ratings & flags"), |ui| {
-        choices(
-            ui,
-            "settingsGridBadges",
-            &[(GridBadges::Auto, "When rated or hovered"), (GridBadges::Always, "Always"), (GridBadges::Never, "Never")],
-            &mut app.ui.settings.grid_badges,
-        );
-    });
+    pick(
+        ui,
+        t,
+        "settingsGridBadges",
+        crate::i18n::tr("Ratings & flags"),
+        &[(GridBadges::Auto, "When rated or hovered"), (GridBadges::Always, "Always"), (GridBadges::Never, "Never")],
+        &mut app.ui.settings.grid_badges,
+    );
     check(ui, "settings.showFilenames", &mut app.ui.show_filenames, "Square Grid: show file names and formats");
     heading(ui, t, crate::i18n::tr("Keywords"));
     row(ui, t, crate::i18n::tr("Keywords of the selection"), |ui| {
@@ -103,11 +115,47 @@ pub(super) fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Toke
     );
     heading(ui, t, crate::i18n::tr("Detail View"));
     check(ui, "settings.navigator", &mut app.ui.navigator, "Show the Navigator while zoomed in");
-    row(ui, t, crate::i18n::tr("Info overlay"), |ui| {
-        use crate::state::InfoOverlay as I;
-        choices(ui, "settingsInfo", &[(I::Off, "Off"), (I::Basic, "Info 1"), (I::Exposure, "Info 2")], &mut app.ui.info_overlay);
-    });
+    use crate::state::InfoOverlay as I;
+    pick(
+        ui,
+        t,
+        "settingsInfo",
+        crate::i18n::tr("Info overlay"),
+        &[(I::Off, "Off"), (I::Basic, "Info 1"), (I::Exposure, "Info 2")],
+        &mut app.ui.info_overlay,
+    );
     hint(ui, t, crate::i18n::tr("View → View Options chooses the lines Info 1 and Info 2 show."));
+    heading(ui, t, crate::i18n::tr("Map"));
+    check(ui, "settings.mapOnline", &mut app.ui.settings.map_online, "Load map tiles from the internet");
+    hint(
+        ui,
+        t,
+        crate::i18n::tr(
+            "Off: the Map shows the built-in world map and tiles saved earlier. Place names and the photos' positions never leave your computer; a tile request tells the tile server which area you look at.",
+        ),
+    );
+    text_row(
+        ui,
+        t,
+        "mapTileUrl",
+        crate::i18n::tr("Tile server"),
+        &mut app.ui.settings.map_tile_url,
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        false,
+        260.0,
+    );
+    let custom = app.ui.settings.map_tile_url.trim();
+    if !custom.is_empty() && !lightcraft_geo::tiles::valid_template(custom) {
+        hint(ui, t, crate::i18n::tr("Not a tile address (it needs https://, {z}, {x} and {y}): the standard tiles are used."));
+    } else if custom.is_empty() {
+        hint(
+            ui,
+            t,
+            crate::i18n::tr(
+                "Empty: OpenStreetMap's standard tiles. They are meant for light use; for a busy shared deployment, use your own or a commercial tile server.",
+            ),
+        );
+    }
 }
 
 /// View ▸ View Options (⌘J), Lightroom Classic's Loupe View tab: whether the info overlay shows and

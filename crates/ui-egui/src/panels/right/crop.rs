@@ -374,7 +374,7 @@ pub(super) fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 }
 
 /// A spot tool's name.
-pub(super) fn spot_mode_name(mode: lightcraft_develop::SpotMode) -> &'static str {
+pub(crate) fn spot_mode_name(mode: lightcraft_develop::SpotMode) -> &'static str {
     match mode {
         lightcraft_develop::SpotMode::Heal => "Heal",
         lightcraft_develop::SpotMode::Clone => "Clone",
@@ -385,7 +385,7 @@ pub(super) fn spot_mode_name(mode: lightcraft_develop::SpotMode) -> &'static str
 
 /// The Remove tool's brush sliders (`keys` of size, feather, opacity): for the next spot painted,
 /// and the selected spot's own while one is selected.
-pub(super) fn spot_sliders(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &lightcraft_develop::DevelopSettings, keys: &[&str]) {
+pub(crate) fn spot_sliders(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &lightcraft_develop::DevelopSettings, keys: &[&str]) {
     let sel = app.session.active_spot.and_then(|i| d.spots.get(i));
     if let Some(sp) = sel {
         (app.ui.remove_size, app.ui.remove_feather, app.ui.remove_opacity) = (sp.size as f32, sp.feather as f32, sp.opacity as f32);

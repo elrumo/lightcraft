@@ -108,7 +108,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
                 }
             });
             crate::widgets::name_combo(&c.response, crate::i18n::tr("Preset"));
-            register(ui.ctx(), "combo:exportPreset", c.response.rect);
+            register(ui, "combo:exportPreset", c.response.rect);
         });
     }
     if let Some(name) = chosen
@@ -321,7 +321,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
             .color(t.text_dim)
             .small(),
         );
-        register(ui.ctx(), "label:exportShareHelp", r.rect);
+        register(ui, "label:exportShareHelp", r.rect);
     } else {
         // like Lightroom Classic's Export To: one folder, or each photo's own folder (not on
         // the web, where originals live in the browser's storage, not in folders)
@@ -529,7 +529,7 @@ fn watermark_preview(
     let size = tex.size_vec2();
     let scale = ui.available_width() / size.x.max(1.0);
     let r = ui.vertical_centered(|ui| ui.add(egui::Image::new((tex.id(), size * scale)))).inner;
-    crate::widgets::register(ui.ctx(), "image:exportWatermarkPreview", r.rect);
+    crate::widgets::register(ui, "image:exportWatermarkPreview", r.rect);
 }
 
 /// A watermark's controls: text or a graphic, where it goes, how big and how strong.
@@ -622,7 +622,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut Resize, ppi: &mut u16
         (R::Percent, "Percentage"),
     ];
     let r_full = crate::widgets::check(ui, full, crate::i18n::tr("Full size"));
-    register(ui.ctx(), "check:exportFullSize", r_full.rect);
+    register(ui, "check:exportFullSize", r_full.rect);
     if !*full {
         let cur = MODES.iter().find(|m| m.0 == r.mode).map_or("Long Edge", |m| m.1);
         let before = r.mode;
@@ -642,7 +642,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut Resize, ppi: &mut u16
                     }
                 });
                 crate::widgets::name_combo(&c.response, crate::i18n::tr("Resize"));
-                register(ui.ctx(), "combo:exportResizeMode", c.response.rect);
+                register(ui, "combo:exportResizeMode", c.response.rect);
             });
         }
         if r.mode != before {
@@ -674,7 +674,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut Resize, ppi: &mut u16
             }
         }
         let c = crate::widgets::check(ui, &mut r.dont_enlarge, crate::i18n::tr("Don't enlarge"));
-        register(ui.ctx(), "check:exportDontEnlarge", c.rect);
+        register(ui, "check:exportDontEnlarge", c.rect);
     }
     let mut p = *ppi as f64;
     if num(ui, &PPI, &mut p) {
@@ -700,7 +700,7 @@ pub fn pulldown(ui: &mut egui::Ui, id: &str, label: &str, value: &str, items: im
     ui.add_space(2.0);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, value));
-    register(ui.ctx(), format!("button:{id}"), r);
+    register(ui, format!("button:{id}"), r);
     let p = ui.painter();
     p.rect_filled(r, 9.0, if resp.is_pointer_button_down_on() { t.hover } else { t.inset });
     p.rect_stroke(r, 9.0, Stroke::new(1.0, t.divider), StrokeKind::Inside);
@@ -732,7 +732,7 @@ fn list_row(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, sub: O
     let body = Rect::from_min_max(r.min, pos2(r.right() - end, r.bottom()));
     let resp = ui.interact(body, Id::new(("lc-share-row", id)), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-    register(ui.ctx(), format!("button:{id}"), body);
+    register(ui, format!("button:{id}"), body);
     let p = ui.painter();
     if enabled && resp.is_pointer_button_down_on() {
         p.rect_filled(r.expand2(vec2(16.0, 0.0)), 0.0, t.hover);
@@ -770,7 +770,7 @@ fn list_row(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, sub: O
             let b = Rect::from_min_max(pos2(r.right() - end, r.top()), r.right_bottom());
             let resp = ui.interact(b, Id::new(("lc-share-row-end", id)), if enabled { Sense::click() } else { Sense::hover() });
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
-            register(ui.ctx(), format!("icon:{id}"), b);
+            register(ui, format!("icon:{id}"), b);
             let c = if !enabled {
                 t.text_disabled
             } else if resp.is_pointer_button_down_on() {
@@ -797,7 +797,7 @@ fn circle(ui: &mut egui::Ui, id: &str, w: f32, icon: Icon, tint: Color32, label:
     let t = Tokens::get(ui.ctx());
     let (cell, resp) = ui.allocate_exact_size(vec2(w, D + 30.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(label)));
-    register(ui.ctx(), format!("button:{id}"), cell);
+    register(ui, format!("button:{id}"), cell);
     let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), enabled && resp.is_pointer_button_down_on(), 0.1);
     let c = pos2(cell.center().x, cell.top() + D / 2.0);
     let p = ui.painter();
@@ -923,8 +923,8 @@ fn film(app: &mut LightcraftApp, ui: &mut egui::Ui, chosen: &mut Vec<u64>, cente
             let on = chosen.contains(&photo.0);
             let name = app.session.catalog.photo(photo).map(|p| p.file_name.clone()).unwrap_or_default();
             let resp = ui.interact(thumb, Id::new(("share-thumb", photo.0)), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, &name));
-            register(ui.ctx(), format!("thumb:share-{}", photo.0), thumb);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &name));
+            register(ui, format!("thumb:share-{}", photo.0), thumb);
             if app.renderer.thumb(photo).is_none() {
                 super::grid::request_thumb(app, photo, 512, 8);
             }
@@ -945,8 +945,8 @@ fn film(app: &mut LightcraftApp, ui: &mut egui::Ui, chosen: &mut Vec<u64>, cente
             // the box: a tap on it counts as a tap on the photo
             let b = Rect::from_center_size(pos2(thumb.center().x, content.top() + FILM_TOP + h + 16.0 + BOX / 2.0), vec2(BOX, BOX));
             let hit = ui.interact(b.expand(10.0), Id::new(("share-box", photo.0)), Sense::click());
-            hit.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, &name));
-            register(ui.ctx(), format!("check:shareItem-{}", photo.0), b.expand(10.0));
+            hit.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &name));
+            register(ui, format!("check:shareItem-{}", photo.0), b.expand(10.0));
             let k = ui.ctx().animate_bool_with_time(Id::new(("share-box-on", photo.0)), on, 0.12);
             let p = ui.painter();
             if k > 0.0 {
@@ -1152,7 +1152,7 @@ fn share_body(app: &mut LightcraftApp, ui: &mut egui::Ui, chosen: &mut Vec<u64>,
             crate::i18n::tr_format!("{n} photo{}", if n == 1 { "" } else { "s" }, n = n)
         };
         let r = ui.label(RichText::new(text).size(13.0).color(t.text_dim));
-        register(ui.ctx(), "label:shareCount", r.rect);
+        register(ui, "label:shareCount", r.rect);
     });
     ui.add_space(10.0);
     rule(ui);
@@ -1193,7 +1193,7 @@ fn options_body(ui: &mut egui::Ui, f: Form<'_>, n: usize) -> bool {
     let Form { opts, full_size, resize, .. } = f;
     ui.spacing_mut().item_spacing.y = 0.0;
     let r = ui.label(RichText::new(crate::i18n::tr_format!("{n} photo{}", if n == 1 { "" } else { "s" }, n = n)).size(13.0).color(t.text_dim));
-    register(ui.ctx(), "label:exportCount", r.rect);
+    register(ui, "label:exportCount", r.rect);
     ui.add_space(6.0);
     // file type
     const TYPES: [(F, &str); 7] =
@@ -1262,14 +1262,14 @@ fn options_body(ui: &mut egui::Ui, f: Form<'_>, n: usize) -> bool {
         // watermark
         let mut on = opts.watermark.is_some();
         let r = crate::widgets::check(ui, &mut on, RichText::new(crate::i18n::tr("Include Watermark")).size(17.0));
-        register(ui.ctx(), "check:exportWatermark", r.rect);
+        register(ui, "check:exportWatermark", r.rect);
         if r.changed() {
             opts.watermark = on.then(|| Watermark { text: "© ".into(), ..Default::default() });
         }
         if let Some(wm) = opts.watermark.as_mut().filter(|w| w.image.is_empty()) {
             let r =
                 ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY)));
-            register(ui.ctx(), "field:exportWatermarkText", r.rect);
+            register(ui, "field:exportWatermarkText", r.rect);
             ui.add_space(10.0);
         }
     }
@@ -1305,7 +1305,7 @@ pub fn progress(ctx: &egui::Context, done: usize, total: usize, current: &str, s
         .show(ctx, |ui| {
             ui.multiply_opacity(p);
             let (card, _) = ui.allocate_exact_size(vec2(width, 218.0), Sense::hover());
-            register(ctx, "dialog:exportProgress", card);
+            crate::widgets::register_geometry(ctx, "dialog:exportProgress", card);
             let painter = ui.painter();
             painter.add(
                 egui::epaint::Shadow { offset: [0, 8], blur: 30, spread: 0, color: Color32::from_black_alpha(90) }
@@ -1326,7 +1326,7 @@ pub fn progress(ctx: &egui::Context, done: usize, total: usize, current: &str, s
                 t.text_label,
             );
             let bar = Rect::from_min_size(pos2(left, card.top() + 128.0), vec2(inner, 6.0));
-            register(ctx, "progress:export", bar);
+            crate::widgets::register_geometry(ctx, "progress:export", bar);
             painter.rect_filled(bar, 3.0, t.inset);
             let frac = (done as f32 / total.max(1) as f32).clamp(0.0, 1.0);
             painter.rect_filled(Rect::from_min_size(bar.min, vec2(inner * frac, 6.0)), 3.0, t.accent);
@@ -1339,7 +1339,7 @@ pub fn progress(ctx: &egui::Context, done: usize, total: usize, current: &str, s
             );
             let resp = ui.interact(pill, id.with("cancel"), if stopping { Sense::hover() } else { Sense::click() });
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, !stopping, label));
-            register(ctx, "button:exportCancel", pill);
+            crate::widgets::register_geometry(ctx, "button:exportCancel", pill);
             let painter = ui.painter();
             if resp.is_pointer_button_down_on() {
                 painter.rect_filled(pill, 20.0, t.hover);

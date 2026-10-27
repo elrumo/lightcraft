@@ -99,7 +99,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 for (i, (kind, label, icon)) in tiles.iter().enumerate() {
                     let (r, resp) = ui.allocate_exact_size(vec2(tile, 52.0), Sense::click());
                     crate::widgets::announce(&resp, crate::i18n::tr(label));
-                    register(ui.ctx(), format!("maskNew:{kind}"), r);
+                    register(ui, format!("maskNew:{kind}"), r);
                     let fill = if resp.is_pointer_button_down_on() || resp.hovered() { t.hover } else { t.inset };
                     ui.painter().rect_filled(r, 4.0, fill);
                     paint(ui.painter(), Rect::from_center_size(r.center() - vec2(0.0, 7.0), vec2(20.0, 20.0)), *icon, t.text_label);
@@ -108,7 +108,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     let g = one_line(ui.painter(), label, t.font(size), t.text_dim, tile - 2.0 * TILE_PAD);
                     let elided = g.elided;
                     let at = pos2(r.center().x, r.bottom() - 9.0) - g.size() / 2.0;
-                    register(ui.ctx(), format!("maskNewLabel:{kind}"), Rect::from_min_size(at, g.size()));
+                    register(ui, format!("maskNewLabel:{kind}"), Rect::from_min_size(at, g.size()));
                     ui.painter().galley(at, g, t.text_dim);
                     let resp = if elided { resp.on_hover_text(label) } else { resp };
                     if resp.clicked() {
@@ -203,7 +203,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     ui,
                     egui::TextEdit::singleline(name).desired_width(ui.available_width()).id_salt(("maskRename", rid)),
                 ));
-                register(ui.ctx(), format!("maskRename:{rid}"), r.rect);
+                register(ui, format!("maskRename:{rid}"), r.rect);
                 if !r.has_focus() && !r.lost_focus() {
                     r.request_focus();
                 }
@@ -308,7 +308,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         ui,
                         egui::TextEdit::singleline(name).desired_width(ui.available_width() - 30.0).id_salt(("compRename", m.id, i)),
                     ));
-                    register(ui.ctx(), format!("componentRename:{i}"), r.rect);
+                    register(ui, format!("componentRename:{i}"), r.rect);
                     if !r.has_focus() && !r.lost_focus() {
                         r.request_focus();
                     }
@@ -610,7 +610,7 @@ pub(super) fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: u
             }
             let mut map = app.ui.mask_overlay && app.ui.mask_overlay_mode == "colorOnBw";
             let r = crate::widgets::check(ui, &mut map, crate::i18n::tr("Show Luminance Map"));
-            register(ui.ctx(), format!("check:lumMap{comp}"), r.rect);
+            register(ui, format!("check:lumMap{comp}"), r.rect);
             if r.changed() {
                 // the luminance map: the photo in black & white with the selected range tinted
                 if map {
@@ -810,7 +810,7 @@ pub(super) fn describe_field(app: &mut LightcraftApp, ui: &mut egui::Ui, new_mas
                 .hint_text(crate::i18n::tr("e.g. sky · the red car · car, road"))
                 .desired_width(ui.available_width()),
         ));
-        register(ui.ctx(), "maskDescribe", r.rect);
+        register(ui, "maskDescribe", r.rect);
         if !r.has_focus() && !r.lost_focus() && text.is_empty() {
             r.request_focus();
         }

@@ -124,7 +124,7 @@ fn bottom_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
     let info = Rect::from_center_size(pos2(x0 + galley.size().x + gap - 6.0, r.center().y), vec2(36.0, 36.0));
     let resp = ui.interact(info, egui::Id::new("remove-help"), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Help")));
-    register(ui.ctx(), "icon:removeHelp", info);
+    register(ui, "icon:removeHelp", info);
     icons::paint(ui.painter(), Rect::from_center_size(info.center(), vec2(20.0, 20.0)), Icon::Info, t.text_label);
     if resp.clicked() {
         let help = match tool(app).1 {
@@ -192,7 +192,7 @@ fn tool_tile(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, r: Rect) {
     let (_, _, icon, name) = tool(app);
     let resp = ui.interact(r, egui::Id::new("remove-tool-tile"), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(name)));
-    register(ui.ctx(), "button:removeTool", r);
+    register(ui, "button:removeTool", r);
     let k = crate::glass::press(ui.ctx(), &resp);
     let tile = r.shrink(2.0 * k);
     let p = ui.painter();

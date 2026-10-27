@@ -117,7 +117,7 @@ pub(super) fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &
         let _ = app.run("spot.select", json!({"index": spot}));
         // a phone: the spot's options (its tool, a new source, delete) by its pin
         if app.compact {
-            super::mobile::open_menu(ui.ctx(), "spotPin", Rect::from_center_size(at, vec2(28.0, 28.0)));
+            crate::panels::mobile::open_menu(ui.ctx(), "spotPin", Rect::from_center_size(at, vec2(28.0, 28.0)));
         }
         return;
     }

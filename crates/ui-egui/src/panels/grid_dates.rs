@@ -130,7 +130,7 @@ fn cover(tw: f32, th: f32, aspect: f32) -> Rect {
 fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, onscreen: bool) -> bool {
     let t = Tokens::get(ui.ctx());
     let resp = ui.interact(r, egui::Id::new(("date-tile", id.0, r.min.x as i32)), Sense::click());
-    register(ui.ctx(), format!("dateTile:{}", id.0), r);
+    register(ui, format!("dateTile:{}", id.0), r);
     let ppp = ui.ctx().pixels_per_point();
     super::grid::request_thumb(
         app,
@@ -226,7 +226,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, ids: &[PhotoId], generat
                     if tile(app, ui, id, r, onscreen) {
                         go = Some(json!({"span": "months", "date": b.key}));
                     }
-                    register(ui.ctx(), format!("year:{}", if b.key.is_empty() { "unknown" } else { &b.key }), r);
+                    register(ui, format!("year:{}", if b.key.is_empty() { "unknown" } else { &b.key }), r);
                     // the year over a shade at the card's top
                     let shade = Rect::from_min_size(r.min, vec2(r.width(), 76.0));
                     ui.painter().add(egui::epaint::RectShape::filled(
@@ -241,7 +241,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, ids: &[PhotoId], generat
                 _ => {
                     let head = Rect::from_min_size(at, vec2(w, HEAD_H));
                     let resp = ui.interact(head, egui::Id::new(("month-head", &b.key)), Sense::click());
-                    register(ui.ctx(), format!("month:{}", if b.key.is_empty() { "unknown" } else { &b.key }), head);
+                    register(ui, format!("month:{}", if b.key.is_empty() { "unknown" } else { &b.key }), head);
                     let ink = if resp.is_pointer_button_down_on() { t.text_dim } else { t.text };
                     let g = ui.painter().layout_no_wrap(title(&b.key), t.semibold(24.0), ink);
                     let gw = g.size().x;

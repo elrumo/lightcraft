@@ -199,7 +199,7 @@ fn group_row(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, mask: Option<&Mas
         let on = enabled && app.ui.mask_group == id;
         let resp = ui.interact(cell, Id::new(("mask-group", id)), if enabled { Sense::click() } else { Sense::hover() });
         resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, crate::i18n::tr(label)));
-        register(ui.ctx(), format!("button:maskGroup-{id}"), cell);
+        register(ui, format!("button:maskGroup-{id}"), cell);
         let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
         if k > 0.0 {
             let pill = cell.shrink2(vec2(3.0, 7.0));
@@ -302,7 +302,7 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
     column(ctx, "mask-column", at, |ui| {
         let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, MASK_TILE), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Create New Mask")));
-        register(ctx, "button:maskNew", r);
+        crate::widgets::register_geometry(ctx, "button:maskNew", r);
         let k = glass::press(ctx, &resp);
         ui.painter().circle_filled(r.center(), MASK_TILE / 2.0 - 2.0 + 2.0 * k, t.accent);
         icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(22.0, 22.0)), Icon::Plus, Color32::WHITE);
@@ -355,7 +355,7 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
             }
             let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, PART_TILE), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Add or Subtract")));
-            register(ctx, "button:maskCombine", r);
+            crate::widgets::register_geometry(ctx, "button:maskCombine", r);
             let k = glass::press(ctx, &resp);
             let c = r.center();
             ui.painter().circle_filled(c, PART_TILE / 2.0 - 2.0 + 2.0 * k, t.pressed);
@@ -375,7 +375,7 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
 fn tile(ui: &mut Ui, t: &Tokens, key: &str, name: &str, icon: Icon, side: f32, sel: bool, visible: bool, badge: Option<&str>) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, side), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, sel, name));
-    register(ui.ctx(), key, r);
+    register(ui, key, r);
     let k = glass::press(ui.ctx(), &resp);
     let sq = Rect::from_center_size(r.center(), vec2(side, side) * (1.0 - 0.06 * k));
     let p = ui.painter();
@@ -417,7 +417,7 @@ fn brush_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
         for (id, icon, label, on) in items {
             let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, MASK_TILE), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(label)));
-            register(ctx, format!("button:brush-{id}"), r);
+            crate::widgets::register_geometry(ctx, format!("button:brush-{id}"), r);
             let k = glass::press(ctx, &resp);
             let sq = r.shrink(1.0 + 2.0 * k);
             let p = ui.painter();

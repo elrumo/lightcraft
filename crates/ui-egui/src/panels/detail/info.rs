@@ -19,7 +19,7 @@ pub(crate) fn draw_focus_point(p: &egui::Painter, img: Rect, photo: &lightcraft_
     let c = b.center();
     p.circle_filled(c, 2.5, Color32::from_black_alpha(170));
     p.circle_filled(c, 1.5, green);
-    register_geometry(p.ctx(), key, b);
+    crate::widgets::register_geometry(p.ctx(), key, b);
 }
 
 /// View Options' Show Briefly When Photo Changes: note when the loupe changes to photo `id`, and
@@ -70,7 +70,7 @@ pub(super) fn info_overlay(app: &LightcraftApp, p: &egui::Painter, canvas: Rect,
         y += g.size().y + INFO_OVERLAY_GAP;
     }
     y = overlay_badges(p, &t, pos2(canvas.left() + 14.0, y), photo);
-    register_geometry(p.ctx(), "canvas:infoOverlay", Rect::from_min_max(canvas.min, pos2(canvas.left() + 320.0, y)));
+    crate::widgets::register_geometry(p.ctx(), "canvas:infoOverlay", Rect::from_min_max(canvas.min, pos2(canvas.left() + 320.0, y)));
 }
 
 /// Where the info overlay's text starts below the canvas' top (without window controls over it),
@@ -155,7 +155,7 @@ fn overlay_badges(p: &egui::Painter, t: &Tokens, at: Pos2, photo: &lightcraft_ca
         paint(p, r, icon, color);
         x += side + 2.0;
     }
-    register_geometry(p.ctx(), "canvas:infoOverlayBadges", Rect::from_min_max(at, pos2(x, at.y + side + 2.0)));
+    crate::widgets::register_geometry(p.ctx(), "canvas:infoOverlayBadges", Rect::from_min_max(at, pos2(x, at.y + side + 2.0)));
     at.y + OVERLAY_BADGES_H
 }
 

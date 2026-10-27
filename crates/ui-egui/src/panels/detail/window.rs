@@ -13,7 +13,7 @@ pub(super) struct WindowCtx {
     pub(super) crop_tool: bool,
     pub(super) interacting: bool,
     /// The linear scale drafts render at during a drag (1 otherwise).
-    draft_scale: f32,
+    pub(super) draft_scale: f32,
     /// Hash of the photo's develop settings.
     pub(super) look: u64,
     /// A pinch or two-finger scroll is running: keep the windows there are.

@@ -104,7 +104,7 @@ pub fn prompt(app: &mut LightcraftApp, title: &str, hint: &str, value: &str, com
 }
 
 /// A themed slider row editing `v`; true when it changed.
-pub(super) fn num(ui: &mut egui::Ui, spec: &ControlSpec, v: &mut f64) -> bool {
+pub(crate) fn num(ui: &mut egui::Ui, spec: &ControlSpec, v: &mut f64) -> bool {
     match crate::widgets::slider(ui, spec, *v, true, None).value {
         Some(n) => {
             *v = n;
@@ -115,7 +115,7 @@ pub(super) fn num(ui: &mut egui::Ui, spec: &ControlSpec, v: &mut f64) -> bool {
 }
 
 /// A labelled row (fixed label column).
-pub(super) fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(crate) fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let t = Tokens::get(ui.ctx());
     if crate::is_compact(ui.ctx()) {
         // a phone (iOS forms): the label above its controls, which wrap to the page's width
@@ -136,13 +136,13 @@ pub(super) fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egu
 /// The rest of a [`field`] row, laid out right to left: `add` places its trailing button(s) first,
 /// then a text field taking exactly the width that's left. (Subtracting a guessed button width
 /// instead made the auto-sized dialog grow every frame when the real button was wider, #8.)
-pub(super) fn trailing_button_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn trailing_button_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let h = ui.spacing().interact_size.y.max(24.0);
     ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), h), egui::Layout::right_to_left(egui::Align::Center), add);
 }
 
 /// A labelled row of mutually exclusive choice buttons (ids `button:{id}-{index}`).
-pub(super) fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, id: &str, options: &[(V, &str)], value: &mut V) {
+pub(crate) fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, id: &str, options: &[(V, &str)], value: &mut V) {
     if crate::is_compact(ui.ctx()) {
         // a phone: iOS's segmented control under the label
         let t = Tokens::get(ui.ctx());

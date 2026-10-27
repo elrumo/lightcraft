@@ -1070,7 +1070,7 @@ pub fn check(ui: &mut Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> 
         *on = !*on;
         resp.mark_changed();
     }
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Checkbox, enabled, *on, galley.text()));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, *on, galley.text()));
     // the knob springs across (a little past, and back)
     let k = crate::glass::spring(ui.ctx(), resp.id.with("knob"), if *on { 1.0 } else { 0.0 }, 0.35, 0.68);
     let held = crate::glass::press(ui.ctx(), &resp);

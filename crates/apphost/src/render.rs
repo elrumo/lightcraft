@@ -2280,7 +2280,8 @@ mod scheduler_tests {
         let current = s.loupe_job(PhotoId(1), 8, 8, true).unwrap().draft();
         r.request(Slot::Main, current, 100);
         let jobs: Vec<RenderJob> = work.borrow_mut().jobs.drain(..).map(|(_, j)| j).collect();
-        let (old, current) = (jobs[0].run(), jobs[1].run());
+        let mut jobs = jobs.into_iter();
+        let (old, current) = (jobs.next().unwrap().run(), jobs.next().unwrap().run());
         work.borrow_mut().finished.push((Slot::Main, old, 0.0));
         r.poll(&mut s, &mut Keep);
         assert_eq!(r.textures[&Slot::Main].look, Some((old_look, true)), "the superseded pixels keep their own geometry");

@@ -116,10 +116,10 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     // rating: the comparison, then the stars (a tap on the chosen one clears it)
     card_row(ui, t, 16.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
-    register(ui.ctx(), "filter:ratingRow", r);
+    register(ui, "filter:ratingRow", r);
     let op = Rect::from_min_size(pos2(r.left() + 8.0, r.top()), vec2(44.0, ROW));
     let op_resp = ui.interact(op, egui::Id::new("filter-rating-op"), Sense::click());
-    register(ui.ctx(), "filter:ratingOp", op);
+    register(ui, "filter:ratingOp", op);
     let (glyph, next, said) = match f.rating_op {
         RatingOp::AtLeast => ("≥", "exactly", "At least"),
         RatingOp::Exactly => ("=", "atMost", "Exactly"),
@@ -134,7 +134,7 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     for i in 1..=5u8 {
         let cell = Rect::from_min_size(pos2(op.right() + 4.0 + (i - 1) as f32 * 40.0, r.top()), vec2(40.0, ROW));
         let resp = ui.interact(cell, egui::Id::new(("filter-star", i)), Sense::click());
-        register(ui.ctx(), format!("filter:star{i}"), cell);
+        register(ui, format!("filter:star{i}"), cell);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, f.rating == i, format!("{i} ★")));
         let on = i <= f.rating;
         let k = ui.ctx().animate_bool_with_time(egui::Id::new(("filter-star-on", i)), on, 0.15);
@@ -153,7 +153,7 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     // flags, one at a time (a tap on the chosen one clears it)
     card_row(ui, t, 16.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
-    register(ui.ctx(), "filter:flagRow", r);
+    register(ui, "filter:flagRow", r);
     for (i, (id, icon, flag, said)) in [
         ("pick", Icon::FlagChecked, Flag::Pick, "Picked"),
         ("none", Icon::FlagPick, Flag::None, "Unflagged"),
@@ -164,7 +164,7 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     {
         let cell = Rect::from_min_size(pos2(r.left() + 8.0 + i as f32 * 56.0, r.top()), vec2(52.0, ROW));
         let resp = ui.interact(cell, egui::Id::new(("filter-flag", id)), Sense::click());
-        register(ui.ctx(), format!("filter:{id}"), cell);
+        register(ui, format!("filter:{id}"), cell);
         let on = f.flag == Some(flag);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(said)));
         let color = match flag {
@@ -185,14 +185,14 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     // colour labels: any of those chosen
     card_row(ui, t, 16.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
-    register(ui.ctx(), "filter:labelRow", r);
+    register(ui, "filter:labelRow", r);
     let mut chosen: Vec<ColorLabel> = f.labels.clone();
     chosen.extend(f.label.filter(|l| !f.labels.contains(l)));
     for (i, l) in ColorLabel::ALL.into_iter().enumerate() {
         let cell = Rect::from_min_size(pos2(r.left() + 8.0 + i as f32 * 44.0, r.top()), vec2(44.0, ROW));
         let name = format!("{l:?}").to_lowercase();
         let resp = ui.interact(cell, egui::Id::new(("filter-label", i)), Sense::click());
-        register(ui.ctx(), format!("filter:label-{name}"), cell);
+        register(ui, format!("filter:label-{name}"), cell);
         let on = chosen.contains(&l);
         let spoken = crate::i18n::color_label(&app.session.catalog, l);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, &spoken));
