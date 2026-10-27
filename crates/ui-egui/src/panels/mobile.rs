@@ -833,6 +833,8 @@ fn edit_menu_bar(ctx: &egui::Context, id: Id, items: &[(&'static str, &str)], cu
     // (its size is known: drawn, and tappable, in its first frame)
     seed_area(ctx, id.with("bar"), egui::Order::Tooltip, bar.min, bar.size());
     egui::Area::new(id.with("bar")).order(egui::Order::Tooltip).constrain(false).fixed_pos(bar.min).show(ctx, |ui| {
+        // (the area is as big as the bar: what is drawn by hand inside it takes no room of its own)
+        let _ = ui.allocate_rect(bar, Sense::hover());
         let p = ui.painter().clone();
         crate::glass::paint(&p, bar, H / 2.0, Some(crate::glass::menu_fill(ctx)), 0.0);
         let mut left = bar.left();
