@@ -339,18 +339,11 @@ pub fn run(root: &Path, write: bool) -> Result<(), String> {
     let path = root.join(DOC);
     let md = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let doc = parse(&md);
-<<<<<<< HEAD
     // (the UI commands' table lives in apphost, shared by the frontends; the language ones in egui)
-    let menus = ["crates/ui-egui/src/menus.rs", "crates/apphost/src/ui_commands.rs"]
-        .iter()
-        .map(|f| std::fs::read_to_string(root.join(f)).map_err(|e| format!("{f}: {e}")))
-        .collect::<Result<Vec<_>, _>>()?
-        .join("\n");
-||||||| 38f8d2508
-    let menus = std::fs::read_to_string(root.join("crates/ui-egui/src/menus.rs")).map_err(|e| format!("menus.rs: {e}"))?;
-=======
-    let menus = menu_sources(&root.join("crates/ui-egui/src"))?;
->>>>>>> upstream/main
+    let menus = format!("{}\n{}", menu_sources(&root.join("crates/ui-egui/src"))?, {
+        let f = "crates/apphost/src/ui_commands.rs";
+        std::fs::read_to_string(root.join(f)).map_err(|e| format!("{f}: {e}"))?
+    });
     let mut commands = registry("commands")?;
     commands.extend(ui_command_ids(&menus));
     let controls = registry("controls")?;
@@ -546,16 +539,10 @@ old
     /// The real menu tables: both are found, so every language command is a known id.
     #[test]
     fn reads_the_language_commands_from_menus_rs() {
-<<<<<<< HEAD
-        let menus = concat!(include_str!("../../crates/ui-egui/src/menus.rs"), include_str!("../../crates/apphost/src/ui_commands.rs"));
-        let ids = ui_command_ids(menus);
-||||||| 38f8d2508
-        let menus = include_str!("../../crates/ui-egui/src/menus.rs");
-        let ids = ui_command_ids(menus);
-=======
         let ui_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/ui-egui/src");
-        let ids = ui_command_ids(&menu_sources(&ui_src).unwrap());
->>>>>>> upstream/main
+        let mut menus = menu_sources(&ui_src).unwrap();
+        menus.push_str(include_str!("../../crates/apphost/src/ui_commands.rs"));
+        let ids = ui_command_ids(&menus);
         for id in ["view.detail", "app.language.english", "app.language.japanese", "app.language.simplifiedChinese", "app.language.portuguese"] {
             assert!(ids.iter().any(|known| known == id), "{id} not found");
         }

@@ -1023,15 +1023,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
     dim(ctx);
     let mut choice = None;
     let frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::symmetric(18, 14));
-<<<<<<< HEAD
-    super::fit_window(egui::Window::new(crate::i18n::tr("Your library couldn't be opened")).id(egui::Id::new("library-problem")), ctx)
-||||||| 38f8d2508
-    egui::Window::new(crate::i18n::tr("Your library couldn't be opened"))
-        .id(egui::Id::new("library-problem"))
-=======
-    let shown = egui::Window::new(crate::i18n::tr("Your library couldn't be opened"))
-        .id(egui::Id::unique(ERROR_WINDOW_ID))
->>>>>>> upstream/main
+    let shown = super::fit_window(egui::Window::new(crate::i18n::tr("Your library couldn't be opened")).id(egui::Id::unique(ERROR_WINDOW_ID)), ctx)
         .order(egui::Order::Foreground)
         .collapsible(false)
         .resizable(false)

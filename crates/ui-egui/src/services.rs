@@ -10,6 +10,11 @@ pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 /// A writer other threads can use (background export).
 pub type SharedWrite = std::sync::Arc<dyn Fn(&str, &[u8]) -> Result<(), String> + Send + Sync>;
 
+/// Runs a prepared export batch without blocking the UI where there are no threads (the browser):
+/// the host takes the batch to an executor of its own, keeps the [`Pending`](lightcraft_apphost::export::Pending)
+/// current (progress, ✕) and ends it with the outcome; an error means it did not start.
+pub type ExportRunner = Box<dyn FnMut(lightcraft_apphost::export::Prepared, lightcraft_apphost::export::Pending) -> Result<(), String>>;
+
 pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
 
 /// A folder chooser (`None` = cancelled).
@@ -35,6 +40,10 @@ pub type OpenModelFolderFn = std::sync::Arc<dyn Fn(&str) -> Result<(), String> +
 /// not known).
 pub type ScreenProfileFn = Box<dyn FnMut() -> Option<Vec<u8>>>;
 
+/// Where the pointer is in the window while files are dragged in from outside it, in points from its
+/// top left (`None`: not known). winit sends no pointer position during such a drag.
+pub type FileDragPointerFn = Box<dyn FnMut() -> Option<egui::Pos2>>;
+
 /// Whether an external editor can be started (its name as in [`Services::open_with`]); the
 /// error says why not and what to do (e.g. PhotoCraft isn't installed).
 pub type CheckEditorFn = Box<dyn Fn(&str) -> Result<(), String>>;
@@ -42,6 +51,43 @@ pub type CheckEditorFn = Box<dyn Fn(&str) -> Result<(), String>>;
 /// Something the host does with the session (web: back up or restore the library in browser
 /// storage); the work may finish asynchronously.
 pub type HostAction = Box<dyn FnMut(&mut Session) -> Result<Value, String>>;
+
+/// Where the host's own picker takes photos from ([`Services::host_pick`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickSource {
+    /// The system photo library (iOS: Photos).
+    Photos,
+    /// Image files (iOS: Files, iCloud Drive, external drives).
+    Files,
+    /// A folder of photos (iOS: a folder in Files).
+    Folder,
+}
+
+/// Show the host's picker for `source`. It returns at once; the picked photos arrive later as
+/// `file.addPhotos {paths, staged: true}` (copies in the host's staging folder).
+pub type HostPick = Box<dyn FnMut(PickSource) -> Result<(), String>>;
+
+/// Exports handed to the system instead of written to a folder the user chooses (iOS: the share
+/// sheet, with Save Image, Save to Files, AirDrop and other apps). The export dialog then has no
+/// folder field; each export empties `dir` first, writes there and offers what it wrote.
+pub struct ShareExports {
+    /// Where exports are written (the host's own staging folder; emptied before each export).
+    pub dir: String,
+    /// Offer the exported files (absolute paths, at least one).
+    pub share: Box<dyn FnMut(&[String])>,
+}
+
+/// How a save to the photo library ended: how many photos went in, or why none did. Called on any
+/// thread.
+pub type SaveDone = Box<dyn FnOnce(Result<usize, String>) + Send>;
+
+/// Add exported files (absolute paths, at least one) to the device's photo library (iOS: PhotoKit).
+/// It returns at once and calls the `SaveDone` when the library has them (or has refused), after
+/// which the host asks for a repaint. The files stay where they are.
+pub type SaveToPhotos = Box<dyn FnMut(&[String], SaveDone)>;
+
+/// What finished saves (see [`SaveToPhotos`]) left for the app to say, taken by `export_task::poll`.
+pub type SavedInbox = std::sync::Arc<std::sync::Mutex<Vec<Result<usize, String>>>>;
 
 /// The system's dark/light appearance where egui doesn't report one (Linux desktops whose
 /// windowing layer says nothing, e.g. many Wayland compositors). The host answers from what it
@@ -55,6 +101,11 @@ pub struct Services {
     /// (`pick`; #191). With it, the synchronous pickers below serve only the buttons inside
     /// dialogs; without it (the web, tests) they answer the commands too.
     pub picker: Option<pick::Picker>,
+    /// The host's own file picker, which hands files over later, by content or as copies (the web:
+    /// the browser's file chooser; iOS: the Files picker). Commands that can take files that way
+    /// ask it ([`pick::ask_host`]; File ▸ Import Profiles & Presets…) when the dialogs above aren't
+    /// there.
+    pub host_files: Option<pick::HostPicker>,
     /// Show an open dialog for photos; returns paths.
     pub pick_files: Option<PickFiles>,
     /// Local ONNX model; a manifest must accompany it.
@@ -70,6 +121,10 @@ pub struct Services {
     /// The profile of the screen showing the window, used while none is chosen in Settings ▸
     /// Display (macOS, whose windows aren't colour-managed: issue #787).
     pub screen_profile: Option<ScreenProfileFn>,
+    /// The pointer while files are dragged in from outside the window (macOS). Without it the album
+    /// under them can't be told, so the sidebar doesn't light one up and a drop goes to the album
+    /// the grid shows.
+    pub file_drag_pointer: Option<FileDragPointerFn>,
     /// Save dialog for an exported `.lcpreset` file.
     pub save_preset_file: Option<SaveFile>,
     /// Open dialog for a keyword list file (`.txt`, Photo Supreme's `.utf8`; File ▸ Import Keywords…).
@@ -95,6 +150,9 @@ pub struct Services {
     pub write_new: Option<WriteFn>,
     /// Thread-safe writer: with it, UI-started exports run in the background (desktop only).
     pub write_shared: Option<SharedWrite>,
+    /// Without threads: a host that can run an export between frames instead (the browser, whose
+    /// workers render and encode the photos). Used when there is no `write_shared`.
+    pub export_runner: Option<ExportRunner>,
     /// PNG encoder (the host links an image encoder; the UI crate stays codec-free).
     pub png: Option<PngEncode>,
     /// Show a file in the system file manager (desktop only).
@@ -125,6 +183,35 @@ pub struct Services {
     pub backup_library: Option<HostAction>,
     /// File ▸ Restore Library from Backup… (web only; keeps the current library).
     pub restore_library: Option<HostAction>,
+    /// Runs self-hosted sync requests ([`sync_ui`]); `None`: this host doesn't sync.
+    pub sync_exec: Option<sync_ui::SyncExec>,
+    /// Fetches map tiles for the Map view ([`panels::map`]); `None`: only the built-in map.
+    pub tile_exec: Option<panels::map::TileExec>,
+    /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
+    pub share_exports: Option<ShareExports>,
+    /// Adds exports to the device's photo library (iOS: Save to Photos in the share sheet and the
+    /// photo's top bar; needs [`Services::share_exports`], whose folder the files are written to).
+    pub save_to_photos: Option<SaveToPhotos>,
+    /// The host's own pickers (iOS: Photos, Files): File ▸ Import from Photos… / from Files… /
+    /// Folder from Files…, and the compact grid's + button.
+    pub host_pick: Option<HostPick>,
+    /// Cameras, phones and cards the host reads itself (iOS, macOS: ImageCaptureCore): File ▸
+    /// Import from Device, the phone's + ▸ Connected Camera/Card ([`camera_import`]).
+    pub cameras: Option<Box<dyn CameraHost>>,
+    /// Plays haptic feedback (iOS: the Taptic Engine); the compact layout asks for it on touch
+    /// gestures and choices (`haptics`).
+    pub haptic: Option<haptics::PlayHaptic>,
+    /// Fetches AI Remove's model in the browser build ([`erase::ModelFetch`]); `None`: the
+    /// engine downloads it (desktop and phone apps).
+    pub erase_model: Option<erase::ModelFetch>,
+    /// Fetches Lens Blur's depth model in the browser build, as [`Services::erase_model`] does
+    /// AI Remove's; `None`: the engine downloads it.
+    pub depth_model: Option<erase::ModelFetch>,
+    /// The system clipboard's text, for Paste in a text field's touch edit menu
+    /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V). A host that can only
+    /// read it asynchronously (the web) starts the read here, returns `None` and sends the text
+    /// itself as an `egui::Event::Paste` on a later frame.
+    pub clipboard_text: Option<Box<dyn FnMut() -> Option<String>>>,
     /// The system appearance for Appearance Mode ▸ Auto, ahead of egui's own report.
     pub system_theme: Option<SystemThemeFn>,
 }

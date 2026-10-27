@@ -3,14 +3,8 @@
 //! The rule engine works on a small, metadata-independent model so it can be
 //! unit-tested; `from_metadata` builds that model from `cargo metadata`.
 
-<<<<<<< HEAD
-use std::collections::HashSet;
-use std::path::Path;
-
-||||||| 38f8d2508
-=======
 use super::*;
->>>>>>> upstream/main
+use std::collections::HashSet;
 use serde_json::Value;
 
 /// Where a workspace crate sits.
@@ -336,7 +330,11 @@ pub(crate) fn cmd_layers() -> Result<(), String> {
             .collect();
         println!("{:<28} {:<14} {}", c.name, layers::describe(layers::classify(&c.name)), ws.join(", "));
     }
-    let violations = layers::check(&crates);
+    let mut violations = layers::check(&crates);
+    // symphonia (MPL-2.0) comes in through filmcraft-codecs, which is not used (docs/video.md)
+    if std::fs::read_to_string(root().join("Cargo.lock")).is_ok_and(|l| l.contains("name = \"symphonia\"")) {
+        violations.push(layers::Violation::FilmcraftBanned { krate: "Cargo.lock".into(), dep: "symphonia".into() });
+    }
     println!();
     if violations.is_empty() {
         println!("OK: {} crates, no layering violations.", crates.len());

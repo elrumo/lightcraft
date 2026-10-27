@@ -469,6 +469,33 @@ pub(crate) const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/getfile.php/7884/nice/Canon%20-%20EOS%20R5%20Mark%20II%20-%20CRAW%20%283:2%29.CR3",
         "6a597497776a6abbfab8fcf12d0086ac7a3f8afea2879d61accf6bbf48d357d7",
     ),
+    // CR3 lossless ("RAW") and lossy ("CRAW", "craw" in the name) pairs of one scene per body, no dual-pixel data (M11.1);
+    // the lossy sides of the R, R6 and 90D are the `-craw` entries further down (same file, same sha256)
+    (
+        "cr3-canon-r-raw.cr3",
+        "https://raw.pixls.us/data/Canon/EOS%20R/Canon_EOS_R_RAW_ISO_100.CR3",
+        "89bd55532b0cceb5efa360e97827ba35c2076bce0de4675f3a4413a883dac880",
+    ),
+    (
+        "cr3-canon-r5-crop-raw.cr3",
+        "https://raw.pixls.us/data/Canon/EOS%20R5/Canon_EOS_R5_RAW_ISO_100_crop_nodual.CR3",
+        "dc3ef975ef029fe527ba6cafa0f899720cfdcbcfb4f590edcff81f26d499c2f0",
+    ),
+    (
+        "cr3-canon-r5-crop-craw.cr3",
+        "https://raw.pixls.us/data/Canon/EOS%20R5/Canon_EOS_R5_CRAW_ISO_100_crop_nodual.CR3",
+        "a5f4935e0331cc16003c0b1ab6c657272739e82175557aaae576e78a8262511b",
+    ),
+    (
+        "cr3-canon-r6-raw.cr3",
+        "https://raw.pixls.us/data/Canon/EOS%20R6/Canon_EOS_R6_RAW_ISO_100_nocrop_nodual.CR3",
+        "81fab349ae9080fd0172583b7fd5ea36806e95ffa434909d2ccc6527dde34ee6",
+    ),
+    (
+        "cr3-canon-90d-raw.cr3",
+        "https://raw.pixls.us/data/Canon/EOS%2090D/Canon-90D-RAW-ISO-100.CR3",
+        "e47981d90142291a2bd7ba5a3dea51a25fff72ad3dad83dd2d2698f3ef5f59a8",
+    ),
     (
         "cr3-canon-m200.cr3",
         "https://raw.pixls.us/getfile.php/8469/nice/Canon%20-%20EOS%20M200%20-%20RAW%20%283:2%29.CR3",
@@ -1536,6 +1563,72 @@ pub(crate) const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "https://raw.pixls.us/getfile.php/3039/nice/Fujifilm%20-%20FinePix%20F770EXR%20-%2012bit%2012bit%20uncompressed%20%284:3%29.RAF",
         "ffc905e325a00c57a5335681654fdf226b724269cd5d26cd976983939f88043d",
     ),
+    // pre-X FinePix RAFs without a raw IFD (crates/raw/src/vendor/raf_legacy.rs): SuperCCD and bare Bayer
+    (
+        "raf-fujifilm-finepix-s2pro.raf",
+        "https://raw.pixls.us/getfile.php/3562/nice/Fujifilm%20-%20FinePix%20S2Pro%20-%203:2.RAF",
+        "9fe1bf1361f015d9db862228e4a26b23d69e81015ed4a032eaefb8242ae9ad42",
+    ),
+    (
+        "raf-fujifilm-finepix-s3pro.raf",
+        "https://raw.pixls.us/getfile.php/1964/nice/Fujifilm%20-%20FinePix%20S3Pro%20-%203:2.RAF",
+        "038e5a13a22513f53d143e328a66e2de8071809565db696ecac84b4364fcb75b",
+    ),
+    (
+        "raf-fujifilm-finepix-s5pro.raf",
+        "https://raw.pixls.us/getfile.php/2634/nice/Fujifilm%20-%20FinePix%20S5Pro%20-%203:2.RAF",
+        "aca2b2ebcf90d248b4f822ed78bfeb73e79f1b64164a87dc2051a96726cdfa0c",
+    ),
+    (
+        "raf-fujifilm-finepix-s5000.raf",
+        "https://raw.pixls.us/getfile.php/2726/nice/Fujifilm%20-%20FinePix%20S5000%20-%204:3.RAF",
+        "dabd5e74521a6980156be9fd4b88d0c37b0fe4d0e0e6f5c12db8cffff1b76297",
+    ),
+    (
+        "raf-fujifilm-finepix-s5200.raf",
+        "https://raw.pixls.us/getfile.php/1970/nice/Fujifilm%20-%20FinePix%20S5200%20-%204:3.RAF",
+        "93eada72efdf8261d9bfde5022a28a656e4c1c6d0ddac7b0c82686fdcb8ded99",
+    ),
+    (
+        "raf-fujifilm-finepix-s5500.raf",
+        "https://raw.pixls.us/getfile.php/1769/nice/Fujifilm%20-%20FinePix%20S5500%20-%204:3.RAF",
+        "92a947758829686f0a0c662d160a7b8319099cc405a0e4bf90e1fd61c47b2b69",
+    ),
+    (
+        "raf-fujifilm-finepix-s6000fd.raf",
+        "https://raw.pixls.us/getfile.php/5549/nice/Fujifilm%20-%20FinePix%20S6000fd%20-%204:3.RAF",
+        "2c602e5a31b81683d8fb97f36c5cb3580836420e12b9ed5ae16241c68ff6201d",
+    ),
+    (
+        "raf-fujifilm-finepix-s6500fd.raf",
+        "https://raw.pixls.us/getfile.php/3122/nice/Fujifilm%20-%20FinePix%20S6500fd%20-%204:3.RAF",
+        "ee2a7afc2afc9e3a85ca9e5e237c68b612dc360fb45c6fb4495ef857abbab48e",
+    ),
+    (
+        "raf-fujifilm-finepix-s7000.raf",
+        "https://raw.pixls.us/getfile.php/3495/nice/Fujifilm%20-%20FinePix%20S7000%20-%204:3.raf",
+        "098aa2c64dc6a026f3f48f1494476a55751e08af2d37789b7f557fd11a14cf49",
+    ),
+    (
+        "raf-fujifilm-finepix-s9500.raf",
+        "https://raw.pixls.us/getfile.php/1373/nice/Fujifilm%20-%20FinePix%20S9500%20-%204:3.RAF",
+        "b7a7bb3b8a69232866c75774ca6ba9296f3d4435d1e1bac327b4cdc6bea39144",
+    ),
+    (
+        "raf-fujifilm-finepix-s9600.raf",
+        "https://raw.pixls.us/getfile.php/1642/nice/Fujifilm%20-%20FinePix%20S9600%20-%204:3.raf",
+        "d4888ec28d89ce7f9cc6d1b852d2ea03da965bf5e8ce5874d1e3fa439f92dbc0",
+    ),
+    (
+        "raf-fujifilm-finepix-s100fs.raf",
+        "https://raw.pixls.us/getfile.php/4068/nice/Fujifilm%20-%20FinePix%20S100FS%20-%204:3.RAF",
+        "efa518d70b8122dcfe65f98c7c080f15a512d841a2a86bfe226032a327e1d25e",
+    ),
+    (
+        "raf-fujifilm-finepix-s200exr.raf",
+        "https://raw.pixls.us/getfile.php/3425/nice/Fujifilm%20-%20FinePix%20S200EXR%20-%204:3.RAF",
+        "2d4549067f92b33a222d7ded9460adb5ff6ce739ed92af9890c168e37170d4ff",
+    ),
     (
         "dng-leica-m-monochrom.dng",
         "https://raw.pixls.us/getfile.php/974/nice/Leica%20-%20M%20Monochrom%20-%2016bit%20%283:2%29.DNG",
@@ -1760,6 +1853,114 @@ pub(crate) const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "orf-olympus-e-500.orf",
         "https://raw.pixls.us/getfile.php/3540/nice/Olympus%20-%20E-500%20-%2016bit%20%284:3%29.ORF",
         "fa5a4759b2de2b573f59629ad1baf64ad04a85fb8fe1fb3cbf68e08a42fff4f0",
+    ),
+    // Uncompressed Olympus compacts and the E-20, one file each (crates/raw/tests/it/olympus_samsung_corpus.rs); the
+    // raw.pixls.us/data/ paths of the same CC0 files.
+    (
+        "orf-olympus-c5050z.orf",
+        "https://raw.pixls.us/data/Olympus/C5050Z/RAW_OLYMPUS_C5050Z.ORF",
+        "f4b013e78204ebaadd740d93416080856b3c51ec154760e2e2de0e552873044a",
+    ),
+    (
+        "orf-olympus-c8080wz.orf",
+        "https://raw.pixls.us/data/Olympus/C8080WZ/RAW_OLYMPUS_C8080.ORF",
+        "d7bbb0740fd55a6cddae193bb03c873c1b774c10c6f4d2160d843460d5436fa4",
+    ),
+    (
+        "orf-olympus-e-20.orf",
+        "https://raw.pixls.us/data/Olympus/E-20/RAW_OLYMPUS_E20.ORF",
+        "888e84a03f4174be2cc6d577587ebee80813a410cd6587b485a7d1ffeec6dac8",
+    ),
+    (
+        "orf-olympus-sp350.orf",
+        "https://raw.pixls.us/data/Olympus/SP350/RAW_OLYMPUS_SP350.ORF",
+        "37dca153cbb42e52a13fecdb3929ae2f7b4d73d7c1ab083b0b06e85887d5ebd1",
+    ),
+    (
+        "orf-olympus-sp500uz.orf",
+        "https://raw.pixls.us/data/Olympus/SP500UZ/RAW_OLYMPUS_SP500UZ.ORF",
+        "076d1a979bba1cfb48c3e90410305de60e8ae4f988eabd246d684117f80a9f96",
+    ),
+    // Compressed Olympus ORFs, shown from their JPEG: orientation, lens name and aspect frame
+    // (crates/raw/tests/it/olympus_preview_corpus.rs); raw.pixls.us/data/ paths.
+    (
+        "orf-olympus-e-30.orf",
+        "https://raw.pixls.us/data/Olympus/E-30/RAW_OLYMPUS_E30.ORF",
+        "08f1bac42d04b983006784f6f2fc0d604149572db5022d0052901323f0b17562",
+    ),
+    (
+        "orf-olympus-e-p2.orf",
+        "https://raw.pixls.us/data/Olympus/E-P2/P9084305.ORF",
+        "2666a6ed03e8678bc6ce0e5354f39a07284e6f8b200dc696d9b543dc9f82bdd5",
+    ),
+    (
+        "orf-olympus-e-m10-mark-iv.orf",
+        "https://raw.pixls.us/data/Olympus/E-M10%20Mark%20IV/PA040002.ORF",
+        "77b67d898f85d3d738cb16daf9740c0fcf078ce9662c381994604ac540ce36b4",
+    ),
+    (
+        "orf-olympus-tg-6.orf",
+        "https://raw.pixls.us/data/Olympus/TG-6/_6100003.ORF",
+        "edd6f928bc790c79852a17fce56718d26563c7a593894d22970ef0fdb86ba45f",
+    ),
+    (
+        "orf-olympus-e-3.orf",
+        "https://raw.pixls.us/data/Olympus/E-3/E_3__3099164_casco_antiguo_petrer.ORF",
+        "ba4605bbd9fe9b77971da444bcdb1698904c0ad4ebdf9dd42dd45ab255f3f6d4",
+    ),
+    // Compressed Olympus / OM ORFs shot at a stated white-balance temperature (a preset or the Kelvin setting 5000 to 7500 K): the
+    // maker note's preset table reads it back (crates/raw/tests/it/olympus_kelvin_corpus.rs); raw.pixls.us/data/ paths.
+    (
+        "orf-olympus-e-p3.orf",
+        "https://raw.pixls.us/data/Olympus/E-P3/RAW_OLYMPUS_EP3.ORF",
+        "540edabdd9d4e6ef8602f56443730cc3133d714dc4d3d2c607e2f0aa6be5cbcd",
+    ),
+    (
+        "orf-olympus-e-pl6.orf",
+        "https://raw.pixls.us/data/Olympus/E-PL6/e7169440.orf",
+        "38d3750abbcf847bba58e254b2ab8c57d8c9f3fc48490c29ae2b55c4e84d5f64",
+    ),
+    (
+        "orf-olympus-e-pl7.orf",
+        "https://raw.pixls.us/data/Olympus/E-PL7/fb240007.orf",
+        "e0e138e9d33b0d2a16c0a9378582ddaac71d0b2cf07bc9ed459df275aa025c60",
+    ),
+    (
+        "orf-olympus-e-m10-mark-iiis.orf",
+        "https://raw.pixls.us/data/Olympus/E-M10%20Mark%20IIIs/ilhabela_202110_0082.ORF",
+        "8bc0009eaacdbeacc72606581665702a1242bc6d4b405d1f0b3f149fe6c85e55",
+    ),
+    (
+        "orf-olympus-e-pl10.orf",
+        "https://raw.pixls.us/data/Olympus/E-PL10/P6100030.ORF",
+        "6911f11810545cc2c55882ef6fa6aa2f25d34674865f8ade15e47990865e37ed",
+    ),
+    (
+        "orf-om-system-om-5.orf",
+        "https://raw.pixls.us/data/OM%20System/OM-5/C1291096.ORF",
+        "ee0213ee4899d677d9bd538d8cfa4d0f69bdbacd462c1cf3ca3901036cf2fce7",
+    ),
+    // OM Digital Solutions' `.ori` (High Res / Pro Capture originals): an ORF container with the compressed coding
+    // (crates/raw/tests/it/olympus_ori_corpus.rs). One per body family; raw.pixls.us/data/ paths.
+    (
+        "ori-olympus-e-m5-mark-ii.ori",
+        "https://raw.pixls.us/data/Olympus/E-M5%20Mark%20II/CB252215.ORI",
+        "f2c7a1dfbfcc6093b28373a1616569b8bd9c2d91cb708480b8312d510c57fbd6",
+    ),
+    (
+        "ori-olympus-e-m1-mark-iii.ori",
+        "https://raw.pixls.us/data/Olympus/E-M1MarkIII/_3160529.ORI",
+        "d831692b608471ad64667eb2485bab553de0ddb9366d384c4ecb731092b5dc42",
+    ),
+    (
+        "ori-om-system-om-1-mark-ii.ori",
+        "https://raw.pixls.us/data/OM%20System/OM-1%20Mark%20II/80mp-14bit-tripod.ori",
+        "a5ee1e874d7aa357192173e12695627f90a8800a272b6c6e4959f029afb59837",
+    ),
+    (
+        "ori-om-digital-om-3.ori",
+        "https://raw.pixls.us/data/OM%20Digital%20Solutions/OM-3/P5048183.ORI",
+        "6fab41a21d5c8c0469619049888b0a36c7b260d893e3c35c174044b7293e9d43",
     ),
     (
         "cr2-canon-eos-70d.cr2",
@@ -2268,5 +2469,46 @@ pub(crate) const RAW_SAMPLES: &[(&str, &str, &str)] = &[
         "mef-mamiya-zd.mef",
         "https://raw.pixls.us/data/Mamiya/ZD/RAW_MAMIYA_ZD.MEF",
         "bcd63507c3c4cc3ea1bad2945e3f88cb4677a1a3c762e1acc38df4445714eb7c",
+    ),
+    // GoPro GPR (VC-5): one CC0 file per body (crates/raw/tests/it/gpr_corpus.rs)
+    (
+        "gpr-hero5-936.gpr",
+        "https://raw.pixls.us/getfile.php/936/nice/GoPro%20-%20HERO5%20Black%20-%2016bit%20%284:3%29.GPR",
+        "191901b64412083146256ccebeacd954783f6c40a4556ef355a067915136159b",
+    ),
+    (
+        "gpr-hero6-2556.gpr",
+        "https://raw.pixls.us/getfile.php/2556/nice/GoPro%20-%20HERO6%20Black%20-%2016bit%20%284:3%29.GPR",
+        "ca9b79fcdfab1cc071405209063fb736cc0b7169a7a88fe091fceee803f546fb",
+    ),
+    (
+        "gpr-hero7-2786.gpr",
+        "https://raw.pixls.us/getfile.php/2786/nice/GoPro%20-%20HERO7%20Black%20-%2016bit%20%284:3%29.GPR",
+        "0c2003137feb0ca7c9a8adf6cd832bc8fba7ff1b89cf5d77822b22558b9a20fe",
+    ),
+    (
+        "gpr-hero8-3949.gpr",
+        "https://raw.pixls.us/getfile.php/3949/nice/GoPro%20-%20HERO8%20Black%20-%2016bit%20%284:3%29.GPR",
+        "bfd992594af380748f3d46e37814dae595356cb6fce182d4188230ca978e6a9f",
+    ),
+    (
+        "gpr-hero9-4483.gpr",
+        "https://raw.pixls.us/getfile.php/4483/nice/GoPro%20-%20HERO9%20Black%20-%2016bit%20%284:3%29.GPR",
+        "bf6f67d0c7096f347b864310f6d58be35237c3d0e715b47a1b30e650e9d785b1",
+    ),
+    (
+        "gpr-hero10-4883.gpr",
+        "https://raw.pixls.us/getfile.php/4883/nice/GoPro%20-%20HERO10%20Black%20-%2016bit%20%284:3%29.GPR",
+        "f462ea1e695a0491960a496e3998c8806a2a02a2830c9c696c7067c0039a437c",
+    ),
+    (
+        "gpr-hero11-7319.gpr",
+        "https://raw.pixls.us/getfile.php/7319/nice/GoPro%20-%20HERO11%20Black%20-%2016bit%20%285:4%29.GPR",
+        "d7a6be163c847cb8456e6858a99aef3b85dc3d8836bca1da1b8886effe0d43e1",
+    ),
+    (
+        "gpr-fusion-7370.gpr",
+        "https://raw.pixls.us/getfile.php/7370/nice/GoPro%20-%20FUSION%20-%2016bit%20%281:1%29.GPR",
+        "f90535bbb28f8b24093c6112bd982f89c47cb0181bcfaba97471e191861a1e80",
     ),
 ];
