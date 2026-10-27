@@ -41,6 +41,10 @@ use crate::switch::Part;
 const INDEX: &str = include_str!("../admin/index.html");
 const SCRIPT: &str = include_str!("../admin/admin.js");
 const STYLE: &str = include_str!("../admin/admin.css");
+/// The welcome page (`/` when the server has no web build, `/welcome` always) and its files.
+const WELCOME: &str = include_str!("../admin/welcome.html");
+const WELCOME_SCRIPT: &str = include_str!("../admin/welcome.js");
+const WELCOME_STYLE: &str = include_str!("../admin/welcome.css");
 /// The app icon (64 px), for the page's header and tab.
 const ICON: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/64x64/apps/ai.storyteller.lightcraft.png");
 
@@ -143,11 +147,14 @@ struct Asset {
 fn assets() -> &'static HashMap<&'static str, Asset> {
     static ASSETS: std::sync::OnceLock<HashMap<&'static str, Asset>> = std::sync::OnceLock::new();
     ASSETS.get_or_init(|| {
-        let files: [(&str, &str, &'static [u8]); 4] = [
+        let files: [(&str, &str, &'static [u8]); 7] = [
             ("/admin", "text/html; charset=utf-8", INDEX.as_bytes()),
             ("/admin/admin.js", "text/javascript; charset=utf-8", SCRIPT.as_bytes()),
             ("/admin/admin.css", "text/css; charset=utf-8", STYLE.as_bytes()),
             ("/admin/icon.png", "image/png", ICON),
+            ("/welcome", "text/html; charset=utf-8", WELCOME.as_bytes()),
+            ("/welcome/welcome.js", "text/javascript; charset=utf-8", WELCOME_SCRIPT.as_bytes()),
+            ("/welcome/welcome.css", "text/css; charset=utf-8", WELCOME_STYLE.as_bytes()),
         ];
         files
             .into_iter()
@@ -162,7 +169,8 @@ fn assets() -> &'static HashMap<&'static str, Asset> {
     })
 }
 
-/// `/admin`, `/admin/admin.js`, `/admin/admin.css`, `/admin/icon.png`: gzipped to browsers that take it, and
+/// `/admin`, `/admin/admin.js`, `/admin/admin.css`, `/admin/icon.png` and the welcome page (`/welcome`, `/` without a
+/// web build, and its script and styles under `/welcome/`): gzipped to browsers that take it, and
 /// answered `304` to one that already has them (the browser asks every time, so a new server version shows at once).
 pub fn page(req: &Request, method: &Method, path: &str) -> Resp {
     if !matches!(method, Method::Get | Method::Head) {
@@ -170,6 +178,7 @@ pub fn page(req: &Request, method: &Method, path: &str) -> Resp {
     }
     let path = match path.trim_end_matches('/') {
         "/admin/index.html" => "/admin",
+        "/welcome/index.html" | "" => "/welcome",
         p => p,
     };
     let Some(a) = assets().get(path) else { return error(404, "not found") };
