@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::headless::Headless;
 use crate::state::{Dialog, ModelStep};
-use crate::tests_superres::{app as small_app, settle, tmp};
+use crate::tests::superres::{app as small_app, settle, tmp};
 
 const T: Duration = Duration::from_secs(20);
 

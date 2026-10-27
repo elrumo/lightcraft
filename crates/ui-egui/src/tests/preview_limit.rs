@@ -1066,7 +1066,7 @@ mod in_the_loupe {
         use crate::state::{BeforeAfter, Zoom};
         for mode in [BeforeAfter::SideBySide, BeforeAfter::TopBottom] {
             for before in [true, false] {
-                let (mut h, _) = detail_in([1400.0, 1000.0]);
+                let (_fx, mut h, _) = detail_in([1400.0, 1000.0]);
                 h.app.ui.before_after = mode;
                 h.settle(SETTLE);
                 let canvas = h.app.canvas_rect.unwrap().shrink(24.0);

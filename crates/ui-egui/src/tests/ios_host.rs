@@ -278,7 +278,7 @@ fn dialog_fields_dont_restart_the_keyboard_every_frame() {
     for _ in 0..3 {
         h.step();
     }
-    let ime = h.view.ime.expect("the name field has the keyboard");
+    let ime = h.view.ime.clone().expect("the name field has the keyboard");
     assert!(!ime.should_interrupt_composition);
     h.step();
     assert!(h.view.ime.as_ref().is_some_and(|i| !i.should_interrupt_composition));

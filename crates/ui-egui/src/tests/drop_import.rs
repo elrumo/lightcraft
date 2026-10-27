@@ -591,12 +591,12 @@ fn a_queued_drop_waits_for_a_running_lightroom_import_instead_of_being_refused()
     for _ in 0..10 {
         h.step();
     }
-    assert!(h.app.lightroom.is_some(), "the Lightroom import still runs");
+    assert!(h.app.lightroom.running(), "the Lightroom import still runs");
     assert_eq!(h.app.dropped_files.len(), 1, "the deferred drop waits for the Lightroom import instead of being refused");
     assert!(!said(&h, "Finish Lightroom catalog import"), "the deferred drop is not refused: {:?}", h.painted_text());
     assert_eq!(photos(&h), 0, "nothing is imported during the Lightroom import");
     drop(task);
-    assert!(h.step_until(SETTLE, |h| h.app.lightroom.is_none()), "the Lightroom task ends");
+    assert!(h.step_until(SETTLE, |h| !h.app.lightroom.running()), "the Lightroom task ends");
     // the stub's disconnect reports a stopped task and opens its result window; close it so the
     // queued drop is released (a real import's result window is another dialog the guard waits for)
     h.app.ui.dialog = None;

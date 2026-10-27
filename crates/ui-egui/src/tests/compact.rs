@@ -583,6 +583,7 @@ fn a_zoomed_photo_is_not_covered_by_its_neighbour() {
     h.app.renderer.textures.insert(
         Slot::Prefetch(0),
         Tex {
+            look: None,
             key: 0,
             photo: next,
             size,
@@ -1069,7 +1070,7 @@ fn the_undo_button_opens_undo_redo_reset_and_versions() {
         assert!(has(&h, w), "{w}");
     }
     frames(&mut h, 30);
-    crate::tests_grid_touch::snap(&h, "undo-menu");
+    crate::tests::grid_touch::snap(&h, "undo-menu");
     click(&mut h, "button:undoStep");
     assert_eq!(exposure(&h), before, "undone");
     assert!(has(&h, "button:redoStep"), "the menu stays open");

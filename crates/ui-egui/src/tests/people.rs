@@ -147,7 +147,7 @@ fn a_persons_unnamed_faces_are_one_picture_and_one_click_selects_them_all() {
     let tile = |(photo, index): (u64, usize)| format!("unnamed-face:{photo}:{index}");
     assert!(has(&h, &tile(first[0])), "the person's picture is there");
     assert!(first[1..].iter().all(|f| !has(&h, &tile(*f))), "their other faces are behind it");
-    crate::tests_grid_touch::snap(&h, "people-grouped");
+    crate::tests::grid_touch::snap(&h, "people-grouped");
     // one click selects every face of theirs, a second deselects them
     click(&mut h, &tile(first[0]));
     h.step();

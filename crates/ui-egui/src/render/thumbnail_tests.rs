@@ -957,7 +957,8 @@ fn missing_or_failed_larger_embedded_preview_does_not_cover_a_smaller_cell() {
         // The larger picture is gone: evicted, or its job failed at that key.
         app.renderer.textures.remove(&quick);
         if failed_larger {
-            app.renderer.failed.insert(quick, (key, "no embedded preview".into(), app.renderer.catalog_rev, id));
+            let rev = app.renderer.catalog_rev;
+            app.renderer.failed.insert(quick, (key, "no embedded preview".into(), rev, id));
         }
         let built = app.renderer.thumb_jobs_built;
         crate::panels::grid::request_thumb(&mut app, id, 256, 10);

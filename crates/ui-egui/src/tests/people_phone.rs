@@ -10,7 +10,7 @@ use serde_json::json;
 
 use crate::headless::Headless;
 use crate::state::{RightPanel, ViewMode};
-use crate::tests_grid_touch::{click, has, rect_of, snap};
+use crate::tests::grid_touch::{click, has, rect_of, snap};
 use crate::{LightcraftApp, Services};
 
 const T: Duration = Duration::from_secs(30);

@@ -114,6 +114,7 @@ fn micro(points: usize, pending: bool) {
             app.renderer.textures.insert(
                 Slot::Thumb(id),
                 Tex {
+                    look: None,
                     key,
                     photo: id,
                     size: [1, 1],

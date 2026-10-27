@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::Services;
 use crate::headless::Headless;
-use crate::tests_superres::{app, settle, tmp};
+use crate::tests::superres::{app, settle, tmp};
 
 const T: Duration = Duration::from_secs(20);
 
