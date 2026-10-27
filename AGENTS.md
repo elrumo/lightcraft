@@ -30,7 +30,8 @@ and often so a crash loses minutes, not hours.
 
 ## HelpBites planning follows the work (LightBites app)
 The LightBites app's tasks live on the HelpBites project's Planning board (project `tb4A2EAxRx`; columns Backlog, Now,
-Next, Later, Done, Canceled). Keep it in step with what you do, **through the HelpBites MCP connector** (endpoint
+Next, Later, Testing, Done, Canceled, Claude, and more may be added: this list is not complete, so never rely on it).
+Keep it in step with what you do, **through the HelpBites MCP connector** (endpoint
 `https://helpbites.app/mcp`; its tools cover the board and the rest of HelpBites). The API reference is
 https://helpbites.app/_docs/scalar (spec: `https://helpbites.app/_docs/openapi.json`); check it, or the connector's own
 tool list, for the current parameters instead of trusting this file. Use the admin API
@@ -46,7 +47,10 @@ tool list, for the current parameters instead of trusting this file. Use the adm
   no tool covers it or the connector is down. Don't work from memory of this file or of an earlier session: HelpBites
   gains routes and tools often, and the spec and the tool list are always current.
 - **When asked to do a task** that concerns the LightBites app: first check the board through the connector for a card
-  that is that task (by number if the user gave one, else by title; page through `list_board_items` with `offset`).
+  that is that task (by number if the user gave one, else by title). **Search every column:** call `list_board_items` with no `status`
+  and page with `offset` until you have seen `total` items; never filter by the columns named above (cards also sit in
+  columns like `claude` and `testing`, and new columns appear). Only when the whole unfiltered board has no such number
+  or title is there no card; if the user names a column, filter by that column's status key instead.
   - **A card exists:** edit it if the user's words changed the task (title, description), and move it to Now.
   - **No card:** ask the user whether to create one (and comment on it when the work is done); create it only on a yes,
     in Now. Don't create cards unasked, and don't skip the question.
