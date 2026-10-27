@@ -47,7 +47,7 @@ fn hashes_match_uncached_keys_and_are_not_recomputed_for_sizes_metadata_or_befor
 #[test]
 fn a_smaller_thumbnail_is_scaled_from_a_larger_one_cached() {
     let mut s = session();
-    s.media.file_loader = Some(Arc::new(|_, _| Err("the file must not be read".into())));
+    s.media.file_loader = Some(Arc::new(|_, _, _| Err("the file must not be read".into())));
     let big = s.thumb_job(PhotoId(1), 384).unwrap();
     let (cache, key) = big.cache.clone().unwrap();
     let mut img = Rgba8::filled(384, 256, [200, 100, 50, 255]);
@@ -67,7 +67,7 @@ fn a_smaller_thumbnail_is_scaled_from_a_larger_one_cached() {
     assert!(cache.get_at(generation, small_key).is_some());
     // nothing larger cached: rendered (here: the file can't be read)
     let mut s = session();
-    s.media.file_loader = Some(Arc::new(|_, _| Err("no file".into())));
+    s.media.file_loader = Some(Arc::new(|_, _, _| Err("no file".into())));
     assert!(s.thumb_job(PhotoId(1), 100).unwrap().run().rendered.is_err());
 }
 #[test]
@@ -98,7 +98,7 @@ fn hash_cache_is_bounded_weak_and_shared_settings_remain_independent() {
 #[test]
 fn source_from_before_content_reload_is_not_accepted() {
     let mut s = session();
-    s.media.file_loader = Some(Arc::new(|_, _| Ok((Rgb32f::new(8, 8), SourceInfo::default()))));
+    s.media.file_loader = Some(Arc::new(|_, _, _| Ok((Rgb32f::new(8, 8), SourceInfo::default()))));
     let old = s.thumb_job(PhotoId(1), 256).unwrap().run();
     assert!(old.loaded.is_some());
     s.catalog
@@ -122,7 +122,7 @@ fn source_from_before_content_reload_is_not_accepted() {
 #[test]
 fn a_render_that_panics_fails_instead_of_never_answering() {
     let mut s = session();
-    s.media.file_loader = Some(Arc::new(|_, _| panic!("decoder bug")));
+    s.media.file_loader = Some(Arc::new(|_, _, _| panic!("decoder bug")));
     let mut job = s.thumb_job(PhotoId(1), 256).unwrap();
     job.request_id = 42;
     let (key, level, source_key) = (job.key, job.level, job.source_key);

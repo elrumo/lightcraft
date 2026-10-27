@@ -1,4 +1,4 @@
-use super::defaults::apply_import_defaults;
+use super::defaults::{apply_import_defaults, keeps_whole_sensor};
 use super::files::copy_into;
 use super::job::{Prepared, PreparedItem, ReadyFile};
 use super::types::{Duplicate, ImportOptions, ImportReport, Kept, Moved, OnDeleted};
@@ -286,8 +286,17 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 p.content_hash = info.content_hash;
                 p.embedded_lens = info.embedded_lens;
                 p.set_preview_only(info.preview_only.clone());
+                // a raw its camera crops (a Panasonic's in-camera aspect ratio) keeps its whole sensor: the photo is catalogued
+                // with the whole area's size, and the camera's frame is its import crop
+                let camera_crop = info.camera_crop.as_ref().filter(|_| keeps_whole_sensor(&sidecar));
+                if let Some(c) = camera_crop {
+                    ((p.width, p.height), p.embedded_lens) = (c.whole, c.lens);
+                }
                 apply_import_defaults(s, &mut p);
                 apply_default_crop(&mut p, info.default_crop);
+                if let Some(c) = camera_crop {
+                    apply_default_crop(&mut p, Some(c.frame));
+                }
                 if let Some(sc) = &sidecar {
                     crate::sidecar::merge_into(&mut p, sc, &now);
                     report.sidecars += 1;

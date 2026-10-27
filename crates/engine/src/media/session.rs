@@ -275,9 +275,20 @@ impl crate::Session {
     /// unedited raw (whose grid thumbnail is that preview too) not known to be offline, upright as
     /// imported, with a preview loader installed. `rect` is the square around the face, `edge` the
     /// tile, `needed` the source's long edge the develop render would ask for.
-    fn face_preview_cut(&self, p: &Photo, rect: lightcraft_geom::Rect, edge: usize, needed: usize) -> Option<crate::face_tiles::PreviewCut> {
+    pub(super) fn face_preview_cut(
+        &self,
+        p: &Photo,
+        rect: lightcraft_geom::Rect,
+        edge: usize,
+        needed: usize,
+    ) -> Option<crate::face_tiles::PreviewCut> {
         let (path, loader) = self.embedded_of(p)?;
-        if p.develop.orientation != lightcraft_geom::Orientation::Normal || self.media.availability.is_offline(&path) || p.width == 0 || p.height == 0
+        // (a photo with an import crop shows a part of its picture: the face rect is in the whole one)
+        if p.develop.orientation != lightcraft_geom::Orientation::Normal
+            || p.is_cropped()
+            || self.media.availability.is_offline(&path)
+            || p.width == 0
+            || p.height == 0
         {
             return None;
         }
@@ -373,7 +384,7 @@ impl crate::Session {
     }
 
     /// The embedded preview of an unedited raw (path, loader), when the app installed a loader. The loader's pictures are
-    /// cut to the photo's own frame ([`frame_to`]): a camera's JPEG can show more than the raw's default crop.
+    /// cut to the photo's own frame as shown ([`frame_to`]): a camera's JPEG can show more than the raw's default crop.
     fn embedded_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
         // a synced photo's `web/<hash>/…` is no file here: its picture is the server's mini preview, which the grid
         // must keep asking for (an embedded preview taken as final, and failing, left its cell empty until an edit)
@@ -381,8 +392,9 @@ impl crate::Session {
             return None;
         }
         match (&p.source, &self.media.preview_loader) {
-            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && crate::import::has_import_look(p) => {
-                Some((path.clone(), framed_loader(l, p.width, p.height)))
+            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && (crate::import::has_import_look(p) || at_camera_frame(p)) => {
+                let (width, height) = p.shown_size();
+                Some((path.clone(), framed_loader(l, width, height)))
             }
             _ => None,
         }
@@ -664,12 +676,23 @@ pub(crate) fn export_source_pixels(p: &Photo, out_long: usize) -> usize {
 }
 
 /// `loader` with the pictures it gives cut to the shape of a `width × height` frame ([`frame_to`]).
-fn framed_loader(loader: &PreviewLoader, width: u32, height: u32) -> PreviewLoader {
-    if width == 0 || height == 0 {
+fn framed_loader(loader: &PreviewLoader, width: f64, height: f64) -> PreviewLoader {
+    if !(width > 0.0 && height > 0.0) {
         return loader.clone();
     }
-    let (inner, aspect) = (loader.clone(), f64::from(width) / f64::from(height));
+    let (inner, aspect) = (loader.clone(), width / height);
     Arc::new(move |path: &str, edge: usize| inner(path, edge).map(|img| frame_to(img, aspect)))
+}
+
+/// A Panasonic raw imported whole whose only departure from the camera's defaults is the camera's own aspect-ratio frame,
+/// its import crop ([`CameraCrop`], [`crate::import::commit_prepared`]): still as imported, so its camera JPEG (the whole
+/// area) cut to that frame ([`frame_to`]) is a fair stand-in, as for a raw with no crop. Not another maker's: their
+/// frames are part of how their decoders and JPEGs work today.
+fn at_camera_frame(p: &Photo) -> bool {
+    let Some(look) = &p.import_look else { return false };
+    let mut defaults = p.camera_defaults();
+    defaults.crop.geometry.rect = look.crop.geometry.rect;
+    p.format.eq_ignore_ascii_case("RW2") && p.develop_is(defaults)
 }
 
 /// A camera's embedded JPEG cut to the frame of the photo it belongs to (`aspect`, width over height). Some cameras show

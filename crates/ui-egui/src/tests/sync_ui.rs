@@ -805,7 +805,8 @@ fn every_cell_on_screen_gets_its_preview_however_slow_the_server() {
     assert_eq!(h.app.session.catalog.len(), N);
     write_png(&root.join("mini.png"), 7);
     let (_, mini) =
-        lightcraft_engine::smart::encode_pair(&std::fs::read(root.join("mini.png")).unwrap(), lightcraft_engine::cloud_sync::MINI_EDGE).unwrap();
+        lightcraft_engine::smart::encode_pair(&std::fs::read(root.join("mini.png")).unwrap(), lightcraft_engine::cloud_sync::MINI_EDGE, None)
+            .unwrap();
     // the server answers four requests at a time, with forty frames of the grid in between
     let (mut answered, mut idle) = (0, 0);
     while idle < 3 {

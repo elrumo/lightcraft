@@ -72,7 +72,11 @@ pub(super) fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32, Orientati
 /// it goes through the file's `orientation` into the picture shown (`shown_w × shown_h`), as Lightroom's crop edges do
 /// ([`crate::crs::crop_in_frame`]).
 pub(super) fn default_crop_of(bytes: &[u8], orientation: Orientation, shown_w: u32, shown_h: u32) -> Option<[f64; 4]> {
-    let [x0, y0, x1, y1] = lightcraft_raw::olympus_aspect_frame(bytes)?;
+    default_crop_from(lightcraft_raw::olympus_aspect_frame(bytes)?, orientation, shown_w, shown_h)
+}
+
+/// [`default_crop_of`] for a frame already known, `[x0, y0, x1, y1]` as fractions of the stored picture.
+pub(super) fn default_crop_from([x0, y0, x1, y1]: [f64; 4], orientation: Orientation, shown_w: u32, shown_h: u32) -> Option<[f64; 4]> {
     let (w, h) = (f64::from(shown_w), f64::from(shown_h));
     let stored_aspect = if orientation.swaps_axes() { h / w } else { w / h };
     let mut v = serde_json::json!({"crop": {"geometry": {"rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}, "angle": 0.0}}});

@@ -1614,8 +1614,8 @@ fn a_browser_shares_the_library_through_its_storage() {
     let mut storage: HashMap<String, Vec<u8>> = HashMap::new();
     let browser = |f: &mut Fake, storage: &mut HashMap<String, Vec<u8>>, t: &Task| -> Done {
         match t {
-            Task::Proxies { id, original, smart, mini } => {
-                let (s, m) = crate::smart::encode_pair(&storage[original], crate::cloud_sync::MINI_EDGE).unwrap();
+            Task::Proxies { id, original, smart, mini, catalogued } => {
+                let (s, m) = crate::smart::encode_pair(&storage[original], crate::cloud_sync::MINI_EDGE, *catalogued).unwrap();
                 storage.insert(smart.clone(), s);
                 storage.insert(mini.clone(), m);
                 Done { id: *id, status: 200, body: String::new() }

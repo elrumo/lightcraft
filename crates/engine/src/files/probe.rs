@@ -1,4 +1,5 @@
 use super::load::WbScaleOf;
+use super::load::camera_crop_of;
 use super::preview::{default_crop_of, embedded_preview_size};
 use super::*;
 
@@ -213,9 +214,17 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         let embedded_lens = crate::lens_profiles::for_raw(&raw, || m.clone());
         // an Olympus / OM body's aspect-ratio setting (3:2, 16:9, 1:1): the whole 4:3 area is developed, the camera's JPEG is cut
         let default_crop = (found == lightcraft_raw::RawFormat::Orf).then(|| default_crop_of(bytes, raw.orientation, w, h)).flatten();
+        // a Panasonic's in-camera aspect ratio: the size above is the camera's frame, as every photo imported before has it;
+        // what a photo is given to keep the whole sensor is here (the import decides, `import::commit_prepared`)
+        let camera_crop = camera_crop_of(raw.format, raw.active_area, raw.crop, raw.orientation, |whole| {
+            let mut all = raw.clone();
+            all.crop = whole;
+            crate::lens_profiles::for_raw(&all, || m.clone())
+        });
         return Ok(ProbeInfo {
             embedded_lens,
             default_crop,
+            camera_crop,
             width: w,
             height: h,
             format: raw_format_name(name, found),
@@ -268,6 +277,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         orientation: Some(o),
         duration: None,
         default_crop: None,
+        camera_crop: None,
     })
 }
 

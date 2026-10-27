@@ -45,6 +45,9 @@ pub struct WireJob {
     /// The original's long edge (`SourceInfo::native_long`).
     #[serde(default)]
     pub native_long: Option<usize>,
+    /// The size the photo is catalogued with, for the frame its raw is developed in (`SourceRef::File::catalogued`).
+    #[serde(default)]
+    pub catalogued: Option<(u32, u32)>,
     pub settings: Arc<DevelopSettings>,
     pub max_w: usize,
     pub max_h: usize,
@@ -91,6 +94,10 @@ impl WireJob {
             as_shot_tint: job.info.as_shot_tint,
             lens: job.info.lens,
             native_long: job.info.native_long,
+            catalogued: match &job.source {
+                SourceRef::File { catalogued, .. } => *catalogued,
+                _ => None,
+            },
             settings: job.settings.clone(),
             max_w: job.request.max_w,
             max_h: job.request.max_h,
@@ -260,13 +267,13 @@ impl WorkerCore {
                         src
                     }
                     (Source::File { .. }, Some(bytes)) => {
-                        let (image, info) = lightcraft_engine::files::load_bytes(bytes, job.max_edge)?;
+                        let (image, info) = lightcraft_engine::files::load_bytes_for(bytes, job.max_edge, job.catalogued)?;
                         DecodedSource::new(Arc::new(image), Some(info))
                     }
                     (Source::File { path }, None) => {
                         return Err(format!("{path}: original not in browser storage and no preview of it has come down yet"));
                     }
-                    (origin @ Source::Demo { .. }, _) => self.media.origin_ref(origin, job.max_edge).load_source()?,
+                    (origin @ Source::Demo { .. }, _) => self.media.origin_ref(origin, job.max_edge, job.catalogued).load_source()?,
                 };
                 if keep {
                     // (room for the picture in the camera's own look too, which Camera Matching keeps beside it)
@@ -666,6 +673,7 @@ mod tests {
             as_shot_tint: 0.0,
             lens: None,
             native_long: None,
+            catalogued: None,
             settings: Arc::new(DevelopSettings::default()),
             max_w: 32,
             max_h: 32,
@@ -754,7 +762,7 @@ mod tests {
     #[test]
     fn worker_renders_synced_photos_from_their_previews() {
         let png = crate::store::png_bytes(1200, 800);
-        let (smart, mini) = lightcraft_engine::smart::encode_pair(&png, lightcraft_engine::cloud_sync::MINI_EDGE).unwrap();
+        let (smart, mini) = lightcraft_engine::smart::encode_pair(&png, lightcraft_engine::cloud_sync::MINI_EDGE, None).unwrap();
         let hash = crate::store::content_hash(&png);
         let job = |max_edge: usize, size: usize| WireJob {
             cache_generation: 0,
@@ -769,6 +777,7 @@ mod tests {
             as_shot_tint: 0.0,
             lens: None,
             native_long: None,
+            catalogued: None,
             settings: Arc::new(DevelopSettings::default()),
             max_w: size,
             max_h: size,

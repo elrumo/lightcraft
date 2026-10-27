@@ -157,7 +157,7 @@ fn a_thumbnail_asked_once_renders_when_its_preview_lands() {
     let l = landed.clone();
     // (thumbnails load through the reduced loader when there is one: this test's loader is the plain one)
     e.session.media.reduced_loader = None;
-    e.session.media.file_loader = Some(Arc::new(move |_, _| {
+    e.session.media.file_loader = Some(Arc::new(move |_, _, _| {
         if !l.load(Ordering::SeqCst) {
             return Err("still downloading".into());
         }

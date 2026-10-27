@@ -70,8 +70,15 @@ pub(super) fn source_edge_needed(p: &Photo, settings: &DevelopSettings, apply_cr
     if needed.is_finite() { needed.min(usize::MAX as f64 / 2.0) as usize } else { out_long }
 }
 
-/// Decodes a file into a linear Rec.2020 image no larger than `max_edge` (set by the app).
-pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), String> + Send + Sync>;
+/// The size (width, height as shown, before any crop of the photo's own) a photo was catalogued with, for a loader that
+/// develops its file: a raw that its camera crops (a Panasonic's in-camera aspect ratio) is developed whole when the photo
+/// was catalogued whole and cut to the camera's frame when it was catalogued at that. `None`: the file is not a photo's
+/// (a candidate not in the catalog, a test), so it is developed as it always was, in the camera's frame.
+pub type Catalogued = Option<(u32, u32)>;
+
+/// Decodes a file into a linear Rec.2020 image no larger than `max_edge` (set by the app), in the frame of a photo
+/// catalogued as [`Catalogued`] says.
+pub type FileLoader = Arc<dyn Fn(&str, usize, Catalogued) -> Result<(Rgb32f, SourceInfo), String> + Send + Sync>;
 
 /// A synced photo's preview files as a host keeps them in memory (the browser), for a photo whose
 /// original that host doesn't have: the bytes of the photo's smart preview, or its mini preview when the
@@ -96,7 +103,7 @@ pub struct ThumbAsk {
 /// [`FileLoader`] for a thumbnail: a raw file that keeps smaller copies of its raw image (Lightroom's merged DNGs)
 /// develops the smallest that covers `max_edge` (set by the app); the flag says it did. Never used for an export,
 /// which must render the full image.
-pub type ReducedLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo, bool), String> + Send + Sync>;
+pub type ReducedLoader = Arc<dyn Fn(&str, usize, Catalogued) -> Result<(Rgb32f, SourceInfo, bool), String> + Send + Sync>;
 
 /// A raw file's embedded (camera-rendered) preview as display sRGB, oriented, no larger than
 /// `max_edge` (set by the app). `None`: no usable preview.
@@ -119,7 +126,7 @@ pub struct DenoiseSpec {
 
 /// Decodes a raw file once and develops it twice: as usual, and from the denoised picture in `spec` when that can be
 /// read (`None` when it cannot). Both are at most `max_edge` long and the same size.
-pub type PairLoader = Arc<dyn Fn(&str, usize, &DenoiseSpec) -> Result<(Rgb32f, Option<Rgb32f>, SourceInfo), String> + Send + Sync>;
+pub type PairLoader = Arc<dyn Fn(&str, usize, &DenoiseSpec, Catalogued) -> Result<(Rgb32f, Option<Rgb32f>, SourceInfo), String> + Send + Sync>;
 
 /// A photo's denoised picture next to its plain one, and the last mix of the two that was asked for.
 pub struct Twin {
@@ -330,6 +337,8 @@ pub enum SourceRef {
         denoise: Option<(DenoiseSpec, PairLoader)>,
         /// A thumbnail's loader, used instead of `loader` (see [`ReducedLoader`]); `None` for every other job.
         reduced: Option<ReducedLoader>,
+        /// The size the photo was catalogued with: which frame its raw is developed in ([`Catalogued`]).
+        catalogued: Catalogued,
     },
     /// A smart preview standing in for a missing original.
     Smart {
@@ -374,12 +383,11 @@ impl SourceRef {
                 });
             }
             SourceRef::Demo { scene, max_edge } => crate::demo::scene_pixels(scene, *max_edge)?,
-            SourceRef::File { path, max_edge, loader, fallback, denoise, reduced } => {
+            SourceRef::File { path, max_edge, loader, fallback, denoise, reduced, catalogued } => {
                 let plain = || match (reduced, loader) {
-                    (Some(l), _) => {
-                        l(path, *max_edge).map(|(image, info, reduced)| DecodedSource { reduced, ..DecodedSource::new(Arc::new(image), Some(info)) })
-                    }
-                    (None, Some(l)) => l(path, *max_edge).map(|(image, info)| DecodedSource::new(Arc::new(image), Some(info))),
+                    (Some(l), _) => l(path, *max_edge, *catalogued)
+                        .map(|(image, info, reduced)| DecodedSource { reduced, ..DecodedSource::new(Arc::new(image), Some(info)) }),
+                    (None, Some(l)) => l(path, *max_edge, *catalogued).map(|(image, info)| DecodedSource::new(Arc::new(image), Some(info))),
                     (None, None) => Err(format!("no decoder available for {path}")),
                 };
                 // the denoised picture comes with the plain one from a single decode; when it cannot be read the
@@ -393,7 +401,7 @@ impl SourceRef {
                             None => true,
                         };
                         if made {
-                            pair(path, *max_edge, spec).and_then(|(image, twin, info)| {
+                            pair(path, *max_edge, spec, *catalogued).and_then(|(image, twin, info)| {
                                 if spec.make.is_some() && twin.is_none() {
                                     return Err("the cached AI Denoise picture could not be read; clear the denoise cache and retry".into());
                                 }
@@ -489,6 +497,28 @@ pub struct ProbeInfo {
     /// ([`lightcraft_raw::olympus_aspect_frame`]). Import puts it into the photo's import look
     /// ([`crate::import::apply_default_crop`]), so it is not an edit and the crop tool can widen it.
     pub default_crop: Option<[f64; 4]>,
+    /// What this raw's camera crops by itself, when it does ([`CameraCrop`]; a Panasonic's in-camera aspect ratio).
+    /// `width` × `height` above are the camera's frame, as every photo imported before has them; a photo given the whole
+    /// sensor's size and this frame as its import crop is what [`crate::import::commit_prepared`] makes of it.
+    pub camera_crop: Option<CameraCrop>,
+}
+
+/// A raw its camera crops by itself, and the frame it crops to. A Panasonic's embedded JPEG shows the whole area its
+/// sensor recorded whatever the aspect-ratio setting, and the decoder develops only the frame the setting cuts. A photo
+/// imported whole is catalogued with `whole` as its size and `frame` as its import crop, so the Crop tool can widen it to
+/// the whole sensor; one catalogued with `framed` (every photo imported before) is developed in the camera's frame as it
+/// always was ([`Catalogued`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CameraCrop {
+    /// The whole area's width and height, as shown (turned by the file's orientation).
+    pub whole: (u32, u32),
+    /// The camera's frame's width and height, as shown.
+    pub framed: (u32, u32),
+    /// The camera's frame in the whole area, `[x0, y0, x1, y1]` as fractions of it, as shown.
+    pub frame: [f64; 4],
+    /// The file's lens correction in the whole area's frame (the one the probe's own is in the camera's frame): what
+    /// a photo catalogued whole is given.
+    pub lens: Option<lightcraft_develop::EmbeddedLens>,
 }
 
 impl ProbeInfo {

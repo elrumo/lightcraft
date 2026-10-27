@@ -11,7 +11,7 @@ use lightcraft_pipeline::SourceInfo;
 use lightcraft_raster::Rgb32f;
 use lightcraft_raster::resample::{Filter, fit};
 
-use crate::media::{DenoiseSpec, FileLoader, FileProbe, PairLoader, PreviewLoader, ProbeInfo, ReducedLoader};
+use crate::media::{CameraCrop, Catalogued, DenoiseSpec, FileLoader, FileProbe, PairLoader, PreviewLoader, ProbeInfo, ReducedLoader};
 
 mod colour;
 mod fs;
@@ -27,7 +27,7 @@ pub use fs::{READ_WHOLE_MAX, fs_hooks, fs_pair_loader, fs_reduced_loader, read_f
 #[cfg(test)]
 use fs::{quick_image_srgb, read_file_from};
 pub(crate) use load::{DngWhite, WbScaleOf, dng_tone_curve};
-pub use load::{load_bytes, load_vec, load_vec_pair, load_vec_reduced};
+pub use load::{load_bytes, load_bytes_for, load_vec, load_vec_for, load_vec_pair, load_vec_pair_for, load_vec_reduced, load_vec_reduced_for};
 #[cfg(test)]
 use preview::PLAN_PREFIX;
 pub(crate) use preview::decode_raw_preview;
