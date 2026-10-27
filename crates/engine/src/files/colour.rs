@@ -59,7 +59,7 @@ fn pick_bin_factor(crop: lightcraft_raw::Rect, active: lightcraft_raw::Rect, max
 /// The block size to read a raw at when it can be binned *while it is decoded* ([`lightcraft_raw::decode_binned`]):
 /// a linear raw (three samples per pixel, no mosaic; Apple ProRAW) without opcodes, whose preview needs 2× or more
 /// less than its size. Its full-size samples are then never held. `None`: decode it whole, as [`bin_factor`] says.
-fn stream_bin_factor(info: &lightcraft_raw::RawInfo, max_edge: usize) -> Option<usize> {
+pub(super) fn stream_bin_factor(info: &lightcraft_raw::RawInfo, max_edge: usize) -> Option<usize> {
     let linear =
         info.cfa.is_none() && info.cpp == 3 && info.opcodes.list1.is_empty() && info.opcodes.list2.is_empty() && info.opcodes.list3.is_empty();
     if linear { pick_bin_factor(info.crop, info.active_area, max_edge, |_| true) } else { None }

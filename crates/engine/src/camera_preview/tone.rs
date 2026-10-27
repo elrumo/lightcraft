@@ -136,7 +136,7 @@ pub(super) fn fit_tone(pairs: Vec<(f64, f64)>) -> Option<CameraTone> {
     CameraTone::new(knots)
 }
 
-fn median(values: &mut [f64]) -> Option<f64> {
+pub(super) fn median(values: &mut [f64]) -> Option<f64> {
     values.sort_by(f64::total_cmp);
     values.get(values.len() / 2).copied()
 }

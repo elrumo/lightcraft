@@ -434,6 +434,21 @@ impl LightcraftApp {
         }
     }
 
+    /// The AI models the user turned off: the saved choice is applied to the session on the first
+    /// frame (the settings are loaded after the app is built), and from then on the session's
+    /// (changed by Settings ▸ AI Models or by an agent) is what gets saved.
+    pub(super) fn sync_models(&mut self) {
+        if !self.models_synced {
+            self.session.set_models_disabled(&self.ui.settings.models_disabled);
+            self.models_synced = true;
+            return;
+        }
+        let now = self.session.models_disabled();
+        if now != self.ui.settings.models_disabled {
+            self.ui.settings.models_disabled = now;
+        }
+    }
+
     pub fn toast(&mut self, ctx: &egui::Context, text: impl Into<String>) {
         self.toast_for(ctx, text, TOAST_SECONDS);
     }
@@ -454,6 +469,34 @@ impl LightcraftApp {
     pub fn toast_for(&mut self, _ctx: &egui::Context, text: impl Into<String>, secs: f64) {
         let t = self.tick_now();
         self.ui.toast = Some((text.into(), t + secs, None));
+    }
+
+    /// Bring back what the external editor saved (Photo ▸ Edit In) to the files it was handed:
+    /// changed files are read again, a Save As beside one is added to its stack, and the watch
+    /// list is kept as the engine leaves it. Not while the library couldn't be opened: the
+    /// session open then is a stand-in, which must neither take the files in nor mark them seen.
+    pub(crate) fn check_external_edits(&mut self, ctx: &egui::Context) {
+        if self.ui.external_edits.is_empty() || self.library_problem.is_some() {
+            return;
+        }
+        let files = serde_json::to_value(&self.ui.external_edits).unwrap_or_default();
+        let r = match self.session.execute("photo.checkExternalEdits", &serde_json::json!({"files": files})) {
+            Ok(r) => r,
+            Err(e) => return log::warn!("checking the external edits: {e}"),
+        };
+        if let Ok(list) = serde_json::from_value(r["files"].clone()) {
+            self.ui.external_edits = list;
+        }
+        let added = r["added"].as_array().map_or(0, Vec::len);
+        let name = |path: &str| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if added == 1 {
+            let name = name(r["added"][0]["path"].as_str().unwrap_or_default());
+            self.toast(ctx, crate::i18n::tr_format!("Added {name}, saved in the external editor, to its stack", name = name));
+        } else if added > 1 {
+            self.toast(ctx, crate::i18n::tr_format!("Added {n} files saved in the external editor to their stacks", n = added));
+        } else if r["reloaded"].as_array().is_some_and(|a| !a.is_empty()) {
+            self.toast(ctx, crate::i18n::tr("Updated the edits saved in the external editor"));
+        }
     }
 
     /// Reverse geocoding: say how a place-names download ended (a failure stays readable, with what to do).
@@ -588,6 +631,7 @@ impl LightcraftApp {
 
     /// Frame timings once layout is done (`t0`: when layout started).
     fn end_frame(&mut self, ctx: &egui::Context, t0: f64) {
+        haptics::flush(ctx, self.services.haptic.as_ref());
         if self.ui.frame_rate {
             frame_rate::show(ctx, self);
         } else {
@@ -606,11 +650,56 @@ impl LightcraftApp {
         self.perf.max_update_ms = self.perf.max_update_ms.max(self.perf.update_ms);
     }
 
+    /// What the UI holds that names the old library's photos and albums (their ids are only unique within a library):
+    /// textures and caches by id, the face being named, the photos being dragged, the compare and reference views, a
+    /// slideshow, a dialog about one of them. Another library was opened, or this one was emptied for another account.
+    pub(crate) fn forget_library_ui(&mut self) {
+        self.lightroom.last = None;
+        self.lightroom_result = None;
+        self.renderer.forget_all();
+        self.cloud_sync.forget_library();
+        let ui = &mut self.ui;
+        ui.compare = None;
+        ui.reference = None;
+        ui.slideshow = None;
+        ui.name_edit = None;
+        ui.person_page = None;
+        ui.person_from = None;
+        ui.last_person = None;
+        ui.dismissed_faces.clear();
+        ui.unnamed_selected.clear();
+        ui.unnamed_anchor = None;
+        ui.dragging_photos = None;
+        ui.reveal_album = None;
+        ui.dragging_album = None;
+        ui.grading_hidden = None;
+        ui.last_find_missing = None;
+        // (Settings stays open: it is where signing out and signing in happen)
+        if !matches!(
+            ui.dialog,
+            None | Some(
+                state::Dialog::Settings { .. }
+                    | state::Dialog::About
+                    | state::Dialog::Shortcuts
+                    | state::Dialog::WhatsNew
+                    | state::Dialog::SystemInfo { .. }
+                    | state::Dialog::SyncChoice
+            )
+        ) {
+            ui.dialog = None;
+        }
+        // an emptied library has no photo to show, compare or survey: the grid says so
+        if self.session.catalog.is_empty() && !matches!(ui.view, state::ViewMode::PhotoGrid | state::ViewMode::SquareGrid | state::ViewMode::Map) {
+            ui.view = state::ViewMode::PhotoGrid;
+        }
+    }
+
     /// Lay out the whole window: input/setup for the known UI phase, then presentation, then the
     /// frame bookkeeping. A hidden `run_logic` never reaches this.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         i18n::set_language(self.ui.language);
         let ctx = ui.ctx().clone();
+        panels::mobile::edit_menu_event(&ctx);
         if !self.fonts_ready {
             ctx.request_repaint();
             return;

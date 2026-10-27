@@ -1,5 +1,5 @@
 use super::settings_hash::SettingsHashes;
-use super::source::{DecodedSource, DenoiseSpec, PairLoader, RENDERED_MEM_BYTES, SourceLevel, SourceRef, THUMB_SOURCE_BYTES};
+use super::source::{ARRIVED_MAX, DecodedSource, DenoiseSpec, PairLoader, RENDERED_MEM_BYTES, SourceLevel, SourceRef, THUMB_SOURCE_BYTES};
 use super::*;
 
 /// The photos that have a cached denoised picture for the denoise model in use. Only memory: nothing here touches the

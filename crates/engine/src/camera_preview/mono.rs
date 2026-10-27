@@ -1,11 +1,11 @@
 use super::colour::{PROXY, file_local_look};
 use super::hue_sat::HueSat;
-use super::look_fit::{with_dro_off_tone, without_clipped};
+use super::look_fit::{prior, with_dro_off_tone, without_clipped};
 use super::pairs::{
     EDGE_CONTRAST, MIN_IMPROVEMENT, PARTIAL_MIN_RANK_CORRELATION, Pairs, collect_pairs, displayed, fit_tone_with_shadows, local_contrast, luma,
     rank_correlation_ties,
 };
-use super::proxy::{LensGeometry, proxies};
+use super::proxy::{LensGeometry, proxies, with_jpeg_vignetting};
 use super::tone::{HighlightCheck, ToneFit, fit_tone, highlights, highlights_hold};
 use super::*;
 

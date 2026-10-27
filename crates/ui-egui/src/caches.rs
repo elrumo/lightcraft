@@ -6,6 +6,8 @@ pub struct LibraryCounts {
     pub total: usize,
     pub picks: usize,
     pub deleted: usize,
+    /// In the Hidden album (shown only while Hidden is unlocked).
+    pub hidden: usize,
 }
 
 /// The values the filter bar's pickers offer.
@@ -56,6 +58,10 @@ impl Caches {
         self.folder_tree = Some((cat.revision, t.clone()));
         t
     }
+    /// The library's photos keyed to spot a camera's files it already has.
+    pub fn library_index(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<lightcraft_engine::devices::LibraryIndex> {
+        self.library_index.get(cat)
+    }
     /// The folder tree as last built, when it still holds (a read-only check cannot rebuild it).
     pub(crate) fn folder_tree_if_fresh(&self, cat: &lightcraft_catalog::Catalog) -> Option<std::sync::Arc<Vec<lightcraft_catalog::FolderNode>>> {
         self.folder_tree.as_ref().filter(|(r, _)| still_right(cat, *r, READS_FILE)).map(|(_, t)| t.clone())
@@ -77,14 +83,14 @@ impl Caches {
     ) -> std::sync::Arc<Vec<panels::keywording::Chip>> {
         let key = key_of((selection, export));
         match &self.keyword_names {
-            Some((r, k, c)) if *r == cat.revision && *k == key => c.clone(),
+            Some((r, k, c)) if *r == cat.library_revision && *k == key => c.clone(),
             _ => {
                 let c = std::sync::Arc::new(if export {
                     panels::keywording::will_export(cat, selection)
                 } else {
                     panels::keywording::with_containing(cat, selection)
                 });
-                self.keyword_names = Some((cat.revision, key, c.clone()));
+                self.keyword_names = Some((cat.library_revision, key, c.clone()));
                 c
             }
         }
@@ -97,10 +103,10 @@ impl Caches {
     ) -> std::sync::Arc<Vec<panels::keywording::Chip>> {
         let key = key_of(selection);
         match &self.keyword_chips {
-            Some((r, k, c)) if *r == cat.revision && *k == key => c.clone(),
+            Some((r, k, c)) if *r == cat.library_revision && *k == key => c.clone(),
             _ => {
                 let c = std::sync::Arc::new(panels::keywording::chips(cat, selection));
-                self.keyword_chips = Some((cat.revision, key, c.clone()));
+                self.keyword_chips = Some((cat.library_revision, key, c.clone()));
                 c
             }
         }
@@ -143,10 +149,10 @@ impl Caches {
     ) -> std::sync::Arc<panels::keyword_list::Ticks> {
         let key = key_of(selection);
         match &self.keyword_ticks {
-            Some((r, k, t)) if *r == cat.revision && *k == key => t.clone(),
+            Some((r, k, t)) if *r == cat.library_revision && *k == key => t.clone(),
             _ => {
                 let t = std::sync::Arc::new(panels::keyword_list::Ticks::of(cat, selection));
-                self.keyword_ticks = Some((cat.revision, key, t.clone()));
+                self.keyword_ticks = Some((cat.library_revision, key, t.clone()));
                 t
             }
         }
@@ -159,12 +165,29 @@ impl Caches {
         filter: &lightcraft_catalog::Filter,
     ) -> std::sync::Arc<Vec<lightcraft_catalog::Person>> {
         let key = lightcraft_catalog::Filter { person: None, ..filter.clone() };
+        // a develop edit only counts again when the filter reads develop state (Edited, …)
+        let rev = cat.view_revision(cat.filter_reads_develop(&key));
         match &self.people {
-            Some((r, f, t)) if *r == cat.revision && *f == key => t.clone(),
+            Some((r, f, t)) if *r == rev && *f == key => t.clone(),
             _ => {
                 let t = std::sync::Arc::new(cat.people_in(&key));
-                self.people = Some((cat.revision, key, t.clone()));
+                self.people = Some((rev, key, t.clone()));
                 t
+            }
+        }
+    }
+    /// What the search text was read as (places, dates), per catalog revision and text.
+    pub fn understood(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        filter: &lightcraft_catalog::Filter,
+    ) -> std::sync::Arc<Vec<lightcraft_catalog::search::Understood>> {
+        match &self.understood {
+            Some((r, t, u)) if *r == cat.revision && *t == filter.text => u.clone(),
+            _ => {
+                let u = std::sync::Arc::new(cat.understood(filter));
+                self.understood = Some((cat.revision, filter.text.clone(), u.clone()));
+                u
             }
         }
     }
@@ -178,12 +201,14 @@ impl Caches {
         }
         let mut c = LibraryCounts::default();
         for p in cat.photos() {
-            if p.in_library() {
+            if p.visible() {
                 c.total += 1;
                 if p.flag == lightcraft_catalog::Flag::Pick {
                     c.picks += 1;
                 }
-            } else if p.deleted && !p.local {
+            } else if p.in_library() {
+                c.hidden += 1;
+            } else if p.deleted && !p.local && !p.hidden {
                 c.deleted += 1;
             }
         }
@@ -204,10 +229,22 @@ impl Caches {
         self.date_groups = Some((cat.revision, g.clone()));
         g
     }
+    /// The library folders on the sync server, with their photo counts (the sidebar's Server
+    /// Folders).
+    pub fn server_folders(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<std::collections::BTreeMap<String, usize>> {
+        match &self.server_folders {
+            Some((r, f)) if *r == cat.revision => f.clone(),
+            _ => {
+                let f = std::sync::Arc::new(lightcraft_catalog::query::server_folders(cat));
+                self.server_folders = Some((cat.revision, f.clone()));
+                f
+            }
+        }
+    }
     /// Cameras, lenses and keywords in the library (filter bar pickers).
     pub fn filter_values(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<FilterValues> {
         match &self.filter_values {
-            Some((r, v)) if *r == cat.revision => v.clone(),
+            Some((r, v)) if *r == cat.library_revision => v.clone(),
             _ => {
                 let distinct = |mut v: Vec<String>| {
                     v.retain(|s| !s.trim().is_empty());
@@ -221,10 +258,15 @@ impl Caches {
                     lenses: distinct(lib().map(|p| p.meta.lens.clone()).collect()),
                     keywords: cat.keywords().into_iter().map(|(k, _)| k).collect(),
                 });
-                self.filter_values = Some((cat.revision, v.clone()));
+                self.filter_values = Some((cat.library_revision, v.clone()));
                 v
             }
         }
+    }
+    /// Cameras, people, places and keywords in the library with their photo counts (the phone's
+    /// Filter page).
+    pub fn filter_choices(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<panels::filter_sheet::Choices> {
+        panels::filter_sheet::choices_for(&mut self.filter_choices, cat)
     }
     /// What the Add keyword box offers for `typed` (see [`panels::keywording::offers`]). Kept apart
     /// from [`Self::suggestions`]: both are asked for on every frame of typing, and each looks
@@ -247,7 +289,7 @@ impl Caches {
     }
     /// Keyword suggestions for a photo with `current` keywords and the typed `prefix`.
     pub fn suggestions(&mut self, cat: &lightcraft_catalog::Catalog, current: &[String], prefix: &str, n: usize) -> std::sync::Arc<Vec<String>> {
-        let k = key_of((cat.revision, current, prefix, n));
+        let k = key_of((cat.library_revision, current, prefix, n));
         match &self.suggestions {
             Some((h, v)) if *h == k => v.clone(),
             _ => {
@@ -258,8 +300,9 @@ impl Caches {
         }
     }
     /// Every album's photo count for the sidebar (a smart album evaluates its rules, which
-    /// scans the catalog). Recomputed when the catalog changes (photos, metadata, album rules
-    /// all bump its revision) and — only while some smart album has an "in the last…" rule —
+    /// scans the catalog). Recomputed when the library changes (photos, metadata, album rules
+    /// all bump its revision; a develop edit only while some smart album's rules read develop
+    /// state) and — only while some smart album has an "in the last…" rule —
     /// when `now` (the session clock, ISO) enters a new minute, so such counts follow the clock
     /// within a minute without rescanning every frame.
     /// [`RulesView`] for `rules` edited in smart album `editing` (`None`: a new album), within
@@ -275,7 +318,10 @@ impl Caches {
     ) -> std::sync::Arc<RulesView> {
         let relative = rules.depends_on_now();
         let minute = if relative { now.get(..16).unwrap_or(now) } else { "" };
-        let k = key_of((cat.revision, serde_json::to_string(rules).unwrap_or_default(), editing, &folder, minute, i18n::language().code()));
+        // the count only changes with a develop edit when the rules (or the albums they test) read develop state
+        let reads_develop = rules.reads_develop() || rules.albums_tested().into_iter().any(|a| cat.album_reads_develop(a));
+        let rev = cat.view_revision(reads_develop);
+        let k = key_of((rev, serde_json::to_string(rules).unwrap_or_default(), editing, &folder, minute, i18n::language().code()));
         if let Some((key, v)) = &self.rules_view
             && *key == k
         {
@@ -315,7 +361,7 @@ impl Caches {
         cat: &lightcraft_catalog::Catalog,
     ) -> std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, Vec<lightcraft_catalog::rules::Problem>>> {
         if let Some((rev, v)) = &self.smart_problems
-            && *rev == cat.revision
+            && *rev == cat.library_revision
         {
             return v.clone();
         }
@@ -323,7 +369,7 @@ impl Caches {
             cat.albums().filter(|a| a.is_smart()).map(|a| (a.id, cat.smart_album_problems(a.id))).filter(|(_, p)| !p.is_empty()).collect(),
         );
         self.smart_problem_scans += 1;
-        self.smart_problems = Some((cat.revision, v.clone()));
+        self.smart_problems = Some((cat.library_revision, v.clone()));
         v
     }
 
@@ -453,6 +499,56 @@ mod cache_tests {
         cat.apply(Op::RemoveAlbum { id: AlbumId(20) }).unwrap();
         assert!(c.smart_album_problems(&cat).get(&AlbumId(21)).is_some_and(|p| !p.is_empty()), "its album is gone");
         assert_eq!(c.smart_problem_scans, 2);
+    }
+
+    /// A develop edit (one slider tick: settings, edit time and a History step) changes no
+    /// library-wide view unless it reads develop state: the sidebar's counts and rule-dialog count
+    /// aren't worked out again, while a smart album and a rule testing Has Edits / Cropped follow
+    /// the edit.
+    #[test]
+    fn develop_edits_only_redo_views_that_read_develop_state() {
+        let mut cat = Catalog::default();
+        let mut c = super::Caches::default();
+        for i in 0..3u64 {
+            cat.apply(photo(i + 1, "2026-09-30T11:00:00", if i == 0 { 5 } else { 1 })).unwrap();
+        }
+        cat.apply(smart(10, serde_json::json!({"rules": [{"field": "rating", "op": "gte", "value": 3}]}))).unwrap();
+        let now = "2026-09-30T12:00:00";
+        let rating =
+            |v: u64| -> RuleSet { serde_json::from_value(serde_json::json!({"rules": [{"field": "rating", "op": "gte", "value": v}]})).unwrap() };
+        let cropped: RuleSet = serde_json::from_value(serde_json::json!({"rules": [{"field": "cropped", "op": "is", "value": true}]})).unwrap();
+        let develop = |cat: &mut Catalog, id: u64, f: &dyn Fn(&mut lightcraft_develop::DevelopSettings)| {
+            let mut s = (*cat.photo(PhotoId(id)).unwrap().develop).clone();
+            f(&mut s);
+            let settings = std::sync::Arc::new(s);
+            let step = lightcraft_catalog::HistoryStep { label: "Edit".into(), settings: settings.clone() };
+            let set = Op::SetDevelop { id: PhotoId(id), settings, label: "Edit".into(), edited: Some(now.into()) };
+            cat.apply(Op::Batch { ops: vec![set, Op::PushHistory { id: PhotoId(id), step }] }).unwrap();
+        };
+        c.album_counts(&cat, now);
+        c.rules_view(&cat, &rating(3), None, None, now);
+        let (tree, counts) = (c.keyword_tree(&cat), c.counts(&cat).total);
+        for i in 0..20 {
+            develop(&mut cat, 2, &|s| s.light.exposure = i as f64 / 10.0);
+            c.album_counts(&cat, now);
+            c.rules_view(&cat, &rating(3), None, None, now);
+            assert!(std::sync::Arc::ptr_eq(&tree, &c.keyword_tree(&cat)));
+            assert_eq!(c.counts(&cat).total, counts);
+        }
+        assert_eq!((c.album_count_scans, c.rules_view_scans), (1, 1), "slider ticks don't recount");
+        // views that read develop state follow the edit
+        assert_eq!(c.rules_view(&cat, &cropped, None, None, now).count, 0);
+        cat.apply(smart(11, serde_json::json!({"rules": [{"field": "edited", "op": "is", "value": true}]}))).unwrap();
+        assert_eq!(c.album_counts(&cat, now)[&AlbumId(11)], 1, "photo 2 has edits");
+        develop(&mut cat, 3, &|s| s.crop.geometry.rect = lightcraft_geom::Rect::new(0.1, 0.1, 0.9, 0.9));
+        assert_eq!(c.album_counts(&cat, now)[&AlbumId(11)], 2, "a smart album testing Has Edits counts the new edit");
+        assert_eq!(c.rules_view(&cat, &cropped, None, None, now).count, 1, "a rule testing Cropped sees the crop");
+        // a rule that tests such an album through an Album rule follows it too
+        let via: RuleSet = serde_json::from_value(serde_json::json!({"rules": [{"field": "album", "op": "is", "value": 11}]})).unwrap();
+        assert_eq!(c.rules_view(&cat, &via, None, None, now).count, 2);
+        develop(&mut cat, 1, &|s| s.light.exposure = 1.0);
+        assert_eq!(c.rules_view(&cat, &via, None, None, now).count, 3);
+        assert_eq!(c.album_counts(&cat, now)[&AlbumId(11)], 3);
     }
 
     /// Without "in the last…" rules the clock never causes a rescan.

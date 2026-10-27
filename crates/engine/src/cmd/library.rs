@@ -18,7 +18,7 @@ pub use import::{
     AUTO_IMPORT_MAX_DEPTH, AUTO_IMPORT_MAX_ENTRIES, AutoImportListing, AutoImportWalk, ImportRequest, import_batch_done, import_params,
     list_auto_import_folder,
 };
-pub(super) use selection::select_after_deletion;
+pub(crate) use selection::select_after_deletion;
 pub use specs::specs;
 
 #[cfg(test)]

@@ -1,7 +1,8 @@
 use super::colour::{PROFILE_PROXY, PROXY, file_local_look};
 use super::hue_sat::fit_hue_sat;
-use super::look_fit::{FIT_PREVIEW_MAX_PIXELS, SENSOR_CLIP, clip_mask, without_clipped};
-use super::pairs::{collect_pairs, fit_matrix};
+use super::look_fit::{FIT_PREVIEW_MAX_PIXELS, SENSOR_CLIP, clip_mask, correct_vignetting, without_clipped};
+use super::pairs::{EDGE_CONTRAST, collect_pairs, fit_matrix, local_contrast};
+use super::tone::{median};
 use super::*;
 
 /// Long edge of the proxies the camera's vignetting correction is estimated on ([`jpeg_vignetting`]).
@@ -108,7 +109,7 @@ fn vignetting_from_proxies(sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool]
 /// A CR3's sensor proxy with the vignetting correction its camera applied to the JPEG proxy it is paired with
 /// ([`vignetting_from_proxies`]; the proxies are oriented alike): a look fitted to the uncorrected sensor learns some of
 /// that correction as brightness, which the render's lens correction ([`jpeg_vignetting`]) would then add again.
-fn with_jpeg_vignetting(raw: &RawImage, mut sensor: Rgb32f, reference: &Rgb32f, clipped: &[bool]) -> Rgb32f {
+pub(super) fn with_jpeg_vignetting(raw: &RawImage, mut sensor: Rgb32f, reference: &Rgb32f, clipped: &[bool]) -> Rgb32f {
     if raw.format == RawFormat::Cr3 {
         let lens = vignetting_from_proxies(&sensor, reference, clipped);
         correct_vignetting(&mut sensor, lens.as_ref(), lightcraft_geom::Orientation::Normal);
@@ -527,7 +528,7 @@ fn proxy_bin(crop: &lightcraft_raw::Rect, edge: u32) -> usize {
 
 /// [`proxies`] against `reference`, the camera JPEG or another render of the photo in the sensor's orientation (linear
 /// Rec.2020).
-fn proxies_from(
+pub(super) fn proxies_from(
     raw: &RawImage,
     reference: Rgb32f,
     transform: &CameraTransform,

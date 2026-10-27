@@ -80,7 +80,7 @@ pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), St
 pub type ProxyBytes = Arc<dyn Fn(&str, usize) -> Option<Arc<[u8]>> + Send + Sync>;
 
 /// Photos whose arrived previews are remembered at most, until a host takes them ([`MediaCache::note_arrived`]).
-const ARRIVED_MAX: usize = 4096;
+pub(super) const ARRIVED_MAX: usize = 4096;
 
 /// A grid cell waiting for its mini preview from the sync server ([`MediaCache::thumb_asks`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

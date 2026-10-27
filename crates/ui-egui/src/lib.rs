@@ -412,6 +412,22 @@ pub struct LightcraftApp {
     pub activity_expanded: bool,
 }
 
+/// Content width (points) below which the compact, touch-first layout is used. The desktop layout
+/// needs about 810 pt (and its window never gets narrower than 900); iPhones are 375–440 pt wide in
+/// portrait, iPads 744–834 pt in portrait (compact, with side panels: see `COMPACT_WIDE_PT`) and
+/// 1024 pt and more in landscape (the desktop layout).
+pub const COMPACT_BELOW_PT: f32 = 900.0;
+
+/// Minimum height (points) of egui-drawn rows and buttons (context menus, combo boxes, dialogs) in the compact
+/// layout: Apple's 44 pt touch target.
+pub const TOUCH_ROW_H: f32 = 44.0;
+
+/// Whether this frame uses the compact layout, for widgets that only have the context (bigger touch
+/// targets).
+pub fn is_compact(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::new("lc-compact"))).unwrap_or(false)
+}
+
 /// How long a screenshot waits for in-flight renders before it is captured anyway (and the
 /// headless fallback's settle budget).
 const SCREENSHOT_SETTLE_MS: f64 = 3000.0;
@@ -609,7 +625,10 @@ pub fn split_presets(dropped: Vec<String>) -> (Vec<String>, Vec<String>) {
     (presets, photos)
 }
 
-/// Results recomputed only when the catalog (or their inputs) change.
+/// Results recomputed only when the catalog (or their inputs) change. Views that don't read
+/// develop state key on [`lightcraft_catalog::Catalog::library_revision`], so a slider drag (a
+/// develop edit per tick) doesn't redo them; the others on
+/// [`lightcraft_catalog::Catalog::view_revision`] or the full revision.
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
@@ -626,14 +645,20 @@ pub struct Caches {
     /// The Keyword List's tick boxes, by library revision and selection.
     keyword_ticks: Option<(u64, u64, std::sync::Arc<panels::keyword_list::Ticks>)>,
     folder_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::FolderNode>>)>,
-    people: Option<(u64, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
+    people: Option<(lightcraft_catalog::ViewRevision, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
+    understood: Option<(u64, String, std::sync::Arc<Vec<lightcraft_catalog::search::Understood>>)>,
     /// What the Add keyword box offers for the text typed in it, by library revision, the
     /// selection's keywords and that text.
     completions: Option<(u64, std::sync::Arc<panels::keywording::Offers>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
+    server_folders: Option<(u64, std::sync::Arc<std::collections::BTreeMap<String, usize>>)>,
+    /// The library's photos keyed to spot a camera's files it already has, by library revision.
+    library_index: camera_import::IndexCache,
     filter_values: Option<(u64, std::sync::Arc<FilterValues>)>,
+    /// The phone Filter page's lists, with counts (`panels::filter_sheet`).
+    filter_choices: Option<(u64, std::sync::Arc<panels::filter_sheet::Choices>)>,
     /// The albums' counts: the minute they are of (while a smart album asks about "the last N days"), the tally
     /// that follows edits, and the counts as the panels take them.
     album_counts:
@@ -674,8 +699,9 @@ pub struct Caches {
     pub face_hints: Option<(u64, u64, u64, std::sync::Arc<panels::faces::Hints>)>,
     /// The open person page: (name, catalog revision, faces indexed, when it was asked for, the page).
     pub person_page: Option<(String, u64, u64, f64, std::sync::Arc<panels::person::PersonPage>)>,
-    /// The unnamed faces: (catalog revision, faces indexed, when it was asked for, the list).
-    pub unnamed: Option<(u64, u64, f64, std::sync::Arc<panels::unnamed::Unnamed>)>,
+    /// The unnamed faces: (catalog revision, (faces indexed, the server's people, faces found), when it was asked for,
+    /// the list).
+    pub unnamed: Option<(u64, (u64, u64, usize), f64, std::sync::Arc<panels::unnamed::Unnamed>)>,
     /// The most photos the face scan has had left at once since it last finished (the progress bar's whole).
     pub faces_peak: u64,
     person_names: Option<(u64, std::sync::Arc<Vec<String>>)>,

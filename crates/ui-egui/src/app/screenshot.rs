@@ -112,7 +112,9 @@ impl LightcraftApp {
             token: self.screenshot_token,
             target,
             reply,
-            headless: headless && !self.headless_host,
+            // (a float surface, which HDR output needs, can't be read back by the window's own
+            // capture: that shows the 8-bit pictures, as every headless screenshot does)
+            headless: (headless || self.renderer.can_draw_hdr()) && !self.headless_host,
             admitted_passes: self.ui_passes,
             not_before_ms: now + SHOT_SETTLE_MS,
             // Capture the current settled frame at this instant even if renders are still in flight

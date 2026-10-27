@@ -1,8 +1,9 @@
-use super::colour::{PROXY, file_local_look};
+use super::colour::{PROFILE_PROXY, PROXY, file_local_look, spectral};
 use super::mono::{fit_tone_only_with, monochrome};
-use super::pairs::{Attempt, TONE_FITS, fit_attempt, fit_partial, search_ordered};
-use super::proxy::{CLIP_TOLERANCE, LensGeometry, MIN_PREVIEW_FRACTION, proxies, structure_agrees};
-use super::tone::{HighlightCheck, highlights};
+use super::pairs::{Attempt, EDGE_CONTRAST, TONE_FITS, collect_pairs, fit_attempt, fit_partial, luma, search_ordered};
+use super::proxy::{CLIP_TOLERANCE, LensGeometry, MIN_PREVIEW_FRACTION, alignment, proxies, proxies_from, structure_agrees, with_jpeg_vignetting};
+use super::tone::{HighlightCheck, highlights, median};
+use super::hue_sat::{fit_hue_sat};
 use super::*;
 
 /// The colour a raw's camera most likely has when its file has no colour matrices, as the matrix that takes what the
@@ -11,7 +12,7 @@ use super::*;
 /// the camera JPEG gives no look to fit, in place of "camera RGB is sRGB": leaving each of 52 measured cameras out in
 /// turn, the typical camera is within CIEDE2000 2.0 of the camera's own best matrix (camera RGB as sRGB: 8.7). It
 /// keeps white, so neutrals stay neutral. `None` when `t` has matrices of its own.
-fn prior(raw: &RawImage, t: &CameraTransform) -> Option<Mat3> {
+pub(super) fn prior(raw: &RawImage, t: &CameraTransform) -> Option<Mat3> {
     if !t.matrix_is_fallback {
         return None;
     }
@@ -182,7 +183,7 @@ fn neutral_look(model: Option<&str>) -> Option<CameraLook> {
 /// model (`camera_profiles::neutral_table`, `lightcraft-cli calibrate --references`) or, without a fit, at the maker's
 /// exposure ([`maker_exposure`]) and [`NEUTRAL_TONE`]'s contrast, with [`NEUTRAL_CHROMA`], and the model's hue/saturation
 /// table when it has one ([`neutral_pairs`]). `None` only if the built-in curve were invalid (a test checks it).
-fn neutral_look_for(model: Option<&str>, make: Option<&str>) -> Option<CameraLook> {
+pub(super) fn neutral_look_for(model: Option<&str>, make: Option<&str>) -> Option<CameraLook> {
     let table = model.and_then(crate::camera_profiles::neutral_table);
     let e = table.as_ref().and_then(|t| t.exposure).unwrap_or_else(|| maker_exposure(make));
     let c = table.as_ref().and_then(|t| t.contrast).unwrap_or(NEUTRAL_TONE.1);
@@ -262,7 +263,7 @@ const CANON_MEDIAN_EXPOSURE: f32 = 1.23;
 /// the maker's exposure, [`maker_exposure`], unless the model was fitted to Lightroom's renders).
 /// Without it such a photo rendered camera RGB as sRGB with the default tone, about 11 L* too dark and 0.4 as colourful
 /// as the camera's own picture on the CC0 archive's Sony A33, A500 and A580 and Samsung NX20 and NX200.
-fn typical_look(raw: &RawImage, t: &CameraTransform) -> Option<CameraLook> {
+pub(super) fn typical_look(raw: &RawImage, t: &CameraTransform) -> Option<CameraLook> {
     // (a DNG without matrices is camera RGB on purpose: a linear export, not a camera's own raw)
     if raw.format == RawFormat::Dng {
         return None;

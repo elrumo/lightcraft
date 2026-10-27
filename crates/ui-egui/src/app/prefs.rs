@@ -7,25 +7,29 @@ impl LightcraftApp {
     }
 
     /// Restyle `ctx` when the theme the settings select (Appearance Mode, the dark and light
-    /// themes, the system's appearance in Auto) is not the one it shows. A no-op otherwise.
+    /// themes, the system's appearance in Auto) is not the one it shows. A no-op otherwise. The
+    /// compact layout has iOS's look instead, light or dark as its own setting says
+    /// (`UiState::appearance`).
     pub fn sync_theme(&mut self, ctx: &egui::Context) {
-        let wanted = self.ui.settings.theme(self.system_theme(ctx));
+        let system = self.system_theme(ctx);
+        if self.compact {
+            self.dark = self.ui.appearance.is_dark(system.map(|t| t == egui::Theme::Dark));
+            theme::apply_compact(ctx, self.dark);
+            return;
+        }
+        let wanted = self.ui.settings.theme(system);
+        self.dark = wanted.is_dark();
         if theme::current(ctx) != Some(wanted) {
             theme::apply_kind(ctx, wanted);
         }
     }
 
-    /// Back from an external editor: pick up the files it saved. Reads `i.focused`, which
-    /// `run_logic` does not refresh, so it belongs to the UI phase.
+    /// Back from an external editor (or launched): pick up the files it saved. Reads `i.focused`,
+    /// which `run_logic` does not refresh, so it belongs to the UI phase.
     pub(super) fn check_external_editor(&mut self, ctx: &egui::Context) {
         let focused = ctx.input(|i| i.focused);
-        if focused && !self.ui.was_focused && !self.ui.external_edits.is_empty() {
-            let ids = self.ui.external_edits.clone();
-            if let Ok(r) = self.session.execute("photo.reload", &serde_json::json!({"ids": ids}))
-                && r["reloaded"].as_array().is_some_and(|a| !a.is_empty())
-            {
-                self.toast(ctx, crate::i18n::tr("Updated the edits saved in the external editor"));
-            }
+        if focused && !self.ui.was_focused {
+            self.check_external_edits(ctx);
         }
         self.ui.was_focused = focused;
     }

@@ -1,6 +1,9 @@
 use super::load::{load_vec, load_vec_pair, load_vec_reduced};
 use super::preview::{fit_box, fs_preview_loader, preview_orientation};
-use super::probe::probe_bytes;
+use super::colour::stream_bin_factor;
+use super::probe::{head_of, probe_bytes};
+#[cfg(not(target_arch = "wasm32"))]
+use super::probe::probe_video_path;
 use super::*;
 
 /// A file at least this long is read in part when it is a TIFF ([`read_file`]).

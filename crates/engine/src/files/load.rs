@@ -1,4 +1,4 @@
-use super::colour::bin_factor;
+use super::colour::{bin_factor, stream_bin_factor};
 use super::preview::{fit_box, load_embedded_preview};
 use super::probe::preview_reason;
 use super::*;

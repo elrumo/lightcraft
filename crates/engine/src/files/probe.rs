@@ -1,5 +1,5 @@
 use super::load::WbScaleOf;
-use super::preview::embedded_preview_size;
+use super::preview::{default_crop_of, embedded_preview_size};
 use super::*;
 
 pub(super) fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
@@ -328,7 +328,7 @@ pub fn probe_video_at(path: &std::path::Path, content_hash: Option<String>) -> R
 }
 
 /// The first bytes of a file, for sniffing without reading it.
-fn head_of(path: &str) -> Option<[u8; 12]> {
+pub(super) fn head_of(path: &str) -> Option<[u8; 12]> {
     use std::io::Read;
     let mut head = [0u8; 12];
     std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
@@ -338,7 +338,7 @@ fn head_of(path: &str) -> Option<[u8; 12]> {
 /// [`probe_video`] for a file on disk when it is a video clip (`None` when it is not): the file is hashed in chunks and
 /// its header read in place, never held whole.
 #[cfg(not(target_arch = "wasm32"))]
-fn probe_video_path(path: &str) -> Option<Result<ProbeInfo, String>> {
+pub(super) fn probe_video_path(path: &str) -> Option<Result<ProbeInfo, String>> {
     use std::io::Read;
     if !lightcraft_video::is_video(&head_of(path)?) {
         return None;

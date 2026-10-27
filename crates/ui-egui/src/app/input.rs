@@ -59,6 +59,7 @@ impl LightcraftApp {
     /// presets, photos and folders go to the import review (or straight in, Settings ▸ Import).
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_dropped_files(&mut self, ctx: &egui::Context, dropped: Vec<egui::DroppedFileHandle>) {
+        file_drop::track(self, ctx);
         let dropped: Vec<String> =
             dropped.iter().map(|f| egui::DroppedFile::path(f.as_ref()).to_string_lossy().to_string()).filter(|p| !p.is_empty()).collect();
         if dropped.is_empty() {
@@ -84,8 +85,8 @@ impl LightcraftApp {
             // presets live in a library: with none open they would go with the session it replaces
             if panels::library_problem::holds_drops(self) {
                 self.toast(ctx, crate::i18n::tr("Open a library first, then drop the presets again"));
-            } else {
-                let _ = self.run("file.importPresets", serde_json::json!({"paths": drop.presets}));
+            } else if let Err(e) = self.run("file.importPresets", serde_json::json!({"paths": drop.presets, "review": true})) {
+                self.toast_error(ctx, e);
             }
         }
         if drop.photos.is_empty() {
@@ -93,7 +94,7 @@ impl LightcraftApp {
         }
         // no library open yet (the launch list, a library that failed to open): they wait for one
         let Some(photos) = panels::library_problem::hold_dropped(self, ctx, drop.photos) else { return };
-        if self.lightroom.is_some() {
+        if self.lightroom.running() {
             self.toast(ctx, crate::i18n::tr("Finish Lightroom catalog import before adding photos"));
             return;
         }
@@ -102,8 +103,13 @@ impl LightcraftApp {
             return;
         }
         let started = if self.ui.settings.import_dropped_directly {
-            // read and added on a worker thread (dropped folders can be large, or on a slow drive)
-            import::start_paths(self, photos).map(|_| ())
+            // read and added on a worker thread (dropped folders can be large, or on a slow drive), into
+            // the album they were dropped on or the one shown; the grid holds a tile for each meanwhile
+            let started = import::start_dropped(self, photos, file_drop::destination(self, ctx)).map(|_| ());
+            if started.is_ok() {
+                file_drop::reveal(ctx);
+            }
+            started
         } else {
             import::open(self, photos).map(|_| ())
         };
@@ -187,7 +193,10 @@ impl LightcraftApp {
             return;
         }
         let n = match self.synthetic[0] {
-            egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. } => 1,
+            // (a finger's touch events come in the frame of the pointer event they go with)
+            egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. } | egui::Event::Touch { .. } => {
+                1 + self.synthetic.iter().skip(1).take_while(|e| matches!(e, egui::Event::Touch { .. })).count()
+            }
             _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
         };
         // A press needs the pointer at its position before the button event; the move that is

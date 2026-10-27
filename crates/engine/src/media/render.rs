@@ -1,4 +1,4 @@
-use super::quick::QuickSource;
+use super::quick::{QuickSource, shrink};
 use super::source::{DecodedSource, SourceLevel, SourceRef};
 use super::*;
 

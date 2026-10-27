@@ -71,7 +71,7 @@ pub(super) fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32, Orientati
 /// The crop a raw file asks for by itself ([`ProbeInfo::default_crop`]): the frame it states is in the stored picture, so
 /// it goes through the file's `orientation` into the picture shown (`shown_w × shown_h`), as Lightroom's crop edges do
 /// ([`crate::crs::crop_in_frame`]).
-fn default_crop_of(bytes: &[u8], orientation: Orientation, shown_w: u32, shown_h: u32) -> Option<[f64; 4]> {
+pub(super) fn default_crop_of(bytes: &[u8], orientation: Orientation, shown_w: u32, shown_h: u32) -> Option<[f64; 4]> {
     let [x0, y0, x1, y1] = lightcraft_raw::olympus_aspect_frame(bytes)?;
     let (w, h) = (f64::from(shown_w), f64::from(shown_h));
     let stored_aspect = if orientation.swaps_axes() { h / w } else { w / h };

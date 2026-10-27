@@ -1,6 +1,6 @@
-use super::look_fit::{fit_dng_tone, fit_preview};
+use super::look_fit::{fit_dng_tone, fit_preview, neutral_look_for, typical_look};
 use super::mono::{fit_dark_tone, monochrome_look};
-use super::proxy::{LensGeometry, proxies};
+use super::proxy::{LensGeometry, jpeg_vignetting, proxies, sharing_proxies, with_jpeg_vignetting};
 use super::*;
 
 /// Long edge of the sensor/JPEG proxy a single photo's look is fitted on (the acceptance gates
@@ -92,7 +92,7 @@ pub(crate) fn dng_tone_eligible(raw: &RawImage, t: &CameraTransform) -> bool {
 }
 
 /// The camera's measured spectral matrices (`lightcraft_raw::spectral`), by the file's make and model.
-fn spectral(raw: &RawImage) -> Option<&'static lightcraft_raw::spectral::Camera> {
+pub(super) fn spectral(raw: &RawImage) -> Option<&'static lightcraft_raw::spectral::Camera> {
     raw.metadata.model.as_deref().and_then(|model| lightcraft_raw::spectral::find(raw.metadata.make.as_deref(), model))
 }
 

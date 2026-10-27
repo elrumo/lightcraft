@@ -48,13 +48,22 @@ impl LightcraftApp {
         }
         let now = self.tick_now();
         self.drain_control(ctx);
+        // a file dialog closed: run its command again (here, not in `ui`: the phone and full-screen layouts return early there)
+        pick::poll(self, ctx);
         self.apply_settings(ctx);
         if self.queued_input_needs_repaint() {
             ctx.request_repaint();
         }
         self.renderer.poll(ctx, &mut self.session);
         merge::poll(self, ctx);
+        superres::poll(self, ctx);
+        erase::poll(self, ctx);
+        lensblur::poll(self, ctx);
+        expand::poll(self, ctx);
+        self.sync_models();
+        expand::sync_choice(self);
         import::poll_scan(self, ctx);
+        camera_import::poll(self, ctx);
         sync::poll(self, ctx);
         sync::poll_run(self, ctx);
         // Import commits batches and must not run twice in one host frame. The first layout pass
@@ -66,6 +75,7 @@ impl LightcraftApp {
         lightroom_import::tick(self, ctx);
         recheck::tick(self);
         tasks::poll(self, ctx);
+        sync_ui::poll(self, ctx);
         updates_ui::tick(self, ctx);
         self.preview_build_status(ctx);
         self.save_status(ctx);
@@ -74,37 +84,50 @@ impl LightcraftApp {
         self.slideshow_tick(ctx, now);
         panels::denoise::pump_background(self, ctx, now);
         panels::faces::pump_background(self, ctx, now);
+        // Alt (Option on macOS) while a slider is dragged shows its temporary preview
+        self.ui.alt_held = ctx.input(|i| i.modifiers.alt);
         model_setup::pump(self, ctx, now);
         focus_scan::pump(self, ctx, now);
         // auto import: list the watched folder every few seconds (on a worker thread: it may be on
         // a network share), then import what's new like any import (also on a worker thread)
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(folder) = self.session.import_defaults.auto_folder.clone() {
+        if let Some(walk) = lightcraft_engine::cmd::library::AutoImportWalk::of(&self.session) {
             const LABEL: &str = "Auto Import";
             if now - self.ui.auto_import_at >= 3.0
                 && self.import.is_none()
                 && self.sync_run.is_none()
-                && self.lightroom.is_none()
+                && !self.lightroom.running()
                 && !self.tasks.is_running(LABEL)
             {
                 self.ui.auto_import_at = now;
-                let work = move || lightcraft_engine::cmd::library::list_auto_import_folder(&folder);
-                let done = |app: &mut LightcraftApp, _ctx: &egui::Context, listing: Result<Vec<(String, u64)>, String>| {
-                    let listing = match listing {
-                        Ok(l) => l,
-                        Err(e) => return log::debug!("auto import: {e}"),
+                let work = move || walk.list();
+                let done =
+                    |app: &mut LightcraftApp, ctx: &egui::Context, listing: Result<lightcraft_engine::cmd::library::AutoImportListing, String>| {
+                        let listing = match listing {
+                            Ok(l) => l,
+                            Err(e) => return log::debug!("auto import: {e}"),
+                        };
+                        // what the listing left out (an unreadable subfolder, a bound reached): said once
+                        if listing.warnings != app.ui.auto_import_warned {
+                            for w in &listing.warnings {
+                                log::warn!("{w}");
+                            }
+                            if let Some(w) = listing.warnings.first() {
+                                app.toast(ctx, w.clone());
+                            }
+                            app.ui.auto_import_warned = listing.warnings.clone();
+                        }
+                        let p = serde_json::json!({"listing": listing.files, "listingWarnings": listing.warnings, "start": false});
+                        let Ok(r) = app.session.execute("library.autoImportScan", &p) else { return };
+                        let Some(mut params) = r.get("import").cloned().filter(|_| app.import.is_none()) else { return };
+                        let paths: Vec<String> =
+                            params["paths"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+                        if let Some(o) = params.as_object_mut() {
+                            o.remove("paths");
+                        }
+                        let undo0 = app.session.undo.len();
+                        app.import = Some(import::ImportTask::new(paths, params, undo0, false).auto());
                     };
-                    let p = serde_json::json!({"listing": listing, "start": false});
-                    let Ok(r) = app.session.execute("library.autoImportScan", &p) else { return };
-                    let Some(mut params) = r.get("import").cloned().filter(|_| app.import.is_none()) else { return };
-                    let paths: Vec<String> =
-                        params["paths"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
-                    if let Some(o) = params.as_object_mut() {
-                        o.remove("paths");
-                    }
-                    let undo0 = app.session.undo.len();
-                    app.import = Some(import::ImportTask::new(paths, params, undo0, false).auto());
-                };
                 // listed every few seconds: quiet, no row in the activity stack
                 if let Err(e) = tasks::spawn(self, LABEL, None, work, done) {
                     log::warn!("{e}");
@@ -260,16 +283,23 @@ impl LightcraftApp {
     }
 
     /// Once per library opened (at launch too): name it in the window title, so nobody edits in
-    /// the wrong one, and put it first in File ▸ Open Recent Library.
+    /// the wrong one, and put it first in File ▸ Open Recent Library. A library other than the one shown
+    /// before makes the UI forget what named that one's photos.
     pub(crate) fn library_changed(&mut self, ctx: &egui::Context) {
         let generation = self.session.library_generation();
         if self.shown_library == Some(generation) {
             return;
         }
-        self.shown_library = Some(generation);
+        // (another library than the one shown before: at launch there was none, and nothing of
+        // an earlier library to let go of)
+        let switched = self.shown_library.replace(generation).is_some();
+        if switched {
+            self.forget_library_ui();
+            sync::library_changed(self);
+        }
         if let Some(l) = self.session.library.as_ref().filter(|l| l.on_disk) {
             let path = l.dir.to_string_lossy().into_owned();
-            panels::settings::remember_library(&mut self.ui.settings.recent_libraries, &path);
+            lightcraft_apphost::libraries::remember(&mut self.ui.settings.recent_libraries, &path);
             // it is open: whatever an earlier check said about it is over
             self.recent_checks.opened(&path);
             // when, for the launch window (issue #1290); only the listed libraries keep a time
@@ -373,6 +403,10 @@ impl LightcraftApp {
         self.library_changed(&ctx);
         // panels set it again this frame while the pointer rests on a preset or profile
         self.hover_preview = None;
+        // (the loupe sets it again when it draws an HDR picture)
+        self.hdr_on_screen = false;
+        panels::ai_search::frame(self, &ctx);
+        panels::people::frame(self, &ctx);
         if self.ui.fullscreen {
             // full-screen preview: the photo alone on black
             egui::CentralPanel::default()
@@ -400,6 +434,17 @@ impl LightcraftApp {
             self.end_frame(&ctx, t0);
             return;
         }
+        self.compact = ctx.content_rect().width() < COMPACT_BELOW_PT;
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-compact"), self.compact));
+        // the look for the layout this frame (cheap when it hasn't changed)
+        self.sync_theme(&ctx);
+        if self.compact {
+            panels::compact::show(self, ui);
+            (self.next_widgets, self.next_widget_hits) = widgets::take_registries(&ctx);
+            self.text_focus = ctx.egui_wants_keyboard_input();
+            self.end_frame(&ctx, t0);
+            return;
+        }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);
@@ -417,19 +462,22 @@ impl LightcraftApp {
         if notice_blocks {
             panels::notices::hide_background_pointer(&ctx);
         }
+        panels::sync_status::show(self, &ctx);
         panels::dialogs::show(self, &ctx, notice_blocks);
         updates_ui::show(self, &ctx);
         panels::library_problem::show(self, &ctx, notice_blocks);
         export_task::poll(self, &ctx);
+        render_dng_task::poll(self, &ctx);
         slideshow_export::poll(self, &ctx);
         panels::activity::show(self, &ctx);
         export_task::poll_photos(self, &ctx);
-        pick::poll(self, &ctx);
         panels::grid::drag_feedback(self, &ctx);
         panels::left::album_drag_feedback(self, &ctx);
         panels::left::section_drag_feedback(self, &ctx);
         panels::keyword_list::drag_feedback(self, &ctx);
         panels::toast(self, &ctx);
+        // (an iPad in landscape: touch, and the desktop layout)
+        panels::mobile::edit_menu(self, &ctx);
         drop_overlay::show(self, &ctx);
         // AppKit moves the window on a drag anywhere in the title-bar band unless the window isn't
         // movable: it stops being movable while the pointer is on a bar control or a panel over it
