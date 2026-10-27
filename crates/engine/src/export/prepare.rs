@@ -60,8 +60,21 @@ struct RenderWork {
     opts: ExportOptions,
 }
 
+/// An export the sync server renders ([`crate::cloud_sync::render_on_server`]).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // (the web build can't make the call)
+struct ServerWork {
+    target: crate::cloud_sync::RenderTarget,
+    request: lightcraft_catalog::sync::proto::Render,
+    /// The size asked for (what the export reports).
+    size: (usize, usize),
+    /// How it waits when the server is busy.
+    wait: crate::cloud_sync::RenderWait,
+}
+
 enum Work {
     Render(Box<RenderWork>),
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // (the web build can't make the call)
+    Server(Box<ServerWork>),
     /// [`ExportFormat::Original`] (the file's bytes + an XMP sidecar) or [`ExportFormat::Dng`] (the
     /// raw data re-encoded as a lossless DNG with the edits in its XMP).
     File {
@@ -118,6 +131,41 @@ fn prepare_guarded(
     let (full_px, long) = ((p.width as usize).saturating_mul(p.height as usize), p.width.max(p.height) as usize);
     let (work, weight) = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
+        if o.on_server {
+            let Some(target) = session.sync_render_target(p) else {
+                return Err(format!("{}: the sync server has no original of this photo to render (sign in, and let it upload)", p.file_name));
+            };
+            let settings = serde_json::to_value(&*p.develop).map_err(|e| e.to_string())?;
+            let request =
+                lightcraft_catalog::sync::proto::Render { hash: target.hash.clone(), name: p.file_name.clone(), settings, export: o.to_json() };
+            // (here: the file it downloads)
+            let weight = w.saturating_mul(h).saturating_mul(4);
+            return Ok(PreparedExport {
+                photo: id,
+                file_name,
+                source_dir,
+                work: Work::Server(Box::new(ServerWork {
+                    target,
+                    request,
+                    size: (w, h),
+                    wait: crate::cloud_sync::RenderWait::new(session.activity.clone()),
+                })),
+                guard,
+                weight,
+            });
+        }
+        // a browser that doesn't hold the original renders from the photo's preview, up to the preview's size
+        if let (Some(store), lightcraft_catalog::Source::File { path }) = (&session.sync_store, &p.source)
+            && let Some(hash) = lightcraft_catalog::sync::hash_of_path(path)
+            && !store.originals.contains(hash)
+            && w.max(h) > crate::media::SourceLevel::Preview.max_edge()
+        {
+            return Err(format!(
+                "{}: this browser has only a preview of it. Choose Photo > Download Originals first, or export at {} px or smaller",
+                p.file_name,
+                crate::media::SourceLevel::Preview.max_edge()
+            ));
+        }
         let (nw, nh) = lightcraft_pipeline::native_output_size(p.width.max(1) as usize, p.height.max(1) as usize, &p.develop);
         let native_px = (nw.round().max(1.0) * nh.round().max(1.0)) as usize;
         let label = p.file_name.clone();
@@ -199,6 +247,13 @@ pub(super) fn render_weight(full_px: usize, long: usize, level: crate::media::So
 }
 
 impl PreparedExport {
+    /// Let `cancel` (the export's flag) end a wait for a busy sync server.
+    pub fn set_cancel(&mut self, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        if let Work::Server(w) = &mut self.work {
+            w.wait.cancel = cancel;
+        }
+    }
+
     pub fn run(self) -> Result<Exported, String> {
         let file_name = self.file_name;
         match self.work {
@@ -217,6 +272,13 @@ impl PreparedExport {
                 };
                 Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new(), gpu_fallback })
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            Work::Server(w) => {
+                let bytes = crate::cloud_sync::render_on_server(&w.target, &w.request, &w.wait)?;
+                Ok(Exported { file_name, bytes, width: w.size.0, height: w.size.1, sidecars: Vec::new(), gpu_fallback: None })
+            }
+            #[cfg(target_arch = "wasm32")]
+            Work::Server(_) => Err("rendering on the server needs the desktop app".to_string()),
             Work::File { path, read, packet, dng, quality, lossy_edge, label, size, remove_location } => {
                 let bytes = match &read {
                     Some(r) => r(&path)?,

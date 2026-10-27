@@ -25,6 +25,7 @@ impl Default for ExportOptions {
             watermark: None,
             color_space: OutputSpace::Srgb,
             bit_depth: None,
+            on_server: false,
             hdr: false,
             jxl_lossless: false,
             jxl_effort: JxlEffort::Normal,
@@ -69,6 +70,7 @@ pub const OPTION_PARAMS: &[&str] = &[
     "watermark",
     "colorSpace",
     "bitDepth",
+    "onServer",
     "hdr",
     "jxlLossless",
     "jxlEffort",
@@ -281,7 +283,7 @@ impl ExportOptions {
                     }
                     serde_json::from_value::<Resize>(v.clone()).map_err(|e| bad(format!("`{k}`: {e}")))?;
                 }
-                "dontEnlarge" | "removeLocation" | "background" | "hdr" | "jxlLossless" | "jxlProgressive" => {
+                "dontEnlarge" | "removeLocation" | "background" | "hdr" | "jxlLossless" | "jxlProgressive" | "onServer" => {
                     boolean(k, v)?;
                 }
                 "addToPhotos" => {
@@ -448,6 +450,7 @@ impl ExportOptions {
             .filter(|w: &Watermark| !w.text.trim().is_empty() || !w.image.trim().is_empty()),
             color_space: s("colorSpace").and_then(OutputSpace::parse).unwrap_or(d.color_space),
             bit_depth: u("bitDepth").filter(|b| matches!(b, 8 | 10 | 16 | 32)).map(|b| b as u8),
+            on_server: p.get("onServer").and_then(Value::as_bool).unwrap_or(d.on_server),
             hdr: p.get("hdr").and_then(Value::as_bool).unwrap_or(d.hdr),
             jxl_lossless: p.get("jxlLossless").and_then(Value::as_bool).unwrap_or(d.jxl_lossless),
             jxl_effort: s("jxlEffort").and_then(JxlEffort::parse).unwrap_or(d.jxl_effort),

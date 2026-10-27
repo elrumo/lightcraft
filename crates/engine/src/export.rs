@@ -93,6 +93,9 @@ pub struct ExportOptions {
     /// Bits per channel: 8, 16 (PNG, TIFF, JPEG XL), 32 (TIFF: float, linear) or 10 (AVIF); `None` = the
     /// format's default (TIFF 16, everything else 8). See [`ExportOptions::effective_depth`].
     pub bit_depth: Option<u8>,
+    /// Have the sync server render this photo ([`crate::cloud_sync::render_on_server`]) instead of this device: for
+    /// a photo whose original is on the server and not here, or a render this device is too small for.
+    pub on_server: bool,
     /// HDR output for photos edited in HDR: JPEG as an ISO 21496-1 gain map JPEG (the SDR
     /// rendition plus a gain map, so the file looks right everywhere; `limit_kb` includes both
     /// images and their metadata), AVIF as 10-bit Rec. 2020 PQ, PNG as 16-bit Rec. 2020 PQ (`cICP`; viewers

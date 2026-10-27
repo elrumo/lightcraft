@@ -670,6 +670,7 @@ fn params_round_trip() {
         watermark: Some(Watermark { text: "© LC".into(), ..Default::default() }),
         color_space: OutputSpace::ProPhoto,
         bit_depth: Some(16),
+        on_server: true,
         ..Default::default()
     };
     assert_eq!(ExportOptions::from_json(&o.to_json()), o);
