@@ -504,7 +504,12 @@ pub fn mark_look_checked(dir: &Path) -> Result<(), String> {
 /// Load the proxy at `path`.
 pub fn load(path: &Path) -> Result<crate::media::DecodedSource, String> {
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    decode(&b).map(|(image, camera_tone, info)| crate::media::DecodedSource {
+    load_bytes(&b)
+}
+
+/// The proxy whose bytes are `b` (a host that keeps synced previews in memory, the browser, has no file to read).
+pub fn load_bytes(b: &[u8]) -> Result<crate::media::DecodedSource, String> {
+    decode(b).map(|(image, camera_tone, info)| crate::media::DecodedSource {
         image: Arc::new(image),
         info,
         camera_tone,

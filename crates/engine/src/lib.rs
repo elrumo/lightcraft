@@ -20,6 +20,7 @@ pub mod apple_photos;
 pub mod availability;
 pub(crate) mod camera_preview;
 pub mod camera_profiles;
+pub mod cloud_sync;
 pub mod cmd;
 pub mod config;
 pub mod contact_sheet;
@@ -80,6 +81,7 @@ pub mod slideshow_export;
 pub mod smart;
 pub mod sync;
 pub mod text;
+pub mod usage;
 mod view;
 pub mod walk;
 
@@ -420,6 +422,14 @@ pub struct Session {
     /// Untouched Local records of folders not browsed for this many days are forgotten when the
     /// library opens (0 = never; persisted in prefs.json). See `cmd/browse.rs`.
     pub forget_local_days: u32,
+    /// Sharing this library with other devices through a server (see [`cloud_sync`]).
+    sync: Option<cloud_sync::SyncState>,
+    /// Set by a host that keeps synced photo files in its own storage instead of a previews folder
+    /// (the browser).
+    pub sync_store: Option<cloud_sync::BrowserStore>,
+    /// Storage keys of the host's synced files that signing out left to delete (the browser's previews), until the host
+    /// takes them ([`Session::take_sync_purge`]).
+    sync_purge: Vec<String>,
     /// Adds exported files to Apple Photos ([`apple_photos`]): `/usr/bin/osascript`, installed by
     /// [`Session::with_fs`] on macOS; `None` elsewhere and in sessions without a file system. Tests
     /// put a fake here.
@@ -542,6 +552,9 @@ impl Session {
             slide_backdrop: Default::default(),
             smart_previews_dir: None,
             forget_local_days: lightcraft_catalog::DEFAULT_FORGET_DAYS,
+            sync: None,
+            sync_store: None,
+            sync_purge: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             apple_photos: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -583,14 +596,16 @@ impl Session {
 
     fn run_command(&mut self, id: &str, journal: Option<&Value>, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
         let log_start = self.pending_log.len();
-        let was_active = self.active();
+        let (was_active, was_library) = (self.active(), self.library_generation);
         self.depth += 1;
         // last-resort guard: a panic in a command is that command's error, not a crash
         let r = guard::catch(&format!("`{id}`"), || f(self)).unwrap_or_else(|e| Err(EngineError::Other(e)));
         self.depth -= 1;
         if self.depth == 0 && was_active.is_some() && self.active() != was_active {
-            self.previous_active = was_active;
-            if let Some(left) = was_active {
+            // (a photo that is gone, or a library emptied for another account, has nothing to paste settings from: the
+            // number could name another photo now)
+            self.previous_active = was_active.filter(|id| self.library_generation == was_library && self.catalog.photo(*id).is_some());
+            if let Some(left) = self.previous_active {
                 self.auto_version(left);
             }
         }
@@ -636,6 +651,7 @@ impl Session {
     pub fn commit(&mut self, label: &str, op: Op) -> Result<()> {
         let fwd = op.clone();
         let inv = self.apply_catalog(op)?;
+        self.sync_record(&fwd, &inv);
         self.pending_log.push(fwd);
         self.undo.push(UndoEntry { label: label.to_string(), op: inv, folder: None, retry_inverse: Vec::new(), retry_sidecars: Vec::new() });
         self.commits = self.commits.wrapping_add(1);
@@ -707,7 +723,8 @@ impl Session {
     /// an undo step, and it leaves the redo stack alone.
     pub(crate) fn apply_system(&mut self, op: Op) -> Result<()> {
         let fwd = op.clone();
-        self.catalog.apply(op)?;
+        let inv = self.catalog.apply(op)?;
+        self.sync_record(&fwd, &inv);
         self.pending_log.push(fwd);
         Ok(())
     }
@@ -731,7 +748,8 @@ impl Session {
             versions.remove(i);
         }
         let op = Op::SetVersions { id, versions };
-        if self.catalog.apply(op.clone()).is_ok() {
+        if let Ok(inv) = self.catalog.apply(op.clone()) {
+            self.sync_record(&op, &inv);
             self.pending_log.push(op);
         }
     }
@@ -784,6 +802,7 @@ impl Session {
             }
         };
         self.show_undone(&e.op);
+        self.sync_record(&e.op, &redo);
         self.pending_log.push(e.op);
         self.redo.push(UndoEntry {
             label: e.label.clone(),
@@ -809,6 +828,7 @@ impl Session {
             }
         };
         self.show_undone(&e.op);
+        self.sync_record(&e.op, &undo);
         self.pending_log.push(e.op);
         self.undo.push(UndoEntry {
             label: e.label.clone(),

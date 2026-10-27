@@ -65,10 +65,16 @@ impl Default for MediaCache {
             file_probe: None,
             preview_loader: None,
             file_bytes: None,
+            proxy_bytes: None,
             smart_dir: None,
             availability: Default::default(),
             scenes: Vec::new(),
             rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
+            thumb_asks: Default::default(),
+            thumb_tick: 0,
+            arrived: Vec::new(),
+            arrived_all: false,
+            thumb_seq: 0,
             denoise: DenoiseIndex::default(),
         }
     }
@@ -104,6 +110,24 @@ impl MediaCache {
         self.thumbs = Lru::new(THUMB_SOURCE_BYTES.min(self.budget));
         self.previews.clear();
         self.full.clear();
+    }
+
+    /// A preview of `id` came down from the sync server: a host that remembers a render that failed for want of
+    /// it must try again ([`MediaCache::take_arrived`]). Nothing about the photo or the library changed, and
+    /// bumping the library's revision for each of hundreds of previews would redo every list of it.
+    pub fn note_arrived(&mut self, id: PhotoId) {
+        if self.arrived.len() < ARRIVED_MAX {
+            self.arrived.push(id);
+        } else {
+            self.arrived_all = true;
+        }
+    }
+
+    /// The photos whose preview came down since the last call; `None`: more than are kept, so all of them may have.
+    pub fn take_arrived(&mut self) -> Option<Vec<PhotoId>> {
+        let all = std::mem::take(&mut self.arrived_all);
+        let ids = std::mem::take(&mut self.arrived);
+        (!all).then_some(ids)
     }
 
     /// How many full-resolution originals to keep at once (at least one). Compare and Reference
@@ -327,6 +351,11 @@ impl MediaCache {
         // be offline is tried first and its smart preview is the render worker's fallback.
         #[cfg(not(target_arch = "wasm32"))]
         if let (Source::File { path }, Some(dir)) = (&p.source, &self.smart_dir) {
+            // synced, with the original on the server only: what was downloaded of it (sync keeps its previews unsharded)
+            if path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) {
+                let smart = dir.join(crate::smart::file_name(p));
+                return SourceRef::Synced { smart, mini: dir.join(crate::cloud_sync::mini_file_name(p)), max_edge };
+            }
             let sharded = crate::smart::sharded_file_path(dir, p);
             let legacy = dir.join(crate::smart::file_name(p));
             let sp = if self.availability.exists(&sharded.to_string_lossy()) == Some(true) { sharded } else { legacy };
@@ -340,6 +369,15 @@ impl MediaCache {
                 *fallback = Some(sp);
             }
             return r;
+        }
+        // the original isn't in this browser but its preview is (up to the preview's own size)
+        if level != SourceLevel::Full
+            && let Source::File { path } = &p.source
+            && path.starts_with(lightcraft_catalog::sync::PATH_PREFIX)
+            && let (Some(hook), Some(key)) = (&self.proxy_bytes, crate::cloud_sync::blob_key(p))
+            && let Some(bytes) = hook(&key, max_edge)
+        {
+            return SourceRef::Bytes { bytes, max_edge };
         }
         self.origin_ref(&p.source, max_edge)
     }

@@ -5,6 +5,8 @@ use crate::{Selection, Session, command_specs};
 mod album_order;
 mod album_remove;
 mod albums_local;
+#[cfg(not(target_arch = "wasm32"))]
+mod cloud_sync;
 mod color;
 mod constrain_crop;
 mod crop_angle;

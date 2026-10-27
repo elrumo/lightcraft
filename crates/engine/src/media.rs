@@ -41,8 +41,22 @@ use settings_hash::SETTINGS_HASH_ENTRIES;
 use settings_hash::SettingsHashes;
 pub use source::{
     DISK_CACHE_BYTES, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe, MakeProduct, PairLoader, PreviewLoader, ProbeInfo,
-    RENDER_CACHE_VERSION, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES, Twin, face_edge, thumb_bucket,
+    ProxyBytes, RENDER_CACHE_VERSION, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES, Twin, face_edge, thumb_bucket,
 };
+
+/// Photos whose arrived previews are remembered at most, until a host takes them ([`MediaCache::note_arrived`]).
+const ARRIVED_MAX: usize = 4096;
+
+/// A grid cell waiting for its mini preview from the sync server ([`MediaCache::thumb_asks`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThumbAsk {
+    /// [`MediaCache::thumb_tick`] when the cell was last asked for.
+    pub tick: u64,
+    /// Which came first within a tick: the cells are asked for in the order they are drawn.
+    pub seq: u64,
+    /// The cell is on screen, not only in the grid's reach above and below it: it is served first.
+    pub shown: bool,
+}
 
 pub struct MediaCache {
     settings_hashes: SettingsHashes,
@@ -69,6 +83,9 @@ pub struct MediaCache {
     pub preview_loader: Option<PreviewLoader>,
     /// Reads a photo file's bytes (Photo Merge); `None` = the local file system.
     pub file_bytes: Option<crate::merge::ByteReader>,
+    /// A synced photo's preview files kept in memory, for when the original isn't here (the browser;
+    /// a computer reads its smart previews folder): [`SourceRef::Bytes`].
+    pub proxy_bytes: Option<ProxyBytes>,
     /// The library's smart previews folder (originals offline: render from the proxy).
     pub smart_dir: Option<std::path::PathBuf>,
     /// Whether originals (and smart previews) are on disk: cached and checked off the UI thread
@@ -77,6 +94,21 @@ pub struct MediaCache {
     scenes: Vec<lightcraft_scenes::Scene>,
     /// Rendered thumbnails (memory, plus disk once a library is attached).
     pub rendered: Arc<PreviewCache>,
+    /// Grid and filmstrip thumbnails asked for that wait on their mini preview from the sync
+    /// server, by photo: when (`thumb_tick`) and in which order they were last asked for.
+    /// [`crate::cloud_sync`] downloads the cells on screen first, the most recent ask first, and only
+    /// the cells that are asked for again: a host asks every frame for each cell it still shows that has
+    /// no picture ([`crate::Session::note_thumb_ask`]), because a render that failed for want of the
+    /// preview is remembered and so isn't asked for again by itself.
+    pub thumb_asks: HashMap<PhotoId, ThumbAsk>,
+    /// Bumped once per sync step (a frame, in the app).
+    pub thumb_tick: u64,
+    thumb_seq: u64,
+    /// Photos whose preview came down from the sync server since a host last looked
+    /// ([`MediaCache::take_arrived`]; `arrived_all`: too many to list). A render that failed for want of it
+    /// is asked for again, though no photo or library changed.
+    arrived: Vec<PhotoId>,
+    arrived_all: bool,
     /// Which photos have a cached denoised picture, and how to read it.
     pub denoise: DenoiseIndex,
 }

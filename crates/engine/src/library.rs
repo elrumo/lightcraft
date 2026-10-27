@@ -91,6 +91,10 @@ pub struct Library {
     retry_at: Option<web_time::Instant>,
     /// What forgetting untouched Local records did when the library opened.
     pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
+    /// Bumped whenever presets.json is written (the sync compares the presets then).
+    presets_gen: u64,
+    /// The same for prefs.json (the sync compares the shared documents then).
+    prefs_gen: u64,
     /// What presets.json holds (see [`PresetsSaved`]).
     presets_saved: PresetsSaved,
     view_written: Vec<u8>,
@@ -194,9 +198,20 @@ impl Library {
     pub fn journal(&self) -> &Journal {
         &self.journal
     }
-    #[cfg(test)]
     pub(crate) fn journal_mut(&mut self) -> &mut Journal {
         &mut self.journal
+    }
+    /// How many times presets.json was written this session.
+    pub(crate) fn presets_gen(&self) -> u64 {
+        self.presets_gen
+    }
+    /// How many times prefs.json was written this session.
+    pub(crate) fn prefs_gen(&self) -> u64 {
+        self.prefs_gen
+    }
+    /// presets.json, view.json, prefs.json and the sync files.
+    pub(crate) fn files_mut(&mut self) -> &mut dyn Store {
+        self.files.as_mut()
     }
     pub fn thumbs_dir(&self) -> PathBuf {
         self.dir.join("thumbs")
@@ -456,6 +471,25 @@ impl Session {
         }
     }
 
+    /// What the library being left named (photo, album and mask ids, the photo worked on last, what was made from its
+    /// photos: denoise work, faces) means nothing in another library, or in this one emptied for another account:
+    /// forget it. Photo ids are only unique within a library. Every open does this, and so does signing out of a synced
+    /// library.
+    pub(crate) fn forget_library_state(&mut self) {
+        // Photo ids belong to one library; denoise work must not carry into the next.
+        self.denoise.library_changed();
+        self.media.denoise.clear();
+        // what was learned about the old library's faces is saved, and none of it carries over (photo ids are per library)
+        #[cfg(not(target_arch = "wasm32"))]
+        self.faces.library_changed();
+        self.target_album = None;
+        self.active_mask = None;
+        self.active_spot = None;
+        self.previous_active = None;
+        self.before.clear();
+        self.signatures.clear();
+    }
+
     /// Open `stores`; the new library takes `lock` once nothing can fail any more.
     fn open_stores(&mut self, stores: LibraryStores, seed_demo: bool, lock: &mut Option<LibraryLock>) -> Result<()> {
         let LibraryStores { dir, catalog, mut files, on_disk } = stores;
@@ -466,12 +500,7 @@ impl Session {
         {
             log::error!("library: {e}");
         }
-        // Photo ids belong to one library; denoise work must not carry into the next.
-        self.denoise.library_changed();
-        self.media.denoise.clear();
-        // what was learned about the old library's faces is saved, and none of it carries over (photo ids are per library)
-        #[cfg(not(target_arch = "wasm32"))]
-        self.faces.library_changed();
+        self.forget_library_state();
         let (mut journal, mut catalog, report) = Journal::open(catalog)?;
         // A loaded catalog counts revisions from 0, like every other one. Caches (sidebar counts,
         // keyword tree, the grid's list…) are keyed on the revision, so give each library loaded
@@ -548,6 +577,11 @@ impl Session {
             self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
             self.profile_recent = f.profile_recent.into_iter().filter(known).take(crate::presets::RECENT_PROFILES).collect();
         }
+        // sync: its state, and the id space this device allocates new ids in
+        self.sync = crate::cloud_sync::SyncState::load(files.as_mut());
+        if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
+            self.catalog.set_id_space(st.config.space);
+        }
         // view state
         if let Some(v) = settings.read::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
@@ -595,6 +629,8 @@ impl Session {
             presets_error: None,
             retry_at: None,
             forgot_local: None,
+            presets_gen: 0,
+            prefs_gen: 0,
             presets_saved,
             view_written,
             settings_warnings: unlocked_warning(lock.as_ref()).into_iter().chain(settings.warnings).collect(),
@@ -602,6 +638,13 @@ impl Session {
             blocked: settings.blocked,
             lock: lock.take(),
         });
+        // signing out was cut short (the app quit or crashed while the library was being emptied): finish it, so the next
+        // account never meets what is left of this one's
+        if self.sync.as_ref().is_some_and(|st| st.config.wiping)
+            && let Err(e) = self.reset_synced_library()
+        {
+            log::error!("library: finishing signing out: {e}");
+        }
         // forget untouched Local records of folders not browsed for a while (journaled at once)
         if self.forget_local_days > 0 {
             let plan = self.forget_local(false, None);
@@ -629,6 +672,17 @@ impl Session {
     pub fn persist(&mut self) -> Result<()> {
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         if !self.pending_log.is_empty() {
+            // the sync outbox first: a change is never logged without being queued for the server
+            if let Some(st) = self.sync.as_mut()
+                && let Err(e) = st.save_outbox(lib.files.as_mut())
+            {
+                let reason = format!("{}: {e}", crate::cloud_sync::OUTBOX);
+                log::error!("library: {} change(s) not written to disk: {reason}", self.pending_log.len());
+                lib.last_error = Some(reason.clone());
+                lib.unsaved_error = Some(reason.clone());
+                lib.retry_at = Some(web_time::Instant::now() + RETRY_BACKOFF);
+                return Err(EngineError::NotSaved(reason));
+            }
             if let Err(e) = lib.journal.append(&self.pending_log) {
                 // the ops stay queued (and applied in memory): the next persist retries them
                 let reason = e.to_string();
@@ -650,12 +704,31 @@ impl Session {
         // The snapshot is written by a worker thread (natively); appends go on meanwhile.
         // A failed compaction loses nothing (the log is kept whole and compacted later): it is
         // reported (`library.info` → `lastError`), not returned.
+        // (nor while the server's library fills this one in: once at the end, not a growing catalog every 2,000 photos)
         if lib.journal.wants_snapshot()
             && self.interaction.is_none()
+            && !self.sync.as_ref().is_some_and(|st| st.config.filling.is_some())
             && let Err(e) = lib.journal.snapshot_in_background(&self.catalog)
         {
             log::error!("library: compaction: {e}");
             lib.last_error = Some(format!("compaction: {e}"));
+        }
+        // the sync state after the log: its cursor never runs ahead of what the log holds
+        if let Some(st) = self.sync.as_mut() {
+            if let Err(e) = st.save_outbox(lib.files.as_mut()) {
+                log::error!("library: {}: {e}", crate::cloud_sync::OUTBOX);
+            }
+            if let Err(e) = st.save_presets_base(lib.files.as_mut()) {
+                log::error!("library: {}: {e}", crate::cloud_sync::PRESETS);
+            }
+            if let Err(e) = st.save_docs_base(lib.files.as_mut()) {
+                log::error!("library: {}: {e}", crate::cloud_sync::DOCS);
+            }
+            if self.pending_log.is_empty()
+                && let Err(e) = st.save_config(lib.files.as_mut())
+            {
+                log::error!("library: {}: {e}", crate::cloud_sync::CONFIG);
+            }
         }
         let due = self.library.as_ref().is_some_and(|l| l.presets_saved.differs(self) && !l.blocked.contains(&"presets.json"));
         if !due {
@@ -679,6 +752,7 @@ impl Session {
                 log::info!("library: presets written to disk");
             }
             lib.presets_saved = state;
+            lib.presets_gen += 1;
         }
         Ok(())
     }
@@ -806,7 +880,11 @@ impl Session {
                 "prefs: prefs.json couldn't be read when the library opened, so it isn't overwritten; reopen the library to save preferences".into(),
             ));
         }
-        lib.files.write_atomic("prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
+        let written = lib.files.write_atomic("prefs.json", &v);
+        if written.is_ok() {
+            lib.prefs_gen += 1;
+        }
+        written.map_err(|e| EngineError::Other(format!("prefs: {e}")))
     }
 
     /// Warnings about the open library not handed out yet: its settings files, and a lock that

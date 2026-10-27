@@ -12,13 +12,44 @@ impl crate::Session {
     /// A grid/filmstrip thumbnail job: the long edge is rounded up to one of [`THUMB_SIZES`]
     /// (≥ `long_edge`) and the result comes from / goes to the thumbnail cache (memory + disk).
     pub fn thumb_job(&mut self, id: PhotoId, long_edge: usize) -> Option<RenderJob> {
+        self.thumb_job_for(id, long_edge, true)
+    }
+
+    /// [`Session::thumb_job`] for a cell that is `shown` on screen, or only in the grid's reach (its
+    /// preview comes after those on screen).
+    pub fn thumb_job_for(&mut self, id: PhotoId, long_edge: usize, shown: bool) -> Option<RenderJob> {
         let b = thumb_bucket(long_edge);
+        self.note_thumb_ask(id, shown);
         let mut job = self.build_job(id, b, b, false, true, Some(b))?;
         // (a thumbnail may develop a smaller copy of the raw image that the file keeps)
         if let SourceRef::File { reduced, .. } = &mut job.source {
             reduced.clone_from(&self.media.reduced_loader);
         }
         Some(job)
+    }
+
+    /// A synced photo without any preview here was asked for (see [`MediaCache::thumb_asks`]). A host
+    /// calls this every frame for each cell it shows that has no picture yet — also when it doesn't build
+    /// the cell's render job again, as it doesn't while a render that failed for want of the preview stands
+    /// — so the ask lasts exactly as long as the cell is drawn. A photo that has a preview here, or isn't
+    /// a synced one, is no ask, and costs a lookup.
+    /// (Not while syncing is paused or signed out: the asks would pile up, all as fresh as the last step.)
+    pub fn note_thumb_ask(&mut self, id: PhotoId, shown: bool) {
+        if self.sync_state().is_none_or(|st| st.config.paused || !st.has_token()) {
+            return;
+        }
+        // (the cell asked a moment ago: no need to look at its files again)
+        if let Some(ask) = self.media.thumb_asks.get_mut(&id) {
+            self.media.thumb_seq = self.media.thumb_seq.wrapping_add(1);
+            *ask = ThumbAsk { tick: self.media.thumb_tick, seq: self.media.thumb_seq, shown };
+            return;
+        }
+        if self.catalog.photo(id).and_then(|p| self.synced_tier(p)) != Some(0) {
+            return;
+        }
+        let m = &mut self.media;
+        m.thumb_seq = m.thumb_seq.wrapping_add(1);
+        m.thumb_asks.insert(id, ThumbAsk { tick: m.thumb_tick, seq: m.thumb_seq, shown });
     }
 
     fn build_job(
@@ -44,7 +75,9 @@ impl crate::Session {
         // …and so is the file's content: a file changed on disk (Reload) renders afresh
         let content_key = content_key(&p);
         let source_key = Hasher128::new().str(&content_key).finish();
-        let content = source_key.0 as u64;
+        // …and, for a synced photo whose original isn't here, which of its previews it has
+        let tier = self.synced_tier(&p).unwrap_or(0);
+        let content = (source_key.0 as u64) ^ u64::from(tier).wrapping_mul(0xd6e8_feb8_6659_fd93);
         // Temporary "before" settings must not replace the photo's cached develop hash.
         let settings_hash = if before { settings.hash64() } else { self.media.settings_hashes.get(id, &settings) };
         let salt = self.media.denoise_salt(id, &settings);
@@ -151,6 +184,8 @@ impl crate::Session {
     /// library's thumbnail cache on disk) like [`Self::variant_job`], and `key` likewise follows
     /// the content: a later launch shows the tile without reading the original.
     pub fn face_job(&mut self, id: PhotoId, face: lightcraft_geom::Rect, edge: usize) -> Option<RenderJob> {
+        // (a synced photo's tile is cut from its preview: shown, so download it like a grid cell's)
+        self.note_thumb_ask(id, true);
         let p = self.catalog.photo(id)?.clone();
         // `face` is on the upright (EXIF-oriented) photo; the crop below is in the frame after the
         // user's Rotate Left/Right, so carry the box (and the photo's size) over to it.
@@ -298,6 +333,11 @@ impl crate::Session {
 
     /// The embedded preview of an unedited raw (path, loader), when the app installed a loader.
     fn embedded_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
+        // a synced photo's `web/<hash>/…` is no file here: its picture is the server's mini preview, which the grid
+        // must keep asking for (an embedded preview taken as final, and failing, left its cell empty until an edit)
+        if crate::cloud_sync::is_remote(p) {
+            return None;
+        }
         match (&p.source, &self.media.preview_loader) {
             (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && crate::import::has_import_look(p) => Some((path.clone(), l.clone())),
             _ => None,
@@ -323,11 +363,12 @@ impl crate::Session {
 
     /// The camera's embedded preview of a raw file, for the face scan. Faces are read from the unedited picture, so the
     /// photo's edits do not matter, and the camera's own JPEG (oriented, display-ready) costs a fraction of decoding the
-    /// raw. `None` for anything else, and where the host installed no loader.
+    /// raw. `None` for anything else, for a synced photo whose original is on the server only (the scan renders its
+    /// downloaded preview), and where the host installed no loader.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn scan_preview_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
         match (&p.source, &self.media.preview_loader) {
-            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw => Some((path.clone(), l.clone())),
+            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && !crate::cloud_sync::is_remote(p) => Some((path.clone(), l.clone())),
             _ => None,
         }
     }

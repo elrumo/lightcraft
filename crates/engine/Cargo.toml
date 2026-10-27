@@ -43,9 +43,13 @@ harfrust = { version = "0.13", default-features = false, features = ["std"] }
 unicode-segmentation = "1.13"
 lightcraft-segment = { workspace = true, optional = true }
 
-# model downloads run natively only (the web build fetches no models)
+# model downloads and the sync client run natively only (the web build fetches no models, and
+# syncs with the browser's own `fetch`)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 lightcraft-fetch = { workspace = true }
+# the sync client's HTTP; `ureq` is told to use no TLS provider, this is the provider (pure Rust)
+ureq = { workspace = true }
+rustls-rustcrypto = "0.0.2-alpha"
 # capture-time parsing for face recognition (native only)
 chrono = { workspace = true }
 

@@ -7,6 +7,7 @@
 mod activity;
 mod before;
 pub(crate) mod browse;
+mod cloud_sync;
 mod color;
 pub(crate) mod convert;
 mod cull;
@@ -169,6 +170,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(missing::specs());
         v.extend(recheck::specs());
         v.extend(sync::specs());
+        v.extend(cloud_sync::specs());
         v.extend(metadata::specs());
         v.extend(geocode::specs());
         v.extend(filters::specs());

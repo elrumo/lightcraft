@@ -73,6 +73,12 @@ pub(super) fn source_edge_needed(p: &Photo, settings: &DevelopSettings, apply_cr
 /// Decodes a file into a linear Rec.2020 image no larger than `max_edge` (set by the app).
 pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), String> + Send + Sync>;
 
+/// A synced photo's preview files as a host keeps them in memory (the browser), for a photo whose
+/// original that host doesn't have: the bytes of the photo's smart preview, or its mini preview when the
+/// long edge wanted is small, by the photo's content hash and the long edge wanted. `None`: the
+/// original is here (or may be), or the preview isn't (yet).
+pub type ProxyBytes = Arc<dyn Fn(&str, usize) -> Option<Arc<[u8]>> + Send + Sync>;
+
 /// [`FileLoader`] for a thumbnail: a raw file that keeps smaller copies of its raw image (Lightroom's merged DNGs)
 /// develops the smallest that covers `max_edge` (set by the app); the flag says it did. Never used for an export,
 /// which must render the full image.
@@ -217,6 +223,19 @@ pub enum SourceRef {
     Smart {
         path: std::path::PathBuf,
     },
+    /// A synced photo whose original isn't on this device ([`crate::cloud_sync`]): its smart preview,
+    /// else its mini preview (the other way round for thumbnails), whichever has been downloaded.
+    Synced {
+        smart: std::path::PathBuf,
+        mini: std::path::PathBuf,
+        max_edge: usize,
+    },
+    /// A synced photo whose original this device (a browser) doesn't have: its smart or mini
+    /// preview, as the bytes the host holds ([`super::MediaCache::proxy_bytes`]).
+    Bytes {
+        bytes: Arc<[u8]>,
+        max_edge: usize,
+    },
 }
 
 impl SourceRef {
@@ -286,8 +305,29 @@ impl SourceRef {
             }
             #[cfg(not(target_arch = "wasm32"))]
             SourceRef::Smart { path } => return crate::smart::load(path),
+            #[cfg(not(target_arch = "wasm32"))]
+            SourceRef::Synced { smart, mini, max_edge } => {
+                let order = if *max_edge <= crate::cloud_sync::MINI_EDGE { [mini, smart] } else { [smart, mini] };
+                let Some(path) = order.into_iter().find(|p| crate::smart::is_valid(p)) else {
+                    return Err("this photo's preview is still downloading".into());
+                };
+                let mut s = crate::smart::load(path)?;
+                if s.image.width.max(s.image.height) > *max_edge {
+                    use lightcraft_raster::resample::{Filter, fit};
+                    s.image = Arc::new(fit(&s.image, *max_edge, *max_edge, Filter::Mitchell));
+                }
+                return Ok(s);
+            }
             #[cfg(target_arch = "wasm32")]
-            SourceRef::Smart { .. } => return Err("smart previews are not available here".into()),
+            SourceRef::Smart { .. } | SourceRef::Synced { .. } => return Err("smart previews are not available here".into()),
+            SourceRef::Bytes { bytes, max_edge } => {
+                use lightcraft_raster::resample::{Filter, fit};
+                let mut source = crate::smart::load_bytes(bytes)?;
+                if source.image.width.max(source.image.height) > *max_edge {
+                    source.image = Arc::new(fit(&source.image, *max_edge, *max_edge, Filter::Mitchell));
+                }
+                return Ok(source);
+            }
         };
         Ok(DecodedSource::new(image, None))
     }

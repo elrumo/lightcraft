@@ -3718,10 +3718,12 @@ dependencies = [
  "log",
  "miniz_oxide 0.9.1",
  "rayon",
+ "rustls-rustcrypto",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "unicode-segmentation",
+ "ureq",
  "web-time",
 ]
 
@@ -6849,6 +6851,7 @@ dependencies = [
  "rustls-platform-verifier",
  "ureq-proto",
  "utf8-zero",
+ "webpki-roots",
 ]
 
 [[package]]
