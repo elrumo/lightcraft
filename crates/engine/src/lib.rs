@@ -1721,6 +1721,8 @@ mod tests_organize;
 #[cfg(test)]
 mod tests_pack;
 #[cfg(test)]
+mod tests_panasonic;
+#[cfg(test)]
 mod tests_persist;
 #[cfg(test)]
 mod tests_photo_library;

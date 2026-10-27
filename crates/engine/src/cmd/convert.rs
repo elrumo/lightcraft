@@ -453,15 +453,18 @@ fn check_external(s: &mut Session, p: &Value) -> Result<Value> {
 /// again (see [`lightcraft_catalog::Photo::preview_checked`]).
 pub(crate) fn content_op(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::Photo, info: crate::media::ProbeInfo) -> Option<Op> {
     let preview_checked = lightcraft_catalog::preview_stamp(&info.preview_only);
+    // a raw its camera crops, imported whole ([`crate::media::CameraCrop`]): the probe's size is the camera's frame, and
+    // the photo keeps the whole area it was catalogued with (its import crop is the frame)
+    let (width, height) = info.camera_crop.as_ref().filter(|c| c.whole == (ph.width, ph.height)).map_or((info.width, info.height), |c| c.whole);
     let same = info.content_hash == ph.content_hash
         && info.file_size == ph.file_size
-        && (info.width, info.height) == (ph.width, ph.height)
+        && (width, height) == (ph.width, ph.height)
         && info.preview_only == ph.preview_only
         && preview_checked == ph.preview_checked;
     (!same).then_some(Op::SetContent {
         id,
-        width: info.width,
-        height: info.height,
+        width,
+        height,
         file_size: info.file_size,
         content_hash: info.content_hash,
         preview_only: info.preview_only,
@@ -804,6 +807,30 @@ pub fn edit_specs() -> Vec<CommandSpec> {
 mod tests {
     use super::*;
     use lightcraft_catalog::{Photo, PhotoId, Source};
+
+    /// Reload (and relinking) reads a Panasonic raw's size as the camera's frame; a photo imported whole keeps the whole area
+    /// it was catalogued with, and one imported in the camera's frame keeps that.
+    #[test]
+    fn reload_keeps_the_size_of_a_raw_catalogued_whole() {
+        let crop = crate::media::CameraCrop { whole: (5776, 4336), framed: (5776, 3248), frame: [0.0, 0.125, 1.0, 0.875], lens: None };
+        let probed = crate::media::ProbeInfo { width: 5776, height: 3248, camera_crop: Some(crop), file_size: 1000, ..Default::default() };
+        let photo = |w, h| {
+            let mut ph = Photo::new(PhotoId(1), Source::File { path: "/x.rw2".into() }, "x.rw2", "RW2", w, h, "2026-10-06T00:00:00");
+            ph.file_size = 1000;
+            ph
+        };
+        assert!(content_op(PhotoId(1), &photo(5776, 4336), probed.clone()).is_none(), "whole: nothing changed");
+        assert!(content_op(PhotoId(1), &photo(5776, 3248), probed.clone()).is_none(), "the camera's frame: nothing changed");
+        // a file that changed is read again at the size the photo has
+        let grown = crate::media::ProbeInfo { file_size: 2000, ..probed.clone() };
+        let Some(Op::SetContent { width, height, .. }) = content_op(PhotoId(1), &photo(5776, 4336), grown.clone()) else { panic!("changed") };
+        assert_eq!((width, height), (5776, 4336));
+        let Some(Op::SetContent { width, height, .. }) = content_op(PhotoId(1), &photo(5776, 3248), grown) else { panic!("changed") };
+        assert_eq!((width, height), (5776, 3248));
+        // a file whose frame changed under the photo (another aspect-ratio setting, a different file relinked) is the new size
+        let Some(Op::SetContent { width, height, .. }) = content_op(PhotoId(1), &photo(4000, 3000), probed) else { panic!("changed") };
+        assert_eq!((width, height), (5776, 3248));
+    }
 
     /// Reload fills camera fields a photo lacks (a CR3 imported before CR3 metadata was read) and keeps
     /// everything already set.

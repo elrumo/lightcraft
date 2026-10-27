@@ -232,7 +232,9 @@ pub enum Task {
     Http { id: u64, method: &'static str, url: String, token: String, body: Body, save_to: Option<String> },
     /// Build a photo's smart and mini previews from its original (decodes it: run it off the UI
     /// thread; natively [`build_proxies`]).
-    Proxies { id: u64, original: String, smart: String, mini: String },
+    /// `catalogued`: the size the photo is catalogued with ([`crate::media::Catalogued`]), for the frame its raw is
+    /// developed in.
+    Proxies { id: u64, original: String, smart: String, mini: String, catalogued: crate::media::Catalogued },
 }
 
 impl Task {
@@ -1751,17 +1753,20 @@ impl Session {
             }
             let task = match &job {
                 Job::Head { key, .. } => st.http("HEAD", &format!("/api/blobs/original/{key}"), Body::Empty, None),
-                Job::Put { key, blob, path, offset, .. } => {
+                Job::Put { key, blob, path, offset, id } => {
                     // (the server builds the previews of an original it is sent this way; one that doesn't know the
-                    // parameter ignores it and the device builds them, see `job_done`)
-                    let ask = if *blob == Blob::Original && st.config.server_builds_previews() { "?previews=1" } else { "" };
+                    // parameter ignores it and the device builds them, see `job_done`. A Panasonic raw's are the device's
+                    // to build: the frame they show is the photo's, which the server, with the file alone, cannot know)
+                    let by_device = self.catalog.photo(*id).is_some_and(|p| p.format.eq_ignore_ascii_case("RW2"));
+                    let ask = if *blob == Blob::Original && st.config.server_builds_previews() && !by_device { "?previews=1" } else { "" };
                     let body = if *offset > 0 { Body::FileFrom(path.clone(), *offset) } else { Body::File(path.clone()) };
                     st.http("PUT", &format!("/api/blobs/{}/{key}{ask}", blob.name()), body, None)
                 }
                 Job::Get { key, blob, dest, .. } => st.http("GET", &format!("/api/blobs/{}/{key}", blob.name()), Body::Empty, Some(dest.clone())),
                 Job::Proxies { path, id, .. } => {
                     let Some((smart, mini)) = self.proxy_paths(*id) else { continue };
-                    Task::Proxies { id: NEXT_TASK.fetch_add(1, Ordering::Relaxed), original: path.clone(), smart, mini }
+                    let catalogued = self.catalog.photo(*id).map(|p| (p.width, p.height));
+                    Task::Proxies { id: NEXT_TASK.fetch_add(1, Ordering::Relaxed), original: path.clone(), smart, mini, catalogued }
                 }
             };
             st.jobs.insert(task.id(), job);
@@ -3063,16 +3068,17 @@ pub fn render_on_server(target: &RenderTarget, request: &proto::Render, wait: &R
     }
 }
 
-/// Build a photo's smart and mini previews from its original (decodes it).
+/// Build a photo's smart and mini previews from its original (decodes it). `catalogued`: the size the photo is catalogued
+/// with, which says the frame a raw its camera crops is developed in ([`crate::media::Catalogued`]).
 #[cfg(not(target_arch = "wasm32"))]
-pub fn build_proxies(original: &str, smart: &str, mini: &str) -> std::result::Result<(), String> {
+pub fn build_proxies(original: &str, smart: &str, mini: &str, catalogued: crate::media::Catalogued) -> std::result::Result<(), String> {
     // (a clip is never read whole: its poster frame is decoded from the file in place)
     let (s, m) = if crate::files::is_video_file(Path::new(original)) {
         crate::smart::encode_pair_video(original, MINI_EDGE)?
     } else {
         // (a TIFF of several GB, mostly layers, is read in part)
         let bytes = crate::files::read_file(Path::new(original))?;
-        crate::smart::encode_pair(&bytes, MINI_EDGE)?
+        crate::smart::encode_pair(&bytes, MINI_EDGE, catalogued)?
     };
     let write = |path: &str, b: Vec<u8>| lightcraft_catalog::safe_file::write_atomic(Path::new(path), &b).map_err(|e| format!("{path}: {e}"));
     if let Some(dir) = Path::new(smart).parent() {
@@ -3088,7 +3094,7 @@ pub fn build_proxies(original: &str, smart: &str, mini: &str) -> std::result::Re
 pub fn run(task: &Task) -> Done {
     let id = task.id();
     crate::guard::catch("sync", || match task {
-        Task::Proxies { id, original, smart, mini } => match build_proxies(original, smart, mini) {
+        Task::Proxies { id, original, smart, mini, catalogued } => match build_proxies(original, smart, mini, *catalogued) {
             Ok(()) => Done { id: *id, status: 200, body: String::new() },
             Err(e) => Done::failed(*id, e),
         },

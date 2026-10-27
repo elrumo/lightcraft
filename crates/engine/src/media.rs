@@ -129,8 +129,15 @@ fn source_edge_needed(p: &Photo, settings: &DevelopSettings, apply_crop: bool, o
     if needed.is_finite() { needed.min(usize::MAX as f64 / 2.0) as usize } else { out_long }
 }
 
-/// Decodes a file into a linear Rec.2020 image no larger than `max_edge` (set by the app).
-pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), String> + Send + Sync>;
+/// The size (width, height as shown, before any crop of the photo's own) a photo was catalogued with, for a loader that
+/// develops its file: a raw that its camera crops (a Panasonic's in-camera aspect ratio) is developed whole when the photo
+/// was catalogued whole and cut to the camera's frame when it was catalogued at that. `None`: the file is not a photo's
+/// (a candidate not in the catalog, a test), so it is developed as it always was, in the camera's frame.
+pub type Catalogued = Option<(u32, u32)>;
+
+/// Decodes a file into a linear Rec.2020 image no larger than `max_edge` (set by the app), in the frame of a photo
+/// catalogued as [`Catalogued`] says.
+pub type FileLoader = Arc<dyn Fn(&str, usize, Catalogued) -> Result<(Rgb32f, SourceInfo), String> + Send + Sync>;
 
 /// A synced photo's preview files as a host keeps them in memory (the browser), for a photo whose
 /// original that host doesn't have: the bytes of the photo's smart preview, or its mini preview when the
@@ -155,7 +162,7 @@ pub struct ThumbAsk {
 /// [`FileLoader`] for a thumbnail: a raw file that keeps smaller copies of its raw image (Lightroom's merged DNGs)
 /// develops the smallest that covers `max_edge` (set by the app); the flag says it did. Never used for an export,
 /// which must render the full image.
-pub type ReducedLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo, bool), String> + Send + Sync>;
+pub type ReducedLoader = Arc<dyn Fn(&str, usize, Catalogued) -> Result<(Rgb32f, SourceInfo, bool), String> + Send + Sync>;
 
 /// A raw file's embedded (camera-rendered) preview as display sRGB, oriented, no larger than
 /// `max_edge` (set by the app). `None`: no usable preview.
@@ -178,7 +185,7 @@ pub struct DenoiseSpec {
 
 /// Decodes a raw file once and develops it twice: as usual, and from the denoised picture in `spec` when that can be
 /// read (`None` when it cannot). Both are at most `max_edge` long and the same size.
-pub type PairLoader = Arc<dyn Fn(&str, usize, &DenoiseSpec) -> Result<(Rgb32f, Option<Rgb32f>, SourceInfo), String> + Send + Sync>;
+pub type PairLoader = Arc<dyn Fn(&str, usize, &DenoiseSpec, Catalogued) -> Result<(Rgb32f, Option<Rgb32f>, SourceInfo), String> + Send + Sync>;
 
 /// A photo's denoised picture next to its plain one, and the last mix of the two that was asked for.
 pub struct Twin {
@@ -389,6 +396,8 @@ pub enum SourceRef {
         denoise: Option<(DenoiseSpec, PairLoader)>,
         /// A thumbnail's loader, used instead of `loader` (see [`ReducedLoader`]); `None` for every other job.
         reduced: Option<ReducedLoader>,
+        /// The size the photo was catalogued with: which frame its raw is developed in ([`Catalogued`]).
+        catalogued: Catalogued,
     },
     /// A smart preview standing in for a missing original.
     Smart {
@@ -433,12 +442,11 @@ impl SourceRef {
                 });
             }
             SourceRef::Demo { scene, max_edge } => crate::demo::scene_pixels(scene, *max_edge)?,
-            SourceRef::File { path, max_edge, loader, fallback, denoise, reduced } => {
+            SourceRef::File { path, max_edge, loader, fallback, denoise, reduced, catalogued } => {
                 let plain = || match (reduced, loader) {
-                    (Some(l), _) => {
-                        l(path, *max_edge).map(|(image, info, reduced)| DecodedSource { reduced, ..DecodedSource::new(Arc::new(image), Some(info)) })
-                    }
-                    (None, Some(l)) => l(path, *max_edge).map(|(image, info)| DecodedSource::new(Arc::new(image), Some(info))),
+                    (Some(l), _) => l(path, *max_edge, *catalogued)
+                        .map(|(image, info, reduced)| DecodedSource { reduced, ..DecodedSource::new(Arc::new(image), Some(info)) }),
+                    (None, Some(l)) => l(path, *max_edge, *catalogued).map(|(image, info)| DecodedSource::new(Arc::new(image), Some(info))),
                     (None, None) => Err(format!("no decoder available for {path}")),
                 };
                 // the denoised picture comes with the plain one from a single decode; when it cannot be read the
@@ -452,7 +460,7 @@ impl SourceRef {
                             None => true,
                         };
                         if made {
-                            pair(path, *max_edge, spec).and_then(|(image, twin, info)| {
+                            pair(path, *max_edge, spec, *catalogued).and_then(|(image, twin, info)| {
                                 if spec.make.is_some() && twin.is_none() {
                                     return Err("the cached AI Denoise picture could not be read; clear the denoise cache and retry".into());
                                 }
@@ -936,7 +944,7 @@ impl MediaCache {
             if self.availability.is_offline(path) && self.availability.exists(&sp.to_string_lossy()) == Some(true) {
                 return SourceRef::Smart { path: sp };
             }
-            let mut r = self.origin_ref(&p.source, max_edge);
+            let mut r = self.origin_ref(&p.source, max_edge, Some((p.width, p.height)));
             if let SourceRef::File { fallback, .. } = &mut r {
                 *fallback = Some(sp);
             }
@@ -951,12 +959,13 @@ impl MediaCache {
         {
             return SourceRef::Bytes { bytes, max_edge };
         }
-        self.origin_ref(&p.source, max_edge)
+        self.origin_ref(&p.source, max_edge, Some((p.width, p.height)))
     }
 
     /// How to load `origin` at most `max_edge` pixels long, ignoring decoded sources in memory (a
-    /// render worker in another wasm instance builds its sources from this).
-    pub fn origin_ref(&mut self, origin: &Source, max_edge: usize) -> SourceRef {
+    /// render worker in another wasm instance builds its sources from this). `catalogued`: the size of the photo it is the
+    /// original of, which says the frame a raw is developed in (`None` for a file that is no photo's).
+    pub fn origin_ref(&mut self, origin: &Source, max_edge: usize, catalogued: Catalogued) -> SourceRef {
         match origin {
             Source::Demo { scene } => {
                 if self.scenes.is_empty() {
@@ -964,12 +973,26 @@ impl MediaCache {
                 }
                 match self.scenes.iter().find(|s| s.id == *scene) {
                     Some(s) => SourceRef::Demo { scene: Box::new(s.clone()), max_edge },
-                    None => SourceRef::File { path: format!("demo:{scene}"), max_edge, loader: None, fallback: None, denoise: None, reduced: None },
+                    None => SourceRef::File {
+                        path: format!("demo:{scene}"),
+                        max_edge,
+                        loader: None,
+                        fallback: None,
+                        denoise: None,
+                        reduced: None,
+                        catalogued,
+                    },
                 }
             }
-            Source::File { path } => {
-                SourceRef::File { path: path.clone(), max_edge, loader: self.file_loader.clone(), fallback: None, denoise: None, reduced: None }
-            }
+            Source::File { path } => SourceRef::File {
+                path: path.clone(),
+                max_edge,
+                loader: self.file_loader.clone(),
+                fallback: None,
+                denoise: None,
+                reduced: None,
+                catalogued,
+            },
         }
     }
 }
@@ -1897,7 +1920,12 @@ impl crate::Session {
     /// tile, `needed` the source's long edge the develop render would ask for.
     fn face_preview_cut(&self, p: &Photo, rect: lightcraft_geom::Rect, edge: usize, needed: usize) -> Option<crate::face_tiles::PreviewCut> {
         let (path, loader) = self.embedded_of(p)?;
-        if p.develop.orientation != lightcraft_geom::Orientation::Normal || self.media.availability.is_offline(&path) || p.width == 0 || p.height == 0
+        // (a photo with an import crop shows a part of its picture: the face rect is in the whole one)
+        if p.develop.orientation != lightcraft_geom::Orientation::Normal
+            || p.is_cropped()
+            || self.media.availability.is_offline(&path)
+            || p.width == 0
+            || p.height == 0
         {
             return None;
         }
@@ -1993,7 +2021,7 @@ impl crate::Session {
     }
 
     /// The embedded preview of an unedited raw (path, loader), when the app installed a loader. The loader's pictures are
-    /// cut to the photo's own frame ([`frame_to`]): a camera's JPEG can show more than the raw's default crop.
+    /// cut to the photo's own frame as shown ([`frame_to`]): a camera's JPEG can show more than the raw's default crop.
     fn embedded_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
         // a synced photo's `web/<hash>/…` is no file here: its picture is the server's mini preview, which the grid
         // must keep asking for (an embedded preview taken as final, and failing, left its cell empty until an edit)
@@ -2001,8 +2029,9 @@ impl crate::Session {
             return None;
         }
         match (&p.source, &self.media.preview_loader) {
-            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && crate::import::has_import_look(p) => {
-                Some((path.clone(), framed_loader(l, p.width, p.height)))
+            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && (crate::import::has_import_look(p) || at_camera_frame(p)) => {
+                let (width, height) = p.shown_size();
+                Some((path.clone(), framed_loader(l, width, height)))
             }
             _ => None,
         }
@@ -2323,6 +2352,28 @@ pub struct ProbeInfo {
     /// ([`lightcraft_raw::olympus_aspect_frame`]). Import puts it into the photo's import look
     /// ([`crate::import::apply_default_crop`]), so it is not an edit and the crop tool can widen it.
     pub default_crop: Option<[f64; 4]>,
+    /// What this raw's camera crops by itself, when it does ([`CameraCrop`]; a Panasonic's in-camera aspect ratio).
+    /// `width` × `height` above are the camera's frame, as every photo imported before has them; a photo given the whole
+    /// sensor's size and this frame as its import crop is what [`crate::import::commit_prepared`] makes of it.
+    pub camera_crop: Option<CameraCrop>,
+}
+
+/// A raw its camera crops by itself, and the frame it crops to. A Panasonic's embedded JPEG shows the whole area its
+/// sensor recorded whatever the aspect-ratio setting, and the decoder develops only the frame the setting cuts. A photo
+/// imported whole is catalogued with `whole` as its size and `frame` as its import crop, so the Crop tool can widen it to
+/// the whole sensor; one catalogued with `framed` (every photo imported before) is developed in the camera's frame as it
+/// always was ([`Catalogued`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CameraCrop {
+    /// The whole area's width and height, as shown (turned by the file's orientation).
+    pub whole: (u32, u32),
+    /// The camera's frame's width and height, as shown.
+    pub framed: (u32, u32),
+    /// The camera's frame in the whole area, `[x0, y0, x1, y1]` as fractions of it, as shown.
+    pub frame: [f64; 4],
+    /// The file's lens correction in the whole area's frame (the one the probe's own is in the camera's frame): what
+    /// a photo catalogued whole is given.
+    pub lens: Option<lightcraft_develop::EmbeddedLens>,
 }
 
 impl ProbeInfo {
@@ -2336,12 +2387,23 @@ impl ProbeInfo {
 pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;
 
 /// `loader` with the pictures it gives cut to the shape of a `width × height` frame ([`frame_to`]).
-fn framed_loader(loader: &PreviewLoader, width: u32, height: u32) -> PreviewLoader {
-    if width == 0 || height == 0 {
+fn framed_loader(loader: &PreviewLoader, width: f64, height: f64) -> PreviewLoader {
+    if !(width > 0.0 && height > 0.0) {
         return loader.clone();
     }
-    let (inner, aspect) = (loader.clone(), f64::from(width) / f64::from(height));
+    let (inner, aspect) = (loader.clone(), width / height);
     Arc::new(move |path: &str, edge: usize| inner(path, edge).map(|img| frame_to(img, aspect)))
+}
+
+/// A Panasonic raw imported whole whose only departure from the camera's defaults is the camera's own aspect-ratio frame,
+/// its import crop ([`CameraCrop`], [`crate::import::commit_prepared`]): still as imported, so its camera JPEG (the whole
+/// area) cut to that frame ([`frame_to`]) is a fair stand-in, as for a raw with no crop. Not another maker's: their
+/// frames are part of how their decoders and JPEGs work today.
+fn at_camera_frame(p: &Photo) -> bool {
+    let Some(look) = &p.import_look else { return false };
+    let mut defaults = p.camera_defaults();
+    defaults.crop.geometry.rect = look.crop.geometry.rect;
+    p.format.eq_ignore_ascii_case("RW2") && p.develop_is(defaults)
 }
 
 /// A camera's embedded JPEG cut to the frame of the photo it belongs to (`aspect`, width over height). Some cameras show
@@ -2428,6 +2490,63 @@ mod embedded_frame_tests {
         s.catalog.apply(Op::AddPhoto { photo: Box::new(whole) }).unwrap();
         assert_eq!(shape(s.quick_view_job(PhotoId(2), 1024, true)), (48, 36));
     }
+
+    /// A GH7-like raw imported whole: the camera's 16:9 frame is its import crop, so it is still as imported and its camera
+    /// JPEG (the whole area) is a fair stand-in once cut to that frame. Not once the user changes the crop, and not for
+    /// another maker's file.
+    #[test]
+    fn the_stand_in_of_a_raw_imported_whole_is_cut_to_its_import_crop() {
+        let mut s = crate::Session::new();
+        let mut add = |id: u64, format: &str| {
+            let name = format!("P100{id}.{format}");
+            let mut p = Photo::new(PhotoId(id), Source::File { path: name.clone() }, &name, format, 5776, 4336, "2026-01-01");
+            p.kind = MediaKind::Raw;
+            p.develop = Arc::new(p.camera_defaults());
+            crate::import::apply_default_crop(&mut p, Some([0.0, 0.125, 1.0, 0.875]));
+            s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        };
+        add(1, "RW2");
+        add(2, "ORF");
+        s.media.preview_loader = Some(Arc::new(|_: &str, _: usize| Some(numbered(48, 36))));
+        let p = s.catalog.photo(PhotoId(1)).unwrap().clone();
+        assert!(!p.is_edited() && p.shown_size() == (5776.0, 3252.0));
+        assert!(s.embedded_thumb_is_final(&p));
+        let q = s.quick_view_job(PhotoId(1), 1024, true).expect("an unedited raw has a stand-in");
+        let r = q.run().rendered.unwrap().image;
+        assert_eq!((r.width, r.height), (48, 27), "the camera's frame, cut from the whole area");
+        // another maker's frame is part of how its decoder and JPEG work: no stand-in claimed
+        assert!(!s.embedded_thumb_is_final(&s.catalog.photo(PhotoId(2)).unwrap().clone()));
+        // the user's own crop is an edit
+        let mut d = (*p.develop).clone();
+        d.crop.geometry.rect = lightcraft_geom::Rect::new(0.1, 0.2, 0.9, 0.8);
+        s.catalog.apply(Op::SetDevelop { id: PhotoId(1), settings: Arc::new(d), label: "Crop".into(), edited: None }).unwrap();
+        assert!(!s.embedded_thumb_is_final(&s.catalog.photo(PhotoId(1)).unwrap().clone()));
+    }
+
+    /// A face's rectangle is in the whole picture, so a photo shown with an import crop gets its face tiles from a render,
+    /// not from the cropped stand-in.
+    #[test]
+    fn a_face_tile_is_not_cut_from_the_stand_in_of_a_cropped_photo() {
+        let mut s = crate::Session::new();
+        let mut add = |id: u64, crop: Option<[f64; 4]>| {
+            let name = format!("P100{id}.RW2");
+            let mut p = Photo::new(PhotoId(id), Source::File { path: name.clone() }, &name, "RW2", 5776, 4336, "2026-01-01");
+            p.kind = MediaKind::Raw;
+            p.develop = Arc::new(p.camera_defaults());
+            crate::import::apply_default_crop(&mut p, crop);
+            s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        };
+        add(1, None);
+        add(2, Some([0.0, 0.125, 1.0, 0.875]));
+        s.media.preview_loader = Some(Arc::new(|_: &str, _: usize| Some(numbered(48, 36))));
+        s.media.availability.set_probe(Arc::new(|_: &str| true));
+        let rect = lightcraft_geom::Rect::new(0.4, 0.4, 0.5, 0.5);
+        let uncropped = s.catalog.photo(PhotoId(1)).unwrap().clone();
+        let cropped = s.catalog.photo(PhotoId(2)).unwrap().clone();
+        assert!(s.face_preview_cut(&uncropped, rect, 64, 256).is_some());
+        assert!(s.embedded_thumb_is_final(&cropped), "it has a stand-in");
+        assert!(s.face_preview_cut(&cropped, rect, 64, 256).is_none());
+    }
 }
 
 #[cfg(test)]
@@ -2482,7 +2601,7 @@ mod thumbnail_hash_tests {
     #[test]
     fn a_smaller_thumbnail_is_scaled_from_a_larger_one_cached() {
         let mut s = session();
-        s.media.file_loader = Some(Arc::new(|_, _| Err("the file must not be read".into())));
+        s.media.file_loader = Some(Arc::new(|_, _, _| Err("the file must not be read".into())));
         let big = s.thumb_job(PhotoId(1), 384).unwrap();
         let (cache, key) = big.cache.clone().unwrap();
         let mut img = Rgba8::filled(384, 256, [200, 100, 50, 255]);
@@ -2502,7 +2621,7 @@ mod thumbnail_hash_tests {
         assert!(cache.get_at(generation, small_key).is_some());
         // nothing larger cached: rendered (here: the file can't be read)
         let mut s = session();
-        s.media.file_loader = Some(Arc::new(|_, _| Err("no file".into())));
+        s.media.file_loader = Some(Arc::new(|_, _, _| Err("no file".into())));
         assert!(s.thumb_job(PhotoId(1), 100).unwrap().run().rendered.is_err());
     }
     #[test]
@@ -2533,7 +2652,7 @@ mod thumbnail_hash_tests {
     #[test]
     fn source_from_before_content_reload_is_not_accepted() {
         let mut s = session();
-        s.media.file_loader = Some(Arc::new(|_, _| Ok((Rgb32f::new(8, 8), SourceInfo::default()))));
+        s.media.file_loader = Some(Arc::new(|_, _, _| Ok((Rgb32f::new(8, 8), SourceInfo::default()))));
         let old = s.thumb_job(PhotoId(1), 256).unwrap().run();
         assert!(old.loaded.is_some());
         s.catalog
@@ -2557,7 +2676,7 @@ mod thumbnail_hash_tests {
     #[test]
     fn a_render_that_panics_fails_instead_of_never_answering() {
         let mut s = session();
-        s.media.file_loader = Some(Arc::new(|_, _| panic!("decoder bug")));
+        s.media.file_loader = Some(Arc::new(|_, _, _| panic!("decoder bug")));
         let mut job = s.thumb_job(PhotoId(1), 256).unwrap();
         job.request_id = 42;
         let (key, level, source_key) = (job.key, job.level, job.source_key);
@@ -2754,7 +2873,7 @@ mod tests {
         job.source = SourceRef::File {
             path: "synthetic.arw".into(),
             max_edge: 64,
-            loader: Some(Arc::new(move |_, _| {
+            loader: Some(Arc::new(move |_, _, _| {
                 let mut image = Rgb32f::new(64, 64);
                 image.data.fill([0.1; 3]);
                 Ok((image, loaded_info.clone()))
@@ -2762,6 +2881,7 @@ mod tests {
             fallback: None,
             denoise: None,
             reduced: None,
+            catalogued: None,
         };
         job.info = SourceInfo::default(); // Header facts cannot override decoder facts.
         job.settings = Arc::new(DevelopSettings::default());
@@ -2814,10 +2934,11 @@ mod tests {
         job.source = SourceRef::File {
             path: "/photos/DSC00001.ARW".into(),
             max_edge: 64,
-            loader: Some(Arc::new(move |_, _| Ok((loaded_pixels.clone(), loaded_info.clone())))),
+            loader: Some(Arc::new(move |_, _, _| Ok((loaded_pixels.clone(), loaded_info.clone())))),
             fallback: None,
             denoise: None,
             reduced: None,
+            catalogued: None,
         };
         let undo_before = s.undo.len();
         let request = job.request;

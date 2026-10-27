@@ -4515,7 +4515,7 @@ mod tests {
         let m = info.camera_match.expect("the fitted look on the side");
         assert!(m.hue_sat.is_some() && m.tone.is_some() && info.camera_tone != m.tone, "a fit, not the neutral look");
         eprintln!("camera look stored: {} bytes", miniz_oxide::deflate::compress_to_vec_zlib(&serde_json::to_vec(&*m).unwrap(), 9).len());
-        let (smart, mini) = crate::smart::encode_pair(&r6, 256).unwrap();
+        let (smart, mini) = crate::smart::encode_pair(&r6, 256, None).unwrap();
         for proxy in [smart, mini] {
             assert_eq!(crate::smart::decode(&proxy).unwrap().2.as_deref(), Some(&*m));
         }

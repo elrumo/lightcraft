@@ -220,8 +220,8 @@ struct SmartCounts {
 fn original_only(source: crate::media::SourceRef) -> Option<crate::media::SourceRef> {
     use crate::media::SourceRef;
     match source {
-        SourceRef::File { path, max_edge, loader, denoise, .. } => {
-            Some(SourceRef::File { path, max_edge, loader, fallback: None, denoise, reduced: None })
+        SourceRef::File { path, max_edge, loader, denoise, catalogued, .. } => {
+            Some(SourceRef::File { path, max_edge, loader, fallback: None, denoise, reduced: None, catalogued })
         }
         SourceRef::Loaded(d) if d.info.is_some() && !d.from_proxy && !d.reduced => Some(SourceRef::Loaded(d)),
         _ => None,
@@ -392,7 +392,14 @@ pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::threa
     let photos: Vec<_> = s.catalog.photos().filter(|p| matches!(p.source, lightcraft_catalog::Source::File { .. })).collect();
     let jobs: Vec<SmartJob> = photos
         .iter()
-        .map(|p| (p.id, crate::smart::sharded_file_path(&dir, p), Some(s.media.origin_ref(&p.source, max_edge)), preview_fitted_look(p)))
+        .map(|p| {
+            (
+                p.id,
+                crate::smart::sharded_file_path(&dir, p),
+                Some(s.media.origin_ref(&p.source, max_edge, Some((p.width, p.height)))),
+                preview_fitted_look(p),
+            )
+        })
         .collect();
     std::thread::Builder::new()
         .name("lc-smart-look".into())
@@ -685,8 +692,15 @@ mod tests {
         let mut jobs = jobs_for(&mut s, id, Some(512));
         assert_eq!(jobs.len(), 2, "view and thumbnail");
         assert!(jobs[0].view_cache.is_some(), "the view renders first");
-        jobs[1].source =
-            SourceRef::File { path: "/nonexistent/photo.arw".into(), max_edge: 512, loader: None, fallback: None, denoise: None, reduced: None };
+        jobs[1].source = SourceRef::File {
+            path: "/nonexistent/photo.arw".into(),
+            max_edge: 512,
+            loader: None,
+            fallback: None,
+            denoise: None,
+            reduced: None,
+            catalogued: None,
+        };
         assert!(run_photo(jobs), "the thumbnail rendered from the view's decoded source");
     }
 

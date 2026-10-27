@@ -364,6 +364,14 @@ impl ImportDefaults {
     }
 }
 
+/// Whether a photo that comes with `sidecar` may keep the whole sensor of a raw its camera crops
+/// ([`crate::media::ProbeInfo::camera_crop`]). Settings made elsewhere (Lightroom's, in a sidecar) are relative to the
+/// camera's frame, which is the picture Lightroom shows: a photo that comes with any keeps that frame, as every photo
+/// imported before has it.
+fn keeps_whole_sensor(sidecar: &Option<crate::sidecar::SidecarData>) -> bool {
+    sidecar.as_ref().is_none_or(|sc| sc.develop.is_none() && sc.upright.is_none())
+}
+
 /// Give a photo the crop its file asks for ([`crate::media::ProbeInfo::default_crop`]) as part of its import look: the
 /// photo isn't edited by it, Reset returns to it, and the crop tool can widen it to the whole picture the camera
 /// recorded. Call it after [`apply_import_defaults`] (or whatever else sets the photo's starting settings).
@@ -1629,8 +1637,17 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 p.content_hash = info.content_hash;
                 p.embedded_lens = info.embedded_lens;
                 p.set_preview_only(info.preview_only.clone());
+                // a raw its camera crops (a Panasonic's in-camera aspect ratio) keeps its whole sensor: the photo is catalogued
+                // with the whole area's size, and the camera's frame is its import crop
+                let camera_crop = info.camera_crop.as_ref().filter(|_| keeps_whole_sensor(&sidecar));
+                if let Some(c) = camera_crop {
+                    ((p.width, p.height), p.embedded_lens) = (c.whole, c.lens);
+                }
                 apply_import_defaults(s, &mut p);
                 apply_default_crop(&mut p, info.default_crop);
+                if let Some(c) = camera_crop {
+                    apply_default_crop(&mut p, Some(c.frame));
+                }
                 if let Some(sc) = &sidecar {
                     crate::sidecar::merge_into(&mut p, sc, &now);
                     report.sidecars += 1;
@@ -1770,7 +1787,7 @@ impl Session {
         p.develop = std::sync::Arc::new(p.import_defaults());
         let edge = edge.clamp(64, crate::media::SourceLevel::Thumb.max_edge());
         let level = crate::media::SourceLevel::Thumb;
-        let source = self.media.origin_ref(&p.source, level.max_edge());
+        let source = self.media.origin_ref(&p.source, level.max_edge(), Some((p.width, p.height)));
         let key = lightcraft_preview::Hasher128::new().str(&c.path).u64(c.file_size).u64(edge as u64).finish().0 as u64;
         let small = crate::media::RenderJob {
             request_id: 0,

@@ -11,7 +11,7 @@ use lightcraft_pipeline::SourceInfo;
 use lightcraft_raster::Rgb32f;
 use lightcraft_raster::resample::{Filter, fit};
 
-use crate::media::{DenoiseSpec, FileLoader, FileProbe, PairLoader, PreviewLoader, ProbeInfo, ReducedLoader};
+use crate::media::{CameraCrop, Catalogued, DenoiseSpec, FileLoader, FileProbe, PairLoader, PreviewLoader, ProbeInfo, ReducedLoader};
 
 fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
     let shutter = m.exposure_time.map(|t| if t >= 1.0 { format!("{t:.0}") } else { format!("1/{:.0}", 1.0 / t) }).unwrap_or_default();
@@ -224,9 +224,17 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         let embedded_lens = crate::lens_profiles::for_raw(&raw, || m.clone());
         // an Olympus / OM body's aspect-ratio setting (3:2, 16:9, 1:1): the whole 4:3 area is developed, the camera's JPEG is cut
         let default_crop = (found == lightcraft_raw::RawFormat::Orf).then(|| default_crop_of(bytes, raw.orientation, w, h)).flatten();
+        // a Panasonic's in-camera aspect ratio: the size above is the camera's frame, as every photo imported before has it;
+        // what a photo is given to keep the whole sensor is here (the import decides, `import::commit_prepared`)
+        let camera_crop = camera_crop_of(raw.format, raw.active_area, raw.crop, raw.orientation, |whole| {
+            let mut all = raw.clone();
+            all.crop = whole;
+            crate::lens_profiles::for_raw(&all, || m.clone())
+        });
         return Ok(ProbeInfo {
             embedded_lens,
             default_crop,
+            camera_crop,
             width: w,
             height: h,
             format: raw_format_name(name, found),
@@ -279,6 +287,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
         orientation: Some(o),
         duration: None,
         default_crop: None,
+        camera_crop: None,
     })
 }
 
@@ -547,27 +556,98 @@ fn stream_bin_factor(info: &lightcraft_raw::RawInfo, max_edge: usize) -> Option<
 /// instead of each one waking the pool from outside and waiting for it (which costs more than the
 /// loops themselves when the machine is busy).
 pub fn load_bytes(bytes: &[u8], max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
-    rayon::scope(|_| load_bytes_now(std::borrow::Cow::Borrowed(bytes), max_edge, None, false).map(|(img, _, info, _)| (img, info)))
+    load_bytes_for(bytes, max_edge, None)
+}
+
+/// [`load_bytes`] for the file of a photo catalogued as `catalogued` says: a raw its camera crops is developed whole
+/// when that is the size it was catalogued at ([`develop_in_catalogued_frame`]).
+pub fn load_bytes_for(bytes: &[u8], max_edge: usize, catalogued: Catalogued) -> Result<(Rgb32f, SourceInfo), String> {
+    rayon::scope(|_| load_bytes_now(std::borrow::Cow::Borrowed(bytes), max_edge, None, false, catalogued).map(|(img, _, info, _)| (img, info)))
 }
 
 /// [`load_bytes`] taking the file's bytes: a raw file's bytes are freed as soon as it is decoded
 /// (less memory held while it is developed).
 pub fn load_vec(bytes: Vec<u8>, max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
-    rayon::scope(move |_| load_bytes_now(std::borrow::Cow::Owned(bytes), max_edge, None, false).map(|(img, _, info, _)| (img, info)))
+    load_vec_for(bytes, max_edge, None)
+}
+
+/// [`load_vec`] for a photo catalogued as `catalogued` says ([`load_bytes_for`]).
+pub fn load_vec_for(bytes: Vec<u8>, max_edge: usize, catalogued: Catalogued) -> Result<(Rgb32f, SourceInfo), String> {
+    rayon::scope(move |_| load_bytes_now(std::borrow::Cow::Owned(bytes), max_edge, None, false, catalogued).map(|(img, _, info, _)| (img, info)))
 }
 
 /// [`load_vec`] for a thumbnail: a DNG that keeps reduced-resolution copies of its raw image (Lightroom's HDR and
 /// panorama merges) develops the smallest that covers `max_edge` instead of the whole image. The flag says whether
 /// it did: such a picture is not the full image, and an export never renders from it.
 pub fn load_vec_reduced(bytes: Vec<u8>, max_edge: usize) -> Result<(Rgb32f, SourceInfo, bool), String> {
-    rayon::scope(move |_| load_bytes_now(std::borrow::Cow::Owned(bytes), max_edge, None, true).map(|(img, _, info, reduced)| (img, info, reduced)))
+    load_vec_reduced_for(bytes, max_edge, None)
+}
+
+/// [`load_vec_reduced`] for a photo catalogued as `catalogued` says ([`load_bytes_for`]).
+pub fn load_vec_reduced_for(bytes: Vec<u8>, max_edge: usize, catalogued: Catalogued) -> Result<(Rgb32f, SourceInfo, bool), String> {
+    rayon::scope(move |_| {
+        load_bytes_now(std::borrow::Cow::Owned(bytes), max_edge, None, true, catalogued).map(|(img, _, info, reduced)| (img, info, reduced))
+    })
 }
 
 /// [`load_vec`] that also develops the photo's cached denoised picture (`spec`) from the same decode: the plain
 /// picture, the denoised one (`None` when it cannot be read or does not fit this raw: the plain one is then all
 /// there is) and the source facts. Both pictures are the same size.
 pub fn load_vec_pair(bytes: Vec<u8>, max_edge: usize, spec: &DenoiseSpec) -> Result<(Rgb32f, Option<Rgb32f>, SourceInfo), String> {
-    rayon::scope(move |_| load_bytes_now(std::borrow::Cow::Owned(bytes), max_edge, Some(spec), false).map(|(img, twin, info, _)| (img, twin, info)))
+    load_vec_pair_for(bytes, max_edge, spec, None)
+}
+
+/// [`load_vec_pair`] for a photo catalogued as `catalogued` says ([`load_bytes_for`]).
+pub fn load_vec_pair_for(
+    bytes: Vec<u8>,
+    max_edge: usize,
+    spec: &DenoiseSpec,
+    catalogued: Catalogued,
+) -> Result<(Rgb32f, Option<Rgb32f>, SourceInfo), String> {
+    rayon::scope(move |_| {
+        load_bytes_now(std::borrow::Cow::Owned(bytes), max_edge, Some(spec), false, catalogued).map(|(img, twin, info, _)| (img, twin, info))
+    })
+}
+
+/// What a raw's camera crops by itself, if it does: the frame in the whole area its sensor recorded, which
+/// [`develop_in_catalogued_frame`] and the import use. Only a Panasonic's in-camera aspect ratio (RW2 tags `0x002f` to
+/// `0x0032`): its embedded JPEG shows the whole area, and every other maker's frame is part of how its decoder works
+/// today. `None` for a raw it does not crop, or whose numbers don't make a frame.
+fn camera_crop_of(
+    format: lightcraft_raw::RawFormat,
+    active: lightcraft_raw::Rect,
+    crop: lightcraft_raw::Rect,
+    orientation: Orientation,
+    lens: impl FnOnce(lightcraft_raw::Rect) -> Option<lightcraft_develop::EmbeddedLens>,
+) -> Option<CameraCrop> {
+    if format != lightcraft_raw::RawFormat::Rw2 {
+        return None;
+    }
+    let c = crop.clipped(active.width, active.height);
+    if active.width < 2 || active.height < 2 || c.width < 2 || c.height < 2 || (c.width, c.height) == (active.width, active.height) {
+        return None;
+    }
+    let (aw, ah) = (active.width as f64, active.height as f64);
+    let stored = [c.x as f64 / aw, c.y as f64 / ah, (c.x + c.width) as f64 / aw, (c.y + c.height) as f64 / ah];
+    let size = |w: usize, h: usize| -> Option<(u32, u32)> {
+        let (w, h) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?);
+        Some(if orientation.swaps_axes() { (h, w) } else { (w, h) })
+    };
+    let (whole, framed) = (size(active.width, active.height)?, size(c.width, c.height)?);
+    let frame = default_crop_from(stored, orientation, whole.0, whole.1)?;
+    Some(CameraCrop { whole, framed, frame, lens: lens(lightcraft_raw::Rect::new(0, 0, active.width, active.height)) })
+}
+
+/// Develop `raw` whole when its photo was catalogued whole: for a raw its camera crops ([`camera_crop_of`]), the size a
+/// photo was catalogued with says which frame it was imported in. At the whole area's size the crop is the photo's import
+/// crop (so the Crop tool can widen it to the whole sensor); at any other size (every photo imported before, and a photo
+/// with no size to go by) the raw is developed in the camera's frame, exactly as it always was.
+fn develop_in_catalogued_frame(raw: &mut lightcraft_raw::RawImage, catalogued: Catalogued) {
+    let whole = lightcraft_raw::Rect::new(0, 0, raw.active_area.width, raw.active_area.height);
+    let Some(c) = camera_crop_of(raw.format, raw.active_area, raw.crop, raw.orientation, |_| None) else { return };
+    if catalogued == Some(c.whole) {
+        raw.crop = whole;
+    }
 }
 
 /// The denoised camera RGB of `raw` from its cached product, as the plain development would have it: the default
@@ -597,6 +677,7 @@ fn load_bytes_now(
     max_edge: usize,
     denoise: Option<&DenoiseSpec>,
     allow_reduced: bool,
+    catalogued: Catalogued,
 ) -> Result<(Rgb32f, Option<Rgb32f>, SourceInfo, bool), String> {
     if lightcraft_raw::probe(&bytes).is_some() {
         // a thumbnail (`allow_reduced`, never an export) of a DNG that keeps smaller copies of its raw image
@@ -628,6 +709,8 @@ fn load_bytes_now(
             }
             Err(Err(e)) => return Err(e),
         };
+        // (a raw its camera crops, of a photo catalogued whole: developed whole, the crop being the photo's own)
+        develop_in_catalogued_frame(&mut raw, catalogued);
         // Embedded lens corrections are applied by the pipeline ("Enable Profile Corrections"), not baked in
         // (removed before the camera look's binned sensor proxy too, which needs an empty `OpcodeList3`).
         let info = raw.info();
@@ -1018,7 +1101,11 @@ fn embedded_preview_size(bytes: &[u8]) -> Option<(u32, u32, Orientation)> {
 /// it goes through the file's `orientation` into the picture shown (`shown_w × shown_h`), as Lightroom's crop edges do
 /// ([`crate::crs::crop_in_frame`]).
 fn default_crop_of(bytes: &[u8], orientation: Orientation, shown_w: u32, shown_h: u32) -> Option<[f64; 4]> {
-    let [x0, y0, x1, y1] = lightcraft_raw::olympus_aspect_frame(bytes)?;
+    default_crop_from(lightcraft_raw::olympus_aspect_frame(bytes)?, orientation, shown_w, shown_h)
+}
+
+/// [`default_crop_of`] for a frame already known, `[x0, y0, x1, y1]` as fractions of the stored picture.
+fn default_crop_from([x0, y0, x1, y1]: [f64; 4], orientation: Orientation, shown_w: u32, shown_h: u32) -> Option<[f64; 4]> {
     let (w, h) = (f64::from(shown_w), f64::from(shown_h));
     let stored_aspect = if orientation.swaps_axes() { h / w } else { w / h };
     let mut v = serde_json::json!({"crop": {"geometry": {"rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}, "angle": 0.0}}});
@@ -1414,13 +1501,13 @@ fn quick_image_srgb(header: &[u8], window: &[u8], adobe_rgb: bool, max_edge: usi
 /// The filesystem-backed [`PairLoader`]: the file is read and decoded once, and developed as usual and from the photo's
 /// denoised picture. It holds two pictures at once, so it counts for more at the memory gate than a plain load.
 pub fn fs_pair_loader() -> PairLoader {
-    Arc::new(|path: &str, max_edge: usize, spec: &DenoiseSpec| {
+    Arc::new(|path: &str, max_edge: usize, spec: &DenoiseSpec, catalogued: Catalogued| {
         let len = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
         let weight = len * if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 4 } else { 10 };
         let gate = crate::memory::work_gate();
         let _permit = if crate::memory::is_background() { gate.acquire(weight) } else { gate.acquire_urgent(weight) };
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        let r = load_vec_pair(bytes, max_edge, spec);
+        let r = load_vec_pair_for(bytes, max_edge, spec, catalogued);
         crate::memory::release();
         r
     })
@@ -1453,8 +1540,9 @@ fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
 /// interactive loads (the loupe, exports) never wait — they are counted, so background work
 /// yields to them.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
-    let loader: FileLoader =
-        Arc::new(|path: &str, max_edge: usize| fs_load(path, max_edge, |bytes| load_vec(bytes, max_edge), |img, info| (img, info)));
+    let loader: FileLoader = Arc::new(|path: &str, max_edge: usize, catalogued: Catalogued| {
+        fs_load(path, max_edge, |bytes| load_vec_for(bytes, max_edge, catalogued), |img, info| (img, info))
+    });
     let probe: FileProbe = Arc::new(|path: &str| {
         if let Some(r) = probe_video_path(path) {
             let mut info = r?;
@@ -1488,7 +1576,9 @@ const VIDEO_WEIGHT: usize = 192 << 20;
 
 /// The filesystem [`ReducedLoader`]: [`load_vec_reduced`] of the file, gated like [`fs_hooks`]' loader.
 pub fn fs_reduced_loader() -> ReducedLoader {
-    Arc::new(|path: &str, max_edge: usize| fs_load(path, max_edge, |bytes| load_vec_reduced(bytes, max_edge), |img, info| (img, info, false)))
+    Arc::new(|path: &str, max_edge: usize, catalogued: Catalogued| {
+        fs_load(path, max_edge, |bytes| load_vec_reduced_for(bytes, max_edge, catalogued), |img, info| (img, info, false))
+    })
 }
 
 /// Read `path` and `load` it, waiting on [`crate::memory::work_gate`] as [`fs_hooks`] explains. A clip is never read

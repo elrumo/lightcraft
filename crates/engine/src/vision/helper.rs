@@ -601,7 +601,8 @@ fn build_and_put(cfg: &Config, scratch: &Path, it: &Item) -> Result<(), Failure>
         if !got.ok() {
             return Err(Failure::Server(why(&got)));
         }
-        memory::in_background(|| cloud_sync::build_proxies(&text(&original), &text(&smart), &text(&mini))).map_err(Failure::Photo)?;
+        memory::in_background(|| cloud_sync::build_proxies(&text(&original), &text(&smart), &text(&mini), Some((it.photo.width, it.photo.height))))
+            .map_err(Failure::Photo)?;
         // (the original is not needed any more: it can be many hundred megabytes)
         let _ = std::fs::remove_file(&original);
         for (kind, file) in [("smart", &smart), ("mini", &mini)] {

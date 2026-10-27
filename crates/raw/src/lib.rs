@@ -44,6 +44,8 @@ pub(crate) mod llvc;
 #[cfg(feature = "testdata")]
 mod olympus_testdata;
 pub mod opcodes;
+#[cfg(feature = "testdata")]
+mod panasonic_testdata;
 mod preview;
 pub mod profile;
 mod saturation;
@@ -58,6 +60,7 @@ mod vc5;
 #[cfg(feature = "testdata")]
 pub mod testdata {
     pub use crate::olympus_testdata::{OlympusOrf, PRESET_KELVIN};
+    pub use crate::panasonic_testdata::PanasonicRw2;
     pub use crate::vc5::synthetic_stream as vc5_stream;
 }
 mod vendor;

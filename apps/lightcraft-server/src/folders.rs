@@ -896,7 +896,7 @@ pub fn build_previews_as(blobs: &Path, hash: &str, file: &Path, replace: bool) -
     let (f, s, m) = (file.to_string_lossy().to_string(), smart.to_string_lossy().to_string(), mini.to_string_lossy().to_string());
     // a huge file (a scan, a PSB) is read whole and decoded: one at a time
     let _one = (std::fs::metadata(file).map_or(0, |m| m.len()) > READ_WHOLE).then(|| lock(&BIG));
-    lightcraft_engine::guard::catch("building previews", || lightcraft_engine::cloud_sync::build_proxies(&f, &s, &m))??;
+    lightcraft_engine::guard::catch("building previews", || lightcraft_engine::cloud_sync::build_proxies(&f, &s, &m, None))??;
     Ok(true)
 }
 
