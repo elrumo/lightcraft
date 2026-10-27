@@ -212,6 +212,19 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
     let mut bar = Bar { cancel: pulled_shut, ..Bar::default() };
     let top = content.top() + 8.0 + drop;
     // (down to the screen's edge: an area otherwise stops at the safe area)
+    // (its size is known: no invisible sizing pass in its first frame, so a field in it takes the focus, and a
+    // tap that opens the page raises the keyboard, in that very frame)
+    let layer = egui::LayerId::new(egui::Order::Foreground, sid);
+    if egui::AreaState::load(ctx, sid).is_none() {
+        let state = egui::AreaState {
+            pivot_pos: Some(pos2(content.left(), top)),
+            pivot: Align2::LEFT_TOP,
+            size: Some(vec2(content.width(), (screen.bottom() - top).max(ROW_H))),
+            interactable: true,
+            last_became_visible_at: None,
+        };
+        ctx.memory_mut(|m| m.areas_mut().set_state(layer, state));
+    }
     let area = egui::Area::new(sid).constrain_to(screen).constrain(false);
     // (opaque as it slides: not egui's fade-in of a new area, through which what is behind showed)
     area.order(egui::Order::Foreground).fade_in(false).fixed_pos(pos2(content.left(), top)).show(ctx, |ui| {
