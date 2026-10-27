@@ -363,6 +363,29 @@ fn big_answers_are_gzipped() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// `/` without a web build is the welcome page: a header linking to the admin page, the next steps and the guides.
+/// `/welcome` is the same page, and the web-build-less server no longer answers other paths with the welcome text.
+#[test]
+fn the_index_is_a_welcome_page_with_a_link_to_the_admin_page() {
+    let root = temp("welcome");
+    let server = Server::start(Config::new(root.join("data"), "127.0.0.1:0")).unwrap();
+    let base = format!("http://{}", server.addr());
+    let get = |path: &str| call("GET", &format!("{base}{path}"), "", None, &[]);
+    let (s, body, h) = get("/");
+    assert_eq!(s, 200);
+    let html = String::from_utf8_lossy(&body);
+    assert!(h.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.starts_with("text/html")));
+    assert!(h.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-security-policy") && v.contains("script-src 'self'")));
+    assert!(html.contains("<header class=\"wbar\">") && html.contains("href=\"/admin\""), "the header links to the admin page");
+    assert!(html.contains("What to do next") && html.contains("https://lightbites.app/server"));
+    assert_eq!(get("/welcome").1, body);
+    assert_eq!(get("/welcome/welcome.js").0, 200);
+    assert_eq!(get("/welcome/welcome.css").0, 200);
+    assert_eq!(get("/nothing-here").0, 404);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn admin_page_sets_up_and_manages_users() {
     use std::io::{Read, Write};

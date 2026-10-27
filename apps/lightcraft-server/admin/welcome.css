@@ -1,0 +1,37 @@
+/* The server's welcome page (`/`, `/welcome`): the admin page's colours and controls, laid out as a page. */
+.welcome .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.welcome .btn { text-decoration: none; }
+.welcome .btn:hover { text-decoration: none; }
+.wbar { position: sticky; top: 0; z-index: 2; background: var(--canvas); border-bottom: 1px solid var(--line); }
+.wbar-inner { max-width: 880px; margin: 0 auto; height: 64px; padding: 0 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wnav { display: flex; align-items: center; gap: 8px; }
+.wlink { color: var(--text-2); font-weight: 600; padding: 6px 12px; border-radius: 16px; }
+.wlink:hover { background: var(--fill); color: var(--heading); text-decoration: none; }
+.wmain { max-width: 880px; margin: 0 auto; padding: 0 20px 48px; }
+.hero { padding: 56px 0 40px; }
+.hero h1 { font-size: 34px; margin-top: 16px; }
+.hero .lead { max-width: 560px; margin-top: 12px; }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.status { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 16px; background: var(--positive-subtle); color: var(--positive); font-size: 13px; font-weight: 600; }
+.status .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.status.down { background: var(--negative-subtle); color: var(--negative-text); }
+.block { margin-top: 24px; background: var(--surface); border-radius: 20px; padding: 24px; box-shadow: var(--shadow); }
+.block > .lead { font-size: 14px; margin-bottom: 4px; }
+.steps { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 20px; }
+.steps li { display: flex; gap: 14px; align-items: flex-start; }
+.steps p { color: var(--text-2); margin-top: 2px; }
+.steps .copy-field { margin-top: 10px; max-width: 460px; }
+.num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-subtle); color: var(--accent-text); display: grid; place-items: center; font-weight: 800; font-size: 13px; }
+.steps li.done .num { background: var(--positive-subtle); color: var(--positive); }
+.tag { margin-left: 6px; padding: 1px 8px; border-radius: 10px; background: var(--fill); color: var(--text-3); font-size: 11px; font-weight: 600; vertical-align: middle; }
+.guides { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 16px; }
+.guide { display: block; padding: 16px; border-radius: 14px; background: var(--fill); color: var(--text-2); }
+.guide:hover { background: var(--fill-hover); text-decoration: none; }
+.guide .icon { color: var(--accent-text); margin-bottom: 8px; }
+.guide p { font-size: 13px; margin-top: 2px; }
+.wfoot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 32px; color: var(--text-3); font-size: 13px; }
+@media (max-width: 560px) {
+  .hero { padding-top: 32px; }
+  .hero h1 { font-size: 26px; }
+  .block { padding: 18px; border-radius: 16px; }
+}

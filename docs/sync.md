@@ -129,6 +129,14 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 
 Back up `<data>` like any folder (stop the server, or copy `catalog.log` first and the blobs after).
 
+### The welcome page
+
+Opening the server's address (`http://<address>:8080/`) in a browser shows a welcome page when the server has no web
+build (the `lite` image, or `serve` without `--web`): a header with a link to the admin page, the next steps (create
+the administrator, add users and library folders, connect devices, HTTPS) with the address to type on each device,
+and links to the [guides](https://lightbites.app/server). It is always at `/welcome` too, and tells whether the first
+administrator still has to be created. A server with a web build serves the web app at `/` instead.
+
 ### The admin page
 
 `https://<your server>/admin` manages the server from a browser. It has five sections (a side bar on wide

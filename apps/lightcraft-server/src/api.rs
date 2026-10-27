@@ -212,7 +212,12 @@ pub fn handle(st: &State, req: &mut Request) -> Resp {
         crate::admin::api(st, req, &method, rest)
     } else if is_api {
         api(st, req, &method, path, q)
-    } else if path == "/admin" || path.starts_with("/admin/") {
+    } else if path == "/admin"
+        || path.starts_with("/admin/")
+        || path == "/welcome"
+        || path.starts_with("/welcome/")
+        || (path == "/" && st.web.is_none())
+    {
         crate::admin::page(req, &method, path)
     } else {
         web(st, req, &method, path)
@@ -1054,9 +1059,7 @@ fn web(st: &State, req: &Request, method: &Method, path: &str) -> Resp {
     if !matches!(method, Method::Get | Method::Head) {
         return error(405, "GET or HEAD");
     }
-    let Some(root) = &st.web else {
-        return bytes(200, "text/plain; charset=utf-8", b"LightCraft sync server. Sign in from LightCraft (Settings > Sync).\n".to_vec());
-    };
+    let Some(root) = &st.web else { return error(404, "not found") };
     let rel = path.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
     if rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c.contains('\\') || c.contains(':')) {
