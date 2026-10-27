@@ -309,6 +309,9 @@ pub struct Session {
     pub copy_groups: Vec<lightcraft_develop::SettingsGroup>,
     /// Built-in then user presets; its generation tells savers and caches when it changed.
     pub presets: presets::PresetList,
+    /// The built-in presets and groups the sync server's admin hid for all its users, left out of
+    /// [`Session::presets`] (see [`Session::set_server_presets`]). Persisted in presets.json.
+    pub server_hidden: presets::Hidden,
     /// Favourite profile ids (persisted with the library, like preset favourites).
     pub profile_favorites: Vec<String>,
     /// Recently applied profile ids, newest first (at most [`presets::RECENT_PROFILES`]).
@@ -489,6 +492,7 @@ impl Session {
             previous_active: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::PresetList::new(presets::builtin()),
+            server_hidden: presets::Hidden::default(),
             profile_favorites: Vec::new(),
             profile_recent: Vec::new(),
             journal: Vec::new(),

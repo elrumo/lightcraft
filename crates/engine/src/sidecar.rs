@@ -114,6 +114,12 @@ fn xmp_cases(p: PathBuf) -> [PathBuf; 3] {
     [p.clone(), p.with_extension("XMP"), p.with_extension("Xmp")]
 }
 
+/// A file's modification time in nanoseconds since 1970 (`None` when it can't be read).
+pub fn modified(path: &Path) -> Option<u64> {
+    let t = std::fs::metadata(path).ok()?.modified().ok()?;
+    u64::try_from(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos()).ok()
+}
+
 /// What a sidecar (or embedded XMP packet) says about a photo. `None` = not stated.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SidecarData {
@@ -333,6 +339,37 @@ pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
     true
 }
 
+/// The undo label of reading sidecars.
+pub const READ_LABEL: &str = "Read Metadata from File";
+
+/// The ops that bring photo `p` to what `sc` says, as [`merge_into`] would: only what changes, the
+/// develop settings as a `SetDevelop` labelled `label` (no history step).
+pub fn sidecar_ops(p: &Photo, sc: &SidecarData, now: &str, label: &str) -> Vec<Op> {
+    let id = p.id;
+    let mut q = p.clone();
+    let develop = merge_into(&mut q, sc, now);
+    let mut ops = Vec::new();
+    if q.rating != p.rating {
+        ops.push(Op::SetRating { id, rating: q.rating });
+    }
+    if q.flag != p.flag {
+        ops.push(Op::SetFlag { id, flag: q.flag });
+    }
+    if q.label != p.label {
+        ops.push(Op::SetLabel { id, label: q.label });
+    }
+    if q.captured != p.captured {
+        ops.push(Op::SetCaptured { id, captured: q.captured });
+    }
+    if q.meta != p.meta {
+        ops.push(Op::SetMeta { id, meta: Box::new(q.meta) });
+    }
+    if develop {
+        ops.push(Op::SetDevelop { id, settings: q.develop, label: label.into(), edited: q.edited });
+    }
+    ops
+}
+
 impl SidecarData {
     /// Read the label through the catalog's label names: other editors write the label's name
     /// (a custom set's "To Do" as well as "Red"); unknown names clear the label.
@@ -447,6 +484,17 @@ fn backup(path: &Path, stamp: &str) -> std::io::Result<PathBuf> {
     Err(std::io::Error::other("no free backup name"))
 }
 
+/// Write the XMP sidecar of photo `p`, whose original is the file `original`, as `naming` says, merged into an
+/// existing sidecar (its other contents kept; one that isn't XMP is copied to `.bak-<stamp>` first). It needs no
+/// session: the sync server uses it for the photos in its writable library folders.
+pub fn write_sidecar_for(p: &Photo, cat: &lightcraft_catalog::Catalog, original: &str, naming: SidecarNaming, stamp: &str) -> Result<SidecarSaved> {
+    let path = sidecar_path(original, naming);
+    let err = |e: std::io::Error| EngineError::Other(format!("{}: {e}", path.display()));
+    let (data, merged, backup) = sidecar_contents(&path, sidecar_packet(p, cat), stamp).map_err(err)?;
+    write_atomic(&path, data.as_bytes()).map_err(err)?;
+    Ok(SidecarSaved { path, merged, backup })
+}
+
 /// What [`Session::save_sidecar`] did.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidecarSaved {
@@ -515,10 +563,11 @@ fn stem_key_into(key: &mut String, original: &str) {
     }
 }
 
+/// The photo's file on this disk (not a demo scene, nor a synced photo stored by content).
 fn file_path(p: &Photo) -> Option<&str> {
     match &p.source {
-        Source::File { path } => Some(path),
-        Source::Demo { .. } => None,
+        Source::File { path } if !path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) => Some(path),
+        _ => None,
     }
 }
 

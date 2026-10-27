@@ -170,6 +170,51 @@ pub fn expand_preset_paths(paths: &[String]) -> Vec<String> {
     out
 }
 
+/// Ids of the presets a sync server shares with all its users (its `server-presets` document) start
+/// with this. They are kept like the built-in ones: `builtin`, never sent back, not editable here.
+pub const SERVER_PREFIX: &str = "srv.";
+
+/// `p` came from the sync server's shared presets.
+pub fn is_server_preset(p: &Preset) -> bool {
+    p.builtin && p.id.starts_with(SERVER_PREFIX)
+}
+
+/// Presets and preset groups left out of the list: the built-in ones a sync server's admin hid for all
+/// its users.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Hidden {
+    /// Preset ids.
+    pub presets: Vec<String>,
+    /// Group names.
+    pub groups: Vec<String>,
+}
+
+impl Hidden {
+    /// `p` is hidden, itself or by its group.
+    pub fn hides(&self, p: &Preset) -> bool {
+        self.presets.contains(&p.id) || self.groups.contains(&p.group)
+    }
+}
+
+impl Session {
+    /// Make the sync server's shared presets `server` (ids [`SERVER_PREFIX`]…) and hide the built-in
+    /// presets and groups it hides for all its users: the list is then the built-in presets, the server's,
+    /// then the user's. Favourites stay favourites (a built-in one the server hid and shows again doesn't).
+    pub fn set_server_presets(&mut self, server: Vec<Preset>, hidden: Hidden) {
+        let favorites: std::collections::HashSet<String> = self.presets.iter().filter(|p| p.builtin && p.favorite).map(|p| p.id.clone()).collect();
+        let user: Vec<Preset> = self.presets.iter().filter(|p| !p.builtin).cloned().collect();
+        let mut list: Vec<Preset> = builtin().into_iter().filter(|p| !hidden.hides(p)).collect();
+        list.extend(server.into_iter().filter(|p| p.id.starts_with(SERVER_PREFIX)).map(|p| Preset { builtin: true, ..p }));
+        for p in &mut list {
+            p.favorite = p.favorite || favorites.contains(&p.id);
+        }
+        list.extend(user);
+        *self.presets = list;
+        self.server_hidden = hidden;
+    }
+}
+
 impl Session {
     /// Add imported presets. Identical presets (same name, group and settings) already present are
     /// skipped; id clashes get a fresh id. Returns the ids added.
@@ -701,5 +746,24 @@ mod tests {
         let dv = s.develop_of(s.active().unwrap()).unwrap();
         assert_eq!((dv.light.exposure, dv.light.shadows, dv.grain.amount), (0.3, 20.0, 12.0));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The server's presets join the list like built-in ones, and the built-ins it hides leave it.
+    #[test]
+    fn server_presets_join_and_hide() {
+        let mut s = Session::new();
+        s.presets.push(Preset { id: "user.a".into(), name: "A".into(), group: "Mine".into(), settings: json!({}), favorite: true, builtin: false });
+        s.execute("preset.favorite", &json!({"id": "lc.bw-soft", "favorite": true})).unwrap();
+        let server = vec![
+            Preset { id: "srv.one".into(), name: "One".into(), group: "Team".into(), settings: json!({}), favorite: false, builtin: false },
+            Preset { id: "user.x".into(), name: "Not".into(), group: "Team".into(), settings: json!({}), favorite: false, builtin: false },
+        ];
+        s.set_server_presets(server, Hidden { presets: vec!["lc.moody".into()], groups: vec!["Film".into()] });
+        assert!(s.presets.iter().any(|p| p.id == "srv.one" && p.builtin && is_server_preset(p)));
+        assert!(!s.presets.iter().any(|p| p.id == "user.x" || p.id == "lc.moody" || p.group == "Film"));
+        assert!(s.presets.iter().any(|p| p.id == "lc.bw-soft" && p.favorite), "favourites stay");
+        assert!(s.presets.iter().any(|p| p.id == "user.a" && p.favorite && !p.builtin), "the user's presets stay");
+        s.set_server_presets(Vec::new(), Hidden::default());
+        assert!(s.presets.iter().any(|p| p.id == "lc.moody") && !s.presets.iter().any(|p| p.id == "srv.one"));
     }
 }

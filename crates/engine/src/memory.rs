@@ -33,13 +33,26 @@ pub fn default_budget() -> usize {
     }
 }
 
-/// Physical memory (bytes), when the platform tells us without native calls.
-pub(crate) fn total_ram() -> Option<usize> {
+/// What an export needs at its peak on top of the app's own memory: about 56 bytes per source pixel (the decoded floats,
+/// the stage copies made while it is developed and oriented, the GPU's copy) and 104 per output pixel (pipeline planes,
+/// the output image, the encoder). Measured as the process's peak footprint in `lightcraft-cli render` of a 48 MP ProRAW
+/// at 1024 to 6048×8064 px (a 4096 px export read whole peaked at 5.0 GB, full size at 8.0 GB), less the ~1 GB the
+/// process holds at any size; deliberately a little high.
+pub fn export_need(source_px: usize, output_px: usize) -> usize {
+    source_px.saturating_mul(56).saturating_add(output_px.saturating_mul(104))
+}
+
+/// Physical memory (bytes), when the platform tells us without native calls. On Linux, a container's
+/// limit (cgroup v2 `memory.max`) when it is lower.
+pub fn total_ram() -> Option<usize> {
     #[cfg(target_os = "linux")]
     {
         let s = std::fs::read_to_string("/proc/meminfo").ok()?;
         let kb: usize = s.lines().find(|l| l.starts_with("MemTotal:"))?.split_whitespace().nth(1)?.parse().ok()?;
-        Some(kb * 1024)
+        let ram = kb.saturating_mul(1024);
+        // ("max" when there is no limit: it doesn't parse)
+        let limit = std::fs::read_to_string("/sys/fs/cgroup/memory.max").ok().and_then(|l| l.trim().parse::<usize>().ok());
+        Some(limit.map_or(ram, |l| l.min(ram)))
     }
     #[cfg(target_os = "macos")]
     {
@@ -314,5 +327,25 @@ impl crate::Session {
         let b = set_budget(bytes);
         self.media.set_budget(cache_share(b));
         b
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_needs_follow_the_pixels() {
+        let (mp12, mp48) = (12_192_768usize, 48_771_072usize);
+        let gib = 1usize << 30;
+        // a 12 MP export fits two gibibytes; a 48 MP one at full size does not, and neither does a 4096 px one of a
+        // 48 MP photo read whole, while the same read at 12 MP (4032 px) fits
+        let mp4096 = 4096 * 3072;
+        assert!(export_need(mp12, mp12) < 2 * gib, "{}", export_need(mp12, mp12));
+        assert!(export_need(mp48, mp48) > 2 * gib, "{}", export_need(mp48, mp48));
+        assert!(export_need(mp48, mp4096) > 2 * gib, "{}", export_need(mp48, mp4096));
+        assert!(export_need(mp12, mp4096) < 2 * gib, "{}", export_need(mp12, mp4096));
+        // never overflows
+        assert_eq!(export_need(usize::MAX, usize::MAX), usize::MAX);
     }
 }

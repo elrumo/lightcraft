@@ -19,9 +19,12 @@ use crate::{Result, Session};
 /// them in the catalog, they never show in library views (Missing Photos included), and a
 /// folder that is gone is simply not browsed again. The sidebar count, the Missing Photos view,
 /// `library.missing` and Find Missing Photos all use this one rule.
+///
+/// Photos kept by content (`web/<hash>/…`: in the browser's storage, or synced photos whose
+/// original is on the sync server) aren't files on this disk: never missing.
 pub fn checked_path(p: &Photo) -> Option<&str> {
     match &p.source {
-        Source::File { path } if p.in_library() => Some(path),
+        Source::File { path } if p.in_library() && !path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) => Some(path),
         _ => None,
     }
 }
