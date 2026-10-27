@@ -153,7 +153,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     });
     divider(ui);
     // amount slider (applies to the last applied preset)
-    let amt_id = egui::Id::new("preset-amount");
+    let amt_id = egui::Id::unique("preset-amount");
     let last: Option<AppliedPreset> = ui.data(|d| d.get_temp(amt_id));
     if let Some(last) = last.clone().filter(|last| last.is_current(&app.session)) {
         let spec = ControlSpec {
@@ -199,7 +199,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let scroll = egui::ScrollArea::vertical().id_salt("presets-scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         // a group header dragged up or down puts the group elsewhere (`preset.moveGroup`)
-        let drag_id = egui::Id::new("preset-group-drag");
+        let drag_id = egui::Id::unique("preset-group-drag");
         let dragging: Option<String> = ui.data(|d| d.get_temp(drag_id));
         let mut headers: Vec<(String, Rect)> = Vec::with_capacity(groups.len());
         // Only the rows in view are laid out, drawn and given thumbnails: a Lightroom collection
@@ -208,7 +208,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         for grp in groups.iter() {
             let (g, builtin, hidden, favorites) = (grp.name.clone(), grp.builtin, grp.hidden, grp.favorites);
             // the Favorites section opens and closes apart from a user group named "Favorites"
-            let open_id = egui::Id::new(("preset-group", favorites, &g));
+            let open_id = egui::Id::unique(("preset-group", favorites, &g));
             let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
             // (the Favorites section is not a group: it can't be dragged to another place)
             let (r, resp) =
@@ -301,13 +301,13 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     let label = crate::i18n::tr_format!("Preset: {name}", name = name);
                     app.hover_preview = Some(HoverPreview { label: label.clone(), settings: s });
                     if let Some(id) = active {
-                        ui.data_mut(|d| d.insert_temp(egui::Id::new("last-preset-hover"), (id, pr.clone(), label)));
+                        ui.data_mut(|d| d.insert_temp(egui::Id::unique("last-preset-hover"), (id, pr.clone(), label)));
                     }
                 }
                 if resp.clicked() && app.run("preset.apply", json!({"id": pid, "amount": 100})).is_ok() {
                     AppliedByPhoto::remember(ui.ctx(), &app.session, &pid);
                     ui.data_mut(|d| d.insert_temp(amt_id, AppliedPreset::new(&app.session, pid.clone(), 100.0)));
-                    ui.data_mut(|d| d.remove::<(lightcraft_catalog::PhotoId, Preset, String)>(egui::Id::new("last-preset-hover")));
+                    ui.data_mut(|d| d.remove::<(lightcraft_catalog::PhotoId, Preset, String)>(egui::Id::unique("last-preset-hover")));
                     app.toast(ui.ctx(), crate::i18n::tr_format!("Preset: {name}", name = name));
                 }
                 crate::widgets::context_menu(&resp, |ui| preset_menu(app, ui, &pr, &name));
@@ -321,7 +321,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
         ui.add_space(30.0);
     });
-    let last_hover_id = egui::Id::new("last-preset-hover");
+    let last_hover_id = egui::Id::unique("last-preset-hover");
     let pointer_in_scroll = ui.ctx().input(|i| i.pointer.hover_pos()).is_some_and(|pos| scroll.inner_rect.contains(pos));
     if pointer_in_scroll {
         if app.hover_preview.is_none()
@@ -374,7 +374,7 @@ const TILE: f32 = 84.0;
 fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, current: Option<&DevelopSettings>, last: Option<&str>) {
     let t = Tokens::get(ui.ctx());
     let mut groups = grouped_presets(app);
-    let key = egui::Id::new("preset-strip-group");
+    let key = egui::Id::unique("preset-strip-group");
     // an import just added presets: show the group they went to, and its chip too
     let show_chosen = app.pending_strip_group.is_some();
     if let Some(g) = app.pending_strip_group.take() {
@@ -422,7 +422,7 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
                 let name = crate::i18n::builtin_label(&pr.name, pr.builtin).to_string();
                 let (r, resp) = ui.allocate_exact_size(vec2(TILE, TILE + 24.0), Sense::click());
                 register(ui, format!("preset:{}", pr.id), r);
-                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
                 let img = Rect::from_min_size(r.min, vec2(TILE, TILE));
                 let mut uv_texture = None;
                 if ui.is_rect_visible(r)
@@ -465,7 +465,7 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
                     if app.run("preset.apply", json!({"id": pr.id, "amount": 100})).is_ok() {
                         AppliedByPhoto::remember(ui.ctx(), &app.session, &pr.id);
                     }
-                    ui.data_mut(|d| d.insert_temp(egui::Id::new("preset-amount"), (pr.id.clone(), 100.0)));
+                    ui.data_mut(|d| d.insert_temp(egui::Id::unique("preset-amount"), (pr.id.clone(), 100.0)));
                     app.toast(ui.ctx(), crate::i18n::tr_format!("Preset: {name}", name = name));
                 }
                 crate::widgets::context_menu(&resp, |ui| preset_menu(app, ui, &pr, &name));
@@ -569,7 +569,7 @@ struct Group {
 /// generation), the group order or what is hidden changed.
 fn grouped(ctx: &egui::Context, session: &lightcraft_engine::Session, show_hidden: bool) -> Arc<Vec<Group>> {
     type Cached = (u64, Vec<String>, lightcraft_engine::presets::Hidden, Arc<Vec<Group>>);
-    let id = egui::Id::new(("presets-grouped", show_hidden));
+    let id = egui::Id::unique(("presets-grouped", show_hidden));
     let presets = &session.presets;
     let hide = &session.hidden_presets;
     if let Some((generation, order, hidden, groups)) = ctx.data(|d| d.get_temp::<Cached>(id))

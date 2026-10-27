@@ -16,7 +16,6 @@ use lightcraft_raster::Rgba8;
 
 use crate::LightcraftApp;
 use crate::theme::Tokens;
-use crate::widgets::register_geometry;
 
 /// The longest side a layout image keeps (a screen never shows more of it).
 pub const MAX_SIDE: usize = 4096;
@@ -173,7 +172,11 @@ fn note(p: &egui::Painter, why: &str) {
         p.galley(at, g, Color32::WHITE);
         y -= 3.0;
     }
-    crate::widgets::register_geometry(p.ctx(), "canvas:layoutImageError", Rect::from_min_max(pos2(canvas.left(), y), pos2(canvas.left() + 360.0, canvas.bottom())));
+    crate::widgets::register_geometry(
+        p.ctx(),
+        "canvas:layoutImageError",
+        Rect::from_min_max(pos2(canvas.left(), y), pos2(canvas.left() + 360.0, canvas.bottom())),
+    );
 }
 
 #[cfg(test)]

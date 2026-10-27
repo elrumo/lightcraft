@@ -68,7 +68,7 @@ fn set(app: &mut LightcraftApp, ctx: &egui::Context, patch: Value) {
 /// The page, while it is open (and while it slides away). Called every frame.
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     // what the page shows: kept while it slides away
-    let shown_id = egui::Id::new("filter-sheet-shown");
+    let shown_id = egui::Id::unique("filter-sheet-shown");
     let open = app.ui.filter_sheet.is_some();
     let at = match &app.ui.filter_sheet {
         Some(at) => {
@@ -89,7 +89,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let out = mobile::page_with(ctx, "filter", bar, open, |ui| {
         // (the list fades in when the page turns to another)
-        ui.multiply_opacity(mobile::enter(ui.ctx(), egui::Id::new("filter-sheet-in"), at.clone(), 0.18));
+        ui.multiply_opacity(mobile::enter(ui.ctx(), egui::Id::unique("filter-sheet-in"), at.clone(), 0.18));
         if at.is_empty() {
             main(app, ui, &t);
         } else {
@@ -118,14 +118,14 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
     register(ui, "filter:ratingRow", r);
     let op = Rect::from_min_size(pos2(r.left() + 8.0, r.top()), vec2(44.0, ROW));
-    let op_resp = ui.interact(op, egui::Id::new("filter-rating-op"), Sense::click());
+    let op_resp = ui.interact(op, egui::Id::unique("filter-rating-op"), Sense::click());
     register(ui, "filter:ratingOp", op);
     let (glyph, next, said) = match f.rating_op {
         RatingOp::AtLeast => ("≥", "exactly", "At least"),
         RatingOp::Exactly => ("=", "atMost", "Exactly"),
         RatingOp::AtMost => ("≤", "atLeast", "At most"),
     };
-    op_resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(said)));
+    op_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr(said)));
     let ink = if op_resp.is_pointer_button_down_on() { t.text_dim } else { t.text };
     ui.painter().text(op.center(), Align2::CENTER_CENTER, glyph, t.font(24.0), ink);
     if op_resp.clicked() {
@@ -133,11 +133,11 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     }
     for i in 1..=5u8 {
         let cell = Rect::from_min_size(pos2(op.right() + 4.0 + (i - 1) as f32 * 40.0, r.top()), vec2(40.0, ROW));
-        let resp = ui.interact(cell, egui::Id::new(("filter-star", i)), Sense::click());
+        let resp = ui.interact(cell, egui::Id::unique(("filter-star", i)), Sense::click());
         register(ui, format!("filter:star{i}"), cell);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, f.rating == i, format!("{i} ★")));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, f.rating == i, format!("{i} ★")));
         let on = i <= f.rating;
-        let k = ui.ctx().animate_bool_with_time(egui::Id::new(("filter-star-on", i)), on, 0.15);
+        let k = ui.ctx().animate_bool_with_time(egui::Id::unique(("filter-star-on", i)), on, 0.15);
         let size = 24.0 * (1.0 + 0.15 * (k * std::f32::consts::PI).sin());
         let star = Rect::from_center_size(cell.center(), vec2(size, size));
         if on {
@@ -163,10 +163,10 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     .enumerate()
     {
         let cell = Rect::from_min_size(pos2(r.left() + 8.0 + i as f32 * 56.0, r.top()), vec2(52.0, ROW));
-        let resp = ui.interact(cell, egui::Id::new(("filter-flag", id)), Sense::click());
+        let resp = ui.interact(cell, egui::Id::unique(("filter-flag", id)), Sense::click());
         register(ui, format!("filter:{id}"), cell);
         let on = f.flag == Some(flag);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(said)));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, crate::i18n::tr(said)));
         let color = match flag {
             _ if !on => t.text_dim,
             Flag::Pick => t.pick,
@@ -191,11 +191,11 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     for (i, l) in ColorLabel::ALL.into_iter().enumerate() {
         let cell = Rect::from_min_size(pos2(r.left() + 8.0 + i as f32 * 44.0, r.top()), vec2(44.0, ROW));
         let name = format!("{l:?}").to_lowercase();
-        let resp = ui.interact(cell, egui::Id::new(("filter-label", i)), Sense::click());
+        let resp = ui.interact(cell, egui::Id::unique(("filter-label", i)), Sense::click());
         register(ui, format!("filter:label-{name}"), cell);
         let on = chosen.contains(&l);
         let spoken = crate::i18n::color_label(&app.session.catalog, l);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, &spoken));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, &spoken));
         let c = cell.center();
         ui.painter().circle_filled(c, 9.0, crate::theme::label_color(l));
         if on {
@@ -362,7 +362,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, at: &str) {
 
 /// The field that narrows a long list (what was typed is kept for each list).
 fn search_field(ui: &mut egui::Ui, t: &Tokens, at: &str) -> String {
-    let id = egui::Id::new(("filter-sheet-query", at));
+    let id = egui::Id::unique(("filter-sheet-query", at));
     let mut q: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     crate::text_field::TextField::singleline("field:filterSearch", &mut q)
         .hint(crate::i18n::tr("Search"))

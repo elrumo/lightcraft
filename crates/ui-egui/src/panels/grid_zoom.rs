@@ -81,13 +81,13 @@ struct Glide {
 }
 
 fn pinch_id() -> egui::Id {
-    egui::Id::new("grid-pinch")
+    egui::Id::unique("grid-pinch")
 }
 fn drawn_id() -> egui::Id {
-    egui::Id::new("grid-drawn")
+    egui::Id::unique("grid-drawn")
 }
 fn glide_id() -> egui::Id {
-    egui::Id::new("grid-glide")
+    egui::Id::unique("grid-glide")
 }
 
 /// What a frame of the grid draws differently because of a pinch or a change of columns.

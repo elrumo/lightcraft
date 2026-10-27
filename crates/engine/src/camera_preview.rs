@@ -35,7 +35,6 @@ pub(crate) use colour::{
 pub(crate) use hue_sat::HueSat;
 #[cfg(test)]
 use hue_sat::{MIN_LUMINANCE_KEPT, NO_LUMINANCE_KEPT, fit_hue_sat, hue_saturation, restore_weight};
-pub(crate) use look_fit::{NeutralFit, fit_neutral, neutral_pairs};
 #[cfg(test)]
 pub(crate) use look_fit::fit_preview;
 #[cfg(test)]
@@ -43,6 +42,7 @@ use look_fit::{
     FIT_PREVIEW_MAX_PIXELS, SENSOR_CLIP, at_most, clips_more, correct_vignetting, fit_look, fit_look_with, sony_dro_off_tone, with_dro_off_tone,
     without_clipped,
 };
+pub(crate) use look_fit::{fit_neutral, neutral_pairs};
 #[cfg(test)]
 use mono::{fit_dark_tone, fit_tone_only, monochrome, monochrome_look, to_prophoto};
 #[cfg(test)]

@@ -521,8 +521,7 @@ fn undo_to_existing_texture_supersedes_pending_edit() {
     let original = app.renderer.thumb(PhotoId(1)).unwrap().pixels.clone().unwrap();
     let mut edit = lightcraft_develop::DevelopSettings::default();
     edit.light.exposure = 1.0;
-    let undo =
-        app.session.catalog.apply(Op::SetDevelop { id: PhotoId(1), settings: Arc::new(edit), label: "edit".into(), edited: None }).unwrap();
+    let undo = app.session.catalog.apply(Op::SetDevelop { id: PhotoId(1), settings: Arc::new(edit), label: "edit".into(), edited: None }).unwrap();
     request(&mut app);
     let (_, edited) = take_job(&work);
     app.session.catalog.apply(undo).unwrap();

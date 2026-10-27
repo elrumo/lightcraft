@@ -458,8 +458,8 @@ enum Face {
 /// a card's grey. True when pressed.
 fn capsule(ui: &mut egui::Ui, t: &Tokens, rect: Rect, id: &str, label: &str, face: Face, prominent: bool) -> bool {
     let label = crate::i18n::tr(label);
-    let resp = ui.interact(rect, egui::Id::new(("sync-status", id)), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let resp = ui.interact(rect, egui::Id::unique(("sync-status", id)), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     register(ui, format!("button:{id}"), rect);
     let dark = Tokens::is_dark(ui.ctx());
     let (fill, ink) = if prominent { (t.accent, Color32::WHITE) } else { (card_fill(ui.ctx()), t.text) };

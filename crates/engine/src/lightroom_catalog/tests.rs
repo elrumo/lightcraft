@@ -429,14 +429,10 @@ fn catalog_xmp_upright_and_guides_are_reported() {
         r#"crs:PerspectiveUpright="5" crs:UprightFourSegmentsCount="2" crs:UprightFourSegments_0="0.2, 0.1, 0.25, 0.9" crs:UprightFourSegments_1="0.8, 0.1, 0.75, 0.9""#,
     );
     let auto = "1.010477639,-0.008540717,-0.006124940,0.014938050,1.011645918,-0.015359712,-0.007190889,-0.003396748,1.000000000";
-    let matrix = xmp(&format!(
-        r#"crs:PerspectiveUpright="1" crs:UprightVersion="151388160" crs:UprightTransformCount="6" crs:UprightTransform_1="{auto}""#
-    ));
-    let lua =
-        format!(r#"s = {{ PerspectiveUpright = 1, UprightVersion = 151388160, UprightTransformCount = 6, UprightTransform_1 = "{auto}" }}"#);
-    for (packet, settings, mode) in
-        [(guides, String::new(), lightcraft_develop::Upright::Guided), (matrix, lua, lightcraft_develop::Upright::Auto)]
-    {
+    let matrix =
+        xmp(&format!(r#"crs:PerspectiveUpright="1" crs:UprightVersion="151388160" crs:UprightTransformCount="6" crs:UprightTransform_1="{auto}""#));
+    let lua = format!(r#"s = {{ PerspectiveUpright = 1, UprightVersion = 151388160, UprightTransformCount = 6, UprightTransform_1 = "{auto}" }}"#);
+    for (packet, settings, mode) in [(guides, String::new(), lightcraft_develop::Upright::Guided), (matrix, lua, lightcraft_develop::Upright::Auto)] {
         let mut data = sample();
         data.photos.truncate(1);
         data.photos[0].image.remove("masterImage");
@@ -659,10 +655,7 @@ fn native_catalog(tables: &[(&str, &str, Vec<SqlValue>)]) -> Vec<u8> {
 
 /// [`native_catalog`] with the last table's root page set to `last_page`, when given.
 fn native_catalog_with_last_table_page(tables: &[(&str, &str, Vec<SqlValue>)], last_page: Option<i64>) -> Vec<u8> {
-    sqlite_file_with_last_table_page(
-        &tables.iter().map(|(name, columns, row)| (*name, *columns, vec![row.clone()])).collect::<Vec<_>>(),
-        last_page,
-    )
+    sqlite_file_with_last_table_page(&tables.iter().map(|(name, columns, row)| (*name, *columns, vec![row.clone()])).collect::<Vec<_>>(), last_page)
 }
 
 /// A SQLite file with one 2 KiB leaf page per table: `(name, columns, rows)` each; row `i` has

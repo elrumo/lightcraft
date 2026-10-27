@@ -55,7 +55,7 @@ pub fn blocks(app: &LightcraftApp, ids: &[PhotoId], key_len: usize, show: usize)
 
 /// The blocks for this view and span, kept while neither changes.
 fn cached(app: &LightcraftApp, ctx: &egui::Context, ids: &[PhotoId], generation: u64, span: GridSpan) -> Arc<Vec<Block>> {
-    let key = egui::Id::new("grid-date-blocks");
+    let key = egui::Id::unique("grid-date-blocks");
     if let Some((g, s, b)) = ctx.data(|d| d.get_temp::<(u64, GridSpan, Arc<Vec<Block>>)>(key))
         && g == generation
         && s == span
@@ -129,7 +129,7 @@ fn cover(tw: f32, th: f32, aspect: f32) -> Rect {
 /// A photo in a rounded tile (widget `dateTile:<id>`); true when tapped.
 fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, onscreen: bool) -> bool {
     let t = Tokens::get(ui.ctx());
-    let resp = ui.interact(r, egui::Id::new(("date-tile", id.0, r.min.x as i32)), Sense::click());
+    let resp = ui.interact(r, egui::Id::unique(("date-tile", id.0, r.min.x as i32)), Sense::click());
     register(ui, format!("dateTile:{}", id.0), r);
     let ppp = ui.ctx().pixels_per_point();
     super::grid::request_thumb(
@@ -144,7 +144,7 @@ fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, onscre
         Some(tex) => {
             let [tw, th] = tex.size;
             let uv = cover(tw as f32, th as f32, r.width() / r.height().max(1.0));
-            let k = ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), true, 0.2);
+            let k = ui.ctx().animate_bool_with_time(egui::Id::unique(("thumb-in", id.0)), true, 0.2);
             if blur {
                 super::grid::paint_obscured(p, tex.tex.id(), r, uv, k);
             } else {
@@ -240,7 +240,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, ids: &[PhotoId], generat
                 }
                 _ => {
                     let head = Rect::from_min_size(at, vec2(w, HEAD_H));
-                    let resp = ui.interact(head, egui::Id::new(("month-head", &b.key)), Sense::click());
+                    let resp = ui.interact(head, egui::Id::unique(("month-head", &b.key)), Sense::click());
                     register(ui, format!("month:{}", if b.key.is_empty() { "unknown" } else { &b.key }), head);
                     let ink = if resp.is_pointer_button_down_on() { t.text_dim } else { t.text };
                     let g = ui.painter().layout_no_wrap(title(&b.key), t.semibold(24.0), ink);

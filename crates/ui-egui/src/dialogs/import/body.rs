@@ -210,7 +210,7 @@ fn mobile_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog,
     let t = Tokens::get(ui.ctx());
     let Some(c) = d.candidates.get(i).cloned() else { return };
     let ok = d.importable(i);
-    let resp = ui.interact(rect, egui::Id::new(("import-cell", i)), Sense::click());
+    let resp = ui.interact(rect, egui::Id::unique(("import-cell", i)), Sense::click());
     register(ui, format!("import:{i}"), rect);
     let p = ui.painter_at(rect.intersect(ui.clip_rect()));
     p.rect_filled(rect, 0.0, t.cell);
@@ -783,7 +783,7 @@ fn paint_box(p: &egui::Painter, r: Rect, state: Option<bool>, enabled: bool, t: 
 fn day_row(ui: &mut egui::Ui, d: &mut ImportDialog, g: &DayGroup, rect: Rect, phone: bool) {
     let t = Tokens::get(ui.ctx());
     let key = g.day.clone().unwrap_or_default();
-    let resp = ui.interact(rect, egui::Id::new(("import-day", &key)), Sense::click());
+    let resp = ui.interact(rect, egui::Id::unique(("import-day", &key)), Sense::click());
     register(ui, format!("importDay:{}", if key.is_empty() { "none" } else { key.as_str() }), rect);
     let state = d.range_checked(g.range.clone());
     let enabled = d.range_enabled(g.range.clone());

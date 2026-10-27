@@ -26,8 +26,8 @@ mod watermark;
 use batch::run_batch_with;
 pub use batch::{export_parallelism, run_batch};
 pub use encoding::{
-    encode_deep, encode_deep_owned, encode_gain_map_jpeg, encode_image, encode_rendered, encode_with_metadata, export_metadata, named_space, output_sharpen,
-    output_sharpen_deep, removes_location, srgb8_in,
+    encode_deep, encode_deep_owned, encode_gain_map_jpeg, encode_image, encode_rendered, encode_with_metadata, export_metadata, named_space,
+    output_sharpen, output_sharpen_deep, removes_location, srgb8_in,
 };
 pub use options::{
     Conflict, DestinationMode, ExportFormat, ExportPreset, HdrCurve, MAX_ENLARGED_PIXELS, MetadataPolicy, Resize, ResizeMode, SharpenAmount,

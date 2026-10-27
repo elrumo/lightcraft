@@ -166,10 +166,10 @@ pub(super) fn cancel_screen(app: &mut LightcraftApp) {
 /// (`left::entrance`), counted from when it opened.
 fn albums(app: &mut LightcraftApp, ctx: &egui::Context, open: bool) {
     let src = app.session.source;
-    let was = egui::Id::new("compact-albums-open");
+    let was = egui::Id::unique("compact-albums-open");
     if open && !ctx.data(|d| d.get_temp::<bool>(was)).unwrap_or(false) {
         let now = ctx.input(|i| i.time);
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(super::left::OPENED_AT), now));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(super::left::OPENED_AT), now));
     }
     ctx.data_mut(|d| d.insert_temp(was, open));
     let bar = mobile::PageBar {
@@ -258,9 +258,9 @@ fn add_button(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens) {
     }
     let screen = ctx.content_rect();
     let at = pos2(screen.right() - 20.0 - ADD_D, screen.bottom() - 20.0 - ADD_D);
-    egui::Area::new(egui::Id::new("compact_add")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("compact_add")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         let (r, resp) = ui.allocate_exact_size(vec2(ADD_D, ADD_D), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Add Photos")));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Add Photos")));
         crate::widgets::register(ui, "button:addPhotos", r);
         let p = ui.painter();
         // prominent (accent-tinted) glass, swelling under the finger as iOS 26's does
@@ -287,7 +287,7 @@ const SPAN_H: f32 = 44.0;
 fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: bool) {
     let grid = matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid);
     let shown = shown && grid && !app.session.visible().is_empty();
-    let k = ctx.animate_bool_with_time(egui::Id::new("span-bar-shown"), shown, 0.25);
+    let k = ctx.animate_bool_with_time(egui::Id::unique("span-bar-shown"), shown, 0.25);
     if k <= 0.0 {
         return;
     }
@@ -300,7 +300,7 @@ fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: boo
     }
     let centre = pos2(x, screen.bottom() - 20.0 - ADD_D / 2.0 + (1.0 - k) * 90.0);
     let capsule = egui::Rect::from_center_size(centre, vec2(w, SPAN_H));
-    egui::Area::new(egui::Id::new("compact_span")).order(egui::Order::Foreground).fixed_pos(capsule.min).show(ctx, |ui| {
+    egui::Area::new(egui::Id::unique("compact_span")).order(egui::Order::Foreground).fixed_pos(capsule.min).show(ctx, |ui| {
         ui.multiply_opacity(k);
         let (r, _) = ui.allocate_exact_size(capsule.size(), Sense::hover());
         let p = ui.painter();
@@ -310,9 +310,9 @@ fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: boo
         let mut chosen = None;
         for (i, span) in crate::state::GridSpan::ALL.into_iter().enumerate() {
             let seg = egui::Rect::from_min_size(r.min + vec2(i as f32 * SPAN_W, 0.0), vec2(SPAN_W, SPAN_H));
-            let resp = ui.interact(seg, egui::Id::new(("span", span.id())), if shown { Sense::click() } else { Sense::hover() });
+            let resp = ui.interact(seg, egui::Id::unique(("span", span.id())), if shown { Sense::click() } else { Sense::hover() });
             let on = app.ui.grid_span == span;
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(span.label())));
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, crate::i18n::tr(span.label())));
             crate::widgets::register(ui, format!("button:span-{}", span.id()), seg);
             if on {
                 chosen = Some(seg);
@@ -324,7 +324,7 @@ fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: boo
                 let _ = app.run("view.gridSpan", json!({"span": span.id()}));
             }
         }
-        ui.painter().set(pill, selection_pill(ui.ctx(), egui::Id::new("span-pill"), chosen, false, vec2(8.0, 8.0)));
+        ui.painter().set(pill, selection_pill(ui.ctx(), egui::Id::unique("span-pill"), chosen, false, vec2(8.0, 8.0)));
     });
 }
 
@@ -506,8 +506,8 @@ fn undo_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     ];
     for (i, (id, icon, tip, cmd, enabled)) in steps.into_iter().enumerate() {
         let cell = egui::Rect::from_min_size(row.min + vec2(i as f32 * w / 2.0, 0.0), vec2(w / 2.0, row.height()));
-        let resp = ui.interact(cell, egui::Id::new(("undo-menu", id)), if enabled { Sense::click() } else { Sense::hover() });
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
+        let resp = ui.interact(cell, egui::Id::unique(("undo-menu", id)), if enabled { Sense::click() } else { Sense::hover() });
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, crate::i18n::tr(tip)));
         crate::widgets::register_geometry(&ctx, format!("button:{id}"), cell);
         if enabled && resp.is_pointer_button_down_on() {
             let spot = cell.shrink2(vec2(10.0, 4.0));
@@ -610,7 +610,7 @@ fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
         ViewMode::Detail => 1,
         _ => 2,
     };
-    let mut k = mobile::enter(ui.ctx(), egui::Id::new("compact-content-in"), kind, 0.22);
+    let mut k = mobile::enter(ui.ctx(), egui::Id::unique("compact-content-in"), kind, 0.22);
     // a photo pulled down shows the grid behind it, and one let go flies back into it: the grid was
     // showing already, so it doesn't fade in
     if super::detail::homing(ui.ctx()).is_some() {
@@ -705,7 +705,7 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
             // over the grid, a tap on the bar between its buttons slides the grid back to its top, as a
             // tap on the status bar does in iOS's lists (the buttons, added after, take their own taps)
             if matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) && !app.ui.select_mode {
-                let bar = ui.interact(full, egui::Id::new("compact-top-tap"), Sense::click());
+                let bar = ui.interact(full, egui::Id::unique("compact-top-tap"), Sense::click());
                 crate::widgets::register(ui, "bar:top", full);
                 if bar.clicked() {
                     let _ = app.run("view.scrollToTop", json!({}));
@@ -714,7 +714,7 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
             // (the bar's contents fade in when it turns into another: grid, photo, choosing)
             ui.multiply_opacity(mobile::enter(
                 ui.ctx(),
-                egui::Id::new("compact-top-in"),
+                egui::Id::unique("compact-top-in"),
                 (app.ui.select_mode, app.ui.view == ViewMode::Detail),
                 0.18,
             ));
@@ -767,7 +767,7 @@ fn cloud_button(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens) -> egui::Res
     let (tip, problem, busy) = crate::sync_ui::cloud_status(app);
     let unsaved = app.session.unsaved().is_some();
     let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip.clone()));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip.clone()));
     crate::widgets::register(ui, "icon:cloud", r);
     let k = glass::press(ui.ctx(), &resp);
     let circle = egui::Rect::from_center_size(r.center(), vec2(H, H) * (1.0 + 0.1 * k));
@@ -904,8 +904,8 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
     let room = (right.left() - 8.0 - (hr.left() + 16.0) - 30.0).max(24.0);
     let galley = crate::widgets::one_line(ui.painter(), &title, t.semibold(28.0), t.text, room);
     let title_r = egui::Rect::from_min_size(pos2(hr.left() + 16.0, hr.center().y - 20.0), vec2(galley.size().x + 30.0, 40.0));
-    let mut resp = ui.interact(title_r, egui::Id::new("compact-collection"), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Albums")));
+    let mut resp = ui.interact(title_r, egui::Id::unique("compact-collection"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Albums")));
     if galley.elided {
         // (the whole name, where there is a pointer to rest on it)
         resp = resp.on_hover_text(title);
@@ -988,8 +988,8 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
             if on {
                 chosen = Some(cell);
             }
-            let resp = ui.interact(cell, egui::Id::new(("compact-tool", id)), if has_photo { Sense::click() } else { Sense::hover() });
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, has_photo, on, crate::i18n::tr(tip)));
+            let resp = ui.interact(cell, egui::Id::unique(("compact-tool", id)), if has_photo { Sense::click() } else { Sense::hover() });
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, has_photo, on, crate::i18n::tr(tip)));
             crate::widgets::register(ui, format!("icon:{id}"), cell);
             // iOS's tab bar: the open tool's icon and name are tinted, the others the label colour
             let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
@@ -1022,7 +1022,7 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
         }
         ui.painter().set(glass_idx, glass::shape(ui.ctx(), capsule, if rail { 26.0 } else { capsule.height() / 2.0 }, None, 0.0));
         let inset = if rail { vec2(8.0, 2.0) } else { vec2(2.0, 8.0) };
-        ui.painter().set(pill_idx, selection_pill(ui.ctx(), egui::Id::new("compact-tool-pill"), chosen, rail, inset));
+        ui.painter().set(pill_idx, selection_pill(ui.ctx(), egui::Id::unique("compact-tool-pill"), chosen, rail, inset));
     });
 }
 
@@ -1114,7 +1114,7 @@ fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 }
                 ui.add_space(8.0);
                 // (as wide as a group, 6 pt clear of the row's top and bottom)
-                let mut shape = selection_pill(ui.ctx(), egui::Id::new("compact-group-pill"), chosen, false, vec2(0.0, 8.0));
+                let mut shape = selection_pill(ui.ctx(), egui::Id::unique("compact-group-pill"), chosen, false, vec2(0.0, 8.0));
                 shape.translate(origin);
                 ui.painter().set(pill, shape);
             });
@@ -1128,7 +1128,7 @@ fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) ->
     let t = Tokens::get(ui.ctx());
     let label = crate::i18n::tr(label);
     let (r, resp) = ui.allocate_exact_size(vec2(GROUP_W, GROUP_H - 4.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, label));
     crate::widgets::register(ui, format!("button:{id}"), r);
     let color = if on || resp.is_pointer_button_down_on() { t.text } else { t.text_dim };
     // (icon and name close together, so that the pill has room round them)
@@ -1149,7 +1149,7 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
     let avail = ui.available_rect_before_wrap().height();
     let ctx = ui.ctx().clone();
     // sliding away, the sheet still shows the tool it had (the app has moved on)
-    let (last, mine) = (egui::Id::new("compact-sheet-last"), (app.ui.right, app.ui.presets));
+    let (last, mine) = (egui::Id::unique("compact-sheet-last"), (app.ui.right, app.ui.presets));
     let now = (mine.0 != RightPanel::None || mine.1).then_some(mine);
     let tool = now.or_else(|| ctx.data(|d| d.get_temp::<(RightPanel, bool)>(last))).unwrap_or(mine);
     ctx.data_mut(|d| d.insert_temp(last, tool));
@@ -1159,7 +1159,7 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
     let body = |app: &mut LightcraftApp, ui: &mut egui::Ui| {
         // the tool's controls fade in on a change of tool or group
         let key = format!("{tool:?}{}", app.ui.edit_group);
-        ui.multiply_opacity(mobile::enter(ui.ctx(), egui::Id::new("compact-sheet-in"), key, 0.18));
+        ui.multiply_opacity(mobile::enter(ui.ctx(), egui::Id::unique("compact-sheet-in"), key, 0.18));
         if app.ui.presets { super::presets::body(app, ui) } else { super::right::body(app, ui) }
     };
     if wide {
@@ -1192,14 +1192,14 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
     let detent = (app.ui.sheet_detent as usize).min(stops.len() - 1);
     // what the finger has made it while dragging the grabber, else the stop it was left at; never
     // taller than its content (measured by `right::body` a frame before)
-    let drag_id = egui::Id::new("compact-sheet-drag");
+    let drag_id = egui::Id::unique("compact-sheet-drag");
     let dragging = ctx.data(|d| d.get_temp::<f32>(drag_id));
     let fit = ctx.data(|d| d.get_temp::<f32>(fit_id(app))).map(|c| c + GRABBER_H);
     // (content that only just overflows a stop is shown whole: a row cut in half helps nobody)
     let limit = |h: f32| fit.map_or(h, |f| if f <= h + SLIDER_ROW_H { f } else { h }).max(GRABBER_H + SLIDER_ROW_H);
     let h = match dragging {
         Some(h) => limit(h),
-        None => ease_to(&ctx, egui::Id::new("compact-sheet-h"), limit(stops[detent])),
+        None => ease_to(&ctx, egui::Id::unique("compact-sheet-h"), limit(stops[detent])),
     };
     let frame = frame.corner_radius(egui::CornerRadius { nw: 22, ne: 22, sw: 0, se: 0 });
     // (what shows through the rounded corners is the photo's canvas, not what the window was cleared to)
@@ -1209,7 +1209,7 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
         &mut shown,
         |ui| {
             let (g, resp) = ui.allocate_exact_size(vec2(ui.available_width(), GRABBER_H), Sense::click_and_drag());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Resize Panel")));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Resize Panel")));
             crate::widgets::register(ui, "sheet:grabber", g);
             let pill = if resp.is_pointer_button_down_on() { t.text_dim } else { t.track };
             ui.painter().rect_filled(egui::Rect::from_center_size(g.center() + vec2(0.0, 1.0), vec2(36.0, 5.0)), 2.5, pill);
@@ -1218,7 +1218,7 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
                 // (not `clamp`: that panics when a tiny window leaves `avail` negative)
                 let now = now.max(0.0).min(stops[2].max(avail * 0.85));
                 ctx.data_mut(|d| d.insert_temp(drag_id, now));
-                ctx.data_mut(|d| d.insert_temp(egui::Id::new("compact-sheet-h"), limit(now)));
+                ctx.data_mut(|d| d.insert_temp(egui::Id::unique("compact-sheet-h"), limit(now)));
             }
             if resp.drag_stopped() {
                 let dropped = dragging.unwrap_or(h);
@@ -1255,7 +1255,7 @@ fn sheet_stops(avail: f32) -> [f32; 3] {
 
 /// Where the height of what the sheet shows now (the tool, and the Edit group) is kept.
 fn fit_id(app: &LightcraftApp) -> egui::Id {
-    egui::Id::new(("compact-sheet-fit", format!("{:?}", app.ui.right), app.ui.presets, app.ui.edit_group.clone()))
+    egui::Id::unique(("compact-sheet-fit", format!("{:?}", app.ui.right), app.ui.presets, app.ui.edit_group.clone()))
 }
 
 /// The tool panel says how tall its content is (`right::body`), so that the sheet needn't be taller.
@@ -1379,7 +1379,7 @@ fn adding_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, album: u64
 fn action_cell(ui: &mut egui::Ui, id: &str, icon: Icon, w: f32, enabled: bool, tip: &str) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(w, ui.available_height()), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, crate::i18n::tr(tip)));
     crate::widgets::register(ui, format!("icon:{id}"), r);
     let k = glass::press(ui.ctx(), &resp);
     if k > 0.0 {
@@ -1417,7 +1417,7 @@ fn common<T: PartialEq + Copy>(app: &LightcraftApp, ids: &[u64], f: impl Fn(&lig
 /// A finger-sized cell in an icon row (`button:<id>`), on a round highlight when `on` or pressed.
 fn row_cell(ui: &mut egui::Ui, id: &str, tip: &str, on: bool) -> (egui::Rect, egui::Response) {
     let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(tip)));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, crate::i18n::tr(tip)));
     crate::widgets::register(ui, format!("button:{id}"), r);
     let t = Tokens::get(ui.ctx());
     // (a round highlight, as iOS marks the chosen one of a row of symbols)

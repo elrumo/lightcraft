@@ -603,7 +603,7 @@ fn the_popover_opens_on_top_after_a_tap_outside_closed_it() {
         frames(&mut h, 30);
         assert!(has(&h, "actions:syncStatus"));
         let pause = rect_of(&h, "button:syncPause");
-        let popover = egui::LayerId::new(egui::Order::Foreground, egui::Id::new(("lc-sheet", crate::panels::sync_status::ID)));
+        let popover = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique(("lc-sheet", crate::panels::sync_status::ID)));
         assert_eq!(h.view.ctx.layer_id_at(pause.center()), Some(popover), "the popover is on top");
         h.request("ui.click", json!({"x": 200.0, "y": 800.0}), T);
         h.settle(SETTLE);

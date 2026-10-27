@@ -4,8 +4,8 @@
 //! unit-tested; `from_metadata` builds that model from `cargo metadata`.
 
 use super::*;
-use std::collections::HashSet;
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// Where a workspace crate sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

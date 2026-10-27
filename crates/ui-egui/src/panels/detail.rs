@@ -13,7 +13,7 @@ use crate::haptics::{self, Haptic};
 use crate::render::Slot;
 use crate::state::{BeforeAfter, RightPanel, ToolOverlay, Zoom};
 use crate::theme::Tokens;
-use crate::widgets::{register, register_geometry};
+use crate::widgets::register;
 
 mod crop;
 mod filmstrip;
@@ -33,8 +33,8 @@ use crop::{flipped_corners, outside_crop_mesh, rotate_cursor_turn};
 use filmstrip::film_label;
 #[cfg(test)]
 pub(crate) use filmstrip::film_spoken;
-pub(crate) use filmstrip::{film_height, filmstrip, filmstrip_rising};
 use filmstrip::navigator;
+pub(crate) use filmstrip::{film_height, filmstrip_rising};
 pub use geometry::CanvasMap;
 #[cfg(test)]
 pub(crate) use geometry::focus_box;

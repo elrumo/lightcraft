@@ -1392,8 +1392,7 @@ fn dragging_a_preset_group_reorders_the_groups() {
     }
     h.step();
     let top = h.app.widgets.iter().rev().find(|(w, _)| *w == format!("presetGroup:{first}")).map(|(_, r)| *r).unwrap();
-    let r =
-        h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "toX": top.center().x, "toY": top.top() + 3.0, "steps": 12}), t);
+    let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "toX": top.center().x, "toY": top.top() + 3.0, "steps": 12}), t);
     assert_eq!(r["ok"], true, "{r}");
     h.step();
     let now = h.app.session.preset_groups();
@@ -1694,8 +1693,7 @@ fn grid_groups_by_capture_date() {
     h.app.ui.thumb_size = 120.0;
     h.settle(SETTLE);
     let vis = h.app.session.visible_cloned();
-    let month =
-        h.app.session.catalog.date_runs(&vis, h.app.session.visible_stacked(), h.app.session.sort.key, lightcraft_catalog::GroupBy::Month);
+    let month = h.app.session.catalog.date_runs(&vis, h.app.session.visible_stacked(), h.app.session.sort.key, lightcraft_catalog::GroupBy::Month);
     let r = h.request("ui.clickWidget", json!({"id": format!("group:{}", month[0].key)}), t);
     assert_eq!(r["ok"], true, "{r}");
     h.request("engine.execute", json!({"command": "library.sort", "params": {"group": "none"}}), t);
@@ -2487,8 +2485,7 @@ fn crop_starts_locked_to_original_without_editing_and_remembers_unlock() {
     for saved in [json!({}), json!({"cropDefaultAspect": null})] {
         let mut h = demo([1200.0, 800.0]);
         h.app.ui = serde_json::from_value::<UiState>(saved).unwrap();
-        let photos: Vec<_> =
-            h.app.session.visible_cloned().into_iter().filter(|id| !h.app.session.catalog.photo(*id).unwrap().is_edited()).collect();
+        let photos: Vec<_> = h.app.session.visible_cloned().into_iter().filter(|id| !h.app.session.catalog.photo(*id).unwrap().is_edited()).collect();
         let photo = photos[0];
         h.app.run("library.select", json!({"ids": [photo.0]})).unwrap();
         h.app.run("panel.crop", json!({})).unwrap();

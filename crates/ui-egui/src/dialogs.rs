@@ -19,11 +19,10 @@ pub use confirm::confirm_dialog;
 pub use cull::{MAX_BURST_GAP, clamp_cull_burst, cull_params, fmt_gap, parse_gap};
 use export::group_checklist;
 pub use frame::{ConfirmStyle, confirm_style, list_height, prompt};
-pub(crate) use frame::{choices, field, num, trailing_button_row};
 use frame::{
-    DIALOG_CHROME_GUESS, DIALOG_MIN_BODY, DIALOG_SCREEN_MARGIN, clicked_backdrop, dialog_body, dialog_field, just_opened, only_shows,
-    return_confirms,
+    DIALOG_CHROME_GUESS, DIALOG_MIN_BODY, DIALOG_SCREEN_MARGIN, clicked_backdrop, dialog_body, dialog_field, just_opened, only_shows, return_confirms,
 };
+pub(crate) use frame::{choices, field, num, trailing_button_row};
 pub(crate) use rename::rename_preview;
 use rename::{RENAME_PREVIEW_ROWS, person_rename_plan};
 pub(crate) use sam_model::show_model_folder;
@@ -47,7 +46,6 @@ pub const ABOUT_TABS: &[(&str, &str)] = &[("about", "About"), ("contributors", "
 
 /// Help ▸ What's New (docs/whats-new.md).
 pub use lightcraft_engine::about::WHATS_NEW;
-
 
 /// The import review and Settings keep window ids of their own, so the size each is given
 /// doesn't carry over to the other dialogs.
@@ -946,7 +944,12 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                 ui.label(crate::i18n::tr("Choose a PDF destination after confirming. Print the PDF from your viewer."));
             }
             Dialog::Export { opts, full_size, resize, preset_name, limit_kb, dir, .. } => {
-                crate::panels::export::form(app, ui, crate::panels::export::Form { opts, full_size, resize, preset_name, limit_kb, dir }, crate::panels::export::Part::All);
+                crate::panels::export::form(
+                    app,
+                    ui,
+                    crate::panels::export::Form { opts, full_size, resize, preset_name, limit_kb, dir },
+                    crate::panels::export::Part::All,
+                );
             }
             Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
             Dialog::PresetImport { review } => crate::preset_import::body(app, ui, review),
@@ -1502,7 +1505,6 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
         app.ui.dialog = Some(dlg);
     }
 }
-
 
 /// The last frame a dialog was drawn and stayed open, for [`clicked_backdrop`].
 const BACKDROP_SHOWN: &str = "dialog-backdrop-shown";

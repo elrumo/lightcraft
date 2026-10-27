@@ -493,7 +493,7 @@ fn found_card(app: &mut LightcraftApp, ui: &mut egui::Ui, p: &Value, r: Rect, ed
     let t = Tokens::get(ui.ctx());
     let Some(id) = p["id"].as_str() else { return };
     let face = Rect::from_min_size(r.min, vec2(edge, edge));
-    let resp = ui.interact(face, egui::Id::new(("found-card", id)), Sense::click());
+    let resp = ui.interact(face, egui::Id::unique(("found-card", id)), Sense::click());
     register(ui, format!("person:found:{id}"), r);
     let (photo, rect) = (p["cover"]["photo"].as_u64().map(lightcraft_catalog::PhotoId), &p["cover"]["rect"]);
     let num = |k: &str| rect[k].as_f64().unwrap_or(0.0);

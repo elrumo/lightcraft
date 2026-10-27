@@ -1,9 +1,9 @@
 use super::colour::{PROFILE_PROXY, PROXY, file_local_look, spectral};
+use super::hue_sat::fit_hue_sat;
 use super::mono::{fit_tone_only_with, monochrome};
 use super::pairs::{Attempt, EDGE_CONTRAST, TONE_FITS, collect_pairs, fit_attempt, fit_partial, luma, search_ordered};
 use super::proxy::{CLIP_TOLERANCE, LensGeometry, MIN_PREVIEW_FRACTION, alignment, proxies, proxies_from, structure_agrees, with_jpeg_vignetting};
 use super::tone::{HighlightCheck, highlights, median};
-use super::hue_sat::{fit_hue_sat};
 use super::*;
 
 /// The colour a raw's camera most likely has when its file has no colour matrices, as the matrix that takes what the

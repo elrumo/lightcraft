@@ -545,7 +545,7 @@ fn header(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     ui.painter().rect(sr, 14.0, t.field, Stroke::new(1.0, t.field_border), StrokeKind::Inside);
     let mut child =
         ui.new_child(egui::UiBuilder::new().max_rect(sr.shrink2(vec2(34.0, 2.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-    let id = egui::Id::new("map-search");
+    let id = egui::Id::unique("map-search");
     let edit = child.add(
         egui::TextEdit::singleline(&mut app.map.search)
             .id(id)
@@ -560,7 +560,7 @@ fn header(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let hits = if app.map.search.trim().chars().count() >= 2 { place_hits(&app.map.search) } else { vec![] };
     if edit.has_focus() && !hits.is_empty() {
         let mut go = None;
-        egui::Area::new(egui::Id::new("map-search-hits")).order(egui::Order::Foreground).fixed_pos(pos2(sr.left(), sr.bottom() + 4.0)).show(
+        egui::Area::new(egui::Id::unique("map-search-hits")).order(egui::Order::Foreground).fixed_pos(pos2(sr.left(), sr.bottom() + 4.0)).show(
             ui.ctx(),
             |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -625,7 +625,7 @@ fn overlays(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &Viewport
     ui.painter().galley(r.min + vec2(5.0, 2.0), g, Color32::from_gray(40));
     crate::widgets::register_geometry(&ctx, "map:attribution", r);
     if let Some(url) = url {
-        let resp = ui.interact(r, egui::Id::new("map-attribution"), Sense::click()).on_hover_text(url);
+        let resp = ui.interact(r, egui::Id::unique("map-attribution"), Sense::click()).on_hover_text(url);
         if resp.clicked()
             && let Some(open) = app.services.open_url.as_mut()
         {
@@ -653,7 +653,7 @@ fn overlays(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &Viewport
     let mut changed = false;
     for (i, (label, id)) in [("+", "map:zoomIn"), ("−", "map:zoomOut"), ("", "map:fit")].into_iter().enumerate() {
         let b = Rect::from_min_size(col.min + vec2(0.0, i as f32 * 33.0), vec2(32.0, 33.0));
-        let resp = ui.interact(b, egui::Id::new(id), Sense::click());
+        let resp = ui.interact(b, egui::Id::unique(id), Sense::click());
         register(ui, id, b);
         let c = if resp.hovered() { t.text } else { t.text_label };
         if id == "map:fit" {
@@ -759,7 +759,7 @@ fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
         drawn += 1;
         let n = c.count();
         let any_selected = c.members.iter().any(|i| points.get(*i as usize).is_some_and(|p| selected.contains(&p.id)));
-        let resp = ui.interact(r, egui::Id::new(("map-marker", front.0, n)), Sense::click());
+        let resp = ui.interact(r, egui::Id::unique(("map-marker", front.0, n)), Sense::click());
         register(ui, format!("marker:{}", front.0), r);
         if resp.hovered() {
             hovered = Some((r, ci));

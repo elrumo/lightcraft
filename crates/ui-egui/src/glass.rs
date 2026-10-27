@@ -141,7 +141,7 @@ pub fn press(ctx: &egui::Context, resp: &egui::Response) -> f32 {
 /// 26's bars have them: back, close, "…". `tint` makes it a prominent (coloured) one.
 pub fn circle_button(ui: &mut egui::Ui, key: &str, icon: Icon, tip: &str, enabled: bool, tint: Option<Color32>) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, crate::i18n::tr(tip)));
     crate::widgets::register(ui, key, r);
     paint_circle(ui, r.center(), &resp, icon, enabled, tint);
     resp
@@ -170,7 +170,7 @@ pub fn capsule_button(ui: &mut egui::Ui, key: &str, label: &str, tint: Option<Co
     let galley = ui.painter().layout_no_wrap(label.to_string(), t.semibold(15.0), ink);
     let w = galley.size().x + 30.0;
     let (r, resp) = ui.allocate_exact_size(vec2(w.max(44.0), 44.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     crate::widgets::register(ui, key, r);
     let k = press(ui.ctx(), &resp);
     let pill = Rect::from_center_size(r.center(), vec2(w, BUTTON_D) * (1.0 + 0.08 * k));
@@ -199,8 +199,8 @@ pub fn group(ui: &mut egui::Ui, items: &[GroupItem]) -> Vec<egui::Response> {
         .map(|(i, (key, icon, tip, enabled))| {
             let slot = if rtl { n - 1.0 - i as f32 } else { i as f32 };
             let cell = Rect::from_min_size(pos2(r.left() + 4.0 + slot * W, r.top()), vec2(W, 44.0));
-            let resp = ui.interact(cell, Id::new(("lc-glass-group", *key)), if *enabled { Sense::click() } else { Sense::hover() });
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, *enabled, crate::i18n::tr(tip)));
+            let resp = ui.interact(cell, Id::unique(("lc-glass-group", *key)), if *enabled { Sense::click() } else { Sense::hover() });
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, *enabled, crate::i18n::tr(tip)));
             crate::widgets::register(ui, *key, cell);
             let k = press(ui.ctx(), &resp);
             glow = glow.max(k);

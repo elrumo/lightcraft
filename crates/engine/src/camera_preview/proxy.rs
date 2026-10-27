@@ -2,7 +2,7 @@ use super::colour::{PROFILE_PROXY, PROXY, file_local_look};
 use super::hue_sat::fit_hue_sat;
 use super::look_fit::{FIT_PREVIEW_MAX_PIXELS, SENSOR_CLIP, clip_mask, correct_vignetting, without_clipped};
 use super::pairs::{EDGE_CONTRAST, collect_pairs, fit_matrix, local_contrast};
-use super::tone::{median};
+use super::tone::median;
 use super::*;
 
 /// Long edge of the proxies the camera's vignetting correction is estimated on ([`jpeg_vignetting`]).

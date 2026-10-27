@@ -1880,7 +1880,8 @@ mod thumbnail_tests {
     fn larger_texture_for_another_key_does_not_count_as_current() {
         let p = photo();
         let slot = Slot::Thumb(p.id);
-        let tex = |key| Shown { look: None, key, photo: p.id, size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 0, draft: false, view: () };
+        let tex =
+            |key| Shown { look: None, key, photo: p.id, size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 0, draft: false, view: () };
         let mut r = Sched::default();
         // A completed larger bucket: the remembered request is bucket 512, key 77.
         r.remember_thumb(&p, 512, 77, false, 10);
@@ -1935,7 +1936,18 @@ mod stage_budget_tests {
     #[test]
     fn a_zoomed_view_is_not_trimmed_while_idle() {
         let mut r = Scheduler::<()>::default();
-        let shown = Shown { look: None, key: 1, photo: PhotoId(1), size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 0, draft: false, view: () };
+        let shown = Shown {
+            look: None,
+            key: 1,
+            photo: PhotoId(1),
+            size: [1, 1],
+            histogram: None,
+            ms: 0.0,
+            quick: None,
+            request_id: 0,
+            draft: false,
+            view: (),
+        };
         r.textures.insert(Slot::Region, shown);
         let long_ago = std::time::Instant::now().checked_sub(IDLE_TRIM * 2).unwrap();
         r.idle = Some((long_ago, false));
@@ -2225,8 +2237,18 @@ mod scheduler_tests {
         for slot in [photo, intro, Slot::Slide(Item::ENDING), Slot::SlidePreview] {
             assert_eq!(Slot::parse(&slot.name()), Some(slot));
         }
-        let shown =
-            || Shown { look: None, key: 1, photo: PhotoId(1), size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 1, draft: false, view: () };
+        let shown = || Shown {
+            look: None,
+            key: 1,
+            photo: PhotoId(1),
+            size: [1, 1],
+            histogram: None,
+            ms: 0.0,
+            quick: None,
+            request_id: 1,
+            draft: false,
+            view: (),
+        };
         let mut r = Scheduler::<()>::with_worker_threads(1);
         r.slides_live = true;
         for slot in [photo, intro, Slot::SlidePreview] {
@@ -2316,7 +2338,9 @@ mod scheduler_tests {
         r.prefetch(Slot::Prefetch(0), s.thumb_job(PhotoId(1), 384).unwrap(), 1);
         r.prefetch(Slot::Prefetch(1), s.thumb_job(PhotoId(1), 384).unwrap(), 1);
         assert_eq!((r.in_flight(), r.in_flight_without_prefetch()), (2, 0));
-        for (index, slot) in [Slot::Main, Slot::Thumb(PhotoId(1)), Slot::Variant(7), Slot::Preview, Slot::ThumbQuick(PhotoId(1))].into_iter().enumerate() {
+        for (index, slot) in
+            [Slot::Main, Slot::Thumb(PhotoId(1)), Slot::Variant(7), Slot::Preview, Slot::ThumbQuick(PhotoId(1))].into_iter().enumerate()
+        {
             r.request(slot, s.thumb_job(PhotoId(1), 384).unwrap(), 10);
             assert_eq!(r.in_flight_without_prefetch(), index + 1);
             assert_eq!(r.in_flight(), index + 3);

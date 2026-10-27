@@ -1,5 +1,3 @@
-use super::*;
-
 /// Where the system keeps monitor profiles, for the Choose Profile dialog to start in: the user's
 /// own profiles first (Linux: colord / DisplayCAL; macOS: ColorSync), then the system's.
 pub(crate) fn display_profile_dir() -> Option<std::path::PathBuf> {

@@ -26,18 +26,18 @@ use dates::date_rows;
 pub(crate) use folders::{folder_row_of, move_photos, moved_text};
 use folders::{folder_rows, reveal_chosen};
 use keywords::{keyword_rows, server_folders_section};
-pub(crate) use local::{fs_cached, fs_cached_running, same_folder};
+pub(crate) use local::{fs_cached, fs_cached_running};
 use local::{local_now, local_rows};
+pub(crate) use rows::OPENED_AT;
 #[cfg(test)]
 pub(crate) use rows::{INDENT_STEP, MIN_INDENT_STEP};
-pub(crate) use rows::OPENED_AT;
 use rows::{LIBFOLDER_REVEALED, SCROLL_TO_ROW, SCROLL_UNTIL, ask_scroll, row, set_tree_open};
 pub(crate) use rows::{content_width, indent_step, step_for};
 pub(crate) use sections::PlacedSection;
 pub use sections::section_drag_feedback;
 #[cfg(test)]
 pub(crate) use sections::section_drop_before;
-use sections::{SECTION_GAP, heading, missing_count, new_album_menu, pinned_header, section, section_drag, sections_menu, visible_right};
+use sections::{SECTION_GAP, heading, missing_count, pinned_header, section, section_drag, sections_menu, visible_right};
 
 /// Draw the My Photos sidebar: title and open-library name, the scrollable sources, albums,
 /// folders and sections, with the section visibility menu on the title.
@@ -280,7 +280,7 @@ fn create_new(ui: &mut egui::Ui) {
     let w = galley.size().x + 18.0 + 10.0 + 2.0 * 24.0;
     let r = Rect::from_center_size(pos2(view.center().x, view.bottom() - 16.0 - CREATE_H / 2.0), vec2(w, CREATE_H));
     let resp = ui.interact(r, egui::Id::unique("left-create-new"), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     register(ui, "button:createNew", r);
     let k = crate::glass::press(ui.ctx(), &resp);
     let r = r.expand(2.0 * k);

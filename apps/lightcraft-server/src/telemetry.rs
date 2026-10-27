@@ -9,9 +9,10 @@ pub fn start(data: &Path) -> Option<sentry::ClientInitGuard> {
     if std::env::var("LIGHTBITES_TELEMETRY").is_ok_and(|value| matches!(value.as_str(), "0" | "false" | "off")) {
         return None;
     }
-    let dsn = std::env::var("LIGHTBITES_BUGSINK_DSN").ok().filter(|value| !value.is_empty()).or_else(|| {
-        option_env!("LIGHTBITES_BUGSINK_DSN").filter(|value| !value.is_empty()).map(str::to_owned)
-    })?;
+    let dsn = std::env::var("LIGHTBITES_BUGSINK_DSN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| option_env!("LIGHTBITES_BUGSINK_DSN").filter(|value| !value.is_empty()).map(str::to_owned))?;
     let dsn = dsn.parse::<sentry::types::Dsn>().ok()?;
     let mut options = sentry::ClientOptions::new();
     options.dsn = Some(dsn);
@@ -30,9 +31,8 @@ pub fn start(data: &Path) -> Option<sentry::ClientInitGuard> {
     }
 
     if let Ok(users) = accounts::read_users(data) {
-        let device_count = users.users.keys().fold(0usize, |total, user| {
-            total.saturating_add(accounts::devices(data, user).map_or(0, |file| file.devices.len()))
-        });
+        let device_count =
+            users.users.keys().fold(0usize, |total, user| total.saturating_add(accounts::devices(data, user).map_or(0, |file| file.devices.len())));
         sentry::with_scope(
             |scope| {
                 scope.set_fingerprint(Some(&["lightbites", "server-start"]));

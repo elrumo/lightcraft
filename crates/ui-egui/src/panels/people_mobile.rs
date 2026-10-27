@@ -169,9 +169,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     let n = photo_count(person.count as u64);
                     ui.painter().text(pos2(face.center().x, face.bottom() + 33.0), Align2::CENTER_CENTER, n, t.font(13.0), t.text_dim);
                     let hit = face.union(Rect::from_min_size(face.left_bottom(), vec2(d, LABEL_H)));
-                    let resp = ui.interact(hit, egui::Id::new(("phone-person", &person.name)), Sense::click());
+                    let resp = ui.interact(hit, egui::Id::unique(("phone-person", &person.name)), Sense::click());
                     register(ui, format!("person:{}", person.name), hit);
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &person.name));
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &person.name));
                     if resp.clicked() {
                         tap = Some(Tap::Person(person.name.clone()));
                     }
@@ -203,7 +203,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     };
                     ui.painter().text(pos2(face.center().x, face.bottom() + 33.0), Align2::CENTER_CENTER, sub, t.font(13.0), t.text_dim);
                     let hit = face.union(Rect::from_min_size(face.left_bottom(), vec2(d, LABEL_H)));
-                    let resp = ui.interact(hit, egui::Id::new(("phone-found", id)), Sense::click());
+                    let resp = ui.interact(hit, egui::Id::unique(("phone-found", id)), Sense::click());
                     register(ui, format!("person:found:{id}"), hit);
                     if resp.clicked() {
                         tap = Some(match (p["name"].as_str(), photo, rect) {
@@ -235,7 +235,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         let s = fit(ui, &s, t.font(13.0), small + GAP);
                         ui.painter().text(pos2(face.center().x, face.bottom() + 12.0), Align2::CENTER_CENTER, s, t.font(13.0), t.text_dim);
                     }
-                    let resp = ui.interact(face, egui::Id::new(("phone-unnamed", f.photo, f.index)), Sense::click());
+                    let resp = ui.interact(face, egui::Id::unique(("phone-unnamed", f.photo, f.index)), Sense::click());
                     register(ui, format!("unnamed-face:{}:{}", f.photo, f.index), face);
                     if resp.clicked() {
                         let target = match run {
@@ -345,7 +345,7 @@ fn person(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         }
         let g = ui.painter().layout_no_wrap(fit(ui, &shown_name, t.semibold(26.0), w - 2.0 * PAD), t.semibold(26.0), t.text);
         let name_r = Rect::from_center_size(o + vec2(w / 2.0, 150.0), g.size() + vec2(16.0, 8.0));
-        let resp = ui.interact(name_r, egui::Id::new("person-phone-name"), Sense::click());
+        let resp = ui.interact(name_r, egui::Id::unique("person-phone-name"), Sense::click());
         register(ui, "person:rename", name_r);
         ui.painter().galley(name_r.center() - g.size() / 2.0, g, t.text);
         if resp.clicked() {
@@ -355,7 +355,7 @@ fn person(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         let count = photo_count(n as u64);
         ui.painter().text(o + vec2(w / 2.0, 178.0), Align2::CENTER_CENTER, count, t.font(14.0), t.text_dim);
         let button = Rect::from_center_size(o + vec2(w / 2.0, 212.0), vec2(170.0, 36.0));
-        let b = ui.interact(button, egui::Id::new("person-phone-photos"), Sense::click());
+        let b = ui.interact(button, egui::Id::unique("person-phone-photos"), Sense::click());
         register(ui, "person:photos", button);
         let k = crate::glass::press(ui.ctx(), &b);
         crate::glass::paint(ui.painter(), button.expand(2.0 * k), 18.0, Some(t.accent), k);
@@ -380,7 +380,7 @@ fn person(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
             shown += 1;
             let r = tile_at(k, top_h);
             square_face(app, ui, f, r);
-            let resp = ui.interact(r, egui::Id::new(("person-phone-face", f.photo, f.index)), Sense::click());
+            let resp = ui.interact(r, egui::Id::unique(("person-phone-face", f.photo, f.index)), Sense::click());
             register(ui, format!("person-face:{}:{}", f.photo, f.index), r);
             if resp.clicked() {
                 tap = Some(Tap::Open(f.photo));
@@ -403,7 +403,7 @@ fn person(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         ui.painter().galley(o + vec2(PAD, more_top + HEAD_H - 4.0), g, t.text_dim);
         if more.len() > 1 {
             let all = Rect::from_min_size(o + vec2(w - PAD - 110.0, more_top + 8.0), vec2(110.0, 30.0));
-            let b = ui.interact(all, egui::Id::new("person-phone-confirm-all"), Sense::click());
+            let b = ui.interact(all, egui::Id::unique("person-phone-confirm-all"), Sense::click());
             register(ui, "person:confirmAll", all);
             crate::glass::paint(ui.painter(), all, 15.0, None, crate::glass::press(ui.ctx(), &b));
             ui.painter().text(all.center(), Align2::CENTER_CENTER, crate::i18n::tr("Confirm All"), t.semibold(14.0), t.accent);
@@ -428,8 +428,8 @@ fn person(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
             ));
             paint(p, Rect::from_center_size(no.center(), vec2(14.0, 14.0)), Icon::Close, Color32::WHITE);
             paint(p, Rect::from_center_size(yes.center(), vec2(16.0, 16.0)), Icon::Check, Color32::WHITE);
-            let n = ui.interact(no, egui::Id::new(("more-no", f.photo, f.index)), Sense::click());
-            let y = ui.interact(yes, egui::Id::new(("more-yes", f.photo, f.index)), Sense::click());
+            let n = ui.interact(no, egui::Id::unique(("more-no", f.photo, f.index)), Sense::click());
+            let y = ui.interact(yes, egui::Id::unique(("more-yes", f.photo, f.index)), Sense::click());
             register(ui, format!("more-no:{}:{}", f.photo, f.index), no);
             register(ui, format!("more-yes:{}:{}", f.photo, f.index), yes);
             if y.clicked() {
@@ -502,7 +502,7 @@ pub fn apply(app: &mut LightcraftApp, target: &NameTarget, name: &str) -> Result
 /// is typed), and for a face on a photo, Remove Face. Call every frame.
 pub fn naming_page(app: &mut LightcraftApp, ctx: &egui::Context) {
     let open = app.ui.face_naming.is_some();
-    let keep = egui::Id::new("face-naming-shown");
+    let keep = egui::Id::unique("face-naming-shown");
     let Some(mut n) = app.ui.face_naming.clone().or_else(|| ctx.data(|d| d.get_temp::<Naming>(keep))) else {
         mobile::hidden(ctx, "faceName");
         return;
@@ -646,7 +646,7 @@ pub fn loupe_faces(
         p.rect_filled(pill, pill.height() / 2.0, Color32::from_black_alpha(160));
         p.galley(pill.center() - g.size() / 2.0, g, ink);
         let hit = rect.union(pill).expand(6.0);
-        let resp = ui.interact(hit, egui::Id::new(("phone-face", photo.id.0, index)), Sense::click());
+        let resp = ui.interact(hit, egui::Id::unique(("phone-face", photo.id.0, index)), Sense::click());
         register(ui, format!("face:{index}"), rect);
         if resp.clicked() {
             let start = r.name.clone().or(guess).unwrap_or_default();
@@ -662,7 +662,7 @@ pub fn loupe_faces(
         p.rect_filled(pill, pill.height() / 2.0, Color32::from_black_alpha(170));
         p.galley(pill.center() - g.size() / 2.0, g, Color32::WHITE);
         register(ui, "hint:tagFace", pill);
-        let resp = ui.interact(img, egui::Id::new("tag-face"), Sense::click());
+        let resp = ui.interact(img, egui::Id::unique("tag-face"), Sense::click());
         if resp.clicked()
             && let Some(at) = resp.interact_pointer_pos()
         {

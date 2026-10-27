@@ -122,8 +122,8 @@ fn bottom_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
     let x0 = r.center().x - (galley.size().x + gap) / 2.0;
     ui.painter().galley(pos2(x0, r.center().y - galley.size().y / 2.0), galley.clone(), t.text);
     let info = Rect::from_center_size(pos2(x0 + galley.size().x + gap - 6.0, r.center().y), vec2(36.0, 36.0));
-    let resp = ui.interact(info, egui::Id::new("remove-help"), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Help")));
+    let resp = ui.interact(info, egui::Id::unique("remove-help"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Help")));
     register(ui, "icon:removeHelp", info);
     icons::paint(ui.painter(), Rect::from_center_size(info.center(), vec2(20.0, 20.0)), Icon::Info, t.text_label);
     if resp.clicked() {
@@ -190,8 +190,8 @@ fn panel(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
 /// says it opens a menu (Remove, Heal, Clone), and its name under it.
 fn tool_tile(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, r: Rect) {
     let (_, _, icon, name) = tool(app);
-    let resp = ui.interact(r, egui::Id::new("remove-tool-tile"), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(name)));
+    let resp = ui.interact(r, egui::Id::unique("remove-tool-tile"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr(name)));
     register(ui, "button:removeTool", r);
     let k = crate::glass::press(ui.ctx(), &resp);
     let tile = r.shrink(2.0 * k);

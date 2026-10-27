@@ -1231,7 +1231,7 @@ fn a_tap_on_a_focused_field_opens_its_edit_menu() {
     tap(&mut h, "button:edit-selectAll");
     assert!(has(&h, "button:edit-copy") && has(&h, "button:edit-cut"), "a selection can be copied");
     tap(&mut h, "button:edit-paste");
-    let query = h.view.ctx.data(|d| d.get_temp::<String>(egui::Id::new("lc-all-commands-query")));
+    let query = h.view.ctx.data(|d| d.get_temp::<String>(egui::Id::unique("lc-all-commands-query")));
     assert_eq!(query.as_deref(), Some("crop"), "the pasted text replaced the selection");
     assert!(h.view.ctx.memory(|m| m.focused()).is_some(), "the field kept the keyboard");
     assert!(!has(&h, "button:edit-paste"), "a choice closes the menu");

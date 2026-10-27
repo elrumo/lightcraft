@@ -335,7 +335,7 @@ fn focal_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
         p.rect(h, CornerRadius::same(2), Color32::WHITE, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
         register(ui, format!("lensBlurRange:{name}"), h.expand(4.0));
     }
-    let gid = egui::Id::new("lensBlurGrip");
+    let gid = egui::Id::unique("lensBlurGrip");
     let set = |app: &mut LightcraftApp, lo: f64, hi: f64| {
         let (lo, hi) = (lo.clamp(0.0, 100.0), hi.clamp(0.0, 100.0));
         let _ = app.run("develop.set", json!({"values": {"lensBlur.focalDistance": (lo + hi) / 2.0, "lensBlur.focalRange": (hi - lo).max(0.0)}}));

@@ -1,7 +1,7 @@
-use super::*;
 use super::colour::{camera_match, spectral};
-use super::proxy::{PROXY_BASE, fingerprint, fits_cache, vignetting_from_proxies};
 use super::look_fit::{NEUTRAL_TONE, fit_neutral_tone, maker_exposure, neutral_curve, neutral_look, prior, typical_look, without_chroma};
+use super::proxy::{PROXY_BASE, fingerprint, fits_cache, vignetting_from_proxies};
+use super::*;
 
 fn steep_toe_scene() -> (Rgb32f, Rgb32f) {
     let mut sensor = Rgb32f::new(96, 64);
@@ -604,8 +604,7 @@ fn a_raw_without_matrices_gets_the_colour_of_a_typical_camera() {
         assert!(t.matrix_is_fallback);
         prior(&raw, &t).unwrap_or_else(|| panic!("{make} {model}: no prior"))
     };
-    for (make, model) in [("OLYMPUS IMAGING CORP.", "E-M5"), ("SONY", "ILCE-7M2"), ("Canon", "Canon EOS 7D"), ("NIKON CORPORATION", "NIKON D750")]
-    {
+    for (make, model) in [("OLYMPUS IMAGING CORP.", "E-M5"), ("SONY", "ILCE-7M2"), ("Canon", "Canon EOS 7D"), ("NIKON CORPORATION", "NIKON D750")] {
         let p = space(make, model);
         let white = p.apply([1.0; 3]);
         // (the tables hold matrices to six decimals, so white is kept to a few millionths)
@@ -882,8 +881,7 @@ fn camera_matched_pixels_are_the_fitted_looks() {
     let fallback = transform([2.0, 1.0, 1.5], Mat3([[1.4, -0.3, -0.1], [-0.1, 1.2, -0.1], [0.0, -0.2, 1.2]]));
     let mut starting = dro_test_look(&std::array::from_fn(|i| 0.006 * 1.13f32.powi(i as i32)), &|x| x.cbrt());
     starting.matrix = Mat3([[1.05, -0.03, -0.02], [-0.01, 1.02, -0.01], [0.0, -0.02, 1.02]]);
-    starting.hue_sat =
-        Some(HsvTable { hue_divisions: 6, sat_divisions: 2, val_divisions: 1, data: vec![[4.0, 1.08, 1.0]; 12], srgb_value: false });
+    starting.hue_sat = Some(HsvTable { hue_divisions: 6, sat_divisions: 2, val_divisions: 1, data: vec![[4.0, 1.08, 1.0]; 12], srgb_value: false });
     let fitted = dro_test_look(&std::array::from_fn(|i| 0.006 * 1.13f32.powi(i as i32)), &|x| x.sqrt());
     let m = camera_match((&neutral, Some(&starting)), &fallback, Some(fitted.clone())).expect("invertible");
     let decode = |t: &CameraTransform, look: &CameraLook| {
@@ -894,8 +892,7 @@ fn camera_matched_pixels_are_the_fitted_looks() {
         }
         let hue_sat = look.hue_sat.as_ref().and_then(HueSat::new);
         let gain = 2f32.powf(t.baseline_exposure as f32);
-        let colour =
-            crate::files::CameraColourModel { wb: t.wb, matrix: look.matrix.mul(&t.matrix), gain, tables: None, hue_sat: hue_sat.as_ref() };
+        let colour = crate::files::CameraColourModel { wb: t.wb, matrix: look.matrix.mul(&t.matrix), gain, tables: None, hue_sat: hue_sat.as_ref() };
         colour.apply(&mut img);
         img
     };
@@ -1053,12 +1050,7 @@ fn the_neutral_fit_recovers_the_exposure_and_contrast_of_the_renders() {
             })
             .collect();
         let fit = fit_neutral(&pairs, Some("Canon")).expect("pairs over nine stops");
-        assert!(
-            (fit.exposure - e).abs() < 0.12 && (fit.contrast - c).abs() < 0.12,
-            "({e}, {c}) came back as ({}, {})",
-            fit.exposure,
-            fit.contrast
-        );
+        assert!((fit.exposure - e).abs() < 0.12 && (fit.contrast - c).abs() < 0.12, "({e}, {c}) came back as ({}, {})", fit.exposure, fit.contrast);
         // the tone explains the render: the table has nothing to add (shifts in degrees, scales 1)
         let shifts: f32 = fit.hue_sat.data.iter().map(|d| d[0].abs()).sum::<f32>() / fit.hue_sat.data.len() as f32;
         let scales: f32 = fit.hue_sat.data.iter().map(|d| (d[1] - 1.0).abs()).sum::<f32>() / fit.hue_sat.data.len() as f32;

@@ -202,7 +202,7 @@ fn option(ui: &mut egui::Ui, t: &Tokens, id: &str, title: &str, text: &str, butt
         ui.label(egui::RichText::new(text).size(13.5).color(t.text_dim));
         ui.add_space(4.0);
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, button));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, button));
         register(ui, format!("button:{id}"), r);
         let down = resp.is_pointer_button_down_on();
         let (bg, fg) = match style {

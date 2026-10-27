@@ -32,6 +32,8 @@ mod performance;
 mod slideshow;
 mod widgets;
 
+#[allow(unused_imports)]
+pub(crate) use appearance::*;
 pub use display::display_profile;
 pub(super) use display::view_options;
 use display::{display_tab, interface_tab};
@@ -42,8 +44,6 @@ pub use libraries::{forget_library, library_name, new_library, open_library, ope
 use performance::performance_tab;
 use slideshow::slideshow_tab;
 pub(crate) use widgets::*;
-#[allow(unused_imports)]
-pub(crate) use appearance::*;
 
 pub mod slide_layout;
 pub mod slide_overlays;
@@ -567,7 +567,16 @@ pub(crate) fn action(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, enabl
 /// A one-line text field (`field:{id}`): beside its label on the desktop; on the phone the label
 /// on the left and the text right-aligned and frameless in the rest of the row, as iOS forms have it.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn text_row(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, value: &mut String, hint_text: &str, password: bool, width: f32) -> egui::Response {
+pub(crate) fn text_row(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    id: &str,
+    label: &str,
+    value: &mut String,
+    hint_text: &str,
+    password: bool,
+    width: f32,
+) -> egui::Response {
     let compact = crate::is_compact(ui.ctx());
     let r = row(ui, t, label, |ui| {
         let edit = egui::TextEdit::singleline(value).hint_text(crate::i18n::tr(hint_text)).password(password);

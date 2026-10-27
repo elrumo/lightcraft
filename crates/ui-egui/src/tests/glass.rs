@@ -41,7 +41,7 @@ fn springs_settle_and_bounce() {
     let peak = (0..=100).map(|i| glass::bounce(i as f32 / 100.0)).fold(0.0_f32, f32::max);
     assert!(peak > 1.01 && peak < 1.15, "a small overshoot: {peak}");
     let ctx = egui::Context::default();
-    let id = egui::Id::new("test-spring");
+    let id = egui::Id::unique("test-spring");
     assert_eq!(glass::spring(&ctx, id, 5.0, 0.4, 0.6), 5.0, "starts at its first target");
     let mut most: f32 = 0.0;
     let mut x = 0.0;

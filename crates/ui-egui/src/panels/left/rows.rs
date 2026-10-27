@@ -278,7 +278,7 @@ fn more_rect(row: Rect, edge: f32) -> Rect {
 pub(super) fn more_button(ui: &mut egui::Ui, row: &egui::Response, widget: &str) {
     let r = more_rect(row.rect, row.rect.right().min(visible_right(ui)));
     let b = ui.interact(r, row.id.with("more"), Sense::click());
-    b.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("More")));
+    b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("More")));
     register(ui, format!("more:{widget}"), r);
     if b.clicked() {
         open_row_menu(ui.ctx(), row, r.center());

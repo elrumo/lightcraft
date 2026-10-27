@@ -35,8 +35,10 @@ mod source;
 
 pub use cache::DenoiseIndex;
 pub use quick::{QuickJob, QuickSource, clip_cover, content_key, source_info};
-pub(crate) use session::{export_source_edge, export_source_pixels};
 pub use render::{RenderJob, RenderResult, develop, develop_hdr, develop_reporting, develop_reporting_hdr, fit_for_display};
+#[cfg(test)]
+pub(crate) use session::export_source_edge;
+pub(crate) use session::export_source_pixels;
 #[cfg(test)]
 use settings_hash::SETTINGS_HASH_ENTRIES;
 use settings_hash::SettingsHashes;

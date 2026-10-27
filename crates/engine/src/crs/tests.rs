@@ -368,8 +368,7 @@ fn unmapped(x: &str) -> Vec<String> {
 
 #[test]
 fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
-    let marked =
-        || json!({"wb": {"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin", "lightroom": true}, "light": {"exposure": 0.5}});
+    let marked = || json!({"wb": {"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin", "lightroom": true}, "light": {"exposure": 0.5}});
     // the ILCE-6000: Lightroom's 6900 K / +3 is a warmer, greener white on Sony's dial
     let mut a6000 = marked();
     lightroom_white_to_dial(&mut a6000, "SONY ILCE-6000");

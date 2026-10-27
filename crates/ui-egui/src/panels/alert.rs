@@ -31,7 +31,7 @@ pub struct Alert<'a> {
 /// `button:alertCancel`, `button:alertOk`.
 pub fn show(ctx: &egui::Context, a: &Alert) -> (bool, bool) {
     let t = Tokens::get(ctx);
-    let id = Id::new(("lc-alert", a.id));
+    let id = Id::unique(("lc-alert", a.id));
     let p = ctx.animate_bool_with_time_and_easing(id.with("in"), true, FADE_S, egui::emath::easing::cubic_out);
     let screen = ctx.viewport_rect();
     let content = ctx.content_rect();
@@ -71,7 +71,7 @@ pub fn show(ctx: &egui::Context, a: &Alert) -> (bool, bool) {
             for (i, (label, strong, red)) in [(a.cancel, false, false), (a.ok, true, a.destructive)].into_iter().enumerate() {
                 let r = Rect::from_min_size(pos2(card.left() + PAD + i as f32 * (half + GAP), row_top), vec2(half, BUTTON_H));
                 let resp = ui.interact(r, id.with(("button", i)), Sense::click());
-                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(label)));
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr(label)));
                 crate::widgets::register_geometry(ctx, if i == 0 { "button:alertCancel" } else { "button:alertOk" }, r);
                 let k = crate::glass::press(ctx, &resp);
                 let pill = r.expand(2.0 * k);
@@ -113,5 +113,5 @@ pub fn show(ctx: &egui::Context, a: &Alert) -> (bool, bool) {
 
 /// The alert `id` isn't on screen this frame (its next showing fades in again).
 pub fn hidden(ctx: &egui::Context, id: &str) {
-    let _ = ctx.animate_bool_with_time(Id::new(("lc-alert", id)).with("in"), false, 0.0);
+    let _ = ctx.animate_bool_with_time(Id::unique(("lc-alert", id)).with("in"), false, 0.0);
 }

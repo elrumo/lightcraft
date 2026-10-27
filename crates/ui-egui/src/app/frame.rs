@@ -435,7 +435,7 @@ impl LightcraftApp {
             return;
         }
         self.compact = ctx.content_rect().width() < COMPACT_BELOW_PT;
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-compact"), self.compact));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("lc-compact"), self.compact));
         // the look for the layout this frame (cheap when it hasn't changed)
         self.sync_theme(&ctx);
         if self.compact {

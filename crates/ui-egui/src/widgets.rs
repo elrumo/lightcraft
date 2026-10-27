@@ -999,7 +999,7 @@ pub fn section_header(ui: &mut Ui, id: &str, title: &str, open: bool, enabled: O
 
 /// What the body under the [`section_header`] `id` folds under (`motion::fold`).
 pub fn section_fold_id(id: &str) -> egui::Id {
-    egui::Id::new(("section", id))
+    egui::Id::unique(("section", id))
 }
 
 /// Thin divider between groups.
@@ -1047,7 +1047,7 @@ pub fn text_box<'t>(ui: &Ui, edit: egui::TextEdit<'t>) -> egui::TextEdit<'t> {
     edit.font(egui::FontId::proportional(17.0))
         .margin(egui::Margin::symmetric(12, 10))
         .min_size(vec2(0.0, crate::TOUCH_ROW_H))
-        .vertical_align(egui::Align::Center)
+        .align(egui::Align2::LEFT_CENTER)
 }
 
 /// A checkbox on the desktop; on a phone an iOS switch at the end of a full-width row, the label

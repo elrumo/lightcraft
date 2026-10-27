@@ -42,10 +42,10 @@ pub fn pill(app: &mut LightcraftApp, ui: &mut egui::Ui, field: Rect) {
     }
     let t = Tokens::get(ui.ctx());
     let r = Rect::from_center_size(pos2(field.right() - 6.0 - PILL_W / 2.0, field.center().y), vec2(PILL_W, 20.0));
-    let resp = ui.interact(r, egui::Id::new("describe-pill"), Sense::click());
+    let resp = ui.interact(r, egui::Id::unique("describe-pill"), Sense::click());
     let on = app.ui.ai_search;
     let label = crate::i18n::tr("Describe");
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, label));
     register(ui, "button:describeSearch", r);
     let (fill, line, ink) = match (on, resp.hovered()) {
         (true, _) => (t.accent, t.accent, egui::Color32::WHITE),
@@ -257,7 +257,7 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
         return;
     };
     let t = Tokens::get(ctx);
-    let shown = egui::Area::new(egui::Id::new("describe-panel"))
+    let shown = egui::Area::new(egui::Id::unique("describe-panel"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos2(field.left(), field.bottom() + 6.0))
         .show(ctx, |ui| {

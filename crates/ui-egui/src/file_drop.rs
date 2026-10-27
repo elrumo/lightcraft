@@ -39,12 +39,12 @@ pub fn track(app: &mut LightcraftApp, ctx: &egui::Context) {
     let (hovering, dropped) = ctx.input(|i| (!i.raw.hovered_files.is_empty(), !i.raw.dropped_files.is_empty()));
     let at = if hovering || dropped { app.services.file_drag_pointer.as_mut().and_then(|f| f()) } else { None };
     ctx.data_mut(|d| {
-        d.insert_temp(Id::new(POINTER), at);
+        d.insert_temp(Id::unique(POINTER), at);
         if hovering {
             // (found again while the sidebar is drawn)
-            d.insert_temp(Id::new(OVER), None::<u64>);
+            d.insert_temp(Id::unique(OVER), None::<u64>);
         } else if !dropped {
-            d.remove_temp::<Option<u64>>(Id::new(OVER));
+            d.remove_temp::<Option<u64>>(Id::unique(OVER));
         }
     });
     if hovering {
@@ -55,32 +55,32 @@ pub fn track(app: &mut LightcraftApp, ctx: &egui::Context) {
 
 /// The pointer while files are dragged in from outside the window, if the host tells.
 pub fn pointer(ctx: &egui::Context) -> Option<Pos2> {
-    ctx.data(|d| d.get_temp::<Option<Pos2>>(Id::new(POINTER))).flatten()
+    ctx.data(|d| d.get_temp::<Option<Pos2>>(Id::unique(POINTER))).flatten()
 }
 
 /// The sidebar was drawn at `rect`.
 pub fn note_sidebar(ctx: &egui::Context, rect: Rect) {
-    ctx.data_mut(|d| d.insert_temp(Id::new(SIDEBAR), rect));
+    ctx.data_mut(|d| d.insert_temp(Id::unique(SIDEBAR), rect));
 }
 
 /// The dragged files are over this album's row.
 pub fn set_over(ctx: &egui::Context, album: u64) {
-    ctx.data_mut(|d| d.insert_temp(Id::new(OVER), Some(album)));
+    ctx.data_mut(|d| d.insert_temp(Id::unique(OVER), Some(album)));
 }
 
 /// The album row the dragged files were over when the last frame was drawn.
 pub(crate) fn over(ctx: &egui::Context) -> Option<u64> {
-    ctx.data(|d| d.get_temp::<Option<u64>>(Id::new(OVER))).flatten()
+    ctx.data(|d| d.get_temp::<Option<u64>>(Id::unique(OVER))).flatten()
 }
 
 /// The album files dropped now go to (`None`: the library only).
 pub fn destination(app: &LightcraftApp, ctx: &egui::Context) -> Option<u64> {
     let row = over(ctx);
-    ctx.data_mut(|d| d.remove_temp::<Option<u64>>(Id::new(OVER)));
+    ctx.data_mut(|d| d.remove_temp::<Option<u64>>(Id::unique(OVER)));
     if row.is_some() {
         return row;
     }
-    let on_sidebar = pointer(ctx).zip(ctx.data(|d| d.get_temp::<Rect>(Id::new(SIDEBAR)))).is_some_and(|(at, sidebar)| sidebar.contains(at));
+    let on_sidebar = pointer(ctx).zip(ctx.data(|d| d.get_temp::<Rect>(Id::unique(SIDEBAR)))).is_some_and(|(at, sidebar)| sidebar.contains(at));
     if on_sidebar { None } else { shown_album(app) }
 }
 
@@ -93,12 +93,12 @@ fn shown_album(app: &LightcraftApp) -> Option<u64> {
 /// A drop just started: the grid scrolls to its tiles.
 pub fn reveal(ctx: &egui::Context) {
     let now = ctx.input(|i| i.time);
-    ctx.data_mut(|d| d.insert_temp(Id::new(REVEAL), now));
+    ctx.data_mut(|d| d.insert_temp(Id::unique(REVEAL), now));
 }
 
 fn take_reveal(ctx: &egui::Context) -> bool {
     let now = ctx.input(|i| i.time);
-    ctx.data_mut(|d| d.remove_temp::<f64>(Id::new(REVEAL))).is_some_and(|at| (0.0..REVEAL_FOR).contains(&(now - at)))
+    ctx.data_mut(|d| d.remove_temp::<f64>(Id::unique(REVEAL))).is_some_and(|at| (0.0..REVEAL_FOR).contains(&(now - at)))
 }
 
 // ------------------------------------------------------------------------------------- tiles
@@ -274,7 +274,7 @@ fn paint_tile(ui: &egui::Ui, p: &egui::Painter, t: &Tokens, r: Rect, i: usize, t
         State::Waiting => crate::i18n::tr("Waiting to be added"),
         State::Adding => crate::i18n::tr("Adding to the library"),
     };
-    ui.interact(r, Id::new(("pending", i)), Sense::hover()).on_hover_text(format!("{} · {what}", tile.name));
+    ui.interact(r, Id::unique(("pending", i)), Sense::hover()).on_hover_text(format!("{} · {what}", tile.name));
 }
 
 /// The status mark, as the cloud's while it syncs: an arrow into the library, dim while it waits

@@ -286,7 +286,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
             &mut opts.dng_compression,
         );
     }
-    let naming_id = egui::Id::new("export-naming");
+    let naming_id = egui::Id::unique("export-naming");
     let tags_open = field(ui, "File name", |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let w = crate::import::tag_field_width(ui);
@@ -442,7 +442,7 @@ fn watermark_preview(
     (id, app.session.catalog.revision, px).hash(&mut h);
     let key = h.finish();
     let ctx = ui.ctx().clone();
-    let (base_id, shown_id) = (egui::Id::new("export-wm-preview-base"), egui::Id::new("export-wm-preview-shown"));
+    let (base_id, shown_id) = (egui::Id::unique("export-wm-preview-base"), egui::Id::unique("export-wm-preview-shown"));
     let base = match ctx.data(|d| d.get_temp::<(u64, Base)>(base_id)) {
         Some((k, base)) if k == key => base,
         _ => {
@@ -535,11 +535,11 @@ fn watermark_preview(
 /// A watermark's controls: text or a graphic, where it goes, how big and how strong.
 fn watermark_form(app: &mut LightcraftApp, ui: &mut egui::Ui, wm: &mut Watermark) {
     // text, or a graphic (a logo with transparency)
-    let mut graphic = !wm.image.is_empty() || ui.data(|d| d.get_temp::<bool>(egui::Id::new("wm-graphic"))).unwrap_or(false);
+    let mut graphic = !wm.image.is_empty() || ui.data(|d| d.get_temp::<bool>(egui::Id::unique("wm-graphic"))).unwrap_or(false);
     let before = graphic;
     choices(ui, "Style", "exportWmStyle", &[(false, "Text"), (true, "Graphic")], &mut graphic);
     if graphic != before {
-        ui.data_mut(|d| d.insert_temp(egui::Id::new("wm-graphic"), graphic));
+        ui.data_mut(|d| d.insert_temp(egui::Id::unique("wm-graphic"), graphic));
         if !graphic {
             wm.image.clear();
         }
@@ -699,7 +699,7 @@ pub fn pulldown(ui: &mut egui::Ui, id: &str, label: &str, value: &str, items: im
     ui.label(RichText::new(crate::i18n::tr(label)).size(13.0).color(t.text_dim));
     ui.add_space(2.0);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, value));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, value));
     register(ui, format!("button:{id}"), r);
     let p = ui.painter();
     p.rect_filled(r, 9.0, if resp.is_pointer_button_down_on() { t.hover } else { t.inset });
@@ -730,8 +730,8 @@ fn list_row(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, sub: O
         Trailing::Button(..) => 52.0,
     };
     let body = Rect::from_min_max(r.min, pos2(r.right() - end, r.bottom()));
-    let resp = ui.interact(body, Id::new(("lc-share-row", id)), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    let resp = ui.interact(body, Id::unique(("lc-share-row", id)), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     register(ui, format!("button:{id}"), body);
     let p = ui.painter();
     if enabled && resp.is_pointer_button_down_on() {
@@ -768,8 +768,8 @@ fn list_row(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, sub: O
         }
         Trailing::Button(icon, tip) => {
             let b = Rect::from_min_max(pos2(r.right() - end, r.top()), r.right_bottom());
-            let resp = ui.interact(b, Id::new(("lc-share-row-end", id)), if enabled { Sense::click() } else { Sense::hover() });
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
+            let resp = ui.interact(b, Id::unique(("lc-share-row-end", id)), if enabled { Sense::click() } else { Sense::hover() });
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, crate::i18n::tr(tip)));
             register(ui, format!("icon:{id}"), b);
             let c = if !enabled {
                 t.text_disabled
@@ -796,7 +796,7 @@ fn circle(ui: &mut egui::Ui, id: &str, w: f32, icon: Icon, tint: Color32, label:
     const D: f32 = 56.0;
     let t = Tokens::get(ui.ctx());
     let (cell, resp) = ui.allocate_exact_size(vec2(w, D + 30.0), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(label)));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, crate::i18n::tr(label)));
     register(ui, format!("button:{id}"), cell);
     let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), enabled && resp.is_pointer_button_down_on(), 0.1);
     let c = pos2(cell.center().x, cell.top() + D / 2.0);
@@ -846,7 +846,7 @@ fn film_layout(
     h: f32,
     cap: f32,
 ) -> std::sync::Arc<Vec<Cell>> {
-    let id = Id::new("lc-share-film-layout");
+    let id = Id::unique("lc-share-film-layout");
     let key: FilmKey = (generation, h as u32, cap as u32);
     if let Some((k, v)) = ctx.data(|d| d.get_temp::<(FilmKey, std::sync::Arc<Vec<Cell>>)>(id))
         && k == key
@@ -922,7 +922,7 @@ fn film(app: &mut LightcraftApp, ui: &mut egui::Ui, chosen: &mut Vec<u64>, cente
             let thumb = Rect::from_min_size(content.min + vec2(*x, FILM_TOP + (h - ph) / 2.0), vec2(*w, *ph));
             let on = chosen.contains(&photo.0);
             let name = app.session.catalog.photo(photo).map(|p| p.file_name.clone()).unwrap_or_default();
-            let resp = ui.interact(thumb, Id::new(("share-thumb", photo.0)), Sense::click());
+            let resp = ui.interact(thumb, Id::unique(("share-thumb", photo.0)), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &name));
             register(ui, format!("thumb:share-{}", photo.0), thumb);
             if app.renderer.thumb(photo).is_none() {
@@ -931,12 +931,12 @@ fn film(app: &mut LightcraftApp, ui: &mut egui::Ui, chosen: &mut Vec<u64>, cente
             let p = ui.painter();
             match app.renderer.thumb(photo) {
                 Some(tex) => {
-                    let fade = ui.ctx().animate_bool_with_time(Id::new(("share-thumb-in", photo.0)), true, 0.2);
+                    let fade = ui.ctx().animate_bool_with_time(Id::unique(("share-thumb-in", photo.0)), true, 0.2);
                     p.image(tex.tex.id(), thumb, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE.gamma_multiply(fade));
                 }
                 None => {
                     p.rect_filled(thumb, 4.0, t.inset);
-                    let _ = ui.ctx().animate_bool_with_time(Id::new(("share-thumb-in", photo.0)), false, 0.0);
+                    let _ = ui.ctx().animate_bool_with_time(Id::unique(("share-thumb-in", photo.0)), false, 0.0);
                 }
             }
             if on {
@@ -944,10 +944,10 @@ fn film(app: &mut LightcraftApp, ui: &mut egui::Ui, chosen: &mut Vec<u64>, cente
             }
             // the box: a tap on it counts as a tap on the photo
             let b = Rect::from_center_size(pos2(thumb.center().x, content.top() + FILM_TOP + h + 16.0 + BOX / 2.0), vec2(BOX, BOX));
-            let hit = ui.interact(b.expand(10.0), Id::new(("share-box", photo.0)), Sense::click());
+            let hit = ui.interact(b.expand(10.0), Id::unique(("share-box", photo.0)), Sense::click());
             hit.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &name));
             register(ui, format!("check:shareItem-{}", photo.0), b.expand(10.0));
-            let k = ui.ctx().animate_bool_with_time(Id::new(("share-box-on", photo.0)), on, 0.12);
+            let k = ui.ctx().animate_bool_with_time(Id::unique(("share-box-on", photo.0)), on, 0.12);
             let p = ui.painter();
             if k > 0.0 {
                 p.rect_filled(b, 6.0, t.accent.gamma_multiply(k));
@@ -1287,7 +1287,7 @@ fn options_body(ui: &mut egui::Ui, f: Form<'_>, n: usize) -> bool {
 pub fn progress(ctx: &egui::Context, done: usize, total: usize, current: &str, stopping: bool) -> bool {
     const FADE_S: f32 = 0.2;
     let t = Tokens::get(ctx);
-    let id = Id::new("lc-export-progress");
+    let id = Id::unique("lc-export-progress");
     let p = ctx.animate_bool_with_time_and_easing(id.with("in"), true, FADE_S, egui::emath::easing::cubic_out);
     let screen = ctx.viewport_rect();
     let content = ctx.content_rect();
@@ -1338,7 +1338,7 @@ pub fn progress(ctx: &egui::Context, done: usize, total: usize, current: &str, s
                 vec2(galley.size().x + 40.0, 40.0),
             );
             let resp = ui.interact(pill, id.with("cancel"), if stopping { Sense::hover() } else { Sense::click() });
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, !stopping, label));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !stopping, label));
             crate::widgets::register_geometry(ctx, "button:exportCancel", pill);
             let painter = ui.painter();
             if resp.is_pointer_button_down_on() {

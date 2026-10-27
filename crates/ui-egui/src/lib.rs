@@ -102,7 +102,7 @@ pub use clock::{monotonic_ms, now_ms};
 pub use services::OpenModelFolderFn;
 pub use services::{
     CheckEditorFn, ExportRunner, FileDragPointerFn, HostAction, HostPick, OpenAllWithFn, OpenUrlFn, OpenWithFn, PickFiles, PickFolder, PickSource,
-    PngEncode, RevealFn, SaveDone, SaveFile, SavedInbox, SaveToPhotos, ScreenProfileFn, Services, ShareExports, SharedWrite, SystemThemeFn, WriteFn,
+    PngEncode, RevealFn, SaveDone, SaveFile, SaveToPhotos, SavedInbox, ScreenProfileFn, Services, ShareExports, SharedWrite, SystemThemeFn, WriteFn,
 };
 use state::{GestureFrame, InjectedPress};
 
@@ -425,7 +425,7 @@ pub const TOUCH_ROW_H: f32 = 44.0;
 /// Whether this frame uses the compact layout, for widgets that only have the context (bigger touch
 /// targets).
 pub fn is_compact(ctx: &egui::Context) -> bool {
-    ctx.data(|d| d.get_temp::<bool>(egui::Id::new("lc-compact"))).unwrap_or(false)
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique("lc-compact"))).unwrap_or(false)
 }
 
 /// How long a screenshot waits for in-flight renders before it is captured anyway (and the

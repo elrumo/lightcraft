@@ -41,7 +41,7 @@ mod tokens;
 pub(crate) use fs::{MoveFs, RealFs};
 #[cfg(test)]
 use fs::{folded_path, same_contents};
-pub(crate) use moves::{BatchMoveError, move_all};
+pub(crate) use moves::move_all;
 #[cfg(test)]
 pub(crate) use moves::move_file_with;
 pub use moves::{MoveError, move_file};
@@ -50,7 +50,7 @@ pub use plan::{plan_rename_photos, rename_photos};
 pub(crate) use sidecar::PacketVersion;
 #[cfg(test)]
 use sidecar::RetainedPacket;
-pub(crate) use sidecar::{SidecarMove, retry_sidecars, retry_sidecars_for_paths, validate_sidecars};
+pub(crate) use sidecar::{SidecarMove, retry_sidecars, validate_sidecars};
 #[cfg(test)]
 use tokens::format_date;
 pub use tokens::{

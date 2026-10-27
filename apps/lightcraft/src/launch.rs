@@ -130,8 +130,6 @@ pub(crate) fn startup_failed(error: &str, log_file: Option<&std::path::Path>) {
 #[cfg(test)]
 mod config_path_tests {
     use super::*;
-    use lightcraft_ui_egui::UiState;
-    use lightcraft_ui_egui::prefs::{load_prefs_at, write_atomic};
 
     #[test]
     fn config_override_keeps_panic_log_in_isolated_profile() {

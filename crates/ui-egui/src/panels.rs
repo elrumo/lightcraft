@@ -124,8 +124,8 @@ pub fn toast(app: &mut LightcraftApp, ctx: &egui::Context) {
     let fade = ((until - now) / 0.25).clamp(0.0, 1.0) as f32;
     // it rises into place and fades in as it appears (`until` names this toast; when it was first seen)
     let seen = ctx.data_mut(|d| {
-        let (u, at) = d.get_temp::<(f64, f64)>(egui::Id::new("toast-seen")).filter(|(u, _)| *u == until).unwrap_or((until, now));
-        d.insert_temp(egui::Id::new("toast-seen"), (u, at));
+        let (u, at) = d.get_temp::<(f64, f64)>(egui::Id::unique("toast-seen")).filter(|(u, _)| *u == until).unwrap_or((until, now));
+        d.insert_temp(egui::Id::unique("toast-seen"), (u, at));
         at
     });
     // (a phone's rises in; the desktop's is there at once)

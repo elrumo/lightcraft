@@ -174,7 +174,8 @@ fn scan_notice(ui: &mut egui::Ui, t: &Tokens, ready: &crate::sync::SyncReady, wi
                     ui.add(egui::Label::new(RichText::new(tr("Review…")).font(t.font(11.0)).color(t.accent)));
                 })
                 .response;
-            let click = ui.interact(body.rect, egui::Id::new("activity-scan-ready"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            let click =
+                ui.interact(body.rect, egui::Id::unique("activity-scan-ready"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
             register(ui, "activity:scanReady:review", body.rect);
             reviewed = click.on_hover_text(tr("Open Synchronize Folder with what the scan found")).clicked();
         })

@@ -454,7 +454,7 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
         crate::panels::detail::view_changed(app, ui.ctx());
         let grid = matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid);
         let view = if grid { crate::state::ViewMode::PhotoGrid } else { app.ui.view };
-        let k = crate::panels::mobile::enter(ui.ctx(), egui::Id::new("view-in"), view, crate::motion::FADE_S);
+        let k = crate::panels::mobile::enter(ui.ctx(), egui::Id::unique("view-in"), view, crate::motion::FADE_S);
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| {
             ui.multiply_opacity(k);
             match app.ui.view {

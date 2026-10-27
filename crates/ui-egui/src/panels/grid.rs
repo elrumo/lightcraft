@@ -405,7 +405,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // a phone's Months and Years (`grid_dates`), faded in when the span changes
     let span = if app.compact { app.ui.grid_span } else { crate::state::GridSpan::All };
     if app.compact {
-        ui.multiply_opacity(super::mobile::enter(ui.ctx(), egui::Id::new("grid-span-in"), span, 0.25));
+        ui.multiply_opacity(super::mobile::enter(ui.ctx(), egui::Id::unique("grid-span-in"), span, 0.25));
     }
     if span != crate::state::GridSpan::All {
         super::grid_zoom::forget(ui.ctx());
@@ -490,7 +490,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     // bring the active photo into view when it changes (keyboard, click, command) or the grid
     // comes back on screen; otherwise the scroll position is the user's
-    let follow = follow_active(ui.ctx(), egui::Id::new("grid-follow-active"), active, app.session.source);
+    let follow = follow_active(ui.ctx(), egui::Id::unique("grid-follow-active"), active, app.session.source);
     let scroll_to: Option<Rect> =
         if follow && forced.is_none() { active.and_then(|a| ids.iter().position(|x| *x == a)).and_then(|i| lay.cells.get(i).copied()) } else { None };
     let mut visible_ids = HashSet::new();
@@ -498,12 +498,12 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // a wheel notch scrolls a third of the grid's height
     let scroll_rect = ui.available_rect_before_wrap();
     crate::widgets::register(ui, "grid:scroll", scroll_rect);
-    let wheel = wheel_step(ui, egui::Id::new("grid-wheel"), scroll_rect, scroll_rect.height(), false);
+    let wheel = wheel_step(ui, egui::Id::unique("grid-wheel"), scroll_rect, scroll_rect.height(), false);
     // a phone: a finger's drag scrolls the grid (its cells take only taps), except while a
     // sideways drag is choosing photos (`drag_choose`)
     let source = if !app.compact {
         egui::scroll_area::ScrollSource::default()
-    } else if zoom.pinching || ui.data(|d| d.get_temp::<DragChoose>(egui::Id::new(DRAG_CHOOSE))).is_some() {
+    } else if zoom.pinching || ui.data(|d| d.get_temp::<DragChoose>(egui::Id::unique(DRAG_CHOOSE))).is_some() {
         egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() }
     } else {
         egui::scroll_area::ScrollSource::ALL
@@ -634,7 +634,7 @@ fn homing(app: &LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], drawn: &[(usize, 
     let end = if square && app.compact { cover_uv(tw as f32, th as f32) } else { full };
     let uv = Rect::from_min_max(full.min.lerp(end.min, k), full.max.lerp(end.max, k));
     let r = Rect::from_min_max(h.from.min.lerp(to.min, k), h.from.max.lerp(to.max, k));
-    let p = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("grid-homing"))).with_clip_rect(ui.clip_rect());
+    let p = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("grid-homing"))).with_clip_rect(ui.clip_rect());
     p.image(tex.tex.id(), r, uv, Color32::WHITE);
     ui.ctx().request_repaint();
 }
@@ -693,7 +693,7 @@ struct DragChoose {
 /// chooses the run of photos from it to the one under the finger (or unchooses them when the
 /// first was chosen); an up or down drag scrolls instead.
 fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &GridLayout, origin: egui::Pos2) {
-    let key = egui::Id::new(DRAG_CHOOSE);
+    let key = egui::Id::unique(DRAG_CHOOSE);
     let (down, press, pos) = ui.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos()));
     let at = |p: egui::Pos2| cell_at(lay, origin, p);
     let mut state: Option<DragChoose> = ui.data(|d| d.get_temp(key));
@@ -744,7 +744,7 @@ const LONG_PRESS_SLOP: f32 = 10.0;
 
 /// Whether the press in progress (or the one just released) was a long press: its tap is not one.
 fn long_pressed(ui: &egui::Ui) -> bool {
-    ui.data(|d| d.get_temp::<bool>(egui::Id::new(LONG_PRESS))).unwrap_or(false)
+    ui.data(|d| d.get_temp::<bool>(egui::Id::unique(LONG_PRESS))).unwrap_or(false)
 }
 
 /// A long press on a phone's photo, answered while the finger is still down, as iOS Photos does:
@@ -753,7 +753,7 @@ fn long_pressed(ui: &egui::Ui) -> bool {
 /// egui's own long touch waits 0.8 s, needs a touch screen, and fires only if a frame happens to
 /// run then; this one asks for that frame, and a mouse held down works the same.
 fn long_press(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &GridLayout, origin: egui::Pos2) {
-    let key = egui::Id::new(LONG_PRESS);
+    let key = egui::Id::unique(LONG_PRESS);
     let (pressed, down, press, start, pos, now, touches) = ui.input(|i| {
         (
             i.pointer.any_pressed(),
@@ -793,7 +793,7 @@ fn long_press(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &Gri
     } else {
         let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
     }
-    ui.data_mut(|d| d.insert_temp(egui::Id::new(DRAG_CHOOSE), DragChoose { start: i, adding, base, last: Some(i) }));
+    ui.data_mut(|d| d.insert_temp(egui::Id::unique(DRAG_CHOOSE), DragChoose { start: i, adding, base, last: Some(i) }));
 }
 
 /// The scroll handle's size (points): a capsule at the grid's right edge, as Lightroom's mobile app
@@ -820,7 +820,7 @@ impl Default for Scrub {
 }
 
 fn scrub_id() -> egui::Id {
-    egui::Id::new("grid-scrubber")
+    egui::Id::unique("grid-scrubber")
 }
 
 /// Where the scroll handle can be taken hold of (last frame), while it shows.
@@ -867,7 +867,7 @@ fn scrubber(app: &LightcraftApp, ui: &mut egui::Ui, viewport: Rect, content_h: f
     if live {
         let resp = ui.interact(hit, key.with("drag"), Sense::drag());
         register(ui, "grid:scrubber", hit);
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ScrollBar, true, crate::i18n::tr("Scroll")));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ScrollBar, true, crate::i18n::tr("Scroll")));
         let pointer = ui.input(|i| i.pointer.interact_pos());
         if resp.drag_started()
             && let Some(p) = pointer
@@ -1254,7 +1254,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         return;
     }
     // (a phone's cells take only taps and long presses: a drag scrolls the grid)
-    let resp = ui.interact(r, egui::Id::new(("cell", id.0)), if app.compact { Sense::click() } else { Sense::click_and_drag() });
+    let resp = ui.interact(r, egui::Id::unique(("cell", id.0)), if app.compact { Sense::click() } else { Sense::click_and_drag() });
     register(ui, format!("thumb:{}", id.0), r);
     let state = app.session.selection.state_of(id);
     let selected = state != lightcraft_engine::SelectionState::NotSelected;
@@ -1300,7 +1300,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         let fit = if tiles { img_rect } else { super::detail::fit_texture_rect(img_rect, [tw, th]) };
         let uv = if tiles { cover_uv(tw as f32, th as f32) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
         // a thumbnail that was not there yet fades in (one that was, shows at once: it has no stored 0)
-        let fade = if app.compact { ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), true, 0.2) } else { 1.0 };
+        let fade = if app.compact { ui.ctx().animate_bool_with_time(egui::Id::unique(("thumb-in", id.0)), true, 0.2) } else { 1.0 };
         // (Blur Sensitive Photos: a photo the sensitive-content model flagged)
         if blur {
             paint_obscured(p, tex.tex.id(), fit, uv, fade);
@@ -1331,7 +1331,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         let ph = img_rect.shrink(if square && !tiles { 20.0 } else { 0.0 });
         p.rect_filled(ph, 0.0, t.skeleton);
         if app.compact {
-            let _ = ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), false, 0.0);
+            let _ = ui.ctx().animate_bool_with_time(egui::Id::unique(("thumb-in", id.0)), false, 0.0);
         }
         // not drawn yet (or unreadable): the selection is still visible
         let side = if tiles { StrokeKind::Inside } else { StrokeKind::Outside };
@@ -1456,7 +1456,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         // (a long press is answered while the finger is down, `long_press`: its release is no tap)
         let tapped = resp.clicked() && !long_pressed(ui);
         if app.ui.select_mode {
-            check_badge(ui, img_rect, selected, &t, egui::Id::new(("check", id.0)));
+            check_badge(ui, img_rect, selected, &t, egui::Id::unique(("check", id.0)));
             if tapped {
                 let _ = app.run("library.select", json!({"ids": [id.0], "mode": "toggle"}));
                 haptics::tap(ui.ctx(), Haptic::Selection);

@@ -165,7 +165,7 @@ fn files_dropped_on_the_sidebar_outside_any_album_skip_the_album_shown() {
     let a = album(&mut h, "Alpha");
     show(&mut h, a);
     let at = pointer(&mut h);
-    let sidebar = h.view.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("file-drop-sidebar"))).expect("the sidebar is drawn");
+    let sidebar = h.view.ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("file-drop-sidebar"))).expect("the sidebar is drawn");
     // (below its last row)
     *at.lock().unwrap() = Some(egui::pos2(sidebar.center().x, sidebar.bottom() - 6.0));
     h.hovering_files = vec![files[0].clone().into()];
