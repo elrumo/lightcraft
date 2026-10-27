@@ -2192,6 +2192,7 @@ fn the_servers_presets_reach_every_device() {
         {"id": "srv.warm", "name": "Team Warm", "group": "Team", "settings": {"light": {"exposure": 0.3}}},
         {"id": "user.sneaky", "name": "Not the server's", "group": "Team", "settings": {}},
         {"id": "srv.bad", "name": "No settings", "group": "Team", "settings": 3},
+        {"id": "srv.off", "name": "Disabled", "group": "Team", "settings": {}, "disabled": true},
         {"id": "hidden", "presets": ["lc.moody"], "groups": ["B&W"]}
     ]);
     f.docs.insert("server-presets".into(), proto::Doc { version: 1, items });
@@ -2200,6 +2201,7 @@ fn the_servers_presets_reach_every_device() {
     let warm = a.presets.iter().find(|p| p.id == "srv.warm").expect("the server's preset is here");
     assert!(warm.builtin && warm.group == "Team");
     assert!(!a.presets.iter().any(|p| p.id == "user.sneaky" || p.id == "srv.bad"), "only well-formed server presets");
+    assert!(!a.presets.iter().any(|p| p.id == "srv.off"), "not the ones the admin disabled");
     assert!(!a.presets.iter().any(|p| p.id == "lc.moody" || p.group == "B&W"), "built-ins the server hides are gone");
     assert!(a.presets.iter().any(|p| p.group == "Film"), "the other built-ins stay");
     assert!(a.execute("preset.rename", &json!({"id": "srv.warm", "name": "Mine"})).is_err(), "not editable on a device");

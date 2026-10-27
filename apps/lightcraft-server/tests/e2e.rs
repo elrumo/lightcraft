@@ -974,6 +974,25 @@ fn presets_an_admin_shares_reach_every_device() {
     let shared = a.presets.iter().find(|p| p.name == "Team Bright").expect("the shared preset is on the device");
     assert!(shared.builtin && shared.id.starts_with("srv.") && shared.group == "Team");
     assert!(!a.presets.iter().any(|p| p.id == "lc.moody"), "hidden for everyone");
+    // disabled on the page: the admin still lists it, devices stop getting it; enabled again, they do
+    let (_, p) = req("GET", "/api/admin/presets", &admin, None);
+    let mut off = p["items"][0].clone();
+    off["disabled"] = json!(true);
+    let items = json!([off, p["items"][1].clone()]);
+    let (s, r) = req("PUT", "/api/admin/presets", &admin, Some(json!({"version": 2, "items": items})));
+    assert_eq!((s, r["version"].as_u64()), (200, Some(3)), "{r}");
+    let (_, p) = req("GET", "/api/admin/presets", &admin, None);
+    assert_eq!(p["items"][0]["disabled"], true, "kept for the admin: {p}");
+    let (_, served) = req("GET", "/api/docs/server-presets", &token, None);
+    assert_eq!((served["version"].as_u64(), served["items"].as_array().map(Vec::len)), (Some(3), Some(1)), "only the hidden item: {served}");
+    a.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert!(!a.presets.iter().any(|p| p.name == "Team Bright"), "gone from the device while disabled");
+    let mut on = p["items"][0].clone();
+    on.as_object_mut().unwrap().remove("disabled");
+    let (s, _) = req("PUT", "/api/admin/presets", &admin, Some(json!({"version": 3, "items": [on, p["items"][1].clone()]})));
+    assert_eq!(s, 200);
+    a.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert!(a.presets.iter().any(|p| p.name == "Team Bright"), "back when enabled");
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -297,8 +297,9 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Delete, ["shares", id]) => crate::shares::revoke(st, &who.user, id),
         // (the presets shared with every user: the admin's to change)
         (Method::Get, ["docs", crate::server_presets::NAME]) => {
-            let body = serde_json::to_vec(st.presets.lock().unwrap_or_else(PoisonError::into_inner).doc());
-            match body {
+            // (the presets the admin disabled stay on the admin page: devices don't get them)
+            let doc = crate::server_presets::for_devices(st.presets.lock().unwrap_or_else(PoisonError::into_inner).doc());
+            match serde_json::to_vec(&doc) {
                 Ok(body) => big_json(req, body),
                 Err(e) => error(500, e),
             }
