@@ -31,11 +31,20 @@ and often so a crash loses minutes, not hours.
 ## HelpBites planning follows the work (LightBites app)
 The LightBites app's tasks live on the HelpBites project's Planning board (project `tb4A2EAxRx`; columns Backlog, Now,
 Next, Later, Done, Canceled). Keep it in step with what you do, **through the HelpBites MCP connector** (endpoint
-`https://helpbites.app/mcp`; its tools: list, create and update board items, and comment on one). The API reference is
+`https://helpbites.app/mcp`; its tools cover the board and the rest of HelpBites). The API reference is
 https://helpbites.app/_docs/scalar (spec: `https://helpbites.app/_docs/openapi.json`); check it, or the connector's own
 tool list, for the current parameters instead of trusting this file. Use the admin API
 (`/v1/admin/board-items`, same `.env` and keys as the `apps/lightbites-web/scripts/helpbites-*.mjs` scripts; see
 `apps/lightbites-web/README.md` → Roadmap) or `helpbites-roadmap.mjs` only when the connector is down.
+- **Not sure how to do something in HelpBites? Look it up before guessing.** This covers anything the user asks you to do
+  in HelpBites (the board, comments and attachments, feedback, the changelog, email, errors, pricing, settings, anything),
+  not only the steps below. Read the live OpenAPI spec first (`https://helpbites.app/_docs/openapi.json`; the browsable
+  reference is `https://helpbites.app/_docs/scalar`): it lists every route with its parameters and what it does. Then go
+  through **all** the tools the HelpBites MCP connector offers (its tool list, or `tools/list` on
+  `https://helpbites.app/mcp`), not only the board ones, and any HelpBites skill your client lists: a tool for the job
+  often exists under a name you would not have guessed. Prefer a connector tool; call the admin API directly only when
+  no tool covers it or the connector is down. Don't work from memory of this file or of an earlier session: HelpBites
+  gains routes and tools often, and the spec and the tool list are always current.
 - **When asked to do a task** that concerns the LightBites app: first check the board through the connector for a card
   that is that task (by number if the user gave one, else by title; page through `list_board_items` with `offset`).
   - **A card exists:** edit it if the user's words changed the task (title, description), and move it to Now.
