@@ -256,7 +256,7 @@ pub(crate) struct Prepared {
     pub base: Arc<Plane>,
     pub clarity_blur: Option<Arc<Plane>>,
     pub texture_blur: Option<Arc<Plane>>,
-    /// Capture sharpening and its blur of log luminance.
+    /// Capture sharpening (process V3) and its blur of log luminance.
     pub sharpen: Option<(local::Capture, Arc<Plane>)>,
     pub dark: Option<Arc<Plane>>,
     /// Blurred chromaticity (`rgb / Y`) for local Moiré / Noise.
@@ -758,7 +758,7 @@ pub fn color_range_sample(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, 
 fn overlay_alpha(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Plane> {
     if o.reads_detail() {
         let capture = prep.sharpen.as_ref().map(|(c, b)| (c, &**b));
-        return visualize::sharpen_plane(o, plan, &prep.log_l, capture);
+        return visualize::sharpen_plane(o, plan, &prep.log_l, prep.texture_blur.as_deref(), capture);
     }
     let m = o.mask(&plan.settings)?;
     if let Some(e) = prep.masks.iter().find(|e| e.id == m.id) {
@@ -789,7 +789,13 @@ fn overlay_alphas_all(o: Overlay, plan: &Plan<'_>, prep: &Prepared) -> Option<Ve
 /// Convenience: render a before/after pair side by side is up to the UI; this renders "before"
 /// (default look, keeping the crop and the area Generative Expand painted past the photo so framing matches, under the photo's own rendering process).
 pub fn before_settings(s: &DevelopSettings) -> DevelopSettings {
-    let mut b = DevelopSettings { crop: s.crop, expand_fill: s.expand_fill.clone(), orientation: s.orientation, ..DevelopSettings::default() };
+    let mut b = DevelopSettings {
+        process: s.process,
+        crop: s.crop,
+        expand_fill: s.expand_fill.clone(),
+        orientation: s.orientation,
+        ..DevelopSettings::default()
+    };
     b.wb = lightcraft_develop::WhiteBalance { mode: lightcraft_develop::WbMode::AsShot, ..b.wb };
     b
 }

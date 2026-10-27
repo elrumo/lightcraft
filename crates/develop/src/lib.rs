@@ -93,11 +93,13 @@ impl DevelopSettings {
         h
     }
 
-    /// True if nothing differs from a fresh default (ignoring white balance "as shot" values).
+    /// True if nothing differs from a fresh default (ignoring white balance "as shot" values, and
+    /// the rendering process: that is not an edit).
     pub fn is_unedited(&self) -> bool {
         let mut a = self.clone();
         let d = DevelopSettings::default();
         a.wb = d.wb;
+        a.process = d.process;
         a == d
     }
 
@@ -175,20 +177,12 @@ impl DevelopSettings {
 }
 
 #[cfg(test)]
+mod tests_process;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    /// Settings saved when LightCraft had several rendering processes carry a `process` number: it
-    /// is ignored, whatever it holds, and the rest loads.
-    #[test]
-    fn a_process_number_from_an_older_version_is_ignored() {
-        for process in [json!(1), json!(3), json!(4), json!(99), json!(2.5), json!("x"), json!(null)] {
-            let s = DevelopSettings::from_json(&json!({"process": process, "light": {"exposure": 0.5}})).unwrap();
-            assert_eq!(s.light.exposure, 0.5);
-            assert!(!s.to_json().as_object().unwrap().contains_key("process"));
-        }
-    }
 
     #[test]
     fn serde_roundtrip_default_and_edited() {

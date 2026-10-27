@@ -50,7 +50,7 @@ struct Planes {
     base: Option<(local::BaseKey, Arc<Buf>)>,
     clarity: Option<(u32, Arc<Buf>)>,
     texture: Option<(u32, Arc<Buf>)>,
-    /// Capture sharpening's blur.
+    /// Capture sharpening's blur (process V3).
     sharpen: Option<(u32, Arc<Buf>)>,
     dark: Option<(u64, Arc<Buf>, f32)>,
     chroma: Option<(u32, Arc<Buf>)>,
@@ -874,9 +874,10 @@ pub fn render(
     let overlay_mask = overlay_mask.or_else(|| {
         req.overlay.reads_detail().then(|| {
             let l = host.log_l.get_or_insert_with(|| Arc::new(cx.read_plane(&prep.log_l, w, h))).clone();
+            let tex = prep.texture.as_deref().map(|b| cx.read_plane(b, w, h));
             let capture = prep.sharpen.as_ref().map(|(c, b)| (*c, cx.read_plane(b, w, h)));
             let capture = capture.as_ref().map(|(c, p)| (c, p));
-            lightcraft_pipeline::visualize::sharpen_plane(req.overlay, &plan, &l, capture)
+            lightcraft_pipeline::visualize::sharpen_plane(req.overlay, &plan, &l, tex.as_ref(), capture)
         })?
     });
     lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan, overlay_mask.as_ref(), all_overlay_alphas.as_deref());
@@ -987,7 +988,7 @@ struct Prep {
     base: Arc<Buf>,
     clarity: Option<Arc<Buf>>,
     texture: Option<Arc<Buf>>,
-    /// Capture sharpening and its blur.
+    /// Capture sharpening (process V3) and its blur.
     sharpen: Option<(local::Capture, Arc<Buf>)>,
     dark: Option<Arc<Buf>>,
     /// Blurred chromaticity (local Moiré / Noise).
@@ -1012,7 +1013,7 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
     };
     let base = match sig.base {
         Some(sg) => {
-            let key = local::base_key(sg, sig.base_detail);
+            let key = local::base_key(&plan.settings, sg, sig.base_detail);
             plane_at(&mut planes.base, key, || tone_base(cx, &log_l, w, h, sg, sig.base_detail))
         }
         None => log_l.clone(),
