@@ -220,7 +220,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
             crate::widgets::announce_selected(&resp, m.name.clone(), Some(m.id) == app.session.active_mask);
-            register(ui.ctx(), format!("mask:{}", m.id), r);
+            register(ui, format!("mask:{}", m.id), r);
             ui.painter().rect_filled(
                 r,
                 4.0,
@@ -239,15 +239,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             let g = one_line(ui.painter(), &m.name, t.font(13.0), color, r.width() - 32.0 - 32.0);
             let elided = g.elided;
             let at = pos2(r.left() + 32.0, r.center().y - g.size().y / 2.0);
-            register(ui.ctx(), format!("maskName:{}", m.id), Rect::from_min_size(at, g.size()));
+            register(ui, format!("maskName:{}", m.id), Rect::from_min_size(at, g.size()));
             ui.painter().galley(at, g, color);
             let resp = if elided { resp.on_hover_text(&m.name) } else { resp };
             // show / hide on hover (and always while hidden)
             // (the pointer test, not `hovered`: over the eye, the row itself no longer counts as hovered)
             if ui.rect_contains_pointer(r) || !m.visible {
                 let er = Rect::from_center_size(pos2(r.right() - 16.0, r.center().y), vec2(22.0, 22.0));
-                register(ui.ctx(), format!("maskVisible:{}", m.id), er);
-                let eye = ui.interact(er, egui::Id::new(("maskVisible", m.id)), Sense::click());
+                register(ui, format!("maskVisible:{}", m.id), er);
+                let eye = ui.interact(er, egui::Id::unique(("maskVisible", m.id)), Sense::click());
                 crate::widgets::announce_selected(&eye, crate::i18n::tr("Show mask"), m.visible);
                 paint(
                     ui.painter(),
@@ -331,14 +331,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     ui.add(egui::Label::new(text).truncate().sense(Sense::click()))
                 });
                 let resp = resp.inner;
-                register(ui.ctx(), format!("component:{i}"), resp.rect);
+                register(ui, format!("component:{i}"), resp.rect);
                 if resp.double_clicked() {
                     app.ui.renaming_component = Some((m.id, i, label.clone()));
                 }
                 crate::widgets::context_menu(&resp, |ui| component_row_menu(app, ui, m.id, i, &label, m.components.len()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let more = ui.small_button("…").on_hover_text(crate::i18n::tr("Component options"));
-                    register(ui.ctx(), format!("button:componentMenu{i}"), more.rect);
+                    register(ui, format!("button:componentMenu{i}"), more.rect);
                     egui::Popup::menu(&more).show(|ui| component_row_menu(app, ui, m.id, i, &label, m.components.len()));
                 });
             });
@@ -503,7 +503,7 @@ pub(super) fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             for c in OVERLAY_COLORS {
                 let (r, resp) = ui.allocate_exact_size(if crate::is_compact(ui.ctx()) { vec2(34.0, 34.0) } else { vec2(18.0, 18.0) }, Sense::click());
                 crate::widgets::announce(&resp, format!("{} #{:02x}{:02x}{:02x}", crate::i18n::tr("Overlay color"), c[0], c[1], c[2]));
-                register(ui.ctx(), format!("maskOverlayColor:{:02x}{:02x}{:02x}", c[0], c[1], c[2]), r);
+                register(ui, format!("maskOverlayColor:{:02x}{:02x}{:02x}", c[0], c[1], c[2]), r);
                 ui.painter().rect_filled(r.shrink(2.0), 3.0, egui::Color32::from_rgb(c[0], c[1], c[2]));
                 if app.ui.mask_overlay_color == c {
                     ui.painter().rect_stroke(r, 3.0, Stroke::new(1.5, t.text), egui::StrokeKind::Inside);
@@ -555,7 +555,7 @@ pub(super) fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: u
             let w = if touch { ui.available_width() } else { ui.available_width().min(240.0) };
             let (rect, resp) = ui.allocate_exact_size(vec2(w, if touch { 36.0 } else { 18.0 }), Sense::click_and_drag());
             crate::widgets::announce(&resp, crate::i18n::tr("Select Luminance Range"));
-            register(ui.ctx(), format!("lumRange:{comp}"), rect);
+            register(ui, format!("lumRange:{comp}"), rect);
             let p = ui.painter();
             // dark → light ramp, the selected span outlined
             let n = 24;
@@ -845,7 +845,7 @@ fn component_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, op: &str) {
             continue;
         }
         let b = ui.button(menu_label(label));
-        register(ui.ctx(), format!("maskComp:{op}:{kind}"), b.rect);
+        register(ui, format!("maskComp:{op}:{kind}"), b.rect);
         if b.clicked() {
             add_component(app, ui.ctx(), op, kind);
         }

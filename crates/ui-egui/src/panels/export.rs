@@ -107,6 +107,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
                     }
                 }
             });
+            crate::widgets::name_combo(&c.response, crate::i18n::tr("Preset"));
             register(ui.ctx(), "combo:exportPreset", c.response.rect);
         });
     }
@@ -640,6 +641,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut Resize, ppi: &mut u16
                         ui.selectable_value(&mut r.mode, m, crate::i18n::tr(l));
                     }
                 });
+                crate::widgets::name_combo(&c.response, crate::i18n::tr("Resize"));
                 register(ui.ctx(), "combo:exportResizeMode", c.response.rect);
             });
         }
