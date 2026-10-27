@@ -1,0 +1,867 @@
+use std::sync::Arc;
+
+use lightcraft_develop::DevelopSettings;
+use serde_json::json;
+
+use super::sync::*;
+use super::*;
+
+fn add_photo(c: &mut Catalog) -> Op {
+    let id = c.alloc_photo_id();
+    Op::AddPhoto { photo: Box::new(Photo::new(id, Source::Demo { scene: 1 }, "a.jpg", "JPEG", 60, 40, "2026-01-01T00:00:00")) }
+}
+
+fn develop(c: &Catalog, id: PhotoId, f: impl FnOnce(&mut DevelopSettings)) -> Op {
+    let mut s = (*c.photo(id).unwrap().develop).clone();
+    f(&mut s);
+    Op::SetDevelop { id, settings: Arc::new(s), label: "Edit".into(), edited: None }
+}
+
+/// A device: its catalog, pending changes and how far it has pulled.
+struct Replica {
+    cat: Catalog,
+    out: Outbox,
+    cursor: u64,
+    space: u32,
+    dirty: bool,
+}
+
+impl Replica {
+    fn join(s: &ServerCore, space: u32) -> Replica {
+        let (cursor, snap) = s.snapshot();
+        let mut cat = Catalog::from_snapshot(&snap).unwrap();
+        cat.set_id_space(space);
+        Replica { cat, out: Outbox::default(), cursor, space, dirty: false }
+    }
+    fn local(&mut self, op: Op) {
+        if let Ok(inv) = self.cat.apply(op.clone()) {
+            self.out.record(&op, &inv, &self.cat);
+        }
+    }
+    fn pull(&mut self, s: &mut ServerCore) {
+        match s.since(self.cursor, usize::MAX).unwrap() {
+            Pull::Ops(ops) => {
+                for (seq, op) in ops {
+                    if let Some(op) = self.out.merge_remote(&op)
+                        && self.cat.apply(op).is_err()
+                    {
+                        self.dirty = true;
+                    }
+                    self.cursor = seq;
+                }
+            }
+            Pull::Gone => self.dirty = true,
+        }
+    }
+    fn push(&mut self, s: &mut ServerCore, lose_ack: bool) {
+        let (ops, pushed) = self.out.take_push(usize::MAX);
+        if ops.is_empty() {
+            return;
+        }
+        match s.push(self.cursor, &ops) {
+            Ok(head) if !lose_ack => {
+                self.out.acked(&pushed);
+                self.cursor = head;
+            }
+            Ok(_) | Err(PushError::Behind { .. }) | Err(PushError::Storage(_)) => {}
+            Err(PushError::Rejected { index, .. }) => {
+                self.out.rejected(&pushed, index);
+                self.dirty = true;
+            }
+        }
+    }
+    fn repair(&mut self, s: &ServerCore) {
+        let (seq, snap) = s.snapshot();
+        let mut c = Catalog::from_snapshot(&snap).unwrap();
+        carry_local(&self.cat, &mut c);
+        c.set_id_space(self.space);
+        self.out.rebase(&mut c);
+        self.cat = c;
+        self.cursor = seq;
+        self.dirty = false;
+    }
+    fn sync(&mut self, s: &mut ServerCore) {
+        self.pull(s);
+        if self.dirty {
+            self.repair(s);
+        }
+        self.push(s, false);
+    }
+}
+
+/// What every device must agree on (ids counters and device-local state aside).
+fn shared(c: &Catalog) -> Catalog {
+    let mut c = c.clone();
+    for p in c.photos.values_mut() {
+        let p = Arc::make_mut(p);
+        p.history.clear();
+        p.local_baseline = None;
+    }
+    c.next_photo = 0;
+    c.next_album = 0;
+    c.next_stack = 0;
+    c.browsed.clear();
+    // (both revisions: the library revision counts the ops of this device, and is part of what Catalog compares)
+    c.revision = 0;
+    c
+}
+
+fn server() -> ServerCore {
+    ServerCore::open(Box::new(MemStore::new())).unwrap()
+}
+
+#[test]
+fn id_spaces_keep_devices_apart() {
+    let mut a = Catalog::new();
+    let legacy = a.alloc_photo_id();
+    assert_eq!(legacy, PhotoId(1), "a library that never synced is unchanged");
+    a.set_id_space(3);
+    let p = a.alloc_photo_id();
+    assert_eq!(p.0, (3 << ID_SPACE_SHIFT) | 1);
+    assert_eq!(a.alloc_album_id().0, (3 << ID_SPACE_SHIFT) | 1);
+    // a photo from another device's space doesn't move this device's counter
+    let other = PhotoId((5 << ID_SPACE_SHIFT) | 9);
+    a.apply(Op::AddPhoto { photo: Box::new(Photo::new(other, Source::Demo { scene: 1 }, "x", "JPEG", 1, 1, "t")) }).unwrap();
+    assert_eq!(a.alloc_photo_id().0, (3 << ID_SPACE_SHIFT) | 2);
+    // reopened (the counter is saved), and re-entering the space after the highest id in it
+    let mut b = Catalog::from_snapshot(&a.to_snapshot()).unwrap();
+    b.set_id_space(3);
+    assert_eq!(b.alloc_photo_id().0, (3 << ID_SPACE_SHIFT) | 3);
+    let mut c = Catalog::from_snapshot(&a.to_snapshot()).unwrap();
+    c.set_id_space(5);
+    assert_eq!(c.alloc_photo_id().0, (5 << ID_SPACE_SHIFT) | 10);
+    // hostile ids don't overflow
+    c.apply(Op::AddPhoto { photo: Box::new(Photo::new(PhotoId(u64::MAX), Source::Demo { scene: 1 }, "x", "JPEG", 1, 1, "t")) }).unwrap();
+}
+
+#[test]
+fn merge3_keeps_both_sides() {
+    let base = json!({"light": {"exposure": 0, "contrast": 0}, "photos": [1, 2, 3], "curve": [0, 1]});
+    let ours = json!({"light": {"exposure": 1, "contrast": 0}, "photos": [1, 3, 4], "curve": [0, 2]});
+    let theirs = json!({"light": {"exposure": 0, "contrast": 20}, "photos": [1, 2, 3, 5], "curve": [0, 3]});
+    assert_eq!(
+        merge3(&base, &ours, &theirs),
+        json!({"light": {"exposure": 1, "contrast": 20}, "photos": [1, 3, 5, 4], "curve": [0, 2]}),
+        "both sliders, both album changes; other arrays are one value (ours)"
+    );
+    // a field only we added, one only we removed
+    assert_eq!(merge3(&json!({"a": 1}), &json!({"b": 2}), &json!({"a": 1, "c": 3})), json!({"b": 2, "c": 3}));
+    assert_eq!(merge3(&json!(1), &json!(1), &json!(2)), json!(2), "unchanged here: theirs");
+}
+
+#[test]
+fn outbox_records_shared_changes_only() {
+    let mut c = Catalog::new();
+    let add = add_photo(&mut c);
+    let mut out = Outbox::default();
+    let inv = c.apply(add.clone()).unwrap();
+    out.record(&add, &inv, &c);
+    let id = PhotoId(1);
+    // a batch is recorded op by op; History stays here
+    let batch = Op::Batch {
+        ops: vec![
+            Op::SetRating { id, rating: 3 },
+            Op::PushHistory { id, step: HistoryStep { label: "x".into(), settings: Arc::default() } },
+            Op::SetBrowsed { folder: "/x".into(), at: Some("t".into()) },
+        ],
+    };
+    let inv = c.apply(batch.clone()).unwrap();
+    out.record(&batch, &inv, &c);
+    let (ops, _) = out.take_push(10);
+    assert_eq!(ops.len(), 2);
+    assert!(matches!(ops[1], Op::SetRating { rating: 3, .. }));
+    // a second change to the same value replaces the pending one (and moves it last)
+    let op = Op::SetRating { id, rating: 5 };
+    let inv = c.apply(op.clone()).unwrap();
+    out.record(&op, &inv, &c);
+    assert_eq!(out.len(), 2);
+
+    // a Local record isn't shared until it's added to the library, then it goes whole
+    let mut local = Photo::new(c.alloc_photo_id(), Source::File { path: "/disk/b.jpg".into() }, "b.jpg", "JPEG", 1, 1, "t");
+    local.local = true;
+    local.content_hash = Some("00ff".into());
+    let lid = local.id;
+    let add = Op::AddPhoto { photo: Box::new(local) };
+    let inv = c.apply(add.clone()).unwrap();
+    out.record(&add, &inv, &c);
+    let rate = Op::SetRating { id: lid, rating: 2 };
+    let inv = c.apply(rate.clone()).unwrap();
+    out.record(&rate, &inv, &c);
+    assert_eq!(out.len(), 2);
+    let promote = Op::SetLocal { id: lid, local: false };
+    let inv = c.apply(promote.clone()).unwrap();
+    out.record(&promote, &inv, &c);
+    let (ops, _) = out.take_push(10);
+    let Some(Op::AddPhoto { photo }) = ops.last() else { panic!("{ops:?}") };
+    assert_eq!((photo.rating, photo.local), (2, false));
+    assert_eq!(photo.source, Source::File { path: "web/00ff/b.jpg".into() }, "points at its content");
+}
+
+#[test]
+fn outbox_changes_name_their_record_and_value() {
+    let mut c = Catalog::new();
+    let add = add_photo(&mut c);
+    let mut out = Outbox::default();
+    let inv = c.apply(add.clone()).unwrap();
+    out.record(&add, &inv, &c);
+    let id = PhotoId(1);
+    let op = Op::SetRating { id, rating: 4 };
+    let inv = c.apply(op.clone()).unwrap();
+    out.record(&op, &inv, &c);
+    let got: Vec<(Subject, &str)> = out.changes().collect();
+    assert_eq!(got, vec![(Subject::Photo(id), "add"), (Subject::Photo(id), "rating")]);
+
+    // every key `key_of` makes reads back, and one that isn't a key reads as `Other` (never a panic)
+    assert_eq!(parse_key("a7.name"), (Subject::Album(AlbumId(7)), "name"));
+    assert_eq!(parse_key("s3.set"), (Subject::Stack(StackId(3)), "set"));
+    assert_eq!(parse_key("label.Red"), (Subject::LabelName("Red".into()), "name"));
+    assert_eq!(parse_key("keyword.travel|rome"), (Subject::Keyword("travel|rome".into()), "keyword"));
+    for bad in ["", "p", "p.", "pX.rating", "p99999999999999999999.rating", "zz", "é.é"] {
+        assert!(matches!(parse_key(bad), (Subject::Other(_), "")), "{bad:?}");
+    }
+}
+
+#[test]
+fn outbox_acks_only_what_did_not_change() {
+    let mut c = Catalog::new();
+    let add = add_photo(&mut c);
+    c.apply(add).unwrap();
+    let id = PhotoId(1);
+    let mut out = Outbox::default();
+    let op = Op::SetRating { id, rating: 1 };
+    let inv = c.apply(op.clone()).unwrap();
+    out.record(&op, &inv, &c);
+    let (_, pushed) = out.take_push(10);
+    // changed again while the push was on its way
+    let op = Op::SetRating { id, rating: 2 };
+    let inv = c.apply(op.clone()).unwrap();
+    out.record(&op, &inv, &c);
+    out.acked(&pushed);
+    assert_eq!(out.len(), 1);
+    // our op coming back (its ack was lost) settles it
+    assert_eq!(out.merge_remote(&Op::SetRating { id, rating: 2 }), None);
+    assert!(out.is_empty());
+}
+
+#[test]
+fn server_core_orders_validates_and_persists() {
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let add = add_photo(&mut c);
+    let Op::AddPhoto { photo } = &add else { panic!("{add:?}") };
+    let id = photo.id;
+    assert_eq!(s.push(0, std::slice::from_ref(&add)), Ok(1));
+    assert_eq!(s.push(0, &[Op::SetRating { id, rating: 1 }]), Err(PushError::Behind { head: 1 }));
+    // all or nothing
+    let r = s.push(1, &[Op::SetRating { id, rating: 4 }, Op::SetRating { id: PhotoId(77), rating: 1 }]);
+    assert!(matches!(r, Err(PushError::Rejected { index: 1, .. })), "{r:?}");
+    assert_eq!(s.catalog().photo(id).unwrap().rating, 0);
+    // device-local ops and batches aren't accepted
+    assert!(matches!(s.push(1, &[Op::SetBrowsed { folder: "/x".into(), at: None }]), Err(PushError::Rejected { index: 0, .. })));
+    assert!(matches!(s.push(1, &[Op::Batch { ops: vec![] }]), Err(PushError::Rejected { .. })));
+    assert_eq!(s.push(1, &[Op::SetRating { id, rating: 4 }]), Ok(2));
+    assert_eq!(s.since(0, 10).unwrap(), Pull::Ops(vec![(1, add), (2, Op::SetRating { id, rating: 4 })]));
+    assert_eq!(s.since(1, 10).unwrap(), Pull::Ops(vec![(2, Op::SetRating { id, rating: 4 })]));
+    assert_eq!(s.since(2, 10).unwrap(), Pull::Ops(vec![]));
+    drop(s);
+    let s = ServerCore::open(Box::new(store)).unwrap();
+    assert_eq!((s.head(), s.catalog().photo(id).unwrap().rating), (2, 4));
+}
+
+/// The library is read in pages, all from the copy taken at the first page however the library
+/// changes meanwhile; a copy that is gone is read again, unless nothing changed since.
+#[test]
+fn snapshot_reads_in_pages_from_one_copy() {
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut ids = Vec::new();
+    for _ in 0..5 {
+        let add = add_photo(&mut c);
+        let Op::AddPhoto { photo } = &add else { panic!("{add:?}") };
+        ids.push(photo.id);
+        s.push(s.head(), &[add]).unwrap();
+    }
+    s.push(s.head(), &[Op::AddAlbum { album: Album::new(c.alloc_album_id(), "Trip") }]).unwrap();
+    let before = s.catalog().to_snapshot();
+    let mut read = s.snapshot_page(None, 2).unwrap();
+    assert_eq!((read.catalog.len(), read.catalog.albums().count(), read.total), (2, 1, Some(5)));
+    // another device changes the library half-way
+    s.push(s.head(), &[Op::SetRating { id: ids[4], rating: 5 }, add_photo(&mut c)]).unwrap();
+    let mut pages = 1;
+    while let Some(next) = read.next.clone() {
+        let page = s.snapshot_page(Some(&next), 2).unwrap();
+        assert_eq!(page.catalog.albums().count(), 0, "albums come with the first page only");
+        assert!(read.add_page(page));
+        pages += 1;
+    }
+    assert_eq!(pages, 3);
+    assert_eq!(read.catalog.to_snapshot(), before, "the library as it was at the first page");
+    // a page of another copy isn't added
+    let other = s.snapshot_page(None, 2).unwrap();
+    assert!(!read.add_page(other.clone()));
+    // the server restarted: the copy is gone; read again unless nothing changed since
+    let at_head = other.next.unwrap();
+    let gone = format!("{}.{}", read.seq, ids[1].0);
+    let mut s = ServerCore::open(Box::new(store)).unwrap();
+    assert!(s.snapshot_page(Some(&gone), 2).is_none());
+    assert_eq!(s.snapshot_page(Some(&at_head), 10).unwrap().catalog.len(), 4);
+    // only a few copies are kept: the oldest goes
+    for _ in 0..4 {
+        s.push(s.head(), &[add_photo(&mut c)]).unwrap();
+        s.snapshot_page(None, 1).unwrap();
+    }
+    assert!(s.snapshot_page(Some(&at_head), 10).is_none());
+    // a cursor that isn't one
+    assert!(s.snapshot_page(Some("x"), 10).is_none() && s.snapshot_page(Some("1.y"), 10).is_none());
+}
+
+/// A merge patch turns its base back into what it was made from: changed members, nested
+/// objects, members gone (an enum's other variant, a map's key), arrays whole.
+#[test]
+fn merge_patches_round_trip() {
+    let cases = [
+        (json!({"a": 1, "b": {"x": 1, "y": 2}}), json!({"a": 1, "b": {"x": 1, "y": 3}})),
+        (json!({"shape": {"Radial": {"r": 1}}}), json!({"shape": {"Linear": {"a": 2}}})),
+        (json!({"m": {"k1": 1, "k2": 2}}), json!({"m": {"k1": 1}})),
+        (json!({"m": {"k1": 1}}), json!({"m": {}})),
+        (json!({"list": [1, 2, 3]}), json!({"list": [1, 3]})),
+        (json!({"o": null}), json!({"o": {"set": true}})),
+        (json!({"o": {"set": true}}), json!({"o": [1]})),
+        (json!({"a": 1}), json!(7)),
+        (json!({"a": 1}), json!({"a": 1, "new": "x"})),
+    ];
+    for (base, v) in cases {
+        let d = diff(&base, &v);
+        assert_eq!(patch(&base, &d), v, "{base} → {v} via {d}");
+    }
+    assert_eq!(diff(&json!({"a": 1, "b": 2}), &json!({"a": 1, "b": 2})), json!({}), "nothing differs: nothing written");
+    // (a member set to null comes back left out, which reads the same into an `Option`)
+    assert_eq!(patch(&json!({"o": {"k": 1}}), &diff(&json!({"o": {"k": 1}}), &json!({"o": null}))), json!({}));
+}
+
+/// Compact pages hold the same photos, edited or not, in a fraction of the bytes; a page that
+/// isn't compact reads as before.
+#[test]
+fn compact_pages_hold_the_same_photos() {
+    use lightcraft_develop::{Mask, MaskComponent, MaskOp, MaskShape, WbMode};
+    let mut s = server();
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut edit = DevelopSettings::default();
+    lightcraft_develop::controls::set(&mut edit, "light.exposure", 1.25);
+    edit.wb.mode = WbMode::Auto;
+    edit.crop.aspect = Some((3, 2));
+    edit.disabled_sections.push("effects".into());
+    edit.masks.push(Mask {
+        id: 1,
+        components: vec![
+            MaskComponent { name: Some("sky".into()), op: MaskOp::Add, invert: false, shape: MaskShape::Sky },
+            MaskComponent {
+                name: None,
+                op: MaskOp::Add,
+                invert: true,
+                shape: MaskShape::Prompt { text: "the car".into(), seg: None, detail: vec![], edge: 0.0 },
+            },
+        ],
+        ..Default::default()
+    });
+    let mut look = DevelopSettings::default();
+    lightcraft_develop::controls::set(&mut look, "light.contrast", 20.0);
+    for i in 0..20 {
+        let Op::AddPhoto { mut photo } = add_photo(&mut c) else { panic!("not a photo") };
+        if i == 0 {
+            photo.develop = Arc::new(edit.clone());
+            photo.import_look = Some(Arc::new(look.clone()));
+            photo.versions.push(Version { name: "v1".into(), created: "2026-01-02T00:00:00".into(), settings: Arc::new(edit.clone()), auto: false });
+        }
+        s.push(s.head(), &[Op::AddPhoto { photo }]).unwrap();
+    }
+    let page = s.snapshot_page(None, 100).unwrap();
+    let full = serde_json::to_string(&page).unwrap();
+    let compact = serde_json::to_string(&compact_page(page.clone()).unwrap()).unwrap();
+    assert!(compact.starts_with("{\"defaults\":"), "{}", &compact[..40]);
+    let back = proto::Snapshot::from_json(&compact).unwrap();
+    assert_eq!(back.catalog, page.catalog);
+    assert_eq!((back.seq, back.next, back.total, back.defaults), (page.seq, None, Some(20), None));
+    assert!(compact.len() * 3 < full.len(), "{} → {} bytes", full.len(), compact.len());
+    assert_eq!(proto::Snapshot::from_json(&full).unwrap().catalog, page.catalog);
+}
+
+/// A big log is compacted: devices far behind reload the library, the rest pull as before, and
+/// it reopens the same.
+#[test]
+fn server_log_compacts() {
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    s.set_compact_bytes(2000);
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut ids = Vec::new();
+    while s.since(0, 1).unwrap() != Pull::Gone {
+        let add = add_photo(&mut c);
+        let Op::AddPhoto { photo } = &add else { panic!("{add:?}") };
+        ids.push(photo.id);
+        s.push(s.head(), &[add]).unwrap();
+        assert!(ids.len() < 100, "never compacted");
+    }
+    let head = s.head();
+    assert_eq!(s.since(head, 10).unwrap(), Pull::Ops(vec![]));
+    s.push(head, &[Op::SetRating { id: ids[0], rating: 5 }]).unwrap();
+    assert_eq!(s.since(head, 10).unwrap(), Pull::Ops(vec![(head + 1, Op::SetRating { id: ids[0], rating: 5 })]));
+    drop(s);
+    let s = ServerCore::open(Box::new(store)).unwrap();
+    assert_eq!((s.head(), s.catalog().len(), s.catalog().photo(ids[0]).unwrap().rating), (head + 1, ids.len(), 5));
+}
+
+/// What a compaction leaves of the log is still served: a device one op behind keeps pulling
+/// (before, every compaction made every other device reload), one far behind reloads, across a
+/// restart too.
+#[test]
+fn compaction_keeps_the_newest_ops_for_devices_a_little_behind() {
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    s.set_compact_bytes(30_000);
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut ops = Vec::new();
+    while s.since(0, 1).unwrap() != Pull::Gone {
+        let add = add_photo(&mut c);
+        ops.push(add.clone());
+        s.push(s.head(), &[add]).unwrap();
+        assert!(ops.len() < 100, "never compacted");
+    }
+    // the push that compacted is the newest op: a device that had everything before it pulls it
+    let head = s.head();
+    assert_eq!(head as usize, ops.len());
+    for behind in 1..=2u64 {
+        let want: Vec<_> = (head - behind + 1..=head).map(|seq| (seq, ops[seq as usize - 1].clone())).collect();
+        assert_eq!(s.since(head - behind, 10).unwrap(), Pull::Ops(want), "{behind} behind");
+    }
+    assert_eq!(s.since(1, 10).unwrap(), Pull::Gone);
+    let floor_known = (1..head).find(|&after| s.since(after, 1).unwrap() != Pull::Gone).unwrap();
+    // restarting changes nothing: the kept ops are in the log, the rest in the snapshot
+    drop(s);
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    assert_eq!((s.head(), s.since(floor_known - 1, 1).unwrap()), (head, Pull::Gone));
+    let Pull::Ops(from_floor) = s.since(floor_known, usize::MAX).unwrap() else { panic!("floor moved") };
+    assert_eq!(from_floor.len() as u64, head - floor_known);
+    assert_eq!(from_floor.last().map(|(seq, _)| *seq), Some(head));
+    // a device that is behind by more than what is kept reloads, and joins the same state
+    let mut late = Replica::join(&s, 2);
+    late.cursor = 0;
+    late.sync(&mut s);
+    assert_eq!(late.cursor, head);
+    assert_eq!(shared(&late.cat), shared(s.catalog()));
+    // and the next compactions go on the same way
+    for _ in 0..40 {
+        let add = add_photo(&mut c);
+        s.push(s.head(), &[add]).unwrap();
+    }
+    let head = s.head();
+    assert!(matches!(s.since(head - 1, 10).unwrap(), Pull::Ops(v) if v.len() == 1));
+}
+
+/// Pulling goes through the log's index and reads it in windows: whatever the cursor, limit and
+/// window, the answer is what reading the whole log gives, and it survives a restart and a
+/// compaction.
+#[test]
+fn pulls_through_the_index_match_reading_the_whole_log() {
+    fn naive(store: &MemStore, after: u64, limit: usize, head: u64) -> Vec<(u64, Op)> {
+        let log = String::from_utf8(store.get("catalog.log").unwrap_or_default()).unwrap();
+        log.lines().filter_map(crate::journal::decode_record).filter(|(seq, _)| *seq > after && *seq <= head).take(limit).collect()
+    }
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let add = add_photo(&mut c);
+    let Op::AddPhoto { photo } = &add else { panic!("{add:?}") };
+    let id = photo.id;
+    s.push(0, &[add]).unwrap();
+    // a thousand-odd ops, pushed in batches of different sizes (the index counts records)
+    let mut rating = 0u8;
+    for batch in (1..=45usize).cycle().take(60) {
+        let ops: Vec<_> = (0..batch)
+            .map(|_| {
+                rating = (rating + 1) % 6;
+                Op::SetRating { id, rating }
+            })
+            .collect();
+        s.push(s.head(), &ops).unwrap();
+    }
+    let check = |s: &mut ServerCore, floor: u64| {
+        let head = s.head();
+        for after in [floor, floor + 1, floor + 255, floor + 256, floor + 257, head / 2, head - 2, head - 1, head] {
+            if after < floor || after > head {
+                continue;
+            }
+            for (limit, window) in [(1, 64), (7, 300), (usize::MAX, 1), (usize::MAX, 1 << 20), (500, 4096)] {
+                s.set_pull_window(window);
+                assert_eq!(
+                    s.since(after, limit).unwrap(),
+                    Pull::Ops(naive(&store, after, limit, head)),
+                    "after {after}, limit {limit}, window {window}"
+                );
+            }
+        }
+    };
+    check(&mut s, 0);
+    drop(s);
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    check(&mut s, 0);
+    // compact, keeping the end: only the kept part is served, from the same index
+    s.set_compact_bytes(store.get("catalog.log").unwrap().len() as u64 / 2);
+    s.push(s.head(), &[Op::SetRating { id, rating: 1 }]).unwrap();
+    let floor = (0..s.head()).find(|&after| s.since(after, 1).unwrap() != Pull::Gone).unwrap();
+    assert!(floor > 300, "the log was not trimmed ({floor})");
+    check(&mut s, floor);
+    drop(s);
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    assert_eq!(s.since(floor - 1, 1).unwrap(), Pull::Gone);
+    check(&mut s, floor);
+}
+
+/// Photos the server adds from the user's library folders: its own id space, their place on the
+/// server synced (and moved), shown by folder.
+#[test]
+fn server_folder_photos_sync_and_filter() {
+    let mut s = server();
+    let space = (1 << 21) - 1;
+    let id = s.alloc_photo_id(space);
+    assert_eq!(id.0 >> ID_SPACE_SHIFT, u64::from(space));
+    let mut p = Photo::new(id, Source::File { path: original_path("ab", "IMG_1.jpg") }, "IMG_1.jpg", "JPEG", 60, 40, "2026-01-01T00:00:00");
+    p.server_path = Some("Photos/2024/Trip/IMG_1.jpg".into());
+    assert_eq!(p.server_folder(), Some("Photos/2024/Trip"));
+    let head = s.push(s.head(), &[Op::AddPhoto { photo: Box::new(p) }]).unwrap();
+    assert_ne!(s.alloc_photo_id(space), id, "ids are never handed out twice");
+    let mut a = Replica::join(&s, 1);
+    assert_eq!(a.cursor, head);
+    // the file moved on the server: every device follows
+    let moved = Op::SetServerPath { id, path: Some("Photos/2025/IMG_1.jpg".into()) };
+    assert_eq!(key_of(&moved).as_deref(), Some(&*format!("p{}.serverPath", id.0)));
+    s.push(s.head(), &[moved]).unwrap();
+    a.local(Op::SetRating { id, rating: 3 });
+    a.sync(&mut s);
+    let ap = a.cat.photo(id).unwrap();
+    assert_eq!((ap.server_path.as_deref(), ap.rating), (Some("Photos/2025/IMG_1.jpg"), 3));
+    assert_eq!(s.catalog().photo(id).unwrap().rating, 3);
+    // folders, with what's in them or below
+    let folders = query::server_folders(&a.cat);
+    assert_eq!(folders.into_iter().collect::<Vec<_>>(), [("Photos".to_string(), 1), ("Photos/2025".to_string(), 1)]);
+    let only = |dir: &str| Filter { server_folder: Some(dir.into()), ..Default::default() }.matches(ap, &a.cat);
+    assert!(only("Photos") && only("Photos/2025/") && only(""));
+    assert!(!only("Photos/2024") && !only("Photos/202") && !only("Phot"));
+}
+
+/// An album order set by hand on one device reaches the server and another device, which lists
+/// the albums the same way.
+#[test]
+fn album_order_syncs() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let ids: Vec<AlbumId> = ["A", "B", "C"]
+        .iter()
+        .map(|n| {
+            let id = a.cat.alloc_album_id();
+            a.local(Op::AddAlbum { album: Album::new(id, *n) });
+            id
+        })
+        .collect();
+    a.sync(&mut s);
+    let mut b = Replica::join(&s, 2);
+    a.local(Op::Batch { ops: vec![Op::SetAlbumOrder { id: ids[2], order: Some(0) }, Op::SetAlbumOrder { id: ids[0], order: Some(1) }] });
+    a.sync(&mut s);
+    b.sync(&mut s);
+    let names = |c: &Catalog| c.album_children(None).iter().map(|x| x.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(&a.cat), ["C", "A", "B"]);
+    assert_eq!(names(&b.cat), ["C", "A", "B"]);
+    assert_eq!(names(s.catalog()), ["C", "A", "B"]);
+}
+
+#[test]
+fn concurrent_edits_merge() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let add = add_photo(&mut a.cat);
+    a.local(add);
+    let id = a.cat.photos().next().unwrap().id;
+    let album = a.cat.alloc_album_id();
+    a.local(Op::AddAlbum { album: Album::new(album, "Trip") });
+    a.sync(&mut s);
+    let mut b = Replica::join(&s, 2);
+    let p2 = add_photo(&mut b.cat);
+    b.local(p2.clone());
+    let id2 = b.cat.photos().map(|p| p.id).find(|p| *p != id).unwrap();
+    // exposure on one device, contrast on the other; each adds a photo to the album
+    a.local(develop(&a.cat, id, |s| s.light.exposure = 1.0));
+    b.local(develop(&b.cat, id, |s| s.light.contrast = 20.0));
+    a.local(Op::SetAlbumPhotos { id: album, photos: vec![id] });
+    b.local(Op::SetAlbumPhotos { id: album, photos: vec![id2] });
+    a.sync(&mut s);
+    b.sync(&mut s);
+    a.sync(&mut s);
+    for r in [&a, &b] {
+        let d = &r.cat.photo(id).unwrap().develop;
+        assert_eq!((d.light.exposure, d.light.contrast), (1.0, 20.0));
+        let mut photos = r.cat.album(album).unwrap().photos.clone();
+        photos.sort();
+        assert_eq!(photos, vec![id, id2]);
+        assert_eq!(shared(&r.cat), shared(s.catalog()));
+    }
+    // a removal beats an edit
+    a.local(Op::SetRating { id: id2, rating: 5 });
+    b.local(b.cat.delete_permanently_ops(id2));
+    b.sync(&mut s);
+    a.sync(&mut s);
+    b.sync(&mut s);
+    assert!(a.cat.photo(id2).is_none() && s.catalog().photo(id2).is_none());
+    assert_eq!(shared(&a.cat), shared(&b.cat));
+}
+
+#[test]
+fn hostile_snapshot_stack_does_not_panic() {
+    let s = Stack { id: StackId(1), photos: vec![], collapsed: false };
+    assert_eq!(s.top(), PhotoId(0));
+}
+
+/// What a step of the convergence test does.
+#[derive(Clone, Debug)]
+enum Step {
+    Rate(usize, u8),
+    Flag(usize, u8),
+    Develop(usize, u8, i8),
+    AlbumAdd(usize, usize),
+    AlbumRemove(usize, usize),
+    Keyword(usize, u8),
+    AddPhoto,
+    Delete(usize),
+    SoftDelete(usize, bool),
+    AddAlbum,
+    RemoveAlbum(usize),
+    RenameAlbum(usize, u8),
+    Sync,
+    PushLosingAck,
+    Pull,
+}
+
+fn step() -> impl proptest::strategy::Strategy<Value = Step> {
+    use proptest::prelude::*;
+    let i = || 0usize..8;
+    prop_oneof![
+        (i(), 0u8..6).prop_map(|(p, r)| Step::Rate(p, r)),
+        (i(), 0u8..3).prop_map(|(p, f)| Step::Flag(p, f)),
+        (i(), 0u8..3, -3i8..4).prop_map(|(p, f, v)| Step::Develop(p, f, v)),
+        (i(), i()).prop_map(|(a, p)| Step::AlbumAdd(a, p)),
+        (i(), i()).prop_map(|(a, p)| Step::AlbumRemove(a, p)),
+        (i(), 0u8..4).prop_map(|(p, k)| Step::Keyword(p, k)),
+        Just(Step::AddPhoto),
+        i().prop_map(Step::Delete),
+        (i(), any::<bool>()).prop_map(|(p, d)| Step::SoftDelete(p, d)),
+        Just(Step::AddAlbum),
+        i().prop_map(Step::RemoveAlbum),
+        (i(), 0u8..3).prop_map(|(a, n)| Step::RenameAlbum(a, n)),
+        Just(Step::Sync),
+        Just(Step::Sync),
+        Just(Step::PushLosingAck),
+        Just(Step::Pull),
+    ]
+}
+
+impl Replica {
+    fn nth_photo(&self, i: usize) -> Option<PhotoId> {
+        let ids: Vec<PhotoId> = self.cat.photos.keys().copied().collect();
+        (!ids.is_empty()).then(|| ids[i % ids.len()])
+    }
+    fn nth_album(&self, i: usize) -> Option<AlbumId> {
+        let ids: Vec<AlbumId> = self.cat.albums.keys().copied().collect();
+        (!ids.is_empty()).then(|| ids[i % ids.len()])
+    }
+    fn run(&mut self, step: &Step, s: &mut ServerCore) {
+        match *step {
+            Step::Rate(p, r) => {
+                if let Some(id) = self.nth_photo(p) {
+                    self.local(Op::SetRating { id, rating: r });
+                }
+            }
+            Step::Flag(p, f) => {
+                if let Some(id) = self.nth_photo(p) {
+                    self.local(Op::SetFlag { id, flag: [Flag::None, Flag::Pick, Flag::Reject][f as usize] });
+                }
+            }
+            Step::Develop(p, f, v) => {
+                if let Some(id) = self.nth_photo(p) {
+                    let op = develop(&self.cat, id, |s| match f {
+                        0 => s.light.exposure = f64::from(v),
+                        1 => s.light.contrast = f64::from(v) * 10.0,
+                        _ => s.light.highlights = f64::from(v) * 10.0,
+                    });
+                    self.local(op);
+                }
+            }
+            Step::AlbumAdd(a, p) | Step::AlbumRemove(a, p) => {
+                if let (Some(album), Some(id)) = (self.nth_album(a), self.nth_photo(p)) {
+                    let mut photos = self.cat.album(album).unwrap().photos.clone();
+                    photos.retain(|x| *x != id);
+                    if matches!(step, Step::AlbumAdd(..)) {
+                        photos.push(id);
+                    }
+                    self.local(Op::SetAlbumPhotos { id: album, photos });
+                }
+            }
+            Step::Keyword(p, k) => {
+                if let Some(id) = self.nth_photo(p) {
+                    let mut meta = self.cat.photo(id).unwrap().meta.clone();
+                    let kw = format!("k{k}");
+                    if !meta.keywords.contains(&kw) {
+                        meta.keywords.push(kw);
+                        self.local(Op::SetMeta { id, meta: Box::new(meta) });
+                    }
+                }
+            }
+            Step::AddPhoto => {
+                let op = add_photo(&mut self.cat);
+                self.local(op);
+            }
+            Step::Delete(p) => {
+                if let Some(id) = self.nth_photo(p) {
+                    let op = self.cat.delete_permanently_ops(id);
+                    self.local(op);
+                }
+            }
+            Step::SoftDelete(p, d) => {
+                if let Some(id) = self.nth_photo(p) {
+                    self.local(Op::SetDeleted { id, deleted: d });
+                }
+            }
+            Step::AddAlbum => {
+                let id = self.cat.alloc_album_id();
+                self.local(Op::AddAlbum { album: Album::new(id, "new") });
+            }
+            Step::RemoveAlbum(a) => {
+                if let Some(id) = self.nth_album(a) {
+                    self.local(Op::RemoveAlbum { id });
+                }
+            }
+            Step::RenameAlbum(a, n) => {
+                if let Some(id) = self.nth_album(a) {
+                    self.local(Op::RenameAlbum { id, name: format!("n{n}") });
+                }
+            }
+            Step::Sync => self.sync(s),
+            Step::PushLosingAck => self.push(s, true),
+            Step::Pull => {
+                self.pull(s);
+                if self.dirty {
+                    self.repair(s);
+                }
+            }
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig { cases: 400, ..Default::default() })]
+
+    /// Three devices doing anything in any interleaving end up with the server's library once
+    /// they've all synced.
+    #[test]
+    fn devices_converge(steps in proptest::collection::vec((0usize..3, step()), 1..60)) {
+        let mut s = server();
+        let mut seed = Replica::join(&s, 1);
+        for _ in 0..3 {
+            let op = add_photo(&mut seed.cat);
+            seed.local(op);
+        }
+        let album = seed.cat.alloc_album_id();
+        seed.local(Op::AddAlbum { album: Album::new(album, "A") });
+        seed.sync(&mut s);
+        let mut devices: Vec<Replica> = (2..5).map(|space| Replica::join(&s, space)).collect();
+        for (d, st) in &steps {
+            devices[*d].run(st, &mut s);
+        }
+        for _ in 0..4 {
+            for d in &mut devices {
+                d.sync(&mut s);
+            }
+        }
+        for d in &mut devices {
+            d.pull(&mut s);
+            proptest::prop_assert!(!d.dirty);
+            proptest::prop_assert!(d.out.is_empty(), "pending: {:?}", d.out);
+            proptest::prop_assert_eq!(shared(&d.cat), shared(s.catalog()));
+        }
+    }
+}
+
+#[test]
+fn seeding_uploads_a_whole_library() {
+    let mut c = Catalog::new();
+    let ids: Vec<PhotoId> = (0..3)
+        .map(|_| {
+            let op = add_photo(&mut c);
+            c.apply(op).unwrap();
+            c.photos().last().unwrap().id
+        })
+        .collect();
+    // the album's id comes first: seeding must still send its folder before it
+    let album = c.alloc_album_id();
+    let folder = c.alloc_album_id();
+    let mut f = Album::new(folder, "Trips");
+    f.folder = true;
+    c.apply(Op::AddAlbum { album: f }).unwrap();
+    c.apply(Op::AddAlbum { album: Album { parent: Some(folder), photos: vec![ids[0], ids[1]], ..Album::new(album, "Rome") } }).unwrap();
+    c.apply(Op::AddStack { stack: Stack { id: StackId(1), photos: vec![ids[1], ids[2]], collapsed: true } }).unwrap();
+    c.apply(Op::SetLabelName { label: ColorLabel::Red, name: Some("Print".into()) }).unwrap();
+    let mut out = Outbox::default();
+    out.seed(&c);
+    let mut s = server();
+    let (ops, _) = out.take_push(usize::MAX);
+    assert_eq!(s.push(0, &ops), Ok(ops.len() as u64));
+    assert_eq!(shared(s.catalog()), shared(&c));
+}
+
+#[test]
+fn a_lost_ack_does_not_undo_a_later_change() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let add = add_photo(&mut a.cat);
+    a.local(add);
+    a.sync(&mut s);
+    let id = a.cat.photos().next().unwrap().id;
+    a.local(develop(&a.cat, id, |s| s.light.exposure = 1.0));
+    a.push(&mut s, true);
+    // set back while the acknowledgement was lost: the server's copy of our first change
+    // coming back must not win over the newer one
+    a.local(develop(&a.cat, id, |s| s.light.exposure = 0.0));
+    a.sync(&mut s);
+    a.sync(&mut s);
+    assert_eq!(a.cat.photo(id).unwrap().develop.light.exposure, 0.0);
+    assert_eq!(s.catalog().photo(id).unwrap().develop.light.exposure, 0.0);
+    assert!(a.out.is_empty());
+}
+
+#[test]
+fn rebase_merges_with_the_server_value() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let add = add_photo(&mut a.cat);
+    a.local(add);
+    a.sync(&mut s);
+    let id = a.cat.photos().next().unwrap().id;
+    let mut b = Replica::join(&s, 2);
+    b.local(develop(&b.cat, id, |s| s.light.contrast = 30.0));
+    b.sync(&mut s);
+    // A edits exposure, then reloads the server's state (a repair) before pulling B's change
+    a.local(develop(&a.cat, id, |s| s.light.exposure = 1.0));
+    a.repair(&s);
+    let d = &a.cat.photo(id).unwrap().develop;
+    assert_eq!((d.light.exposure, d.light.contrast), (1.0, 30.0), "both edits survive the reload");
+    a.sync(&mut s);
+    b.sync(&mut s);
+    assert_eq!(shared(&a.cat), shared(&b.cat));
+    assert_eq!(shared(&a.cat), shared(s.catalog()));
+}

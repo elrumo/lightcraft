@@ -16,16 +16,19 @@
 pub mod dates;
 pub mod folders;
 mod index;
+pub mod join;
 pub mod journal;
 pub mod keywords;
 pub mod local;
 pub mod lock;
+pub mod merge;
 pub mod model;
 pub mod query;
 pub mod rules;
 pub mod safe_file;
 pub mod stacks;
 pub mod store;
+pub mod sync;
 pub mod tally;
 
 use std::collections::BTreeMap;
@@ -256,10 +259,36 @@ pub enum Op {
         folder: String,
         record: Option<FolderRecord>,
     },
+    /// Where a photo's original is in the user's library folders on the sync server
+    /// ([`Photo::server_path`]): the server found it there, or it moved there.
+    SetServerPath {
+        id: PhotoId,
+        path: Option<String>,
+    },
     /// Several ops as one step (undo applies the inverses in reverse).
     Batch {
         ops: Vec<Op>,
     },
+}
+
+/// Bits of an id below its id space (see [`Catalog::set_id_space`]).
+pub const ID_SPACE_SHIFT: u32 = 32;
+
+/// The id a counter hands out next: never 0, and at least the first id of its space.
+fn first_free(next: u64) -> u64 {
+    next.max(((next >> ID_SPACE_SHIFT) << ID_SPACE_SHIFT) | 1)
+}
+
+/// The first and last id of the id space a counter is in.
+fn space_range(next: u64) -> (u64, u64) {
+    let low = (1u64 << ID_SPACE_SHIFT) - 1;
+    (next & !low, next | low)
+}
+
+/// A counter after a record with id `id` was added: raised past it only when it's in the
+/// counter's own space.
+fn raise(next: u64, id: u64) -> u64 {
+    if id >> ID_SPACE_SHIFT == next >> ID_SPACE_SHIFT { next.max(id.saturating_add(1)) } else { next }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -366,23 +395,42 @@ impl Catalog {
     }
 
     // ---- ids
+    //
+    // Ids are `(space << ID_SPACE_SHIFT) | n`. A library that never synced lives in space 0; each
+    // synced device allocates in the space the server gave it ([`Catalog::set_id_space`]), so
+    // devices never hand out the same id. Adding a record only raises the counter of its own
+    // space: ids arriving from other devices leave this device's counters alone.
 
     // (saturating: a counter a damaged snapshot left at the top hands out its last id again, which
     // the op that adds it then refuses as taken, rather than overflowing)
     pub fn alloc_photo_id(&mut self) -> PhotoId {
-        let id = PhotoId(self.next_photo.max(1));
+        let id = PhotoId(first_free(self.next_photo));
         self.next_photo = id.0.saturating_add(1);
         id
     }
     pub fn alloc_album_id(&mut self) -> AlbumId {
-        let id = AlbumId(self.next_album.max(1));
+        let id = AlbumId(first_free(self.next_album));
         self.next_album = id.0.saturating_add(1);
         id
     }
     pub fn alloc_stack_id(&mut self) -> StackId {
-        let id = StackId(self.next_stack.max(1));
+        let id = StackId(first_free(self.next_stack));
         self.next_stack = id.0.saturating_add(1);
         id
+    }
+
+    /// Allocate new ids in `space` from now on (after the highest id already in it). Spaces stay
+    /// below 2^21 so ids remain exact in JSON numbers read by JavaScript (2^53).
+    pub fn set_id_space(&mut self, space: u32) {
+        let base = u64::from(space) << ID_SPACE_SHIFT;
+        let end = base.saturating_add(1 << ID_SPACE_SHIFT);
+        let next = |cur: u64, max: Option<u64>| {
+            let after_max = max.map_or(base + 1, |m| m.saturating_add(1));
+            if cur >> ID_SPACE_SHIFT == u64::from(space) { cur.max(after_max) } else { after_max }
+        };
+        self.next_photo = next(self.next_photo, self.photos.range(PhotoId(base)..PhotoId(end)).next_back().map(|(id, _)| id.0));
+        self.next_album = next(self.next_album, self.albums.range(AlbumId(base)..AlbumId(end)).next_back().map(|(id, _)| id.0));
+        self.next_stack = next(self.next_stack, self.stacks.range(StackId(base)..StackId(end)).next_back().map(|(id, _)| id.0));
     }
 
     // ---- reads
@@ -667,9 +715,13 @@ impl Catalog {
                 self.changes.now = Aspects::ALL;
                 self.touch(*id);
             }
-            Op::SetDeleted { .. } | Op::SetLocal { .. } | Op::SetContent { .. } | Op::SetEmbeddedLens { .. } | Op::SetAsShotWb { .. } => {
-                self.changes.now = Aspects::ALL
-            }
+            // (a photo's place on the sync server decides the library-folder filter, so it counts for all too)
+            Op::SetDeleted { .. }
+            | Op::SetLocal { .. }
+            | Op::SetContent { .. }
+            | Op::SetEmbeddedLens { .. }
+            | Op::SetAsShotWb { .. }
+            | Op::SetServerPath { .. } => self.changes.now = Aspects::ALL,
             Op::SetRating { .. } => self.changes.now = Aspects::RATING,
             Op::SetFlag { .. } => self.changes.now = Aspects::FLAG,
             Op::SetLabel { .. } => self.changes.now = Aspects::LABEL,
@@ -704,7 +756,7 @@ impl Catalog {
                     return Err(CatalogError::Invalid(format!("photo {:?} exists", photo.id)));
                 }
                 let id = photo.id;
-                self.next_photo = self.next_photo.max(id.0.saturating_add(1));
+                self.next_photo = raise(self.next_photo, id.0);
                 self.photos.insert(id, Arc::new(*photo));
                 Op::RemovePhoto { id }
             }
@@ -794,7 +846,7 @@ impl Catalog {
                     self.validate_rules(rules)?;
                 }
                 let id = album.id;
-                self.next_album = self.next_album.max(id.0.saturating_add(1));
+                self.next_album = raise(self.next_album, id.0);
                 self.index.album_changed(id, Some(&album.photos));
                 self.albums.insert(id, album);
                 Op::RemoveAlbum { id }
@@ -873,7 +925,7 @@ impl Catalog {
                 }
                 self.validate_stack(stack.id, &stack.photos)?;
                 let id = stack.id;
-                self.next_stack = self.next_stack.max(id.0.saturating_add(1));
+                self.next_stack = raise(self.next_stack, id.0);
                 self.index.stack_changed(id, &[], &stack.photos);
                 self.stacks.insert(id, stack);
                 Op::RemoveStack { id }
@@ -913,6 +965,10 @@ impl Catalog {
                 let old_name = std::mem::replace(&mut p.file_name, file_name);
                 let old_format = format.map(|f| std::mem::replace(&mut p.format, f));
                 Op::Relink { id, file_name: old_name, source: std::mem::replace(&mut p.source, source), format: old_format }
+            }
+            Op::SetServerPath { id, path } => {
+                let p = self.photo_mut(id)?;
+                Op::SetServerPath { id, path: std::mem::replace(&mut p.server_path, path) }
             }
             Op::SetContent { id, width, height, file_size, content_hash, preview_only, preview_checked } => {
                 let p = self.photo_mut(id)?;
@@ -1052,7 +1108,7 @@ impl Catalog {
     /// Make a catalog read from a snapshot hold together where a damaged or hand-edited file left
     /// it inconsistent, so nothing that relies on it can fail (code indexes stacks by the ids it
     /// finds in them, and walks folders up to the top): every photo, album and stack carries the
-    /// id it is filed under; the id counters lie past every id in use; a stack keeps only photos
+    /// id it is filed under; the id counters lie past every id in use in their own id space; a stack keeps only photos
     /// in the catalog, once each, and goes when fewer than two are left; an album whose parent is
     /// missing, not a folder or inside itself moves to the top level. Returns what was changed
     /// (nothing, for a catalog this build wrote).
@@ -1134,11 +1190,14 @@ impl Catalog {
             // previously validated chain. Unvisited ancestors never inherit a guessed verdict.
             valid.extend(walked);
         }
-        let past = |last: Option<u64>| last.map_or(1, |v| v.saturating_add(1));
+        // A counter lies past the ids in use in its own id space: ids other devices made (other
+        // spaces) leave it alone, as in `raise`.
+        let past = |next: u64, last: Option<u64>| last.map_or(first_free(next), |v| first_free(next).max(v.saturating_add(1)));
+        let ((p0, p1), (a0, a1), (s0, s1)) = (space_range(self.next_photo), space_range(self.next_album), space_range(self.next_stack));
         let (photo, album, stack) = (
-            past(self.photos.keys().last().map(|k| k.0)),
-            past(self.albums.keys().last().map(|k| k.0)),
-            past(self.stacks.keys().last().map(|k| k.0)),
+            past(self.next_photo, self.photos.range(PhotoId(p0)..=PhotoId(p1)).next_back().map(|(k, _)| k.0)),
+            past(self.next_album, self.albums.range(AlbumId(a0)..=AlbumId(a1)).next_back().map(|(k, _)| k.0)),
+            past(self.next_stack, self.stacks.range(StackId(s0)..=StackId(s1)).next_back().map(|(k, _)| k.0)),
         );
         if self.next_photo < photo || self.next_album < album || self.next_stack < stack {
             changed.push("id counters behind the ids in use: moved past them".into());
@@ -1201,15 +1260,21 @@ mod tests_format_version;
 #[cfg(test)]
 mod tests_index;
 #[cfg(test)]
+mod tests_join;
+#[cfg(test)]
 mod tests_journal;
 #[cfg(test)]
 mod tests_local;
 #[cfg(test)]
 mod tests_lock;
 #[cfg(test)]
+mod tests_merge;
+#[cfg(test)]
 mod tests_repair;
 #[cfg(test)]
 mod tests_scale;
+#[cfg(test)]
+mod tests_sync;
 #[cfg(test)]
 mod tests_tally;
 #[cfg(test)]

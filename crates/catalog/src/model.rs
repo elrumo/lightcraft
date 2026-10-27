@@ -29,8 +29,10 @@ pub struct Stack {
 }
 
 impl Stack {
+    /// The top photo (`PhotoId(0)`, which no photo has, for an empty stack read from damaged or
+    /// untrusted data).
     pub fn top(&self) -> PhotoId {
-        self.photos[0]
+        self.photos.first().copied().unwrap_or(PhotoId(0))
     }
     pub fn position(&self, id: PhotoId) -> Option<usize> {
         self.photos.iter().position(|p| *p == id)
@@ -308,6 +310,12 @@ pub struct Photo {
     /// whether the user changed anything since (see [`crate::local`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_baseline: Option<u64>,
+    /// The original is one of the files in the user's library folders on the sync server, read
+    /// there in place: its path, starting with the folder's name (`Photos/2024/Trip/IMG_1.CR3`).
+    /// Set by the server when it finds the file (and when the file moves); `None` for every other
+    /// photo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_path: Option<String>,
 }
 
 /// What assisted culling measured on a photo.
@@ -394,7 +402,12 @@ impl Photo {
             preview_only: None,
             preview_checked: String::new(),
             local_baseline: None,
+            server_path: None,
         }
+    }
+    /// The folder of [`Photo::server_path`] (`Photos/2024/Trip`).
+    pub fn server_folder(&self) -> Option<&str> {
+        self.server_path.as_deref().map(|p| p.rsplit_once('/').map_or("", |(dir, _)| dir))
     }
     /// Sets [`Photo::preview_only`] as this build decided it, with its stamp.
     pub fn set_preview_only(&mut self, preview_only: Option<String>) {
