@@ -31,16 +31,44 @@ and often so a crash loses minutes, not hours.
 
 ## HelpBites planning follows the work (LightBites app)
 The LightBites app's tasks live on the HelpBites project's Planning board (project `tb4A2EAxRx`; columns Backlog, Now,
-Next, Later, Done, Canceled). Keep it in step with what you do, with `apps/lightbites-web/scripts/helpbites-roadmap.mjs`
-or the `/v1/admin/board-items` API (same `.env` and keys as the other `helpbites-*.mjs` scripts; see
-`apps/lightbites-web/README.md` → Roadmap):
-- **When asked to do a task** that concerns the LightBites app: first look at the board. If a card for it exists, move it
-  to Now; if not, create one (Now). New work you find on the way (a follow-up, a bug) becomes a card too (Backlog).
-- **When asked to commit** such work: before committing, move the cards the commit completes to Done (cards for work
-  that was dropped go to Canceled), and say which cards moved in your reply.
+Next, Later, Done, Canceled). Keep it in step with what you do, **through the HelpBites MCP connector** (endpoint
+`https://helpbites.app/mcp`; its tools: list, create and update board items, and comment on one). The API reference is
+https://helpbites.app/_docs/scalar (spec: `https://helpbites.app/_docs/openapi.json`); check it, or the connector's own
+tool list, for the current parameters instead of trusting this file. Use the admin API
+(`/v1/admin/board-items`, same `.env` and keys as the `apps/lightbites-web/scripts/helpbites-*.mjs` scripts; see
+`apps/lightbites-web/README.md` → Roadmap) or `helpbites-roadmap.mjs` only when the connector is down.
+- **When asked to do a task** that concerns the LightBites app: first check the board through the connector for a card
+  that is that task (by number if the user gave one, else by title; page through `list_board_items` with `offset`).
+  - **A card exists:** edit it if the user's words changed the task (title, description), and move it to Now.
+  - **No card:** ask the user whether to create one (and comment on it when the work is done); create it only on a yes,
+    in Now. Don't create cards unasked, and don't skip the question.
+  - New work you find on the way (a follow-up, a bug): say so in one line at the end and ask whether to file it
+    (Backlog); don't file it unasked.
+- **When the work is done** (and always before a commit that completes it), on each card the work covers:
+  1. **Comment** on the card with what was fixed or built (and the commit, once there is one), and **what the user should
+     test**: concrete steps, or "nothing to test" when you verified it all yourself.
+  2. **Screenshots** of the finished result, attached to that comment (below).
+  3. **Move it to the column that matches**: Done when the work is finished and verified; still Now, with the comment
+     saying what is left, when it is not finished, blocked, or needs the user's test to decide; Canceled for work that was
+     dropped. Say in your reply which cards moved and where.
+- **Name a card as a link.** Whenever you mention a card in a reply, write its number as a Markdown link to the card,
+  `[#97](https://help.eliasruiz.com/projects/tb4A2EAxRx/board?item=<item id>)`, never a bare `#97`. The `<item id>` is the
+  card's `id` (like `jEFaBNN0QD`), not its number; you have it from the connector's `list_board_items` or
+  `update_board_item`. (The host is the API's, `HELPBITES_API_URL`; the path is the board page's own `?item=` deep link.)
+- **Screenshots of the result go on the card.** When you take screenshots of the end result of a card's work (the running
+  app, the changed screen), upload them with the card's comment, a line saying what each shows. The connector and the API
+  take up to 10 files per comment: a file is sent as `{ filename, contentBase64 }` to `POST /v1/feedback/attachments`
+  (`?project=tb4A2EAxRx`; PNG, JPEG, GIF or WebP up to 8 MB), which returns `{ url, name, mime, size }`, and those go in
+  the comment's `attachments`. Only screenshots of the finished result, not every intermediate look, and never one that
+  shows the user's real library (run on `LIGHTCRAFT_DEMO=1` or a library of your own, see the app's CLAUDE.md). If the
+  upload fails, say so in one line and give the user the screenshot paths instead.
 - **Every new card is private**: create it with `public: false`, so it does not show on the public roadmap or the site.
   Only make a card public when the user says so. (`helpbites-roadmap.mjs` files `shared/roadmap.json` entries as public;
   that file is the published roadmap, so don't add working tasks to it.)
+- **Page the board, don't pull it whole.** `list_board_items` takes `status`, `offset` and `limit` (`limit` defaults to 50,
+  max 200) and returns `total`; `GET /v1/admin/board-items` takes the same three and, without `limit`, returns every item.
+  (Before 2026-10-27 the whole board came back in one 60k-character reply that was cut off, and cards past the cut
+  could not be reached.)
 - If HelpBites can't be reached (no keys, offline), say so in one line and carry on; never block the task or the commit.
 
 ## Never crash (outranks feature work)
