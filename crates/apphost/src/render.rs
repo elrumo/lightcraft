@@ -1110,7 +1110,7 @@ impl<V> Scheduler<V> {
             .as_ref()
             .map(|job| job.origin.clone())
             .or_else(|| job.embedded.as_ref().map(|(path, _, _)| lightcraft_catalog::Source::File { path: path.clone() }));
-        let look = job.small.as_ref().map(look_of);
+        let look = job.small.as_ref().map(|j| look_of(j));
         if let Some(look) = look {
             self.note_look(job.request_id, look);
         }
