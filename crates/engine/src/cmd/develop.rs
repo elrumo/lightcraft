@@ -2,7 +2,7 @@
 
 use lightcraft_catalog::{Op, PhotoId, Version};
 use lightcraft_develop::{DevelopSettings, Preset, ProcessVersion, Section, SettingsGroup, Treatment, Upright, WbMode, controls};
-use lightcraft_geom::{CropGeometry, CropHandle, MIN_CROP_FRACTION, Point, Rect, crop_cover_angle, crop_fit_angle, drag_crop_in};
+use lightcraft_geom::{CropGeometry, CropHandle, MIN_CROP_FRACTION, Point, Rect, crop_around, crop_cover_angle, crop_fit_angle, drag_crop_in};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, f64_or, f64_req, has_active, has_clipboard, has_selection, index_req, ok, str_param};
@@ -770,6 +770,45 @@ pub fn specs() -> Vec<CommandSpec> {
                 let angle = level.clamp(-45.0, 45.0);
                 s.execute("crop.straighten", &json!({"angle": (angle * 100.0).round() / 100.0}))?;
                 Ok(json!({"changed": true, "angle": angle}))
+            }
+        ),
+        cmd!(
+            "crop.autoFrame",
+            "Auto Crop",
+            [],
+            None,
+            "{regions: [[x0,y0,x1,y1],…] (normalized boxes on the uncropped, oriented photo, y down: the subjects and faces a detector found, as a native frontend's Vision gets them from `mask.inputImage`), angle?: degrees (the straighten angle to crop at; default the photo's own, ±45), margin?: 0..1 (room kept around them, as a fraction of their size; 0.25)} → {changed, rect?, angle?} — crops to frame them: the proportions of the locked aspect (the photo's own when free), no smaller than half the largest crop that fits, inside the photo at that angle; `changed: false` when the photo is framed as well as it can be",
+            has_active,
+            |s, p| {
+                let id = active(s, "crop.autoFrame")?;
+                let (w, h) = crop_dims(s, id);
+                let regions: Vec<Rect> = p
+                    .get("regions")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|r| match numbers(Some(r)).as_deref() {
+                                Some(&[x0, y0, x1, y1]) => Some(Rect::new(x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1))),
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if regions.is_empty() {
+                    return Err(bad("crop.autoFrame", "regions needs boxes: [[x0, y0, x1, y1], …]"));
+                }
+                let d = s.develop_of(id).unwrap_or_default();
+                let angle = p.get("angle").and_then(Value::as_f64).unwrap_or(d.crop.geometry.angle).clamp(-45.0, 45.0);
+                let aspect = d.crop.aspect.map(|(x, y)| f64::from(x) / f64::from(y.max(1)));
+                let Some(geometry) = crop_around(w, h, angle, aspect, &regions, f64_or(p, "margin", 0.25)) else {
+                    return Ok(json!({"changed": false, "reason": "the photo is framed as well as it can be"}));
+                };
+                edit(s, "crop.autoFrame", "Auto Crop", |d| {
+                    d.crop.geometry = geometry;
+                    Ok(())
+                })?;
+                let r = geometry.rect;
+                Ok(json!({"changed": true, "rect": [r.x0, r.y0, r.x1, r.y1], "angle": geometry.angle}))
             }
         ),
         cmd!(

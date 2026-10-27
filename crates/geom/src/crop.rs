@@ -282,6 +282,91 @@ pub fn crop_fit_angle(w: f64, h: f64, angle_deg: f64, aspect: Option<f64>) -> Cr
     CropGeometry { rect: r.scale(1.0 / w, 1.0 / h), angle: angle_deg }
 }
 
+/// The smallest crop `crop_around` makes, as a fraction of the largest crop that fits: a small subject is not cropped
+/// down to a speck.
+pub const AUTO_CROP_MIN_SCALE: f64 = 0.5;
+
+/// A crop that frames `regions`: boxes on the `w × h` photo (normalized `[x0, y0, x1, y1]`, y down: what a detector
+/// found, subjects and faces), at `angle_deg`, with the proportions `aspect` (width / height in pixels; the photo's own
+/// if `None`). Their bounding box with `margin` of its size added on each side, grown to the aspect about its centre,
+/// between [`AUTO_CROP_MIN_SCALE`] and the whole of the largest crop that fits at that angle, then moved (or, at an
+/// angle, shrunk) until it lies inside the rotated photo. `None` when no region is usable, or when the result is hardly
+/// tighter than the largest crop: the photo is framed as well as it can be.
+pub fn crop_around(w: f64, h: f64, angle_deg: f64, aspect: Option<f64>, regions: &[Rect], margin: f64) -> Option<CropGeometry> {
+    if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
+        return None;
+    }
+    let a = aspect.filter(|a| a.is_finite() && *a > 0.0).unwrap_or(w / h);
+    let angle = if angle_deg.is_finite() { angle_deg.clamp(-45.0, 45.0) } else { 0.0 };
+    let margin = if margin.is_finite() { margin.clamp(0.0, 1.0) } else { 0.0 };
+    let turn = Affine::rotate_about(angle.to_radians(), Point::new(w / 2.0, h / 2.0));
+    // the regions in the straightened frame, in pixels
+    let mut span: Option<Rect> = None;
+    for r in regions {
+        let px = r.scale(w, h);
+        if ![px.x0, px.y0, px.x1, px.y1].iter().all(|v| v.is_finite()) || px.width() <= 0.0 || px.height() <= 0.0 {
+            continue;
+        }
+        for q in px.corners().map(|p| turn.apply(p)) {
+            span = Some(match span {
+                None => Rect::new(q.x, q.y, q.x, q.y),
+                Some(s) => Rect::new(s.x0.min(q.x), s.y0.min(q.y), s.x1.max(q.x), s.y1.max(q.y)),
+            });
+        }
+    }
+    let span = span?;
+    let largest = crop_fit_angle(w, h, angle, Some(a)).rect.scale(w, h);
+    // the room around them, then the aspect: the short side grows
+    let (mut cw, mut ch) = (span.width() * (1.0 + 2.0 * margin), span.height() * (1.0 + 2.0 * margin));
+    if cw / ch.max(1e-9) < a {
+        cw = ch * a;
+    } else {
+        ch = cw / a;
+    }
+    // (`largest` has the aspect, so one scale takes both sides)
+    let scale = (cw / largest.width()).max(ch / largest.height()).clamp(AUTO_CROP_MIN_SCALE, 1.0);
+    if scale > 0.97 {
+        return None;
+    }
+    let (hw, hh) = (largest.width() * scale / 2.0, largest.height() * scale / 2.0);
+    let centre = slide_inside(span.center(), hw, hh, angle, w, h);
+    let frame = Rect::from_center(centre, 2.0 * hw, 2.0 * hh);
+    Some(CropGeometry { rect: frame.scale(1.0 / w, 1.0 / h), angle }.constrained(w, h))
+}
+
+/// The centre `c` (in the straightened frame) of a `2·hw × 2·hh` crop, moved the shortest way that brings its corners
+/// back inside the `w × h` photo rotated by `angle_deg`: flush against the edge it reached past, not pulled towards the
+/// middle. Each corner's overshoot is turned back by the angle and taken in turn; a few rounds settle it.
+fn slide_inside(mut c: Point, hw: f64, hh: f64, angle_deg: f64, w: f64, h: f64) -> Point {
+    let back = Affine::rotate_about(-angle_deg.to_radians(), Point::new(w / 2.0, h / 2.0));
+    let turn = Affine::rotate_about(angle_deg.to_radians(), Point::new(0.0, 0.0));
+    let over = |v: f64, max: f64| {
+        if v < 0.0 {
+            -v
+        } else if v > max {
+            max - v
+        } else {
+            0.0
+        }
+    };
+    for _ in 0..16 {
+        let mut moved = false;
+        for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            let q = back.apply(Point::new(c.x + sx * hw, c.y + sy * hh));
+            let (dx, dy) = (over(q.x, w), over(q.y, h));
+            if dx != 0.0 || dy != 0.0 {
+                let d = turn.apply(Point::new(dx, dy));
+                c = Point::new(c.x + d.x, c.y + d.y);
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    c
+}
+
 /// The straighten angle (degrees, as `CropGeometry::angle` takes it) that makes a line drawn on the
 /// photo, from one end to the other `(dx, dy)` apart (y down), level, or plumb when it is closer to
 /// vertical. `None` for a line of no length.
@@ -525,6 +610,61 @@ mod tests {
                 assert!([r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite()), "{rect:?} {angle}: {r:?}");
                 assert!(c.is_within_image(400.0, 300.0), "{rect:?} {angle}: {r:?}");
             }
+        }
+    }
+
+    /// A crop's rect in pixels of a 3000 × 2000 photo, and whether it holds `region`.
+    fn holds(g: &CropGeometry, region: Rect) -> bool {
+        let (r, q) = (g.rect.scale(3000.0, 2000.0), region.scale(3000.0, 2000.0));
+        r.x0 <= q.x0 + 1e-6 && r.y0 <= q.y0 + 1e-6 && r.x1 >= q.x1 - 1e-6 && r.y1 >= q.y1 - 1e-6
+    }
+
+    #[test]
+    fn a_subject_is_framed_with_room_in_the_photos_own_proportions() {
+        let subject = Rect::new(0.4, 0.35, 0.6, 0.65);
+        let g = crop_around(3000.0, 2000.0, 0.0, None, &[subject], 0.25).unwrap();
+        assert!(holds(&g, subject), "{g:?}");
+        assert!(g.is_within_image(3000.0, 2000.0));
+        let r = g.rect.scale(3000.0, 2000.0);
+        assert!((r.width() / r.height() - 1.5).abs() < 1e-9, "{r:?}");
+        assert!(g.rect.width() < 0.97 && g.rect.width() >= AUTO_CROP_MIN_SCALE - 1e-9, "{g:?}");
+    }
+
+    #[test]
+    fn a_subject_in_a_corner_gets_a_crop_in_that_corner() {
+        let subject = Rect::new(0.02, 0.02, 0.25, 0.4);
+        let g = crop_around(3000.0, 2000.0, 0.0, None, &[subject], 0.2).unwrap();
+        assert!(holds(&g, subject) && g.is_within_image(3000.0, 2000.0), "{g:?}");
+        assert!(g.rect.x0 >= -1e-9 && g.rect.y0 >= -1e-9, "{g:?}");
+    }
+
+    #[test]
+    fn a_small_subject_is_not_cropped_to_a_speck() {
+        let g = crop_around(3000.0, 2000.0, 0.0, None, &[Rect::new(0.49, 0.49, 0.51, 0.51)], 0.25).unwrap();
+        assert!((g.rect.width() - AUTO_CROP_MIN_SCALE).abs() < 1e-9, "{g:?}");
+    }
+
+    #[test]
+    fn a_locked_aspect_is_kept() {
+        let g = crop_around(3000.0, 2000.0, 0.0, Some(1.0), &[Rect::new(0.4, 0.3, 0.6, 0.7)], 0.25).unwrap();
+        let r = g.rect.scale(3000.0, 2000.0);
+        assert!((r.width() / r.height() - 1.0).abs() < 1e-9 && holds(&g, Rect::new(0.4, 0.3, 0.6, 0.7)), "{g:?}");
+    }
+
+    #[test]
+    fn a_photo_already_framed_or_without_regions_is_left_alone() {
+        assert!(crop_around(3000.0, 2000.0, 0.0, None, &[Rect::new(0.05, 0.05, 0.95, 0.95)], 0.25).is_none());
+        assert!(crop_around(3000.0, 2000.0, 0.0, None, &[], 0.25).is_none());
+        assert!(crop_around(3000.0, 2000.0, 0.0, None, &[Rect::new(f64::NAN, 0.0, 1.0, 1.0), Rect::new(0.5, 0.5, 0.5, 0.9)], 0.25).is_none());
+        assert!(crop_around(0.0, 2000.0, 0.0, None, &[Rect::new(0.4, 0.4, 0.6, 0.6)], 0.25).is_none());
+    }
+
+    #[test]
+    fn at_an_angle_the_crop_still_lies_inside_the_photo() {
+        for angle in [-6.0, 3.5, 12.0] {
+            let g = crop_around(3000.0, 2000.0, angle, None, &[Rect::new(0.05, 0.1, 0.3, 0.5)], 0.25).unwrap();
+            assert_eq!(g.angle, angle);
+            assert!(g.is_within_image(3000.0, 2000.0), "{angle}: {g:?}");
         }
     }
 }

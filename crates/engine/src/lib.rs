@@ -1641,6 +1641,8 @@ mod tests_crop_angle;
 #[cfg(test)]
 mod tests_crop_aspect;
 #[cfg(test)]
+mod tests_crop_autoframe;
+#[cfg(test)]
 mod tests_denoise;
 #[cfg(test)]
 mod tests_describe;
