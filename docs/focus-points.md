@@ -16,6 +16,11 @@ zooms to it, so checking whether the subject is sharp takes one key while cullin
   centres on the active photo's point; per-pane focus zoom is a follow-up.
 - **Info panel**: a *Focus* row says how the camera focused, e.g. `AF-C · Wide · Animal Eye Tracking` (focus mode,
   the AF area set on the camera, and what it tracked when the camera says).
+- **Native frontends**: `view.focus {id?}` answers where the box is in the photo *as shown* (after the user's Rotate, flips and
+  crop): `{rect: [x0, y0, x1, y1], center: [x, y], mode?, area?, tracking?}`, normalized to the displayed image (y down), or `null` when
+  the photo has no point or it is cropped away. It is the same mapping egui draws with (`lightcraft_engine::focus_view`), so a
+  frontend draws the brackets in the rect of the picture it shows and pans Toggle Zoom to `center`. The app host (`apphost`) runs
+  the background reader (`focus.pump`) on its own tick, so a frontend that is not egui needs no pump of its own.
 - **Agents**: `photo.inspect` (and the MCP `lightcraft://photo/active` resource) returns it as `meta.focus`:
   `{rect: {x0, y0, x1, y1}, mode?, area?, tracking?}`, the box normalized to the upright (EXIF-oriented) photo, y down.
   Photos without one have no `focus` key. `view.zoomToggle` replies `{focus: [x, y]}` (the pan it centred on) when it
@@ -112,6 +117,8 @@ DMF (AF, then manual touch-up) keeps its point.
   including an opt-in test over real files (`LIGHTCRAFT_FOCUS_SAMPLES=<photo folder>`).
 - `crates/meta/src/focus_read.rs`: the header-only read; its tests check it against the whole-file read on intact,
   truncated and corrupted files and count what it reads.
+- `crates/engine/src/focus_view.rs`: the point mapped through rotation, flips and crop (`focus_box`), and its tests; `view.focus`
+  is in `crates/engine/src/cmd/focus.rs`. egui's `focus_box` (below) calls it.
 - `crates/engine/src/focus_scan.rs`: the background job (`photo.readFocusPoints`, `focus.pump`) and
   `crates/engine/src/tests/focus_scan.rs`, with an opt-in comparison over real files
   (`LIGHTCRAFT_FOCUS_FILES=<a list of paths>`); `crates/ui-egui/src/focus_scan.rs` drives it from the frame loop.

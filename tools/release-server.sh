@@ -59,11 +59,13 @@ mkdir -p "$web"
 find "$target_dir/web-site" -maxdepth 1 -type f -exec cp {} "$web/" \;
 test -f "$web/index.html"
 
-package() { # package <system> <binary>
+package() { # package <system> <binary> [menu-bar binary]
   name="lightbites-server-$version-$1"
   d="$src/_pkg/$name"
   rm -rf "$d" && mkdir -p "$d"
   cp "$2" "$d/lightbites-server" && chmod 755 "$d/lightbites-server"
+  # the Mac zips carry the menu-bar app (status, Start, Stop) beside the server
+  if [ -n "${3:-}" ]; then cp "$3" "$d/lightbites-menubar" && chmod 755 "$d/lightbites-menubar"; fi
   cp -R "$web" "$d/web"
   cp LICENSE-MIT LICENSE-APACHE NOTICE "$d/"
   cp docs/self-hosting.md "$d/README-self-hosting.md"
@@ -74,8 +76,8 @@ package() { # package <system> <binary>
 mac() { # mac <rust target> <system>
   echo "== $2"
   rustup target add "$1" >/dev/null
-  (cd "$src" && cargo build --release --locked -p lightcraft-server --target "$1")
-  package "$2" "$target_dir/$1/release/lightbites-server"
+  (cd "$src" && cargo build --release --locked -p lightcraft-server -p lightbites-menubar --target "$1")
+  package "$2" "$target_dir/$1/release/lightbites-server" "$target_dir/$1/release/lightbites-menubar"
 }
 mac aarch64-apple-darwin macos-arm64
 [ "$intel" = 0 ] || mac x86_64-apple-darwin macos-x86_64

@@ -21,7 +21,7 @@
 //! lightbites-server health
 //! lightbites-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: a launchd agent, see `install`)
 //! lightbites-server uninstall
-//! lightbites-server start | stop | status       (macOS: the installed launchd agent)
+//! lightbites-server start | stop | status       (macOS launchd agent, Linux systemd user service)
 //! ```
 //!
 //! Admins also manage users and devices from the server's web page, `/admin` (until the first
@@ -66,8 +66,8 @@ const USAGE: &str = "usage:
   lightbites-server health                     (is the server answering? exit status)
   lightbites-server version
   lightbites-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: run the server at every login, as a launchd agent)
-  lightbites-server uninstall                  (macOS: stop it and remove the agent; the data stays)
-  lightbites-server start|stop|status          (macOS: the installed server; stop keeps it stopped, also after a login, until start)
+  lightbites-server uninstall                  (macOS, Linux: stop it and remove the agent; the data stays)
+  lightbites-server start|stop|status          (macOS and Linux: the installed server; stop keeps it stopped, also after a login, until start; status --porcelain prints running, stopped or not-installed)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
 ";
 
@@ -440,7 +440,7 @@ fn run(args: &[String]) -> Result<(), String> {
         ["uninstall"] => install::uninstall(),
         ["start"] => install::start(),
         ["stop"] => install::stop(),
-        ["status"] => install::status(),
+        ["status"] => install::status(args.iter().any(|a| a == "--porcelain")),
         ["version"] => {
             println!("lightbites-server {}", env!("LIGHTCRAFT_BUILD_VERSION"));
             Ok(())

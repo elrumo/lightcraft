@@ -314,6 +314,8 @@ struct Engine {
     histogram_sent: Option<Instant>,
     /// When face recognition's scan is pumped next ([`crate::faces`]).
     faces_next: Instant,
+    /// When the camera's focus points are read next (`focus.pump`).
+    focus_next: Instant,
     /// How far that scan is (`HostState::faces`).
     faces_scan: Option<Value>,
     /// `app.export` running on its worker: answered when it ends.
@@ -498,6 +500,7 @@ impl Engine {
             last_request: Instant::now(),
             histogram_sent: None,
             faces_next: Instant::now(),
+            focus_next: Instant::now(),
             faces_scan: None,
             export: None,
             lightroom: Default::default(),
@@ -1096,6 +1099,7 @@ impl Engine {
             self.events.push(Event::Ask { dialog: "syncChoice".into(), params: json!({}) }.to_value());
         }
         self.pump_faces();
+        self.pump_focus();
         self.poll_export();
         self.poll_super_res();
         self.poll_expand();
@@ -1598,6 +1602,20 @@ impl Engine {
             // idle or off: every idle tick is soon enough (switching it on is seen at once)
             self.faces_next = now + Duration::from_secs_f64(wait.max(IDLE_TICK.as_secs_f64()));
         }
+    }
+
+    /// Reading the camera's focus points for photos imported before they were read (`focus.pump`): a few KB of each file, at
+    /// the pace face recognition keeps to (nothing new while the user works). The job shows as a row in the activity stack.
+    fn pump_focus(&mut self) {
+        let now = Instant::now();
+        if now < self.focus_next {
+            return;
+        }
+        let worked = now.duration_since(self.last_request).as_secs_f64();
+        let pace = crate::faces::pace_for(self.in_front, !self.in_front, worked, worked, false);
+        // (a running reader commits its batches from here: every idle tick is often enough, and the loop needs no faster one)
+        self.session.execute("focus.pump", &json!({"pace": pace})).ok();
+        self.focus_next = now + IDLE_TICK;
     }
 
     fn snapshot(&mut self) -> HostState {

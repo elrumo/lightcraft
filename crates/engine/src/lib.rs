@@ -53,6 +53,7 @@ mod faces_worker;
 pub mod files;
 #[cfg(not(target_arch = "wasm32"))]
 mod focus_scan;
+pub mod focus_view;
 pub mod fonts;
 pub mod guard;
 pub mod hardware;
