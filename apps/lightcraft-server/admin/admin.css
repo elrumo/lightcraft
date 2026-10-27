@@ -737,14 +737,15 @@ main:has(> [data-view="processing"]:not([hidden])) { max-width: 1840px; }
 .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-bottom: 24px; overflow: hidden; border-radius: 16px; background: var(--line); box-shadow: var(--shadow); }
 @media (min-width: 640px) { .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (min-width: 1240px) { .tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
-.tile { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 16px 18px 22px; border: 0; background: var(--surface); font: inherit; text-align: left; color: var(--text); cursor: pointer; transition: background-color 0.13s; }
+.tile { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; padding: 10px 14px 14px; border: 0; background: var(--surface); font: inherit; text-align: left; color: var(--text); cursor: pointer; transition: background-color 0.13s; }
 .tile:hover { background: var(--fill); }
 .tile:focus-visible { outline-offset: -3px; }
-.tile .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.tile-note:empty { display: none; }
+.tile .chip { justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .tile-name { font-weight: 600; color: var(--text-2); }
-.tile-pct { font-size: 32px; line-height: 1.1; font-weight: 650; letter-spacing: -0.02em; color: var(--heading); font-variant-numeric: tabular-nums; }
+.tile-pct { font-size: 20px; line-height: 1.1; font-weight: 650; letter-spacing: -0.02em; color: var(--heading); font-variant-numeric: tabular-nums; }
 .tile.off .tile-pct { color: var(--text-3); }
-.tile-note { min-height: 20px; font-size: 13px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tile-note { font-size: 12px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .tile-bar { position: absolute; inset: auto 0 0 0; height: 4px; background: var(--track); overflow: hidden; }
 .tile-bar i { display: block; height: 100%; background: var(--text-3); transition: width 0.4s ease; }
 .tile.on .tile-bar i { background: var(--accent); }
