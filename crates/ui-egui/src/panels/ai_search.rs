@@ -42,11 +42,11 @@ pub fn pill(app: &mut LightcraftApp, ui: &mut egui::Ui, field: Rect) {
     }
     let t = Tokens::get(ui.ctx());
     let r = Rect::from_center_size(pos2(field.right() - 6.0 - PILL_W / 2.0, field.center().y), vec2(PILL_W, 20.0));
-    let resp = ui.interact(r, egui::Id::new("describe-pill"), Sense::click());
+    let resp = ui.interact(r, egui::Id::unique("describe-pill"), Sense::click());
     let on = app.ui.ai_search;
     let label = crate::i18n::tr("Describe");
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
-    register(ui.ctx(), "button:describeSearch", r);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, label));
+    register(ui, "button:describeSearch", r);
     let (fill, line, ink) = match (on, resp.hovered()) {
         (true, _) => (t.accent, t.accent, egui::Color32::WHITE),
         (false, true) => (t.hover, t.field_border, t.text),
@@ -257,7 +257,7 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
         return;
     };
     let t = Tokens::get(ctx);
-    let shown = egui::Area::new(egui::Id::new("describe-panel"))
+    let shown = egui::Area::new(egui::Id::unique("describe-panel"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos2(field.left(), field.bottom() + 6.0))
         .show(ctx, |ui| {
@@ -267,7 +267,7 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
                 body(app, ui, &which, &download, &t);
             });
         });
-    register(ctx, format!("panel:describe:{}", which.name()), shown.response.rect);
+    crate::widgets::register_geometry(ctx, format!("panel:describe:{}", which.name()), shown.response.rect);
 }
 
 /// For a device that has the model, next to a server that can search: whether to send it the
@@ -279,7 +279,7 @@ fn share_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let mut on = v.share_with_server;
     let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Send the search data to my server, so my other devices can search too"));
-    register(ui.ctx(), "check:describeShare", r.rect);
+    register(ui, "check:describeShare", r.rect);
     if r.changed() {
         let _ = app.run("vision.setShare", json!({"on": on}));
     }
@@ -310,7 +310,7 @@ fn helper_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             continue;
         }
         let r = crate::widgets::check(ui, &mut on, crate::i18n::tr(label));
-        register(ui.ctx(), format!("check:describeHelper:{part}"), r.rect);
+        register(ui, format!("check:describeHelper:{part}"), r.rect);
         if r.changed() {
             next.retain(|p| p != part);
             if on {
@@ -333,7 +333,7 @@ fn source_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let mut on = v.local_only;
     let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Search on this device only, not through my server"));
-    register(ui.ctx(), "check:describeLocalOnly", r.rect);
+    register(ui, "check:describeLocalOnly", r.rect);
     if r.changed() {
         let _ = app.run("vision.setLocalOnly", json!({"on": on}));
     }
@@ -348,7 +348,7 @@ fn text_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let mut on = v.text || app.ui.ai_text_offer;
     let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Also find words in photos (signs, menus, documents)"));
-    register(ui.ctx(), "check:describeText", r.rect);
+    register(ui, "check:describeText", r.rect);
     if !r.changed() {
         return;
     }
@@ -370,7 +370,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
         Panel::Error(e) => {
             ui.label(egui::RichText::new(e).color(egui::Color32::from_rgb(230, 90, 80)));
             let r = ui.button(crate::i18n::tr("OK"));
-            register(ui.ctx(), "button:describeDismiss", r.rect);
+            register(ui, "button:describeDismiss", r.rect);
             if r.clicked() {
                 app.ui.ai_search_error = None;
             }
@@ -405,7 +405,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             }
             source_row(app, ui);
             let r = ui.link(crate::i18n::tr("Read the licence")).on_hover_text(LICENSE_URL);
-            register(ui.ctx(), "link:describeLicense", r.rect);
+            register(ui, "link:describeLicense", r.rect);
             if r.clicked() {
                 let _ = crate::links::open(app, LICENSE_URL);
             }
@@ -413,7 +413,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
                 ui.label(egui::RichText::new(crate::i18n::tr("This build has no download location for the model yet.")).color(t.text_dim));
             } else {
                 let r = ui.button(crate::i18n::tr("Download and Turn On"));
-                register(ui.ctx(), "button:describeDownload", r.rect);
+                register(ui, "button:describeDownload", r.rect);
                 if r.clicked() {
                     match app.run("vision.model.download", json!({"acknowledged": true})) {
                         Ok(_) => app.ui.ai_search_downloading = true,
@@ -427,9 +427,9 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             let frac = if total > 0 { done as f64 / total as f64 } else { 0.0 };
             let file = download["file"].as_str().unwrap_or("");
             let r = ui.add(egui::ProgressBar::new(frac as f32).text(format!("{:.2} / {:.2} GB · {file}", gb(done), gb(total))));
-            register(ui.ctx(), "progress:describeDownload", r.rect);
+            register(ui, "progress:describeDownload", r.rect);
             let r = ui.button(crate::i18n::tr("Cancel Download"));
-            register(ui.ctx(), "button:describeCancel", r.rect);
+            register(ui, "button:describeCancel", r.rect);
             if r.clicked() {
                 app.session.vision.cancel_download();
             }
@@ -443,9 +443,9 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
                 _ => crate::i18n::tr_format!("Getting your photos ready to search: {done} of {total}", done = done, total = total),
             };
             let r = ui.add(egui::ProgressBar::new(frac).text(text));
-            register(ui.ctx(), "progress:describeIndex", r.rect);
+            register(ui, "progress:describeIndex", r.rect);
             let r = ui.button(crate::i18n::tr("Stop"));
-            register(ui.ctx(), "button:describeStop", r.rect);
+            register(ui, "button:describeStop", r.rect);
             if r.clicked() {
                 let _ = app.run("vision.indexCancel", json!({}));
             }
@@ -458,7 +458,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             helper_rows(app, ui);
             source_row(app, ui);
             let r = ui.button(crate::i18n::tr("Prepare the Rest"));
-            register(ui.ctx(), "button:describeIndex", r.rect);
+            register(ui, "button:describeIndex", r.rect);
             if r.clicked()
                 && let Err(e) = app.run("vision.index", json!({}))
             {
@@ -515,13 +515,13 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
                 .color(t.text_dim),
             );
             let r = ui.link(crate::i18n::tr("Read the licence")).on_hover_text(TEXT_LICENSE_URL);
-            register(ui.ctx(), "link:describeTextLicense", r.rect);
+            register(ui, "link:describeTextLicense", r.rect);
             if r.clicked() {
                 let _ = crate::links::open(app, TEXT_LICENSE_URL);
             }
             ui.horizontal(|ui| {
                 let r = ui.button(crate::i18n::tr("Download and Turn On"));
-                register(ui.ctx(), "button:describeTextDownload", r.rect);
+                register(ui, "button:describeTextDownload", r.rect);
                 if r.clicked() {
                     match app.run("vision.text.download", json!({"acknowledged": true})) {
                         Ok(_) => {
@@ -533,7 +533,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
                     }
                 }
                 let r = ui.button(crate::i18n::tr("Not Now"));
-                register(ui.ctx(), "button:describeTextLater", r.rect);
+                register(ui, "button:describeTextLater", r.rect);
                 if r.clicked() {
                     app.ui.ai_text_offer = false;
                 }
@@ -544,9 +544,9 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             let (done, total) = (d["done"].as_u64().unwrap_or(0), d["total"].as_u64().unwrap_or(0));
             let frac = if total > 0 { done as f64 / total as f64 } else { 0.0 };
             let r = ui.add(egui::ProgressBar::new(frac as f32).text(format!("{:.1} / {:.1} MB", done as f64 / 1e6, total as f64 / 1e6)));
-            register(ui.ctx(), "progress:describeTextDownload", r.rect);
+            register(ui, "progress:describeTextDownload", r.rect);
             let r = ui.button(crate::i18n::tr("Cancel Download"));
-            register(ui.ctx(), "button:describeTextCancel", r.rect);
+            register(ui, "button:describeTextCancel", r.rect);
             if r.clicked() {
                 app.session.vision.cancel_text_download();
             }

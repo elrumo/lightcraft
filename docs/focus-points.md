@@ -120,7 +120,7 @@ DMF (AF, then manual touch-up) keeps its point.
 - `crates/engine/src/focus_view.rs`: the point mapped through rotation, flips and crop (`focus_box`), and its tests; `view.focus`
   is in `crates/engine/src/cmd/focus.rs`. egui's `focus_box` (below) calls it.
 - `crates/engine/src/focus_scan.rs`: the background job (`photo.readFocusPoints`, `focus.pump`) and
-  `crates/engine/src/tests_focus_scan.rs`, with an opt-in comparison over real files
+  `crates/engine/src/tests/focus_scan.rs`, with an opt-in comparison over real files
   (`LIGHTCRAFT_FOCUS_FILES=<a list of paths>`); `crates/ui-egui/src/focus_scan.rs` drives it from the frame loop.
 - `crates/ui-egui/src/panels/detail.rs` (`focus_box`, `focus_pan`, `draw_focus_point`): mapping through the user's
-  rotation and crop, the overlay, and the zoom target; `crates/ui-egui/src/tests_focus_point.rs`.
+  rotation and crop, the overlay, and the zoom target; `crates/ui-egui/src/tests/focus_point.rs`.

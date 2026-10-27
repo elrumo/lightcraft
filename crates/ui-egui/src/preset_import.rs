@@ -263,7 +263,7 @@ fn review_body(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Review) {
     if !parts.is_empty() {
         let text = parts.join(" · ");
         let r = ui.label(egui::RichText::new(text).color(t.text_dim));
-        register(ui.ctx(), "presetImport:summary", r.rect);
+        register(ui, "presetImport:summary", r.rect);
     }
     // the presets, by group, each as this photo would look with it
     let active = app.session.active();
@@ -277,14 +277,14 @@ fn review_body(app: &mut LightcraftApp, ui: &mut egui::Ui, r: &Review) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let h = ui.label(egui::RichText::new(group).font(t.semibold(13.0)).color(t.text_label));
-            register(ui.ctx(), format!("presetImport:group:{group}"), h.rect);
+            register(ui, format!("presetImport:group:{group}"), h.rect);
             ui.label(egui::RichText::new(items.len().to_string()).color(t.text_dim));
         });
         for it in items {
             let left_out = !it.unmapped.is_empty();
             let h = if left_out { THUMB + 18.0 } else { THUMB + 6.0 };
             let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
-            register(ui.ctx(), format!("presetImport:item:{}", it.preset.id), row);
+            register(ui, format!("presetImport:item:{}", it.preset.id), row);
             let tile = Rect::from_min_size(row.min + vec2(0.0, 3.0), vec2(THUMB, THUMB));
             thumb(app, ui, tile, &it.preset, photo);
             let x = tile.right() + 12.0;
@@ -342,7 +342,7 @@ fn outcome_body(ui: &mut egui::Ui, r: &Review, o: &Outcome) {
     if o.presets > 0 {
         ui.add_space(2.0);
         let r = ui.label(egui::RichText::new(crate::i18n::tr("Find them in Presets:")).color(t.text));
-        register(ui.ctx(), "presetImport:where", r.rect);
+        register(ui, "presetImport:where", r.rect);
         for (group, n) in &o.groups {
             ui.label(egui::RichText::new(format!("{group} · {n}")).font(t.semibold(13.0)).color(t.text_label));
         }

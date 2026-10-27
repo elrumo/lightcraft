@@ -181,7 +181,7 @@ pub fn panel(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id
     egui::Frame::NONE.inner_margin(crate::widgets::margin(&ctx, 4, 4)).show(ui, |ui| {
         let mut on = true;
         let r = crate::widgets::check(ui, &mut on, tr("Apply"));
-        register(&ctx, "check:lensBlur", r.rect);
+        crate::widgets::register_geometry(&ctx, "check:lensBlur", r.rect);
         if r.changed() {
             let _ = app.run("lensBlur.apply", json!({"on": false}));
         }
@@ -218,7 +218,7 @@ pub fn panel(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id
     let mut vis = app.ui.depth_visualize;
     egui::Frame::NONE.inner_margin(crate::widgets::margin(&ctx, 2, 4)).show(ui, |ui| {
         let r = crate::widgets::check(ui, &mut vis, tr("Visualize Depth"));
-        register(&ctx, "check:visualizeDepth", r.rect);
+        crate::widgets::register_geometry(&ctx, "check:visualizeDepth", r.rect);
         if r.changed() {
             app.ui.depth_visualize = vis;
         }
@@ -303,7 +303,7 @@ fn focal_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
     let (outer, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click_and_drag());
     let bar =
         Rect::from_min_max(pos2(outer.left() + 24.0, outer.top() + 7.0), pos2((outer.right() - 22.0).max(outer.left() + 64.0), outer.top() + 23.0));
-    register(ui.ctx(), "lensBlurRange", bar);
+    register(ui, "lensBlurRange", bar);
     let x_of = |v: f64| bar.left() + bar.width() * (v / 100.0) as f32;
     let v_of = |x: f32| f64::from(((x - bar.left()) / bar.width()).clamp(0.0, 1.0)) * 100.0;
     let p = ui.painter();
@@ -333,9 +333,9 @@ fn focal_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
     for (v, name) in [(near, "near"), (far, "far")] {
         let h = Rect::from_center_size(pos2(x_of(v), bar.center().y), vec2(8.0, 22.0));
         p.rect(h, CornerRadius::same(2), Color32::WHITE, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
-        register(ui.ctx(), format!("lensBlurRange:{name}"), h.expand(4.0));
+        register(ui, format!("lensBlurRange:{name}"), h.expand(4.0));
     }
-    let gid = egui::Id::new("lensBlurGrip");
+    let gid = egui::Id::unique("lensBlurGrip");
     let set = |app: &mut LightcraftApp, lo: f64, hi: f64| {
         let (lo, hi) = (lo.clamp(0.0, 100.0), hi.clamp(0.0, 100.0));
         let _ = app.run("develop.set", json!({"values": {"lensBlur.focalDistance": (lo + hi) / 2.0, "lensBlur.focalRange": (hi - lo).max(0.0)}}));

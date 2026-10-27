@@ -83,6 +83,8 @@ pub enum Slot {
 /// What a slot shows: the render's facts, and `view`, the frontend's form of its pixels (an egui
 /// texture, an image lease…). Derefs to `view`, so a frontend reads its own fields directly.
 pub struct Shown<V> {
+    /// Frame geometry and crop mode captured when these pixels were requested ([`geometry_look`]).
+    pub look: Option<(u64, bool)>,
     pub key: u64,
     pub photo: PhotoId,
     pub size: [usize; 2],
@@ -95,6 +97,25 @@ pub struct Shown<V> {
     /// Rendered at draft quality (a slider drag in progress).
     pub draft: bool,
     pub view: V,
+}
+
+/// Settings that can change the rendered frame. Colour-only edits, including temporarily
+/// hidden grading wheels, must not discard a decoded RAW's actual aspect ratio.
+pub fn geometry_look(settings: &lightcraft_develop::DevelopSettings) -> u64 {
+    let geometry = lightcraft_develop::DevelopSettings {
+        crop: settings.crop,
+        orientation: settings.orientation,
+        geometry: settings.geometry.clone(),
+        optics: settings.optics,
+        disabled_sections: settings.disabled_sections.iter().filter(|s| matches!(s.as_str(), "geometry" | "optics")).cloned().collect(),
+        ..Default::default()
+    };
+    geometry.hash64()
+}
+
+/// The geometry identity of a job's pixels: [`geometry_look`] and whether the crop applies.
+fn look_of(job: &RenderJob) -> (u64, bool) {
+    (geometry_look(&job.settings), job.request.apply_crop)
 }
 
 impl<V> Deref for Shown<V> {
@@ -152,6 +173,8 @@ pub trait RenderOffload {
 
 /// Immutable identity captured when a request is submitted, not when its result is collected.
 pub struct Requested {
+    /// Frame geometry and crop mode of the request ([`Shown::look`]).
+    pub look: Option<(u64, bool)>,
     pub id: u64,
     /// The file or scene the request reads, for a failure's log line (`None`: not a photo's render).
     pub source: Option<lightcraft_catalog::Source>,
@@ -421,6 +444,10 @@ pub fn skips_the_real_render(embedded_is_final: bool, from_embedded: bool) -> bo
 pub struct Scheduler<V> {
     /// The request in flight for each slot (its id and what it reads). Public for the frontends' tests.
     pub requests: HashMap<Slot, Requested>,
+    /// Geometry identity of every request still out, by request id: a superseded draft that is
+    /// still shown keeps its own, never the newer request's (and an offload's results, which carry
+    /// none, find theirs here).
+    pub request_looks: HashMap<u64, (u64, bool)>,
     /// The latest failure lines logged (at most [`FAILURE_MESSAGES_KEPT`]), for tests.
     pub failure_messages: Vec<String>,
     /// Request id of the pixels each interactive view (loupe, before, hover) shows: a draft that
@@ -431,10 +458,11 @@ pub struct Scheduler<V> {
     epoch: u64,
     preview_generation: Option<(std::sync::Weak<lightcraft_preview::PreviewCache>, u64)>,
     /// Last thumbnail inputs; weak identities do not retain photo histories or force deep clones.
-    /// (photo, size bucket, job key, whether the request went through an embedded stand-in)
-    thumb_inputs: HashMap<PhotoId, (std::sync::Weak<lightcraft_catalog::Photo>, usize, u64, bool)>,
+    /// (photo, size bucket, job key, whether the request went through an embedded stand-in, and the
+    /// priority of the caller that queued it: a stand-in's background render runs below that)
+    pub thumb_inputs: HashMap<PhotoId, (std::sync::Weak<lightcraft_catalog::Photo>, usize, u64, bool, u32)>,
     /// Photos whose grid thumbnail is the camera's embedded preview itself (no render behind it).
-    embedded_thumbs: HashMap<PhotoId, (std::sync::Weak<lightcraft_catalog::Photo>, usize, u64)>,
+    pub embedded_thumbs: HashMap<PhotoId, (std::sync::Weak<lightcraft_catalog::Photo>, usize, u64)>,
     pub pool: JobPool<Slot, RenderResult>,
     /// Jobs run elsewhere (see [`RenderOffload`]); `queue` holds the ones not started yet.
     offload: Option<Box<dyn RenderOffload>>,
@@ -467,10 +495,10 @@ pub struct Scheduler<V> {
     /// Jobs that failed (unreadable or missing file…), by slot and job key, with the error and
     /// the photo: not requested again until the key changes (an edit, another size) — the grid
     /// asks every frame.
-    failed: HashMap<Slot, (u64, String, u64, PhotoId)>,
+    pub failed: HashMap<Slot, (u64, String, u64, PhotoId)>,
     /// The catalog revision seen at the last poll: a failure is retried once the catalog changes
     /// (a relinked or re-imported file).
-    catalog_rev: u64,
+    pub catalog_rev: u64,
     /// Prefetch slot → key of the last job submitted (each runs once).
     prefetched: HashMap<Slot, u64>,
     /// Variant key → frame it was last asked for (LRU of [`Slot::Variant`] textures).
@@ -580,6 +608,7 @@ impl<V> Scheduler<V> {
         let threads = if cfg!(target_arch = "wasm32") { 0 } else { threads.clamp(1, 6) };
         Scheduler {
             requests: HashMap::new(),
+            request_looks: HashMap::new(),
             failure_messages: Vec::new(),
             shown_ids: HashMap::new(),
             epoch: 0,
@@ -629,11 +658,27 @@ impl<V> Scheduler<V> {
 
     /// Would asking for this thumbnail again (at `priority`) change nothing?
     pub fn thumb_current(&self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, priority: u32) -> bool {
-        let Some(&(ref old, size, key, quick)) = self.thumb_inputs.get(&photo.id) else { return false };
-        if old.as_ptr() != Arc::as_ptr(photo) || size != bucket {
+        let Some(&(ref old, size, key, quick, _)) = self.thumb_inputs.get(&photo.id) else { return false };
+        if old.as_ptr() != Arc::as_ptr(photo) {
             return false;
         }
         let slot = Slot::Thumb(photo.id);
+        if size > bucket {
+            // A larger thumbnail that has already arrived for this photo and settings serves a
+            // smaller cell too (cells at different sizes share one photo). Asking for the smaller
+            // bucket would replace the larger picture, and the larger cell would then ask for its
+            // bucket back on the next frame: two print cells would alternate renders forever.
+            // The photo identity above is the scheduler's `Weak<Photo>`: `Catalog` edits through
+            // `Arc::make_mut`, which (per std) moves the value to a new allocation whenever a
+            // `Weak` exists, even with one strong reference. An edit therefore breaks this match,
+            // and the key keeps an older picture of the same allocation from being reused. A
+            // larger request still renders once (below), and while it is in flight
+            // [`Self::thumb_pending_other_bucket`] holds the smaller callers.
+            return self.textures.get(&slot).is_some_and(|t| t.key == key);
+        }
+        if size != bucket {
+            return false;
+        }
         if quick && !self.textures.contains_key(&slot) {
             // Stand-in path (`grid::request_thumb`): the embedded preview is still on its way, or
             // the real thumbnail is requested at the background priority whatever the caller's.
@@ -685,6 +730,15 @@ impl<V> Scheduler<V> {
         {
             return false;
         }
+        // Several cells can show one photo at different sizes (a print page's cells). Before any
+        // thumbnail arrives, a caller at another bucket would replace the pending request every frame
+        // and restart it, so none of them ever gets a picture: keep the request in flight. A higher
+        // priority caller may take it over once; the caller it replaced then coalesces behind it.
+        if let Some(photo) = session.catalog.photo(id)
+            && self.thumb_pending_other_bucket(photo, bucket, priority)
+        {
+            return false;
+        }
         let Some(job) = session.thumb_job_for(id, size, shown) else { return false };
         let quick = if self.textures.contains_key(&Slot::Thumb(id)) { None } else { session.quick_thumb_job(&job) };
         // A cached render is a stand-in for whatever comes next; an embedded camera preview of an
@@ -693,9 +747,9 @@ impl<V> Scheduler<V> {
             quick.is_some() && session.catalog.photo(id).is_some_and(|p| skips_the_real_render(session.embedded_thumb_is_final(p), true));
         if let Some(photo) = session.catalog.photo(id) {
             if embedded_is_final {
-                self.remember_embedded_thumb(photo, bucket, job.key);
+                self.remember_embedded_thumb(photo, bucket, job.key, priority);
             } else {
-                self.remember_thumb(photo, bucket, job.key, quick.is_some());
+                self.remember_thumb(photo, bucket, job.key, quick.is_some(), priority);
             }
         }
         match quick {
@@ -714,16 +768,30 @@ impl<V> Scheduler<V> {
     /// Whether the camera's embedded preview *is* this photo's thumbnail: its quick render arrived
     /// (so `Slot::ThumbQuick` holds the picture) and no edit has moved the photo on to a settings
     /// hash of its own. The grid stops here instead of decoding the raw behind a thumbnail the
-    /// embedded JPEG already covers — see `grid::skips_the_real_render`.
+    /// embedded JPEG already covers — see `grid::skips_the_real_render`. A preview that arrived at
+    /// a larger bucket and is still held is final for a smaller cell too, so print cells at
+    /// different sizes do not replace it every frame.
     pub fn thumb_quick_is_final(&self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, priority: u32) -> bool {
         let Some((old, size, key)) = self.embedded_thumbs.get(&photo.id) else { return false };
-        old.as_ptr() == Arc::as_ptr(photo) && *size == bucket && !self.request_needed(Slot::ThumbQuick(photo.id), *key, priority)
+        if old.as_ptr() != Arc::as_ptr(photo) || *size < bucket {
+            return false;
+        }
+        let slot = Slot::ThumbQuick(photo.id);
+        if *size > bucket {
+            // A larger preview serves a smaller cell only when its pixels are actually here for
+            // the recorded key. The same-bucket failure memoization below says "no" after a failed
+            // job, but a missing larger preview is not a final picture: the smaller cell must ask
+            // for its own bucket rather than stay blank until the catalog revision changes.
+            return self.textures.get(&slot).is_some_and(|t| t.key == *key);
+        }
+        // The requested bucket itself: keep the failure memoization (`failed`) unchanged.
+        !self.request_needed(slot, *key, priority)
     }
 
     /// Whether this photo's embedded-preview thumbnail is pending at the requested priority, or
     /// already running. A queued priority change must reach the grid's stand-in request.
     pub fn thumb_quick_pending(&self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, priority: u32) -> bool {
-        let Some((old, size, key, quick)) = self.thumb_inputs.get(&photo.id) else { return false };
+        let Some((old, size, key, quick, _)) = self.thumb_inputs.get(&photo.id) else { return false };
         let slot = Slot::ThumbQuick(photo.id);
         old.as_ptr() == Arc::as_ptr(photo)
             && *size == bucket
@@ -732,10 +800,44 @@ impl<V> Scheduler<V> {
             && !self.request_needed(slot, *key, priority.saturating_add(1))
     }
 
+    /// Whether a request for this photo's thumbnail is already in flight at another bucket and a
+    /// caller asking at `bucket` should leave it there. Several cells can show one photo at
+    /// different sizes at once (a print page's cells), and replacing `Slot::Thumb(id)` from each of
+    /// them every frame restarts the render, so none of them ever gets a picture.
+    ///
+    /// A caller with a higher priority than the one that queued the request takes it over once;
+    /// from then on the original caller coalesces behind that higher priority instead of replacing
+    /// it back. Equal priorities keep the request that is in flight (the print cells' case). This
+    /// only chooses which pending bucket survives; after it completes, a larger bucket is reused by
+    /// smaller callers ([`Self::thumb_current`]) rather than being replaced every frame.
+    ///
+    /// A full render queued behind a stand-in is submitted at [`BACKGROUND_THUMB_PRIORITY`],
+    /// deliberately below an on-screen caller. That is not the caller's priority, so the comparison
+    /// uses the priority recorded with the inputs: comparing the background slot's own priority
+    /// would let two buckets keep replacing each other's background render every frame.
+    ///
+    /// A photo that changed (another `Arc<Photo>`) or a texture for the recorded job key is not
+    /// coalesced: its callers ask for their own bucket as before. A stale texture from before an
+    /// edit does not count: it is still displayed while the replacement renders, and comparing
+    /// the key (not presence) keeps coalescing across buckets in the meantime.
+    pub fn thumb_pending_other_bucket(&self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, priority: u32) -> bool {
+        let Some(&(ref old, size, key, _, requested_priority)) = self.thumb_inputs.get(&photo.id) else { return false };
+        if old.as_ptr() != Arc::as_ptr(photo) || size == bucket {
+            return false;
+        }
+        if self.textures.get(&Slot::Thumb(photo.id)).is_some_and(|t| t.key == key) {
+            return false;
+        }
+        // (the inputs must belong to the request still in flight, not to one that already ended)
+        let in_flight = self.pending.get(&Slot::ThumbQuick(photo.id)).is_some_and(|p| p.0 == key)
+            || self.pending.get(&Slot::Thumb(photo.id)).is_some_and(|p| p.0 == key);
+        in_flight && requested_priority >= priority
+    }
+
     /// Remember that the camera's embedded preview is this photo's final thumbnail, so the grid's
     /// per-frame requests stop at it (the quick render's key, which [`Self::thumb_quick_is_final`]
     /// compares against).
-    pub fn remember_embedded_thumb(&mut self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, key: u64) {
+    pub fn remember_embedded_thumb(&mut self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, key: u64, priority: u32) {
         let slot = Slot::Thumb(photo.id);
         if self.pending.get(&slot).is_some_and(|(pending_key, _)| *pending_key != key) {
             // An edit can still be rendering when Undo restores this embedded-final thumbnail.
@@ -745,20 +847,20 @@ impl<V> Scheduler<V> {
             self.pool.reprioritize(|s, p| if *s == slot { None } else { Some(p) });
             self.queue.retain(|q| q.slot != slot);
         }
-        self.remember_thumb(photo, bucket, key, true);
+        self.remember_thumb(photo, bucket, key, true, priority);
         self.embedded_thumbs.insert(photo.id, (Arc::downgrade(photo), bucket, key));
     }
 
-    pub fn remember_thumb(&mut self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, key: u64, quick: bool) {
+    pub fn remember_thumb(&mut self, photo: &Arc<lightcraft_catalog::Photo>, bucket: usize, key: u64, quick: bool, priority: u32) {
         if self.thumb_inputs.len() >= 1024 && !self.thumb_inputs.contains_key(&photo.id) {
-            self.thumb_inputs.retain(|_, (p, _, _, _)| p.strong_count() > 0);
+            self.thumb_inputs.retain(|_, (p, _, _, _, _)| p.strong_count() > 0);
             if self.thumb_inputs.len() >= 1024
                 && let Some(id) = self.thumb_inputs.keys().next().copied()
             {
                 self.thumb_inputs.remove(&id);
             }
         }
-        self.thumb_inputs.insert(photo.id, (Arc::downgrade(photo), bucket, key, quick));
+        self.thumb_inputs.insert(photo.id, (Arc::downgrade(photo), bucket, key, quick, priority));
     }
 
     /// Views that render straight into the display profile's primaries (wide gamut); everything
@@ -904,7 +1006,9 @@ impl<V> Scheduler<V> {
         }
         self.pending.insert(slot, (job.key, priority));
         job.request_id = lightcraft_preview::next_tick();
-        self.requests.insert(slot, Requested { id: job.request_id, source: Some(job.origin.clone()) });
+        let look = look_of(&job);
+        self.note_look(job.request_id, look);
+        self.requests.insert(slot, Requested { look: Some(look), id: job.request_id, source: Some(job.origin.clone()) });
         if job.request.quality == lightcraft_engine::pipeline::Quality::Draft {
             if self.drafted.len() >= 64 {
                 self.drafted.remove(0);
@@ -954,7 +1058,7 @@ impl<V> Scheduler<V> {
         }
         self.pending.insert(slot, (key, priority));
         let request_id = lightcraft_preview::next_tick();
-        self.requests.insert(slot, Requested { id: request_id, source: None });
+        self.requests.insert(slot, Requested { look: None, id: request_id, source: None });
         let display = self.display.clone();
         let failed = Failed { request_id, source_key: None, photo: PhotoId(0), level: lightcraft_engine::media::SourceLevel::Preview, key };
         self.pool.submit(slot, key, priority, Box::new(move || run_for(failed, || compose.result(request_id), &display)));
@@ -1006,7 +1110,11 @@ impl<V> Scheduler<V> {
             .as_ref()
             .map(|job| job.origin.clone())
             .or_else(|| job.embedded.as_ref().map(|(path, _, _)| lightcraft_catalog::Source::File { path: path.clone() }));
-        self.requests.insert(slot, Requested { id: job.request_id, source });
+        let look = job.small.as_ref().map(|j| look_of(j));
+        if let Some(look) = look {
+            self.note_look(job.request_id, look);
+        }
+        self.requests.insert(slot, Requested { look, id: job.request_id, source });
         let key = job.key;
         let display = self.display.clone();
         let failed =
@@ -1023,16 +1131,28 @@ impl<V> Scheduler<V> {
         self.prefetched.insert(slot, job.key);
         self.pending.insert(slot, (job.key, priority));
         job.request_id = lightcraft_preview::next_tick();
-        self.requests.insert(slot, Requested { id: job.request_id, source: Some(job.origin.clone()) });
+        let look = look_of(&job);
+        self.note_look(job.request_id, look);
+        self.requests.insert(slot, Requested { look: Some(look), id: job.request_id, source: Some(job.origin.clone()) });
         let key = job.key;
         let failed = Failed::of(&job);
         self.pool.submit(slot, key, priority, Box::new(move || run_for(failed, || lightcraft_engine::memory::in_background(|| job.run()), &None)));
     }
 
     /// Is a request for `slot` queued or running?
+    /// Remember the geometry identity of request `id` until its result is collected.
+    fn note_look(&mut self, id: u64, look: (u64, bool)) {
+        // (bounded: results of cancelled jobs never come back to remove theirs)
+        if self.request_looks.len() >= 4096 {
+            self.request_looks.clear();
+        }
+        self.request_looks.insert(id, look);
+    }
+
     /// Drop every texture and cached stage (another library was opened: photo ids changed meaning).
     pub fn forget_all(&mut self) {
         self.requests.clear();
+        self.request_looks.clear();
         self.shown_ids.clear();
         self.epoch = lightcraft_preview::next_tick();
         self.preview_generation = None;
@@ -1088,6 +1208,30 @@ impl<V> Scheduler<V> {
     /// Requests queued or running.
     pub fn in_flight(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Requests queued or running, excluding background preparation of neighbouring photos.
+    pub fn in_flight_without_prefetch(&self) -> usize {
+        self.pending.keys().filter(|slot| !matches!(slot, Slot::Prefetch(_))).count()
+    }
+
+    /// Yield to native render workers until a result is ready or the timeout expires.
+    /// The result remains queued for the next poll. Browser and offloaded renderers do not wait.
+    /// Any native pending job, including prefetch, can satisfy the wait. A zero-worker test pool
+    /// must run its jobs inline first, or this call can only time out.
+    pub fn wait_for_worker(&mut self, timeout: Duration) -> bool {
+        if cfg!(target_arch = "wasm32") || self.offload.is_some() || self.pending.is_empty() {
+            return false;
+        }
+        self.pool.wait(timeout)
+    }
+
+    /// Test seam: make the scheduler look busy without starting a job (capture deadlines).
+    pub fn force_in_flight_for_test(&mut self, count: usize) {
+        self.pending.clear();
+        for i in 0..count {
+            self.pending.insert(Slot::Prefetch((i % 256) as u8), (0, 0));
+        }
     }
 
     /// Why the last render for `slot` failed (until a render with another key succeeds).
@@ -1281,6 +1425,7 @@ impl<V> Scheduler<V> {
         let mut polled = Polled::default();
         for (mut slot, mut r, ms) in finished {
             self.completed += 1;
+            let completed_look = self.request_looks.remove(&r.request_id);
             // made for another display profile than the one in use: obsolete
             if r.display.is_some_and(|id| Some(id) != self.display_id()) {
                 continue;
@@ -1289,7 +1434,7 @@ impl<V> Scheduler<V> {
             // an interactive view still takes a superseded draft that is newer than what it
             // shows, and the source it decoded: a drag supersedes every request before it
             // finishes, and a source thrown away with them is decoded again for every tick.
-            let source = if self.requests.get(&slot).map(|request| request.id) != Some(r.request_id) {
+            let (source, look) = if self.requests.get(&slot).map(|request| request.id) != Some(r.request_id) {
                 let newer_draft = slot.is_view()
                     && self.requests.contains_key(&slot)
                     && r.request_id >= self.epoch
@@ -1300,11 +1445,14 @@ impl<V> Scheduler<V> {
                     continue;
                 }
                 session.accept(&r);
-                None // superseded successful drafts have no failure diagnostic
+                // (no failure diagnostic for a superseded success; it keeps the geometry of its own pixels, never the newer request's)
+                (None, completed_look)
             } else {
-                let source = self.requests.remove(&slot).and_then(|request| request.source);
+                let request = self.requests.remove(&slot);
+                let look = request.as_ref().and_then(|request| request.look);
+                let source = request.and_then(|request| request.source);
                 session.accept(&r);
-                source
+                (source, look)
             };
             if slot.is_view() {
                 self.shown_ids.insert(slot, r.request_id);
@@ -1367,6 +1515,7 @@ impl<V> Scheduler<V> {
                     if Self::renders_hdr(slot) {
                         present.set_hdr(slot, hdr, &mut t.view);
                     }
+                    t.look = look;
                     t.key = r.key;
                     t.photo = r.photo;
                     t.size = size;
@@ -1382,6 +1531,7 @@ impl<V> Scheduler<V> {
                         present.set_hdr(slot, hdr, &mut view);
                     }
                     let shown = Shown {
+                        look,
                         key: r.key,
                         photo: r.photo,
                         size,
@@ -1577,7 +1727,7 @@ mod thumbnail_tests {
         catalog.apply(Op::AddPhoto { photo: Box::new((*photo()).clone()) }).unwrap();
         let old = catalog.photo(PhotoId(1)).unwrap().clone();
         let mut r = Sched::default();
-        r.remember_thumb(&old, 384, 77, false);
+        r.remember_thumb(&old, 384, 77, false, 10);
         r.pending.insert(Slot::Thumb(PhotoId(1)), (77, 10));
         assert!(r.thumb_current(&old, 384, 10));
         assert!(!r.thumb_current(&old, 512, 10));
@@ -1613,7 +1763,7 @@ mod thumbnail_tests {
         let key = job.key;
         let mut r = Sched::default();
         r.set_offload(Box::new(Blocked));
-        r.remember_thumb(&p, 384, key, false);
+        r.remember_thumb(&p, 384, key, false, 5);
         r.request(slot, job, 5);
         assert!(r.thumb_current(&p, 384, 5));
         assert!(!r.thumb_current(&p, 384, 10));
@@ -1669,7 +1819,7 @@ mod thumbnail_tests {
         let slot = Slot::ThumbQuick(p.id);
         // Deterministic queue: no native worker starts.
         let mut r = Sched { pool: JobPool::new(0), ..Default::default() };
-        r.remember_thumb(&p, 384, quick.key, true);
+        r.remember_thumb(&p, 384, quick.key, true, 5);
         r.request_quick(slot, quick.clone(), 6); // grid prefetch: 5 + 1
         r.request_quick(Slot::ThumbQuick(PhotoId(2)), other, 9); // filmstrip: 8 + 1
         let request_id = r.requests[&slot].id;
@@ -1697,7 +1847,7 @@ mod thumbnail_tests {
         let (_, other) = queued_quick_thumbnail(PhotoId(2));
         let slot = Slot::ThumbQuick(p.id);
         let mut r = Sched { pool: JobPool::new(0), ..Default::default() };
-        r.remember_thumb(&p, 384, quick.key, true);
+        r.remember_thumb(&p, 384, quick.key, true, 10);
         r.request_quick(slot, quick.clone(), 11);
         r.request_quick(Slot::ThumbQuick(PhotoId(2)), other, 9);
         assert!(!r.thumb_current(&p, 384, 5));
@@ -1712,7 +1862,7 @@ mod thumbnail_tests {
         let p = photo();
         let slot = Slot::Thumb(p.id);
         let mut r = Sched::default();
-        r.remember_thumb(&p, 384, 77, false);
+        r.remember_thumb(&p, 384, 77, false, 10);
         r.pending.insert(Slot::ThumbQuick(p.id), (77, 11));
         assert!(!r.thumb_current(&p, 384, 10));
         r.failed.insert(slot, (77, "no decoder".into(), 0, p.id));
@@ -1724,6 +1874,42 @@ mod thumbnail_tests {
     }
 
     // Given a face that failed to render for want of its synced preview, the preview landing retries it
+    /// A larger texture only serves a smaller bucket when it is the recorded request's picture
+    /// (under a `contains_key`-only check the first assertion would return `true`).
+    #[test]
+    fn larger_texture_for_another_key_does_not_count_as_current() {
+        let p = photo();
+        let slot = Slot::Thumb(p.id);
+        let tex =
+            |key| Shown { look: None, key, photo: p.id, size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 0, draft: false, view: () };
+        let mut r = Sched::default();
+        // A completed larger bucket: the remembered request is bucket 512, key 77.
+        r.remember_thumb(&p, 512, 77, false, 10);
+        // Another key's pixels (the picture from before an edit) may still be displayed, but they
+        // are not the remembered request's picture.
+        r.textures.insert(slot, tex(66));
+        assert!(!r.thumb_current(&p, 256, 10), "a mismatched texture key must not serve a smaller bucket");
+        r.textures.insert(slot, tex(77));
+        assert!(r.thumb_current(&p, 256, 10), "the recorded key's larger texture serves the smaller bucket");
+    }
+
+    // Cells at other buckets leave an in-flight thumbnail alone; a higher priority caller takes it over once
+    #[test]
+    fn a_pending_thumbnail_coalesces_across_buckets() {
+        let p = photo();
+        let slot = Slot::Thumb(p.id);
+        let mut r = Sched::default();
+        r.remember_thumb(&p, 256, 77, false, 10);
+        assert!(!r.thumb_pending_other_bucket(&p, 512, 10), "nothing in flight yet");
+        r.pending.insert(slot, (77, 10));
+        assert!(!r.thumb_pending_other_bucket(&p, 256, 10), "its own bucket asks as usual");
+        assert!(r.thumb_pending_other_bucket(&p, 512, 10), "equal priority keeps the request in flight");
+        assert!(r.thumb_pending_other_bucket(&p, 384, 8));
+        assert!(!r.thumb_pending_other_bucket(&p, 512, 11), "a higher priority caller takes it over");
+        r.pending.clear();
+        assert!(!r.thumb_pending_other_bucket(&p, 512, 10), "the inputs must belong to a request still in flight");
+    }
+
     #[test]
     fn a_landed_preview_retries_its_failed_faces() {
         let mut session = Session::new();
@@ -1750,7 +1936,18 @@ mod stage_budget_tests {
     #[test]
     fn a_zoomed_view_is_not_trimmed_while_idle() {
         let mut r = Scheduler::<()>::default();
-        let shown = Shown { key: 1, photo: PhotoId(1), size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 0, draft: false, view: () };
+        let shown = Shown {
+            look: None,
+            key: 1,
+            photo: PhotoId(1),
+            size: [1, 1],
+            histogram: None,
+            ms: 0.0,
+            quick: None,
+            request_id: 0,
+            draft: false,
+            view: (),
+        };
         r.textures.insert(Slot::Region, shown);
         let long_ago = std::time::Instant::now().checked_sub(IDLE_TRIM * 2).unwrap();
         r.idle = Some((long_ago, false));
@@ -2040,8 +2237,18 @@ mod scheduler_tests {
         for slot in [photo, intro, Slot::Slide(Item::ENDING), Slot::SlidePreview] {
             assert_eq!(Slot::parse(&slot.name()), Some(slot));
         }
-        let shown =
-            || Shown { key: 1, photo: PhotoId(1), size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 1, draft: false, view: () };
+        let shown = || Shown {
+            look: None,
+            key: 1,
+            photo: PhotoId(1),
+            size: [1, 1],
+            histogram: None,
+            ms: 0.0,
+            quick: None,
+            request_id: 1,
+            draft: false,
+            view: (),
+        };
         let mut r = Scheduler::<()>::with_worker_threads(1);
         r.slides_live = true;
         for slot in [photo, intro, Slot::SlidePreview] {
@@ -2049,6 +2256,100 @@ mod scheduler_tests {
         }
         r.release_slides(&[Item::INTRO]);
         assert!(r.textures.contains_key(&intro) && r.textures.contains_key(&Slot::SlidePreview) && !r.textures.contains_key(&photo));
+    }
+
+    /// Runs nothing itself: the test hands the jobs' results back.
+    #[derive(Default)]
+    struct Work {
+        jobs: Vec<(Slot, RenderJob)>,
+        finished: Vec<(Slot, RenderResult, f64)>,
+    }
+    struct Manual(std::rc::Rc<std::cell::RefCell<Work>>);
+    impl RenderOffload for Manual {
+        fn try_start(&mut self, slot: Slot, job: RenderJob) -> Option<RenderJob> {
+            self.0.borrow_mut().jobs.push((slot, job));
+            None
+        }
+        fn finished(&mut self) -> Vec<(Slot, RenderResult, f64)> {
+            std::mem::take(&mut self.0.borrow_mut().finished)
+        }
+    }
+
+    fn flat_session() -> Session {
+        session(Arc::new(|_, _| {
+            let mut image = lightcraft_raster::Rgb32f::new(8, 8);
+            image.data.fill([0.3, 0.2, 0.1]);
+            Ok((image, Default::default()))
+        }))
+    }
+
+    // A superseded draft that is still shown keeps the geometry of its own pixels, never the newer
+    // request's, and a completed request leaves nothing behind
+    #[test]
+    fn a_superseded_draft_keeps_the_geometry_of_its_own_pixels() {
+        let mut s = flat_session();
+        let mut r = Scheduler::<Arc<Rgba8>>::default();
+        let work = std::rc::Rc::new(std::cell::RefCell::new(Work::default()));
+        r.set_offload(Box::new(Manual(work.clone())));
+        let old = s.loupe_job(PhotoId(1), 8, 8, true).unwrap().draft();
+        let old_look = geometry_look(&old.settings);
+        r.request(Slot::Main, old, 100);
+        let mut settings = lightcraft_develop::DevelopSettings::default();
+        settings.crop.geometry.rect = lightcraft_geom::Rect::new(0.0, 0.0, 0.5, 1.0);
+        let new_look = geometry_look(&settings);
+        assert_ne!(old_look, new_look);
+        s.catalog.apply(Op::SetDevelop { id: PhotoId(1), settings: Arc::new(settings), label: "crop".into(), edited: None }).unwrap();
+        let current = s.loupe_job(PhotoId(1), 8, 8, true).unwrap().draft();
+        r.request(Slot::Main, current, 100);
+        let jobs: Vec<RenderJob> = work.borrow_mut().jobs.drain(..).map(|(_, j)| j).collect();
+        let mut jobs = jobs.into_iter();
+        let (old, current) = (jobs.next().unwrap().run(), jobs.next().unwrap().run());
+        work.borrow_mut().finished.push((Slot::Main, old, 0.0));
+        r.poll(&mut s, &mut Keep);
+        assert_eq!(r.textures[&Slot::Main].look, Some((old_look, true)), "the superseded pixels keep their own geometry");
+        work.borrow_mut().finished.push((Slot::Main, current, 0.0));
+        r.poll(&mut s, &mut Keep);
+        assert_eq!(r.textures[&Slot::Main].look, Some((new_look, true)));
+        assert!(r.request_looks.is_empty(), "completed requests are released");
+    }
+
+    // Hidden grading wheels change the job's settings but not the frame's geometry
+    #[test]
+    fn hidden_grading_keeps_the_completed_textures_geometry_identity() {
+        let mut s = flat_session();
+        let mut settings = lightcraft_develop::DevelopSettings::default();
+        settings.grading.shadows.sat = 40.0;
+        settings.crop.geometry.rect = lightcraft_geom::Rect::new(0.1, 0.2, 0.8, 0.7);
+        s.catalog.apply(Op::SetDevelop { id: PhotoId(1), settings: Arc::new(settings.clone()), label: "grade".into(), edited: None }).unwrap();
+        let expected = geometry_look(&settings);
+        let job = s.loupe_job(PhotoId(1), 8, 8, true).unwrap().with_hidden_grading([true, false, false]);
+        assert_ne!(job.settings.hash64(), settings.hash64(), "the view really hides a nonzero wheel");
+        let mut r = Scheduler::<Arc<Rgba8>>::with_worker_threads(1);
+        r.request(Slot::Main, job, 100);
+        poll_until(&mut r, &mut s, Polled::changed);
+        assert_eq!(r.textures[&Slot::Main].look, Some((expected, true)));
+    }
+
+    // Capture readiness: neighbours' preparation does not count, photo and thumbnail work does
+    #[test]
+    fn capture_readiness_excludes_prefetch_but_keeps_photo_and_thumbnail_work() {
+        let mut s = flat_session();
+        let mut r = Scheduler::<Arc<Rgba8>> { pool: JobPool::new(0), ..Default::default() };
+        r.prefetch(Slot::Prefetch(0), s.thumb_job(PhotoId(1), 384).unwrap(), 1);
+        r.prefetch(Slot::Prefetch(1), s.thumb_job(PhotoId(1), 384).unwrap(), 1);
+        assert_eq!((r.in_flight(), r.in_flight_without_prefetch()), (2, 0));
+        for (index, slot) in
+            [Slot::Main, Slot::Thumb(PhotoId(1)), Slot::Variant(7), Slot::Preview, Slot::ThumbQuick(PhotoId(1))].into_iter().enumerate()
+        {
+            r.request(slot, s.thumb_job(PhotoId(1), 384).unwrap(), 10);
+            assert_eq!(r.in_flight_without_prefetch(), index + 1);
+            assert_eq!(r.in_flight(), index + 3);
+        }
+        assert_eq!(r.pool.run_inline(7), 7);
+        // Waiting observes a completed job without swallowing the result needed by poll.
+        assert!(r.wait_for_worker(Duration::ZERO));
+        r.poll(&mut s, &mut Keep);
+        assert_eq!((r.in_flight(), r.in_flight_without_prefetch()), (0, 0));
     }
 
     // A finished render becomes the slot's picture, with its facts, through the frontend's presenter

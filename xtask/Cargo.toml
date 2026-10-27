@@ -14,7 +14,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 # precompressed web bundle (`cargo xtask web`); pure Rust
 flate2 = "1"
-brotli = { version = "8", default-features = false, features = ["std"] }
+brotli = { version = "9", default-features = false, features = ["std"] }
 # `cargo xtask geodata`: compact place and coastline files for crates/geo. Pure Rust.
 miniz_oxide = { workspace = true }
 earcutr = "0.4"

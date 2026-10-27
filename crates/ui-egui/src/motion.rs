@@ -66,7 +66,7 @@ mod tests {
             let mut full = ctx.run_ui(input, |ui| {
                 ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
                 let top = ui.cursor().top();
-                fold(ui, Id::new("body"), open, |ui| ui.allocate_space(vec2(100.0, 200.0)));
+                fold(ui, Id::unique("body"), open, |ui| ui.allocate_space(vec2(100.0, 200.0)));
                 out.push(ui.cursor().top() - top);
             });
             full.textures_delta.clear();

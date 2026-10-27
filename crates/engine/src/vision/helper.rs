@@ -694,7 +694,10 @@ impl crate::Session {
         self.vision.helper_once.retain(|p| self.vision.helper_parts.contains(p));
         self.save_prefs().map_err(|e| e.to_string())?;
         let dropped: Vec<&String> = old.iter().filter(|o| !self.vision.helper_parts.contains(o)).collect();
-        let added: Vec<&String> = self.vision.helper_parts.iter().filter(|p| !old.contains(p)).collect();
+        // (a part this device can't run is not left to it: the server keeps doing it)
+        let available = self.vision.helper_availability();
+        let added: Vec<&String> =
+            self.vision.helper_parts.iter().filter(|p| !old.contains(p) && available.get(p.as_str()).is_some_and(|a| a == &json!(true))).collect();
         if !added.is_empty() && self.vision_signed_in() {
             // (a choice: the server's taking the part back no longer holds)
             let _ = self.vision_aux("PUT", "/api/work/settings", Body::Json(json!({"add": added, "chosen": true}).to_string()), super::Aux::Work);

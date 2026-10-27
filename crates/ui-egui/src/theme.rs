@@ -325,7 +325,7 @@ impl Tokens {
 
     /// Whether the UI is drawn dark now (a light desktop theme or the compact layout's light look: not).
     pub fn is_dark(ctx: &egui::Context) -> bool {
-        ctx.data(|d| d.get_temp::<bool>(egui::Id::new("lc-dark"))).unwrap_or(true)
+        ctx.data(|d| d.get_temp::<bool>(egui::Id::unique("lc-dark"))).unwrap_or(true)
     }
 
     /// The tokens of `kind`. Metrics are shared; the classic themes change only colours, the Studio
@@ -653,12 +653,12 @@ pub const WHEEL_STRIP_SHARE: f32 = 1.0 / 3.0;
 pub const WHEEL_ZOOM_PER_POINT: f32 = 40.0 / 200.0 / WHEEL_LINE_POINTS;
 
 fn theme_id() -> egui::Id {
-    egui::Id::new("lightcraft-theme")
+    egui::Id::unique("lightcraft-theme")
 }
 
 /// Whether the compact look is applied, and in which appearance (dark).
 fn compact_id() -> egui::Id {
-    egui::Id::new("lc-styled")
+    egui::Id::unique("lc-styled")
 }
 
 /// The theme `ctx` is styled with (none before the first [`apply_kind`]).
@@ -738,7 +738,7 @@ fn apply_tokens(ctx: &egui::Context, t: Tokens, dark: bool) {
     });
     ctx.data_mut(|d| {
         d.insert_temp(egui::Id::NULL, t);
-        d.insert_temp(egui::Id::new("lc-dark"), dark);
+        d.insert_temp(egui::Id::unique("lc-dark"), dark);
     });
     let mut v = if dark { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.chrome;

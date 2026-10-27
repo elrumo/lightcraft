@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-24 · **Change:** minor (GoPro GPR decodes (upstream #2787); pre-X FinePix and SuperCCD RAFs decode (upstream #2316); upstream merged again, up to v0.13.0 (38f8d2508): Print gains Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺); Minolta MRW decoded, 6 bodies verified; German catalog 91% → 97%; Finnish and Indonesian interfaces; earlier: checklist recount 84.3% of 554 rows after the colour mixer's fit to Lightroom exports and Calibration ✅ → 🟡; a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-27 · **Change:** minor (upstream merged up to v0.14.0 (201 commits), checklist recounted 84.5% of 561 rows; GoPro GPR decodes (upstream #2787); pre-X FinePix and SuperCCD RAFs decode (upstream #2316); upstream merged again, up to v0.13.0 (38f8d2508): Print gains Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺); Minolta MRW decoded, 6 bodies verified; German catalog 91% → 97%; Finnish and Indonesian interfaces; earlier: checklist recount 84.3% of 554 rows after the colour mixer's fit to Lightroom exports and Calibration ✅ → 🟡; a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -139,6 +139,10 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 ## Progress log
 
+- 2026-10-27: Upstream merged again (up to v0.14.0, 201 commits). Upstream's split of `ui-egui` (dialogs, widgets, menus, state, app, tests),
+  `xtask` and the desktop app are the layout now; the fork's phone layout, camera import, Map, sync, HDR and AI features were ported onto it.
+  The checklist is recounted by `cargo xtask parity`.
+
 - 2026-10-24: Upstream merged again (up to v0.13.0, 38f8d2508; 675 commits). From upstream: Print gains the Japanese photo and
   postcard papers, Minolta MRW decodes, German catalog 97%, Finnish and Indonesian interfaces, a shared CI gate workflow,
   `cargo xtask ci --quick`. This fork keeps its sync server, Generative Expand and Sign Out ahead of it.
@@ -239,6 +243,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Upstream merged again (up to v0.14.0, 201 commits); checklist recounted 84.5% of 561 rows (P0 98.0%, P1 92.8%, P2 62.6%) |
 | 2026-10-25 | minor | Camera support from community pull requests integrated (X-Trans III Kelvin #2514, Blackmagic DNG #1305, two-field Coolpix #672, pre-X FinePix #2316, GoPro GPR #2787) and the Olympus family work (ORI files, five more uncompressed bodies verified, ORF preview details, aspect crop); Coolpix 5700, 8400 and 8800 move from unsupported to verified; RAW: 86% of Adobe's models decode, 40% verified (575), use-weighted share unchanged at ~94% (86% on a verified body); Canon CRW (#2512) and Nikon HE (#896) held back on clean-room provenance |
 | 2026-10-25 | minor | Upstream #2787: GoPro GPR (VC-5) decoded: RAW 83% → 84% of Adobe's models decode, 38% verified; readiness unchanged |
 | 2026-10-24 | minor | Upstream merged again (up to v0.13.0); headline numbers are recounted after the merge |

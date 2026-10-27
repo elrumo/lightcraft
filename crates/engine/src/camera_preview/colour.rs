@@ -1,0 +1,405 @@
+use super::look_fit::{fit_dng_tone, fit_preview, neutral_look_for, typical_look};
+use super::mono::{fit_dark_tone, monochrome_look};
+use super::proxy::{LensGeometry, jpeg_vignetting, proxies, sharing_proxies, with_jpeg_vignetting};
+use super::*;
+
+/// Long edge of the sensor/JPEG proxy a single photo's look is fitted on (the acceptance gates
+/// below were set at this size).
+pub(super) const PROXY: usize = 96;
+
+/// Long edge of the proxies pooled for a camera profile: small objects (a shirt) get 4× the samples.
+pub(crate) const PROFILE_PROXY: usize = 192;
+
+/// Raw formats whose decoder supplies vendor white-balance multipliers but no camera colour matrix:
+/// their starting look is fitted to the file's own JPEG, and white balance is relative to the
+/// as-shot look (`docs/camera-preview-colour.md`). The catalog's `Photo::relative_wb` matches the
+/// same formats by file extension.
+pub(crate) fn file_local_look(format: RawFormat) -> bool {
+    matches!(
+        format,
+        RawFormat::Arw
+            | RawFormat::Nef
+            | RawFormat::Nrw
+            | RawFormat::Rw2
+            | RawFormat::Raf
+            | RawFormat::Cr3
+            | RawFormat::Cr2
+            | RawFormat::Pef
+            | RawFormat::Srw
+            | RawFormat::Orf
+            | RawFormat::Mrw
+            | RawFormat::Erf
+    )
+}
+
+/// The colour a raw starts from, first available first: the file's own colour matrices (DNG); for a Canon CR3 of a model
+/// with measured spectral matrices, those matrices and LightCraft's neutral tone ([`neutral_look`]); a look fitted to the
+/// file's JPEG ([`fit_preview`]: with the camera profile for its model when there is one, else with colour fitted to
+/// this photo alone); the model's colour matrices from measured spectral sensitivities (`lightcraft_raw::spectral`);
+/// the neutral fallback. The spectral matrices only stand in for the neutral fallback, so a photo whose JPEG fit is
+/// accepted renders as without them; when used they are written into `raw.color`. A photo whose JPEG is black and
+/// white (a monochrome picture style) has no colour to fit, but still gives its tone curve: with the camera profile's
+/// colour in [`fit_preview`], else on top of the spectral matrices or the fallback ([`monochrome_look`]). Returns the
+/// as-shot white, the camera transform at it and the fitted look, and for a CR3 that starts from the neutral look,
+/// the camera look it started from before (the Camera Matching profile, [`camera_match`]).
+/// `lens` is the file's own lens-correction warp ([`lens_geometry`], read before the caller removes it from
+/// `OpcodeList3`): the camera applied it to its JPEG, so the sensor proxy is warped the same way before pairing.
+/// `embedded` is the file's embedded lens vignetting, for the DNG tone fit.
+pub(crate) fn starting_colour(
+    raw: &mut RawImage,
+    bytes: &[u8],
+    lens: Option<&LensGeometry>,
+    embedded: Option<&lightcraft_develop::EmbeddedLens>,
+) -> (Xy, CameraTransform, Option<CameraLook>, Option<CameraMatch>) {
+    let (xy, t, look, matched) = starting_colour_with(
+        raw,
+        |raw, t| fit_preview(raw, bytes, t, lens),
+        |raw, t| monochrome_look(raw, bytes, t, lens),
+        |raw, t| {
+            if !file_local_look(raw.format) {
+                return None;
+            }
+            let (sensor, reference, clipped) = proxies(raw, bytes, t, PROXY, 0.0, lens)?;
+            let sensor = with_jpeg_vignetting(raw, sensor, &reference, &clipped);
+            fit_dark_tone(&sensor, &reference, &clipped)
+        },
+    );
+    if look.is_none() && dng_tone_eligible(raw, &t) {
+        let look = fit_dng_tone(raw, bytes, &t, embedded);
+        return (xy, t, look, matched);
+    }
+    (xy, t, look, matched)
+}
+
+/// Whether the profile's tone curve is absent or the identity (within 0.005 over the range).
+fn identity_tone_curve(curve: Option<&lightcraft_raw::profile::ToneCurve>) -> bool {
+    curve.is_none_or(|c| {
+        (0..=32).all(|i| {
+            let x = i as f32 / 32.0;
+            (c.eval(x) - x).abs() < 0.005
+        })
+    })
+}
+
+/// A DNG with its own colour model whose tone is not (yet) defined by the file: a matrix, no
+/// non-identity `ProfileToneCurve` and no `ProfileGainTableMap`. A `LookTable` does not define the tone: an
+/// Adobe Standard profile carries one without a tone curve and is rendered with Lightroom's default curve on
+/// top (Lightroom Classic's lossy DNGs rendered flat and dull without a fit), and the fit applies the tables
+/// to its proxy, so it fits only the tone around them.
+pub(crate) fn dng_tone_eligible(raw: &RawImage, t: &CameraTransform) -> bool {
+    let p = &raw.color.profile;
+    raw.format == RawFormat::Dng && !t.matrix_is_fallback && identity_tone_curve(p.tone_curve.as_ref()) && p.gain_table_map.is_none()
+}
+
+/// The camera's measured spectral matrices (`lightcraft_raw::spectral`), by the file's make and model.
+pub(super) fn spectral(raw: &RawImage) -> Option<&'static lightcraft_raw::spectral::Camera> {
+    raw.metadata.model.as_deref().and_then(|model| lightcraft_raw::spectral::find(raw.metadata.make.as_deref(), model))
+}
+
+/// [`starting_colour`] with the JPEG fit (the look, and whether the JPEG is black and white) and the black-and-white
+/// JPEG's tone fit and the near-black tone fallback passed in (tests pin the order with them).
+pub(super) fn starting_colour_with(
+    raw: &mut RawImage,
+    fit: impl FnOnce(&RawImage, &CameraTransform) -> (Option<CameraLook>, bool),
+    monochrome: impl FnOnce(&RawImage, &CameraTransform) -> Option<CameraLook>,
+    dark: impl FnOnce(&RawImage, &CameraTransform) -> Option<CameraLook>,
+) -> (Xy, CameraTransform, Option<CameraLook>, Option<CameraMatch>) {
+    let start = |raw: &RawImage| {
+        let xy = lightcraft_raw::color::as_shot_white_xy(raw);
+        (xy, lightcraft_raw::color::camera_transform(raw, xy))
+    };
+    let (xy, t) = start(raw);
+    if !t.matrix_is_fallback {
+        return (xy, t, None, None);
+    }
+    // A CR3's camera JPEG shows the picture style and Auto Lighting Optimizer set in the camera (custom film-look
+    // styles, lifted shadows), which Lightroom ignores: a model with measured matrices starts from them and the
+    // neutral tone instead of a fit to that JPEG. The look fitted to that JPEG (what such a CR3 started from before,
+    // by the order below) stays on offer as the Camera Matching profile.
+    if raw.format == RawFormat::Cr3
+        && let Some(camera) = spectral(raw)
+    {
+        let (fitted, black_and_white) = fit(raw, &t);
+        camera.fill(&mut raw.color);
+        if lightcraft_pipeline::profiling() {
+            eprintln!("[profile] {:?} neutral look on spectral sensitivities: {} {}", raw.format, camera.make, camera.model);
+        }
+        let (xy, neutral) = start(raw);
+        let starting = neutral_look_for(raw.metadata.model.as_deref(), raw.metadata.make.as_deref());
+        let matched = match fitted {
+            Some(look) => camera_match((&neutral, starting.as_ref()), &t, Some(look)),
+            None => camera_match((&neutral, starting.as_ref()), &neutral, if black_and_white { monochrome(raw, &neutral) } else { None }),
+        };
+        return (xy, neutral, starting, matched);
+    }
+    // A model fitted to Lightroom's renders of its raws (a neutral table: `lightcraft-cli calibrate --references`), of any
+    // maker, starts from the neutral look and its camera's colour, whatever its camera JPEG shows
+    if file_local_look(raw.format)
+        && raw.metadata.model.as_deref().is_some_and(|m| crate::camera_profiles::neutral_table(m).is_some())
+        && let Some(look) = typical_look(raw, &t)
+    {
+        return (xy, t, Some(look), None);
+    }
+    let (look, black_and_white) = fit(raw, &t);
+    if let Some(look) = look {
+        return (xy, t, Some(look), None);
+    }
+    let (xy, t) = match spectral(raw) {
+        Some(camera) => {
+            camera.fill(&mut raw.color);
+            if lightcraft_pipeline::profiling() {
+                eprintln!("[profile] {:?} camera colour from spectral sensitivities: {} {}", raw.format, camera.make, camera.model);
+            }
+            start(raw)
+        }
+        None => (xy, t),
+    };
+    // A black-and-white JPEG first tries its existing tone fit on the chosen colour; a colour one that gave no look pays
+    // nothing more, and a photo with no look at all starts from its camera's typical colour and a neutral tone
+    let look = if black_and_white { monochrome(raw, &t) } else { None };
+    let look = look.or_else(|| dark(raw, &t));
+    let look = look.or_else(|| typical_look(raw, &t));
+    if lightcraft_pipeline::profiling() && look.is_some() {
+        eprintln!(
+            "[profile] {:?} typical look: {} {}",
+            raw.format,
+            raw.metadata.make.as_deref().unwrap_or(""),
+            raw.metadata.model.as_deref().unwrap_or("")
+        );
+    }
+    (xy, t, look, None)
+}
+
+/// Median tone and chroma curves of the camera looks fitted to the embedded JPEGs of 50 public Canon RF-mount CR3
+/// files (R, RP, R3, R5, R6, R6 Mark II, R7, R10, R50, R100, R6 Mark III; the HDR-PQ files, which have no JPEG,
+/// are not among them). On a common scene-luminance grid, the median over the files whose own knots cover the grid
+/// point; the part past the covered range continues at half the last covered slope. The curves agree within roughly
+/// 15 % between bodies from 0.05 to 0.25 scene luminance (display 0.08-0.13 and 0.58-0.73 at the ends).
+const CANON_TONE_KNOTS: [[f32; 2]; 32] = [
+    [0.01300, 0.02133],
+    [0.01462, 0.02399],
+    [0.01645, 0.02399],
+    [0.01851, 0.02573],
+    [0.02082, 0.03036],
+    [0.02342, 0.03749],
+    [0.02635, 0.04490],
+    [0.02964, 0.05512],
+    [0.03334, 0.06410],
+    [0.03751, 0.07782],
+    [0.04219, 0.09449],
+    [0.04746, 0.11311],
+    [0.05340, 0.13590],
+    [0.06007, 0.16061],
+    [0.06757, 0.18507],
+    [0.07601, 0.21076],
+    [0.08551, 0.23481],
+    [0.09619, 0.26245],
+    [0.10821, 0.29332],
+    [0.12173, 0.32584],
+    [0.13694, 0.36895],
+    [0.15405, 0.40889],
+    [0.17330, 0.45380],
+    [0.19495, 0.50112],
+    [0.21931, 0.54242],
+    [0.24671, 0.58651],
+    [0.27754, 0.63641],
+    [0.31221, 0.67163],
+    [0.35122, 0.69642],
+    [0.39510, 0.71950],
+    [0.44447, 0.73694],
+    [0.50000, 0.75066],
+];
+const CANON_TONE_CHROMA: [f32; CHROMA_N] = [1.0191, 1.0141, 0.9875, 0.9537, 0.9309, 0.9176, 0.8915, 0.9833];
+
+/// The tone a Canon CR3 starts from when it has no embedded JPEG to fit a look to (the HDR-PQ shots of the R5 Mark II and R8
+/// carry only an HEVC preview) and takes the model's spectral colour matrices: the median camera tone of Canon
+/// RF-mount bodies ([`CANON_TONE_KNOTS`]), instead of LightCraft's default curve, which renders such a raw about
+/// 13 L* darker than the camera's own look. `None` for any raw with a preview, its own matrices or a fitted look.
+pub(crate) fn previewless_tone(
+    raw: &RawImage,
+    bytes: &[u8],
+    own_matrix: bool,
+    transform: &CameraTransform,
+    look: &Option<CameraLook>,
+) -> Option<CameraTone> {
+    if raw.format != RawFormat::Cr3 || own_matrix || transform.matrix_is_fallback || look.is_some() {
+        return None;
+    }
+    if lightcraft_raw::embedded_preview(bytes).is_some() {
+        return None;
+    }
+    CameraTone::new(CANON_TONE_KNOTS)?.with_chroma(CANON_TONE_CHROMA)
+}
+
+/// What turns the pixels the starting look develops (`to` with the look `start` on top, as `files::CameraColourModel`
+/// applies them: `start.matrix · to.matrix · diag(to.wb)` and the baseline exposure, then `start`'s hue/saturation
+/// table) into the ones `from` with `look` on top develops: `start`'s table undone, then one 3×3 (same camera RGB in,
+/// so one matrix carries the change of matrices and white balance), `look`'s table and tone curve (none: the default
+/// tone map). `None` when the starting colour can't be inverted.
+pub(super) fn camera_match(start: (&CameraTransform, Option<&CameraLook>), from: &CameraTransform, look: Option<CameraLook>) -> Option<CameraMatch> {
+    let develops = |t: &CameraTransform, m: Mat3| {
+        let gain = 2f64.powf(t.baseline_exposure);
+        let [r, g, b] = t.wb.map(|w| f64::from(w) * gain);
+        m.mul(&t.matrix).mul(&Mat3::diag(r, g, b))
+    };
+    let (to, starting) = start;
+    let undone = develops(to, starting.map_or(Mat3::IDENTITY, |l| l.matrix)).inverse()?;
+    let matrix = develops(from, look.as_ref().map_or(Mat3::IDENTITY, |l| l.matrix)).mul(&undone);
+    let (hue_sat, tone) = look.map_or((None, None), |l| (l.hue_sat, Some(l.tone)));
+    CameraMatch { start_hue_sat: starting.and_then(|l| l.hue_sat.clone()), matrix, hue_sat, tone }.checked()
+}
+
+/// `img`, linear Rec.2020 in a raw's starting look, in the camera's own look `m` (the Camera Matching profile): the
+/// starting look's table undone, then the camera look's matrix and table, as the decode applies a fitted look
+/// ([`crate::files::CameraColourModel::apply`]).
+pub(crate) fn camera_matched(img: &Rgb32f, m: &CameraMatch) -> Rgb32f {
+    let mut out = img.clone();
+    if let Some(start) = m.start_hue_sat.as_ref().and_then(HueSat::new) {
+        lightcraft_raster::par_rows(&mut out.data, out.width, |_, row| row.iter_mut().for_each(|p| *p = start.undo(*p)));
+    }
+    let hue_sat = m.hue_sat.as_ref().and_then(HueSat::new);
+    let colour = crate::files::CameraColourModel { wb: [1.0; 3], matrix: m.matrix, gain: 1.0, tables: None, hue_sat: hue_sat.as_ref() };
+    colour.apply(&mut out);
+    out
+}
+
+/// The colour a raw starts from ([`starting_colour`]) as DNG colour tags, for a DNG of the raw's camera RGB (Photo
+/// Merge, issue #965): without them a merge of CR2s, whose colour comes from a look fitted to their JPEG, rendered
+/// green and dark. `None` when the file has colour matrices of its own (a DNG keeps them).
+pub(crate) fn starting_colour_tags(raw: &mut RawImage, bytes: &[u8]) -> Option<ColorData> {
+    if lightcraft_raw::color::has_matrix(&raw.color) {
+        return None;
+    }
+    // the white the source shows, decided before `starting_colour` may fill in measured matrices
+    let scale = crate::files::WbScaleOf::new(raw.format, &raw.color, raw.wb_multipliers, &raw.metadata);
+    let white = scale.dng_white(&raw.color, lightcraft_raw::color::as_shot_white_xy(raw));
+    // (a merge frame arrives without its lens warp: `lightcraft_merge` removes it before calling)
+    let (_, t, look, _) = starting_colour(raw, bytes, None, None);
+    dng_colour(&raw.color, &white, &t, look.as_ref())
+}
+
+/// Give a raw about to be written as a DNG of its own (Export as DNG, Convert / Copy as DNG) the colour it opens
+/// with, when the file has no colour matrices (issue #1745: a Z 9 NEF's DNG had no `ColorMatrix1`, and other raw
+/// converters refused it). The lens corrections stay in the DNG; only the fit sees the raw without them, as when
+/// the photo opens. A raw that opens with the vignetting its camera corrected in its JPEG ([`jpeg_vignetting`])
+/// gets it as a `FixVignetteRadial`, so the DNG opens with it too.
+pub(crate) fn with_starting_colour(raw: &mut RawImage, bytes: &[u8]) {
+    if lightcraft_raw::color::has_matrix(&raw.color) {
+        return;
+    }
+    let lens = crate::lens_profiles::for_raw(&raw.info(), || lightcraft_meta::extract(bytes));
+    let list3 = raw.opcodes.list3.clone();
+    raw.opcodes.list3.retain(|op| !op.is_lens_correction());
+    let (tags, vignette) = sharing_proxies(|| {
+        let tags = starting_colour_tags(raw, bytes);
+        // (the transform the photo opens with: `starting_colour_tags` filled in any measured matrices)
+        let t = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
+        let vignette = if lens.is_none() { jpeg_vignetting(raw, bytes, &t).and_then(|l| vignette_opcode(raw, l.vignette.as_ref()?)) } else { None };
+        (tags, vignette)
+    });
+    raw.opcodes.list3 = list3;
+    raw.opcodes.list3.extend(vignette);
+    if let Some(tags) = tags {
+        raw.color = tags;
+    }
+}
+
+/// A vignette centred on `raw`'s default crop (as [`jpeg_vignetting`] gives it) as a DNG `FixVignetteRadial` of its
+/// active area: the opcode's radius is the farthest active-area corner (`files::embedded_lens` reads it back).
+fn vignette_opcode(raw: &RawImage, v: &lightcraft_develop::EmbeddedVignette) -> Option<lightcraft_raw::Opcode> {
+    let a = raw.active_area;
+    let c = raw.crop.clipped(a.width, a.height);
+    let c = if c.width == 0 || c.height == 0 { lightcraft_raw::Rect::new(0, 0, a.width, a.height) } else { c };
+    if a.width < 2 || a.height < 2 {
+        return None;
+    }
+    let (aw, ah) = (a.width as f64 - 1.0, a.height as f64 - 1.0);
+    // the crop's centre in the opcode's pixel-index convention (0 and 1 at the first and last pixel)
+    let (px, py) = (c.x as f64 + (c.width as f64 - 1.0) / 2.0, c.y as f64 + (c.height as f64 - 1.0) / 2.0);
+    let far = [(0.0, 0.0), (aw, 0.0), (0.0, ah), (aw, ah)].iter().map(|&(x, y)| (x - px).hypot(y - py)).fold(0.0, f64::max);
+    let s = far / (v.radius * c.width.max(c.height) as f64);
+    if !(s.is_finite() && s > 0.0) {
+        return None;
+    }
+    let mut k = v.k;
+    for (i, ki) in k.iter_mut().enumerate() {
+        *ki *= s.powi(2 * i as i32 + 2);
+    }
+    Some(lightcraft_raw::Opcode::FixVignetteRadial { k, center: [px / aw, py / ah] })
+}
+
+/// DNG tags that render white-balanced camera RGB at its as-shot white as `t` with `look` on top does: one forward
+/// matrix (with a colour matrix and as-shot neutral that agree with it at that white), the look's hue/saturation
+/// table as `ProfileHueSatMap` and its tone curve as `ProfileToneCurve`. Not quite the same render: a DNG table
+/// doesn't keep each pixel's luminance as the fitted one does ([`HueSat`]), and the chroma curve has no tag; on two
+/// CC0 CR2s (EOS 550D, 40D) an HDR merge of three copies renders within mean CIE76 ΔE 1.07 and 0.47 of the photo
+/// (1.47 and 0.66 without the table; 26 and 23 with no colour tags at all).
+/// The colour matrices declare `declared`, the white balance the source shows ([`crate::files::WbScaleOf::dng_white`]),
+/// so the DNG opens at the source's As Shot temperature and tint and a white-balance edit starts from it. Matrices
+/// derived from `forward` put the declared white wherever the look and the generic camera model took it: ARW merges
+/// opened at about 7000 K / +115 where the ARWs show 4800 K / +8, and any white-balance edit turned them green.
+/// `forward` is used only with the as-shot neutral, so the render at As Shot doesn't depend on them.
+/// `None` when the white balance or the matrix can't give tags.
+pub(crate) fn dng_colour(tags: &ColorData, declared: &crate::files::DngWhite, t: &CameraTransform, look: Option<&CameraLook>) -> Option<ColorData> {
+    let m = look.map_or(t.matrix, |l| l.matrix.mul(&t.matrix));
+    // the DNG model renders the camera's white at unit brightness: what a look does to white's brightness goes
+    // into the baseline exposure
+    let white = m.apply([1.0; 3]);
+    let k = (white[0] + white[1] + white[2]) / 3.0;
+    if !(k.is_finite() && k > 1e-6 && t.wb.iter().all(|w| w.is_finite() && *w > 0.0)) {
+        return None;
+    }
+    let m = Mat3(m.0.map(|r| r.map(|v| v / k)));
+    let forward = bradford(D65, D50).mul(&REC2020.to_xyz()).mul(&m);
+    let wb = t.wb.map(f64::from);
+    let neutral = wb.map(|w| wb.iter().cloned().fold(f64::MAX, f64::min) / w);
+    let (illuminant, color_matrix) = match declared {
+        crate::files::DngWhite::Matrices(c) if lightcraft_raw::color::has_matrix(c) => (c.illuminant, c.color_matrix),
+        crate::files::DngWhite::Matrices(_) => ([21, 0], [Some(declaring(t.white_xy, neutral)?), None]),
+        crate::files::DngWhite::At(xy) => ([21, 0], [Some(declaring(*xy, neutral)?), None]),
+    };
+    if !color_matrix.iter().flatten().all(|m| m.0.iter().flatten().all(|v| v.is_finite())) {
+        return None;
+    }
+    Some(ColorData {
+        illuminant,
+        color_matrix,
+        // a second colour matrix comes with a second forward matrix (DNG spec): the same one, fitted at one white
+        forward_matrix: [Some(forward), color_matrix[1].map(|_| forward)],
+        camera_calibration: [None, None],
+        analog_balance: None,
+        as_shot_neutral: Some(neutral),
+        as_shot_white_xy: None,
+        baseline_exposure: t.baseline_exposure + k.log2(),
+        baseline_sharpness: tags.baseline_sharpness,
+        kelvin_presets: None,
+        profile: ProfileLook {
+            hue_sat_map: [look.and_then(|l| l.hue_sat.clone()), None],
+            tone_curve: look.and_then(|l| dng_tone_curve(&l.tone)),
+            ..Default::default()
+        },
+    })
+}
+
+/// An XYZ → camera colour matrix under which camera `neutral` is white `xy`: the generic camera model, scaled per
+/// channel. `None` when the model gives no positive neutral there.
+fn declaring(xy: Xy, neutral: [f64; 3]) -> Option<Mat3> {
+    let g = lightcraft_raw::color::xyz_to_camera(&ColorData::default(), xy);
+    let n = g.apply(xy.to_xyz());
+    if !n.iter().all(|v| v.is_finite() && *v > 1e-9) {
+        return None;
+    }
+    Some(Mat3::diag(neutral[0] / n[0], neutral[1] / n[1], neutral[2] / n[2]).mul(&g))
+}
+
+/// A camera tone curve as a DNG `ProfileToneCurve` (linear in, linear out, 1 = white): sampled densely over the
+/// 12 stops below white, the range the curve is read back over (`files::dng_tone_curve`).
+pub(crate) fn dng_tone_curve(tone: &CameraTone) -> Option<ToneCurve> {
+    const N: usize = 256;
+    let samples = (0..=N).map(|i| {
+        let x = 2f32.powf(-12.0 + 12.0 * i as f32 / N as f32);
+        [x, tone.apply(x).min(1.0)]
+    });
+    let flat: Vec<f64> = std::iter::once([0.0, 0.0]).chain(samples).flatten().map(f64::from).collect();
+    ToneCurve::from_tag(&flat)
+}

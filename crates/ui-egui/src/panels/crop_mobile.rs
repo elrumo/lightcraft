@@ -228,9 +228,9 @@ fn bottom_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
         };
         let galley = ui.painter().layout_no_wrap(text, t.font(15.0), t.text);
         let at = Rect::from_center_size(r.center(), galley.size() + vec2(12.0, 14.0));
-        let resp = ui.interact(at, Id::new("crop-fill-with"), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Fill With")));
-        register(ui.ctx(), "button:cropFillWith", at);
+        let resp = ui.interact(at, Id::unique("crop-fill-with"), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Fill With")));
+        register(ui, "button:cropFillWith", at);
         let x = at.center().x - galley.size().x / 2.0;
         let y = at.center().y - galley.size().y / 2.0;
         ui.painter().hline(x..=(x + galley.size().x), y + galley.size().y + 1.0, Stroke::new(1.0, t.text));
@@ -312,14 +312,14 @@ fn tools(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, inline: bool) {
 /// Generate (`button:cropGenerate`): paints the area of the crop past the photo with the chosen
 /// model. While it runs it reads the progress, and a tap stops it.
 fn generate_pill(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, at: Rect) {
-    let resp = ui.interact(at, Id::new("crop-generate"), Sense::click());
+    let resp = ui.interact(at, Id::unique("crop-generate"), Sense::click());
     let progress = crate::expand::progress(app);
     let label = match progress {
         Some(f) => crate::i18n::tr_format!("{stage}… {:.0}%", f * 100.0, stage = crate::i18n::tr("Generating")),
         None => crate::i18n::tr("Generate").to_string(),
     };
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
-    register(ui.ctx(), "button:cropGenerate", at);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label.clone()));
+    register(ui, "button:cropGenerate", at);
     let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), resp.is_pointer_button_down_on(), 0.1);
     let p = ui.painter();
     p.rect_filled(at.shrink(2.0 * k), at.height() / 2.0, crate::widgets::lerp(t.accent, t.pressed, 0.25 * k));
@@ -357,8 +357,8 @@ fn generate_pill(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, at: Rect) {
 fn expand_tile(ui: &mut Ui, t: &Tokens, on: bool) -> egui::Response {
     let label = crate::i18n::tr_ctx("crop", "Expand");
     let (r, resp) = ui.allocate_exact_size(vec2(TILE_W, 72.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, label));
-    register(ui.ctx(), "button:cropExpand", r);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, label));
+    register(ui, "button:cropExpand", r);
     let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
     let track = Rect::from_center_size(r.center() - vec2(0.0, 11.0), vec2(46.0, 26.0));
     ui.painter().rect_filled(track, 13.0, crate::widgets::lerp(t.button, t.accent, k));
@@ -371,9 +371,9 @@ fn expand_tile(ui: &mut Ui, t: &Tokens, on: bool) -> egui::Response {
 
 /// A round button of the tools row (`icon:<id>`): dark, with its glyph white when `lit`.
 fn round_button(ui: &mut Ui, t: &Tokens, id: &str, icon: Icon, tip: &str, at: Rect, lit: bool) -> egui::Response {
-    let resp = ui.interact(at, Id::new(("crop-round", id)), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(tip)));
-    register(ui.ctx(), format!("icon:{id}"), at);
+    let resp = ui.interact(at, Id::unique(("crop-round", id)), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr(tip)));
+    register(ui, format!("icon:{id}"), at);
     let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), resp.is_pointer_button_down_on(), 0.1);
     let c = at.center();
     ui.painter().circle(c, ROUND_D / 2.0 * (1.0 - 0.06 * k), crate::widgets::lerp(t.chrome, t.pressed, k), Stroke::new(1.0, t.button_border));
@@ -387,11 +387,11 @@ fn dial(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, r: Rect) {
     let Some(id) = app.session.active() else { return };
     let angle_now = |app: &LightcraftApp| app.session.develop_of(id).map_or(0.0, |d| d.crop.geometry.angle);
     let area = Rect::from_center_size(r.center(), vec2(r.width().min(260.0), r.height()));
-    let resp = ui.interact(area.expand2(vec2(24.0, 0.0)), Id::new("crop-dial"), Sense::drag());
+    let resp = ui.interact(area.expand2(vec2(24.0, 0.0)), Id::unique("crop-dial"), Sense::drag());
     let before = angle_now(app);
     resp.widget_info(|| egui::WidgetInfo::slider(true, before, crate::i18n::tr("Straighten")));
-    register(ui.ctx(), "dial:angle", area);
-    let start = Id::new("crop-dial-start");
+    register(ui, "dial:angle", area);
+    let start = Id::unique("crop-dial-start");
     if resp.drag_started() {
         let _ = app.run("develop.beginInteraction", json!({"label": "Straighten"}));
         ui.ctx().data_mut(|d| d.insert_temp(start, before));
@@ -460,9 +460,9 @@ fn tabs_panel(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
     for (i, ((key, label), w)) in labels.iter().zip(widths).enumerate() {
         let on = app.ui.crop_geometry == (i == 1);
         let cell = Rect::from_min_size(pos2(x - 12.0, r.top()), vec2(w + 24.0, TABS_H));
-        let resp = ui.interact(cell, Id::new(("crop-tab", *key)), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(label)));
-        register(ui.ctx(), format!("button:cropTab-{key}"), cell);
+        let resp = ui.interact(cell, Id::unique(("crop-tab", *key)), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, crate::i18n::tr(label)));
+        register(ui, format!("button:cropTab-{key}"), cell);
         let galley = layout(label, on);
         ui.painter().galley(pos2(x, cell.center().y - galley.size().y / 2.0), galley, t.text);
         if on {
@@ -485,8 +485,8 @@ fn tabs_panel(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
 fn tile(ui: &mut Ui, t: &Tokens, id: &str, icon: Icon, label: &str, on: bool) -> egui::Response {
     let label = crate::i18n::tr(label);
     let (r, resp) = ui.allocate_exact_size(vec2(TILE_W, 72.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
-    register(ui.ctx(), format!("button:{id}"), r);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, label));
+    register(ui, format!("button:{id}"), r);
     let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
     if k > 0.0 {
         ui.painter().rect_filled(r, 10.0, t.tool_active.gamma_multiply(k));
@@ -609,8 +609,8 @@ pub fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
 fn ratio_row(ui: &mut Ui, id: &str, label: &str, w: f64, h: f64, on: bool) -> bool {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
-    register(ui.ctx(), format!("button:{id}"), r);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, label));
+    register(ui, format!("button:{id}"), r);
     let p = ui.painter();
     if resp.is_pointer_button_down_on() {
         p.rect_filled(r, 0.0, t.hover);
@@ -635,8 +635,8 @@ fn ratio_row(ui: &mut Ui, id: &str, label: &str, w: f64, h: f64, on: bool) -> bo
 fn square_tile(ui: &mut Ui, t: &Tokens, id: &str, icon: Icon, label: &str, on: bool) -> egui::Response {
     let label = crate::i18n::tr(label);
     let (r, resp) = ui.allocate_exact_size(vec2(54.0, 76.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
-    register(ui.ctx(), format!("button:{id}"), r);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, label));
+    register(ui, format!("button:{id}"), r);
     let b = Rect::from_min_size(r.min, vec2(54.0, 54.0));
     let down = resp.is_pointer_button_down_on();
     ui.painter().rect(
@@ -720,15 +720,15 @@ fn geometry_tab(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
 /// While the Straighten line is being drawn: a pill over the photo saying how, which cancels it.
 fn straighten_hint(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
     let t = Tokens::get(ctx);
-    egui::Area::new(Id::new("crop-straighten-hint"))
+    egui::Area::new(Id::unique("crop-straighten-hint"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos2(canvas.center().x, canvas.top() + 12.0))
         .pivot(Align2::CENTER_TOP)
         .show(ctx, |ui| {
             let galley = ui.painter().layout_no_wrap(crate::i18n::tr("Drag along the horizon").to_string(), t.font(14.0), Color32::WHITE);
             let (r, resp) = ui.allocate_exact_size(galley.size() + vec2(56.0, 18.0), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Cancel")));
-            register(ctx, "button:straightenCancel", r);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Cancel")));
+            crate::widgets::register_response("button:straightenCancel", r, &resp);
             ui.painter().rect_filled(r, r.height() / 2.0, Color32::from_black_alpha(190));
             ui.painter().galley(pos2(r.left() + 16.0, r.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(14.0, 14.0)), Icon::Close, Color32::WHITE);
