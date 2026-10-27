@@ -297,7 +297,8 @@ impl Session {
     }
 
     /// The server's shared presets (`{id: "srv.…", name, group, settings}`) and the built-in ones it hides
-    /// (the item [`SERVER_HIDDEN_ITEM`]): what doesn't parse, repeats an id or is too large is left out.
+    /// (the item [`SERVER_HIDDEN_ITEM`]): what doesn't parse, repeats an id, is disabled (`disabled: true`) or
+    /// is too large is left out.
     fn take_server_presets(&mut self, items: &[Value]) {
         let mut hidden = crate::presets::Hidden::default();
         let mut list = Vec::new();
@@ -317,6 +318,10 @@ impl Session {
                         .collect()
                 };
                 hidden = crate::presets::Hidden { presets: names("presets"), groups: names("groups") };
+                continue;
+            }
+            // (the server doesn't send the ones its admin disabled; a server that did is not shown them either)
+            if v.get("disabled").and_then(Value::as_bool) == Some(true) {
                 continue;
             }
             let Ok(p) = serde_json::from_value::<lightcraft_develop::Preset>(v.clone()) else { continue };

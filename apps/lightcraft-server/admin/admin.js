@@ -390,27 +390,47 @@ function showPresets(p) {
   const presets = p.items.filter((i) => !isHiddenItem(i));
   const body = $('sharedPresets').querySelector('tbody');
   body.replaceChildren();
-  if (!presets.length) body.append(emptyRow(2, 'presets', 'No shared presets yet. Import LightCraft, XMP or Lightroom preset files, or a zip of them.'));
+  if (!presets.length) body.append(emptyRow(3, 'presets', 'No shared presets yet. Import LightCraft, XMP or Lightroom preset files, or a zip of them.'));
   for (const [group, list] of byGroup(presets)) {
+    const off = list.filter((it) => it.disabled === true).length;
+    const allOff = off === list.length;
+    const count = plural(list.length, 'preset', 'presets');
     body.append(
       el(
         'tr',
-        { class: 'group' },
-        el('td', {}, el('b', {}, group), el('span', { class: 'sub' }, plural(list.length, 'preset', 'presets'))),
+        { class: 'group' + (allOff ? ' off' : ''), 'data-group': group },
+        el('td', {}, el('b', {}, group), el('span', { class: 'sub' }, allOff ? count + ', disabled' : off ? count + ', ' + off + ' disabled' : count)),
+        el('td', { class: 'end' }, shownSwitch(group, !allOff, (on) => setDisabled((x) => x.group === group, !on), false, 'Enable the group ' + group + ' for users')),
         el('td', { class: 'end' }, rowButton('edit', 'Rename', () => renameGroup(group)), rowButton('trash', 'Delete', () => deleteGroup(group, list.length))),
       ),
     );
     for (const it of list) {
-      body.append(
+      const row = el(
+        'tr',
+        { class: 'preset' + (it.disabled === true ? ' off' : ''), 'data-group': group },
         el(
-          'tr',
+          'td',
           {},
-          el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('presets')), el('b', {}, it.name))),
-          el('td', { class: 'end' }, rowButton('edit', 'Rename', () => renamePreset(it)), rowButton('folder', 'Move', () => movePreset(it)), rowButton('trash', 'Delete', () => deletePreset(it))),
+          el(
+            'div',
+            { class: 'who-cell' },
+            el('span', { class: 'grip', title: 'Drag to another group', 'aria-hidden': 'true' }, icon('grip')),
+            el('span', { class: 'thing' }, icon('presets')),
+            el('b', {}, it.name),
+            ...(it.disabled === true ? [el('span', { class: 'sub off-note' }, 'Disabled')] : []),
+          ),
         ),
+        el('td', { class: 'end' }, shownSwitch(it.name, it.disabled !== true, (on) => setDisabled((x) => x.id === it.id, !on), false, 'Enable ' + it.name + ' for users')),
+        el('td', { class: 'end' }, rowButton('edit', 'Rename', () => renamePreset(it)), rowButton('folder', 'Move', () => movePreset(it)), rowButton('trash', 'Delete', () => deletePreset(it))),
       );
+      dragPreset(row, it);
+      body.append(row);
     }
   }
+  if (presets.length) {
+    body.append(el('tr', { class: 'dropnew', 'data-new': '' }, el('td', { colspan: 3 }, icon('folder'), el('span', {}, 'Drop here to move it to a new group'))));
+  }
+  wireDrop(body);
   const hidden = hiddenOf(p.items);
   const builtin = $('builtinPresets').querySelector('tbody');
   builtin.replaceChildren();
@@ -424,9 +444,101 @@ function showPresets(p) {
   }
 }
 
-/** A "shown to users" switch for `what`; `change(on)` saves. */
-function shownSwitch(what, on, change, disabled) {
-  const input = el('input', { type: 'checkbox', role: 'switch', 'aria-label': 'Show ' + what + ' to users', disabled });
+/** The id of the preset being dragged (null: none). */
+let dragged = null;
+
+/** Make `row` (the preset `it`) draggable onto another group. */
+function dragPreset(row, it) {
+  row.draggable = true;
+  row.addEventListener('dragstart', (e) => {
+    dragged = it.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', it.name);
+    // (after the browser took its picture of the row)
+    requestAnimationFrame(() => {
+      row.classList.add('dragging');
+      $('sharedPresets').classList.add('dragging-on');
+    });
+  });
+  row.addEventListener('dragend', endDrag);
+}
+
+function endDrag() {
+  dragged = null;
+  const t = $('sharedPresets');
+  t.classList.remove('dragging-on');
+  for (const r of t.querySelectorAll('.dragging, .drop-target')) r.classList.remove('dragging', 'drop-target');
+}
+
+/** The rows of the group `group` take a dragged preset; so does the "new group" row at the end. */
+function wireDrop(body) {
+  const slot = (e) => {
+    const row = e.target instanceof Element ? e.target.closest('tr[data-group], tr[data-new]') : null;
+    const it = dragged && sharedItems().find((x) => x.id === dragged);
+    if (!row || !it) return null;
+    const group = row.hasAttribute('data-new') ? null : row.dataset.group;
+    return group === it.group ? null : { it, group, row };
+  };
+  const mark = (group, isNew) => {
+    for (const r of body.querySelectorAll('tr')) r.classList.toggle('drop-target', isNew ? r.hasAttribute('data-new') : group !== undefined && r.dataset.group === group && !r.hasAttribute('data-new'));
+  };
+  body.ondragover = (e) => {
+    const s = slot(e);
+    if (!s) return mark(undefined, false);
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    mark(s.group, s.group === null);
+  };
+  body.ondragleave = (e) => {
+    if (!body.contains(e.relatedTarget)) mark(undefined, false);
+  };
+  body.ondrop = (e) => {
+    const s = slot(e);
+    endDrag();
+    if (!s) return;
+    e.preventDefault();
+    if (s.group !== null) return moveTo(s.it, s.group).catch(fail);
+    newGroupFor(s.it);
+  };
+}
+
+/** Ask for the name of a new group for `it`. */
+function newGroupFor(it) {
+  return ask({
+    title: 'Move ' + it.name + ' to a new group',
+    fields: [{ name: 'group', label: 'New group', value: '', help: groupsHelp() }],
+    ok: 'Move',
+    action: (v) => moveTo(it, v.group.trim()),
+  });
+}
+
+/**
+ * Put the preset `it` in the group `group`. A group whose presets are all disabled is disabled: the preset
+ * joins it disabled too (enable it, or the group, to show it).
+ */
+async function moveTo(it, group) {
+  const there = sharedItems().filter((x) => x.group === group);
+  const inherit = there.length > 0 && there.every((x) => x.disabled === true);
+  await savePresets(withHidden(sharedItems().map((x) => (x.id === it.id ? { ...x, group, ...(inherit ? { disabled: true } : {}) } : x))));
+  toast('Moved ' + it.name + ' to ' + group + (inherit && it.disabled !== true ? ', which is disabled, so it is disabled too' : '') + '.');
+}
+
+/** Disable (or enable) the shared presets `match` picks. A disabled preset stays here and goes from every user’s devices. */
+function setDisabled(match, off) {
+  return savePresets(
+    withHidden(
+      sharedItems().map((x) => {
+        if (!match(x)) return x;
+        const { disabled, ...rest } = x;
+        return off ? { ...rest, disabled: true } : rest;
+      }),
+    ),
+  );
+}
+
+/** A "shown to users" switch for `what` (named `label` when given); `change(on)` saves. */
+function shownSwitch(what, on, change, disabled, label) {
+  const input = el('input', { type: 'checkbox', role: 'switch', 'aria-label': label || 'Show ' + what + ' to users', disabled });
   input.checked = on;
   input.addEventListener('change', async () => {
     input.disabled = true;
@@ -475,7 +587,7 @@ function movePreset(it) {
     title: 'Move ' + it.name,
     fields: [{ name: 'group', label: 'Group', value: it.group, help: groupsHelp() }],
     ok: 'Move',
-    action: (v) => savePresets(withHidden(sharedItems().map((x) => (x.id === it.id ? { ...x, group: v.group.trim() } : x)))),
+    action: (v) => moveTo(it, v.group.trim()),
   });
 }
 
