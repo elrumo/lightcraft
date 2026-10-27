@@ -5,7 +5,7 @@
 #      LIGHTCRAFT_DOMAIN=photos.example.com LIGHTCRAFT_PHOTOS=/srv/photos docker compose up -d --build
 #   3. docker compose logs lightcraft     (shows the one-time setup code)
 #      Open https://photos.example.com/admin, enter the code, create your admin account, add users.
-#      (Or from the command line: docker compose exec -it lightcraft lightcraft-server user add ann)
+#      (Or from the command line: docker compose exec -it lightcraft lightbites-server user add ann)
 #   4. Photos already on this machine: on the admin page, Users › Folders, add /photos/<folder> to a
 #      user (LIGHTCRAFT_PHOTOS is mounted at /photos, read-only: nothing there is copied or changed).
 #   5. In LightCraft: Settings > Sync, server https://photos.example.com, user ann, the password.
@@ -19,7 +19,7 @@ services:
     build:
       context: ../..
       dockerfile: apps/lightcraft-server/Dockerfile
-    image: lightcraft-server
+    image: lightbites-server
     restart: unless-stopped
     environment:
       LIGHTCRAFT_LOG: info

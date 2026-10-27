@@ -41,7 +41,7 @@ in the container, for [library folders](#library-folders-photos-already-on-the-s
 
 Open `https://photos.example.com/admin`, enter the setup code, create your admin account and add users there
 ([the admin page](#the-admin-page)); or from the command line:
-`docker compose exec -it lightcraft lightcraft-server user add ann` (type the password; it isn't shown).
+`docker compose exec -it lightcraft lightbites-server user add ann` (type the password; it isn't shown).
 
 `apps/lightcraft-server/docker-compose.yml` and its `Caddyfile` are all there is to it; everything the server keeps is
 in the `lightcraft-data` volume. Then [connect your devices](#connect-your-devices) to `https://photos.example.com`.
@@ -49,25 +49,25 @@ in the `lightcraft-data` volume. Then [connect your devices](#connect-your-devic
 ### Docker
 
 ```sh
-docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .
+docker build -f apps/lightcraft-server/Dockerfile -t lightbites-server .
 docker run -d --name lightcraft --restart unless-stopped -p 8080:8080 \
-  -v lightcraft-data:/data -v /srv/photos:/photos:ro lightcraft-server
-docker exec -i lightcraft lightcraft-server user add ann        # type the password, then Enter
-docker exec lightcraft lightcraft-server folder add ann /photos/ann --name Photos   # optional
+  -v lightcraft-data:/data -v /srv/photos:/photos:ro lightbites-server
+docker exec -i lightcraft lightbites-server user add ann        # type the password, then Enter
+docker exec lightcraft lightbites-server folder add ann /photos/ann --name Photos   # optional
 ```
 
 The image holds the server and the web build; everything it keeps is in the `/data` volume (the photo folders
 mounted at `/photos` stay where they are). If everyone uses the apps and nobody the web client, add `--target lite`
 to the build (`make push-server-lite` pushes it as `…/lightcraft-lite`): the server and its admin page only, built
 without the web client, so it builds faster. It runs as uid 10001, which must be able to read the photo folders, and
-reports its health to Docker (`lightcraft-server health`).
+reports its health to Docker (`lightbites-server health`).
 
 ### Without Docker
 
 ```sh
 cargo build --release -p lightcraft-server
-printf '%s\n' 'a long password' | target/release/lightcraft-server user add ann --data /srv/lightcraft
-target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1:8080 [--web target/web-site]
+printf '%s\n' 'a long password' | target/release/lightbites-server user add ann --data /srv/lightcraft
+target/release/lightbites-server serve --data /srv/lightcraft --listen 127.0.0.1:8080 [--web target/web-site]
 ```
 
 | Command | What it does |
@@ -199,7 +199,7 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
 **First run:** while no user is an admin, the server prints a one-time **setup code** to its log
 (`docker compose logs lightcraft`, or the terminal running `serve`). The admin page asks for it before it creates the
 first admin, so a server that is already on the internet can't be claimed by whoever finds it first; ten wrong codes
-replace it with a new one (logged again). Already have users? `lightcraft-server user admin ann on` (or
+replace it with a new one (logged again). Already have users? `lightbites-server user admin ann on` (or
 `user add NAME --admin`) instead.
 
 Admins sign in to the page with their user name and password. That opens an admin session of its own (not a device:
@@ -227,7 +227,7 @@ device's.
 ### Storage limits
 
 An admin can limit what the server keeps for a user, as a family plan's share of a cloud service: admin page ›
-Users › the user › **Storage limit**, or `lightcraft-server user quota ann 200G` (`off` lifts it). What counts is
+Users › the user › **Storage limit**, or `lightbites-server user quota ann 200G` (`off` lifts it). What counts is
 what the server stores for them: the originals their devices upload, smart and small previews, and photos visitors
 add through their [album links](#share-an-album). **Library folders don't count** (they are the admin's folders,
 read in place).
@@ -243,16 +243,16 @@ read in place).
 
 The server can also search each user's photos by what is in them, so the web build, iOS and other
 computers need no model: `GET /api/search?q=…`, an index of vectors per user that devices may add to, and the admin
-page's **Processing** search switch (or `lightcraft-server model download --accept-licences`) to install the model (about 1.5 GB,
-loaded on first use, ~1.9 GB of memory while loaded). `lightcraft-server model disable|enable [--text]` are the switches from a shell. It can also read the text in photos (`model download --text`) and, for a user an admin allows
-(`lightcraft-server user faces NAME on`, after `model download --faces`), find the people in their photos for devices to
+page's **Processing** search switch (or `lightbites-server model download --accept-licences`) to install the model (about 1.5 GB,
+loaded on first use, ~1.9 GB of memory while loaded). `lightbites-server model disable|enable [--text]` are the switches from a shell. It can also read the text in photos (`model download --text`) and, for a user an admin allows
+(`lightbites-server user faces NAME on`, after `model download --faces`), find the people in their photos for devices to
 name. Routes, privacy and limits: [`search-people.md`](search-people.md).
 
 ## Library folders: photos already on the server
 
 A self-hosted server usually sits next to the photos: a NAS share, a backup disk, folders of past years. An admin
 can make such folders a user's **library folders** (admin page › Users › the user › Library folders, or
-`lightcraft-server folder add ann /photos/ann --name Photos`). The server reads them in place:
+`lightbites-server folder add ann /photos/ann --name Photos`). The server reads them in place:
 
 - **Nothing in them is copied, moved or changed.** Mount them read-only (`-v /srv/photos:/photos:ro`). The server
   keeps only the previews it builds and an index (`folders.json`); a photo's original is sent to a device straight
@@ -271,7 +271,7 @@ can make such folders a user's **library folders** (admin page › Users › the
   Read Metadata from File does. Edits made on a device stay until the sidecar changes. The index keeps each
   sidecar's time; an index written by an older server only notes them on its first scan.
 - **Writable folders (opt-in, per folder).** An admin can let the server write in a library folder (admin page ›
-  the user › Library folders › **Writing**, or `lightcraft-server folder writable ann Photos on`; add
+  the user › Library folders › **Writing**, or `lightbites-server folder writable ann Photos on`; add
   `--writable` / `--imports` to `folder add`). The folder must be mounted read-write, writable by the server's user
   (uid 10001 in the image; `:rw` in the compose file); the server tries a file before it says yes, and the admin
   page shows when a folder that should be writable isn't. Three things then happen, and nothing else:
@@ -293,7 +293,7 @@ can make such folders a user's **library folders** (admin page › Users › the
     temporary name and linked into place; if the server stops in between, the next scan recognises the file by its
     content. Previews stay in the server's store.
 - **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
-  (the admin page's **Scan for changes**, `lightcraft-server scan`). Files whose size and time didn't change aren't read
+  (the admin page's **Scan for changes**, `lightbites-server scan`). Files whose size and time didn't change aren't read
   again, and neither are the ones that couldn't be read, until the server restarts. The admin page's **Rescan
   everything** (`POST /api/admin/users/{name}/rescan`) reads every file again, changed or not, and tries again the ones
   that couldn't be read: it finds a file whose content changed but whose size and time didn't, and it takes as long
@@ -310,7 +310,7 @@ can make such folders a user's **library folders** (admin page › Users › the
 - **Files cut short.** A copy or download that stopped part-way keeps the start of a photo and loses its end. It
   still opens (a raw shows its camera JPEG, a DNG or CR2 develops what is left), so it looks wrong rather than broken.
   The admin page's **Check files** (the user › Library folders, `POST /api/admin/users/{name}/check`, or
-  `lightcraft-server check [NAME]`) checks every original of the user, in their library folders and in the server's
+  `lightbites-server check [NAME]`) checks every original of the user, in their library folders and in the server's
   store, from each file's structure, reading only its headers: every box of a CR3 / HEIC / MP4 / MOV and every strip
   and tile of a DNG / CR2 / NEF / ARW / TIFF must end inside the file, a JPEG / PNG / GIF must end with its end
   marker, a WebP or PSD must be as long as it says. It lists each damaged file with what is missing and its photos,
@@ -322,7 +322,7 @@ can make such folders a user's **library folders** (admin page › Users › the
   and shown as such on the admin page. A photo removed from the library on a device isn't added back by the next
   scan (unless its file changes). Removing a library folder keeps its photos in the library.
 - **Names you choose are skipped too** (admin page › the user › Library folders › **Skipped names**, or
-  `lightcraft-server folder ignore ann '*.fcpbundle' 'Proxy Media'`). A pattern is one file or folder name, not a
+  `lightbites-server folder ignore ann '*.fcpbundle' 'Proxy Media'`). A pattern is one file or folder name, not a
   path: `*` stands for any run of characters, `?` for one, capitals don't matter, and anything inside a skipped
   folder goes with it, so `*.fcpbundle` leaves out every Final Cut Pro bundle (and its `Original Media`) wherever it
   is. The list belongs to the user and covers all their library folders; the next scan (started when it is saved)
@@ -336,9 +336,9 @@ can make such folders a user's **library folders** (admin page › Users › the
 
 Every client needs the same three things: the **server address** (`https://photos.example.com`, or
 `http://machine-name:8080` on a tailnet), a **user name** and its **password**, as added on
-[the admin page](#the-admin-page) or with `lightcraft-server user add`. The password goes to the server once; the
+[the admin page](#the-admin-page) or with `lightbites-server user add`. The password goes to the server once; the
 device gets its own token (kept in the library's `sync.json`), which revoking the device (admin page or
-`lightcraft-server device revoke`) or [Sign Out](#signing-out) ends. A bare `photos.example.com` means `https://photos.example.com`;
+`lightbites-server device revoke`) or [Sign Out](#signing-out) ends. A bare `photos.example.com` means `https://photos.example.com`;
 a bare address at home or on a tailnet (`localhost`, a private or Tailscale IP address, a one-word name such as `nas`,
 `*.local`, `*.lan`) means `http://` (type `https://` to say otherwise).
 The device is listed on the server under the computer's name (`$LIGHTCRAFT_DEVICE` to choose another).
@@ -357,7 +357,7 @@ Users and devices are managed on the server: on [the admin page](#the-admin-page
 
 The server serves the web build itself, at its own address, and that needs nothing more. A web build hosted somewhere
 else (a static host or CDN) can sign in to the server too, if the server is told that site may call it from a browser:
-`lightcraft-server serve --cors-origin https://photos-app.example.com` (once per site, or `$LIGHTCRAFT_CORS`). Then
+`lightbites-server serve --cors-origin https://photos-app.example.com` (once per site, or `$LIGHTCRAFT_CORS`). Then
 type the server's address in Settings ▸ Sync on that site. Two things stay the browser's own rules: a page served over
 `https://` can only call an `https://` server (no `http://` on a home network), and the library and sign-in live in
 that site's browser storage, so each site is a separate device. The admin page is never callable from another site.

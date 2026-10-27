@@ -1,7 +1,7 @@
 //! Users and their devices.
 //!
 //! - `<data>/users.json`: each user's argon2 password hash and library id. Written by
-//!   `lightcraft-server user …`, read at every sign-in (so a new user works without a restart).
+//!   `lightbites-server user …`, read at every sign-in (so a new user works without a restart).
 //! - `<data>/users/<name>/devices.json`: the user's signed-in devices: name, id space, and the
 //!   SHA-256 of the device's token (the token itself is never stored). Reloaded when it changes
 //!   on disk (`device revoke` while the server runs).

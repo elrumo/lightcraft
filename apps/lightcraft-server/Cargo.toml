@@ -10,7 +10,7 @@ description = "LightCraft sync server: each user's library, shared by their devi
 path = "src/lib.rs"
 
 [[bin]]
-name = "lightcraft-server"
+name = "lightbites-server"
 path = "src/main.rs"
 
 [lints]

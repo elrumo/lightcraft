@@ -1,9 +1,10 @@
-//! `lightcraft-server install` / `uninstall`: run the server on a Mac without Docker or a terminal left open.
+//! `lightbites-server install` / `uninstall`: run the server on a Mac without Docker or a terminal left open.
 //!
 //! `install` copies the program and its `web` folder to `~/Library/Application Support/LightCraft Server/program`
 //! and starts it with a launchd agent (`~/Library/LaunchAgents/ai.lightcraft.server.plist`): it runs at login, is
 //! restarted if it stops, and keeps its data in `…/LightCraft Server/data`. `uninstall` stops it and removes the
-//! agent and the program; the data stays. Other systems use their own service manager (docs/self-hosting.md).
+//! agent and the program; the data stays. `start`, `stop` and `status` control the installed agent without removing
+//! it (a stopped server stays stopped across logins until `start`). Other systems use their own service manager (docs/self-hosting.md).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -89,7 +90,7 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     let p = paths()?;
     let exe = std::env::current_exe().map_err(|e| format!("can't find this program: {e}"))?.canonicalize().map_err(|e| e.to_string())?;
     let program_dir = p.app.join("program");
-    let installed_exe = program_dir.join("lightcraft-server");
+    let installed_exe = program_dir.join("lightbites-server");
     let installed_web = program_dir.join("web");
     let web_src = web.or_else(|| exe.parent().map(|d| d.join("web"))).filter(|w| w.is_dir());
     let data = match data {
@@ -104,6 +105,8 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     if exe != installed_exe {
         std::fs::create_dir_all(&program_dir).map_err(|e| format!("{}: {e}", program_dir.display()))?;
         std::fs::copy(&exe, &installed_exe).map_err(|e| format!("{}: {e}", installed_exe.display()))?;
+        // releases before the rename installed it as `lightcraft-server`
+        let _ = std::fs::remove_file(program_dir.join("lightcraft-server"));
     }
     if let Some(src) = web_src.as_ref().filter(|s| s.canonicalize().ok().as_deref() != installed_web.canonicalize().ok().as_deref()) {
         let _ = std::fs::remove_dir_all(&installed_web);
@@ -119,16 +122,15 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     }
     let _ = std::fs::remove_file(&p.log);
     std::fs::write(&p.plist, plist(&installed_exe, &data, listen, &installed_web, &p.log)).map_err(|e| format!("{}: {e}", p.plist.display()))?;
-    let plist_path = p.plist.to_string_lossy();
-    if !run("launchctl", &["bootstrap", &p.domain, &plist_path]) && !run("launchctl", &["load", "-w", &plist_path]) {
-        return Err(format!("launchctl could not start the server; its agent is {}", p.plist.display()));
-    }
+    run("launchctl", &["enable", &target]);
+    load(&p)?;
 
     let port = listen.rsplit(':').next().unwrap_or("8080");
     println!("LightCraft Server is installed and running (it starts at every login).");
     println!("  admin page: http://localhost:{port}/admin");
     println!("  data:       {}", data.display());
     println!("  log:        {}", p.log.display());
+    println!("  stop/start: lightbites-server stop | start | status  (the program is {})", installed_exe.display());
     // the first start logs the one-time code that claims the server: show it
     let until = Instant::now() + Duration::from_secs(20);
     while Instant::now() < until {
@@ -142,9 +144,64 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     Ok(())
 }
 
+fn load(p: &Paths) -> Result<(), String> {
+    let plist_path = p.plist.to_string_lossy();
+    if run("launchctl", &["bootstrap", &p.domain, &plist_path]) || run("launchctl", &["load", "-w", &plist_path]) {
+        Ok(())
+    } else {
+        Err(format!("launchctl could not start the server; its agent is {}", p.plist.display()))
+    }
+}
+
+fn running(p: &Paths) -> bool {
+    run("launchctl", &["print", &format!("{}/{LABEL}", p.domain)])
+}
+
+fn installed(p: &Paths) -> Result<(), String> {
+    if p.plist.is_file() { Ok(()) } else { Err("LightCraft Server is not installed here: run the installer first (see docs/self-hosting.md)".into()) }
+}
+
+/// Starts the installed server (and lets it start at login again).
+pub fn start() -> Result<(), String> {
+    let p = paths()?;
+    installed(&p)?;
+    run("launchctl", &["enable", &format!("{}/{LABEL}", p.domain)]);
+    if running(&p) {
+        println!("LightCraft Server is already running.");
+        return Ok(());
+    }
+    load(&p)?;
+    println!("LightCraft Server is running (it starts at every login).");
+    Ok(())
+}
+
+/// Stops the server and keeps it stopped, also after the next login, until `start`.
+pub fn stop() -> Result<(), String> {
+    let p = paths()?;
+    installed(&p)?;
+    let target = format!("{}/{LABEL}", p.domain);
+    run("launchctl", &["disable", &target]);
+    run("launchctl", &["bootout", &target]);
+    println!("LightCraft Server is stopped. Start it again with: lightbites-server start");
+    Ok(())
+}
+
+/// Ok when the server is running; an error (exit status 1) when it is not.
+pub fn status() -> Result<(), String> {
+    let p = paths()?;
+    installed(&p)?;
+    if running(&p) {
+        println!("LightCraft Server is running (log: {}).", p.log.display());
+        Ok(())
+    } else {
+        Err("LightCraft Server is stopped. Start it with: lightbites-server start".into())
+    }
+}
+
 pub fn uninstall() -> Result<(), String> {
     let p = paths()?;
     run("launchctl", &["bootout", &format!("{}/{LABEL}", p.domain)]);
+    run("launchctl", &["enable", &format!("{}/{LABEL}", p.domain)]);
     let _ = std::fs::remove_file(&p.plist);
     let _ = std::fs::remove_dir_all(p.app.join("program"));
     println!(
@@ -160,8 +217,8 @@ mod tests {
 
     #[test]
     fn plist_escapes_paths_and_lists_the_serve_arguments() {
-        let p = plist(Path::new("/a & b/lightcraft-server"), Path::new("/d"), "0.0.0.0:8080", Path::new("/w<1>"), Path::new("/l.log"));
-        assert!(p.contains("<string>/a &amp; b/lightcraft-server</string>\n    <string>serve</string>"));
+        let p = plist(Path::new("/a & b/lightbites-server"), Path::new("/d"), "0.0.0.0:8080", Path::new("/w<1>"), Path::new("/l.log"));
+        assert!(p.contains("<string>/a &amp; b/lightbites-server</string>\n    <string>serve</string>"));
         assert!(p.contains("<string>/w&lt;1&gt;</string>"));
         assert!(p.contains("<key>KeepAlive</key><true/>"));
         // macOS's own checker agrees it is a property list

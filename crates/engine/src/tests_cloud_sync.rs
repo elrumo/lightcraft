@@ -1,6 +1,6 @@
 //! Self-hosted sync, device side: real libraries on disk talking to an in-process server (the
 //! catalog's [`ServerCore`] plus a blob map), so every request the engine makes is answered the
-//! way `lightcraft-server` answers it.
+//! way `lightbites-server` answers it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

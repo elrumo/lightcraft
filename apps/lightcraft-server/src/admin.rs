@@ -727,7 +727,7 @@ fn setup(st: &State, req: &mut Request) -> Resp {
         return error(403, "wrong setup code (it is in the server's log)");
     }
     if accounts::read_users(&st.data).is_ok_and(|f| f.users.contains_key(&s.user)) {
-        return error(409, format!("`{}` exists: make them admin with `lightcraft-server user admin {} on`, or pick another name", s.user, s.user));
+        return error(409, format!("`{}` exists: make them admin with `lightbites-server user admin {} on`, or pick another name", s.user, s.user));
     }
     if let Err(e) = accounts::set_user(&st.data, &s.user, &s.password, false).and_then(|()| accounts::set_admin(&st.data, &s.user, true)) {
         return error(400, e);

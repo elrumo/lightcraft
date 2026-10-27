@@ -6,7 +6,7 @@
 //! media file (CR3, HEIC, MP4, MOV) must end inside the file, every strip and tile a TIFF-based file
 //! (DNG, CR2, NEF, ARW, ORF, RW2, PEF, TIFF) points at must lie inside it, a JPEG, PNG or GIF must end with
 //! its end marker, and a WebP or PSD must be as long as it says. Formats it doesn't know are counted, not
-//! judged. Nothing is changed: the admin page (Folders → Check files) and `lightcraft-server check` show
+//! judged. Nothing is changed: the admin page (Folders → Check files) and `lightbites-server check` show
 //! what is damaged, and the report stays in the user's folder (`integrity.json`) until the next check.
 
 use std::collections::HashMap;

@@ -60,10 +60,10 @@ find "$target_dir/web-site" -maxdepth 1 -type f -exec cp {} "$web/" \;
 test -f "$web/index.html"
 
 package() { # package <system> <binary>
-  name="lightcraft-server-$version-$1"
+  name="lightbites-server-$version-$1"
   d="$src/_pkg/$name"
   rm -rf "$d" && mkdir -p "$d"
-  cp "$2" "$d/lightcraft-server" && chmod 755 "$d/lightcraft-server"
+  cp "$2" "$d/lightbites-server" && chmod 755 "$d/lightbites-server"
   cp -R "$web" "$d/web"
   cp LICENSE-MIT LICENSE-APACHE NOTICE "$d/"
   cp docs/self-hosting.md "$d/README-self-hosting.md"
@@ -75,7 +75,7 @@ mac() { # mac <rust target> <system>
   echo "== $2"
   rustup target add "$1" >/dev/null
   (cd "$src" && cargo build --release --locked -p lightcraft-server --target "$1")
-  package "$2" "$target_dir/$1/release/lightcraft-server"
+  package "$2" "$target_dir/$1/release/lightbites-server"
 }
 mac aarch64-apple-darwin macos-arm64
 [ "$intel" = 0 ] || mac x86_64-apple-darwin macos-x86_64
@@ -83,7 +83,7 @@ mac aarch64-apple-darwin macos-arm64
 # what the Mac that builds it can run: it starts, answers /health, serves the web app
 if [ "$(uname -m)" = arm64 ]; then
   echo "== smoke test (macos-arm64)"
-  exe="$target_dir/aarch64-apple-darwin/release/lightcraft-server"
+  exe="$target_dir/aarch64-apple-darwin/release/lightbites-server"
   "$exe" --version
   data=$(mktemp -d)
   LIGHTCRAFT_DATA="$data" LIGHTCRAFT_LISTEN=127.0.0.1:18081 LIGHTCRAFT_WEB="$web" "$exe" serve >/dev/null 2>&1 &
@@ -102,8 +102,8 @@ if [ "$linux" = 1 ]; then
   # the lite stage holds just the program: export its files and take it out
   docker buildx build --platform linux/amd64,linux/arm64 -f apps/lightcraft-server/Dockerfile --target lite \
     --build-arg "LIGHTCRAFT_VERSION=$version" --build-arg "LIGHTCRAFT_COMMIT=$commit" -o "type=local,dest=$lin" "$src"
-  package linux-x86_64 "$lin/linux_amd64/usr/local/bin/lightcraft-server"
-  package linux-aarch64 "$lin/linux_arm64/usr/local/bin/lightcraft-server"
+  package linux-x86_64 "$lin/linux_amd64/usr/local/bin/lightbites-server"
+  package linux-aarch64 "$lin/linux_arm64/usr/local/bin/lightbites-server"
   rm -rf "$lin"
 fi
 

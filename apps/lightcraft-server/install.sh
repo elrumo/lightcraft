@@ -3,9 +3,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/elrumo/lightcraft/main/apps/lightcraft-server/install.sh | sh
 #
-# A specific version: ... | sh -s -- 0.14.0        Remove it again: lightcraft-server uninstall (or see the guide)
+# A specific version: ... | sh -s -- 0.14.0        Remove it again: lightbites-server uninstall (or see the guide)
 #
-# It downloads the zip for this Mac from the GitHub release, checks its checksum, and runs `lightcraft-server install`
+# It downloads the zip for this Mac from the GitHub release, checks its checksum, and runs `lightbites-server install`
 # (the program and the web app go to ~/Library/Application Support/LightCraft Server, which a downloaded-by-curl
 # file needs no Gatekeeper approval for).
 set -eu
@@ -26,7 +26,7 @@ tag=$(printf '%s' "$api" | grep -o '"tag_name": *"server-v[^"]*"' | sed 's/.*"se
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-zip="lightcraft-server-$tag-$system.zip"
+zip="lightbites-server-$tag-$system.zip"
 base="https://github.com/$repo/releases/download/server-v$tag"
 echo "Downloading LightCraft Server $tag for $system..."
 curl -fsSL -o "$tmp/$zip" "$base/$zip"
@@ -34,4 +34,4 @@ curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS-server.txt"
 (cd "$tmp" && grep " $zip\$" SHA256SUMS | shasum -a 256 -c -) >/dev/null || { echo "the download does not match its checksum" >&2; exit 1; }
 
 unzip -q "$tmp/$zip" -d "$tmp"
-"$tmp/lightcraft-server-$tag-$system/lightcraft-server" install
+"$tmp/lightbites-server-$tag-$system/lightbites-server" install

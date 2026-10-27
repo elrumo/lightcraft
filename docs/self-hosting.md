@@ -55,9 +55,9 @@ Two ways to get it, both prebuilt for 64-bit Intel/AMD and ARM (Apple silicon, R
   (the server and admin page; `:latest`, or a version such as `:0.14.0`, or `:0.14`). The browser editor is not
   bundled in this lightweight image; use the LightBites apps to browse and edit the library.
 - **The program**, a zip per system from the
-  [LightBites Server Releases](https://github.com/elrumo/lightbites-server/releases): `lightcraft-server-<version>-<system>.zip`
+  [LightBites Server Releases](https://github.com/elrumo/lightbites-server/releases): `lightbites-server-<version>-<system>.zip`
   for `macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, `windows-x86_64` and `windows-arm64`. It holds
-  `lightcraft-server` (`.exe` on Windows) and a `web` folder next to it, which the server serves by itself.
+  `lightbites-server` (`.exe` on Windows) and a `web` folder next to it, which the server serves by itself.
 
 ### A. Docker Compose with HTTPS on your own domain
 
@@ -131,28 +131,32 @@ Already downloaded the zip? Unzip it, clear the download flag once and run the s
 it serves; the default is `0.0.0.0:8080`, for a home network):
 
 ```sh
-xattr -dr com.apple.quarantine lightcraft-server-*-macos-*
-./lightcraft-server-*-macos-*/lightcraft-server install
+xattr -dr com.apple.quarantine lightbites-server-*-macos-*
+./lightbites-server-*-macos-*/lightbites-server install
 ```
 
-Remove it with `~/Library/Application\ Support/LightCraft\ Server/program/lightcraft-server uninstall`: it stops the
+Stop, start and check it with `lightbites-server stop`, `start` and `status` (run from
+`~/Library/Application\ Support/LightCraft\ Server/program/`): a stopped server stays stopped, also after the next
+login, until you `start` it.
+
+Remove it with `~/Library/Application\ Support/LightCraft\ Server/program/lightbites-server uninstall`: it stops the
 server and removes the agent and the program, and keeps your data. The Mac must be awake and logged in for the server
 to answer (System Settings ▸ Energy: prevent automatic sleeping on a Mac used as a server).
 
 #### By hand
 
 Unzip a download from the Releases page and run it from a terminal (Windows: PowerShell). On a Mac, if Gatekeeper
-refuses the program ("cannot be verified"), clear the download flag once: `xattr -dr com.apple.quarantine lightcraft-server-*`.
+refuses the program ("cannot be verified"), clear the download flag once: `xattr -dr com.apple.quarantine lightbites-server-*`.
 
 ```sh
-cd lightcraft-server-0.14.0-macos-arm64
-./lightcraft-server --version
-./lightcraft-server serve --data ~/lightcraft-data       # http://127.0.0.1:8080 : this computer only
+cd lightbites-server-0.14.0-macos-arm64
+./lightbites-server --version
+./lightbites-server serve --data ~/lightcraft-data       # http://127.0.0.1:8080 : this computer only
 ```
 
 ```powershell
-cd lightcraft-server-0.14.0-windows-x86_64
-.\lightcraft-server.exe serve --data C:\lightcraft-data
+cd lightbites-server-0.14.0-windows-x86_64
+.\lightbites-server.exe serve --data C:\lightcraft-data
 ```
 
 It serves the `web` folder beside it at `/` (or the one `--web DIR` / `LIGHTCRAFT_WEB` names), keeps everything in the
@@ -163,12 +167,12 @@ front of it (see the checklist at the end). A library folder's path is then the 
 To keep it running, start it as a service:
 
 - **Linux (systemd):** the unit [below](#run-it-as-a-service-linux-systemd).
-- **macOS:** `./lightcraft-server install` (below) does it: no service file to write.
+- **macOS:** `./lightbites-server install` (below) does it: no service file to write.
 - **Windows (Task Scheduler):** runs at start-up, without a window, and restarts after a failure. In an
   administrator PowerShell:
 
   ```powershell
-  $a = New-ScheduledTaskAction -Execute "C:\lightcraft-server\lightcraft-server.exe" -Argument "serve --data C:\lightcraft-data" -WorkingDirectory "C:\lightcraft-server"
+  $a = New-ScheduledTaskAction -Execute "C:\lightbites-server\lightbites-server.exe" -Argument "serve --data C:\lightcraft-data" -WorkingDirectory "C:\lightbites-server"
   $t = New-ScheduledTaskTrigger -AtStartup
   $s = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit 0
   Register-ScheduledTask -TaskName "LightCraft Server" -Action $a -Trigger $t -Settings $s -User "SYSTEM" -RunLevel Highest
@@ -176,9 +180,9 @@ To keep it running, start it as a service:
   ```
 
   The setup code is then in the terminal only when you run the server by hand once first, or from the command line
-  instead of the admin page: `lightcraft-server.exe user add ann --admin --data C:\lightcraft-data`.
+  instead of the admin page: `lightbites-server.exe user add ann --admin --data C:\lightcraft-data`.
 
-Updating the program: stop it, replace `lightcraft-server` and the `web` folder with the new release's, start it.
+Updating the program: stop it, replace `lightbites-server` and the `web` folder with the new release's, start it.
 The data folder stays.
 
 ### From source
@@ -188,7 +192,7 @@ git clone https://github.com/elrumo/lightcraft
 cd lightcraft
 ```
 
-Docker: `docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .` (`--target lite` leaves out the web
+Docker: `docker build -f apps/lightcraft-server/Dockerfile -t lightbites-server .` (`--target lite` leaves out the web
 app; the first build takes 10–20 minutes), or `cd apps/lightcraft-server && LIGHTCRAFT_DOMAIN=photos.example.com
 docker compose up -d --build` for the Caddy setup from source. Without Docker:
 
@@ -196,8 +200,8 @@ docker compose up -d --build` for the Caddy setup from source. Without Docker:
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --locked --version "$(sed -n '/^name = "wasm-bindgen"$/{n;s/version = "\(.*\)"/\1/p;}' Cargo.lock)"
 cargo xtask web                                   # the web app → target/web-site
-cargo build --release -p lightcraft-server        # → target/release/lightcraft-server
-sudo install -m 755 target/release/lightcraft-server /usr/local/bin/
+cargo build --release -p lightcraft-server        # → target/release/lightbites-server
+sudo install -m 755 target/release/lightbites-server /usr/local/bin/
 sudo mkdir -p /opt/lightcraft && sudo cp -r target/web-site /opt/lightcraft/web
 ```
 
@@ -215,7 +219,7 @@ After=network-online.target
 [Service]
 User=lightcraft
 Environment=LIGHTCRAFT_DATA=/srv/lightcraft LIGHTCRAFT_LISTEN=127.0.0.1:8080 LIGHTCRAFT_WEB=/opt/lightcraft/web
-ExecStart=/usr/local/bin/lightcraft-server serve
+ExecStart=/usr/local/bin/lightbites-server serve
 Restart=on-failure
 
 [Install]
@@ -241,11 +245,11 @@ Open the admin page: `https://photos.example.com/admin` (or `http://<address>:80
 3. **Overview ▸ Connect a device** shows the address to type on each device, with a Copy button.
 
 The same from the command line, if you prefer (`docker compose exec` with Compose, `docker exec -it lightcraft`
-with plain Docker, or `lightcraft-server` directly):
+with plain Docker, or `lightbites-server` directly):
 
 ```sh
-docker compose exec -it lightcraft lightcraft-server user add ann --admin     # asks for the password
-docker compose exec -it lightcraft lightcraft-server user add ben
+docker compose exec -it lightcraft lightbites-server user add ann --admin     # asks for the password
+docker compose exec -it lightcraft lightbites-server user add ben
 ```
 
 ### Add library folders (optional)
@@ -255,7 +259,7 @@ the user ▸ Library folders ▸ Add folder**, then the folder's path **as the s
 the name devices show (say `/photos/ann` named `Photos`). Or:
 
 ```sh
-docker compose exec lightcraft lightcraft-server folder add ann /photos/ann --name Photos
+docker compose exec lightcraft lightbites-server folder add ann /photos/ann --name Photos
 ```
 
 The server reads the folder right away (the tab shows the progress: files read, new photos, previews still to
@@ -362,8 +366,8 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
   docker compose start lightcraft
   ```
 
-- **Storage clean-up** (admin page, or `lightcraft-server gc`): removes files of photos deleted for good.
-- **Storage limits** (admin page ▸ Users ▸ the user ▸ Storage limit, or `lightcraft-server user quota ann 200G`): the
+- **Storage clean-up** (admin page, or `lightbites-server gc`): removes files of photos deleted for good.
+- **Storage limits** (admin page ▸ Users ▸ the user ▸ Storage limit, or `lightbites-server user quota ann 200G`): the
   most the server keeps for one person; uploads over it wait, nothing is deleted. Library folders don't count.
 - **Logs:** `docker compose logs -f lightcraft`; `LIGHTCRAFT_LOG=debug` for more.
 - **Scans of library folders:** every 15 minutes (`LIGHTCRAFT_SCAN_INTERVAL`, minutes; `0` = only at start and from

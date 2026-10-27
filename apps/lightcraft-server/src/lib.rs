@@ -32,7 +32,7 @@
 //! admin, are read in place — never copied, moved or written — and their photos join the user's
 //! library like any other (the server builds their previews and serves their originals).
 //!
-//! Users, devices and library folders are managed from the command line (`lightcraft-server
+//! Users, devices and library folders are managed from the command line (`lightbites-server
 //! user …`, `folder …`) or the admin page at `/admin` ([`admin`]).
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]

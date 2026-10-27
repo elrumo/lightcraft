@@ -130,7 +130,7 @@ jobs:
           path: web
       - name: Smoke test (starts, answers /health, serves the web app)
         run: |
-          exe=target/${{ matrix.target }}/release/lightcraft-server
+          exe=target/${{ matrix.target }}/release/lightbites-server
           [ -f "$exe.exe" ] && exe="$exe.exe"
           "$exe" --version
           LIGHTCRAFT_DATA="$RUNNER_TEMP/data" LIGHTCRAFT_LISTEN=127.0.0.1:18080 LIGHTCRAFT_WEB=web "$exe" serve &
@@ -141,9 +141,9 @@ jobs:
           kill $pid || true
       - name: Package
         run: |
-          name="lightcraft-server-$VERSION-${{ matrix.name }}"
+          name="lightbites-server-$VERSION-${{ matrix.name }}"
           mkdir -p "dist/$name"
-          exe=target/${{ matrix.target }}/release/lightcraft-server
+          exe=target/${{ matrix.target }}/release/lightbites-server
           if [ -f "$exe.exe" ]; then exe="$exe.exe"; fi
           cp "$exe" "dist/$name/"
           cp -R web "dist/$name/web"

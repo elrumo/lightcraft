@@ -2,7 +2,7 @@
 //! server keeps, so a device that can't run the model (iOS, the web) can still list and blur them.
 //!
 //! Off until an admin downloads the model on the admin page (**Processing ▸ Sensitive content**) or with
-//! `lightcraft-server model download --accept-licences --sensitive`; the download turns it on, and
+//! `lightbites-server model download --accept-licences --sensitive`; the download turns it on, and
 //! `model disable --sensitive` (or the page's switch) turns it off, keeping the scores. The worker scores
 //! [`CHUNK`] photos of a user at a time, after the search, the faces and the text.
 //!
@@ -113,7 +113,7 @@ impl Sensitive {
         }
         if !self.files_installed() {
             return Err(format!(
-                "the sensitive-content model is not installed on this server (run `lightcraft-server model download --accept-licences --sensitive`, or put it in {})",
+                "the sensitive-content model is not installed on this server (run `lightbites-server model download --accept-licences --sensitive`, or put it in {})",
                 self.dir.display()
             ));
         }

@@ -478,7 +478,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
                 ui.label(crate::i18n::tr("Your server can search by description, but its search model isn't installed yet."));
                 ui.label(
                     egui::RichText::new(crate::i18n::tr(
-                        "An administrator installs it from the server's admin page (Search), or with: lightcraft-server model download --accept-licences",
+                        "An administrator installs it from the server's admin page (Search), or with: lightbites-server model download --accept-licences",
                     ))
                     .color(t.text_dim),
                 );
