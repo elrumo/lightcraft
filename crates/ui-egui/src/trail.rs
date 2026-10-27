@@ -216,7 +216,7 @@ mod tests {
             let painter = ctx.layer_painter(egui::LayerId::background());
             let clip = Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0));
             for (pts, r) in [(vec![pos2(f32::NAN, 1.0)], 5.0), (vec![pos2(1.0, 1.0)], 0.0), (vec![], 5.0), (vec![pos2(-500.0, -500.0)], 5.0)] {
-                paint(ctx, &painter, Id::new("t"), clip, &pts, r, Style::Fill, Color32::RED);
+                paint(ctx, &painter, Id::unique("t"), clip, &pts, r, Style::Fill, Color32::RED);
             }
         });
         out.textures_delta.clear();

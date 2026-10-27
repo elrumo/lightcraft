@@ -115,7 +115,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, landscape: bool) {
     if open {
         // as tall as what it holds, up to two fifths of the room (then it scrolls)
         let avail = ui.available_rect_before_wrap().height();
-        let fit_id = Id::new(("mask-sheet-fit", app.ui.mask_group.clone()));
+        let fit_id = Id::unique(("mask-sheet-fit", app.ui.mask_group.clone()));
         let fit = ui.ctx().data(|d| d.get_temp::<f32>(fit_id)).unwrap_or(3.0 * TOUCH_SLIDER_ROW_H);
         let h = (fit + 12.0).min(avail * 0.4).max(TOUCH_SLIDER_ROW_H.min(avail));
         let frame = frame(t.chrome).corner_radius(egui::CornerRadius { nw: 18, ne: 18, sw: 0, se: 0 });
@@ -197,9 +197,9 @@ fn group_row(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, mask: Option<&Mas
     for (i, (id, icon, label, _)) in GROUPS.into_iter().enumerate() {
         let cell = Rect::from_min_size(pos2(x0 + i as f32 * w, r.top()), vec2(w, r.height()));
         let on = enabled && app.ui.mask_group == id;
-        let resp = ui.interact(cell, Id::new(("mask-group", id)), if enabled { Sense::click() } else { Sense::hover() });
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, crate::i18n::tr(label)));
-        register(ui.ctx(), format!("button:maskGroup-{id}"), cell);
+        let resp = ui.interact(cell, Id::unique(("mask-group", id)), if enabled { Sense::click() } else { Sense::hover() });
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, crate::i18n::tr(label)));
+        register(ui, format!("button:maskGroup-{id}"), cell);
         let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
         if k > 0.0 {
             let pill = cell.shrink2(vec2(3.0, 7.0));
@@ -280,7 +280,7 @@ pub fn floating(app: &mut LightcraftApp, ctx: &egui::Context) {
 // ponytail: no scrolling (a ScrollArea in an auto-sized Area keeps its first height); a photo with
 // more masks than fit runs the column off the photo's bottom
 fn column(ctx: &egui::Context, id: &str, at: egui::Pos2, add: impl FnOnce(&mut Ui)) {
-    egui::Area::new(Id::new(id)).order(egui::Order::Middle).fixed_pos(at).show(ctx, |ui| {
+    egui::Area::new(Id::unique(id)).order(egui::Order::Middle).fixed_pos(at).show(ctx, |ui| {
         let under = ui.painter().add(egui::Shape::Noop);
         let inner = egui::Frame::NONE.inner_margin(egui::Margin::same(6)).show(ui, |ui| {
             ui.set_width(COL_W - 12.0);
@@ -301,8 +301,8 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
     let at = pos2(canvas.right() - COL_W - 8.0, canvas.top() + 8.0);
     column(ctx, "mask-column", at, |ui| {
         let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, MASK_TILE), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Create New Mask")));
-        register(ctx, "button:maskNew", r);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Create New Mask")));
+        crate::widgets::register_response("button:maskNew", r, &resp);
         let k = glass::press(ctx, &resp);
         ui.painter().circle_filled(r.center(), MASK_TILE / 2.0 - 2.0 + 2.0 * k, t.accent);
         icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(22.0, 22.0)), Icon::Plus, Color32::WHITE);
@@ -342,7 +342,7 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
                 let resp = tile(ui, &t, &format!("component:{k}"), &name, icon, PART_TILE, false, true, badge);
                 if resp.clicked() {
                     haptics::tap(ctx, Haptic::Selection);
-                    ctx.data_mut(|d| d.insert_temp(Id::new("mask-comp-menu"), k));
+                    ctx.data_mut(|d| d.insert_temp(Id::unique("mask-comp-menu"), k));
                     // a painted part puts the brush in hand (a Subtract part is painted with
                     // positive paint too: its op takes it away)
                     if matches!(c.shape, MaskShape::Brush { .. }) && app.ui.tool != "brush" {
@@ -354,15 +354,15 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
                 }
             }
             let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, PART_TILE), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Add or Subtract")));
-            register(ctx, "button:maskCombine", r);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Add or Subtract")));
+            crate::widgets::register_response("button:maskCombine", r, &resp);
             let k = glass::press(ctx, &resp);
             let c = r.center();
             ui.painter().circle_filled(c, PART_TILE / 2.0 - 2.0 + 2.0 * k, t.pressed);
             icons::paint(ui.painter(), Rect::from_center_size(c, vec2(22.0, 22.0)), Icon::PlusMinus, t.text);
             if resp.clicked() {
                 haptics::tap(ctx, Haptic::Selection);
-                ctx.data_mut(|d| d.insert_temp(Id::new("mask-combine-at"), r));
+                ctx.data_mut(|d| d.insert_temp(Id::unique("mask-combine-at"), r));
                 mobile::open_menu(ctx, "maskCombine", r);
             }
         }
@@ -374,8 +374,8 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
 #[allow(clippy::too_many_arguments)]
 fn tile(ui: &mut Ui, t: &Tokens, key: &str, name: &str, icon: Icon, side: f32, sel: bool, visible: bool, badge: Option<&str>) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, side), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, sel, name));
-    register(ui.ctx(), key, r);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, sel, name));
+    register(ui, key, r);
     let k = glass::press(ui.ctx(), &resp);
     let sq = Rect::from_center_size(r.center(), vec2(side, side) * (1.0 - 0.06 * k));
     let p = ui.painter();
@@ -416,8 +416,8 @@ fn brush_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
         ];
         for (id, icon, label, on) in items {
             let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, MASK_TILE), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(label)));
-            register(ctx, format!("button:brush-{id}"), r);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, crate::i18n::tr(label)));
+            crate::widgets::register_response(format!("button:brush-{id}"), r, &resp);
             let k = glass::press(ctx, &resp);
             let sq = r.shrink(1.0 + 2.0 * k);
             let p = ui.painter();
@@ -501,7 +501,7 @@ pub fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
             app.ui.tool.clear();
         }
     });
-    let k = ctx.data(|d| d.get_temp::<usize>(Id::new("mask-comp-menu"))).unwrap_or(0);
+    let k = ctx.data(|d| d.get_temp::<usize>(Id::unique("mask-comp-menu"))).unwrap_or(0);
     let comp = mask.as_ref().and_then(|m| m.components.get(k).map(|c| (m.id, m.components.len(), c.clone())));
     let comp_name = comp.as_ref().map(|(_, _, c)| c.name.clone().unwrap_or_else(|| crate::i18n::tr(masking::kind_label(&c.shape).0).to_string()));
     mobile::actions(ctx, "maskComp", comp_name.as_deref(), |ui| {
@@ -539,7 +539,7 @@ pub fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
     });
     // ± then the kinds, from the same place
-    let at = ctx.data(|d| d.get_temp::<Rect>(Id::new("mask-combine-at"))).unwrap_or(Rect::NOTHING);
+    let at = ctx.data(|d| d.get_temp::<Rect>(Id::unique("mask-combine-at"))).unwrap_or(Rect::NOTHING);
     mobile::actions(ctx, "maskCombine", None, |ui| {
         for (op, menu, icon, label) in [
             ("add", "maskAdd", Icon::Plus, "Add to Mask"),

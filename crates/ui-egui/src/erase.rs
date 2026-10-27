@@ -162,7 +162,7 @@ pub fn switch(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let mut on = app.ui.remove_ai;
     let r = crate::widgets::check(ui, &mut on, tr("Generative AI"))
         .on_hover_text(tr("Fill with what is most likely behind the stroke (the MI-GAN model) instead of texture from around it"));
-    crate::widgets::register(ui.ctx(), "check:removeAi", r.rect);
+    crate::widgets::register(ui, "check:removeAi", r.rect);
     if r.changed() {
         app.ui.remove_ai = on;
     }
@@ -249,7 +249,7 @@ fn high_quality(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let mut on = app.ui.remove_hq;
     let r = crate::widgets::check(ui, &mut on, tr("High quality"))
         .on_hover_text(tr("Paint with LaMa, a larger model: slower, and better on textures and large areas"));
-    crate::widgets::register(ui.ctx(), "check:removeAiHq", r.rect);
+    crate::widgets::register(ui, "check:removeAiHq", r.rect);
     if r.changed() {
         app.ui.remove_hq = on;
     }

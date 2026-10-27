@@ -53,6 +53,7 @@ mod faces_worker;
 pub mod files;
 #[cfg(not(target_arch = "wasm32"))]
 mod focus_scan;
+pub mod focus_view;
 pub mod fonts;
 pub mod guard;
 pub mod hardware;
@@ -1621,11 +1622,10 @@ pub fn json_delta(old: &Value, new: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod tests_album_order;
+#[cfg(not(target_arch = "wasm32"))]
+use tests::face_recognize as tests_face_recognize;
 #[cfg(test)]
-mod tests_album_remove;
-#[cfg(test)]
-mod tests_albums_local;
+use tests::xmp as tests_xmp;
 #[cfg(test)]
 mod tests_auto_import;
 #[cfg(test)]
@@ -1633,17 +1633,7 @@ mod tests_bitmap_mask;
 #[cfg(test)]
 mod tests_cloud_sync;
 #[cfg(test)]
-mod tests_color;
-#[cfg(test)]
-mod tests_constrain_crop;
-#[cfg(test)]
-mod tests_crop_angle;
-#[cfg(test)]
-mod tests_crop_aspect;
-#[cfg(test)]
 mod tests_crop_autoframe;
-#[cfg(test)]
-mod tests_denoise;
 #[cfg(test)]
 mod tests_describe;
 #[cfg(test)]
@@ -1653,95 +1643,33 @@ mod tests_enhance_levels;
 #[cfg(test)]
 mod tests_expand;
 #[cfg(test)]
-mod tests_export;
-#[cfg(test)]
 mod tests_external_edit;
-#[cfg(test)]
-mod tests_face_models;
-#[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
-mod tests_face_recognize;
-#[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
-mod tests_face_tiles;
-#[cfg(test)]
-mod tests_filesystem_history;
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests_focus_scan;
-#[cfg(test)]
-mod tests_folders;
-#[cfg(test)]
-mod tests_forget_local;
 #[cfg(test)]
 mod tests_hdr_sources;
 #[cfg(test)]
 mod tests_hidden;
 #[cfg(test)]
-mod tests_history_cursor;
-#[cfg(test)]
-mod tests_hold_view;
-#[cfg(test)]
 mod tests_icloud;
-#[cfg(test)]
-mod tests_ids_params;
-#[cfg(test)]
-mod tests_import;
-#[cfg(test)]
-mod tests_import_move;
 #[cfg(test)]
 mod tests_invalidation;
 #[cfg(test)]
-mod tests_keyword_list;
-#[cfg(test)]
 mod tests_lensblur;
-#[cfg(test)]
-mod tests_libops;
-#[cfg(test)]
-mod tests_library;
-#[cfg(test)]
-mod tests_lightroom_folder;
 #[cfg(test)]
 mod tests_live_photo;
 #[cfg(test)]
 mod tests_map;
 #[cfg(test)]
-mod tests_mask_effects;
-#[cfg(test)]
 mod tests_mask_feel;
-#[cfg(test)]
-mod tests_merge;
 #[cfg(test)]
 mod tests_models;
 #[cfg(test)]
-mod tests_move_to_share;
-#[cfg(test)]
 mod tests_olympus;
-#[cfg(test)]
-mod tests_organize;
 #[cfg(test)]
 mod tests_pack;
 #[cfg(test)]
 mod tests_panasonic;
 #[cfg(test)]
-mod tests_persist;
-#[cfg(test)]
 mod tests_photo_library;
-#[cfg(test)]
-mod tests_prefs;
-#[cfg(test)]
-mod tests_presets_scale;
-#[cfg(test)]
-mod tests_print;
-#[cfg(test)]
-mod tests_process;
-#[cfg(test)]
-mod tests_recheck;
-#[cfg(test)]
-mod tests_segment;
-#[cfg(test)]
-mod tests_settings_files;
-#[cfg(test)]
-mod tests_slide;
 #[cfg(test)]
 mod tests_sliders;
 #[cfg(test)]
@@ -1749,16 +1677,6 @@ mod tests_sliders_raw;
 #[cfg(test)]
 mod tests_sliders_store;
 #[cfg(test)]
-mod tests_slideshow_export;
-#[cfg(test)]
-mod tests_spots;
-#[cfg(test)]
-mod tests_sync;
-#[cfg(test)]
 mod tests_upright;
 #[cfg(test)]
 mod tests_video;
-#[cfg(test)]
-mod tests_view_follow;
-#[cfg(test)]
-mod tests_xmp;

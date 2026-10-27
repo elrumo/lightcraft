@@ -1,12 +1,12 @@
 # egui-wgpu, patched for HDR output
 
-This is [egui-wgpu](https://github.com/emilk/egui/tree/main/crates/egui-wgpu) 0.36.2 (MIT OR
+This is [egui-wgpu](https://github.com/emilk/egui/tree/main/crates/egui-wgpu) 0.37.0 (from the storytold/egui fork pinned in the root Cargo.toml) (MIT OR
 Apache-2.0, © Emil Ernerfeldt and the egui contributors) with three small changes, each marked
 `LightCraft patch` in the source. LightCraft uses it in place of the crates.io release (root
 `Cargo.toml`, `[patch.crates-io]`); it is not a workspace member and is not built by `cargo xtask ci`
 on its own.
 
-Why: eframe 0.36 picks the window surface's format itself, 8-bit only (`preferred_framebuffer_format`),
+Why: eframe 0.37 picks the window surface's format itself, 8-bit only (`preferred_framebuffer_format`),
 so no photo can be brighter than SDR white. With a 16-bit float surface in the extended Display P3
 colour space, macOS draws values above 1.0 as brighter than white (EDR) on a display that has headroom.
 

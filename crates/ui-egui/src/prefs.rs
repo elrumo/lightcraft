@@ -155,7 +155,7 @@ impl PrefsWriter {
         }
         let Some(path) = self.path.clone() else { return Ok(()) };
         if let Some(workspace) = &ui.docking {
-            workspace.validate()?;
+            workspace.validate().map_err(|e| e.to_string())?;
         }
         let bytes = serde_json::to_vec_pretty(ui).map_err(|e| e.to_string())?;
         if bytes == self.written {

@@ -222,7 +222,7 @@ impl eframe::App for App {
         let dark = self.0.try_borrow().map_or(true, |h| h.app.dark);
         (if dark { egui::Color32::BLACK } else { egui::Color32::WHITE }).to_normalized_gamma_f32()
     }
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         press_enter(raw, lightcraft_ios_host::take_return_presses());
         // winit ignores the theme on iOS: the system's style is read from UIKit (the main screen's
         // traits, which the app forcing a style on its windows doesn't change)
@@ -235,7 +235,7 @@ impl eframe::App for App {
                 h.safe_area = s;
             }
             raw.safe_area_insets = Some(above_keyboard(h.safe_area, lightcraft_ios_host::keyboard_height()));
-            h.app.raw_input_hook(raw);
+            h.app.raw_input_hook(ctx, raw);
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
