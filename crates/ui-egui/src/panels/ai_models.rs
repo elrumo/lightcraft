@@ -62,7 +62,7 @@ pub fn tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     }
     let total: u64 = models.iter().map(|m| m.disk_bytes).fold(0, u64::saturating_add);
     let r = ui.label(RichText::new(format!("{} {}", crate::i18n::tr("Models on this device:"), size(total))).color(t.text));
-    register(ui.ctx(), "label:modelStorage", r.rect);
+    register(ui, "label:modelStorage", r.rect);
 }
 
 /// This device, for the Generative Expand section ("A computer · 16 GB · GPU").
@@ -97,13 +97,13 @@ fn expand_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let automatic = app.session.expand.preferred.is_none();
         let current = crate::expand::chosen(app);
         let r = ui.radio(automatic, crate::expand::automatic_line(app));
-        register(ui.ctx(), "radio:expandModel-auto", r.rect);
+        register(ui, "radio:expandModel-auto", r.rect);
         if r.clicked() {
             crate::expand::choose(app, None);
         }
         for m in crate::expand::offered(app) {
             let r = ui.radio(!automatic && m == current, format!("{} · {}", m.label(), crate::expand::describe(app, m)));
-            register(ui.ctx(), format!("radio:expandModel-{}", m.id()), r.rect);
+            register(ui, format!("radio:expandModel-{}", m.id()), r.rect);
             if r.clicked() {
                 crate::expand::choose(app, Some(m));
             }
@@ -134,7 +134,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                     (crate::i18n::tr("Not downloaded"), t.text_dim)
                 };
                 let r = ui.label(RichText::new(text).color(color));
-                register(ui.ctx(), format!("label:modelStatus-{}", m.id), r.rect);
+                register(ui, format!("label:modelStatus-{}", m.id), r.rect);
             });
         });
         hint(ui, t, m.purpose.as_str());
@@ -144,13 +144,13 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
         // where it is, how big
         if m.installed {
             let r = ui.label(RichText::new(size(m.disk_bytes)).color(t.text_label));
-            register(ui.ctx(), format!("label:modelStorage-{}", m.id), r.rect);
+            register(ui, format!("label:modelStorage-{}", m.id), r.rect);
             hint(ui, t, format!("{} {}", crate::i18n::tr("Stored in"), m.dir.as_deref().unwrap_or_default()));
             if app.services.reveal.is_some()
                 && let Some(dir) = &m.dir
             {
                 let r = ui.small_button(crate::i18n::tr("Show in Folder"));
-                register(ui.ctx(), format!("button:modelReveal-{}", m.id), r.rect);
+                register(ui, format!("button:modelReveal-{}", m.id), r.rect);
                 if r.clicked()
                     && let Some(reveal) = app.services.reveal.as_mut()
                 {
@@ -163,7 +163,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                 line = format!("{line} · {} {}", size(m.disk_bytes), crate::i18n::tr("already downloaded (it resumes)"));
             }
             let r = ui.label(RichText::new(line).color(t.text_label));
-            register(ui.ctx(), format!("label:modelStorage-{}", m.id), r.rect);
+            register(ui, format!("label:modelStorage-{}", m.id), r.rect);
         }
         let from = if m.sources.is_empty() {
             crate::i18n::tr("No download location is set up for this model yet (see docs/ai-masks.md).").to_string()
@@ -171,17 +171,17 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
             format!("{} {}", crate::i18n::tr("Downloads from"), m.sources.join(", "))
         };
         let r = ui.label(RichText::new(from).color(t.text_label));
-        register(ui.ctx(), format!("label:modelSource-{}", m.id), r.rect);
+        register(ui, format!("label:modelSource-{}", m.id), r.rect);
         // licence and credit
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("{} · {}", m.licence, m.credit)).size(11.0).color(t.text_dim));
             let r = ui.link(crate::i18n::tr("Licence")).on_hover_text(m.licence_url.as_str());
-            register(ui.ctx(), format!("link:modelLicence-{}", m.id), r.rect);
+            register(ui, format!("link:modelLicence-{}", m.id), r.rect);
             if r.clicked() {
                 let _ = crate::links::open(app, &m.licence_url);
             }
             let r = ui.link(crate::i18n::tr("About")).on_hover_text(m.home_url.as_str());
-            register(ui.ctx(), format!("link:modelAbout-{}", m.id), r.rect);
+            register(ui, format!("link:modelAbout-{}", m.id), r.rect);
             if r.clicked() {
                 let _ = crate::links::open(app, &m.home_url);
             }
@@ -195,7 +195,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
         if m.can_disable {
             let mut on = m.enabled;
             let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Use this model"));
-            register(ui.ctx(), format!("check:modelEnabled-{}", m.id), r.rect);
+            register(ui, format!("check:modelEnabled-{}", m.id), r.rect);
             if r.changed()
                 && let Err(e) = app.run("models.setEnabled", json!({"id": m.id, "enabled": on}))
             {
@@ -214,10 +214,10 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
             } else {
                 let frac = if d.total > 0 { d.done as f64 / d.total as f64 } else { 0.0 };
                 let r = ui.add(egui::ProgressBar::new(frac as f32).text(format!("{} / {}", size(d.done), size(d.total))));
-                register(ui.ctx(), format!("progress:model-{}", m.id), r.rect);
+                register(ui, format!("progress:model-{}", m.id), r.rect);
             }
             let r = ui.button(crate::i18n::tr("Cancel Download"));
-            register(ui.ctx(), format!("button:modelCancel-{}", m.id), r.rect);
+            register(ui, format!("button:modelCancel-{}", m.id), r.rect);
             if r.clicked() {
                 app.run("models.cancel", json!({"id": m.id})).ok();
             }
@@ -242,7 +242,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                 hint(ui, t, format!("{} {} ({}).", crate::i18n::tr("Downloading means accepting its licence:"), m.licence, m.credit));
                 ui.horizontal_wrapped(|ui| {
                     let r = ui.button(crate::i18n::tr("Download"));
-                    register(ui.ctx(), format!("button:modelDownloadConfirm-{}", m.id), r.rect);
+                    register(ui, format!("button:modelDownloadConfirm-{}", m.id), r.rect);
                     if r.clicked() {
                         app.ui.model_confirm = None;
                         match app.run("models.download", json!({"id": m.id, "acknowledged": true})) {
@@ -251,7 +251,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                         }
                     }
                     let r = ui.button(crate::i18n::tr("Cancel"));
-                    register(ui.ctx(), format!("button:modelStepCancel-{}", m.id), r.rect);
+                    register(ui, format!("button:modelStepCancel-{}", m.id), r.rect);
                     if r.clicked() {
                         app.ui.model_confirm = None;
                     }
@@ -269,7 +269,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                 );
                 ui.horizontal_wrapped(|ui| {
                     let r = ui.button(crate::i18n::tr("Delete"));
-                    register(ui.ctx(), format!("button:modelDeleteConfirm-{}", m.id), r.rect);
+                    register(ui, format!("button:modelDeleteConfirm-{}", m.id), r.rect);
                     if r.clicked() {
                         app.ui.model_confirm = None;
                         if let Err(e) = app.run("models.delete", json!({"id": m.id, "confirm": true})) {
@@ -277,7 +277,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                         }
                     }
                     let r = ui.button(crate::i18n::tr("Cancel"));
-                    register(ui.ctx(), format!("button:modelStepCancel-{}", m.id), r.rect);
+                    register(ui, format!("button:modelStepCancel-{}", m.id), r.rect);
                     if r.clicked() {
                         app.ui.model_confirm = None;
                     }
@@ -287,7 +287,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                 ui.horizontal_wrapped(|ui| {
                     if m.installed {
                         let r = ui.button(crate::i18n::tr("Delete…"));
-                        register(ui.ctx(), format!("button:modelDelete-{}", m.id), r.rect);
+                        register(ui, format!("button:modelDelete-{}", m.id), r.rect);
                         if r.clicked() {
                             app.ui.model_confirm = Some((m.id.clone(), ModelStep::Delete));
                         }
@@ -301,7 +301,7 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                                 "Download…"
                             })),
                         );
-                        register(ui.ctx(), format!("button:modelDownload-{}", m.id), r.rect);
+                        register(ui, format!("button:modelDownload-{}", m.id), r.rect);
                         if r.clicked() {
                             app.ui.model_confirm = Some((m.id.clone(), ModelStep::Download));
                         }

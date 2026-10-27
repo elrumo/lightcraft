@@ -23,6 +23,17 @@ const PULL_DOWN_W: f32 = 270.0;
 /// A menu's corners (iOS 26's are round enough to look like a lozenge).
 const MENU_R: f32 = 24.0;
 
+/// Tell egui the size of the fixed-position area `id` before it is first shown: it otherwise draws that first
+/// frame invisible and deaf, to measure itself, and what a tap opens (a page with a field, an edit menu)
+/// would only work from the next frame.
+fn seed_area(ctx: &egui::Context, id: Id, order: egui::Order, pos: egui::Pos2, size: egui::Vec2) {
+    if egui::AreaState::load(ctx, id).is_some() {
+        return;
+    }
+    let state = egui::AreaState { pivot_pos: Some(pos), pivot: Align2::LEFT_TOP, size: Some(size), interactable: true, last_became_visible_at: None };
+    ctx.memory_mut(|m| m.areas_mut().set_state(egui::LayerId::new(order, id), state));
+}
+
 /// The slide progress of the sheet `id`, eased: 0 = off screen, 1 = in place. It follows `open`, so
 /// a sheet slides out the way it slid in (the same curve backwards: it starts slowly and picks up).
 /// Call it, or [`hidden`], every frame: a sheet first seen open appears at once, not sliding in.
@@ -33,14 +44,14 @@ fn slide(ctx: &egui::Context, id: Id, open: bool) -> f32 {
 /// The sheet `id` isn't on screen this frame and has no exit to play (its next opening slides in
 /// from the bottom).
 pub fn hidden(ctx: &egui::Context, id: &str) {
-    let _ = ctx.animate_bool_with_time(Id::new(("lc-sheet", id)).with("slide"), false, 0.0);
+    let _ = ctx.animate_bool_with_time(Id::unique(("lc-sheet", id)).with("slide"), false, 0.0);
 }
 
 /// 0 → 1 over `secs` (eased out) each time `key` changes, for fading in what `key` names (the view
 /// shown, the tool in the sheet); 1 while it stays. The first call only notes the key, so nothing
 /// fades in at start-up. Multiply a ui's opacity by it.
 pub fn enter(ctx: &egui::Context, id: Id, key: impl std::hash::Hash + std::fmt::Debug, secs: f32) -> f32 {
-    let key = Id::new(key).value();
+    let key = Id::unique(key).value();
     let seen = ctx.data(|d| d.get_temp::<u64>(id));
     if seen != Some(key) {
         ctx.data_mut(|d| d.insert_temp(id, key));
@@ -88,9 +99,9 @@ fn glass_end(ui: &mut egui::Ui, id: &str, tip: &str, face: Face, tint: Option<Co
     let glass = Rect::from_min_size(pos2(left, at.y - crate::glass::BUTTON_D / 2.0), vec2(w, crate::glass::BUTTON_D));
     let hit = glass.expand2(vec2(3.0, (ROW_H - glass.height()) / 2.0));
     // (two pages can be up at once with the same buttons: the id is the page's own)
-    let resp = ui.interact(hit, ui.id().with(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), hit);
+    let resp = ui.interact(hit, ui.scope_id().with(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, crate::i18n::tr(tip)));
+    crate::widgets::register(ui, format!("button:{id}"), hit);
     let k = crate::glass::press(ui.ctx(), &resp);
     let glass = glass.expand(2.0 * k);
     crate::glass::paint(ui.painter(), glass, glass.height() / 2.0, tint, k);
@@ -181,7 +192,7 @@ pub fn page(ctx: &egui::Context, id: &str, title: &str, cancel: &str, ok: Option
 /// is drawn over it.
 pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, body: impl FnOnce(&mut egui::Ui)) -> Bar {
     let t = Tokens::get(ctx);
-    let sid = Id::new(("lc-sheet", id));
+    let sid = Id::unique(("lc-sheet", id));
     let p = slide(ctx, sid, open);
     if p <= 0.0 {
         ctx.data_mut(|d| d.remove::<f32>(sid.with("pull").with("from")));
@@ -212,6 +223,9 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
     let mut bar = Bar { cancel: pulled_shut, ..Bar::default() };
     let top = content.top() + 8.0 + drop;
     // (down to the screen's edge: an area otherwise stops at the safe area)
+    // (its size is known: no invisible sizing pass in its first frame, so a field in it takes the focus, and a
+    // tap that opens the page raises the keyboard, in that very frame)
+    seed_area(ctx, sid, egui::Order::Foreground, pos2(content.left(), top), vec2(content.width(), (screen.bottom() - top).max(ROW_H)));
     let area = egui::Area::new(sid).constrain_to(screen).constrain(false);
     // (opaque as it slides: not egui's fade-in of a new area, through which what is behind showed)
     area.order(egui::Order::Foreground).fade_in(false).fixed_pos(pos2(content.left(), top)).show(ctx, |ui| {
@@ -222,8 +236,8 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
         let _ = ui.allocate_rect(full, Sense::hover());
         // (its colour goes on under the home indicator: the area's own clip stops at the safe area)
         ui.set_clip_rect(full);
-        crate::widgets::register(ctx, format!("sheet:{id}"), full);
-        crate::widgets::register(ctx, "dialog:window", full);
+        crate::widgets::register_geometry(ctx, format!("sheet:{id}"), full);
+        crate::widgets::register_geometry(ctx, "dialog:window", full);
         ui.painter().rect_filled(full, CornerRadius { nw: PAGE_R, ne: PAGE_R, sw: 0, se: 0 }, t.chrome);
         let bar_r = Rect::from_min_size(full.min, vec2(w, ROW_H));
         let galley = ui.painter().layout(crate::i18n::tr(bar_spec.title).to_string(), t.semibold(17.0), t.text, (w - 200.0).max(80.0));
@@ -250,7 +264,7 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
         let (top, inner) = ctx.data(|d| d.get_temp::<(bool, Id)>(sid.with("inner"))).unwrap_or((true, out.id));
         ctx.data_mut(|d| {
             d.insert_temp(sid.with("scroll-ids"), [out.id, inner]);
-            d.insert_temp(sid.with("at-top"), out.state.offset.y <= 0.5 && top);
+            d.insert_temp(sid.with("at-top"), out.state.unclamped_offset().y <= 0.5 && top);
             d.remove::<(bool, Id)>(sid.with("inner"));
         });
     });
@@ -260,8 +274,8 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
 /// A page's body that scrolls a list of its own (the albums) says where that list is, so that a
 /// pull down on it closes the page only from its top. Call while drawing the page `id`.
 pub fn scrolled<R>(ctx: &egui::Context, id: &str, list: &egui::scroll_area::ScrollAreaOutput<R>) {
-    let at = (list.state.offset.y <= 0.5, list.id);
-    ctx.data_mut(|d| d.insert_temp(Id::new(("lc-sheet", id)).with("inner"), at));
+    let at = (list.state.unclamped_offset().y <= 0.5, list.id);
+    ctx.data_mut(|d| d.insert_temp(Id::unique(("lc-sheet", id)).with("inner"), at));
 }
 
 /// A page's top corners, rounder than they were before iOS 26.
@@ -286,11 +300,11 @@ struct Pull {
 /// follow it down. Call every frame while it lasts.
 pub fn hold(ctx: &egui::Context) {
     let frame = ctx.cumulative_frame_nr();
-    ctx.data_mut(|d| d.insert_temp(Id::new("lc-sheet-hold"), frame));
+    ctx.data_mut(|d| d.insert_temp(Id::unique("lc-sheet-hold"), frame));
 }
 
 fn held(ctx: &egui::Context) -> bool {
-    let at = ctx.data(|d| d.get_temp::<u64>(Id::new("lc-sheet-hold")));
+    let at = ctx.data(|d| d.get_temp::<u64>(Id::unique("lc-sheet-hold")));
     at.is_some_and(|f| f + 1 >= ctx.cumulative_frame_nr())
 }
 
@@ -360,7 +374,7 @@ fn pulled_drop(ctx: &egui::Context, id: Id, p: f32, slide: f32, pulled: (f32, bo
 
 /// Where the pages say how far up they are this frame (the most of any), for [`stack_behind`].
 fn presented_id() -> Id {
-    Id::new("lc-presented")
+    Id::unique("lc-presented")
 }
 
 /// The screen behind a page steps back while the page is up, as an iPhone shows a sheet: it
@@ -393,7 +407,7 @@ pub fn stack_behind(ctx: &egui::Context, layer: egui::LayerId, backdrop: egui::l
 }
 
 fn open_id() -> Id {
-    Id::new("lc-actions-open")
+    Id::unique("lc-actions-open")
 }
 
 /// Open the action sheet `id` at the bottom of the screen (one menu or sheet at a time).
@@ -439,7 +453,7 @@ pub fn actions(ctx: &egui::Context, id: &str, title: Option<&str>, add: impl FnO
 /// panel of its own rather than a list of rows, like the sync status.
 pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: f32, add: impl FnOnce(&mut egui::Ui)) {
     let mut add = Some(add);
-    let sid = Id::new(("lc-sheet", id));
+    let sid = Id::unique(("lc-sheet", id));
     let live = opened(ctx, id);
     let p = slide(ctx, sid, live.is_some());
     let last = sid.with("anchor");
@@ -527,8 +541,8 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
             ui.add_space(8.0);
             glass(ui, &mut |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(w, ROW_H - 8.0), Sense::click());
-                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Cancel")));
-                crate::widgets::register(ctx, "button:actionsCancel", r);
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Cancel")));
+                crate::widgets::register_response("button:actionsCancel", r, &resp);
                 let color = if resp.is_pointer_button_down_on() { t.accent.gamma_multiply(0.6) } else { t.accent };
                 ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr("Cancel"), t.semibold(17.0), color);
                 if resp.clicked() {
@@ -546,7 +560,7 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
     // pressed to the front and keeps that order when both show again, so after a tap outside closed
     // it the menu would open under its own dim, greyed, every tap on it closing it)
     ctx.set_sublayer(dim.response.layer_id, shown.response.layer_id);
-    crate::widgets::register(ctx, format!("actions:{id}"), shown.response.rect);
+    crate::widgets::register_geometry(ctx, format!("actions:{id}"), shown.response.rect);
     ctx.data_mut(|d| d.insert_temp(h_id, shown.response.rect.height()));
     if !closing && (close || ctx.input(|i| i.key_pressed(egui::Key::Escape))) {
         close_actions(ctx);
@@ -571,10 +585,10 @@ fn row_inked(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, enabl
     let w = ui.available_width();
     let (r, resp) = ui.allocate_exact_size(vec2(w, 44.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| match checked {
-        Some(c) => egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, c, label),
-        None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label),
+        Some(c) => egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, c, label),
+        None => egui::WidgetInfo::labeled(egui::Role::Button, enabled, label),
     });
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
+    crate::widgets::register(ui, format!("button:{id}"), r);
     let p = ui.painter();
     if resp.is_pointer_button_down_on() {
         let spot = r.shrink2(vec2(6.0, 1.0));
@@ -635,7 +649,7 @@ fn all_commands(app: &LightcraftApp) -> Vec<(String, String, String, Value, bool
 /// "All Commands": every command the menus have, as a searchable list (the phone layout has no
 /// menu bar). Open with `app.ui.all_commands = true`.
 pub fn all_commands_page(app: &mut LightcraftApp, ctx: &egui::Context) {
-    let query_id = Id::new("lc-all-commands-query");
+    let query_id = Id::unique("lc-all-commands-query");
     let mut query = ctx.data(|d| d.get_temp::<String>(query_id)).unwrap_or_default();
     let mut run: Option<(String, Value)> = None;
     let open = app.ui.all_commands;
@@ -645,7 +659,7 @@ pub fn all_commands_page(app: &mut LightcraftApp, ctx: &egui::Context) {
             ui,
             egui::TextEdit::singleline(&mut query).hint_text(crate::i18n::tr("Search")).desired_width(f32::INFINITY),
         ));
-        crate::widgets::register(ui.ctx(), "field:allCommandsSearch", r.rect);
+        crate::widgets::register(ui, "field:allCommandsSearch", r.rect);
         let q = query.to_lowercase();
         let t = Tokens::get(ui.ctx());
         let mut section = String::new();
@@ -691,7 +705,7 @@ pub fn all_commands_page(app: &mut LightcraftApp, ctx: &egui::Context) {
 /// (`Services::clipboard_text`). While it is open a tap elsewhere doesn't take the keyboard away.
 /// Call once a frame, after everything else is drawn. Buttons: `button:edit-<action>`.
 pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
-    let id = Id::new("lc-edit-menu");
+    let id = Id::unique("lc-edit-menu");
     let focused = ctx.memory(|m| m.focused()).filter(|f| egui::TextEdit::load_state(ctx, *f).is_some());
     // which field had the keyboard when the finger came down: a first tap only focuses
     let before = ctx.data(|d| d.get_temp::<Option<Id>>(id.with("before"))).flatten();
@@ -704,15 +718,15 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
     // is on screen (a page slides in from below), so for a moment it doesn't: report the field's own rect then.
     if let Some(field) = focused
         && ctx.input(|i| i.has_touch_screen())
-        && ctx.output(|o| o.ime).is_none()
+        && ctx.output(|o| o.ime.is_none())
         && let Some(r) = ctx.read_response(field)
     {
         let rect = ctx.layer_transform_to_global(r.layer_id).unwrap_or_default() * r.rect;
         ctx.output_mut(|o| {
-            o.ime = Some(egui::output::IMEOutput { purpose: egui::IMEPurpose::Normal, rect, cursor_rect: rect, should_interrupt_composition: false });
+            o.ime = Some(egui::output::IMEOutput::new(field, 1, egui::IMEPurpose::Normal, rect, rect));
         });
     }
-    let ime = ctx.output(|o| o.ime);
+    let ime = ctx.output(|o| o.ime.clone());
     let (Some(field), Some(ime), true) = (focused, ime, ctx.input(|i| i.has_touch_screen())) else {
         ctx.data_mut(|d| d.remove::<Id>(id));
         ctx.options_mut(|o| o.input_options.surrender_focus_on = egui::SurrenderFocusOn::Clicks);
@@ -793,7 +807,7 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
 /// Deliver the Cut or Copy the edit menu chose to its field, in the extra pass it asked for (or the next
 /// frame's first, when egui declines another pass). Call first thing in a pass.
 pub fn edit_menu_event(ctx: &egui::Context) {
-    let key = Id::new("lc-edit-menu").with("event");
+    let key = Id::unique("lc-edit-menu").with("event");
     if let Some(event) = ctx.data(|d| d.get_temp::<egui::Event>(key)) {
         ctx.data_mut(|d| d.remove::<egui::Event>(key));
         ctx.input_mut(|i| i.events.push(event));
@@ -816,15 +830,19 @@ fn edit_menu_bar(ctx: &egui::Context, id: Id, items: &[(&'static str, &str)], cu
     let x = (cursor.center().x - w / 2.0).clamp(content.left() + 8.0, (content.right() - 8.0 - w).max(content.left() + 8.0));
     let bar = Rect::from_min_size(pos2(x, y), vec2(w, H));
     let mut chosen = None;
+    // (its size is known: drawn, and tappable, in its first frame)
+    seed_area(ctx, id.with("bar"), egui::Order::Tooltip, bar.min, bar.size());
     egui::Area::new(id.with("bar")).order(egui::Order::Tooltip).constrain(false).fixed_pos(bar.min).show(ctx, |ui| {
+        // (the area is as big as the bar: what is drawn by hand inside it takes no room of its own)
+        let _ = ui.allocate_rect(bar, Sense::hover());
         let p = ui.painter().clone();
         crate::glass::paint(&p, bar, H / 2.0, Some(crate::glass::menu_fill(ctx)), 0.0);
         let mut left = bar.left();
         for ((key, label), galley) in items.iter().zip(galleys) {
             let r = Rect::from_min_size(pos2(left, bar.top()), vec2(galley.size().x + 28.0, H));
             let resp = ui.interact(r, id.with(*key), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(label)));
-            crate::widgets::register(ctx, format!("button:edit-{key}"), r);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr(label)));
+            crate::widgets::register_response(format!("button:edit-{key}"), r, &resp);
             if resp.is_pointer_button_down_on() {
                 p.rect_filled(r.shrink(3.0), (H - 6.0) / 2.0, t.pressed);
             }

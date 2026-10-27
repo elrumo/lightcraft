@@ -3,10 +3,9 @@
 //! The rule engine works on a small, metadata-independent model so it can be
 //! unit-tested; `from_metadata` builds that model from `cargo metadata`.
 
-use std::collections::HashSet;
-use std::path::Path;
-
+use super::*;
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// Where a workspace crate sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +307,44 @@ pub fn describe(class: Option<Class>) -> String {
         Some(Class::Testkit) => "testkit".into(),
         Some(Class::Exempt) => "exempt".into(),
         None => "UNREGISTERED".into(),
+    }
+}
+
+pub(crate) fn cmd_layers() -> Result<(), String> {
+    let crates = layers::from_metadata(&metadata()?)?;
+    println!("Dependency layering (plan/architecture.md §3)\n");
+    println!("{:<28} {:<14} workspace deps", "crate", "layer");
+    for c in &crates {
+        let ws: Vec<String> = c
+            .deps
+            .iter()
+            .filter(|d| d.workspace)
+            .map(|d| {
+                let k = match d.kind {
+                    layers::DepKind::Normal => "",
+                    layers::DepKind::Dev => " (dev)",
+                    layers::DepKind::Build => " (build)",
+                };
+                format!("{}{k}", layers::short_name(&d.name))
+            })
+            .collect();
+        println!("{:<28} {:<14} {}", c.name, layers::describe(layers::classify(&c.name)), ws.join(", "));
+    }
+    let mut violations = layers::check(&crates);
+    // symphonia (MPL-2.0) comes in through filmcraft-codecs, which is not used (docs/video.md)
+    if std::fs::read_to_string(root().join("Cargo.lock")).is_ok_and(|l| l.contains("name = \"symphonia\"")) {
+        violations.push(layers::Violation::FilmcraftBanned { krate: "Cargo.lock".into(), dep: "symphonia".into() });
+    }
+    println!();
+    if violations.is_empty() {
+        println!("OK: {} crates, no layering violations.", crates.len());
+        Ok(())
+    } else {
+        println!("{} violation(s):", violations.len());
+        for v in &violations {
+            println!("  - {v}");
+        }
+        Err(format!("{} layering violation(s)", violations.len()))
     }
 }
 

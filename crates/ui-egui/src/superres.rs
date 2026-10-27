@@ -147,7 +147,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str>) {
                 ui.label(egui::RichText::new(p.file_name.clone()).strong());
                 let mp = (ow * oh) as f64 / 1e6;
                 let r = ui.label(format!("{w} × {h}  →  {ow} × {oh}  ({})", if mp < 1.0 { "< 1 MP".to_string() } else { format!("{mp:.0} MP") }));
-                crate::widgets::register(ui.ctx(), "label:superResSize", r.rect);
+                crate::widgets::register(ui, "label:superResSize", r.rect);
                 if ow.saturating_mul(oh) > limit {
                     ui.label(
                         egui::RichText::new(format!(
@@ -183,12 +183,12 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str>) {
         ui.label(egui::RichText::new(format!("{} {}", m.credit, crate::i18n::tr("— licence:"))).color(t.text_label));
         ui.horizontal(|ui| {
             let r = ui.link(m.licence.as_str()).on_hover_text(m.licence_url.as_str());
-            crate::widgets::register(ui.ctx(), "link:superResLicence", r.rect);
+            crate::widgets::register(ui, "link:superResLicence", r.rect);
             if r.clicked() {
                 let _ = crate::links::open(app, &m.licence_url);
             }
             let r = ui.link(crate::i18n::tr("About the model")).on_hover_text(m.home_url.as_str());
-            crate::widgets::register(ui.ctx(), "link:superResModel", r.rect);
+            crate::widgets::register(ui, "link:superResModel", r.rect);
             if r.clicked() {
                 let _ = crate::links::open(app, &m.home_url);
             }
@@ -199,9 +199,9 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str>) {
         ui.add_space(4.0);
         let frac = if d.total > 0 { d.done as f64 / d.total as f64 } else { 0.0 };
         let r = ui.add(egui::ProgressBar::new(frac as f32).text(format!("{:.2} / {:.2} MB", mb(d.done), mb(d.total))));
-        crate::widgets::register(ui.ctx(), "progress:superResDownload", r.rect);
+        crate::widgets::register(ui, "progress:superResDownload", r.rect);
         let r = ui.button(crate::i18n::tr("Cancel Download"));
-        crate::widgets::register(ui.ctx(), "button:superResCancel", r.rect);
+        crate::widgets::register(ui, "button:superResCancel", r.rect);
         if r.clicked() {
             app.session.enhancer.cancel_download(Some(SUPER_RES_MODEL));
         }

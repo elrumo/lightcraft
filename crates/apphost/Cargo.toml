@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 lightcraft-engine = { workspace = true }
 lightcraft-catalog = { workspace = true }
+lightcraft-develop = { workspace = true }
 lightcraft-geom = { workspace = true }
 lightcraft-pipeline = { workspace = true }
 lightcraft-preview = { workspace = true }
@@ -22,7 +23,6 @@ log = { workspace = true }
 web-time = { workspace = true }
 
 [dev-dependencies]
-lightcraft-develop = { workspace = true }
 # Super Resolution's test runs a synthetic model
 lightcraft-engine = { workspace = true, features = ["enhance"] }
 lightcraft-enhance = { workspace = true }

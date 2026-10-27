@@ -24,6 +24,10 @@ pub mod automation;
 pub mod backup;
 pub mod bench;
 pub mod chooser;
+// The web host's drop gate, also compiled natively so its queue handling has tests (the module is
+// unused in a native, non-test library build and would otherwise be dead code there).
+#[cfg(any(test, target_arch = "wasm32"))]
+mod drop_gate;
 pub mod files;
 pub mod health;
 pub mod store;

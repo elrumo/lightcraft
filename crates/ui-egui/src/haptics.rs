@@ -22,13 +22,13 @@ pub type PlayHaptic = Box<dyn Fn(Haptic)>;
 
 /// Ask for `h` this frame (cheap anywhere; several of one kind in a frame are played once).
 pub fn tap(ctx: &Context, h: Haptic) {
-    ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<Haptic>>(Id::new("lc-haptics")).push(h));
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<Haptic>>(Id::unique("lc-haptics")).push(h));
 }
 
 /// Hand the frame's taps to `play`, each kind once, in the order they were asked for. Always
 /// empties the queue, so a host that plays nothing doesn't collect them.
 pub(crate) fn flush(ctx: &Context, play: Option<&PlayHaptic>) {
-    let taps = ctx.data_mut(|d| std::mem::take(d.get_temp_mut_or_default::<Vec<Haptic>>(Id::new("lc-haptics"))));
+    let taps = ctx.data_mut(|d| std::mem::take(d.get_temp_mut_or_default::<Vec<Haptic>>(Id::unique("lc-haptics"))));
     let Some(play) = play else { return };
     let mut played = Vec::with_capacity(taps.len().min(4));
     for h in taps {
