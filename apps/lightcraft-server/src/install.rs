@@ -107,6 +107,17 @@ struct Paths {
     domain: String,
 }
 
+/// `s` as one word for a POSIX shell (single quotes, a quote inside as `'\''`): the install folder has a space on a Mac.
+fn shell_quote(s: &Path) -> String {
+    format!("'{}'", s.to_string_lossy().replace('\'', "'\\''"))
+}
+
+/// A line to paste in a terminal that runs `verb` on the installed program. The install folder is not on `PATH`, so a
+/// bare `lightbites-server start` would not be found.
+fn command_line(p: &Paths, verb: &str) -> String {
+    format!("{} {verb}", shell_quote(&p.app.join("program/lightbites-server")))
+}
+
 fn home() -> Result<PathBuf, String> {
     std::env::var("HOME").ok().filter(|h| !h.is_empty()).map(PathBuf::from).ok_or_else(|| "$HOME is not set".into())
 }
@@ -231,7 +242,7 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     println!("  admin page: http://localhost:{port}/admin");
     println!("  data:       {}", data.display());
     println!("  log:        {}", p.log.display());
-    println!("  stop/start: lightbites-server stop | start | status  (the program is {})", installed_exe.display());
+    println!("  stop/start: {} stop | start | status", shell_quote(&installed_exe));
     // the first start logs the one-time code that claims the server: show it
     let until = Instant::now() + Duration::from_secs(20);
     while Instant::now() < until {
@@ -293,7 +304,7 @@ pub fn stop() -> Result<(), String> {
     installed(&p)?;
     disable(&p);
     unload(&p);
-    println!("LightCraft Server is stopped. Start it again with: lightbites-server start");
+    println!("LightCraft Server is stopped. Start it again with: {}", command_line(&p, "start"));
     Ok(())
 }
 
@@ -319,7 +330,7 @@ pub fn status(porcelain: bool) -> Result<(), String> {
         println!("LightCraft Server is running (log: {}).", p.log.display());
         Ok(())
     } else {
-        Err("LightCraft Server is stopped. Start it with: lightbites-server start".into())
+        Err(format!("LightCraft Server is stopped. Start it with: {}", command_line(&p, "start")))
     }
 }
 
@@ -369,6 +380,25 @@ mod tests {
         assert!(u.contains("StandardOutput=append:/l 100%%.log\n"));
         assert!(u.contains("Restart=always") && u.contains("WantedBy=default.target"));
         assert_eq!(unit_word("a\"b\\c\nd"), "\"a\\\"b\\\\c d\"");
+    }
+
+    #[test]
+    fn the_commands_to_paste_name_the_installed_program_in_full() {
+        let p = Paths {
+            app: PathBuf::from("/Users/a b/Library/Application Support/LightCraft Server"),
+            agent: PathBuf::new(),
+            log: PathBuf::new(),
+            domain: String::new(),
+        };
+        // the install folder is not on PATH and has a space in it
+        assert_eq!(command_line(&p, "start"), "'/Users/a b/Library/Application Support/LightCraft Server/program/lightbites-server' start");
+        assert_eq!(shell_quote(Path::new("/it's/x")), "'/it'\\''s/x'");
+        // what the shell makes of it: one word, the same path
+        if cfg!(unix) {
+            let script = format!("printf '%s' {}", shell_quote(Path::new("/it's a $x/y")));
+            let out = Command::new("sh").arg("-c").arg(script).output().unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "/it's a $x/y");
+        }
     }
 
     #[test]
