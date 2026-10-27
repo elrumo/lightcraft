@@ -139,6 +139,21 @@ Stop, start and check it with `lightbites-server stop`, `start` and `status` (ru
 `~/Library/Application\ Support/LightCraft\ Server/program/`): a stopped server stays stopped, also after the next
 login, until you `start` it.
 
+`status` exits with 1 when the server is stopped, and `status --porcelain` prints one word (`running`, `stopped` or
+`not-installed`) for scripts. For a menu-bar icon with the status and Start / Stop items, run `lightbites-menubar`
+(`lightbites-server install` puts it beside the server; it calls these same commands; `--port N` sets the port its *Open Admin Page* item uses). The icon is green when the
+server is running, grey when it is stopped and orange when it is not installed. To have the icon at every login, add
+`lightbites-menubar` to System Settings ▸ General ▸ Login Items.
+
+#### On a Linux desktop: one command
+
+`lightbites-server install` also works on Linux: it copies the program and the web app to
+`~/.local/share/lightbites-server`, writes a systemd user service (`~/.config/systemd/user/lightbites-server.service`)
+and starts it. The log is `~/.local/state/lightbites-server/server.log`. `stop`, `start`, `status` and `uninstall` work as on
+a Mac (`stop` disables the service, so it stays stopped after a login). A user service runs while you are logged in; to
+have it run from boot without a login, run `loginctl enable-linger $USER` once. There is no tray icon on Linux (it
+would need GTK, which the product doesn't use).
+
 Remove it with `~/Library/Application\ Support/LightCraft\ Server/program/lightbites-server uninstall`: it stops the
 server and removes the agent and the program, and keeps your data. The Mac must be awake and logged in for the server
 to answer (System Settings ▸ Energy: prevent automatic sleeping on a Mac used as a server).

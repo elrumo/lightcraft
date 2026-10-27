@@ -1,0 +1,19 @@
+[package]
+name = "lightbites-menubar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "LightBites Server menu-bar app (macOS): status, Start and Stop for the installed server"
+
+[[bin]]
+name = "lightbites-menubar"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+# Only the macOS build has a menu-bar icon: tray-icon on Linux needs GTK (C libraries), which the product doesn't use.
+[target.'cfg(target_os = "macos")'.dependencies]
+tao = "0.37.2"
+tray-icon = { version = "0.26.1", default-features = false }

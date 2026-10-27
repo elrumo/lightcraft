@@ -1,16 +1,20 @@
-//! `lightbites-server install` / `uninstall`: run the server on a Mac without Docker or a terminal left open.
+//! `lightbites-server install` / `uninstall`: run the server on a Mac or a Linux desktop without Docker or a terminal left open.
 //!
-//! `install` copies the program and its `web` folder to `~/Library/Application Support/LightCraft Server/program`
+//! macOS: `install` copies the program and its `web` folder to `~/Library/Application Support/LightCraft Server/program`
 //! and starts it with a launchd agent (`~/Library/LaunchAgents/ai.lightcraft.server.plist`): it runs at login, is
-//! restarted if it stops, and keeps its data in `…/LightCraft Server/data`. `uninstall` stops it and removes the
-//! agent and the program; the data stays. `start`, `stop` and `status` control the installed agent without removing
-//! it (a stopped server stays stopped across logins until `start`). Other systems use their own service manager (docs/self-hosting.md).
+//! restarted if it stops, and keeps its data in `…/LightCraft Server/data`. Linux: the same with a systemd user service
+//! (`~/.config/systemd/user/lightbites-server.service`) and `~/.local/share/lightbites-server`. `uninstall` stops it and
+//! removes the agent and the program; the data stays. `start`, `stop` and `status` control the installed agent without
+//! removing it (a stopped server stays stopped across logins until `start`); `status --porcelain` prints one word
+//! (`running`, `stopped` or `not-installed`) for the menu-bar app and scripts. Windows uses its own service manager
+//! (docs/self-hosting.md).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const LABEL: &str = "ai.lightcraft.server";
+const UNIT: &str = "lightbites-server.service";
 /// Most nested folders `copy_dir` follows (the web build is two or three deep).
 const MAX_DEPTH: usize = 8;
 
@@ -37,6 +41,42 @@ fn plist(program: &Path, data: &Path, listen: &str, web: &Path, log: &Path) -> S
     )
 }
 
+/// One word of a systemd `ExecStart=` line: quoted, with the characters systemd expands escaped.
+fn unit_word(w: &str) -> String {
+    let mut o = String::from("\"");
+    for c in w.chars() {
+        match c {
+            '\\' => o.push_str("\\\\"),
+            '"' => o.push_str("\\\""),
+            '%' => o.push_str("%%"),
+            '$' => o.push_str("$$"),
+            '\n' => o.push(' '),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// The systemd user service that runs `program serve …` at login and keeps it running.
+fn unit(program: &Path, data: &Path, listen: &str, web: &Path, log: &Path) -> String {
+    let words = [
+        program.to_string_lossy(),
+        "serve".into(),
+        "--data".into(),
+        data.to_string_lossy(),
+        "--listen".into(),
+        listen.into(),
+        "--web".into(),
+        web.to_string_lossy(),
+    ];
+    let exec = words.iter().map(|w| unit_word(w)).collect::<Vec<_>>().join(" ");
+    let log = format!("append:{}", log.to_string_lossy().replace('%', "%%"));
+    format!(
+        "[Unit]\nDescription=LightBites Server\nAfter=network-online.target\n\n[Service]\nExecStart={exec}\nRestart=always\nRestartSec=3\nStandardOutput={log}\nStandardError={log}\n\n[Install]\nWantedBy=default.target\n"
+    )
+}
+
 fn copy_dir(from: &Path, to: &Path, depth: usize) -> Result<(), String> {
     if depth > MAX_DEPTH {
         return Err(format!("{}: folders nested too deeply", from.display()));
@@ -60,30 +100,86 @@ fn run(cmd: &str, args: &[&str]) -> bool {
 
 struct Paths {
     app: PathBuf,
-    plist: PathBuf,
+    /// The launchd plist (macOS) or the systemd unit (Linux).
+    agent: PathBuf,
     log: PathBuf,
+    /// launchd's `gui/<uid>` domain (macOS); empty on Linux.
     domain: String,
 }
 
+fn home() -> Result<PathBuf, String> {
+    std::env::var("HOME").ok().filter(|h| !h.is_empty()).map(PathBuf::from).ok_or_else(|| "$HOME is not set".into())
+}
+
 fn paths() -> Result<Paths, String> {
-    if !cfg!(target_os = "macos") {
-        return Err("install and uninstall are for macOS; on Linux and Windows, run the server as a service as docs/self-hosting.md describes".into());
+    let home = home()?;
+    if cfg!(target_os = "macos") {
+        let uid = Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty())
+            .ok_or("can't tell which user this is (`id -u` failed)")?;
+        Ok(Paths {
+            app: home.join("Library/Application Support/LightCraft Server"),
+            agent: home.join(format!("Library/LaunchAgents/{LABEL}.plist")),
+            log: home.join("Library/Logs/LightCraft Server/server.log"),
+            domain: format!("gui/{uid}"),
+        })
+    } else if cfg!(target_os = "linux") {
+        let xdg = |var: &str, fallback: &str| {
+            std::env::var(var).ok().filter(|d| d.starts_with('/')).map(PathBuf::from).unwrap_or_else(|| home.join(fallback))
+        };
+        Ok(Paths {
+            app: xdg("XDG_DATA_HOME", ".local/share").join("lightbites-server"),
+            agent: xdg("XDG_CONFIG_HOME", ".config").join("systemd/user").join(UNIT),
+            log: xdg("XDG_STATE_HOME", ".local/state").join("lightbites-server/server.log"),
+            domain: String::new(),
+        })
+    } else {
+        Err("install, start, stop and status are for macOS and Linux; on Windows, run the server as a service as docs/self-hosting.md describes"
+            .into())
     }
-    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty()).map(PathBuf::from).ok_or("$HOME is not set")?;
-    let uid = Command::new("id")
-        .arg("-u")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|u| u.trim().to_string())
-        .filter(|u| !u.is_empty())
-        .ok_or("can't tell which user this is (`id -u` failed)")?;
-    Ok(Paths {
-        app: home.join("Library/Application Support/LightCraft Server"),
-        plist: home.join(format!("Library/LaunchAgents/{LABEL}.plist")),
-        log: home.join("Library/Logs/LightCraft Server/server.log"),
-        domain: format!("gui/{uid}"),
-    })
+}
+
+fn systemctl(args: &[&str]) -> bool {
+    let mut all = vec!["--user"];
+    all.extend_from_slice(args);
+    run("systemctl", &all)
+}
+
+/// The agent's definition for this system.
+fn agent_file(p: &Paths, program: &Path, data: &Path, listen: &str, web: &Path) -> String {
+    if cfg!(target_os = "macos") { plist(program, data, listen, web, &p.log) } else { unit(program, data, listen, web, &p.log) }
+}
+
+/// Stops the agent for now (it may still start at the next login).
+fn unload(p: &Paths) {
+    if cfg!(target_os = "macos") {
+        run("launchctl", &["bootout", &format!("{}/{LABEL}", p.domain)]);
+    } else {
+        systemctl(&["stop", UNIT]);
+    }
+}
+
+/// Lets the agent start at login (again).
+fn enable(p: &Paths) {
+    if cfg!(target_os = "macos") {
+        run("launchctl", &["enable", &format!("{}/{LABEL}", p.domain)]);
+    } else {
+        systemctl(&["enable", UNIT]);
+    }
+}
+
+/// Keeps the agent from starting at login.
+fn disable(p: &Paths) {
+    if cfg!(target_os = "macos") {
+        run("launchctl", &["disable", &format!("{}/{LABEL}", p.domain)]);
+    } else {
+        systemctl(&["disable", UNIT]);
+    }
 }
 
 pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Result<(), String> {
@@ -99,14 +195,17 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     };
 
     // stop the old copy before replacing it (nothing to stop the first time)
-    let target = format!("{}/{LABEL}", p.domain);
-    run("launchctl", &["bootout", &target]);
+    unload(&p);
 
     if exe != installed_exe {
         std::fs::create_dir_all(&program_dir).map_err(|e| format!("{}: {e}", program_dir.display()))?;
         std::fs::copy(&exe, &installed_exe).map_err(|e| format!("{}: {e}", installed_exe.display()))?;
         // releases before the rename installed it as `lightcraft-server`
         let _ = std::fs::remove_file(program_dir.join("lightcraft-server"));
+    }
+    // the Mac zips carry the menu-bar app beside the server: keep it with the installed program
+    if let Some(menubar) = exe.parent().map(|d| d.join("lightbites-menubar")).filter(|m| m.is_file()) {
+        let _ = std::fs::copy(&menubar, program_dir.join("lightbites-menubar"));
     }
     if let Some(src) = web_src.as_ref().filter(|s| s.canonicalize().ok().as_deref() != installed_web.canonicalize().ok().as_deref()) {
         let _ = std::fs::remove_dir_all(&installed_web);
@@ -115,14 +214,16 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
         eprintln!("no `web` folder next to the program: the web app won't be served (the admin page and the apps still work)");
     }
     // a browser download is marked "from the internet"; the copy no longer needs it
-    run("xattr", &["-dr", "com.apple.quarantine", &program_dir.to_string_lossy()]);
+    if cfg!(target_os = "macos") {
+        run("xattr", &["-dr", "com.apple.quarantine", &program_dir.to_string_lossy()]);
+    }
 
-    for dir in [p.plist.parent(), p.log.parent(), Some(data.as_path())].into_iter().flatten() {
+    for dir in [p.agent.parent(), p.log.parent(), Some(data.as_path())].into_iter().flatten() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let _ = std::fs::remove_file(&p.log);
-    std::fs::write(&p.plist, plist(&installed_exe, &data, listen, &installed_web, &p.log)).map_err(|e| format!("{}: {e}", p.plist.display()))?;
-    run("launchctl", &["enable", &target]);
+    std::fs::write(&p.agent, agent_file(&p, &installed_exe, &data, listen, &installed_web)).map_err(|e| format!("{}: {e}", p.agent.display()))?;
+    enable(&p);
     load(&p)?;
 
     let port = listen.rsplit(':').next().unwrap_or("8080");
@@ -144,28 +245,39 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     Ok(())
 }
 
+/// Starts the agent now (macOS: bootstrap; Linux: reload the unit file, then `enable --now`).
 fn load(p: &Paths) -> Result<(), String> {
-    let plist_path = p.plist.to_string_lossy();
-    if run("launchctl", &["bootstrap", &p.domain, &plist_path]) || run("launchctl", &["load", "-w", &plist_path]) {
-        Ok(())
+    if cfg!(target_os = "macos") {
+        let plist_path = p.agent.to_string_lossy();
+        if run("launchctl", &["bootstrap", &p.domain, &plist_path]) || run("launchctl", &["load", "-w", &plist_path]) {
+            return Ok(());
+        }
     } else {
-        Err(format!("launchctl could not start the server; its agent is {}", p.plist.display()))
+        systemctl(&["daemon-reload"]);
+        if systemctl(&["enable", "--now", UNIT]) {
+            return Ok(());
+        }
     }
+    Err(format!("the service manager could not start the server; its agent is {}", p.agent.display()))
 }
 
 fn running(p: &Paths) -> bool {
-    run("launchctl", &["print", &format!("{}/{LABEL}", p.domain)])
+    if cfg!(target_os = "macos") {
+        run("launchctl", &["print", &format!("{}/{LABEL}", p.domain)])
+    } else {
+        systemctl(&["is-active", "--quiet", UNIT])
+    }
 }
 
 fn installed(p: &Paths) -> Result<(), String> {
-    if p.plist.is_file() { Ok(()) } else { Err("LightCraft Server is not installed here: run the installer first (see docs/self-hosting.md)".into()) }
+    if p.agent.is_file() { Ok(()) } else { Err("LightCraft Server is not installed here: run the installer first (see docs/self-hosting.md)".into()) }
 }
 
 /// Starts the installed server (and lets it start at login again).
 pub fn start() -> Result<(), String> {
     let p = paths()?;
     installed(&p)?;
-    run("launchctl", &["enable", &format!("{}/{LABEL}", p.domain)]);
+    enable(&p);
     if running(&p) {
         println!("LightCraft Server is already running.");
         return Ok(());
@@ -179,16 +291,29 @@ pub fn start() -> Result<(), String> {
 pub fn stop() -> Result<(), String> {
     let p = paths()?;
     installed(&p)?;
-    let target = format!("{}/{LABEL}", p.domain);
-    run("launchctl", &["disable", &target]);
-    run("launchctl", &["bootout", &target]);
+    disable(&p);
+    unload(&p);
     println!("LightCraft Server is stopped. Start it again with: lightbites-server start");
     Ok(())
 }
 
-/// Ok when the server is running; an error (exit status 1) when it is not.
-pub fn status() -> Result<(), String> {
+/// Ok when the server is running; an error (exit status 1) when it is not. `porcelain` prints one word
+/// (`running`, `stopped` or `not-installed`) and always succeeds, for the menu-bar app and scripts.
+pub fn status(porcelain: bool) -> Result<(), String> {
     let p = paths()?;
+    if porcelain {
+        println!(
+            "{}",
+            if installed(&p).is_err() {
+                "not-installed"
+            } else if running(&p) {
+                "running"
+            } else {
+                "stopped"
+            }
+        );
+        return Ok(());
+    }
     installed(&p)?;
     if running(&p) {
         println!("LightCraft Server is running (log: {}).", p.log.display());
@@ -200,9 +325,13 @@ pub fn status() -> Result<(), String> {
 
 pub fn uninstall() -> Result<(), String> {
     let p = paths()?;
-    run("launchctl", &["bootout", &format!("{}/{LABEL}", p.domain)]);
-    run("launchctl", &["enable", &format!("{}/{LABEL}", p.domain)]);
-    let _ = std::fs::remove_file(&p.plist);
+    disable(&p);
+    unload(&p);
+    enable(&p);
+    let _ = std::fs::remove_file(&p.agent);
+    if !cfg!(target_os = "macos") {
+        systemctl(&["daemon-reload"]);
+    }
     let _ = std::fs::remove_dir_all(p.app.join("program"));
     println!(
         "LightCraft Server is stopped and removed. Its data is kept in {}; delete that folder to remove your libraries too.",
@@ -228,6 +357,18 @@ mod tests {
             assert!(run("plutil", &["-lint", &file.to_string_lossy()]), "plutil rejected:\n{p}");
             std::fs::remove_file(&file).unwrap();
         }
+    }
+
+    #[test]
+    fn unit_quotes_words_and_escapes_what_systemd_expands() {
+        let u = unit(Path::new("/a b/lightbites-server"), Path::new("/d%1/$x"), "0.0.0.0:8080", Path::new("/w"), Path::new("/l 100%.log"));
+        assert!(
+            u.contains("ExecStart=\"/a b/lightbites-server\" \"serve\" \"--data\" \"/d%%1/$$x\" \"--listen\" \"0.0.0.0:8080\" \"--web\" \"/w\"\n"),
+            "{u}"
+        );
+        assert!(u.contains("StandardOutput=append:/l 100%%.log\n"));
+        assert!(u.contains("Restart=always") && u.contains("WantedBy=default.target"));
+        assert_eq!(unit_word("a\"b\\c\nd"), "\"a\\\"b\\\\c d\"");
     }
 
     #[test]
