@@ -25,6 +25,11 @@ impl LightcraftApp {
         self.dropped_files.split_off(self.deferred_dropped_file_count.min(self.dropped_files.len()))
     }
 
+    /// Whether files the host dropped wait for the UI phase.
+    pub(crate) fn has_dropped_files(&self) -> bool {
+        !self.dropped_files.is_empty()
+    }
+
     /// Import native drops as presets, face models or photos.
     pub(super) fn import_dropped_files(&mut self, ctx: &egui::Context) {
         // (every frame: files hovering over the window have a pointer to follow before any drop)

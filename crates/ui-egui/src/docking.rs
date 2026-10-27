@@ -562,7 +562,7 @@ fn divider_owners(layout: &Layout<Panel>, bodies: &[(Panel, egui::Rect)], slop: 
         let edge = match side {
             Some(Side::Start) => body.right(),
             Some(Side::End) => body.left(),
-            None => continue,
+            _ => continue,
         };
         let tall = egui::Rect::from_x_y_ranges(body.x_range(), (body.top() - tab_h)..=body.bottom());
         if (pos.x - edge).abs() <= slop && tall.y_range().contains(pos.y) {

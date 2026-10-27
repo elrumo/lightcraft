@@ -36,7 +36,9 @@ const REVEAL_FOR: f64 = 2.0;
 /// window (and in the frame they are dropped), and forget the album row they were over when they
 /// leave without a drop.
 pub fn track(app: &mut LightcraftApp, ctx: &egui::Context) {
-    let (hovering, dropped) = ctx.input(|i| (!i.raw.hovered_files.is_empty(), !i.raw.dropped_files.is_empty()));
+    // (the host's dropped files are taken from the raw input into the app's queue before the UI pass)
+    let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
+    let dropped = app.has_dropped_files();
     let at = if hovering || dropped { app.services.file_drag_pointer.as_mut().and_then(|f| f()) } else { None };
     ctx.data_mut(|d| {
         d.insert_temp(Id::unique(POINTER), at);

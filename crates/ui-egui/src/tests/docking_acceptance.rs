@@ -502,7 +502,8 @@ fn a_divider_beside_presets_resets_only_the_panel_it_sizes() {
         h.step();
     }
     // (widths that leave the photo its minimum in the 1400 pt headless window beside the Library)
-    let resize = craft_ui::docking::Action::<Panel>::ResizeSplit { path: vec![true, false], size: craft_ui::layout::SplitSize::FixedSecond(350.0) };
+    // (the docks hold their columns' own widths: Presets' is set on its column)
+    let resize = craft_ui::docking::Action::<Panel>::ResizeColumn { panel: Panel::Presets, width: 350.0 };
     h.app.run("ui.dock", json!({"action": resize})).unwrap();
     let reply = h.request("ui.set", json!({"rightWidth": 330.0}), std::time::Duration::from_secs(20));
     assert_eq!(reply["ok"], true, "{reply}");

@@ -123,6 +123,8 @@ fn saves_come_back_after_a_restart() {
     // …after the editor saved while it was closed: read on the first frame
     write_psd(&src, 30, 20, 60000);
     let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
+    // (the first pass installs the fonts; the UI phase, which checks the editor's files, starts after it)
+    h.step();
     h.step();
     let ph = h.app.session.catalog.photo(id).unwrap();
     assert_eq!((ph.width, ph.height), (30, 20), "read at launch");
