@@ -43,8 +43,9 @@ pub(crate) use session::export_source_pixels;
 use settings_hash::SETTINGS_HASH_ENTRIES;
 use settings_hash::SettingsHashes;
 pub use source::{
-    DISK_CACHE_BYTES, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe, MakeProduct, PairLoader, PreviewLoader, ProbeInfo,
-    ProxyBytes, RENDER_CACHE_VERSION, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES, ThumbAsk, Twin, face_edge, hdr_from_gain, thumb_bucket,
+    CameraCrop, Catalogued, DISK_CACHE_BYTES, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe, MakeProduct, PairLoader,
+    PreviewLoader, ProbeInfo, ProxyBytes, RENDER_CACHE_VERSION, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES, ThumbAsk, Twin, face_edge,
+    hdr_from_gain, thumb_bucket,
 };
 
 pub struct MediaCache {

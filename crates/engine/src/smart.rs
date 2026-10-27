@@ -298,10 +298,11 @@ pub fn encode(img: &Rgb32f, info: Option<&SourceInfo>) -> Result<Vec<u8>, String
 }
 
 /// A photo's smart preview and a smaller one (≤ `mini_edge`, the sync's grid preview), from the
-/// bytes of its original.
-pub fn encode_pair(original: &[u8], mini_edge: usize) -> Result<(Vec<u8>, Vec<u8>), String> {
+/// bytes of its original. `catalogued`: the size the photo is catalogued with, which says the frame a raw its camera crops
+/// is developed in (`None` when there is no photo to ask: the camera's frame).
+pub fn encode_pair(original: &[u8], mini_edge: usize, catalogued: crate::media::Catalogued) -> Result<(Vec<u8>, Vec<u8>), String> {
     use lightcraft_raster::resample::{Filter, fit};
-    let (img, info) = crate::files::load_bytes(original, crate::media::SourceLevel::Preview.max_edge())?;
+    let (img, info) = crate::files::load_bytes_for(original, crate::media::SourceLevel::Preview.max_edge(), catalogued)?;
     let smart = encode(&img, Some(&info))?;
     let small = if img.width.max(img.height) > mini_edge { fit(&img, mini_edge, mini_edge, Filter::Mitchell) } else { img };
     Ok((smart, encode(&small, Some(&info))?))

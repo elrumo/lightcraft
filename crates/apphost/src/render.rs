@@ -2276,7 +2276,7 @@ mod scheduler_tests {
     }
 
     fn flat_session() -> Session {
-        session(Arc::new(|_, _| {
+        session(Arc::new(|_, _, _| {
             let mut image = lightcraft_raster::Rgb32f::new(8, 8);
             image.data.fill([0.3, 0.2, 0.1]);
             Ok((image, Default::default()))
@@ -2355,7 +2355,7 @@ mod scheduler_tests {
     // A finished render becomes the slot's picture, with its facts, through the frontend's presenter
     #[test]
     fn a_render_becomes_what_its_slot_shows() {
-        let mut s = session(Arc::new(|_, _| {
+        let mut s = session(Arc::new(|_, _, _| {
             let mut image = lightcraft_raster::Rgb32f::new(8, 8);
             image.data.fill([0.3, 0.2, 0.1]);
             Ok((image, Default::default()))
@@ -2395,7 +2395,7 @@ mod scheduler_tests {
     // SDR render that takes its place takes the picture away (LR-VIEW-HDR-DISPLAY)
     #[test]
     fn the_loupe_of_an_hdr_edit_shows_hdr_only_on_an_hdr_display() {
-        let mut s = session(Arc::new(|_, _| {
+        let mut s = session(Arc::new(|_, _, _| {
             let mut image = lightcraft_raster::Rgb32f::new(8, 8);
             image.data.fill([3.0, 2.0, 1.0]);
             Ok((image, Default::default()))
@@ -2441,7 +2441,7 @@ mod scheduler_tests {
     fn a_preview_that_lands_lets_the_failed_thumbnail_render_in_the_same_frame() {
         let landed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let l = landed.clone();
-        let mut s = session(Arc::new(move |_, _| {
+        let mut s = session(Arc::new(move |_, _, _| {
             if !l.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err("still downloading".into());
             }
@@ -2469,7 +2469,7 @@ mod scheduler_tests {
     fn a_panicking_render_fails_its_slot_and_spares_the_worker() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let c = calls.clone();
-        let mut s = session(Arc::new(move |_, _| {
+        let mut s = session(Arc::new(move |_, _, _| {
             if c.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                 panic!("a decoder panics (expected in this test)");
             }

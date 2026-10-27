@@ -1,5 +1,5 @@
 use super::colour::stream_bin_factor;
-use super::load::{load_vec, load_vec_pair, load_vec_reduced};
+use super::load::{load_vec_for, load_vec_pair_for, load_vec_reduced_for};
 use super::preview::{fit_box, fs_preview_loader, preview_orientation};
 #[cfg(not(target_arch = "wasm32"))]
 use super::probe::probe_video_path;
@@ -143,13 +143,13 @@ pub(super) fn quick_image_srgb(header: &[u8], window: &[u8], adobe_rgb: bool, ma
 /// The filesystem-backed [`PairLoader`]: the file is read and decoded once, and developed as usual and from the photo's
 /// denoised picture. It holds two pictures at once, so it counts for more at the memory gate than a plain load.
 pub fn fs_pair_loader() -> PairLoader {
-    Arc::new(|path: &str, max_edge: usize, spec: &DenoiseSpec| {
+    Arc::new(|path: &str, max_edge: usize, spec: &DenoiseSpec, catalogued: Catalogued| {
         let len = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
         let weight = len * if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 4 } else { 10 };
         let gate = crate::memory::work_gate();
         let _permit = if crate::memory::is_background() { gate.acquire(weight) } else { gate.acquire_urgent(weight) };
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        let r = load_vec_pair(bytes, max_edge, spec);
+        let r = load_vec_pair_for(bytes, max_edge, spec, catalogued);
         crate::memory::release();
         r
     })
@@ -182,8 +182,9 @@ pub(super) fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
 /// interactive loads (the loupe, exports) never wait — they are counted, so background work
 /// yields to them.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
-    let loader: FileLoader =
-        Arc::new(|path: &str, max_edge: usize| fs_load(path, max_edge, |bytes| load_vec(bytes, max_edge), |img, info| (img, info)));
+    let loader: FileLoader = Arc::new(|path: &str, max_edge: usize, catalogued: Catalogued| {
+        fs_load(path, max_edge, |bytes| load_vec_for(bytes, max_edge, catalogued), |img, info| (img, info))
+    });
     let probe: FileProbe = Arc::new(|path: &str| {
         if let Some(r) = probe_video_path(path) {
             let mut info = r?;
@@ -217,7 +218,9 @@ const VIDEO_WEIGHT: usize = 192 << 20;
 
 /// The filesystem [`ReducedLoader`]: [`load_vec_reduced`] of the file, gated like [`fs_hooks`]' loader.
 pub fn fs_reduced_loader() -> ReducedLoader {
-    Arc::new(|path: &str, max_edge: usize| fs_load(path, max_edge, |bytes| load_vec_reduced(bytes, max_edge), |img, info| (img, info, false)))
+    Arc::new(|path: &str, max_edge: usize, catalogued: Catalogued| {
+        fs_load(path, max_edge, |bytes| load_vec_reduced_for(bytes, max_edge, catalogued), |img, info| (img, info, false))
+    })
 }
 
 /// Read `path` and `load` it, waiting on [`crate::memory::work_gate`] as [`fs_hooks`] explains. A clip is never read

@@ -1667,6 +1667,8 @@ mod tests_olympus;
 #[cfg(test)]
 mod tests_pack;
 #[cfg(test)]
+mod tests_panasonic;
+#[cfg(test)]
 mod tests_photo_library;
 #[cfg(test)]
 mod tests_sliders;

@@ -375,7 +375,7 @@ impl MediaCache {
             if self.availability.is_offline(path) && self.availability.exists(&sp.to_string_lossy()) == Some(true) {
                 return SourceRef::Smart { path: sp };
             }
-            let mut r = self.origin_ref(&p.source, max_edge);
+            let mut r = self.origin_ref(&p.source, max_edge, Some((p.width, p.height)));
             if let SourceRef::File { fallback, .. } = &mut r {
                 *fallback = Some(sp);
             }
@@ -390,12 +390,13 @@ impl MediaCache {
         {
             return SourceRef::Bytes { bytes, max_edge };
         }
-        self.origin_ref(&p.source, max_edge)
+        self.origin_ref(&p.source, max_edge, Some((p.width, p.height)))
     }
 
     /// How to load `origin` at most `max_edge` pixels long, ignoring decoded sources in memory (a
-    /// render worker in another wasm instance builds its sources from this).
-    pub fn origin_ref(&mut self, origin: &Source, max_edge: usize) -> SourceRef {
+    /// render worker in another wasm instance builds its sources from this). `catalogued`: the size of the photo it is the
+    /// original of, which says the frame a raw is developed in (`None` for a file that is no photo's).
+    pub fn origin_ref(&mut self, origin: &Source, max_edge: usize, catalogued: Catalogued) -> SourceRef {
         match origin {
             Source::Demo { scene } => {
                 if self.scenes.is_empty() {
@@ -403,12 +404,26 @@ impl MediaCache {
                 }
                 match self.scenes.iter().find(|s| s.id == *scene) {
                     Some(s) => SourceRef::Demo { scene: Box::new(s.clone()), max_edge },
-                    None => SourceRef::File { path: format!("demo:{scene}"), max_edge, loader: None, fallback: None, denoise: None, reduced: None },
+                    None => SourceRef::File {
+                        path: format!("demo:{scene}"),
+                        max_edge,
+                        loader: None,
+                        fallback: None,
+                        denoise: None,
+                        reduced: None,
+                        catalogued,
+                    },
                 }
             }
-            Source::File { path } => {
-                SourceRef::File { path: path.clone(), max_edge, loader: self.file_loader.clone(), fallback: None, denoise: None, reduced: None }
-            }
+            Source::File { path } => SourceRef::File {
+                path: path.clone(),
+                max_edge,
+                loader: self.file_loader.clone(),
+                fallback: None,
+                denoise: None,
+                reduced: None,
+                catalogued,
+            },
         }
     }
 }

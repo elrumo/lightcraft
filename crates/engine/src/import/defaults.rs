@@ -72,6 +72,14 @@ impl ImportDefaults {
     }
 }
 
+/// Whether a photo that comes with `sidecar` may keep the whole sensor of a raw its camera crops
+/// ([`crate::media::ProbeInfo::camera_crop`]). Settings made elsewhere (Lightroom's, in a sidecar) are relative to the
+/// camera's frame, which is the picture Lightroom shows: a photo that comes with any keeps that frame, as every photo
+/// imported before has it.
+pub(super) fn keeps_whole_sensor(sidecar: &Option<crate::sidecar::SidecarData>) -> bool {
+    sidecar.as_ref().is_none_or(|sc| sc.develop.is_none() && sc.upright.is_none())
+}
+
 /// Give a photo the crop its file asks for ([`crate::media::ProbeInfo::default_crop`]) as part of its import look: the
 /// photo isn't edited by it, Reset returns to it, and the crop tool can widen it to the whole picture the camera
 /// recorded. Call it after [`apply_import_defaults`] (or whatever else sets the photo's starting settings).
