@@ -27,6 +27,9 @@ impl LightcraftApp {
 
     /// Import native drops as presets, face models or photos.
     pub(super) fn import_dropped_files(&mut self, ctx: &egui::Context) {
+        // (every frame: files hovering over the window have a pointer to follow before any drop)
+        #[cfg(not(target_arch = "wasm32"))]
+        file_drop::track(self, ctx);
         // A drop that waited behind a prompt or the library window is not dropped again just
         // because a dialog, Lightroom catalog import, a running Synchronize Folder or the import
         // a library open started is still running when the barrier goes. Keep it queued and try
@@ -59,7 +62,6 @@ impl LightcraftApp {
     /// presets, photos and folders go to the import review (or straight in, Settings ▸ Import).
     #[cfg(not(target_arch = "wasm32"))]
     fn handle_dropped_files(&mut self, ctx: &egui::Context, dropped: Vec<egui::DroppedFileHandle>) {
-        file_drop::track(self, ctx);
         let dropped: Vec<String> =
             dropped.iter().map(|f| egui::DroppedFile::path(f.as_ref()).to_string_lossy().to_string()).filter(|p| !p.is_empty()).collect();
         if dropped.is_empty() {

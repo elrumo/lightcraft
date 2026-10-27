@@ -508,7 +508,7 @@ fn undo_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let cell = egui::Rect::from_min_size(row.min + vec2(i as f32 * w / 2.0, 0.0), vec2(w / 2.0, row.height()));
         let resp = ui.interact(cell, egui::Id::unique(("undo-menu", id)), if enabled { Sense::click() } else { Sense::hover() });
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, crate::i18n::tr(tip)));
-        crate::widgets::register_geometry(&ctx, format!("button:{id}"), cell);
+        crate::widgets::register_response(format!("button:{id}"), cell, &resp);
         if enabled && resp.is_pointer_button_down_on() {
             let spot = cell.shrink2(vec2(10.0, 4.0));
             ui.painter().rect_filled(

@@ -302,7 +302,7 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
     column(ctx, "mask-column", at, |ui| {
         let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, MASK_TILE), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Create New Mask")));
-        crate::widgets::register_geometry(ctx, "button:maskNew", r);
+        crate::widgets::register_response("button:maskNew", r, &resp);
         let k = glass::press(ctx, &resp);
         ui.painter().circle_filled(r.center(), MASK_TILE / 2.0 - 2.0 + 2.0 * k, t.accent);
         icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(22.0, 22.0)), Icon::Plus, Color32::WHITE);
@@ -355,7 +355,7 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
             }
             let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, PART_TILE), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Add or Subtract")));
-            crate::widgets::register_geometry(ctx, "button:maskCombine", r);
+            crate::widgets::register_response("button:maskCombine", r, &resp);
             let k = glass::press(ctx, &resp);
             let c = r.center();
             ui.painter().circle_filled(c, PART_TILE / 2.0 - 2.0 + 2.0 * k, t.pressed);
@@ -417,7 +417,7 @@ fn brush_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
         for (id, icon, label, on) in items {
             let (r, resp) = ui.allocate_exact_size(vec2(MASK_TILE, MASK_TILE), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, crate::i18n::tr(label)));
-            crate::widgets::register_geometry(ctx, format!("button:brush-{id}"), r);
+            crate::widgets::register_response(format!("button:brush-{id}"), r, &resp);
             let k = glass::press(ctx, &resp);
             let sq = r.shrink(1.0 + 2.0 * k);
             let p = ui.painter();

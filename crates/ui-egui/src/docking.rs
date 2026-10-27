@@ -403,20 +403,39 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
         if cards { egui::Rect::from_min_max(area.min + egui::vec2(t.dock_gap, 0.0), area.max - egui::vec2(t.dock_gap, t.dock_gap)) } else { area };
     // Tool and preset panels publish hover previews before the photo consumes them.
     let mut canvas = None;
-    // Where each panel's body is drawn, to round the cards' corners.
+    // Where each panel's body is drawn, to round the cards' corners and to tell which divider a
+    // double-click lands on.
     let mut bodies = Vec::new();
+    // panels being shown or hidden slide in and out, the photo making room or taking it back
+    let (drawn, slides) = sliding(ui.ctx(), &workspace);
+    if !slides.is_empty() {
+        style.min_pane = 0.0;
+    }
     let output = ui
         .scope_builder(egui::UiBuilder::new().max_rect(dock_rect), |ui| {
             DockArea::new(egui::Id::unique("lightcraft-docking")).locked(workspace.locked).show_with_limits(
                 ui,
-                &workspace.layout,
+                &drawn.layout,
                 &style,
                 |panel| crate::i18n::tr(panel.label()).into(),
                 permissions,
-                panel_limits,
+                |panel| {
+                    let mut limits = panel_limits(panel);
+                    if slides.iter().any(|s| s.panel == *panel) {
+                        limits.min.x = 0.0;
+                    }
+                    limits
+                },
                 |ui, panel| {
                     let rect = ui.max_rect();
                     bodies.push((*panel, rect));
+                    // (one sliding is drawn whole, the part not in yet past the edge it comes from)
+                    let whole = match slides.iter().find(|s| s.panel == *panel) {
+                        Some(s) if s.left => egui::Rect::from_min_max(egui::pos2(rect.right() - s.full, rect.top()), rect.max),
+                        Some(s) => egui::Rect::from_min_size(rect.min, egui::vec2(s.full, rect.height())),
+                        None => rect,
+                    };
+                    let ui = &mut ui.new_child(egui::UiBuilder::new().id_salt("panel-body").max_rect(whole).layout(*ui.layout()));
                     match panel {
                         Panel::Canvas => {
                             canvas = Some(ui.new_child(egui::UiBuilder::new().id_salt("photo-view").max_rect(rect)));
@@ -471,7 +490,7 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
     if cards {
         // last, over everything the panels drew (they fill their rectangles square)
         let painter = ui.painter().with_clip_rect(area);
-        for rect in group_rects(&workspace.layout, &bodies, style.tab_height) {
+        for rect in group_rects(&drawn.layout, &bodies, style.tab_height) {
             round_corners(&painter, rect, t.card_radius, t.divider);
         }
     }
@@ -485,7 +504,8 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
     }
     publish_visibility(app, &workspace);
     app.ui.docking = Some(workspace);
-    if stale {
+    // (while panels slide, what was drawn isn't the layout: moves and resizes wait until they are in place)
+    if stale || !slides.is_empty() {
         return;
     }
     // A divider (or a floating panel's grip or corner) is dragged from the frame its button goes
@@ -504,6 +524,109 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
             app.ui.toast = Some((format!("Panel move was not applied: {error}"), app.tick_now() + 8.0, None));
         }
     }
+    // A double-click on a divider returns the panel column it sizes to its default width. egui counts
+    // a click as a triple click when the click before last came within 0.6 s, wherever it was: a
+    // click anywhere just before a double-click on a divider turns that double-click into a triple
+    // one. Both mean "this click is a quick repeat at the same spot", and a reset is idempotent.
+    let double_click = ui.input(|input| {
+        let pointer = &input.pointer;
+        (pointer.button_double_clicked(egui::PointerButton::Primary) || pointer.button_triple_clicked(egui::PointerButton::Primary))
+            .then(|| pointer.interact_pos())
+            .flatten()
+    });
+    if let Some(pos) = double_click.filter(|pos| ui.ctx().layer_id_at(*pos) == Some(ui.layer_id())) {
+        for panel in divider_owners(&rendered.layout, &bodies, style.gap.max(4.0) + 2.0, style.tab_height, pos) {
+            let Some(width) = default_width(panel) else { continue };
+            if let Err(error) = command_impl(app, false, &json!({"action": Action::<Panel>::ResizeColumn { panel, width }}), true) {
+                app.ui.toast = Some((format!("Panel width was not reset: {error}"), app.tick_now() + 8.0, None));
+            }
+        }
+    }
+}
+
+/// The width a double-click on a panel's divider returns it to; the photo view has none.
+fn default_width(panel: Panel) -> Option<f32> {
+    (panel != Panel::Canvas).then(|| panel.home_width())
+}
+
+/// The panels whose column has a divider at `pos`: the edge of a column that faces the photo
+/// (the right edge of a start dock's columns, the left edge of an end dock's), within `slop` points,
+/// along the column's height including its tab strip (`tab_h`).
+fn divider_owners(layout: &Layout<Panel>, bodies: &[(Panel, egui::Rect)], slop: f32, tab_h: f32, pos: egui::Pos2) -> Vec<Panel> {
+    let mut owners = Vec::new();
+    for (panel, body) in bodies {
+        if *panel == Panel::Canvas || body.contains(pos) {
+            continue;
+        }
+        let side = layout.location(panel).ok().and_then(|l| l.group).and_then(|g| g.column).map(|c| c.side);
+        let edge = match side {
+            Some(Side::Start) => body.right(),
+            Some(Side::End) => body.left(),
+            None => continue,
+        };
+        let tall = egui::Rect::from_x_y_ranges(body.x_range(), (body.top() - tab_h)..=body.bottom());
+        if (pos.x - edge).abs() <= slop && tall.y_range().contains(pos.y) {
+            owners.push(*panel);
+        }
+    }
+    owners
+}
+
+/// A side panel on its way in or out this frame: its width once it is all there, and whether it is
+/// left of the photo (it slides in from the left edge) or right.
+struct Slide {
+    panel: Panel,
+    full: f32,
+    left: bool,
+}
+
+/// What to draw this frame: `workspace` with the panels being shown or hidden at the width they
+/// have got to (one being hidden is put back where it was until it has gone). Only a panel in a
+/// column of its own slides; one floating or sharing its column comes and goes at once.
+fn sliding(ctx: &egui::Context, workspace: &Workspace) -> (Workspace, Vec<Slide>) {
+    let mut drawn = workspace.clone();
+    let mut slides = Vec::new();
+    for panel in [Panel::Library, Panel::Presets, Panel::Tools] {
+        let open = workspace.layout.contains(&panel);
+        let k = crate::motion::openness(ctx, egui::Id::unique(("dock-slide", panel.id())), open, crate::motion::SLIDE_S);
+        if (open && k >= 1.0) || (!open && k <= 0.0) {
+            continue;
+        }
+        let mut next = drawn.clone();
+        if !open && set_visible(&mut next, panel, true).is_err() {
+            continue;
+        }
+        if let Some((full, left)) = narrow(&mut next.layout, panel, k) {
+            drawn = next;
+            slides.push(Slide { panel, full, left });
+        }
+    }
+    (drawn, slides)
+}
+
+/// Make `panel`, in a column of its own, `k` of its width. Returns its whole width and whether it
+/// is on the left; `None` (nothing changed) where it isn't in a column of its own.
+fn narrow(layout: &mut Layout<Panel>, panel: Panel, k: f32) -> Option<(f32, bool)> {
+    let mut nodes: Vec<&mut Node<Panel>> = layout.root.iter_mut().collect();
+    while let Some(node) = nodes.pop() {
+        match node {
+            Node::Split { first, second, .. } => {
+                nodes.push(first);
+                nodes.push(second);
+            }
+            Node::Dock { side, columns } => {
+                let left = *side == Side::Start;
+                let alone = |column: &Column<Panel>| matches!(column.groups.as_slice(), [group] if group.panels.as_slice() == [panel]);
+                if let Some(column) = columns.iter_mut().find(|column| alone(column) && !column.iconic) {
+                    let full = column.width;
+                    column.width = full * k;
+                    return Some((full, left));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Where each docked group is drawn, its tab strip and its body, from where its panels' bodies

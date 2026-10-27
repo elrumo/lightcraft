@@ -728,7 +728,7 @@ fn straighten_hint(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
             let galley = ui.painter().layout_no_wrap(crate::i18n::tr("Drag along the horizon").to_string(), t.font(14.0), Color32::WHITE);
             let (r, resp) = ui.allocate_exact_size(galley.size() + vec2(56.0, 18.0), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Cancel")));
-            crate::widgets::register_geometry(ctx, "button:straightenCancel", r);
+            crate::widgets::register_response("button:straightenCancel", r, &resp);
             ui.painter().rect_filled(r, r.height() / 2.0, Color32::from_black_alpha(190));
             ui.painter().galley(pos2(r.left() + 16.0, r.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(14.0, 14.0)), Icon::Close, Color32::WHITE);

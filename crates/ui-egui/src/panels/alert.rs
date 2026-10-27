@@ -72,7 +72,7 @@ pub fn show(ctx: &egui::Context, a: &Alert) -> (bool, bool) {
                 let r = Rect::from_min_size(pos2(card.left() + PAD + i as f32 * (half + GAP), row_top), vec2(half, BUTTON_H));
                 let resp = ui.interact(r, id.with(("button", i)), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr(label)));
-                crate::widgets::register_geometry(ctx, if i == 0 { "button:alertCancel" } else { "button:alertOk" }, r);
+                crate::widgets::register_response(if i == 0 { "button:alertCancel" } else { "button:alertOk" }, r, &resp);
                 let k = crate::glass::press(ctx, &resp);
                 let pill = r.expand(2.0 * k);
                 let (fill, ink) = match (strong, red) {

@@ -315,7 +315,7 @@ pub fn scan_progress(app: &mut LightcraftApp, ctx: &egui::Context) {
             ui.label(egui::RichText::new(text).color(t.text));
             ui.add(egui::ProgressBar::new(done as f32 / total.max(1) as f32).desired_width(320.0));
             let r = ui.button(crate::i18n::tr("Cancel"));
-            crate::widgets::register_geometry(ctx, "button:scanCancel", r.rect);
+            crate::widgets::register_response("button:scanCancel", r.rect, &r);
             cancel = r.clicked();
         });
     if cancel {

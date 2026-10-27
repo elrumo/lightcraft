@@ -528,7 +528,7 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
             glass(ui, &mut |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(w, ROW_H - 8.0), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr("Cancel")));
-                crate::widgets::register_geometry(ctx, "button:actionsCancel", r);
+                crate::widgets::register_response("button:actionsCancel", r, &resp);
                 let color = if resp.is_pointer_button_down_on() { t.accent.gamma_multiply(0.6) } else { t.accent };
                 ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr("Cancel"), t.semibold(17.0), color);
                 if resp.clicked() {
@@ -824,7 +824,7 @@ fn edit_menu_bar(ctx: &egui::Context, id: Id, items: &[(&'static str, &str)], cu
             let r = Rect::from_min_size(pos2(left, bar.top()), vec2(galley.size().x + 28.0, H));
             let resp = ui.interact(r, id.with(*key), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::i18n::tr(label)));
-            crate::widgets::register_geometry(ctx, format!("button:edit-{key}"), r);
+            crate::widgets::register_response(format!("button:edit-{key}"), r, &resp);
             if resp.is_pointer_button_down_on() {
                 p.rect_filled(r.shrink(3.0), (H - 6.0) / 2.0, t.pressed);
             }

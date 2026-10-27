@@ -1339,7 +1339,7 @@ pub fn progress(ctx: &egui::Context, done: usize, total: usize, current: &str, s
             );
             let resp = ui.interact(pill, id.with("cancel"), if stopping { Sense::hover() } else { Sense::click() });
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, !stopping, label));
-            crate::widgets::register_geometry(ctx, "button:exportCancel", pill);
+            crate::widgets::register_response("button:exportCancel", pill, &resp);
             let painter = ui.painter();
             if resp.is_pointer_button_down_on() {
                 painter.rect_filled(pill, 20.0, t.hover);

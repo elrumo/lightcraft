@@ -491,7 +491,7 @@ pub fn progress(app: &mut LightcraftApp, ctx: &egui::Context) {
             ui.label(egui::RichText::new(text).color(t.text));
             ui.add(egui::ProgressBar::new(frac).desired_width(320.0));
             let r = ui.add_enabled(!task.cancelled, egui::Button::new(crate::i18n::tr("Cancel")));
-            crate::widgets::register_geometry(ctx, "button:importCancel", r.rect);
+            crate::widgets::register_response("button:importCancel", r.rect, &r);
             cancel = r.clicked();
         });
     if cancel && let Some(task) = app.import.as_mut() {
