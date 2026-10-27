@@ -385,7 +385,7 @@ pub(crate) fn card_end(ui: &mut egui::Ui, t: &Tokens) {
 pub(crate) fn tap_row(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, h: f32, inset: f32, enabled: bool) -> (Rect, egui::Response) {
     card_row(ui, t, inset);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     if !id.is_empty() {
         register(ui, format!("button:{id}"), r);
     }
@@ -466,17 +466,6 @@ pub(crate) fn option(ui: &mut egui::Ui, id: &str, i: usize, selected: bool, labe
         mobile::row_checked(ui, &format!("{id}-{i}"), None, label, true, Some(selected))
     } else {
         ui.selectable_label(selected, label).clicked()
-    }
-}
-
-/// A heading between a [`select`]'s choices.
-pub(crate) fn group(ui: &mut egui::Ui, t: &Tokens, label: &str) {
-    if crate::is_compact(ui.ctx()) {
-        mobile::row_gap(ui);
-        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
-        ui.painter().text(pos2(r.left() + 16.0, r.center().y), egui::Align2::LEFT_CENTER, label, t.font(13.0), t.text_dim);
-    } else {
-        ui.label(RichText::new(label).size(10.5).weak());
     }
 }
 
@@ -586,8 +575,7 @@ pub(crate) fn text_row(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, val
             ui.add(
                 edit.frame(egui::Frame::NONE)
                     .font(egui::FontId::proportional(17.0))
-                    .horizontal_align(Align::RIGHT)
-                    .vertical_align(Align::Center)
+                    .align(egui::Align2::RIGHT_CENTER)
                     .min_size(vec2(0.0, ROW))
                     .desired_width(ui.available_width()),
             )

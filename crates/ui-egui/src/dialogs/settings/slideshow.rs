@@ -1,5 +1,5 @@
 use super::display::duration_slider;
-use super::widgets::{check, choices, heading, hint, row};
+use super::widgets::{check, heading, hint, row};
 use super::*;
 
 /// `with_preview` the composed slide is left out: [`pin_slide_preview`] has pinned it above the page.

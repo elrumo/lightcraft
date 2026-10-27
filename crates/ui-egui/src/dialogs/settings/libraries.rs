@@ -156,23 +156,6 @@ pub fn new_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> 
     switch_library(app, &dir.to_string_lossy())
 }
 
-/// Characters a folder name can't hold on Windows (and `/`, which no system allows).
-const RESERVED_NAME_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
-
-fn valid_library_name(s: &str) -> Result<&str, String> {
-    let n = s.trim();
-    // Windows drops trailing dots and spaces from a folder name: refuse them rather than
-    // creating a folder whose name differs from the one asked for (spaces around the name
-    // are trimmed first)
-    let bad = n.is_empty() || n == "." || n == ".." || n.ends_with(['.', ' ']) || n.contains(RESERVED_NAME_CHARS) || n.chars().any(char::is_control);
-    if bad {
-        return Err(format!(
-            "app.newLibrary: {s:?} can't be a library name (a folder name without < > : \" / \\ | ? * and not ending in a dot or space)"
-        ));
-    }
-    Ok(n)
-}
-
 /// `base` inside `location`, or `base 2`, `base 3`… if that is taken.
 pub(crate) fn free_name(location: &std::path::Path, base: &str) -> std::path::PathBuf {
     lightcraft_apphost::libraries::free_name(location, base)

@@ -1,5 +1,5 @@
 use super::general::{cameras, preset_combo};
-use super::widgets::{button_width, check, choices, heading, hint, path_label, row};
+use super::widgets::{check, heading, hint, row};
 use super::*;
 
 pub(crate) fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {

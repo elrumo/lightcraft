@@ -98,16 +98,6 @@ pub fn desktop_height(max: f32) -> f32 {
     if max.is_nan() { 620.0 } else { max.clamp(1.0, 620.0) }
 }
 
-/// The width of `text` in the style `style`, and the gap before it: what a label takes in a row.
-pub(super) fn label_width(ui: &egui::Ui, text: &str, style: egui::TextStyle) -> f32 {
-    ui.painter().layout_no_wrap(text.to_string(), style.resolve(ui.style()), egui::Color32::WHITE).size().x + ui.spacing().item_spacing.x
-}
-
-/// The same for a button, which has padding either side of its text.
-pub(super) fn button_width(ui: &egui::Ui, text: &str) -> f32 {
-    label_width(ui, text, egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.x
-}
-
 pub(crate) fn heading(ui: &mut egui::Ui, t: &Tokens, text: &str) {
     if crate::is_compact(ui.ctx()) {
         // iOS: small grey capitals over the card
