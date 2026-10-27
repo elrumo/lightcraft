@@ -308,6 +308,14 @@ fn a_preset_drop_waits_behind_the_launch_list_over_an_open_library() {
     let r = h.request("ui.key", json!({"key": "Escape"}), T);
     assert_eq!(r["ok"], true, "{r}");
     assert!(h.step_until(SETTLE, |h| h.app.library_problem.is_none()), "Keep closes the launch list");
+    // (a dropped preset is shown in the Import Presets review first: it imports on Import)
+    assert!(
+        h.step_until(SETTLE, |h| matches!(h.app.ui.dialog, Some(crate::state::Dialog::PresetImport { .. }))),
+        "the queued preset is reviewed once the list is gone"
+    );
+    assert_eq!(user_presets(&h), before, "nothing is added before Import");
+    let r = h.request("ui.dialog.confirm", json!({}), T);
+    assert_eq!(r["ok"], true, "{r}");
     assert!(h.step_until(SETTLE, |h| user_presets(h) == before + 1), "the queued preset imports once the list is gone");
     assert!(h.app.dropped_files.is_empty());
 }

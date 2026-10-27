@@ -568,7 +568,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         // F8: `show` (true / false) says which; without it the panel toggles
         "view.rightPanel" => {
             let was = app.ui.right;
-            let shown = app.ui.toggle_right_panel(p.get("show").and_then(Value::as_bool));
+            let show = p.get("show").and_then(Value::as_bool);
+            // A right panel that is open but not showing (minimized, or behind another tab) keeps its
+            // mode; reveal_command brings it to the front.
+            if was != RightPanel::None && show != Some(false) && !crate::docking::exposed(app, crate::docking::Panel::Tools) {
+                return Some(Ok(json!({"shown": true, "right": was})));
+            }
+            let shown = app.ui.toggle_right_panel(show);
             if was != RightPanel::None && !shown {
                 end_panel_tool(app);
             }

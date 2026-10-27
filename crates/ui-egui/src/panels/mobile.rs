@@ -702,6 +702,16 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
     // The host raises the keyboard when egui reports a field's IME rect, and iOS Safari does so only for a focus
     // made inside the tap. egui reports it only from the pass after the field takes focus and only once the field
     // is on screen (a page slides in from below), so for a moment it doesn't: report the field's own rect then.
+    eprintln!(
+        "DBG em focused={:?} mfocused={:?} touch={} ime_none={}",
+        focused,
+        ctx.memory(|m| m.focused()),
+        ctx.input(|i| i.has_touch_screen()),
+        ctx.output(|o| o.ime.is_none())
+    );
+    if let Some(f) = focused {
+        eprintln!("DBG rr={:?}", ctx.read_response(f).map(|r| r.rect));
+    }
     if let Some(field) = focused
         && ctx.input(|i| i.has_touch_screen())
         && ctx.output(|o| o.ime.is_none())

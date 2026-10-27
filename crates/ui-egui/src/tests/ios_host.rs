@@ -275,7 +275,8 @@ fn the_phone_grid_has_an_add_button() {
 fn dialog_fields_dont_restart_the_keyboard_every_frame() {
     let mut h = Headless::new(LightcraftApp::new(Session::with_demo(), Services::default()), [390.0, 844.0], 3.0);
     h.app.run("dialog.newAlbum", json!({})).unwrap();
-    for _ in 0..3 {
+    // (the first frames install the fonts; the field takes the focus the frame after it is drawn)
+    for _ in 0..6 {
         h.step();
     }
     let ime = h.view.ime.clone().expect("the name field has the keyboard");
