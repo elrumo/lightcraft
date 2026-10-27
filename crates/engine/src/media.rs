@@ -103,6 +103,8 @@ pub struct MediaCache {
 }
 
 #[cfg(test)]
+mod embedded_frame_tests;
+#[cfg(test)]
 mod thumbnail_hash_tests;
 
 #[cfg(test)]

@@ -372,7 +372,8 @@ impl crate::Session {
         Some(job)
     }
 
-    /// The embedded preview of an unedited raw (path, loader), when the app installed a loader.
+    /// The embedded preview of an unedited raw (path, loader), when the app installed a loader. The loader's pictures are
+    /// cut to the photo's own frame ([`frame_to`]): a camera's JPEG can show more than the raw's default crop.
     fn embedded_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
         // a synced photo's `web/<hash>/…` is no file here: its picture is the server's mini preview, which the grid
         // must keep asking for (an embedded preview taken as final, and failing, left its cell empty until an edit)
@@ -380,7 +381,9 @@ impl crate::Session {
             return None;
         }
         match (&p.source, &self.media.preview_loader) {
-            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && crate::import::has_import_look(p) => Some((path.clone(), l.clone())),
+            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && crate::import::has_import_look(p) => {
+                Some((path.clone(), framed_loader(l, p.width, p.height)))
+            }
             _ => None,
         }
     }
@@ -658,4 +661,36 @@ pub(crate) fn export_source_pixels(p: &Photo, out_long: usize) -> usize {
         }
         None => px,
     }
+}
+
+/// `loader` with the pictures it gives cut to the shape of a `width × height` frame ([`frame_to`]).
+fn framed_loader(loader: &PreviewLoader, width: u32, height: u32) -> PreviewLoader {
+    if width == 0 || height == 0 {
+        return loader.clone();
+    }
+    let (inner, aspect) = (loader.clone(), f64::from(width) / f64::from(height));
+    Arc::new(move |path: &str, edge: usize| inner(path, edge).map(|img| frame_to(img, aspect)))
+}
+
+/// A camera's embedded JPEG cut to the frame of the photo it belongs to (`aspect`, width over height). Some cameras show
+/// the whole sensor in their JPEG while the raw's default crop is the in-camera aspect ratio (Panasonic: a 16:9 shot is
+/// the middle of its 4:3 sensor); a thumbnail made from the JPEG then showed another frame than the render that replaced
+/// it, and a photo changed shape when its page settled. The cut is around the centre, where the in-camera crops are.
+/// Left alone: a picture of the frame's shape within what resizing rounds, one turned the other way, and a frame that
+/// would keep less than half of it (that is no aspect-ratio setting).
+pub(super) fn frame_to(img: Rgba8, aspect: f64) -> Rgba8 {
+    let (w, h) = (img.width, img.height);
+    if w == 0 || h == 0 || !(aspect.is_finite() && aspect > 0.0) {
+        return img;
+    }
+    let have = w as f64 / h as f64;
+    if (have / aspect - 1.0).abs() < 0.02 || (have - 1.0) * (aspect - 1.0) < 0.0 {
+        return img;
+    }
+    let (cw, ch) =
+        if aspect < have { (((h as f64 * aspect).round() as usize).clamp(1, w), h) } else { (w, ((w as f64 / aspect).round() as usize).clamp(1, h)) };
+    if cw.saturating_mul(ch).saturating_mul(2) < w.saturating_mul(h) {
+        return img;
+    }
+    img.into_crop((w - cw) / 2, (h - ch) / 2, cw, ch)
 }

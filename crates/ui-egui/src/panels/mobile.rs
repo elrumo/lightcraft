@@ -23,6 +23,17 @@ const PULL_DOWN_W: f32 = 270.0;
 /// A menu's corners (iOS 26's are round enough to look like a lozenge).
 const MENU_R: f32 = 24.0;
 
+/// Tell egui the size of the fixed-position area `id` before it is first shown: it otherwise draws that first
+/// frame invisible and deaf, to measure itself, and what a tap opens (a page with a field, an edit menu)
+/// would only work from the next frame.
+fn seed_area(ctx: &egui::Context, id: Id, order: egui::Order, pos: egui::Pos2, size: egui::Vec2) {
+    if egui::AreaState::load(ctx, id).is_some() {
+        return;
+    }
+    let state = egui::AreaState { pivot_pos: Some(pos), pivot: Align2::LEFT_TOP, size: Some(size), interactable: true, last_became_visible_at: None };
+    ctx.memory_mut(|m| m.areas_mut().set_state(egui::LayerId::new(order, id), state));
+}
+
 /// The slide progress of the sheet `id`, eased: 0 = off screen, 1 = in place. It follows `open`, so
 /// a sheet slides out the way it slid in (the same curve backwards: it starts slowly and picks up).
 /// Call it, or [`hidden`], every frame: a sheet first seen open appears at once, not sliding in.
@@ -214,17 +225,7 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
     // (down to the screen's edge: an area otherwise stops at the safe area)
     // (its size is known: no invisible sizing pass in its first frame, so a field in it takes the focus, and a
     // tap that opens the page raises the keyboard, in that very frame)
-    let layer = egui::LayerId::new(egui::Order::Foreground, sid);
-    if egui::AreaState::load(ctx, sid).is_none() {
-        let state = egui::AreaState {
-            pivot_pos: Some(pos2(content.left(), top)),
-            pivot: Align2::LEFT_TOP,
-            size: Some(vec2(content.width(), (screen.bottom() - top).max(ROW_H))),
-            interactable: true,
-            last_became_visible_at: None,
-        };
-        ctx.memory_mut(|m| m.areas_mut().set_state(layer, state));
-    }
+    seed_area(ctx, sid, egui::Order::Foreground, pos2(content.left(), top), vec2(content.width(), (screen.bottom() - top).max(ROW_H)));
     let area = egui::Area::new(sid).constrain_to(screen).constrain(false);
     // (opaque as it slides: not egui's fade-in of a new area, through which what is behind showed)
     area.order(egui::Order::Foreground).fade_in(false).fixed_pos(pos2(content.left(), top)).show(ctx, |ui| {
@@ -715,16 +716,6 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
     // The host raises the keyboard when egui reports a field's IME rect, and iOS Safari does so only for a focus
     // made inside the tap. egui reports it only from the pass after the field takes focus and only once the field
     // is on screen (a page slides in from below), so for a moment it doesn't: report the field's own rect then.
-    eprintln!(
-        "DBG em focused={:?} mfocused={:?} touch={} ime_none={}",
-        focused,
-        ctx.memory(|m| m.focused()),
-        ctx.input(|i| i.has_touch_screen()),
-        ctx.output(|o| o.ime.is_none())
-    );
-    if let Some(f) = focused {
-        eprintln!("DBG rr={:?}", ctx.read_response(f).map(|r| r.rect));
-    }
     if let Some(field) = focused
         && ctx.input(|i| i.has_touch_screen())
         && ctx.output(|o| o.ime.is_none())
@@ -839,6 +830,8 @@ fn edit_menu_bar(ctx: &egui::Context, id: Id, items: &[(&'static str, &str)], cu
     let x = (cursor.center().x - w / 2.0).clamp(content.left() + 8.0, (content.right() - 8.0 - w).max(content.left() + 8.0));
     let bar = Rect::from_min_size(pos2(x, y), vec2(w, H));
     let mut chosen = None;
+    // (its size is known: drawn, and tappable, in its first frame)
+    seed_area(ctx, id.with("bar"), egui::Order::Tooltip, bar.min, bar.size());
     egui::Area::new(id.with("bar")).order(egui::Order::Tooltip).constrain(false).fixed_pos(bar.min).show(ctx, |ui| {
         let p = ui.painter().clone();
         crate::glass::paint(&p, bar, H / 2.0, Some(crate::glass::menu_fill(ctx)), 0.0);
