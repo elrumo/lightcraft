@@ -67,7 +67,7 @@ use launch::launch_imports_in;
 use launch::{HELP, control_port_from, launch_imports, log_dir, panic_log_path_with, startup_failed, stopped_text, stopped_while_running};
 #[cfg(test)]
 use platform::{explorer_select_arg, explorer_select_command, windows_open_url_command};
-use prefs::as_remembered;
+use prefs::{as_remembered, config_dir};
 #[cfg(test)]
 use lightcraft_ui_egui::prefs::{load_prefs_at, write_atomic};
 use session::{open_session, services};
