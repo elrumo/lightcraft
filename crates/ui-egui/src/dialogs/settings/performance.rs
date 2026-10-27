@@ -1,4 +1,6 @@
-use super::widgets::{check, choices, heading, hint, row};
+#[cfg(not(target_arch = "wasm32"))]
+use super::widgets::choices;
+use super::widgets::{check, heading, hint, row};
 use super::*;
 
 // --------------------------------------------------------------------------------- Performance

@@ -6,7 +6,9 @@
 
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, cmd, f64_or, str_param};
+use super::{CommandSpec, always, bad, cmd};
+#[cfg(not(target_arch = "wasm32"))]
+use super::{f64_or, str_param};
 use crate::{Result, Session};
 
 /// The clip `p` names (`id`, else the active photo) and the file it is in.

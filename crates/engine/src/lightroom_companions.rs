@@ -17,6 +17,7 @@ pub struct Server {
 }
 
 /// `name` as a URL query value.
+#[cfg(not(target_arch = "wasm32"))]
 fn encode(name: &str) -> String {
     name.bytes().fold(String::new(), |mut out, b| {
         if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use crate::activity::{Activity, Cancel, TaskHandle, Unit};

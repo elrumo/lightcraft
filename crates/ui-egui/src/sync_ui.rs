@@ -69,6 +69,7 @@ impl SyncDriver {
 }
 
 /// How often this computer's folders are measured again while Settings ▸ Sync is open.
+#[cfg(not(target_arch = "wasm32"))]
 const MEASURE_EVERY: f64 = 30.0;
 
 /// What this computer takes, for Settings ▸ Sync's storage section. Reading every file's size
@@ -82,6 +83,7 @@ pub struct Storage {
     #[cfg(not(target_arch = "wasm32"))]
     measuring: Option<Receiver<LocalUsage>>,
     /// `ctx` time of the last measurement.
+    #[cfg(not(target_arch = "wasm32"))]
     at: Option<f64>,
 }
 

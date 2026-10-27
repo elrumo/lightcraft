@@ -368,7 +368,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     #[cfg(target_os = "macos")]
     {
         let r = ui.checkbox(&mut opts.add_to_photos, crate::i18n::tr("Add to Apple Photos"));
-        register(ui.ctx(), "exportAddToPhotos", r.rect);
+        register(ui, "exportAddToPhotos", r.rect);
         if opts.add_to_photos {
             field(ui, "Album", |ui| {
                 crate::widgets::named(

@@ -123,6 +123,7 @@ impl DeviceWatch {
 
     /// The last scan, immediately; starts a background rescan when it is stale and none is running.
     pub fn get(self: &Arc<Self>) -> Vec<Device> {
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut s = self.state();
         #[cfg(not(target_arch = "wasm32"))]
         if !s.refreshing && s.scanned.is_none_or(|t| t.elapsed() >= self.max_age) {

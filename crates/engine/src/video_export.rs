@@ -4,14 +4,18 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(target_arch = "wasm32"))]
 use lightcraft_catalog::{MediaKind, PhotoId, Source};
+#[cfg(not(target_arch = "wasm32"))]
 use lightcraft_develop::DevelopSettings;
+#[cfg(not(target_arch = "wasm32"))]
 use lightcraft_pipeline::{RenderRequest, SourceInfo};
+#[cfg(not(target_arch = "wasm32"))]
 use lightcraft_raster::Rgba8;
 #[cfg(not(target_arch = "wasm32"))]
 use serde_json::{Value, json};
@@ -138,6 +142,7 @@ const CANCELLED: &str = "Video export cancelled";
 
 /// A decoded picture (linear Rec.2020) as 8-bit sRGB: with the develop settings applied and the crop (`edits`), the way
 /// an export shows it, else as recorded.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn finish_picture(
     picture: lightcraft_raster::Rgb32f,
     info: &SourceInfo,
