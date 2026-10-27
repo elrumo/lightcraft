@@ -7,7 +7,7 @@ members = ["crates/*", "apps/*", "xtask"]
 exclude = ["third_party", "apps/lightbites-web", "apps/lightbites-server"]
 
 [workspace.package]
-version = "0.14.0"
+version = "0.14.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
