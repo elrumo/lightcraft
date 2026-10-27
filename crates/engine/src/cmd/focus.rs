@@ -1,7 +1,8 @@
-//! Focus points for photos already in the library: `photo.readFocusPoints` (Photo ▸ Read Focus Points) and the
-//! per-frame `focus.pump` that keeps the background job going. The job itself is `crate::focus_scan`.
+//! Focus points: `view.focus` (where the camera focused, in the photo as shown), and for photos already in the library
+//! `photo.readFocusPoints` (Photo ▸ Read Focus Points) and the per-frame `focus.pump` that keeps the background job
+//! going. The job itself is `crate::focus_scan`; the mapping through rotation and crop is `crate::focus_view`.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{CommandSpec, cmd};
 use crate::{Result, Session};
@@ -26,8 +27,34 @@ fn pump(_: &mut Session, _: &Value) -> Result<Value> {
     Ok(serde_json::json!({"active": false}))
 }
 
+/// `view.focus`: the camera's focus box mapped to the photo as shown, or null.
+fn view_focus(s: &mut Session, p: &Value) -> Result<Value> {
+    let c = "view.focus";
+    let id = super::photo_id(p, c)?.or(s.active()).ok_or_else(|| super::bad(c, "no photo (pass `id`)"))?;
+    let photo = s.catalog.photo(id).ok_or_else(|| super::bad(c, format!("no photo {}", id.0)))?;
+    let Some(point) = photo.meta.focus.as_ref() else { return Ok(Value::Null) };
+    let lens = s.embedded_lens(id);
+    let Some(r) = crate::focus_view::focus_box(photo, lens.as_ref()) else { return Ok(Value::Null) };
+    let mut out = json!({"rect": [r.x0, r.y0, r.x1, r.y1], "center": [(r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0]});
+    for (key, value) in [("mode", &point.mode), ("area", &point.area), ("tracking", &point.tracking)] {
+        if let (Some(o), Some(v)) = (out.as_object_mut(), value) {
+            o.insert(key.into(), json!(v));
+        }
+    }
+    Ok(out)
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(
+            query "view.focus",
+            "Focus Point",
+            [],
+            None,
+            "{id?} → {rect: [x0, y0, x1, y1], center: [x, y], mode?, area?, tracking?} | null — where the camera focused, in the photo as it is shown: the box normalized to the displayed image (y down) after the user's Rotate, flips and crop, `null` when the photo has no focus point or it is cropped away. The box may reach past an edge (clip it when drawing). A frontend draws it over the loupe (View ▸ Focus Point) and centres Toggle Zoom on `center` (View ▸ Zoom to Focus Point)",
+            super::always,
+            view_focus
+        ),
         cmd!(
             "photo.readFocusPoints",
             "Read Focus Points",

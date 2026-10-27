@@ -297,33 +297,10 @@ pub(crate) fn output_px(frame: &Frame) -> [usize; 2] {
 }
 
 /// The camera's focus point of `photo` in the displayed frame (its crop, rotation and flips), as the
-/// normalized box over the drawn image: `None` when the photo has none or it is cropped away.
+/// normalized box over the drawn image: `None` when the photo has none or it is cropped away. (The mapping is the
+/// engine's, shared with a native frontend's `view.focus`.)
 pub(crate) fn focus_box(photo: &lightcraft_catalog::Photo) -> Option<lightcraft_geom::Rect> {
-    let f = photo.meta.focus.as_ref()?;
-    let d = &photo.develop;
-    let frame = Frame::with_lens(photo.width.max(1) as usize, photo.height.max(1) as usize, d, true, photo.embedded_lens.as_ref());
-    let [w, h] = output_px(&frame);
-    let to_out = frame.out_to_norm(w, h).inverse()?;
-    // stored on the upright photo: the user's Rotate / Flip on top, then the crop
-    let r = d.orientation.map_norm_rect(f.rect);
-    let corners = [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x0, r.y1), Point::new(r.x1, r.y1)].map(|c| {
-        let q = to_out.apply(c);
-        (q.x / w as f64, q.y / h as f64)
-    });
-    let xs = corners.map(|c| c.0);
-    let ys = corners.map(|c| c.1);
-    let out = lightcraft_geom::Rect {
-        x0: xs.iter().copied().fold(f64::INFINITY, f64::min),
-        y0: ys.iter().copied().fold(f64::INFINITY, f64::min),
-        x1: xs.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-        y1: ys.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-    };
-    if ![out.x0, out.y0, out.x1, out.y1].iter().all(|v| v.is_finite()) {
-        return None;
-    }
-    // its centre must be in the frame; the box may reach past the edge (it is clipped when drawn)
-    let (cx, cy) = ((out.x0 + out.x1) / 2.0, (out.y0 + out.y1) / 2.0);
-    ((0.0..=1.0).contains(&cx) && (0.0..=1.0).contains(&cy)).then_some(out)
+    lightcraft_engine::focus_view::focus_box(photo, photo.embedded_lens.as_ref())
 }
 
 /// Where Toggle Zoom centres the view on the photo's focus point (`app.ui.pan`), if it has one in frame.
