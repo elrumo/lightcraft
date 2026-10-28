@@ -1433,3 +1433,33 @@ fn export_weights_follow_the_source_and_output_sizes() {
     assert_eq!(render_weight(0, 0, SourceLevel::Full, 0), 0);
     assert!(render_weight(usize::MAX, 1, SourceLevel::Full, usize::MAX) > 0, "no overflow");
 }
+
+/// The memory check of a 42 MP Sony raw on a phone (two 1 GiB budgets): a 2048 px export is read binned and goes ahead; one
+/// that is too big says to export smaller only when that would help.
+#[test]
+fn a_big_raw_on_a_phone_is_refused_with_advice_that_can_help() {
+    let gib = 1usize << 30;
+    let mut s = crate::Session::new();
+    let p = lightcraft_catalog::Photo::new(
+        lightcraft_catalog::PhotoId(1),
+        lightcraft_catalog::Source::File { path: "/nowhere/_DSC9466.ARW".into() },
+        "_DSC9466.ARW",
+        "ARW",
+        7952,
+        5304,
+        "",
+    );
+    s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    let id = lightcraft_catalog::PhotoId(1);
+    let at = |edge: f32| ExportOptions { resize: Some(Resize::long_edge(edge as u32)), ..Default::default() };
+    s.set_export_limit(Some(2 * gib));
+    assert!(prepare_export(&mut s, id, &at(2048.0), 1).is_ok(), "read binned, it fits");
+    // 3000 px: binned it still needs more than 1 GiB, but half that size fits: say to export smaller
+    s.set_export_limit(Some(gib));
+    let e = prepare_export(&mut s, id, &at(3000.0), 1).err().unwrap();
+    assert!(e.contains("Export it smaller") && e.contains("sync server"), "{e}");
+    // 100 MB: even the sensor's samples do not fit, whatever the size: no advice that cannot help
+    s.set_export_limit(Some(100 << 20));
+    let e = prepare_export(&mut s, id, &at(1024.0), 1).err().unwrap();
+    assert!(e.contains("42 MP") && e.contains("at any size") && !e.contains("smaller") && e.contains("sync server"), "{e}");
+}

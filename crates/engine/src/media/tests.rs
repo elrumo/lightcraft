@@ -650,3 +650,51 @@ fn variant_jobs_have_their_own_keys_and_hit_the_cache() {
     assert_ne!(pv.key, s.render_job(id, 800, 600, false, true).unwrap().key);
     assert_eq!(*pv.settings, a);
 }
+
+/// A 42 MP Sony raw on a phone: an export up to a preview's size is read binned as it always was (its memory check now
+/// says so); a bigger one of at most half the photo's size is read binned too when the whole sensor, 2.4 GB, would not fit.
+/// With no limit, a fitting export, a bigger-than-half one and a maker that may be X-Trans, the whole sensor as before.
+#[test]
+fn a_bayer_raw_too_big_to_demosaic_whole_is_read_binned_for_a_half_size_export() {
+    fn session_with(name: &str, format: &str, w: u32, h: u32) -> (crate::Session, PhotoId) {
+        let mut s = crate::Session::new();
+        let p = Photo::new(PhotoId(1), Source::File { path: format!("/nowhere/{name}") }, name, format, w, h, "");
+        s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        (s, PhotoId(1))
+    }
+    let edge_of = |s: &mut crate::Session, id: PhotoId, long: usize| match s
+        .export_job(id, long, long, lightcraft_pipeline::OutputSpace::default(), lightcraft_pipeline::OutputDepth::default())
+        .unwrap()
+        .source
+    {
+        SourceRef::File { max_edge, .. } => max_edge,
+        _ => panic!("the original is read from its file"),
+    };
+    let (gib, preview) = (1usize << 30, SourceLevel::Preview.max_edge());
+    let (mut s, id) = session_with("a.ARW", "ARW", 7952, 5304);
+    // no limit (a desktop): a preview's read for a small export, the whole sensor for a big one, as it always was
+    assert_eq!(edge_of(&mut s, id, 2048), preview);
+    assert_eq!(edge_of(&mut s, id, 3976), usize::MAX);
+    // a phone's two budgets: a small export is unchanged; half the size is read at the half-size source
+    s.set_export_limit(Some(2 * gib));
+    assert_eq!(edge_of(&mut s, id, 2048), preview);
+    assert_eq!(edge_of(&mut s, id, 3976), 3976);
+    assert_eq!(edge_of(&mut s, id, 3000), (3000f64 * 1.12).ceil() as usize);
+    // over half the size there is nothing to bin to; one that fits is left alone
+    assert_eq!(edge_of(&mut s, id, 5000), usize::MAX);
+    s.set_export_limit(Some(8 * gib));
+    assert_eq!(edge_of(&mut s, id, 3976), usize::MAX, "it fits: read as before");
+    // a maker that can be X-Trans bins by 3 only: not promised
+    let (mut raf, rid) = session_with("a.RAF", "RAF", 7952, 5304);
+    raf.set_export_limit(Some(2 * gib));
+    assert_eq!(edge_of(&mut raf, rid, 3976), usize::MAX);
+    // the estimate follows what is read: a 2048 px export is about 1 GB binned (2.7 GB whole, which it was said to need);
+    // a sensor too small to bin at a preview's size is estimated whole
+    let p = s.catalog.photo(id).unwrap().clone();
+    let out_px = 2048 * 1365;
+    let whole = crate::memory::export_need(7952 * 5304, out_px);
+    let binned = export_binned_need(&p, preview, out_px);
+    assert!(whole > 2 * gib && binned < gib + gib / 8, "whole {whole}, binned {binned}");
+    let small = Photo::new(PhotoId(2), Source::File { path: "/nowhere/b.ARW".into() }, "b.ARW", "ARW", 4000, 3000, "");
+    assert_eq!(export_binned_need(&small, preview, out_px), crate::memory::export_need(4000 * 3000, out_px));
+}

@@ -1,5 +1,6 @@
 use super::colour::stream_bin_factor;
 use super::fs::load_weight;
+use super::load::bins_at;
 /// Keywords from a file keep their hierarchy: the paths of `lr:hierarchicalSubject`, not the
 /// flat names of `dc:subject` that LightCraft's exports (and Lightroom Classic) write besides
 /// them; an exported `travel|Italy|Rome` comes back as itself.
@@ -2034,4 +2035,15 @@ fn existing_photo_settings_are_not_rewritten() {
     assert!(!s.catalog.photo(old).unwrap().is_edited(), "still as imported");
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A mosaic is binned for a preview's size; for a bigger finite edge (an export asking for less than the sensor) only on a
+/// device with an export memory limit; a whole-size read is never binned.
+#[test]
+fn exports_bin_a_mosaic_only_where_a_memory_limit_asks_for_it() {
+    let preview = crate::media::SourceLevel::Preview.max_edge();
+    assert!(bins_at(512, None) && bins_at(preview, None));
+    assert!(!bins_at(preview + 1, None), "a desktop export demosaics the whole sensor");
+    assert!(bins_at(3976, Some(1 << 30)));
+    assert!(!bins_at(usize::MAX, Some(1 << 30)));
 }

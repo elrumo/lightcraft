@@ -125,6 +125,13 @@ fn denoised_camera_rgb(raw: &lightcraft_raw::RawImage, spec: &DenoiseSpec, facto
     }
 }
 
+/// Whether a mosaic is binned for a source of at most `max_edge` pixels: always for a preview's size; beyond it only for a
+/// finite edge (an export that asked for less than the sensor) on a device with an export memory `limit`. Without a
+/// limit an export demosaics the whole sensor, as it always did.
+pub(super) fn bins_at(max_edge: usize, limit: Option<usize>) -> bool {
+    max_edge <= crate::media::SourceLevel::Preview.max_edge() || (max_edge < usize::MAX && limit.is_some())
+}
+
 fn load_bytes_now(
     bytes: std::borrow::Cow<'_, [u8]>,
     max_edge: usize,
@@ -201,8 +208,9 @@ fn load_bytes_now(
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
         let t0 = web_time::Instant::now();
-        // (mosaics bin only for previews: a bigger size is an export, which demosaics the whole sensor)
-        let bin = bin_factor(&raw, max_edge).filter(|_| !pre_binned && max_edge <= crate::media::SourceLevel::Preview.max_edge());
+        // (mosaics bin only for previews: a bigger size is an export, which demosaics the whole sensor, except on a device
+        // with a memory limit, where `export_job` asks for a smaller edge only when the whole sensor would not fit)
+        let bin = bin_factor(&raw, max_edge).filter(|_| !pre_binned && bins_at(max_edge, crate::memory::export_limit()));
         // (binned: block means, and which colours had a clipped sample in each block)
         let binned = match bin {
             Some(k) => raw.develop_binned_masked(k, HIGHLIGHT_CLIP).map_err(|e| e.to_string())?,

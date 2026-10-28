@@ -19,6 +19,17 @@ pub struct Exported {
     pub gpu_fallback: Option<String>,
 }
 
+/// What rendering photo `p` at `w × h` needs in memory on this device: its source (the whole sensor, or fewer pixels when
+/// a DNG or a Bayer raw too big for the device is read smaller, [`crate::media::export_binned_edge`]) and the output.
+fn export_need_of(session: &crate::Session, p: &lightcraft_catalog::Photo, w: usize, h: usize) -> usize {
+    let (long, out_px) = (w.max(h), w.saturating_mul(h));
+    let need = crate::memory::export_need(crate::media::export_source_pixels(p, long), out_px);
+    match crate::media::export_binned_edge(session, p, long, out_px) {
+        Some(edge) => need.min(crate::media::export_binned_need(p, edge, out_px)),
+        None => need,
+    }
+}
+
 /// Output size of photo `p` under `o` (its cropped full size when `o.resize` is `None`).
 pub fn output_size(p: &lightcraft_catalog::Photo, o: &ExportOptions) -> (usize, usize) {
     let (w, h) = lightcraft_pipeline::native_output_size(p.width.max(1) as usize, p.height.max(1) as usize, &p.develop);
@@ -133,16 +144,24 @@ fn prepare_guarded(
     let (work, weight) = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
         // what this render needs against what this device may use: over it, the sync server renders (or says why not)
-        let need = crate::memory::export_need(crate::media::export_source_pixels(p, w.max(h)), w.saturating_mul(h));
+        let need = export_need_of(session, p, w, h);
         let too_big = session.export_limit().is_some_and(|limit| need > limit);
         if o.on_server || too_big {
             let Some(target) = session.sync_render_target(p) else {
                 return Err(if o.on_server {
                     format!("{}: the sync server has no original of this photo to render (sign in, and let it upload)", p.file_name)
-                } else {
+                } else if session.export_limit().is_some_and(|limit| export_need_of(session, p, w / 2, h / 2) <= limit) {
                     format!(
                         "{}: a {w} × {h} export needs about {} MB, more than this device can allow. Export it smaller, or sign in to a sync server that has the original and it renders there",
                         p.file_name,
+                        need >> 20
+                    )
+                } else {
+                    // (the photo's own size is what costs: a smaller export would not fit either)
+                    format!(
+                        "{}: a {} MP photo needs about {} MB to export, more than this device can allow at any size. Sign in to a sync server that has the original and it renders there",
+                        p.file_name,
+                        full_px / 1_000_000,
                         need >> 20
                     )
                 });
