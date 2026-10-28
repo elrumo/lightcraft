@@ -1,0 +1,898 @@
+//! The admin web page (`/admin`) and its API (`/api/admin/…`): users (add, reset a password,
+//! make admin, remove), their devices (sign out), storage, and the server's settings, read-only.
+//!
+//! - **First run:** while no user is an admin, the server prints a one-time setup code to its log
+//!   at start; `/admin` asks for it to create the first admin (so a server just put on the
+//!   internet can't be claimed by whoever finds it first). Wrong codes rotate it after a few tries.
+//! - **Sessions:** an admin signs in with their user name and password and gets a session of its own;
+//!   it is not a device and can't sync, and a device token never opens these routes. The page keeps
+//!   its session in an `HttpOnly` cookie (`lc_admin`, `SameSite=Strict`, and every request that changes
+//!   something carries [`CSRF_HEADER`]); apps and scripts get a token to send as a bearer.
+//!   "Keep me signed in" keeps a session for weeks and across restarts of the server, see
+//!   [`accounts::ADMIN_REMEMBER_IDLE`]; any other ends after [`accounts::ADMIN_IDLE`] without a request.
+//!   A new password for the admin ends their sessions.
+//! - **Shared presets** ([`crate::server_presets`]): presets every user gets, imported and organized here,
+//!   and the built-in ones hidden for everyone.
+//! - **Limits** on how much of the machine the server takes (CPU threads, previews, renders and
+//!   requests at once) are set here unless the deployment fixed them ([`crate::limits`]).
+//! - **Settings stay deployment settings:** where the data lives, the address the server listens
+//!   on and its domain are shown, not edited: moving a library under a running server, or its
+//!   address under its clients, is how libraries get lost (see `docs/sync.md`).
+//!
+//! The page is ours, embedded in the binary (`admin/`), and served with a strict Content
+//! Security Policy: no inline script or style, nothing from other origins, no framing.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
+
+use crate::http::{Header, Method, Request, Response, StatusCode};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use sha2::Digest;
+
+use crate::State;
+use crate::accounts::{self, LoginError};
+use crate::api::{Resp, error, header, header_value, json, read_json, read_small_json};
+
+const INDEX: &str = include_str!("../admin/index.html");
+const SCRIPT: &str = include_str!("../admin/admin.js");
+const STYLE: &str = include_str!("../admin/admin.css");
+/// The welcome page (`/` when the server has no web build, `/welcome` always) and its files.
+const WELCOME: &str = include_str!("../admin/welcome.html");
+const WELCOME_SCRIPT: &str = include_str!("../admin/welcome.js");
+const WELCOME_STYLE: &str = include_str!("../admin/welcome.css");
+/// The app icon (64 px), for the page's header and tab.
+const ICON: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/64x64/apps/ai.storyteller.lightcraft.png");
+
+/// Wrong setup codes before a new one is made.
+const SETUP_TRIES: u32 = 10;
+
+/// How long the bytes of a user's photo files are trusted before they are walked again.
+const SIZES_TTL: Duration = Duration::from_secs(60);
+
+/// The bytes of the photo files the server keeps for each user (uploaded originals and previews). Counting
+/// them stats every file, which takes seconds on a NAS disk, so the admin page is answered from the last
+/// count and a new one runs in the background (the first when the server starts). The photos in a user's
+/// library folders aren't walked: the index of those knows their sizes.
+#[derive(Default)]
+pub struct Sizes {
+    known: Arc<Mutex<HashMap<String, (Instant, u64)>>>,
+    walking: Arc<AtomicBool>,
+}
+
+impl Sizes {
+    /// The last count of `name`'s bytes (`None`: not counted yet).
+    fn get(&self, name: &str) -> Option<u64> {
+        self.known.lock().unwrap_or_else(PoisonError::into_inner).get(name).map(|&(_, bytes)| bytes)
+    }
+
+    /// What `name` keeps here now: the last count and what arrived since (counted here and now when it never
+    /// was: the first upload after a start or a clean-up waits for it).
+    pub(crate) fn used(&self, data: &Path, name: &str) -> u64 {
+        if let Some(bytes) = self.get(name) {
+            return bytes;
+        }
+        let bytes = size_of(&accounts::user_dir(data, name).join("blobs"), 3);
+        self.known.lock().unwrap_or_else(PoisonError::into_inner).entry(name.to_string()).or_insert((Instant::now(), bytes)).1
+    }
+
+    /// `bytes` more arrived for `name` (an upload), until the next count.
+    pub(crate) fn add(&self, name: &str, bytes: u64) {
+        if let Some(e) = self.known.lock().unwrap_or_else(PoisonError::into_inner).get_mut(name) {
+            e.1 = e.1.saturating_add(bytes);
+        }
+    }
+
+    /// Forget the counts (files were removed): the next ones are made in the background.
+    fn clear(&self) {
+        self.known.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    }
+
+    /// Count the users whose bytes are unknown or old, in the background, one walk at a time.
+    pub fn refresh(&self, data: &Path) {
+        let Ok(f) = accounts::read_users(data) else { return };
+        let stale: Vec<String> = {
+            let known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
+            f.users.keys().filter(|n| known.get(*n).is_none_or(|(at, _)| at.elapsed() > SIZES_TTL)).cloned().collect()
+        };
+        if stale.is_empty() || self.walking.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let (known, walking, data) = (self.known.clone(), self.walking.clone(), data.to_path_buf());
+        let spawned = std::thread::Builder::new().name("lc-sizes".into()).spawn(move || {
+            for name in stale {
+                let bytes = size_of(&accounts::user_dir(&data, &name).join("blobs"), 3);
+                known.lock().unwrap_or_else(PoisonError::into_inner).insert(name, (Instant::now(), bytes));
+            }
+            walking.store(false, Ordering::Release);
+        });
+        if spawned.is_err() {
+            self.walking.store(false, Ordering::Release);
+        }
+    }
+}
+
+/// Headers every admin page file gets.
+fn page_headers(ctype: &str) -> Vec<Header> {
+    [
+        ("Content-Type", ctype),
+        (
+            "Content-Security-Policy",
+            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        ),
+        ("X-Content-Type-Options", "nosniff"),
+        ("Referrer-Policy", "no-referrer"),
+        ("Cache-Control", "no-cache"),
+        ("Cross-Origin-Opener-Policy", "same-origin"),
+        ("Cross-Origin-Resource-Policy", "same-origin"),
+    ]
+    .into_iter()
+    .filter_map(|(k, v)| Header::from_bytes(k.as_bytes(), v.as_bytes()).ok())
+    .collect()
+}
+
+/// A page file as served: the bytes, gzipped, and the tag that says whether the browser's copy is current.
+struct Asset {
+    ctype: &'static str,
+    raw: &'static [u8],
+    gz: Vec<u8>,
+    etag: String,
+}
+
+/// The page's files, by path. Built once: they are in the binary and never change.
+fn assets() -> &'static HashMap<&'static str, Asset> {
+    static ASSETS: std::sync::OnceLock<HashMap<&'static str, Asset>> = std::sync::OnceLock::new();
+    ASSETS.get_or_init(|| {
+        let files: [(&str, &str, &'static [u8]); 7] = [
+            ("/admin", "text/html; charset=utf-8", INDEX.as_bytes()),
+            ("/admin/admin.js", "text/javascript; charset=utf-8", SCRIPT.as_bytes()),
+            ("/admin/admin.css", "text/css; charset=utf-8", STYLE.as_bytes()),
+            ("/admin/icon.png", "image/png", ICON),
+            ("/welcome", "text/html; charset=utf-8", WELCOME.as_bytes()),
+            ("/welcome/welcome.js", "text/javascript; charset=utf-8", WELCOME_SCRIPT.as_bytes()),
+            ("/welcome/welcome.css", "text/css; charset=utf-8", WELCOME_STYLE.as_bytes()),
+        ];
+        files
+            .into_iter()
+            .map(|(path, ctype, raw)| {
+                let mut z = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+                let gz =
+                    std::io::Write::write_all(&mut z, raw).ok().and_then(|()| z.finish().ok()).filter(|g| g.len() < raw.len()).unwrap_or_default();
+                let etag = format!("\"{}\"", sha2::Sha256::digest(raw).iter().take(8).map(|b| format!("{b:02x}")).collect::<String>());
+                (path, Asset { ctype, raw, gz, etag })
+            })
+            .collect()
+    })
+}
+
+/// `/admin`, `/admin/admin.js`, `/admin/admin.css`, `/admin/icon.png` and the welcome page (`/welcome`, `/` without a
+/// web build, and its script and styles under `/welcome/`): gzipped to browsers that take it, and
+/// answered `304` to one that already has them (the browser asks every time, so a new server version shows at once).
+pub fn page(req: &Request, method: &Method, path: &str) -> Resp {
+    if !matches!(method, Method::Get | Method::Head) {
+        return error(405, "GET or HEAD");
+    }
+    let path = match path.trim_end_matches('/') {
+        "/admin/index.html" => "/admin",
+        "/welcome/index.html" | "" => "/welcome",
+        p => p,
+    };
+    let Some(a) = assets().get(path) else { return error(404, "not found") };
+    let mut headers = page_headers(a.ctype);
+    headers.extend(header("ETag", &a.etag));
+    headers.extend(header("Vary", "Accept-Encoding"));
+    if header_value(req, "If-None-Match").is_some_and(|v| v.split(',').any(|t| t.trim() == a.etag)) {
+        return Response::new(StatusCode(304), headers, Box::new(std::io::empty()), Some(0), None);
+    }
+    let gzip = !a.gz.is_empty() && header_value(req, "Accept-Encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
+    let body = if gzip { a.gz.clone() } else { a.raw.to_vec() };
+    if gzip {
+        headers.extend(header("Content-Encoding", "gzip"));
+    }
+    let len = body.len();
+    Response::new(StatusCode(200), headers, Box::new(std::io::Cursor::new(body)), Some(len), None)
+}
+
+/// A new one-time setup code (`ABCD-1234`), when the server has no admin yet.
+pub fn new_setup_code() -> Option<String> {
+    let hex = accounts::random_hex(4).ok()?.to_ascii_uppercase();
+    Some(format!("{}-{}", hex.get(..4)?, hex.get(4..)?))
+}
+
+fn token(req: &Request) -> String {
+    header_value(req, "Authorization").and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").trim().to_string()
+}
+
+/// The cookie the admin page's sign-in sets: the session token, where the page's script can't read it.
+const COOKIE: &str = "lc_admin";
+
+/// The header the page adds to every request that changes something when it signs in by cookie. A form on
+/// another site can't send it (and `/api/admin` answers no cross-origin preflight), so it can't use the cookie.
+const CSRF_HEADER: &str = "X-LightCraft-Admin";
+
+/// The session token a request signs in with: a bearer token (apps, scripts) or else the page's
+/// cookie; and whether it came in the cookie.
+fn credential(req: &Request) -> (String, bool) {
+    let bearer = token(req);
+    if !bearer.is_empty() {
+        return (bearer, false);
+    }
+    let cookie = req.headers().iter().filter(|h| h.field.equiv("Cookie")).flat_map(|h| h.value.as_str().split(';')).find_map(|c| {
+        let (k, v) = c.trim().split_once('=')?;
+        (k.trim() == COOKIE).then(|| v.trim().to_string())
+    });
+    (cookie.unwrap_or_default(), true)
+}
+
+/// `Set-Cookie` for an admin session. Kept ones outlive the browser (the server ends them when idle, see
+/// [`accounts::ADMIN_REMEMBER_IDLE`]); the others end with it. `Secure` when the connection is HTTPS (a proxy says so).
+fn session_cookie(req: &Request, token: &str, remember: bool) -> Option<Header> {
+    let age = if remember { format!("; Max-Age={}", accounts::ADMIN_REMEMBER_MAX.as_secs()) } else { String::new() };
+    header("Set-Cookie", &format!("{COOKIE}={token}; Path=/api/admin; HttpOnly; SameSite=Strict{age}{}", secure(req)))
+}
+
+/// `Set-Cookie` that makes the browser forget the session.
+fn clear_cookie(req: &Request) -> Option<Header> {
+    header("Set-Cookie", &format!("{COOKIE}=; Path=/api/admin; Max-Age=0; HttpOnly; SameSite=Strict{}", secure(req)))
+}
+
+fn secure(req: &Request) -> &'static str {
+    if crate::shares::is_https(req) { "; Secure" } else { "" }
+}
+
+/// `r` with a cookie to set, if there is one.
+fn with_cookie(mut r: Resp, cookie: Option<Header>) -> Resp {
+    if let Some(h) = cookie {
+        r.add_header(h);
+    }
+    r
+}
+
+#[derive(Deserialize)]
+struct Setup {
+    code: String,
+    user: String,
+    password: String,
+}
+
+/// `POST /api/admin/login`. The admin page asks for `cookie`: the session goes in an `HttpOnly` cookie and
+/// the answer holds no token; `remember` keeps it for weeks and across restarts. Anything else (a script, say)
+/// gets a token to send as a bearer.
+#[derive(Deserialize)]
+struct Login {
+    user: String,
+    password: String,
+    #[serde(default)]
+    remember: bool,
+    #[serde(default)]
+    cookie: bool,
+}
+
+#[derive(Deserialize)]
+struct NewUser {
+    name: String,
+    password: String,
+    #[serde(default)]
+    admin: bool,
+}
+
+#[derive(Deserialize)]
+struct Password {
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct Admin {
+    admin: bool,
+}
+
+#[derive(Deserialize)]
+struct NewFolder {
+    path: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    writable: bool,
+    #[serde(default)]
+    imports: bool,
+}
+
+#[derive(Deserialize)]
+struct FolderMode {
+    #[serde(default)]
+    writable: Option<bool>,
+    #[serde(default)]
+    imports: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct Ignore {
+    ignore: Vec<String>,
+}
+
+/// `PUT /api/admin/users/<name>/quota`: `{quota: bytes}`, or `{quota: null}` for no limit.
+#[derive(Deserialize)]
+struct Quota {
+    quota: Option<u64>,
+}
+
+/// `PUT /api/admin/presets`: the shared presets, changed from version `version`.
+#[derive(Deserialize)]
+struct SharedPresets {
+    version: u64,
+    items: Vec<Value>,
+}
+
+/// `POST /api/admin/presets/import`: preset files given by content (`[{name, data: base64}]`), into
+/// `group` when given.
+#[derive(Deserialize)]
+struct ImportPresets {
+    files: Vec<Value>,
+    #[serde(default)]
+    group: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct Gc {
+    dry_run: bool,
+}
+
+/// `/api/admin/…`.
+pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
+    let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+    // without a session
+    match (method, parts.as_slice()) {
+        (Method::Get, ["state"]) => {
+            let setup = st.setup.lock().unwrap_or_else(PoisonError::into_inner).is_some() && !accounts::has_admin(&st.data);
+            return json(200, &json!({"setup": setup}));
+        }
+        (Method::Post, ["setup"]) => return setup(st, req),
+        (Method::Post, ["login"]) => return login(st, req),
+        _ => {}
+    }
+    let (token, by_cookie) = credential(req);
+    let Some(me) = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).check_admin(&token) else {
+        // (a cookie that is no good any more is not sent again)
+        return with_cookie(error(401, "sign in as an admin"), clear_cookie(req).filter(|_| by_cookie && !token.is_empty()));
+    };
+    if by_cookie && !matches!(method, Method::Get | Method::Head) && header_value(req, CSRF_HEADER).is_none() {
+        return error(403, "this request must come from the admin page");
+    }
+    if let (Method::Post, ["logout"]) = (method, parts.as_slice()) {
+        st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_logout(&token);
+        return with_cookie(json(200, &json!({})), clear_cookie(req).filter(|_| by_cookie));
+    }
+    // a user name in the path is one (never `..` or the like)
+    if let ["users", name, ..] = parts.as_slice()
+        && !accounts::valid_name(name)
+    {
+        return error(400, format!("not a user name: {name}"));
+    }
+    let r = match (method, parts.as_slice()) {
+        (Method::Get, ["status"]) => Ok(status(st, &me)),
+        (Method::Get, ["users"]) => users(st),
+        (Method::Post, ["users"]) => read_json::<NewUser>(req).map_err(Err).and_then(|u| add_user(st, u).map_err(Ok)),
+        (Method::Put, ["users", name, "password"]) => read_json::<Password>(req).map_err(Err).and_then(|p| {
+            accounts::set_user(&st.data, name, &p.password, true).map_err(|e| Ok((400, e)))?;
+            // (a new password ends the user's admin sessions; the browser that changed their own stays signed in)
+            if *name == me.as_str() {
+                st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_keep(&token);
+            }
+            Ok(json!({}))
+        }),
+        (Method::Put, ["users", name, "admin"]) => read_json::<Admin>(req)
+            .map_err(Err)
+            .and_then(|a| accounts::set_admin(&st.data, name, a.admin).map(|()| json!({})).map_err(|e| Ok((409, e)))),
+        (Method::Put, ["users", name, "quota"]) => read_json::<Quota>(req).map_err(Err).and_then(|q| {
+            let code = if accounts::read_users(&st.data).is_ok_and(|f| f.users.contains_key(*name)) { 400 } else { 404 };
+            accounts::set_quota(&st.data, name, q.quota).map_err(|e| Ok((code, e)))?;
+            match q.quota {
+                Some(b) => log::info!("admin {me}: {name} may keep {b} bytes on the server"),
+                None => log::info!("admin {me}: {name} has no storage limit"),
+            }
+            Ok(json!({"quota": q.quota}))
+        }),
+        (Method::Delete, ["users", name]) => remove_user(st, name),
+        (Method::Get, ["users", name, "devices"]) => devices(st, name),
+        (Method::Delete, ["users", name, "devices", id]) => match id.parse::<u64>() {
+            Ok(id) => st.accounts.lock().unwrap_or_else(PoisonError::into_inner).revoke(name, id).map(|()| json!({})).map_err(|e| Ok((404, e))),
+            Err(_) => Err(Ok((400, format!("not a device id: {id}")))),
+        },
+        (Method::Get, ["users", name, "shares"]) => Ok(json!(st.shares.lock().unwrap_or_else(PoisonError::into_inner).list(name))),
+        (Method::Delete, ["users", name, "shares", id]) => {
+            let r = st.shares.lock().unwrap_or_else(PoisonError::into_inner).remove(&st.data, name, id);
+            match r {
+                Ok(true) => {
+                    log::info!("admin {me}: revoked {name}'s link {id}");
+                    Ok(json!({}))
+                }
+                Ok(false) => Err(Ok((404, "no such link".to_string()))),
+                Err(e) => Err(Ok((500, e))),
+            }
+        }
+        (Method::Get, ["users", name, "folders"]) => folders(st, name),
+        (Method::Post, ["users", name, "folders"]) => read_json::<NewFolder>(req).map_err(Err).and_then(|f| {
+            let added = accounts::add_folder(&st.data, name, &f.path, f.name.as_deref()).map_err(|e| Ok((400, e)))?;
+            log::info!("admin {me}: {name} has the library folder {} ({})", added.name, added.path);
+            if f.writable || f.imports {
+                // (a folder the server can't write in is not added at all)
+                if let Err(e) = accounts::set_folder_mode(&st.data, name, &added.name, Some(f.writable || f.imports), Some(f.imports)) {
+                    let _ = accounts::remove_folder(&st.data, name, &added.name);
+                    return Err(Ok((400, e)));
+                }
+                log::info!("admin {me}: {name}'s {} is writable{}", added.name, if f.imports { " and takes the uploads" } else { "" });
+            }
+            st.folders.request(name);
+            folders(st, name)
+        }),
+        (Method::Put, ["users", name, "folders", folder]) => read_json::<FolderMode>(req).map_err(Err).and_then(|m| {
+            let folder = percent_decode(folder);
+            let f = accounts::set_folder_mode(&st.data, name, &folder, m.writable, m.imports).map_err(|e| Ok((400, e)))?;
+            log::info!(
+                "admin {me}: {name}'s {} is {}{}",
+                f.name,
+                if f.writable { "writable" } else { "read-only" },
+                if f.imports { " and takes the uploads" } else { "" }
+            );
+            folders(st, name)
+        }),
+        (Method::Delete, ["users", name, "folders", folder]) => {
+            let folder = percent_decode(folder);
+            accounts::remove_folder(&st.data, name, &folder).map_err(|e| Ok((404, e))).and_then(|()| {
+                log::info!("admin {me}: {name} no longer has the library folder {folder}");
+                folders(st, name)
+            })
+        }
+        (Method::Put, ["users", name, "ignore"]) => read_json::<Ignore>(req).map_err(Err).and_then(|i| {
+            let kept = accounts::set_ignore(&st.data, name, &i.ignore).map_err(|e| Ok((400, e)))?;
+            log::info!("admin {me}: {name} ignores {kept:?}");
+            st.folders.request(name);
+            folders(st, name)
+        }),
+        // Building previews, for the Processing page, and the same for every user at once: `pause` and `resume` were global
+        // already
+        (Method::Get, ["previews"]) => Ok(previews(st)),
+        (Method::Post, ["previews", action @ ("pause" | "resume" | "generate" | "rebuild")]) => {
+            let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+            match *action {
+                "pause" => st.folders.pause(true),
+                "resume" => st.folders.pause(false),
+                "rebuild" => names.iter().for_each(|n| st.folders.rebuild_all(n)),
+                _ => names.iter().for_each(|n| st.folders.generate_all(n)),
+            }
+            log::info!("admin {me}: {action} previews (everyone)");
+            Ok(previews(st))
+        }
+        // `generate`: the previews that are missing; `rebuild`: every preview, the ones there too
+        (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate" | "rebuild")]) => {
+            match *action {
+                "pause" => st.folders.pause(true),
+                "resume" => st.folders.pause(false),
+                "rebuild" => st.folders.rebuild_all(name),
+                _ => st.folders.generate_all(name),
+            }
+            log::info!("admin {me}: {action} previews ({name})");
+            folders(st, name)
+        }
+        // `scan`: read the files that are new or changed; `rescan`: read every file again
+        (Method::Post, ["users", name, "scan"]) => {
+            st.folders.request(name);
+            folders(st, name)
+        }
+        (Method::Post, ["users", name, "rescan"]) => {
+            log::info!("admin {me}: rescan everything ({name})");
+            st.folders.request_full(name);
+            folders(st, name)
+        }
+        // files cut short among the user's originals: the last check, and how far a running one is
+        (Method::Get, ["users", name, "check"]) => known_user(st, name).map(|()| st.checker.status(name, &accounts::user_dir(&st.data, name))),
+        (Method::Post, ["users", name, "check"]) => known_user(st, name).and_then(|()| start_check(st, &me, name)),
+        (Method::Get, ["limits"]) => Ok(st.limits.status()),
+        (Method::Get, ["usage"]) => Ok(usage(st)),
+        (Method::Put, ["limits"]) => read_json::<crate::limits::Values>(req).map_err(Err).and_then(|v| {
+            let e = st.limits.set(v).map_err(|e| Ok((400, e)))?;
+            st.render.set_max(e.renders);
+            st.folders.wake_builders();
+            log::info!("admin {me}: limits {v:?}");
+            Ok(st.limits.status())
+        }),
+        (Method::Get, ["presets"]) => Ok(shared_presets(st)),
+        (Method::Put, ["presets"]) => read_json::<SharedPresets>(req).map_err(Err).and_then(|p| {
+            let r = st.presets.lock().unwrap_or_else(PoisonError::into_inner).put(p.version, &p.items);
+            match r {
+                Ok(Ok(version)) => {
+                    log::info!("admin {me}: shared presets changed (version {version})");
+                    Ok(json!({"version": version}))
+                }
+                // someone else changed them first: the answer is theirs, to show again
+                Ok(Err(current)) => Err(Err(json(412, &serde_json::to_value(&current).unwrap_or(Value::Null)))),
+                Err(e) if e.starts_with("storage:") => Err(Ok((500, e))),
+                Err(e) => Err(Ok((400, e))),
+            }
+        }),
+        (Method::Post, ["presets", "import"]) => read_json::<ImportPresets>(req).map_err(Err).and_then(|i| {
+            let group = i.group.as_deref().map(str::trim).filter(|g| !g.is_empty());
+            // ponytail: the import parses under the lock (pulls wait for it); a big pack takes seconds, it's rare
+            let r = st.presets.lock().unwrap_or_else(PoisonError::into_inner).import(i.files, group);
+            match r {
+                Ok(v) => {
+                    log::info!("admin {me}: imported {} shared preset(s)", v["added"]);
+                    Ok(v)
+                }
+                Err(e) if e.starts_with("storage:") => Err(Ok((500, e))),
+                Err(e) => Err(Ok((400, e))),
+            }
+        }),
+        (Method::Post, ["gc"]) => {
+            let g = read_json::<Gc>(req).unwrap_or_default();
+            match crate::gc::run(&st.data, g.dry_run) {
+                Ok(r) => {
+                    if !g.dry_run {
+                        st.sizes.clear();
+                    }
+                    log::info!("admin {me}: gc{} removed {} file(s)", if g.dry_run { " (dry run)" } else { "" }, r.removed);
+                    Ok(json!({"dryRun": g.dry_run, "removed": r.removed, "bytes": r.bytes, "kept": r.kept, "errors": r.errors}))
+                }
+                Err(e) => Err(Ok((500, e))),
+            }
+        }
+        _ => Err(Ok((404, format!("no admin route {method} /api/admin/{rest}")))),
+    };
+    match r {
+        Ok(v) => json(200, &v),
+        Err(Ok((status, msg))) => error(status, msg),
+        Err(Err(resp)) => resp,
+    }
+}
+
+/// An error: a status and message, or a response made already (a body that didn't read).
+type AdminResult = Result<Value, std::result::Result<(u16, String), Resp>>;
+
+fn setup(st: &State, req: &mut Request) -> Resp {
+    let s: Setup = match read_small_json(req) {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let mut code = st.setup.lock().unwrap_or_else(PoisonError::into_inner);
+    if accounts::has_admin(&st.data) || code.is_none() {
+        return error(409, "this server has an admin already: sign in");
+    }
+    let given = s.code.trim().to_ascii_uppercase();
+    if code.as_deref() != Some(given.as_str()) {
+        let tries = st.setup_tries.fetch_add(1, std::sync::atomic::Ordering::SeqCst).saturating_add(1);
+        if tries >= SETUP_TRIES {
+            *code = new_setup_code();
+            st.setup_tries.store(0, std::sync::atomic::Ordering::SeqCst);
+            log::warn!("too many wrong setup codes: the new one is {}", code.as_deref().unwrap_or("(none)"));
+        }
+        drop(code);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        return error(403, "wrong setup code (it is in the server's log)");
+    }
+    if accounts::read_users(&st.data).is_ok_and(|f| f.users.contains_key(&s.user)) {
+        return error(409, format!("`{}` exists: make them admin with `lightcraft-server user admin {} on`, or pick another name", s.user, s.user));
+    }
+    if let Err(e) = accounts::set_user(&st.data, &s.user, &s.password, false).and_then(|()| accounts::set_admin(&st.data, &s.user, true)) {
+        return error(400, e);
+    }
+    *code = None;
+    log::info!("admin {} created from the setup page", s.user);
+    json(200, &json!({"user": s.user}))
+}
+
+fn login(st: &State, req: &mut Request) -> Resp {
+    let l: Login = match read_small_json(req) {
+        Ok(l) => l,
+        Err(r) => return r,
+    };
+    let keys = crate::api::throttle_keys(req, &l.user);
+    if let Some(r) = crate::api::throttled(st, &keys) {
+        return r;
+    }
+    let r = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_login(&l.user, &l.password, l.remember);
+    let mut t = st.throttle.lock().unwrap_or_else(PoisonError::into_inner);
+    if matches!(r, Err(LoginError::Refused)) {
+        t.failed(&keys)
+    } else {
+        t.succeeded(&keys)
+    }
+    drop(t);
+    match r {
+        Ok(token) => {
+            log::info!("admin {} signed in to the admin page{}", l.user, if l.remember { " (kept signed in)" } else { "" });
+            if l.cookie {
+                // (the page never holds the token: the browser sends the cookie, and script can't read it)
+                with_cookie(json(200, &json!({"user": l.user})), session_cookie(req, &token, l.remember))
+            } else {
+                json(200, &json!({"token": token, "user": l.user}))
+            }
+        }
+        Err(LoginError::Refused) => {
+            log::warn!("refused an admin sign-in as `{}`", l.user.chars().take(64).collect::<String>());
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            error(401, "wrong user name or password, or not an admin")
+        }
+        Err(LoginError::Failed(e)) => error(500, e),
+    }
+}
+
+/// Bytes on the file system holding `dir`: (total, available), from `df` where there is one.
+fn disk(dir: &Path) -> Option<(u64, u64)> {
+    let out = std::process::Command::new("df").arg("-Pk").arg(dir).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let cols: Vec<&str> = text.lines().nth(1)?.split_whitespace().collect();
+    let k = |i: usize| cols.get(i)?.parse::<u64>().ok().map(|n| n.saturating_mul(1024));
+    Some((k(1)?, k(3)?))
+}
+
+/// Bytes of the files under `dir` (a user's photo files), at most a few levels deep.
+fn size_of(dir: &Path, depth: u32) -> u64 {
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    rd.flatten()
+        .map(|e| match e.metadata() {
+            Ok(m) if m.is_dir() && depth > 0 => size_of(&e.path(), depth - 1),
+            Ok(m) if m.is_file() => m.len(),
+            _ => 0,
+        })
+        .fold(0, u64::saturating_add)
+}
+
+/// The served web build's `version.json` (`{"version", "commit"}`, written by `cargo xtask web`), if it has one.
+fn web_build(web: &Path) -> Option<Value> {
+    let text = std::fs::read_to_string(web.join("version.json")).ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    let field = |k: &str| v.get(k).and_then(Value::as_str).map(|s| s.chars().take(64).collect::<String>());
+    Some(json!({"version": field("version"), "commit": field("commit")}))
+}
+
+/// `GET /api/admin/usage`: what the server takes of the machine (a point every 30 s, averaged to a few hundred) and what
+/// each user's devices asked of it since it started ([`crate::usage`]). `supported`: the machine numbers are read here
+/// (Linux and Docker); elsewhere they are `null`.
+fn usage(st: &State) -> Value {
+    let u = &st.usage;
+    let history: Vec<Value> = u
+        .history()
+        .iter()
+        .map(|s| json!({"at": s.at, "cpu": s.cpu, "machineCpu": s.machine_cpu, "rss": s.rss, "memUsed": s.mem_used, "requests": s.requests, "out": s.out}))
+        .collect();
+    let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+    let mut a = st.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+    let users: Vec<Value> = names
+        .iter()
+        .map(|name| {
+            let devices: Vec<Value> = a
+                .devices_of(name)
+                .iter()
+                .map(|d| {
+                    let x = u.of(name, d.id);
+                    json!({"id": d.id, "name": d.name, "requests": x.requests, "in": x.bytes_in, "out": x.bytes_out, "busyMs": x.busy_ms, "lastSeen": a.last_seen(name, d.id)})
+                })
+                .collect();
+            json!({"name": name, "devices": devices})
+        })
+        .collect();
+    json!({
+        "since": u.since,
+        "supported": cfg!(target_os = "linux"),
+        "cores": st.limits.machine.cores,
+        "memory": st.limits.machine.memory,
+        "history": history,
+        "users": users,
+    })
+}
+
+fn status(st: &State, me: &str) -> Value {
+    let data = std::fs::canonicalize(&st.data).unwrap_or_else(|_| st.data.clone());
+    let users = accounts::read_users(&st.data).map(|f| f.users.len()).unwrap_or(0);
+    json!({
+        "me": me,
+        "version": env!("LIGHTCRAFT_BUILD_VERSION"),
+        "commit": env!("LIGHTCRAFT_COMMIT"),
+        "data": data.to_string_lossy(),
+        "listen": st.listen,
+        "web": st.web.as_ref().map(|w| w.to_string_lossy().to_string()),
+        "webBuild": st.web.as_deref().and_then(web_build),
+        "disk": disk(&st.data).map(|(total, free)| json!({"total": total, "free": free})),
+        "users": users,
+    })
+}
+
+/// `GET /api/admin/presets`: the shared presets (`{version, items}`, see [`crate::server_presets`]) and the
+/// built-in presets an admin may hide (`builtin: [{id, name, group}]`).
+fn shared_presets(st: &State) -> Value {
+    let doc = st.presets.lock().unwrap_or_else(PoisonError::into_inner).doc().clone();
+    let builtin: Vec<Value> = lightcraft_engine::presets::builtin().iter().map(|p| json!({"id": p.id, "name": p.name, "group": p.group})).collect();
+    json!({"version": doc.version, "items": doc.items, "builtin": builtin})
+}
+
+/// Building previews, for the Processing page: every user's batch added up (`left`, `done`, the pace), the time left
+/// (the slowest user's), what is being built now, and per user how many photos have previews.
+fn previews(st: &State) -> Value {
+    let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+    let (mut left, mut done, mut per_min, mut eta, mut have, mut photos, mut counted) = (0usize, 0usize, 0u64, None::<u64>, 0usize, 0usize, true);
+    let (mut building, mut users, mut last, mut rebuilding) = (Vec::new(), Vec::new(), None::<(usize, u64)>, false);
+    for name in &names {
+        let s = st.folders.status(name);
+        let cov = st.folders.coverage(st, name);
+        counted &= cov.is_some();
+        let (h, p) = cov.unwrap_or((0, 0));
+        (left, done, have, photos) = (left + s.previews, done + s.previews_done, have + h, photos + p);
+        per_min += s.previews_per_min.unwrap_or(0);
+        eta = eta.max(s.previews_eta_secs);
+        rebuilding |= s.previews_rebuilding;
+        if let Some((at, n)) = s.previews_last_at.zip(s.previews_last_done)
+            && last.is_none_or(|l| at > l.1)
+        {
+            last = Some((n, at));
+        }
+        building.extend(s.previews_building.iter().cloned());
+        users.push(json!({"name": name, "left": s.previews, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len()}));
+    }
+    building.sort();
+    json!({
+        "paused": st.folders.status("").previews_paused,
+        "left": left, "done": done, "perMinute": per_min, "etaSecs": eta, "rebuilding": rebuilding,
+        "have": counted.then_some(have), "photos": counted.then_some(photos),
+        "lastDone": last.map(|l| l.0), "lastAt": last.map(|l| l.1),
+        "building": building, "users": users,
+    })
+}
+
+fn users(st: &State) -> AdminResult {
+    let f = accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?;
+    st.sizes.refresh(&st.data);
+    let mut out = Vec::new();
+    for (name, u) in &f.users {
+        let devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(name).len();
+        let (tally, in_folders) = match crate::api::lib(st, name) {
+            Ok(l) => {
+                let tally = crate::api::library_stats(&l);
+                let in_folders = l.lock().unwrap_or_else(PoisonError::into_inner).index.folder_total().bytes;
+                (tally, in_folders)
+            }
+            Err(e) => {
+                log::error!("{e}");
+                Default::default()
+            }
+        };
+        let folders: Vec<Value> = u.folders.iter().map(|f| json!({"name": f.name, "path": f.path})).collect();
+        out.push(json!({
+            "name": name, "admin": u.admin, "photos": tally.photos, "albums": tally.albums, "devices": devices,
+            // what their photos take on the server in all: the files kept for them (counted in the background:
+            // null until they are) and the photos in their library folders, which are only read
+            "bytes": st.sizes.get(name).map(|kept| kept.saturating_add(in_folders)), "folderBytes": in_folders,
+            // (their storage limit counts the files kept for them only)
+            "quota": u.quota,
+            "shares": st.shares.lock().unwrap_or_else(PoisonError::into_inner).list(name).len(),
+            "folders": folders, "scan": st.folders.status(name),
+        }));
+    }
+    Ok(Value::Array(out))
+}
+
+fn add_user(st: &State, u: NewUser) -> std::result::Result<Value, (u16, String)> {
+    accounts::set_user(&st.data, &u.name, &u.password, false).map_err(|e| (400, e))?;
+    if u.admin {
+        accounts::set_admin(&st.data, &u.name, true).map_err(|e| (500, e))?;
+    }
+    log::info!("added user {}{}", u.name, if u.admin { " (admin)" } else { "" });
+    Ok(json!({"name": u.name}))
+}
+
+fn remove_user(st: &State, name: &str) -> AdminResult {
+    accounts::remove_user(&st.data, name).map_err(|e| Ok((409, e)))?;
+    // (their album links stop at once)
+    st.shares.lock().unwrap_or_else(PoisonError::into_inner).drop_user(name);
+    st.accounts.lock().unwrap_or_else(PoisonError::into_inner).forget(name);
+    // closes the library (and releases its lock)
+    st.libs.lock().unwrap_or_else(PoisonError::into_inner).remove(name);
+    log::info!("removed user {name} (their files stay in {})", accounts::user_dir(&st.data, name).display());
+    Ok(json!({"files": accounts::user_dir(&st.data, name).to_string_lossy()}))
+}
+
+/// `%20` and the like in a path segment (folder names may have spaces).
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while let Some(&c) = b.get(i) {
+        let hex = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (c, hex) {
+            (b'%', Some(v)) => {
+                out.push(v);
+                i += 3;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A user's library folders and what the last scan of them did.
+fn folders(st: &State, name: &str) -> AdminResult {
+    let f = accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?;
+    let u = f.users.get(name).ok_or_else(|| Ok((404, format!("no user `{name}`"))))?;
+    let list: Vec<Value> = u
+        .folders
+        .iter()
+        .map(|f| {
+            // (a writable folder is tried, so the page shows a mount that went read-only)
+            let can_write = f.writable.then(|| accounts::check_writable(std::path::Path::new(&f.path)).map_err(|e| e.to_string()));
+            json!({
+                "name": f.name, "path": f.path, "there": std::path::Path::new(&f.path).is_dir(),
+                "writable": f.writable, "imports": f.imports,
+                "writeError": can_write.and_then(Result::err),
+            })
+        })
+        .collect();
+    let mut scan = st.folders.status(name);
+    (scan.previews_have, scan.previews_photos) = st.folders.coverage(st, name).unzip();
+    Ok(json!({"folders": list, "ignore": u.ignore, "scan": scan}))
+}
+
+fn known_user(st: &State, name: &str) -> Result<(), std::result::Result<(u16, String), Resp>> {
+    if accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?.users.contains_key(name) {
+        Ok(())
+    } else {
+        Err(Ok((404, format!("no user `{name}`"))))
+    }
+}
+
+/// Start checking a user's originals (their library folders' files and the ones the server keeps).
+fn start_check(st: &State, me: &str, name: &str) -> AdminResult {
+    let dir = accounts::user_dir(&st.data, name);
+    let mut files = {
+        let l = crate::api::lib(st, name).map_err(|e| Ok((500, e)))?;
+        let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+        let names = crate::integrity::photo_names(l.core.catalog());
+        let files = crate::integrity::folder_originals(&l.index, &names);
+        (files, names)
+    };
+    // (listed without the library's lock: devices keep syncing meanwhile)
+    files.0.extend(crate::integrity::kept_originals(&dir, &files.1));
+    let n = files.0.len();
+    if !st.checker.start(name, dir.clone(), files.0) {
+        return Err(Ok((409, "a check of these files is running".to_string())));
+    }
+    log::info!("admin {me}: check {name}'s {n} original files");
+    Ok(st.checker.status(name, &dir))
+}
+
+fn devices(st: &State, name: &str) -> AdminResult {
+    if !accounts::read_users(&st.data).is_ok_and(|f| f.users.contains_key(name)) {
+        return Err(Ok((404, format!("no user `{name}`"))));
+    }
+    let mut a = st.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+    let list: Vec<Value> = a
+        .devices_of(name)
+        .iter()
+        .map(|d| json!({"id": d.id, "name": d.name, "space": d.space, "created": d.created, "lastSeen": a.last_seen(name, d.id)}))
+        .collect();
+    Ok(Value::Array(list))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_build_reads_version_json_and_tolerates_junk() {
+        let dir = std::env::temp_dir().join(format!("lc-web-build-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(web_build(&dir), None, "no version.json");
+        std::fs::write(dir.join("version.json"), "not json").unwrap();
+        assert_eq!(web_build(&dir), None);
+        std::fs::write(dir.join("version.json"), r#"{"version":"0.2.3","commit":"ffae40d8ab-dirty"}"#).unwrap();
+        assert_eq!(web_build(&dir), Some(json!({"version": "0.2.3", "commit": "ffae40d8ab-dirty"})));
+        std::fs::write(dir.join("version.json"), r#"{"version":7}"#).unwrap();
+        assert_eq!(web_build(&dir), Some(json!({"version": null, "commit": null})));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

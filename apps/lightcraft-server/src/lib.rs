@@ -1,0 +1,270 @@
+//! LightCraft sync server: each user's library — photos, edits, albums, presets — shared by
+//! their devices (the desktop app, the CLI, the web build it serves at `/`). Self-hosted, one
+//! binary; see `docs/sync.md`.
+//!
+//! The server decodes photos only to build previews of library folders' photos. It keeps the
+//! single order of every device's changes
+//! ([`lightcraft_catalog::sync::ServerCore`]: each push is validated by applying it to the
+//! user's catalog, all or nothing), the photo files by content hash (originals and the smart and
+//! mini previews devices build), the presets document, and who may sign in. Plain HTTP: put it
+//! behind a TLS reverse proxy (Caddy) or a private network (Tailscale).
+//!
+//! ```text
+//! <data>/users.json                       users: argon2 password hash, library id
+//! <data>/server-presets.json              presets shared with every user, built-ins hidden for all (admin page)
+//! <data>/users/<name>/library/            the op log (catalog.log)
+//! <data>/users/<name>/blobs/<kind>/<xx>/<hash>   original | smart | mini
+//! <data>/users/<name>/presets.json        { version, presets }
+//! <data>/users/<name>/devices.json        signed-in devices (token hashes, id spaces)
+//! <data>/users/<name>/folders.json        the user's library folders as last scanned
+//! <data>/users/<name>/shares.json         album links (tokens, passwords' hashes)
+//! ```
+//!
+//! **Album links** ([`shares`]): a page of an album for anyone with its link, no account — by day, a page per
+//! photo, a slideshow, Download All ([`zip`]), optionally a password, optionally a form through which visitors
+//! add photos ([`guest`], [`multipart`]). **Storage limits** ([`accounts::User::quota`]) cap what the server keeps
+//! for a user: uploads over one are refused with `507`.
+//!
+//! **Library folders** ([`folders`]): photo folders already on the server, given to a user by an
+//! admin, are read in place — never copied, moved or written — and their photos join the user's
+//! library like any other (the server builds their previews and serves their originals).
+//!
+//! Users, devices and library folders are managed from the command line (`lightcraft-server
+//! user …`, `folder …`) or the admin page at `/admin` ([`admin`]).
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+pub mod accounts;
+pub mod admin;
+pub mod api;
+pub mod cors;
+pub mod docs;
+pub mod folders;
+pub mod gc;
+pub mod guest;
+pub mod http;
+pub mod ignore;
+pub mod integrity;
+pub mod limits;
+pub mod multipart;
+pub mod render;
+pub mod server_presets;
+pub mod shares;
+mod stats;
+pub mod throttle;
+pub mod usage;
+pub mod writeback;
+pub mod zip;
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicU32;
+use std::sync::{Arc, Mutex};
+
+/// The largest id space (ids stay below 2^53: exact in JavaScript). Devices get the ones below
+/// it; it is the server's own ([`folders::SPACE`]).
+pub const MAX_SPACE: u32 = (1 << 21) - 1;
+
+pub struct Config {
+    /// Where everything is kept.
+    pub data: PathBuf,
+    /// `host:port` to listen on.
+    pub listen: String,
+    /// The web build to serve at `/` (`cargo xtask web` → `target/web-site/`).
+    pub web: Option<PathBuf>,
+    /// Requests answered at once (more get `503`; the health check always answers; `None`: what the
+    /// admin page set, else automatic, see [`limits`]). How long connections may stall and how many
+    /// there can be: [`http::Limits`].
+    pub max_requests: Option<usize>,
+    /// Scan every user's library folders this often (`None`: at start and on demand only).
+    pub scan_interval: Option<std::time::Duration>,
+    /// Threads building previews of photos found in library folders (`None`: as for `max_requests`).
+    pub preview_threads: Option<usize>,
+    /// Threads the decodes, develops and models share (`None`: as for `max_requests`).
+    pub threads: Option<usize>,
+    /// Renders at once for devices that export on the server ([`render`]; `None`: as for `max_requests`).
+    pub render_threads: Option<usize>,
+    /// How long a render waits for a free place before the device is told to try again (`None`: 45 s).
+    pub render_wait: Option<std::time::Duration>,
+    /// Sites whose pages may call the API from a browser (`https://photos.example.com`; `*`: any),
+    /// for a web build served from somewhere else than this server ([`cors`]). Empty: none.
+    pub cors_origins: Vec<String>,
+}
+
+impl Config {
+    /// Serve `data` on `listen`: no web build, the limits the admin page set or automatic ones,
+    /// library folders scanned every 15 minutes.
+    pub fn new(data: impl Into<PathBuf>, listen: impl Into<String>) -> Config {
+        Config {
+            data: data.into(),
+            listen: listen.into(),
+            web: None,
+            max_requests: None,
+            scan_interval: Some(std::time::Duration::from_secs(15 * 60)),
+            preview_threads: None,
+            threads: None,
+            render_threads: None,
+            render_wait: None,
+            cors_origins: Vec::new(),
+        }
+    }
+}
+
+/// What every request thread shares.
+pub struct State {
+    pub(crate) data: PathBuf,
+    pub(crate) web: Option<PathBuf>,
+    /// The address served (shown on the admin page).
+    pub(crate) listen: String,
+    /// The one-time code that creates the first admin from `/admin` (while there is none).
+    pub(crate) setup: Mutex<Option<String>>,
+    pub(crate) setup_tries: AtomicU32,
+    pub(crate) accounts: Mutex<accounts::Accounts>,
+    /// What the admin page shows of each user's photo files ([`admin::Sizes`]).
+    pub(crate) sizes: admin::Sizes,
+    pub(crate) libs: Mutex<HashMap<String, Arc<Mutex<api::UserLib>>>>,
+    /// Library folder scans and preview building.
+    pub(crate) folders: folders::Scanner,
+    /// Renders for devices ([`render`]).
+    pub(crate) render: render::Slots,
+    /// How much of the machine the work above may take.
+    pub(crate) limits: limits::Limits,
+    /// Failed sign-ins (password guessing).
+    pub(crate) throttle: Mutex<throttle::Throttle>,
+    /// Which sites' pages may call the API.
+    pub(crate) cors: cors::Cors,
+    /// Every user's album links, by token ([`shares`]).
+    pub(crate) shares: Mutex<shares::Index>,
+    /// Sidecars to write and uploads to file in writable library folders ([`writeback`]).
+    pub(crate) writer: writeback::Writer,
+    /// The unfinished uploads being written right now (one writer per file).
+    pub(crate) uploading: Mutex<std::collections::HashSet<PathBuf>>,
+    /// The presets shared with every user ([`server_presets`]).
+    pub(crate) presets: Mutex<server_presets::ServerPresets>,
+    /// What the server takes of the machine and what each device asks of it ([`usage`]).
+    pub(crate) usage: usage::Usage,
+    /// Checks of users' originals for files cut short ([`integrity`]).
+    pub(crate) checker: integrity::Checker,
+}
+
+/// A running server.
+pub struct Server {
+    http: Option<http::Server>,
+    addr: SocketAddr,
+    /// The library folder scanner and preview builders.
+    workers: Vec<std::thread::JoinHandle<()>>,
+    state: Arc<State>,
+}
+
+impl Server {
+    /// Listen and serve on a background thread.
+    pub fn start(cfg: Config) -> Result<Server, String> {
+        std::fs::create_dir_all(&cfg.data).map_err(|e| format!("{}: {e}", cfg.data.display()))?;
+        let fixed = limits::Values { threads: cfg.threads, previews: cfg.preview_threads, renders: cfg.render_threads, requests: cfg.max_requests };
+        let lim = limits::Limits::new(Some(&cfg.data), limits::Machine::this(), fixed);
+        let now = lim.effective();
+        log::info!(
+            "limits: {} CPU threads, {} previews, {} renders and {} requests at once",
+            lim.threads_now(),
+            now.previews,
+            now.renders,
+            now.requests
+        );
+        let http_limits = http::Limits { active: lim.requests.clone(), ..http::Limits::default() };
+        let bound = http::Server::bind(&cfg.listen, http_limits).map_err(|e| format!("can't listen on {}: {e}", cfg.listen))?;
+        let addr = bound.addr();
+        let setup = if accounts::has_admin(&cfg.data) { None } else { admin::new_setup_code() };
+        if let Some(code) = &setup {
+            let at = if addr.ip().is_unspecified() { format!("http://<this server>:{}", addr.port()) } else { format!("http://{addr}") };
+            log::warn!("no admin yet: open {at}/admin (or your domain's /admin) and enter the setup code {code}");
+        }
+        let links = shares::Index::load(&cfg.data);
+        let shared_presets = server_presets::ServerPresets::load(&cfg.data);
+        let state = Arc::new(State {
+            accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
+            sizes: admin::Sizes::default(),
+            listen: addr.to_string(),
+            setup: Mutex::new(setup),
+            setup_tries: AtomicU32::new(0),
+            data: cfg.data,
+            web: cfg.web,
+            libs: Mutex::new(HashMap::new()),
+            folders: folders::Scanner::new(cfg.scan_interval),
+            render: render::Slots::new(now.renders, cfg.render_wait.unwrap_or(std::time::Duration::from_secs(45))),
+            limits: lim,
+            throttle: Mutex::new(throttle::Throttle::default()),
+            uploading: Mutex::new(std::collections::HashSet::new()),
+            cors: cors::Cors::new(&cfg.cors_origins),
+            shares: Mutex::new(links),
+            writer: writeback::Writer::new(),
+            presets: Mutex::new(shared_presets),
+            usage: usage::Usage::new(),
+            checker: integrity::Checker::default(),
+        });
+        // (counted now, so the admin page has the numbers by the time anyone opens it)
+        state.sizes.refresh(&state.data);
+        let st = state.clone();
+        let http = bound.serve(Arc::new(move |req: &mut http::Request| api::handle(&st, req)))?;
+        let mut workers = Vec::new();
+        let s = state.clone();
+        workers.push(std::thread::Builder::new().name("lc-scan".into()).spawn(move || folders::run_scanner(&s)).map_err(|e| e.to_string())?);
+        let s = state.clone();
+        workers.push(std::thread::Builder::new().name("lc-writeback".into()).spawn(move || writeback::run(&s)).map_err(|e| e.to_string())?);
+        state.usage.sample();
+        let s = state.clone();
+        workers.push(std::thread::Builder::new().name("lc-usage".into()).spawn(move || s.usage.run()).map_err(|e| e.to_string())?);
+        // (as many as the limit may ever be: the ones over it wait, see `folders::run_previews`)
+        for i in 0..state.limits.machine.max().previews.max(now.previews) {
+            let s = state.clone();
+            let t = std::thread::Builder::new().name(format!("lc-previews-{i}")).spawn(move || folders::run_previews(&s));
+            workers.push(t.map_err(|e| e.to_string())?);
+        }
+        Ok(Server { http: Some(http), addr, workers, state })
+    }
+
+    /// The first-run setup code, while the server has no admin (tests; it is also logged).
+    pub fn setup_code(&self) -> Option<String> {
+        self.state.setup.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Take a render's place until the returned value is dropped (tests: a busy server).
+    pub fn hold_render_slot(&self) -> Option<impl Drop + '_> {
+        self.state.render.acquire(std::time::Duration::ZERO)
+    }
+
+    /// What the last (or current) scan of a user's library folders did (tests, the admin page).
+    pub fn folder_status(&self, user: &str) -> folders::Status {
+        self.state.folders.status(user)
+    }
+
+    /// Scan a user's library folders soon.
+    pub fn scan(&self, user: &str) {
+        self.state.folders.request(user);
+    }
+
+    /// Serve until the process ends.
+    pub fn wait(mut self) {
+        if let Some(h) = self.http.take() {
+            h.wait();
+        }
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        // (stops answering first: a request in flight may still need the workers)
+        drop(self.http.take());
+        self.state.folders.shut_down();
+        self.state.writer.shut_down();
+        self.state.usage.shut_down();
+        self.state.checker.shut_down();
+        for t in self.workers.drain(..) {
+            let _ = t.join();
+        }
+    }
+}

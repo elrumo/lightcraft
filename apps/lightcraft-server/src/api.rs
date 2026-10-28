@@ -1,0 +1,1025 @@
+//! The HTTP API (`/api/…`, JSON; see `lightcraft_catalog::sync::proto` and `docs/sync.md`) and
+//! the web build at `/`.
+//!
+//! Every route but `POST /api/login` wants `Authorization: Bearer <token>`. Bodies are capped
+//! ([`JSON_MAX`], [`BLOB_MAX`]); content hashes are parsed before they're used in a path; an
+//! uploaded original is hashed while it streams to a temporary file and only kept when the hash is
+//! the one its URL names. Nothing here panics on what a client sends.
+
+use std::cell::Cell;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
+
+use crate::http::{Header, Method, Request, Response, StatusCode};
+use lightcraft_catalog::sync::{Pull, PushError, ServerCore, proto};
+use lightcraft_catalog::{FsStore, LibraryLock};
+use serde_json::{Value, json};
+
+use crate::State;
+use crate::accounts::{self, LoginError, Session};
+use crate::folders::PreviewState;
+
+/// Largest JSON body (a push is at most a few hundred ops).
+pub const JSON_MAX: u64 = 64 << 20;
+/// Largest body of the routes anyone can call (signing in, setting up): they are small.
+pub const SMALL_JSON_MAX: u64 = 64 << 10;
+/// Largest photo file: originals (raw files) and previews.
+pub const BLOB_MAX: u64 = 16 << 30;
+const PREVIEW_MAX: u64 = 256 << 20;
+/// Ops per pull at most.
+const PULL_MAX: usize = 5000;
+/// A storage answer is reused this long: it walks every photo file the user has.
+const USAGE_TTL: Duration = Duration::from_secs(5);
+/// Smart and mini previews start with this.
+const PREVIEW_MAGIC: &[u8] = b"LCSP1\n";
+
+pub type Resp = Response<Box<dyn Read + Send>>;
+
+pub(crate) fn header(k: &str, v: &str) -> Option<Header> {
+    Header::from_bytes(k.as_bytes(), v.as_bytes()).ok()
+}
+
+pub(crate) fn bytes(status: u16, ctype: &str, body: Vec<u8>) -> Resp {
+    let len = body.len();
+    Response::new(StatusCode(status), header("Content-Type", ctype).into_iter().collect(), Box::new(std::io::Cursor::new(body)), Some(len), None)
+}
+
+pub(crate) fn json(status: u16, v: &Value) -> Resp {
+    bytes(status, "application/json", v.to_string().into_bytes())
+}
+
+/// A JSON answer that can be big (the library, pulled changes, the presets): gzipped when it is and the device
+/// takes gzip, a tenth of the bytes.
+fn big_json(req: &Request, body: Vec<u8>) -> Resp {
+    let takes_gzip = header_value(req, "Accept-Encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
+    if takes_gzip && body.len() >= GZIP_MIN {
+        let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(body.len() / 4), flate2::Compression::fast());
+        if z.write_all(&body).is_ok()
+            && let Ok(z) = z.finish()
+        {
+            let mut resp = bytes(200, "application/json", z);
+            if let Some(h) = header("Content-Encoding", "gzip") {
+                resp.add_header(h);
+            }
+            return resp;
+        }
+    }
+    bytes(200, "application/json", body)
+}
+
+/// Smaller answers aren't worth compressing.
+const GZIP_MIN: usize = 16 << 10;
+
+pub(crate) fn error(status: u16, msg: impl std::fmt::Display) -> Resp {
+    json(status, &json!({"error": msg.to_string()}))
+}
+
+/// A user's library on this server: the op log, the presets document, and the index of their
+/// library folders.
+pub struct UserLib {
+    pub(crate) core: ServerCore,
+    presets: proto::Presets,
+    /// The other documents the user's devices share ([`crate::docs`]).
+    docs: crate::docs::Docs,
+    /// The user's folder.
+    pub(crate) dir: PathBuf,
+    pub(crate) index: crate::folders::Index,
+    /// The last `GET /api/usage` answer and when it was made.
+    usage: Option<(Instant, proto::Usage)>,
+    /// The library counted, and the [`lightcraft_catalog::Catalog::revision`] it was counted at (a pass over every
+    /// photo, so it is redone only when the library changed).
+    tally: Cell<Option<(u64, crate::stats::Tally)>>,
+    _lock: LibraryLock,
+}
+
+impl UserLib {
+    fn open(data: &Path, user: &str) -> Result<UserLib, String> {
+        let dir = accounts::user_dir(data, user);
+        let lib = dir.join("library");
+        std::fs::create_dir_all(&lib).map_err(|e| format!("{}: {e}", lib.display()))?;
+        let lock = LibraryLock::acquire(&lib, "lightcraft-server").map_err(|e| e.to_string())?;
+        let store = FsStore::open(&lib).map_err(|e| format!("{}: {e}", lib.display()))?;
+        let core = ServerCore::open(Box::new(store)).map_err(|e| format!("{user}'s library: {e}"))?;
+        let presets = match std::fs::read(dir.join("presets.json")) {
+            Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("{user}'s presets.json is damaged: {e}"))?,
+            Err(_) => proto::Presets { version: 0, presets: json!([]) },
+        };
+        let docs = crate::docs::Docs::load(&dir).map_err(|e| format!("{user}'s documents: {e}"))?;
+        let index = crate::folders::Index::load(&dir);
+        Ok(UserLib { core, presets, docs, dir, index, usage: None, tally: Cell::new(None), _lock: lock })
+    }
+
+    /// What the library holds: photos (not counting Recently Deleted or virtual copies) and albums.
+    pub(crate) fn tally(&self) -> crate::stats::Tally {
+        let c = self.core.catalog();
+        match self.tally.get() {
+            Some((at, t)) if at == c.revision => t,
+            _ => {
+                let t = crate::stats::tally(c);
+                self.tally.set(Some((c.revision, t)));
+                t
+            }
+        }
+    }
+
+    /// The library's catalog.
+    pub fn catalog(&self) -> &lightcraft_catalog::Catalog {
+        self.core.catalog()
+    }
+
+    /// Open a user's library (the command line, while the server isn't running).
+    pub fn open_for(data: &Path, user: &str) -> Result<UserLib, String> {
+        UserLib::open(data, user)
+    }
+}
+
+pub(crate) fn lib(st: &State, user: &str) -> Result<Arc<Mutex<UserLib>>, String> {
+    let mut libs = st.libs.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(l) = libs.get(user) {
+        return Ok(l.clone());
+    }
+    let l = Arc::new(Mutex::new(UserLib::open(&st.data, user)?));
+    libs.insert(user.to_string(), l.clone());
+    Ok(l)
+}
+
+/// Read a body of at most `max` bytes.
+pub(crate) fn read_body(req: &mut Request, max: u64) -> Result<Vec<u8>, Resp> {
+    if req.body_length().is_some_and(|n| n as u64 > max) {
+        return Err(error(413, format!("the request is larger than {max} bytes")));
+    }
+    let mut buf = Vec::new();
+    match req.as_reader().take(max + 1).read_to_end(&mut buf) {
+        Ok(n) if n as u64 > max => Err(error(413, format!("the request is larger than {max} bytes"))),
+        Ok(_) => Ok(buf),
+        Err(e) => Err(error(400, format!("reading the request: {e}"))),
+    }
+}
+
+pub(crate) fn read_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, Resp> {
+    read_json_max(req, JSON_MAX)
+}
+
+/// [`read_json`] for the routes that need no sign-in.
+pub(crate) fn read_small_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, Resp> {
+    read_json_max(req, SMALL_JSON_MAX)
+}
+
+fn read_json_max<T: serde::de::DeserializeOwned>(req: &mut Request, max: u64) -> Result<T, Resp> {
+    let b = read_body(req, max)?;
+    serde_json::from_slice(&b).map_err(|e| error(400, format!("not the JSON this route takes: {e}")))
+}
+
+pub(crate) fn header_value<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
+    req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str())
+}
+
+pub(crate) fn query<'a>(q: &'a str, key: &str) -> Option<&'a str> {
+    q.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v)
+}
+
+/// Answer one request.
+pub fn handle(st: &State, req: &mut Request) -> Resp {
+    let url = req.url().to_string();
+    let (path, q) = url.split_once('?').unwrap_or((url.as_str(), ""));
+    let method = req.method().clone();
+    let is_api = path == "/api" || path.starts_with("/api/");
+    // (the admin page is never called from another site)
+    let origin = header_value(req, "Origin").filter(|_| is_api && !path.starts_with("/api/admin/")).map(str::to_string);
+    if let (Method::Options, Some(o)) = (&method, &origin) {
+        return preflight(st, o);
+    }
+    let mut resp = if path == "/s" || path.starts_with("/s/") {
+        // a shared album: for anyone with the link
+        crate::shares::public(st, req, &method, path, q)
+    } else if let Some(rest) = path.strip_prefix("/api/admin/") {
+        crate::admin::api(st, req, &method, rest)
+    } else if is_api {
+        api(st, req, &method, path, q)
+    } else if path == "/admin"
+        || path.starts_with("/admin/")
+        || path == "/welcome"
+        || path.starts_with("/welcome/")
+        || (path == "/" && st.web.is_none())
+    {
+        crate::admin::page(req, &method, path)
+    } else {
+        web(st, req, &method, path)
+    };
+    // what every answer says, unless it says otherwise: don't guess types, don't leak the URL,
+    // and (the API) don't keep answers that hold a user's library
+    let has = |r: &Resp, k: &'static str| r.headers().iter().any(|h| h.field.equiv(k));
+    for (k, v, when) in [("X-Content-Type-Options", "nosniff", true), ("Referrer-Policy", "no-referrer", true), ("Cache-Control", "no-store", is_api)]
+    {
+        if when
+            && !has(&resp, k)
+            && let Some(h) = header(k, v)
+        {
+            resp.add_header(h);
+        }
+    }
+    // a page from a site the server was told about may read the answer
+    if let Some(o) = &origin {
+        for h in st.cors.answer_headers(o) {
+            resp.add_header(h);
+        }
+    }
+    resp
+}
+
+/// The answer to a browser's question whether a page from `origin` may call the API.
+fn preflight(st: &State, origin: &str) -> Resp {
+    let headers = st.cors.preflight_headers(origin);
+    if headers.is_empty() {
+        return error(403, "this site may not call the server from a browser (start it with --cors-origin to allow it)");
+    }
+    Response::new(StatusCode(204), headers, Box::new(std::io::empty()), Some(0), None)
+}
+
+fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> Resp {
+    if (method, path) == (&Method::Post, "/api/login") {
+        return login(st, req);
+    }
+    if path == "/api/health" {
+        return json(200, &json!({"ok": true, "version": env!("CARGO_PKG_VERSION")}));
+    }
+    let token = header_value(req, "Authorization").and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").trim().to_string();
+    let Some(who) = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).check(&token) else {
+        return error(401, "sign in first");
+    };
+    let l = match lib(st, &who.user) {
+        Ok(l) => l,
+        Err(e) => {
+            log::error!("{e}");
+            return error(500, e);
+        }
+    };
+    let parts: Vec<&str> = path.trim_start_matches("/api/").split('/').collect();
+    let (began, sent) = (Instant::now(), req.body_length().unwrap_or(0) as u64);
+    let resp = match (method, parts.as_slice()) {
+        (Method::Post, ["logout"]) => match st.accounts.lock().unwrap_or_else(PoisonError::into_inner).logout(&who) {
+            Ok(()) => json(200, &json!({})),
+            Err(e) => error(500, e),
+        },
+        (Method::Get, ["me"]) => me(st, &who),
+        (Method::Get, ["snapshot"]) => snapshot(st, req, &l, &who, q),
+        (Method::Get, ["usage"]) => usage(st, &l, &who),
+        (Method::Get, ["activity"]) => activity(st, &who),
+        (Method::Get, ["ops"]) => ops(st, req, &l, q),
+        (Method::Post, ["ops"]) => push(st, req, &l, &who),
+        (Method::Get, ["presets"]) => {
+            // (a preset collection imported whole is tens of MB: gzipped, a tenth of that)
+            let body = serde_json::to_vec(&l.lock().unwrap_or_else(PoisonError::into_inner).presets);
+            match body {
+                Ok(body) => big_json(req, body),
+                Err(e) => error(500, e),
+            }
+        }
+        (Method::Put, ["presets"]) => put_presets(req, &l),
+        (Method::Get, ["shares"]) => crate::shares::list(st, &who.user),
+        (Method::Post, ["shares"]) => crate::shares::create(st, &who.user, req),
+        (Method::Delete, ["shares", id]) => crate::shares::revoke(st, &who.user, id),
+        // (the presets shared with every user: the admin's to change)
+        (Method::Get, ["docs", crate::server_presets::NAME]) => {
+            let body = serde_json::to_vec(st.presets.lock().unwrap_or_else(PoisonError::into_inner).doc());
+            match body {
+                Ok(body) => big_json(req, body),
+                Err(e) => error(500, e),
+            }
+        }
+        (Method::Put, ["docs", crate::server_presets::NAME]) => error(403, "the shared presets are changed from /admin"),
+        (Method::Get, ["docs", name]) => get_doc(&l, name),
+        (Method::Put, ["docs", name]) => put_doc(req, &l, name),
+        (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
+        (Method::Post, ["render"]) => render(st, req, &l, &who.user),
+        _ => error(404, format!("no route {method} {path}")),
+    };
+    // (what this device asks of the server: the admin page's Overview)
+    st.usage.note(&who.user, who.device, sent, resp.data_length().unwrap_or(0) as u64, began.elapsed());
+    resp
+}
+
+/// The throttle's keys for a sign-in: the client's address and the user name.
+pub(crate) fn throttle_keys(req: &Request, user: &str) -> Vec<String> {
+    let ip = crate::throttle::client(req.remote_addr().copied(), header_value(req, "X-Forwarded-For"));
+    vec![format!("ip:{ip}"), format!("user:{}", user.chars().take(64).collect::<String>().to_lowercase())]
+}
+
+/// `429` while these sign-in keys must wait.
+pub(crate) fn throttled(st: &State, keys: &[String]) -> Option<Resp> {
+    let wait = st.throttle.lock().unwrap_or_else(PoisonError::into_inner).wait(keys)?;
+    let secs = wait.as_secs().max(1);
+    let mut r = error(429, format!("too many wrong passwords: try again in {secs} s"));
+    if let Some(h) = header("Retry-After", &secs.to_string()) {
+        r.add_header(h);
+    }
+    Some(r)
+}
+
+fn login(st: &State, req: &mut Request) -> Resp {
+    let l: proto::Login = match read_small_json(req) {
+        Ok(l) => l,
+        Err(r) => return r,
+    };
+    let keys = throttle_keys(req, &l.user);
+    if let Some(r) = throttled(st, &keys) {
+        return r;
+    }
+    let r = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).login(&l.user, &l.password, &l.device);
+    let mut t = st.throttle.lock().unwrap_or_else(PoisonError::into_inner);
+    if matches!(r, Err(LoginError::Refused)) {
+        t.failed(&keys)
+    } else {
+        t.succeeded(&keys)
+    }
+    drop(t);
+    match r {
+        Ok((token, d, library)) => {
+            if let Err(e) = lib(st, &l.user) {
+                log::error!("{e}");
+                return error(500, e);
+            }
+            log::info!("{}: signed in device {} ({}), id space {}", l.user, d.id, d.name, d.space);
+            json(200, &json!(proto::Device { token, device: d.id, space: d.space, library }))
+        }
+        Err(LoginError::Refused) => {
+            log::warn!("refused a sign-in as `{}`", l.user.chars().take(64).collect::<String>());
+            // slow down password guessing
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            error(401, "wrong user name or password")
+        }
+        Err(LoginError::Failed(e)) => {
+            log::error!("sign-in: {e}");
+            error(500, e)
+        }
+    }
+}
+
+fn me(st: &State, who: &Session) -> Resp {
+    let mut a = st.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+    let devices: Vec<Value> =
+        a.devices_of(&who.user).iter().map(|d| json!({"id": d.id, "name": d.name, "space": d.space, "created": d.created})).collect();
+    json(200, &json!({"user": who.user, "device": who.device, "library": a.library_of(&who.user).unwrap_or_default(), "devices": devices}))
+}
+
+/// What the user's library takes here: their photo files by kind, the photos in their library
+/// folders (read where they are, not stored, but they take that room too; and how many of those
+/// bytes are on the data's own disk), and how much room the disk has left.
+fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
+    use lightcraft_engine::usage::{disk_space, same_disk};
+    let (dir, mut u, places) = {
+        let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((at, u)) = &l.usage
+            && at.elapsed() < USAGE_TTL
+        {
+            return json(200, &json!(u));
+        }
+        let by_folder = l.index.folder_files();
+        let folders = by_folder.values().fold(proto::Files::default(), |all, f| all.plus(*f));
+        // where each library folder is on the server, with the bytes it holds
+        let places: Vec<(PathBuf, u64)> =
+            by_folder.iter().filter_map(|(name, f)| Some((PathBuf::from(l.index.roots.get(*name)?), f.bytes))).collect();
+        (l.dir.clone(), proto::Usage { folders, ..Default::default() }, places)
+    };
+    // (the folders are walked without the library locked: pushes and pulls go on meanwhile)
+    let tally = library_stats(l);
+    (u.photos, u.albums) = (tally.photos as u64, tally.albums as u64);
+    let blobs = dir.join("blobs");
+    u.original = blob_usage(&blobs, "original");
+    u.smart = blob_usage(&blobs, "smart");
+    u.mini = blob_usage(&blobs, "mini");
+    u.disk = disk_space(&st.data);
+    // a library folder on the data's own disk takes its room like the files kept there; one on another
+    // disk (a backup drive, a second NAS) doesn't
+    if let Some(data) = u.disk {
+        u.folders_on_disk = places
+            .iter()
+            .filter(|(root, _)| disk_space(root).is_some_and(|d| same_disk(d, data)))
+            .fold(0, |bytes, (_, here)| u64::saturating_add(bytes, *here));
+    }
+    u.quota = accounts::quota_of(&st.data, &who.user);
+    u.devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(&who.user).len() as u64;
+    l.lock().unwrap_or_else(PoisonError::into_inner).usage = Some((Instant::now(), u.clone()));
+    json(200, &json!(u))
+}
+
+/// A user's library counted.
+pub(crate) fn library_stats(l: &Mutex<UserLib>) -> crate::stats::Tally {
+    l.lock().unwrap_or_else(PoisonError::into_inner).tally()
+}
+
+/// What the server is doing for this user right now: scanning their library folders and building previews
+/// (of what was found there and of originals devices uploaded).
+/// Cheap: it reads the progress the workers keep, so devices can ask every few seconds.
+fn activity(st: &State, who: &Session) -> Resp {
+    let s = st.folders.status(&who.user);
+    let has_folders = accounts::read_users(&st.data).is_ok_and(|f| f.users.get(&who.user).is_some_and(|u| !u.folders.is_empty()));
+    let scan = has_folders.then(|| proto::Scan {
+        scanning: s.scanning,
+        phase: s.phase.to_string(),
+        done: s.done as u64,
+        todo: s.todo as u64,
+        files: s.files as u64,
+        eta_secs: s.eta_secs,
+        last_scan: s.last_scan,
+        problems: (s.failed + s.errors.len() + s.preview_errors.len()) as u64,
+    });
+    let previews = proto::Progress { done: s.previews_done as u64, total: s.previews_total as u64, eta_secs: s.previews_eta_secs };
+    json(200, &json!(proto::Activity { scan, previews }))
+}
+
+/// The files of one kind under `blobs/<kind>/<xx>/<hash>`.
+fn blob_usage(blobs: &Path, kind: &str) -> proto::Files {
+    let mut out = proto::Files::default();
+    let Ok(prefixes) = std::fs::read_dir(blobs.join(kind)) else { return out };
+    for prefix in prefixes.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
+        let Ok(files) = std::fs::read_dir(prefix.path()) else { continue };
+        for f in files.flatten() {
+            if let Ok(m) = f.metadata()
+                && m.is_file()
+            {
+                out.files += 1;
+                out.bytes = out.bytes.saturating_add(m.len());
+            }
+        }
+    }
+    out
+}
+
+fn snapshot(st: &State, req: &Request, l: &Mutex<UserLib>, who: &Session, q: &str) -> Resp {
+    let library = match st.accounts.lock().unwrap_or_else(PoisonError::into_inner).library_of(&who.user) {
+        Ok(lib) => lib,
+        Err(e) => return error(500, e),
+    };
+    // in pages (devices since paging); without `limit`, the whole library at once (older devices)
+    if let Some(limit) = query(q, "limit").and_then(|v| v.parse::<usize>().ok()) {
+        let page = l.lock().unwrap_or_else(PoisonError::into_inner).core.snapshot_page(query(q, "cursor"), limit.clamp(1, PULL_MAX));
+        let page = page.map(|p| proto::Snapshot { library, ..p });
+        let body = match page {
+            Some(p) if query(q, "compact") == Some("1") => Some(lightcraft_catalog::sync::compact_page(p).and_then(|p| serde_json::to_vec(&p))),
+            Some(p) => Some(serde_json::to_vec(&p)),
+            None => None,
+        };
+        return match body {
+            Some(Ok(body)) => big_json(req, body),
+            Some(Err(e)) => error(500, e),
+            None => error(410, "the library changed while it was read: read it again from the start"),
+        };
+    }
+    let (seq, catalog) = l.lock().unwrap_or_else(PoisonError::into_inner).core.snapshot();
+    let lib = Value::String(library).to_string();
+    big_json(req, format!("{{\"library\":{lib},\"seq\":{seq},\"catalog\":{catalog}}}").into_bytes())
+}
+
+fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
+    let since = query(q, "since").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    let limit = query(q, "limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1000).clamp(1, PULL_MAX);
+    let shared = st.presets.lock().unwrap_or_else(PoisonError::into_inner).version();
+    let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
+    let presets = l.presets.version;
+    let mut docs = l.docs.versions();
+    if shared > 0 {
+        docs.insert(crate::server_presets::NAME.to_string(), shared);
+    }
+    match l.core.since(since, limit) {
+        Ok(Pull::Ops(ops)) => {
+            let body = serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs, format: lightcraft_catalog::journal::VERSION });
+            drop(l);
+            match body {
+                Ok(body) => big_json(req, body),
+                Err(e) => error(500, e),
+            }
+        }
+        Ok(Pull::Gone) => error(410, "that is older than the server keeps: reload the library"),
+        Err(e) => {
+            log::error!("reading the log: {e}");
+            error(500, e)
+        }
+    }
+}
+
+fn push(st: &State, req: &mut Request, l: &Mutex<UserLib>, who: &Session) -> Resp {
+    let p: proto::Push = match read_json(req) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
+    match l.core.push(p.base, &p.ops) {
+        Ok(head) => {
+            log::debug!("{} device {}: {} op(s), head {head}", who.user, who.device, p.ops.len());
+            // (a library folder the server may write in gets the changed photos' sidecars)
+            st.writer.photos_changed(&who.user, &crate::writeback::sidecar_photos(&p.ops));
+            json(200, &json!(proto::Head { head }))
+        }
+        Err(PushError::Behind { head }) => json(409, &json!(proto::Head { head })),
+        Err(PushError::Rejected { index, error }) => {
+            log::info!("{} device {}: refused op {index}: {error}", who.user, who.device);
+            json(422, &json!(proto::Refused { index, error }))
+        }
+        Err(PushError::Storage(e)) => {
+            log::error!("{}: writing the log: {e}", who.user);
+            error(500, e)
+        }
+    }
+}
+
+fn put_presets(req: &mut Request, l: &Mutex<UserLib>) -> Resp {
+    let p: proto::Presets = match read_json(req) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    if !p.presets.is_array() {
+        return error(400, "`presets` must be an array");
+    }
+    let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
+    if p.version != l.presets.version {
+        // another device changed them first: get them, merge, put again
+        return json(412, &serde_json::to_value(&l.presets).unwrap_or(Value::Null));
+    }
+    let next = proto::Presets { version: l.presets.version + 1, presets: p.presets };
+    let body = serde_json::to_vec(&next).unwrap_or_default();
+    if let Err(e) = lightcraft_catalog::safe_file::write_atomic(&l.dir.join("presets.json"), &body) {
+        return error(500, format!("presets.json: {e}"));
+    }
+    l.presets = next;
+    json(200, &json!({"version": l.presets.version}))
+}
+
+fn get_doc(l: &Mutex<UserLib>, name: &str) -> Resp {
+    match l.lock().unwrap_or_else(PoisonError::into_inner).docs.get(name) {
+        Some(doc) => json(200, &serde_json::to_value(&doc).unwrap_or(Value::Null)),
+        None => error(404, format!("no document `{name}`")),
+    }
+}
+
+fn put_doc(req: &mut Request, l: &Mutex<UserLib>, name: &str) -> Resp {
+    if req.body_length().is_some_and(|n| n as u64 > crate::docs::MAX) {
+        return error(413, format!("a document is at most {} bytes", crate::docs::MAX));
+    }
+    let doc: proto::Doc = match read_body(req, crate::docs::MAX)
+        .and_then(|b| serde_json::from_slice(&b).map_err(|e| error(400, format!("not the JSON this route takes: {e}"))))
+    {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+    match l.lock().unwrap_or_else(PoisonError::into_inner).docs.put(name, doc) {
+        Ok(Ok(version)) => json(200, &json!({"version": version})),
+        // another device wrote first: the answer is its document, to merge and put again
+        Ok(Err(current)) => json(412, &serde_json::to_value(&current).unwrap_or(Value::Null)),
+        Err(e) if e.starts_with("no document") => error(404, e),
+        Err(e) if e.starts_with("storage:") => error(500, e),
+        Err(e) => error(400, e),
+    }
+}
+
+/// Where a photo file is kept: `blobs/<kind>/<first two digits>/<hash>`.
+pub(crate) fn blob_path(dir: &Path, kind: &str, hash: &str) -> Option<PathBuf> {
+    if !proto::BLOB_KINDS.contains(&kind) {
+        return None;
+    }
+    let h = lightcraft_preview::Hash128::parse(hash)?.to_string();
+    Some(dir.join(kind).join(h.get(..2)?).join(h))
+}
+
+/// `Range: bytes=a-b` / `bytes=a-` / `bytes=-n` → (start, end inclusive); `None`: not a range
+/// this server serves (the whole file is sent).
+pub(crate) fn range(v: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
+    let spec = v.trim().strip_prefix("bytes=")?;
+    if spec.contains(',') {
+        return None;
+    }
+    let (a, b) = spec.split_once('-')?;
+    let r = match (a.trim().parse::<u64>().ok(), b.trim().parse::<u64>().ok()) {
+        (Some(a), Some(b)) if a <= b && a < len => Ok((a, b.min(len.saturating_sub(1)))),
+        (Some(a), None) if b.trim().is_empty() && a < len => Ok((a, len - 1)),
+        (None, Some(n)) if a.trim().is_empty() && n > 0 && len > 0 => Ok((len.saturating_sub(n), len - 1)),
+        _ => Err(()),
+    };
+    Some(r)
+}
+
+/// An original kept in one of the user's library folders (still the file that was indexed).
+fn folder_original(st: &State, l: &Mutex<UserLib>, user: &str, hash: &str) -> Option<std::fs::File> {
+    folder_original_path(st, l, user, hash).and_then(|p| std::fs::File::open(p).ok())
+}
+
+/// Where a library folder keeps the original with this content, when it is there, unchanged and readable.
+pub(crate) fn folder_original_path(st: &State, l: &Mutex<UserLib>, user: &str, hash: &str) -> Option<PathBuf> {
+    let found = l.lock().unwrap_or_else(PoisonError::into_inner).index.originals(hash);
+    for (path, size, mtime) in &found {
+        if crate::folders::unchanged(path, *size, *mtime) && std::fs::File::open(path).is_ok() {
+            return Some(path.clone());
+        }
+    }
+    if !found.is_empty() {
+        // changed or gone since the last scan: look again
+        st.folders.request(user);
+    }
+    None
+}
+
+fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user: &str, kind: &str, hash: &str) -> Resp {
+    let dir = l.lock().unwrap_or_else(PoisonError::into_inner).dir.join("blobs");
+    let Some(path) = blob_path(&dir, kind, hash) else {
+        return error(400, "not a photo file this server keeps (/api/blobs/original|smart|mini/<32 hex digits>)");
+    };
+    let hash = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    match method {
+        Method::Head | Method::Get => {
+            let mut f = match std::fs::File::open(&path) {
+                Ok(f) => Some(f),
+                Err(_) if kind == "original" => folder_original(st, l, user, &hash),
+                Err(_) => None,
+            };
+            // a device shows a photo whose preview isn't built yet: build it before the rest, and say so
+            if f.is_none() && matches!(kind, "smart" | "mini") && matches!(method, Method::Get) {
+                match rush_preview(st, l, user, &dir, &hash) {
+                    Some(PreviewState::Built) => f = std::fs::File::open(&path).ok(),
+                    Some(state) => return preview_not_yet(state),
+                    None => {}
+                }
+            }
+            let Some(mut f) = f else {
+                // an original may be part-way: say how far
+                let part = (kind == "original").then(|| part_path(&dir, &hash));
+                let have = part.and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
+                return offset_error(404, "the server doesn't have this file yet", have);
+            };
+            let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+            // by content: never changes
+            let mut headers: Vec<Header> = [
+                header("Content-Type", "application/octet-stream"),
+                header("Accept-Ranges", "bytes"),
+                header("Cache-Control", "private, max-age=31536000, immutable"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let (status, start, n) = match header_value(req, "Range").and_then(|v| range(v, len)) {
+                Some(Ok((a, b))) => {
+                    headers.extend(header("Content-Range", &format!("bytes {a}-{b}/{len}")));
+                    (206, a, b - a + 1)
+                }
+                Some(Err(())) => {
+                    headers.extend(header("Content-Range", &format!("bytes */{len}")));
+                    return Response::new(StatusCode(416), headers, Box::new(std::io::empty()), Some(0), None);
+                }
+                None => (200, 0, len),
+            };
+            if start > 0 && f.seek(SeekFrom::Start(start)).is_err() {
+                return error(500, "can't read the file");
+            }
+            let size = usize::try_from(n).ok();
+            Response::new(StatusCode(status), headers, Box::new(f.take(n)), size, None)
+        }
+        Method::Put => {
+            let incoming = req.body_length().map_or(0, |n| n as u64);
+            if let Some(r) = over_quota(st, user, incoming) {
+                return r;
+            }
+            // `?previews=1` on an original: the device asks the server to build its previews
+            let previews = kind == "original" && req.url().split_once('?').is_some_and(|(_, q)| query(q, "previews") == Some("1"));
+            let resp = put_blob(st, req, &dir, kind, &path, if kind == "original" { Check::Hash } else { Check::Magic });
+            if resp.status_code().0 == 200 {
+                st.sizes.add(user, incoming);
+            }
+            if kind == "original" && resp.status_code().0 == 200 {
+                // (an imports folder takes it)
+                st.writer.file_uploads(user);
+            }
+            if previews && resp.status_code().0 == 200 {
+                return json(200, &json!({"previews": st.folders.queue(&dir, user, hash, path).word()}));
+            }
+            resp
+        }
+        _ => error(405, "HEAD, GET or PUT"),
+    }
+}
+
+/// `507` when `incoming` more bytes would take `user` over their storage limit ([`accounts::User::quota`]).
+pub(crate) fn over_quota(st: &State, user: &str, incoming: u64) -> Option<Resp> {
+    let quota = accounts::quota_of(&st.data, user)?;
+    let used = st.sizes.used(&st.data, user);
+    if used.saturating_add(incoming) <= quota {
+        return None;
+    }
+    let gb = |b: u64| format!("{:.1} GB", b as f64 / 1e9);
+    Some(error(507, format!("over the storage limit: {} of {} used on the server; ask its admin for more room", gb(used), gb(quota))))
+}
+
+/// A device asked for a preview that isn't there, for a photo whose original this server has (uploaded, or in a
+/// library folder): have its previews built before the rest of the queue ([`crate::folders::Scanner::rush`]).
+/// `None`: the server has no such original, so there is nothing to wait for.
+fn rush_preview(st: &State, l: &Mutex<UserLib>, user: &str, dir: &Path, hash: &str) -> Option<PreviewState> {
+    let original = blob_path(dir, "original", hash).filter(|p| p.is_file()).or_else(|| folder_original_path(st, l, user, hash))?;
+    Some(st.folders.rush(dir, user, hash.to_string(), original))
+}
+
+/// The answer to a preview that isn't there yet: `404` as for any file the server doesn't have, and in the body, which
+/// devices from before it ignore, whether the server is making it (`queued`: ask again in a few seconds) or can't (`failed`).
+fn preview_not_yet(state: PreviewState) -> Resp {
+    let msg = match state {
+        PreviewState::Failed => "the server can't make this preview",
+        _ => "the server is making this preview",
+    };
+    let mut resp = json(404, &json!({"error": msg, "previews": state.word()}));
+    if state == PreviewState::Queued {
+        header("Retry-After", "3").into_iter().for_each(|h| resp.add_header(h));
+    }
+    resp
+}
+
+/// `POST /api/render` ([`proto::Render`]): the photo with this original, rendered with these edits and options.
+fn render(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &str) -> Resp {
+    let r: proto::Render = match read_json(req) {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    let (dir, data) = {
+        let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+        (l.dir.join("blobs"), st.data.join("tmp"))
+    };
+    let Some(blob) = blob_path(&dir, "original", &r.hash) else {
+        return error(400, "not a content hash (32 hex digits)");
+    };
+    let Some(original) = Some(blob).filter(|b| b.is_file()).or_else(|| folder_original_path(st, l, user, &r.hash)) else {
+        return error(404, "the server doesn't have this photo's original");
+    };
+    let Some(_slot) = st.render.acquire(st.render.wait()) else {
+        let mut resp = error(503, "the server is rendering other photos: try again in a minute");
+        header("Retry-After", "60").into_iter().for_each(|h| resp.add_header(h));
+        return resp;
+    };
+    match lightcraft_engine::guard::catch("rendering", || crate::render::render_file(&original, &data, &r)) {
+        Ok(Ok(out)) => {
+            let mut resp = bytes(200, out.content_type, out.bytes);
+            header("X-LightCraft-Size", &format!("{}x{}", out.width, out.height)).into_iter().for_each(|h| resp.add_header(h));
+            resp
+        }
+        Ok(Err(e)) | Err(e) => error(422, e),
+    }
+}
+
+/// Where an original's unfinished upload is kept: the same file for every attempt, so a later one
+/// can go on from it ([`put_blob`]). `gc` removes the ones nobody went back to.
+pub(crate) fn part_path(dir: &Path, hash: &str) -> PathBuf {
+    dir.join("tmp").join(format!("original-{hash}.part"))
+}
+
+/// `Content-Range: bytes first-last/total` of an upload: (first, last, total).
+fn upload_range(v: &str) -> Option<(u64, u64, u64)> {
+    let (r, total) = v.trim().strip_prefix("bytes ")?.split_once('/')?;
+    let (first, last) = r.split_once('-')?;
+    Some((first.trim().parse().ok()?, last.trim().parse().ok()?, total.trim().parse().ok()?))
+}
+
+/// An error that also tells the device where its unfinished upload of an original stands (in
+/// the body, and as `Upload-Offset` for a `HEAD`, which has none).
+fn offset_error(status: u16, msg: impl std::fmt::Display, offset: u64) -> Resp {
+    let mut r = json(status, &json!({"error": msg.to_string(), "offset": offset}));
+    if let Some(h) = header("Upload-Offset", &offset.to_string()) {
+        r.add_header(h);
+    }
+    r
+}
+
+/// Marks an original's partial file as being written until dropped (one writer at a time).
+struct Writing<'a> {
+    set: &'a Mutex<std::collections::HashSet<PathBuf>>,
+    path: PathBuf,
+}
+
+impl<'a> Writing<'a> {
+    fn take(set: &'a Mutex<std::collections::HashSet<PathBuf>>, path: &Path) -> Option<Writing<'a>> {
+        set.lock().unwrap_or_else(PoisonError::into_inner).insert(path.to_path_buf()).then(|| Writing { set, path: path.to_path_buf() })
+    }
+}
+
+impl Drop for Writing<'_> {
+    fn drop(&mut self) {
+        self.set.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.path);
+    }
+}
+
+/// What the bytes of an upload have to be for the server to keep them.
+pub(crate) enum Check {
+    /// Hash to the file's name (an original).
+    Hash,
+    /// Start like a LightCraft preview.
+    Magic,
+}
+
+/// `PUT /api/blobs/<kind>/<hash>`. A preview is taken whole or not at all. An original is
+/// streamed to `tmp/<kind>-<hash>.part` and hashed on the way; if the connection breaks, what
+/// arrived stays, `HEAD` says how much (`Upload-Offset`), and a `PUT` with
+/// `Content-Range: bytes <offset>-<last>/<total>` carries on from there. A plain `PUT` starts
+/// over. Only the hash decides whether the file is kept.
+pub(crate) fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path, check: Check) -> Resp {
+    let original = kind == "original";
+    let max = if original { BLOB_MAX } else { PREVIEW_MAX };
+    let expected = req.body_length().map(|n| n as u64);
+    if expected.is_some_and(|n| n > max) {
+        return error(413, format!("larger than {max} bytes"));
+    }
+    // (the path's file name is the hash, normalized)
+    let hash = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let tmp_dir = dir.join("tmp");
+    let part = if original {
+        part_path(dir, &hash)
+    } else {
+        match accounts::random_hex(8) {
+            Ok(r) => tmp_dir.join(format!("{r}.part")),
+            Err(e) => return error(500, e),
+        }
+    };
+    let range = match header_value(req, "Content-Range").map(upload_range) {
+        None => None,
+        Some(Some(r)) if original => Some(r),
+        Some(_) => return error(400, "Content-Range: bytes <first>-<last>/<total>, on an original"),
+    };
+    let _writing = if original {
+        match Writing::take(&st.uploading, &part) {
+            Some(w) => Some(w),
+            None => {
+                return offset_error(409, "this file is being uploaded by another request", std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0));
+            }
+        }
+    } else {
+        None
+    };
+    // the bytes of the unfinished upload that are here, if this request carries on from them
+    let have = if original { std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0) } else { 0 };
+    let start = match range {
+        None => 0,
+        Some((first, last, total)) => {
+            // (the whole rest of the file, in this one request)
+            if total > max || last.checked_add(1) != Some(total) || first > last || expected != Some(last - first + 1) {
+                return error(400, "Content-Range must name the rest of the file, as long as the body");
+            }
+            if first != have {
+                return offset_error(409, format!("the server has {have} bytes of this file, not {first}"), have);
+            }
+            first
+        }
+    };
+    let mut keep = false;
+    let r = (|| -> Result<(), (u16, String)> {
+        let io = |e: std::io::Error| (500, e.to_string());
+        std::fs::create_dir_all(&tmp_dir).map_err(io)?;
+        let mut hasher = lightcraft_preview::Hasher128::new();
+        let mut buf = vec![0u8; 1 << 20];
+        let mut f = if start > 0 {
+            // the first part is hashed again: the hash is of the whole file
+            let mut old = std::fs::File::open(&part).map_err(io)?.take(start);
+            loop {
+                let n = old.read(&mut buf).map_err(io)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(buf.get(..n).unwrap_or(&[]));
+            }
+            std::fs::OpenOptions::new().append(true).open(&part).map_err(io)?
+        } else {
+            std::fs::File::create(&part).map_err(io)?
+        };
+        let (mut total, mut got, mut head) = (start, 0u64, Vec::<u8>::new());
+        let reader = req.as_reader();
+        loop {
+            let n = match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    keep = original && f.sync_data().is_ok();
+                    return Err((400, format!("reading the upload: {e}")));
+                }
+            };
+            let chunk = buf.get(..n).unwrap_or(&[]);
+            total += n as u64;
+            got += n as u64;
+            if total > max {
+                return Err((413, format!("larger than {max} bytes")));
+            }
+            if head.len() < PREVIEW_MAGIC.len() {
+                head.extend(chunk.iter().take(PREVIEW_MAGIC.len() - head.len()));
+            }
+            hasher.update(chunk);
+            f.write_all(chunk).map_err(io)?;
+        }
+        // a body that ends before its Content-Length: the connection broke (the reader says
+        // "end" then). An original keeps what arrived, for the device to resume from.
+        if expected.is_some_and(|n| got != n) {
+            keep = original && f.sync_data().is_ok();
+            return Err((400, format!("the upload ended after {got} of {} bytes", expected.unwrap_or(0))));
+        }
+        let digest = hasher.finish().to_string();
+        match check {
+            Check::Hash if digest != hash => return Err((422, "the file isn't the one its hash names".into())),
+            Check::Magic if head != PREVIEW_MAGIC => return Err((422, "not a LightCraft preview".into())),
+            _ => {}
+        }
+        f.sync_all().map_err(io)?;
+        drop(f);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(io)?;
+        }
+        std::fs::rename(&part, path).map_err(io)?;
+        if let Some(parent) = path.parent()
+            && let Ok(d) = std::fs::File::open(parent)
+        {
+            let _ = d.sync_all();
+        }
+        Ok(())
+    })();
+    match r {
+        Ok(()) => json(200, &json!({})),
+        Err((status, msg)) => {
+            if keep {
+                // what is here is exactly what arrived: the next request goes on from it
+                let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+                return offset_error(status, msg, have);
+            }
+            let _ = std::fs::remove_file(&part);
+            error(status, msg)
+        }
+    }
+}
+
+fn mime(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "wasm" => "application/wasm",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "png" => "image/png",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
+/// The web build (`cargo xtask web` → `target/web-site/`), cross-origin isolated like the dev server,
+/// with its precompressed copies when the browser takes them.
+fn web(st: &State, req: &Request, method: &Method, path: &str) -> Resp {
+    if !matches!(method, Method::Get | Method::Head) {
+        return error(405, "GET or HEAD");
+    }
+    let Some(root) = &st.web else { return error(404, "not found") };
+    let rel = path.trim_start_matches('/');
+    let rel = if rel.is_empty() { "index.html" } else { rel };
+    if rel.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c.contains('\\') || c.contains(':')) {
+        return error(404, "not found");
+    }
+    let accept = header_value(req, "Accept-Encoding").unwrap_or("");
+    let accepts = |enc: &str| accept.split(',').any(|e| e.split(';').next().is_some_and(|n| n.trim().eq_ignore_ascii_case(enc)));
+    let pick = [("br", ".br"), ("gzip", ".gz")].into_iter().find(|(enc, sfx)| accepts(enc) && root.join(format!("{rel}{sfx}")).is_file());
+    let file = match pick {
+        Some((_, sfx)) => root.join(format!("{rel}{sfx}")),
+        None => root.join(rel),
+    };
+    let Ok(f) = std::fs::File::open(&file) else { return error(404, "not found") };
+    let len = f.metadata().ok().and_then(|m| usize::try_from(m.len()).ok());
+    let mut headers: Vec<Header> = [
+        header("Content-Type", mime(rel)),
+        header("Cache-Control", "no-cache"),
+        header("Vary", "Accept-Encoding"),
+        header("Cross-Origin-Opener-Policy", "same-origin"),
+        header("Cross-Origin-Embedder-Policy", "require-corp"),
+        header("Cross-Origin-Resource-Policy", "same-origin"),
+        // never inside another site's page
+        header("X-Frame-Options", "DENY"),
+        header("Content-Security-Policy", "frame-ancestors 'none'"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if let Some((enc, _)) = pick {
+        headers.extend(header("Content-Encoding", enc));
+    }
+    Response::new(StatusCode(200), headers, Box::new(f), len, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ranges_and_paths() {
+        assert_eq!(range("bytes=0-9", 100), Some(Ok((0, 9))));
+        assert_eq!(range("bytes=90-", 100), Some(Ok((90, 99))));
+        assert_eq!(range("bytes=-10", 100), Some(Ok((90, 99))));
+        assert_eq!(range("bytes=50-500", 100), Some(Ok((50, 99))));
+        assert_eq!(range("bytes=100-", 100), Some(Err(())));
+        assert_eq!(range("bytes=9-0", 100), Some(Err(())));
+        assert_eq!(range("bytes=-0", 0), Some(Err(())));
+        assert_eq!(range("bytes=0-1,5-6", 100), None);
+        assert_eq!(range("items=0-1", 100), None);
+        let d = Path::new("/d");
+        assert!(blob_path(d, "original", "../../etc/passwd").is_none());
+        assert!(blob_path(d, "secret", "0123456789abcdef0123456789abcdef").is_none());
+        assert_eq!(blob_path(d, "mini", "0123456789ABCDEF0123456789abcdef"), Some(PathBuf::from("/d/mini/01/0123456789abcdef0123456789abcdef")));
+        assert_eq!(query("since=5&limit=9", "limit"), Some("9"));
+    }
+}

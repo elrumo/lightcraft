@@ -1,0 +1,513 @@
+//! `lightcraft-server`: the self-hosted LightCraft sync server (see `docs/sync.md`).
+//!
+//! ```text
+//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
+//! lightcraft-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
+//! lightcraft-server user passwd NAME
+//! lightcraft-server user admin NAME on|off
+//! lightcraft-server user quota NAME SIZE|off
+//! lightcraft-server user remove NAME
+//! lightcraft-server user list
+//! lightcraft-server device list NAME
+//! lightcraft-server device revoke NAME ID
+//! lightcraft-server folder add NAME PATH [--name FOLDER] [--writable] [--imports]
+//! lightcraft-server folder writable|imports NAME FOLDER on|off
+//! lightcraft-server folder remove NAME FOLDER
+//! lightcraft-server folder list [NAME]
+//! lightcraft-server folder ignore NAME [PATTERN…]
+//! lightcraft-server scan [NAME]
+//! lightcraft-server check [NAME]
+//! lightcraft-server gc [--dry-run]
+//! lightcraft-server health
+//! lightcraft-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: a launchd agent, see `install`)
+//! lightcraft-server uninstall
+//! lightcraft-server start | stop | status       (macOS: the installed launchd agent)
+//! ```
+//!
+//! Admins also manage users and devices from the server's web page, `/admin` (until the first
+//! admin exists, it asks for the setup code the server logs at start).
+//!
+//! `--data` defaults to `$LIGHTCRAFT_DATA` or `./lightcraft-data`, `--listen` to
+//! `$LIGHTCRAFT_LISTEN` or `127.0.0.1:8080` (only this computer: put a TLS proxy in front, or
+//! listen on a private network such as Tailscale).
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+use std::io::{BufRead, IsTerminal, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::Duration;
+
+mod install;
+
+use lightcraft_server::{Config, Server, accounts, folders, gc};
+
+const USAGE: &str = "usage:
+  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
+  lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
+  lightcraft-server user passwd|remove NAME
+  lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
+  lightcraft-server user quota NAME SIZE|off  (the most the server keeps for NAME: 500M, 50G, 1T; library folders don't count)
+  lightcraft-server user list
+  lightcraft-server device list NAME
+  lightcraft-server device revoke NAME ID
+  lightcraft-server folder add NAME PATH [--name FOLDER] [--writable] [--imports]   (a photo folder on this server, read in place;
+                                                      --writable: the server writes XMP sidecars there; --imports: devices' uploads are filed there)
+  lightcraft-server folder writable|imports NAME FOLDER on|off
+  lightcraft-server folder remove NAME FOLDER
+  lightcraft-server folder list [NAME]
+  lightcraft-server folder ignore NAME [PATTERN…]   (names the scan skips, like '*.fcpbundle'; none: show them, '': clear)
+  lightcraft-server scan [NAME]                (read the library folders now)
+  lightcraft-server check [NAME]               (look for photo files cut short, such as copies that stopped part-way; changes nothing)
+  lightcraft-server gc [--dry-run]
+  lightcraft-server health                     (is the server answering? exit status)
+  lightcraft-server version
+  lightcraft-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: run the server at every login, as a launchd agent)
+  lightcraft-server uninstall                  (macOS: stop it and remove the agent; the data stays)
+  lightcraft-server start|stop|status          (macOS: the installed server; stop keeps it stopped, also after a login, until start)
+options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
+";
+
+/// Log to stderr (`$LIGHTCRAFT_LOG`: error, warn, info (default), debug).
+struct Stderr;
+
+static LOGGER: Stderr = Stderr;
+
+impl log::Log for Stderr {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= log::max_level()
+    }
+    fn log(&self, r: &log::Record) {
+        if self.enabled(r.metadata()) {
+            eprintln!("{} {}", r.level(), r.args());
+        }
+    }
+    fn flush(&self) {}
+}
+
+/// Bytes as a person reads them (powers of 1000, as the admin page shows them and `user quota` takes them).
+fn human(b: u64) -> String {
+    let units = [("TB", 1e12), ("GB", 1e9), ("MB", 1e6), ("KB", 1e3)];
+    match units.iter().find(|(_, size)| b as f64 >= *size) {
+        Some((unit, size)) => format!("{} {unit}", format!("{:.1}", b as f64 / size).trim_end_matches(".0")),
+        None => format!("{b} bytes"),
+    }
+}
+
+fn option(args: &[String], name: &str) -> Option<String> {
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
+/// Every value of an option that may be given more than once.
+fn options(args: &[String], name: &str) -> Vec<String> {
+    args.iter().enumerate().filter(|(_, a)| *a == name).filter_map(|(i, _)| args.get(i + 1)).cloned().collect()
+}
+
+/// The arguments that aren't options or option values.
+fn positional(args: &[String]) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut skip = false;
+    for a in args {
+        if skip {
+            skip = false;
+        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval" | "--max-requests" | "--cors-origin") {
+            skip = true;
+        } else if !a.starts_with("--") {
+            out.push(a.as_str());
+        }
+    }
+    out
+}
+
+fn password() -> Result<String, String> {
+    if let Ok(p) = std::env::var("LIGHTCRAFT_PASSWORD")
+        && !p.is_empty()
+    {
+        return Ok(p);
+    }
+    // typed at a terminal: don't show it (best effort, `stty` where there is one)
+    let tty = std::io::stdin().is_terminal();
+    let echo = |on: bool| {
+        if tty {
+            let _ = std::process::Command::new("stty").arg(if on { "echo" } else { "-echo" }).stdin(std::process::Stdio::inherit()).status();
+        }
+    };
+    eprint!("password: ");
+    echo(false);
+    let mut line = String::new();
+    let read = std::io::stdin().lock().read_line(&mut line);
+    echo(true);
+    eprintln!();
+    read.map_err(|e| e.to_string())?;
+    let p = line.trim_end_matches(['\r', '\n']).to_string();
+    if p.is_empty() { Err("no password given".into()) } else { Ok(p) }
+}
+
+/// What to tell about a folder the server may write in.
+fn mode_note(f: &accounts::LibraryFolder) -> &'static str {
+    match (f.writable, f.imports) {
+        (_, true) => "; it writes XMP sidecars there and files the photos devices upload into it (never changing the photos themselves)",
+        (true, false) => "; it writes XMP sidecars there (never changing the photos themselves)",
+        _ => "",
+    }
+}
+
+fn run(args: &[String]) -> Result<(), String> {
+    let data = PathBuf::from(option(args, "--data").or_else(|| std::env::var("LIGHTCRAFT_DATA").ok()).unwrap_or_else(|| "lightcraft-data".into()));
+    let pos = positional(args);
+    let pos = if args.iter().any(|a| a == "--version") { vec!["version"] } else { pos };
+    match pos.as_slice() {
+        ["serve"] => {
+            let listen = option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into());
+            // `--web`, `$LIGHTCRAFT_WEB`, else the `web` folder next to the program (a downloaded release ships one)
+            let web = option(args, "--web")
+                .or_else(|| std::env::var("LIGHTCRAFT_WEB").ok())
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("web"))))
+                .filter(|w| w.is_dir());
+            if let Some(w) = web.as_ref().filter(|w| !w.join("index.html").is_file()) {
+                log::warn!("the web build {} has no index.html: `/` will answer 404 (`cargo xtask web` writes it to target/web-site)", w.display());
+            }
+            let users = accounts::read_users(&data)?;
+            if users.users.is_empty() {
+                log::warn!("no users yet: add them on the admin page (/admin) or with `lightcraft-server user add NAME --data {}`", data.display());
+            }
+            // minutes between scans of the library folders (0: at start and on demand only)
+            let minutes = option(args, "--scan-interval")
+                .or_else(|| std::env::var("LIGHTCRAFT_SCAN_INTERVAL").ok())
+                .map(|m| m.trim().parse::<u64>().map_err(|_| format!("--scan-interval takes minutes, not `{m}`")))
+                .transpose()?
+                .unwrap_or(15);
+            // limits a deployment fixes (the admin page can't change them); unset: the admin page's, else automatic (`limits`)
+            let count = |flag: Option<&str>, var: &str| -> Result<Option<usize>, String> {
+                let what = flag.unwrap_or(var);
+                flag.and_then(|f| option(args, f))
+                    .or_else(|| std::env::var(var).ok())
+                    .map(|m| m.trim().parse::<usize>().ok().filter(|n| *n > 0).ok_or(format!("{what} takes a number from 1 up, not `{m}`")))
+                    .transpose()
+            };
+            // requests answered at once (more are told to try again; the health check always answers)
+            let max_requests = count(Some("--max-requests"), "LIGHTCRAFT_MAX_REQUESTS")?;
+            // the threads decodes and develops share
+            let threads = count(Some("--threads"), "LIGHTCRAFT_THREADS")?;
+            let previews = count(None, "LIGHTCRAFT_PREVIEW_THREADS")?;
+            let renders = count(None, "LIGHTCRAFT_RENDER_THREADS")?;
+            let mut cfg = Config::new(data.clone(), listen);
+            cfg.web = web.clone();
+            cfg.max_requests = max_requests;
+            cfg.threads = threads;
+            cfg.preview_threads = previews;
+            cfg.render_threads = renders;
+            // sites that may call the API from a browser (`--cors-origin` once per site, or `$LIGHTCRAFT_CORS`, comma-separated)
+            cfg.cors_origins = options(args, "--cors-origin");
+            cfg.cors_origins.extend(std::env::var("LIGHTCRAFT_CORS").unwrap_or_default().split(',').map(str::to_string));
+            cfg.cors_origins.retain(|o| !o.trim().is_empty());
+            cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
+            let s = Server::start(cfg)?;
+            log::info!(
+                "serving {} on http://{}{}",
+                data.display(),
+                s.addr(),
+                web.map(|w| format!(" (web build: {})", w.display())).unwrap_or_default()
+            );
+            s.wait();
+            Ok(())
+        }
+        ["user", "add", name] => {
+            accounts::set_user(&data, name, &password()?, false)?;
+            let admin = args.iter().any(|a| a == "--admin");
+            if admin {
+                accounts::set_admin(&data, name, true)?;
+            }
+            println!("added {name}{}", if admin { " (admin)" } else { "" });
+            Ok(())
+        }
+        ["user", "admin", name, on @ ("on" | "off")] => {
+            accounts::set_admin(&data, name, *on == "on")?;
+            println!("{name} {} an admin", if *on == "on" { "is" } else { "is no longer" });
+            Ok(())
+        }
+        ["user", "quota", name, size] => {
+            let quota = accounts::parse_size(size)?;
+            accounts::set_quota(&data, name, quota)?;
+            match quota {
+                Some(b) => println!("{name} may keep {} on the server", human(b)),
+                None => println!("{name} has no storage limit"),
+            }
+            Ok(())
+        }
+        ["user", "passwd", name] => {
+            accounts::set_user(&data, name, &password()?, true)?;
+            println!("changed {name}'s password");
+            Ok(())
+        }
+        ["user", "remove", name] => {
+            accounts::remove_user(&data, name)?;
+            println!("removed {name} (their files stay in {})", accounts::user_dir(&data, name).display());
+            Ok(())
+        }
+        ["user", "list"] => {
+            for (name, u) in accounts::read_users(&data)?.users {
+                let quota = u.quota.map(|q| format!("\tlimit {}", human(q))).unwrap_or_default();
+                println!("{name}{}{quota}", if u.admin { "\tadmin" } else { "" });
+            }
+            Ok(())
+        }
+        ["device", "list", name] => {
+            for d in accounts::devices(&data, name)?.devices {
+                println!("{}\t{}\tspace {}", d.id, d.name, d.space);
+            }
+            Ok(())
+        }
+        ["device", "revoke", name, id] => {
+            let id = id.parse().map_err(|_| format!("not a device id: {id}"))?;
+            accounts::revoke(&data, name, id)?;
+            println!("signed out device {id}");
+            Ok(())
+        }
+        ["folder", "add", name, path] => {
+            let mut f = accounts::add_folder(&data, name, path, option(args, "--name").as_deref())?;
+            let (imports, writable) = (args.iter().any(|a| a == "--imports"), args.iter().any(|a| a == "--writable"));
+            if imports || writable {
+                let added = f.name.clone();
+                f = accounts::set_folder_mode(&data, name, &added, Some(true), imports.then_some(true)).inspect_err(|_| {
+                    let _ = accounts::remove_folder(&data, name, &added);
+                })?;
+            }
+            println!("{name} has the library folder {} ({}): its photos are read in place, never copied or moved{}", f.name, f.path, mode_note(&f));
+            request_scan(&data, name);
+            Ok(())
+        }
+        ["folder", kind @ ("writable" | "imports"), name, folder, on @ ("on" | "off")] => {
+            let on = Some(*on == "on");
+            let (w, i) = if *kind == "writable" { (on, None) } else { (None, on) };
+            let f = accounts::set_folder_mode(&data, name, folder, w, i)?;
+            println!("{name}'s {} is {}{}", f.name, if f.writable { "writable" } else { "read-only" }, mode_note(&f));
+            Ok(())
+        }
+        ["folder", "remove", name, folder] => {
+            accounts::remove_folder(&data, name, folder)?;
+            println!("{name} no longer has the library folder {folder} (its photos stay in the library)");
+            Ok(())
+        }
+        ["folder", "ignore", name, patterns @ ..] => {
+            let list = if patterns.is_empty() {
+                accounts::read_users(&data)?.users.get(*name).map(|u| u.ignore.clone()).ok_or_else(|| format!("no user `{name}`"))?
+            } else {
+                let list = accounts::set_ignore(&data, name, &patterns.iter().map(|p| p.to_string()).collect::<Vec<_>>())?;
+                request_scan(&data, name);
+                list
+            };
+            println!("{name}'s library folders are scanned without: {}", if list.is_empty() { "(nothing)".to_string() } else { list.join(", ") });
+            Ok(())
+        }
+        ["folder", "list", rest @ ..] => {
+            for (name, u) in accounts::read_users(&data)?.users {
+                if rest.first().is_some_and(|n| *n != name) {
+                    continue;
+                }
+                for f in &u.folders {
+                    let there = if Path::new(&f.path).is_dir() { "" } else { "\t(not there)" };
+                    let mode = if f.imports {
+                        "\t(writable, takes uploads)"
+                    } else if f.writable {
+                        "\t(writable)"
+                    } else {
+                        ""
+                    };
+                    println!("{name}\t{}\t{}{there}{mode}", f.name, f.path);
+                }
+            }
+            Ok(())
+        }
+        ["scan", rest @ ..] => {
+            let users: Vec<String> = match rest {
+                [name] => vec![name.to_string()],
+                [] => accounts::read_users(&data)?.users.into_iter().filter(|(_, u)| !u.folders.is_empty()).map(|(n, _)| n).collect(),
+                _ => return Err(USAGE.into()),
+            };
+            for u in users {
+                scan(&data, &u)?;
+            }
+            Ok(())
+        }
+        ["check", rest @ ..] => {
+            let users: Vec<String> = match rest {
+                [name] => vec![name.to_string()],
+                [] => accounts::read_users(&data)?.users.into_keys().collect(),
+                _ => return Err(USAGE.into()),
+            };
+            let mut damaged = 0;
+            for u in users {
+                damaged += check(&data, &u)?;
+            }
+            if damaged > 0 { Err(format!("{damaged} damaged file(s)")) } else { Ok(()) }
+        }
+        ["install"] => install::install(
+            option(args, "--data").map(PathBuf::from),
+            &option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "0.0.0.0:8080".into()),
+            option(args, "--web").map(PathBuf::from),
+        ),
+        ["uninstall"] => install::uninstall(),
+        ["start"] => install::start(),
+        ["stop"] => install::stop(),
+        ["status"] => install::status(),
+        ["version"] => {
+            println!("lightcraft-server {}", env!("LIGHTCRAFT_BUILD_VERSION"));
+            Ok(())
+        }
+        ["health"] => {
+            health(&option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into()))
+        }
+        ["gc"] => {
+            let dry = args.iter().any(|a| a == "--dry-run");
+            let r = gc::run(&data, dry)?;
+            println!("{} {} file(s), {:.1} MB; kept {}", if dry { "would remove" } else { "removed" }, r.removed, r.bytes as f64 / 1e6, r.kept);
+            for e in &r.errors {
+                eprintln!("{e}");
+            }
+            Ok(())
+        }
+        _ => Err(USAGE.into()),
+    }
+}
+
+/// Ask a running server to scan a user's library folders (it looks for the request every few
+/// seconds; a server that isn't running scans at start).
+fn request_scan(data: &Path, user: &str) {
+    let _ = std::fs::write(accounts::user_dir(data, user).join(folders::REQUEST), b"");
+}
+
+/// Check a user's originals for files cut short and print the damaged ones; the report is kept for the
+/// admin page. While the server runs (it holds the library), photos are named by their files only.
+fn check(data: &Path, user: &str) -> Result<usize, String> {
+    use lightcraft_server::integrity;
+    let dir = accounts::user_dir(data, user);
+    // (fails while the server runs: it holds the library)
+    let names = lightcraft_server::api::UserLib::open_for(data, user).map(|l| integrity::photo_names(l.catalog())).unwrap_or_default();
+    let mut files = integrity::folder_originals(&folders::Index::load(&dir), &names);
+    files.extend(integrity::kept_originals(&dir, &names));
+    let (done, stop) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicBool::new(false));
+    let tty = std::io::stderr().is_terminal();
+    let total = files.len();
+    let report = std::thread::scope(|s| {
+        let work = s.spawn(|| integrity::check_all(&files, &done, &stop));
+        while tty && !work.is_finished() {
+            eprint!("\r{user}: checked {} of {total} file(s)", done.load(std::sync::atomic::Ordering::Relaxed));
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        work.join().map_err(|_| "the check failed unexpectedly".to_string())
+    })?;
+    if tty {
+        eprintln!();
+    }
+    for d in report.cut.iter().chain(&report.unreadable) {
+        let missing = d.missing.map(|m| format!(", {m} bytes missing")).unwrap_or_default();
+        println!("{user}\t{}\t{}{missing}", d.path, d.why);
+    }
+    println!(
+        "{user}: {} file(s) checked; {} cut short, {} unreadable, {} of a format not checked",
+        report.files,
+        report.cut.len(),
+        report.unreadable.len(),
+        report.unchecked
+    );
+    report.save(&dir)?;
+    Ok(report.cut.len() + report.unreadable.len())
+}
+
+/// `scan NAME`: here and now, or by the running server.
+fn scan(data: &Path, user: &str) -> Result<(), String> {
+    let lib_dir = accounts::user_dir(data, user).join("library");
+    std::fs::create_dir_all(&lib_dir).map_err(|e| format!("{}: {e}", lib_dir.display()))?;
+    if lightcraft_engine::catalog::LibraryLock::acquire(&lib_dir, "lightcraft-server scan").is_err() {
+        request_scan(data, user);
+        println!("{user}: the server is running: it scans the library folders within a few seconds (progress on the admin page)");
+        return Ok(());
+    }
+    let lib = std::sync::Mutex::new(lightcraft_server::api::UserLib::open_for(data, user)?);
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let mut jobs = Vec::new();
+    let tty = std::io::stderr().is_terminal();
+    let s = folders::scan(
+        data,
+        user,
+        &lib,
+        &stop,
+        folders::Reread::Failed,
+        &mut |s| {
+            if tty && s.todo > 0 {
+                eprint!("\r{user}: read {} of {} file(s)", s.done, s.todo);
+            }
+        },
+        &mut |hash, file| jobs.push((hash, file)),
+    )?;
+    if tty {
+        eprintln!();
+    }
+    println!(
+        "{user}: {} photo file(s); {} new, {} moved, {} changed, {} uploaded before, {} not read, {} missing",
+        s.files, s.added, s.moved, s.changed, s.linked, s.failed, s.missing
+    );
+    for e in &s.errors {
+        eprintln!("  {e}");
+    }
+    let blobs = accounts::user_dir(data, user).join("blobs");
+    let (mut built, mut failed) = (0, 0);
+    let n = jobs.len();
+    for (i, (hash, file)) in jobs.into_iter().enumerate() {
+        match folders::build_previews(&blobs, &hash, &file) {
+            Ok(b) => built += usize::from(b),
+            Err(e) => {
+                failed += 1;
+                eprintln!("{}: {e}", file.display());
+            }
+        }
+        if tty {
+            eprint!("\r{user}: previews {} of {n}", i + 1);
+        }
+    }
+    if tty && n > 0 {
+        eprintln!();
+    }
+    println!("{user}: built previews of {built} photo(s){}", if failed > 0 { format!(", {failed} failed") } else { String::new() });
+    Ok(())
+}
+
+/// `health`: does the server at `listen` answer (the Docker health check)?
+fn health(listen: &str) -> Result<(), String> {
+    use std::net::ToSocketAddrs;
+    let local = listen.replacen("0.0.0.0:", "127.0.0.1:", 1).replacen("[::]:", "[::1]:", 1);
+    let addr = local.to_socket_addrs().map_err(|e| format!("{local}: {e}"))?.next().ok_or_else(|| format!("{local}: no address"))?;
+    let mut c = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| format!("{addr}: {e}"))?;
+    c.set_read_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
+    c.write_all(b"GET /api/health HTTP/1.0\r\nHost: localhost\r\n\r\n").map_err(|e| e.to_string())?;
+    let mut answer = String::new();
+    c.take(4096).read_to_string(&mut answer).map_err(|e| e.to_string())?;
+    let status = answer.split_whitespace().nth(1).unwrap_or("");
+    if status == "200" { Ok(()) } else { Err(format!("{addr}: unhealthy ({})", answer.lines().next().unwrap_or("no answer"))) }
+}
+
+fn main() -> ExitCode {
+    let level = match std::env::var("LIGHTCRAFT_LOG").as_deref() {
+        Ok("error") => log::LevelFilter::Error,
+        Ok("warn") => log::LevelFilter::Warn,
+        Ok("debug") => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Info,
+    };
+    if log::set_logger(&LOGGER).is_ok() {
+        log::set_max_level(level);
+    }
+    // (a decode's free pages go back to the system: glibc keeps them in its arenas otherwise)
+    lightcraft_engine::memory::set_release_hook(|| {
+        let _ = lightcraft_sysmem::release_free_memory();
+    });
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}

@@ -1,0 +1,38 @@
+[package]
+name = "lightcraft-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "LightCraft sync server: each user's library, shared by their devices (self-hosted, see docs/sync.md)"
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+lightcraft-catalog = { workspace = true }
+lightcraft-preview = { workspace = true }
+# reading photos found in library folders: describing them, their XMP sidecars, their previews
+lightcraft-engine = { workspace = true }
+httparse = { workspace = true }
+argon2 = { workspace = true }
+sha2 = { workspace = true }
+getrandom = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+flate2 = { workspace = true }
+log = { workspace = true }
+# the presets an admin uploads travel base64-encoded
+base64 = { workspace = true }
+# gives the allocator's free pages back after big decodes (`main`)
+lightcraft-sysmem = { workspace = true }
+# sizing the thread pool decodes and develops run on (`limits`)
+rayon = { workspace = true }
+
+[dev-dependencies]
+lightcraft-codecs = { workspace = true }
+lightcraft-raster = { workspace = true }
+ureq = { workspace = true }
