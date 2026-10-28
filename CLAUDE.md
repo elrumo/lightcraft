@@ -45,8 +45,9 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   (the iOS app's memory limit) and `mmap` / `munmap` for `ReturningAlloc`, the iOS app's global allocator (large blocks
   get pages of their own that go back when freed, but for a few kept for the next block of the same size until
   `release_free_memory`). `ios-host`: the iOS app's Objective-C calls through `objc2` (Photos and Files pickers, share
-  sheet, pasteboard, lifecycle notifications, ImageIO decoding, status-bar taps), compiled for iOS only. Every other
-  production crate root has `#![forbid(unsafe_code)]`. A new unsafe need goes in an isolated, well-tested helper crate
+  sheet, pasteboard, lifecycle notifications, ImageIO decoding, status-bar taps), compiled for iOS only. (The iOS
+  app's C entry point, `lightcraft_ios_main` in `apps/lightcraft-ios`, is the one `#[unsafe(no_mangle)]` outside them.)
+  Every other production crate root has `#![forbid(unsafe_code)]`. A new unsafe need goes in an isolated, well-tested helper crate
   like them: `// SAFETY:` on every block, a safe API, a safe fallback where possible, and a line here naming it.
 - **Input-derived numbers are hostile:** `get()` instead of `[i]`/`[a..b]` for offsets from files, users, agents or
   arithmetic on them; checked/saturating math for lengths, offsets and counts; no division by zero, NaN/inf or negative
@@ -148,8 +149,9 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 ## Map of the code
 `geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
 → `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop), `lightcraft-cli` (render/commands/MCP), `lightcraft-server`
-(optional self-hosted sync, `docs/sync.md`; the devices' side is `catalog::sync` + `engine::cloud_sync`). `scenes` generates demo
-photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `corpus`, `stats`); `testkit` = test helpers
+(optional self-hosted sync, `docs/sync.md`; the devices' side is `catalog::sync` + `engine::cloud_sync`), `lightcraft-ios`
+(iPhone/iPad on egui, `docs/ios.md`; its native glue is `ios-host`). `scenes` generates demo
+photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `ios`, `corpus`, `stats`); `testkit` = test helpers
 (dev-dependency only). `flake.nix` +
 `nix/package.nix` = the Nix package (`nix build` builds both binaries with the craft-fonts input, installs the
 desktop file/icons/AppStream metadata and runs `cargo test --workspace`; `nix develop` = dev shell). Community-maintained; CI only

@@ -3826,6 +3826,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-ios"
+version = "0.14.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "lightcraft-codecs",
+ "lightcraft-engine",
+ "lightcraft-ios-host",
+ "lightcraft-raster",
+ "lightcraft-sysmem",
+ "lightcraft-ui-egui",
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "lightcraft-ios-host"
 version = "0.14.0"
 dependencies = [

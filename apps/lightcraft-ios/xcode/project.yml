@@ -1,0 +1,52 @@
+# The Xcode project for LightCraft on iOS: `xcodegen generate` in this folder makes LightCraft.xcodeproj
+# (docs/ios.md). Its pre-build script builds the Rust static library (apps/lightcraft-ios) for the
+# SDK being built and links it with the Objective-C host in ../host.
+name: LightCraft
+options:
+  # (change it, and the team below, to sign the app with your own account)
+  bundleIdPrefix: io.github.storytold
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""   # set your team to run on a device
+targets:
+  LightCraft:
+    type: application
+    platform: iOS
+    supportedDestinations: [iOS]
+    sources: [../host]
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: LightCraft
+        # sync with a LightCraft server on the home network (docs/sync.md); iOS asks once
+        NSLocalNetworkUsageDescription: LightCraft syncs your library with your own LightCraft server, which can be on this network.
+        # Save to Photos and Save Image in the share sheet (exports); importing uses the Photos picker, which needs no access
+        NSPhotoLibraryAddUsageDescription: LightCraft saves the photos you export to your photo library.
+        UILaunchScreen: {}
+        # iOS 27 traps apps without the scene lifecycle; winit has none, see host/SceneDelegate.m
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: LCSceneDelegate
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.storytold.lightcraft.ios
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64   # Apple-silicon simulator only
+        LIBRARY_SEARCH_PATHS: ["$(BUILT_PRODUCTS_DIR)"]
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/../host/include"]
+        CLANG_ENABLE_OBJC_ARC: YES
+        OTHER_LDFLAGS: [-llightcraft_ios, -lc++, -framework, Metal, -framework, QuartzCore, -framework, UIKit, -framework, Foundation, -framework, CoreGraphics, -framework, CoreFoundation, -framework, Security, -framework, CoreText, -framework, AVFoundation, -framework, CoreMedia, -framework, CoreVideo, -framework, MetalKit, -framework, IOSurface, -framework, PhotosUI, -framework, Photos, -framework, ImageIO, -framework, UniformTypeIdentifiers]
+    preBuildScripts:
+      - name: Build Rust (cargo)
+        script: '"$SRCROOT/build-rust.sh"'
+        basedOnDependencyAnalysis: false
