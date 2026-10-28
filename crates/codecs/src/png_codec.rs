@@ -68,6 +68,50 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     finish(F, raw, meta, (w, h), opts)
 }
 
+/// The samples of a PNG as stored, each 0..1, with no colour management, alpha dropped and gray expanded: for an image that
+/// carries numbers rather than a picture (a Hald CLUT). `max_pixels` bounds the image before it is inflated.
+pub(crate) fn codes(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32, Vec<[f32; 3]>)> {
+    let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
+    dec.set_transformations(png::Transformations::EXPAND);
+    dec.set_limits(png::Limits { bytes: max_pixels.saturating_mul(8).min(usize::MAX as u64) as usize });
+    let mut reader = dec.read_info().map_err(err)?;
+    let (w, h) = {
+        let i = reader.info();
+        (i.width, i.height)
+    };
+    if (w as u64).saturating_mul(h as u64) > max_pixels {
+        return Err(err(format!("{w}×{h} is too large")));
+    }
+    let size = reader.output_buffer_size().ok_or_else(|| err("buffer size overflow"))?;
+    let mut buf = vec![0u8; size];
+    let out = reader.next_frame(&mut buf).map_err(err)?;
+    buf.truncate(out.buffer_size());
+    let channels = match out.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => return Err(err("palette not expanded")),
+    };
+    let wide = matches!(out.bit_depth, png::BitDepth::Sixteen);
+    let sample = |px: &[u8], c: usize| -> f32 {
+        // (gray has one sample: all three channels read it)
+        let c = if channels < 3 { 0 } else { c };
+        if wide {
+            let at = c * 2;
+            px.get(at..at + 2).map_or(0.0, |s| u16::from_be_bytes([s[0], s[1]]) as f32 / 65535.0)
+        } else {
+            px.get(c).map_or(0.0, |&s| s as f32 / 255.0)
+        }
+    };
+    let stride = channels * if wide { 2 } else { 1 };
+    let pixels: Vec<[f32; 3]> = buf.chunks_exact(stride).map(|px| [sample(px, 0), sample(px, 1), sample(px, 2)]).collect();
+    if pixels.len() as u64 != w as u64 * h as u64 {
+        return Err(err("image data is short"));
+    }
+    Ok((w, h, pixels))
+}
+
 /// Stored dimensions and EXIF orientation (`eXIf`, wherever it is) from the chunk headers, without
 /// inflating the image data. Refused, as a decode would refuse it: an invalid IHDR, an indexed
 /// image without a palette, no IDAT, or a file that ends before the chunk after the last IDAT
@@ -183,6 +227,39 @@ fn rgb_to_xyz_d50_checked(space: &RgbSpace) -> Option<Mat3> {
 #[cfg(test)]
 mod tests {
     use crate::DecodeOptions;
+
+    fn png_of(w: u32, h: u32, color: png::ColorType, depth: png::BitDepth, data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(color);
+        enc.set_depth(depth);
+        let mut writer = enc.write_header().unwrap();
+        writer.write_image_data(data).unwrap();
+        writer.finish().unwrap();
+        out
+    }
+
+    /// The numbers in the file come back as they are stored: no colour space, no gamma, no alpha.
+    #[test]
+    fn png_codes_are_the_stored_samples() {
+        let rgb8 = png_of(2, 1, png::ColorType::Rgb, png::BitDepth::Eight, &[0, 51, 255, 255, 0, 102]);
+        let (w, h, px) = super::codes(&rgb8, 100).unwrap();
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(px, vec![[0.0, 0.2, 1.0], [1.0, 0.0, 0.4]]);
+        let rgba16 = png_of(1, 1, png::ColorType::Rgba, png::BitDepth::Sixteen, &[0xFF, 0xFF, 0x80, 0x00, 0, 0, 0, 0]);
+        let (_, _, px) = super::codes(&rgba16, 100).unwrap();
+        assert!((px[0][0] - 1.0).abs() < 1e-6 && (px[0][1] - 0.50000763).abs() < 1e-6 && px[0][2] == 0.0, "{px:?}");
+        let gray = png_of(1, 1, png::ColorType::Grayscale, png::BitDepth::Eight, &[102]);
+        assert_eq!(super::codes(&gray, 100).unwrap().2, vec![[0.4, 0.4, 0.4]]);
+    }
+
+    #[test]
+    fn png_codes_refuse_a_big_or_broken_image_without_panicking() {
+        let big = png_of(20, 20, png::ColorType::Rgb, png::BitDepth::Eight, &vec![7; 1200]);
+        assert!(super::codes(&big, 100).is_err());
+        assert!(super::codes(&big[..big.len() / 2], 1000).is_err());
+        assert!(super::codes(b"not a png", 1000).is_err());
+    }
 
     /// A compressed text chunk is expanded by `png` through our own cap: an XMP document
     /// bigger than it is dropped, not inflated. Compressing an 8 MiB string is a few

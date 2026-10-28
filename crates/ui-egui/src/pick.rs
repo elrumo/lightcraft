@@ -62,8 +62,8 @@ impl PickRequest {
     }
 }
 
-/// What File ▸ Import Profiles & Presets… opens.
-pub const PRESET_EXTENSIONS: &[&str] = &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack", "cube", "lceffect"];
+/// What File ▸ Import Profiles & Presets… opens (`.cube`, `.3dl` and a Hald CLUT `.png` are LUTs: profiles).
+pub const PRESET_EXTENSIONS: &[&str] = &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack", "cube", "3dl", "png", "lceffect"];
 /// What Import Point Curve Presets… opens.
 pub const CURVE_PRESET_EXTENSIONS: &[&str] = &["lccurve", "json"];
 

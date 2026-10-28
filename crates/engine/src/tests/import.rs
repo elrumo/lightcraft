@@ -942,6 +942,73 @@ fn cube_luts_become_profiles() {
     let _ = std::fs::remove_dir_all(&lib);
 }
 
+/// A level-3 Hald CLUT image (27 px a side, 9 points a side) that swaps red and blue, padded to `w` px a side, as PNG bytes.
+fn swap_hald_png(w: usize) -> Vec<u8> {
+    let n = 9usize;
+    let mut data: Vec<[u8; 4]> = (0..n * n * n)
+        .map(|i| {
+            let (r, g, b) = (i % n, (i / n) % n, i / (n * n));
+            [(b * 255 / 8) as u8, (g * 255 / 8) as u8, (r * 255 / 8) as u8, 255]
+        })
+        .collect();
+    data.resize(w * w, [0, 0, 0, 255]);
+    let img = lightcraft_raster::Rgba8 { width: w, height: w, data };
+    lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap()
+}
+
+/// A swap-red-and-blue `.3dl` of 5 points a side, 10 bits, with a mesh line.
+fn swap_3dl() -> String {
+    let mut s = String::from("0 256 512 768 1023\n");
+    for r in 0..5 {
+        for g in 0..5 {
+            for b in 0..5 {
+                s.push_str(&format!("{} {} {}\n", b * 1023 / 4, g * 1023 / 4, r * 1023 / 4));
+            }
+        }
+    }
+    s
+}
+
+/// `.3dl` files and Hald CLUT images import as profiles too: converted to `.cube` in the library, so they sync like any other.
+/// In a folder or a zip a `.png` is read only when it says it is a Hald image; a picked one that isn't a table says why.
+#[test]
+fn three_dl_and_hald_images_become_profiles() {
+    let src = temp_dir("lutformats");
+    let lib = temp_dir("lutformatslib");
+    std::fs::create_dir_all(src.join("Cinema")).unwrap();
+    std::fs::write(src.join("Cinema/Swap Mesh.3dl"), swap_3dl()).unwrap();
+    std::fs::write(src.join("Cinema/hald_swap.png"), swap_hald_png(27)).unwrap();
+    std::fs::write(src.join("Cinema/preview.png"), swap_hald_png(27)).unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, true).unwrap();
+    let r = s.execute("profile.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let names: Vec<_> = r["imported"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_string()).collect();
+    assert_eq!(names.len(), 2, "{r}");
+    assert!(names.contains(&"Swap Mesh".to_string()) && names.contains(&"hald_swap".to_string()), "{names:?}");
+    assert!(r["failed"].as_array().unwrap().is_empty() && r["imported"][0]["group"] == "Cinema", "{r}");
+    for p in s.lut_profiles.clone() {
+        assert!(p.file.ends_with(".cube") && std::fs::read_to_string(&p.file).unwrap().contains("LUT_3D_SIZE"), "{}", p.file);
+        let lut = lightcraft_pipeline::lut::get(&p.id).unwrap();
+        let v = lut.apply([0.1, 0.5, 0.8]);
+        assert!((v[0] - 0.8).abs() < 0.01 && (v[2] - 0.1).abs() < 0.01, "{}: {v:?}", p.id);
+    }
+    // a picked PNG that is no table says why; the same file is fine in a pack folder when it isn't named like a table
+    let plain = src.join("photo.png");
+    std::fs::write(&plain, swap_hald_png(28)).unwrap();
+    let r = s.execute("profile.import", &json!({"paths": [plain.to_string_lossy()], "dryRun": true})).unwrap();
+    assert!(r["imported"].as_array().unwrap().is_empty(), "{r}");
+    assert!(r["failed"][0][1].as_str().unwrap().contains("Hald"), "{r}");
+    // and the review a person sees names them, whatever the extension
+    let paths = vec![src.join("Cinema/Swap Mesh.3dl").to_string_lossy().to_string(), src.join("Cinema/hald_swap.png").to_string_lossy().to_string()];
+    assert_eq!(crate::preset_review::lut_paths(&paths).len(), 2);
+    assert!(crate::preset_review::preset_paths(&paths).is_empty());
+    for p in s.lut_profiles.clone() {
+        s.execute("profile.deleteImported", &json!({"id": p.id})).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}
+
 /// Without a library on disk an imported LUT lives only in this session: no copy of it is
 /// left in the temp folder (#1952).
 #[test]

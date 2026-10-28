@@ -444,7 +444,7 @@ accounts' libraries never meet on a device. **Settings ▸ Sync ▸ Sign Out** (
    the device stays listed there until an admin signs it out.)
 3. **The library is emptied for the next account:** the catalog and its journal, the queue of unsent changes, the sync
    state, user presets and the other synced documents (export, metadata, filter and curve presets, label and keyword
-   sets, LUT profiles that synced (a `.cube` over 4 MiB never does, and stays), the import defaults that don't name a
+   sets, LUT profiles that synced (a `.cube` over 7.5 MiB never does, and stays), the import defaults that don't name a
    place), the files sync made (`sync/originals`, the default
    `Smart Previews` folder, the face-scan files) and everything the screens were showing. Never touched: the copies
    import made inside the library (`Originals/`), a previews folder you chose, the files you imported from, the folders

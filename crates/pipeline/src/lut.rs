@@ -66,6 +66,112 @@ impl Lut3d {
         Ok(Lut3d { size, data, domain_min: min, domain_max: max, title })
     }
 
+    /// Parse an Autodesk / Lustre `.3dl` file: an optional first line of input mesh points (taken as evenly spaced), then
+    /// size³ lines of whole-number "r g b" with **blue changing fastest** (the opposite of `.cube`). The output depth
+    /// (10, 12 or 16 bits, or 0..1 floats) is read from the largest value in the table.
+    pub fn parse_3dl(text: &str) -> Result<Lut3d, String> {
+        const SIZE_MAX: usize = 129;
+        let text = text.trim_start_matches('\u{feff}');
+        let mut mesh: Option<usize> = None;
+        let mut rows: Vec<[f32; 3]> = Vec::new();
+        for line in text.lines() {
+            let l = line.trim();
+            // (keywords such as `3DMESH`, `Mesh 4 12` or `gamma 1.0` in the header carry nothing we need)
+            if l.is_empty()
+                || l.starts_with(['#', '/'])
+                || l.starts_with(|c: char| c.is_ascii_alphabetic())
+                || l.to_ascii_uppercase().starts_with("3DMESH")
+            {
+                continue;
+            }
+            let v: Vec<f32> = l
+                .split_whitespace()
+                .map(|x| x.parse::<f32>().ok().filter(|f| f.is_finite() && *f >= 0.0).ok_or_else(|| format!("bad line `{l}`")))
+                .collect::<Result<_, _>>()?;
+            match v.as_slice() {
+                [r, g, b] => {
+                    if rows.len() >= SIZE_MAX * SIZE_MAX * SIZE_MAX {
+                        return Err(format!("a .3dl LUT of more than {SIZE_MAX} points a side is not supported"));
+                    }
+                    rows.push([*r, *g, *b]);
+                }
+                // (the mesh line: how many points a side)
+                _ if rows.is_empty() && mesh.is_none() && v.len() > 3 => mesh = Some(v.len()),
+                _ => return Err(format!("bad line `{l}`")),
+            }
+        }
+        let size = (rows.len() as f64).cbrt().round() as usize;
+        if size < 2 || size * size * size != rows.len() {
+            return Err(format!("not a .3dl LUT: {} entries are not a cube", rows.len()));
+        }
+        if mesh.is_some_and(|m| m != size) {
+            return Err(format!("not a .3dl LUT: its mesh has {} points and its table {size} a side", mesh.unwrap_or(0)));
+        }
+        let max = rows.iter().flatten().fold(0.0f32, |a, &b| a.max(b));
+        let scale = match max {
+            m if m <= 1.0 => 1.0,
+            m if m <= 1023.0 => 1023.0,
+            m if m <= 4095.0 => 4095.0,
+            m if m <= 65535.0 => 65535.0,
+            m => return Err(format!("a .3dl value of {m} is past 16 bits")),
+        };
+        let mut data = vec![[0.0f32; 3]; rows.len()];
+        for r in 0..size {
+            for g in 0..size {
+                for b in 0..size {
+                    if let (Some(dst), Some(src)) = (data.get_mut(r + size * (g + size * b)), rows.get(b + size * (g + size * r))) {
+                        *dst = [src[0] / scale, src[1] / scale, src[2] / scale];
+                    }
+                }
+            }
+        }
+        Ok(Lut3d { size, data, domain_min: [0.0; 3], domain_max: [1.0; 3], title: None })
+    }
+
+    /// A Hald CLUT image's pixels (`pixels`, row by row, each 0..1) as a table. The image is `level³` pixels a side and holds
+    /// `level²` points a side, red changing fastest from the first pixel, as `.cube` does.
+    pub fn from_hald(pixels: &[[f32; 3]], width: usize) -> Result<Lut3d, String> {
+        let level = (width as f64).cbrt().round() as usize;
+        let size = level * level;
+        if level < 2 || level * level * level != width || pixels.len() != width.saturating_mul(width) {
+            return Err(format!("not a Hald CLUT image: its side must be a cube (64, 125, 216, 343, 512…), not {width}"));
+        }
+        Ok(Lut3d { size, data: pixels.to_vec(), domain_min: [0.0; 3], domain_max: [1.0; 3], title: None })
+    }
+
+    /// The same table sampled at `size` points a side (trilinear): a smaller file for a table that is finer than it needs.
+    pub fn resampled(&self, size: usize) -> Lut3d {
+        let size = size.clamp(2, 256);
+        let mut data = Vec::with_capacity(size * size * size);
+        let at = |i: usize, k: usize| self.domain_min[k] + (self.domain_max[k] - self.domain_min[k]) * (i as f32 / (size - 1) as f32);
+        for b in 0..size {
+            for g in 0..size {
+                for r in 0..size {
+                    data.push(self.apply([at(r, 0), at(g, 1), at(b, 2)]));
+                }
+            }
+        }
+        Lut3d { size, data, ..self.clone() }
+    }
+
+    /// The table as `.cube` text (6 decimals).
+    pub fn to_cube(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::with_capacity(64 + self.data.len() * 27);
+        if let Some(t) = self.title.as_deref().map(|t| t.replace(['"', '\n', '\r'], " ")).filter(|t| !t.trim().is_empty()) {
+            let _ = writeln!(s, "TITLE \"{}\"", t.trim());
+        }
+        let _ = writeln!(s, "LUT_3D_SIZE {}", self.size);
+        if self.domain_min != [0.0; 3] || self.domain_max != [1.0; 3] {
+            let _ = writeln!(s, "DOMAIN_MIN {} {} {}", self.domain_min[0], self.domain_min[1], self.domain_min[2]);
+            let _ = writeln!(s, "DOMAIN_MAX {} {} {}", self.domain_max[0], self.domain_max[1], self.domain_max[2]);
+        }
+        for c in &self.data {
+            let _ = writeln!(s, "{:.6} {:.6} {:.6}", c[0], c[1], c[2]);
+        }
+        s
+    }
+
     /// Look up `c` (trilinear).
     pub fn apply(&self, c: [f32; 3]) -> [f32; 3] {
         let n = self.size;
@@ -215,5 +321,85 @@ mod tests {
         assert!((v[0] - 0.8).abs() < 1e-5 && (v[2] - 0.1).abs() < 1e-5, "{v:?}");
         assert!(Lut3d::parse_cube("LUT_1D_SIZE 4\n0 0 0").is_err());
         assert!(Lut3d::parse_cube("LUT_3D_SIZE 2\n0 0 0\n").is_err(), "too few entries");
+    }
+
+    /// A `.3dl` of `n` points a side with the values `f` gives, blue changing fastest, at `max` for white.
+    fn three_dl(f: impl Fn([f32; 3]) -> [f32; 3], n: usize, max: f32, mesh: bool) -> String {
+        let mut s = String::new();
+        if mesh {
+            s.push_str(&(0..n).map(|i| format!("{}", (i as f32 * 1023.0 / (n - 1) as f32).round())).collect::<Vec<_>>().join(" "));
+            s.push('\n');
+        }
+        for r in 0..n {
+            for g in 0..n {
+                for b in 0..n {
+                    let c = f([r as f32 / (n - 1) as f32, g as f32 / (n - 1) as f32, b as f32 / (n - 1) as f32]);
+                    s.push_str(&format!("{} {} {}\n", (c[0] * max).round(), (c[1] * max).round(), (c[2] * max).round()));
+                }
+            }
+        }
+        s
+    }
+
+    fn close(a: [f32; 3], b: [f32; 3], tol: f32) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() <= tol)
+    }
+
+    #[test]
+    fn a_3dl_has_blue_fastest_and_its_depth_is_read_from_the_table() {
+        let probe = [0.1, 0.5, 0.8];
+        // 10 bits with a mesh line, 12 bits without one, and a file with a header keyword
+        for (max, mesh) in [(1023.0, true), (4095.0, false)] {
+            let swap = Lut3d::parse_3dl(&three_dl(|c| [c[2], c[1], c[0]], 9, max, mesh)).unwrap();
+            assert_eq!(swap.size, 9);
+            assert!(close(swap.apply(probe), [0.8, 0.5, 0.1], 2e-3), "{max}: {:?}", swap.apply(probe));
+        }
+        let text = format!("3DMESH\nMesh 3 10\n{}", three_dl(|c| [c[0] * 0.5, c[1], c[2]], 5, 1023.0, true));
+        assert!(close(Lut3d::parse_3dl(&text).unwrap().apply([1.0, 1.0, 1.0]), [0.5, 1.0, 1.0], 2e-3));
+        // 16 bits, and the colours a table never reaches the top of
+        assert!(close(Lut3d::parse_3dl(&three_dl(|c| c, 5, 65535.0, false)).unwrap().apply([1.0, 0.0, 0.5]), [1.0, 0.0, 0.5], 1e-3));
+    }
+
+    #[test]
+    fn a_3dl_that_is_not_a_cube_is_refused() {
+        assert!(Lut3d::parse_3dl("").is_err());
+        assert!(Lut3d::parse_3dl("0 0 0\n1 1 1\n").is_err(), "two entries");
+        assert!(Lut3d::parse_3dl(&three_dl(|c| c, 4, 1023.0, true).replace("1023 1023 1023", "1023 x 1023")).is_err());
+        // a mesh that says 5 points over a table of 4
+        let wrong = format!("0 256 512 768 1023\n{}", three_dl(|c| c, 4, 1023.0, false));
+        assert!(Lut3d::parse_3dl(&wrong).is_err());
+        assert!(Lut3d::parse_3dl("0 0 0\n99999999 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n").is_err(), "past 16 bits");
+    }
+
+    #[test]
+    fn a_hald_image_is_a_table_and_a_big_one_can_be_made_smaller() {
+        // level 3: 27 px a side, 9 points a side, red changing fastest
+        let n = 9;
+        let px: Vec<[f32; 3]> = (0..n * n * n)
+            .map(|i| {
+                let (r, g, b) = (i % n, (i / n) % n, i / (n * n));
+                [b as f32 / 8.0, g as f32 / 8.0, r as f32 / 8.0]
+            })
+            .collect();
+        let swap = Lut3d::from_hald(&px, 27).unwrap();
+        assert_eq!(swap.size, 9);
+        assert!(close(swap.apply([0.1, 0.5, 0.8]), [0.8, 0.5, 0.1], 1e-5));
+        for bad in [26usize, 64] {
+            assert!(Lut3d::from_hald(&px, bad).is_err(), "{bad}");
+        }
+        let small = swap.resampled(5);
+        assert_eq!(small.size, 5);
+        assert!(close(small.apply([0.25, 0.5, 1.0]), [1.0, 0.5, 0.25], 1e-5));
+    }
+
+    #[test]
+    fn a_table_written_as_cube_reads_back() {
+        let mut lut = Lut3d::parse_cube(&cube(|c| [c[1] * 0.9, c[2], c[0] * 0.3 + 0.1], 7)).unwrap();
+        lut.title = Some("a \"quoted\"\nname".into());
+        let back = Lut3d::parse_cube(&lut.to_cube()).unwrap();
+        assert_eq!((back.size, back.title.as_deref()), (7, Some("a  quoted  name")));
+        assert!(close(back.apply([0.3, 0.6, 0.9]), lut.apply([0.3, 0.6, 0.9]), 2e-6));
+        lut.domain_max = [2.0; 3];
+        assert_eq!(Lut3d::parse_cube(&lut.to_cube()).unwrap().domain_max, [2.0; 3]);
     }
 }

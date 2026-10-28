@@ -307,10 +307,20 @@ mod drop_tests {
 
     #[test]
     fn dropped_presets_are_told_apart_from_photos() {
-        for p in ["/a/Look.lrtemplate", "/a/b.XMP", "/a/pack.zip", "/a/x.lcpreset", "/a/Magic Hour.mplumpack", "/a/Pop.lmp", "/a/Bundle.LMP"] {
+        for p in [
+            "/a/Look.lrtemplate",
+            "/a/b.XMP",
+            "/a/pack.zip",
+            "/a/x.lcpreset",
+            "/a/Magic Hour.mplumpack",
+            "/a/Pop.lmp",
+            "/a/Bundle.LMP",
+            "/a/Film.cube",
+            "/a/Film.3DL",
+        ] {
             assert!(super::is_preset_file(p), "{p}");
         }
-        for p in ["/a/IMG_1.CR2", "/a/b.dng", "/a/c.jpg", "/a/folder"] {
+        for p in ["/a/IMG_1.CR2", "/a/b.dng", "/a/c.jpg", "/a/hald.png", "/a/folder"] {
             assert!(!super::is_preset_file(p), "{p}");
         }
     }

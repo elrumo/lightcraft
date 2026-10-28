@@ -405,7 +405,7 @@ fn a_wipe_that_could_not_finish_is_finished_before_another_account_signs_in() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A LUT profile too big to be shared (over 4 MiB) was never on the server, so it is the computer's own and stays; the
+/// A LUT profile too big to be shared (over 7.5 MiB) was never on the server, so it is the computer's own and stays; the
 /// ones that were shared go with the account.
 #[test]
 fn a_lut_profile_too_big_to_sync_stays_and_the_shared_ones_go() {
@@ -417,7 +417,7 @@ fn a_lut_profile_too_big_to_sync_stays_and_the_shared_ones_go() {
     let small = profiles.join("small.cube");
     std::fs::write(&small, "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n").unwrap();
     let big = profiles.join("big.cube");
-    std::fs::write(&big, "# padding\n".repeat((4 << 20) / 10 + 10)).unwrap();
+    std::fs::write(&big, "# padding\n".repeat((8 << 20) / 10 + 10)).unwrap();
     let profile = |slug: &str, file: &Path| LutProfile {
         id: format!("lut:{slug}"),
         name: slug.into(),

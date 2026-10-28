@@ -246,6 +246,55 @@ fn shared_settings_travel_item_by_item() {
     assert_eq!(names(&a), ["Travel"]);
 }
 
+/// LUT profiles go through iCloud with their `.cube` text: one imported as a `.cube`, one converted from a `.3dl`, and a
+/// 65-point table (7.4 MB, a record's data that is held as an asset).
+#[test]
+fn imported_luts_travel_through_icloud() {
+    let root = temp_dir("luts");
+    let mut cloud = Cloud::default();
+    let (mut a, mut b) = (Device::new(&root, "a"), Device::new(&root, "b"));
+    let big = {
+        let n = 65;
+        let f = |i: usize| i as f32 / (n - 1) as f32;
+        let mut s = String::from("TITLE \"Big\"\nLUT_3D_SIZE 65\n");
+        for blue in 0..n {
+            for g in 0..n {
+                for r in 0..n {
+                    s.push_str(&format!("{:.6} {:.6} {:.6}\n", f(r), f(g), f(blue)));
+                }
+            }
+        }
+        s
+    };
+    let mut mesh = String::from("0 256 512 768 1023\n");
+    for r in 0..5 {
+        for g in 0..5 {
+            for blue in 0..5 {
+                mesh.push_str(&format!("{} {} {}\n", r * 1023 / 4, g * 1023 / 4, blue * 1023 / 4));
+            }
+        }
+    }
+    std::fs::write(root.join("Big.cube"), &big).unwrap();
+    std::fs::write(root.join("Mesh.3dl"), mesh).unwrap();
+    let paths = [root.join("Big.cube"), root.join("Mesh.3dl")].map(|p| p.to_string_lossy().to_string());
+    let r = a.s.execute("profile.import", &json!({"paths": paths})).unwrap();
+    assert_eq!(r["imported"].as_array().unwrap().len(), 2, "{r}");
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    assert_eq!(b.s.lut_profiles.len(), 2, "{:?}", b.s.lut_profiles);
+    for on_a in &a.s.lut_profiles {
+        let on_b = b.s.lut_profiles.iter().find(|p| p.id == on_a.id).unwrap();
+        assert_eq!(std::fs::read_to_string(&on_b.file).unwrap(), std::fs::read_to_string(&on_a.file).unwrap(), "{}", on_a.id);
+    }
+    // removed on a: gone on b
+    let id = a.s.lut_profiles[0].id.clone();
+    a.s.execute("profile.deleteImported", &json!({"id": id})).unwrap();
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    assert_eq!(b.s.lut_profiles.len(), 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn the_newer_change_wins_when_both_devices_changed_a_preset() {
     let root = temp_dir("conflict");

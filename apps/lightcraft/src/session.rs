@@ -116,7 +116,7 @@ pub(crate) fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::
                 .set_title(lightcraft_ui_egui::i18n::tr("Import Presets"))
                 .add_filter_nocase(
                     lightcraft_ui_egui::i18n::tr("Presets & Profiles"),
-                    &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack", "cube"],
+                    &["lcpreset", "xmp", "lrtemplate", "zip", "dng", "lmp", "mplumpack", "cube", "3dl", "png"],
                 )
                 .pick_files()
                 .unwrap_or_default()

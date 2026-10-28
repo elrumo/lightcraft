@@ -2082,6 +2082,33 @@ fn presets_and_sets_follow_the_user_to_their_other_devices() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// An identity table of `n` points a side as `.cube` text (6 decimals, as the editing apps write them).
+fn identity_cube(n: usize, title: &str) -> String {
+    let mut s = format!("TITLE \"{title}\"\nLUT_3D_SIZE {n}\n");
+    let f = |i: usize| i as f32 / (n - 1) as f32;
+    for b in 0..n {
+        for g in 0..n {
+            for r in 0..n {
+                s.push_str(&format!("{:.6} {:.6} {:.6}\n", f(r), f(g), f(b)));
+            }
+        }
+    }
+    s
+}
+
+/// A 5-point `.3dl` (10 bits, a mesh line, blue changing fastest) that is the identity.
+fn identity_3dl() -> String {
+    let mut s = String::from("0 256 512 768 1023\n");
+    for r in 0..5 {
+        for g in 0..5 {
+            for b in 0..5 {
+                s.push_str(&format!("{} {} {}\n", r * 1023 / 4, g * 1023 / 4, b * 1023 / 4));
+            }
+        }
+    }
+    s
+}
+
 const CUBE: &str = "TITLE \"Warm\"\nLUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
 
 /// A LUT profile travels with its `.cube` text: the other device writes it into its own `Profiles` folder
@@ -2107,6 +2134,32 @@ fn lut_profiles_travel_with_their_files() {
     sync(&mut a, &mut f);
     sync(&mut b, &mut f);
     assert!(b.lut_profiles.is_empty() && !Path::new(&file_on_b).exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A LUT imported as a `.3dl` travels as the `.cube` it was converted to, and so does a 65-point table (7.4 MB: over the
+/// old 4 MiB limit, under the new one).
+#[test]
+fn converted_and_big_luts_travel() {
+    let mut f = Fake::new();
+    let (mut a, mut b, root) = two_devices("docs-lut-big", &mut f);
+    let big = identity_cube(65, "Big");
+    assert!(big.len() > 4 << 20, "{}", big.len());
+    std::fs::write(root.join("Big.cube"), &big).unwrap();
+    std::fs::write(root.join("Mesh.3dl"), identity_3dl()).unwrap();
+    let paths = [root.join("Big.cube"), root.join("Mesh.3dl")].map(|p| p.to_string_lossy().to_string());
+    let r = a.execute("profile.import", &json!({"paths": paths})).unwrap();
+    assert_eq!(r["imported"].as_array().unwrap().len(), 2, "{r}");
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert_eq!(b.lut_profiles.len(), 2, "{:?}", b.lut_profiles);
+    for on_a in &a.lut_profiles {
+        let on_b = b.lut_profiles.iter().find(|p| p.id == on_a.id).unwrap();
+        assert_eq!(std::fs::read_to_string(&on_b.file).unwrap(), std::fs::read_to_string(&on_a.file).unwrap(), "{}", on_a.id);
+        assert!(on_b.file.ends_with(".cube"));
+    }
+    let v = lightcraft_pipeline::lut::get(&b.lut_profiles[0].id).unwrap().apply([0.2, 0.5, 0.9]);
+    assert!((v[0] - 0.2).abs() < 0.01 && (v[2] - 0.9).abs() < 0.01, "{v:?}");
     let _ = std::fs::remove_dir_all(&root);
 }
 

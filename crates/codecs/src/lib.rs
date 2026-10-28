@@ -172,6 +172,13 @@ pub fn decode(bytes: &[u8], opts: DecodeOptions) -> Result<Decoded> {
     std::panic::catch_unwind(|| decode_unguarded(bytes, format, &opts)).unwrap_or_else(|_| Err(Error::Malformed(format, "decoder panicked".into())))
 }
 
+/// A PNG's samples as stored, `(width, height, pixels)` with each sample 0..1: no colour management, no gamma, alpha dropped, gray
+/// expanded. For an image that carries numbers rather than a picture, such as a Hald CLUT. An image of more than `max_pixels`
+/// pixels is refused before it is inflated. Malformed input yields an error, never a panic.
+pub fn decode_png_codes(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32, Vec<[f32; 3]>)> {
+    std::panic::catch_unwind(|| png_codec::codes(bytes, max_pixels)).unwrap_or_else(|_| Err(Error::Malformed(Format::Png, "decoder panicked".into())))
+}
+
 /// What a file's headers say about its image: enough to catalogue it without decoding pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {

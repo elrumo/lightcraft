@@ -59,8 +59,12 @@ const SERVER_HIDDEN_ITEM: &str = "hidden";
 
 /// Items taken from the server per document at most (untrusted input).
 const ITEMS_MAX: usize = 2000;
-/// A LUT's `.cube` text at most, in bytes.
-const CUBE_MAX: usize = 4 << 20;
+/// A LUT's `.cube` text at most, in bytes: a 65-point table is 7.4 MB, and has to fit a record (`icloud::DATA_MAX`, with its
+/// JSON around it).
+const CUBE_MAX: usize = 15 << 19;
+/// The `.cube` text of all the LUTs in the document at most (the server takes 24 MiB a document, with the JSON around them): a
+/// LUT that would go over leaves the others syncing instead of making the whole document too large to send.
+const CUBES_TOTAL_MAX: usize = 20 << 20;
 /// A preset's or set's name at most, in characters.
 const NAME_MAX: usize = 200;
 /// The id of the one item of the `prefs` document.
@@ -168,14 +172,17 @@ impl Session {
             "label-sets" => list(&self.label_sets),
             "keyword-sets" => list(&self.keyword_sets),
             // (a profile whose file can't be read here isn't offered: to the others it looks removed)
-            "lut-profiles" => self
-                .lut_profiles
-                .iter()
-                .filter_map(|p| {
-                    let cube = std::fs::read_to_string(&p.file).ok().filter(|c| c.len() <= CUBE_MAX)?;
-                    Some(json!({"id": p.id, "name": p.name, "group": p.group, "cube": cube}))
-                })
-                .collect(),
+            "lut-profiles" => {
+                let mut total = 0usize;
+                self.lut_profiles
+                    .iter()
+                    .filter_map(|p| {
+                        let cube = std::fs::read_to_string(&p.file).ok().filter(|c| c.len() <= CUBE_MAX)?;
+                        total = total.saturating_add(cube.len());
+                        (total <= CUBES_TOTAL_MAX).then(|| json!({"id": p.id, "name": p.name, "group": p.group, "cube": cube}))
+                    })
+                    .collect()
+            }
             "prefs" => {
                 let mut v = serde_json::to_value(&self.import_defaults).unwrap_or(Value::Null);
                 if let Some(o) = v.as_object_mut() {
@@ -438,7 +445,7 @@ impl Session {
     /// LUT profiles go with them.
     pub(super) fn reset_shared_documents(&mut self) {
         self.presets.retain(|p| p.builtin);
-        // (the LUT profiles that were shared go; one that never could be, over 4 MiB or whose file can't be read here, is
+        // (the LUT profiles that were shared go; one that never could be, over 7.5 MiB or whose file can't be read here, is
         // only this computer's and stays: its file is the only copy)
         self.drop_shared_lut_profiles();
         for (name, _) in SPECS {

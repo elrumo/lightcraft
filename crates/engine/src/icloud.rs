@@ -76,7 +76,7 @@ pub const LABEL: &str = "Synced from iCloud";
 const NAME_MAX: usize = 255;
 /// A record's key is this long at most.
 const KEY_MAX: usize = 1024;
-/// A record's data is this large at most (a LUT profile carries its `.cube` text, up to 4 MiB).
+/// A record's data is this large at most (a LUT profile carries its `.cube` text, up to 7.5 MiB).
 const DATA_MAX: usize = 8 << 20;
 /// Records per call at most.
 const BATCH_MAX: usize = 2000;

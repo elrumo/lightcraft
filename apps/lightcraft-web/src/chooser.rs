@@ -10,9 +10,14 @@
 pub const MAX_FILE_BYTES: f64 = 200.0 * 1024.0 * 1024.0;
 
 /// The chooser's `accept` list for these extensions (`.xmp,.zip,…`). `.cube` is left out: a LUT
-/// profile is kept as a file in a library folder, which the browser has none of.
+/// profile is kept as a file in a library folder, which the browser has none of (nor `.3dl` and Hald `.png`, the other LUT files).
 pub fn accept(extensions: &[&str]) -> String {
-    extensions.iter().filter(|e| !e.eq_ignore_ascii_case("cube")).map(|e| format!(".{e}")).collect::<Vec<_>>().join(",")
+    extensions
+        .iter()
+        .filter(|e| !["cube", "3dl", "png"].iter().any(|l| e.eq_ignore_ascii_case(l)))
+        .map(|e| format!(".{e}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Why `name` (of `size` bytes) isn't read, if it is too large.
@@ -100,7 +105,7 @@ mod tests {
 
     #[test]
     fn the_chooser_offers_the_preset_files_the_browser_can_import() {
-        assert_eq!(accept(&["lcpreset", "xmp", "zip", "cube", "CUBE"]), ".lcpreset,.xmp,.zip");
+        assert_eq!(accept(&["lcpreset", "xmp", "zip", "cube", "CUBE", "3dl", "png"]), ".lcpreset,.xmp,.zip");
         assert_eq!(accept(lightcraft_ui_egui::pick::PRESET_EXTENSIONS), ".lcpreset,.xmp,.lrtemplate,.zip,.dng,.lmp,.mplumpack,.lceffect");
         assert_eq!(accept(&[]), "");
         assert!(too_large("a.xmp", 4096.0).is_none());
