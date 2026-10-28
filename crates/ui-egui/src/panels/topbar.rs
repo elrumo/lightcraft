@@ -150,7 +150,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     n = n
                 )
             });
-            let cloud_tip = unsaved.as_deref().unwrap_or("Local library — no cloud account needed");
+            // how syncing stands (a library that doesn't sync says so); a save that fails is told first
+            let (cloud_text, cloud_problem, cloud_busy) = crate::sync_ui::cloud_status(app);
+            let cloud_tip = unsaved.as_deref().unwrap_or(cloud_text.as_str());
             // Import Photos… beside Export, always one click away, with the key it is bound to now
             let mac = ui.ctx().os() == egui::os::OperatingSystem::Mac;
             let import_tip = match crate::shortcuts::shortcut_of(&app.ui.settings.keymap, "file.addPhotos") {
@@ -169,9 +171,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let resp = ui.interact(r, egui::Id::unique(("top", id)), Sense::click()).on_hover_text(crate::i18n::tr(tip));
                 crate::widgets::announce(&resp, crate::i18n::tr(tip));
                 register(ui, format!("icon:{id}"), r);
-                let warn = id == "cloud" && unsaved.is_some();
+                let warn = id == "cloud" && (unsaved.is_some() || cloud_problem);
                 let colour = if warn {
                     t.caution
+                } else if id == "cloud" && cloud_busy {
+                    t.accent
                 } else if resp.hovered() {
                     t.text
                 } else {
@@ -182,7 +186,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     let c = r.right_top() + vec2(-5.0, 6.0);
                     ui.painter().circle_filled(c, 6.0, t.reject);
                     ui.painter().text(c, Align2::CENTER_CENTER, "!", t.semibold(9.5), t.canvas);
-                    register(ui, "indicator:unsaved", r);
+                    if unsaved.is_some() {
+                        register(ui, "indicator:unsaved", r);
+                    }
+                }
+                // the cloud button opens the sync status (a click, or `view.syncStatus`)
+                if id == "cloud" {
+                    crate::panels::sync_status::show(app, ui, &resp);
                 }
                 // a refusal says why (Import while a Lightroom catalog is coming in)
                 if resp.clicked()

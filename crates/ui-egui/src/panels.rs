@@ -28,6 +28,7 @@ pub mod right;
 pub mod second;
 pub mod slideshow;
 pub mod strip;
+pub mod sync_status;
 pub mod topbar;
 pub mod unnamed;
 

@@ -193,9 +193,24 @@ pub(super) fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.add_space(4.0);
             ui.label(egui::RichText::new(line).color(t.text_dim));
         }
+        if let Some(sp) = &p.server_path {
+            // one of the library folders on the sync server, read there in place
+            ui.label(egui::RichText::new(format!("{} {sp}", crate::i18n::tr("On the server:"))).color(t.text_dim)).on_hover_text(crate::i18n::tr(
+                "The original is in one of your library folders on the sync server, where it stays (never copied or changed)",
+            ));
+        }
         // offline originals / smart previews
         // (cached answers, checked off the UI thread: unknown counts as online / no smart preview)
-        if let lightcraft_catalog::Source::File { path } = &p.source {
+        if lightcraft_engine::cloud_sync::is_remote(&p) {
+            // synced: the original is on the server
+            let s = app.session.synced_tier(&p).unwrap_or(0);
+            let text = match s {
+                2 => "Original on the sync server · editing the smart preview",
+                1 => "Original on the sync server · smart preview downloading",
+                _ => "Original on the sync server · previews downloading",
+            };
+            ui.label(egui::RichText::new(crate::i18n::tr(text)).color(t.text_dim));
+        } else if let lightcraft_catalog::Source::File { path } = &p.source {
             let avail = &app.session.media.availability;
             let online = !avail.is_offline(path);
             let smart = app.session.media.smart_dir.as_ref().is_some_and(|d| {

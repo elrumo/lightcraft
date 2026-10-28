@@ -34,6 +34,7 @@ pub mod sidebar;
 pub mod softpaint;
 pub mod state;
 pub mod sync;
+pub mod sync_ui;
 pub mod tasks;
 pub mod theme;
 pub mod widgets;
@@ -295,6 +296,8 @@ pub struct LightcraftApp {
     pub sync_owns_changes: bool,
     /// A Synchronize Folder at work in the background.
     pub sync_run: Option<sync::SyncRun>,
+    /// Self-hosted sync (`docs/sync.md`): the requests in flight, the Settings ▸ Sync form and its storage numbers.
+    pub cloud_sync: sync_ui::SyncDriver,
     /// A Lightroom catalog inspect/import in progress.
     pub lightroom: Option<lightroom_import::LightroomTask>,
     /// Last terminal Lightroom result, exposed by the command's status/wait response.
@@ -549,6 +552,8 @@ pub fn split_presets(dropped: Vec<String>) -> (Vec<String>, Vec<String>) {
 #[derive(Default)]
 pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
+    /// The library folders on the sync server with their photo counts (the sidebar's Server Folders).
+    server_folders: Option<(u64, std::sync::Arc<std::collections::BTreeMap<String, usize>>)>,
     /// The Keywording box's read-only names (with containing keywords, or Will Export), by library
     /// revision, selection and view.
     keyword_names: Option<(u64, u64, std::sync::Arc<Vec<panels::keywording::Chip>>)>,

@@ -73,6 +73,7 @@ mod slideshow;
 mod solo_sections;
 mod switch_library;
 mod sync;
+mod sync_ui;
 mod tallies;
 mod temp_slider;
 mod titlebar;

@@ -13,6 +13,7 @@ mod export;
 mod frame;
 mod rename;
 mod sam_model;
+mod share_link;
 
 pub(crate) use confirm::album_entries;
 pub use confirm::confirm_dialog;
@@ -42,6 +43,7 @@ pub mod print_view;
 pub mod rules_editor;
 pub mod settings;
 pub mod slideshow_export;
+pub mod sync_choice;
 pub mod updates_ui;
 
 /// About dialog tabs: (widget id suffix, label). The credits come from `crate::credits`.
@@ -114,6 +116,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
         Dialog::NewAlbum { folder: true, .. } => "Create Folder",
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
+        Dialog::ShareLink { .. } => "Share Link",
         Dialog::Rename { .. } => "Rename Photos",
         Dialog::Import { .. } => "Import Photos",
         Dialog::LightroomResult { .. } => "Lightroom Catalog Import",
@@ -161,6 +164,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
         // (nothing to download from in this build: the dialog explains the manual install)
         Dialog::SamModel { .. } if sam_by_hand(&app.session.segmenter) => "Install the SAM 3 Model",
         Dialog::SamModel { .. } => "Download the SAM 3 Model?",
+        Dialog::SyncChoice => "Sync This Library",
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
         Dialog::ViewOptions => "View Options",
@@ -637,6 +641,17 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                 Dialog::RenameAlbum { name, .. } => {
                     if dialog_field(ui, "field:albumName", name, "Name") {
                         confirm = true;
+                    }
+                }
+                Dialog::ShareLink { name, days, originals, upload, password, .. } => {
+                    if share_link::body(ui, &t, name, days, originals, upload, password) {
+                        confirm = true;
+                    }
+                }
+                // (the choices are buttons in the body; one made closes the dialog)
+                Dialog::SyncChoice => {
+                    if sync_choice::body(app, ui) {
+                        close = true;
                     }
                 }
                 Dialog::CreatePreset { name, group, groups } => {
@@ -1282,6 +1297,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                 let cancel = match &dlg {
                     Dialog::SamModel { .. } if sam_running || sam_installed || sam_nowhere => "Close",
                     Dialog::SamModel { .. } => "Not Now",
+                    // (the choices are in the body: this one puts it off)
+                    Dialog::SyncChoice => "Decide Later",
                     Dialog::LightroomResult { .. } => "Close",
                     _ => "Cancel",
                 };
@@ -1311,6 +1328,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                     Dialog::KeywordTag { editing: None, .. } => "Create",
                     Dialog::KeywordTag { .. } => "Save",
                     Dialog::RemoveFolder { .. } => "Remove",
+                    Dialog::ShareLink { .. } => "Create Link",
+                    Dialog::SyncChoice => "",
                     Dialog::LightroomCatalog { .. } => "Import Lightroom Catalog…",
                     d @ Dialog::LightroomDestination { .. } => crate::lightroom_destination::ok_label(d),
                     Dialog::SynchronizeFolder { .. } if informational => "Close",
@@ -1339,7 +1358,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                             Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. } | Dialog::SynchronizeFolder { counts: None, .. }
                         )
                             // smart-album rules that can't mean anything wait to be fixed
-                            && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty()));
+                            && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty())
+                            // (a link's password, if there is one, is long enough)
+                            && !matches!(&dlg, Dialog::ShareLink { password, .. } if share_link::too_short(password)));
                 let primary = !informational && can_confirm && confirm_style(&dlg) == ConfirmStyle::Primary;
                 use crate::button::{Button, Kind};
                 // (each kind of dialog its own buttons: the keyboard's place doesn't carry from a
@@ -1428,6 +1449,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                         | Dialog::KeywordTag { .. }
                         | Dialog::KeywordSet { .. }
                         | Dialog::SynchronizeFolder { .. }
+                        | Dialog::ShareLink { .. }
                         | Dialog::SaveEffect { .. }
                         | Dialog::CaptureTime { .. }
                 ) =>

@@ -691,12 +691,22 @@ fn group_header(app: &mut LightcraftApp, ui: &mut egui::Ui, run: &DateRun, ids: 
 /// [`lightcraft_engine::media::Session::embedded_thumb_is_final`]), which for a folder of raws on a
 /// network share is the difference between reading every file whole and reading a preview each.
 pub fn request_thumb(app: &mut LightcraftApp, id: PhotoId, size: usize, priority: u32) {
+    // (a preview that landed in this frame's sync step: its cell may draw it now, not a frame from now,
+    // when an idle app may not run one)
+    app.renderer.preview_arrived(&mut app.session);
     // A slider drag changes the photo every frame: its thumbnail follows once the drag ends, so its
     // renders (a raw decode the first time) don't compete with the loupe's drafts.
     if app.session.interaction.as_ref().is_some_and(|i| i.photo == id) && app.renderer.thumb(id).is_some() {
         return;
     }
     let bucket = lightcraft_engine::media::thumb_bucket(size);
+    let shown = priority > PREFETCH_THUMB_PRIORITY;
+    // A synced photo whose preview hasn't come down yet has no picture, and the render that failed for want of it
+    // is remembered (`thumb_current`): without this the grid would ask for it once and the download would be
+    // forgotten a few frames later, leaving the cell empty for good while it stays on screen.
+    if app.renderer.thumb(id).is_none() {
+        app.session.note_thumb_ask(id, shown);
+    }
     if let Some(photo) = app.session.catalog.photo(id)
         && app.renderer.thumb_current(photo, bucket, priority)
     {
@@ -719,7 +729,7 @@ pub fn request_thumb(app: &mut LightcraftApp, id: PhotoId, size: usize, priority
     {
         return;
     }
-    let Some(job) = app.session.thumb_job(id, size) else { return };
+    let Some(job) = app.session.thumb_job_for(id, size, shown) else { return };
     #[cfg(test)]
     {
         app.renderer.thumb_jobs_built += 1;
@@ -763,6 +773,9 @@ pub(crate) fn skips_the_real_render(embedded_is_final: bool, from_embedded: bool
 /// Rendered thumbnails replacing embedded previews: after everything on screen.
 pub const BACKGROUND_THUMB_PRIORITY: u32 = 3;
 
+/// The priority of a cell the grid only draws in its reach, beside the screen (a request above it is a cell on screen).
+pub const PREFETCH_THUMB_PRIORITY: u32 = 5;
+
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
@@ -795,7 +808,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     };
     // thumbnail
     let size = thumb_px(img_rect.width().max(img_rect.height()), ppp);
-    request_thumb(app, id, size, if onscreen { 10 } else { 5 });
+    request_thumb(app, id, size, if onscreen { 10 } else { PREFETCH_THUMB_PRIORITY });
     if let Some(tex) = app.renderer.thumb(id) {
         let [tw, th] = tex.size;
         // Preserve the decoded preview's ratio when it differs from the catalog dimensions.

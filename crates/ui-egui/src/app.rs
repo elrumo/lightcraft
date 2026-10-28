@@ -99,6 +99,7 @@ impl LightcraftApp {
             sync: None,
             sync_owns_changes: false,
             sync_run: None,
+            cloud_sync: Default::default(),
             lightroom: None,
             lightroom_last: None,
             lightroom_result: None,

@@ -184,6 +184,22 @@ pub(super) fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Al
                 let _ = app.run("album.setTarget", json!({"id": null}));
             }
         }
+        // (Make Available Offline keeps its photos editable without a network; Share Link… makes a page anyone can open)
+        if !a.folder && app.services.sync_exec.is_some() && app.session.sync_state().is_some() {
+            let on = app.session.sync_state().is_some_and(|st| st.config.offline_albums.contains(&a.id));
+            let label = if on { "Remove Offline Copy" } else { "Make Available Offline" };
+            if ui.button(crate::i18n::tr(label)).clicked() {
+                let _ = app.run("album.makeAvailableOffline", json!({"id": a.id.0, "on": !on}));
+                ui.close();
+            }
+        }
+        let can_share = !a.folder && !a.is_smart() && app.services.sync_exec.is_some() && app.session.sync_state().is_some_and(|st| st.signed_in());
+        if can_share && ui.button(crate::i18n::tr("Share Link…")).clicked() {
+            if let Err(e) = app.run("dialog.shareLink", json!({"id": a.id.0})) {
+                app.toast(ui.ctx(), e);
+            }
+            ui.close();
+        }
         if a.quick && ui.button(crate::i18n::tr("Clear Quick Collection")).clicked() {
             let _ = app.run("album.clearQuick", json!({}));
         }

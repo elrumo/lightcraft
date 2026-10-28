@@ -54,6 +54,16 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             created_in(app, "album.create", json!({"name": name, "folder": folder, "addSelected": !folder && *include_selected, "parent": parent}))
         }
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
+        Dialog::ShareLink { id, days, originals, upload, password, .. } => {
+            let mut p = json!({"id": id, "expiresDays": days, "originals": originals, "upload": upload});
+            if !password.is_empty() {
+                p["password"] = json!(password);
+            }
+            // (the link arrives with the next sync, and goes on the clipboard: `sync_ui::poll`)
+            app.run("album.share", p)
+        }
+        // (its choices act in the body)
+        Dialog::SyncChoice => Ok(serde_json::Value::Null),
         Dialog::TextPrompt { value, command, params, key, .. } => {
             let mut p = params.clone();
             p[key.as_str()] = json!(value.trim());

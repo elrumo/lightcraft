@@ -18,6 +18,7 @@ mod keywords;
 mod local;
 mod rows;
 mod sections;
+mod server;
 
 pub use albums::{album_drag_feedback, auto_scroll_speed};
 use albums::{albums_rows, drag_auto_scroll};
@@ -37,6 +38,7 @@ pub use sections::section_drag_feedback;
 #[cfg(test)]
 pub(crate) use sections::section_drop_before;
 use sections::{SECTION_GAP, missing_count, pinned_header, section, section_drag, sections_menu};
+use server::server_folders_section;
 
 /// Draw the My Photos sidebar: title and open-library name, the scrollable sources, albums,
 /// folders and sections, with the section visibility menu on the title.
@@ -125,6 +127,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 // …and the sidebar scrolls to it
                 ui.data_mut(|d| d.insert_temp(egui::Id::unique(SCROLL_TO_ROW), format!("keyword:{path}").to_lowercase()));
             }
+            // the library folders on the sync server, while it has any
+            server_folders_section(app, ui);
             // the folder Show in Folders went to: Folders is shown and opened, and so are the
             // folders above it, also when it was already the one shown and one was folded by hand…
             if let Some(path) = app.ui.reveal_folder.take() {

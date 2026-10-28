@@ -14,6 +14,14 @@ pub enum Icon {
     Share,
     Help,
     Cloud,
+    /// Sending to the sync server: an arrow up out of a tray.
+    Upload,
+    /// Receiving from the sync server: an arrow down into a tray.
+    Download,
+    /// Two stacked units: the sync server.
+    Server,
+    /// Two arrows chasing each other: sync now.
+    Refresh,
     Sliders,
     Crop,
     Eraser,
@@ -529,6 +537,28 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<
             pen.circle(10.0, 7.0, 3.0);
             pen.arc(10.0, 18.0, 6.5, 200.0, 340.0);
             pen.rect(2.5, 2.5, 17.5, 17.5, 2.0);
+        }
+        Upload => {
+            pen.line(&[(4.0, 13.0), (4.0, 16.5), (16.0, 16.5), (16.0, 13.0)]);
+            pen.line(&[(10.0, 13.0), (10.0, 3.5)]);
+            pen.line(&[(6.0, 7.0), (10.0, 3.0), (14.0, 7.0)]);
+        }
+        Download => {
+            pen.line(&[(4.0, 12.0), (4.0, 17.0), (16.0, 17.0), (16.0, 12.0)]);
+            pen.line(&[(10.0, 2.5), (10.0, 12.5)]);
+            pen.line(&[(6.5, 9.0), (10.0, 12.5), (13.5, 9.0)]);
+        }
+        Server => {
+            pen.rect(3.0, 3.5, 17.0, 8.5, 1.5);
+            pen.rect(3.0, 11.5, 17.0, 16.5, 1.5);
+            pen.dot(6.5, 6.0, 0.9);
+            pen.dot(6.5, 14.0, 0.9);
+        }
+        Refresh => {
+            pen.arc(10.0, 10.0, 6.5, 200.0, 340.0);
+            pen.line(&[(16.5, 3.5), (16.3, 7.8), (12.0, 7.6)]);
+            pen.arc(10.0, 10.0, 6.5, 20.0, 160.0);
+            pen.line(&[(3.5, 16.5), (3.7, 12.2), (8.0, 12.4)]);
         }
         Play => pen.fill(&[(6.0, 4.0), (6.0, 16.0), (16.0, 10.0)], color),
         Pause => {

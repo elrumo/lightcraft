@@ -137,6 +137,11 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "file.backupLibrary",
             "file.restoreLibrary",
             "---",
+            "sync.now",
+            "sync.pause",
+            "view.syncStatus",
+            "album.makeAvailableOffline",
+            "---",
             "dialog.newAlbum",
             "dialog.newFolder",
             "dialog.smartAlbum",
@@ -282,6 +287,9 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "dialog.captureTime",
             "photo.tagFromTracklog",
             "---",
+            "photo.makeAvailableOffline",
+            "sync.downloadOriginals",
+            "---",
             "album.removePhotos",
             "photo.delete",
             "photo.restore",
@@ -361,6 +369,12 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
     match id {
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
+        // only once this library syncs (Settings ▸ Sync), on a host that can
+        "sync.now" | "sync.pause" | "sync.downloadOriginals" | "album.makeAvailableOffline" | "photo.makeAvailableOffline" => {
+            app.services.sync_exec.is_some() && app.session.sync_state().is_some()
+        }
+        // (a library that never synced shows how to start)
+        "view.syncStatus" => app.services.sync_exec.is_some(),
         "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
         "photo.delete" => !selection_deleted(app),
         // only in an album that holds its photos (not a smart one)
@@ -438,6 +452,16 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
         "panel.keywords" => panel(RightPanel::Keywords),
         "panel.presets" => Some(u.presets),
         "library.toggleAutoWriteXmp" => Some(app.session.xmp.auto_write),
+        "sync.pause" => app.session.sync_state().map(|st| st.config.paused),
+        "sync.storeOriginalsLocally" => app.session.sync_state().map(|st| st.config.store_originals),
+        "album.makeAvailableOffline" => app.session.sync_state().map(|st| match app.session.source {
+            lightcraft_engine::LibrarySource::Album(a) => st.config.offline_albums.contains(&a),
+            _ => false,
+        }),
+        "photo.makeAvailableOffline" => {
+            let ids = app.session.selected();
+            app.session.sync_state().map(|_| !ids.is_empty() && ids.iter().all(|id| app.session.sync_is_offline(*id)))
+        }
         _ => None,
     }
 }

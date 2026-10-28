@@ -57,6 +57,7 @@ impl LightcraftApp {
         import::poll_scan(self, ctx);
         sync::poll(self, ctx);
         sync::poll_run(self, ctx);
+        sync_ui::poll(self, ctx);
         // Import commits batches and must not run twice in one host frame. The first layout pass
         // and a hidden logic tick both report pass index 0; a second pass reports 1. A wall-clock
         // gate cannot express that (a slow discarded first pass would re-run it).
@@ -266,7 +267,11 @@ impl LightcraftApp {
         if self.shown_library == Some(generation) {
             return;
         }
-        self.shown_library = Some(generation);
+        // (another library than the one shown before: at launch there was none, and nothing of an earlier
+        // library to let go of)
+        if self.shown_library.replace(generation).is_some() {
+            self.forget_library_ui();
+        }
         if let Some(l) = self.session.library.as_ref().filter(|l| l.on_disk) {
             let path = l.dir.to_string_lossy().into_owned();
             panels::settings::remember_library(&mut self.ui.settings.recent_libraries, &path);
@@ -278,6 +283,30 @@ impl LightcraftApp {
             settings.recent_opened.retain(|p, _| settings.recent_libraries.contains(p));
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.window_title()));
+    }
+
+    /// What the UI holds that names the old library's photos and albums (their ids are only unique within a library):
+    /// textures and caches by id, the face being named, the photos being dragged, the compare and reference views, a
+    /// slideshow, a dialog about one of them. Another library was opened, or this one was emptied for another account
+    /// (signing out of a sync server removes the account's library from the device).
+    pub(crate) fn forget_library_ui(&mut self) {
+        self.renderer.forget_all();
+        self.cloud_sync.forget_library();
+        let ui = &mut self.ui;
+        ui.compare = None;
+        ui.reference = None;
+        ui.slideshow = None;
+        ui.name_edit = None;
+        ui.dragging_photos = None;
+        ui.dragging_album = None;
+        // (the question about an album that may no longer be there)
+        if matches!(ui.dialog, Some(crate::state::Dialog::ShareLink { .. })) {
+            ui.dialog = None;
+        }
+        // an emptied library has no photo to show, compare or survey: the grid says so
+        if self.session.catalog.is_empty() && !matches!(ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
+            ui.view = crate::state::ViewMode::PhotoGrid;
+        }
     }
 
     /// "LightCraft — <library name>" (just "LightCraft" for a library that isn't saved).

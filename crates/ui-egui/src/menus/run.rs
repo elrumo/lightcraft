@@ -1101,6 +1101,38 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
+        "dialog.shareLink" => {
+            // {id?}: the album (default: the one on show)
+            let id = match p.get("id").and_then(Value::as_u64) {
+                Some(id) => id,
+                None => match app.session.source {
+                    lightcraft_engine::LibrarySource::Album(a) => a.0,
+                    _ => return Some(Err("missing `id` (or show an album first)".into())),
+                },
+            };
+            let name = match app.session.catalog.album(lightcraft_catalog::AlbumId(id)) {
+                Some(a) if !a.folder && !a.is_smart() => a.name.clone(),
+                Some(_) => return Some(Err("only an album of photos can be shared: not a folder or a smart album".into())),
+                None => return Some(Err(format!("no album {id}"))),
+            };
+            if !app.session.sync_state().is_some_and(|st| st.signed_in()) {
+                return Some(Err("sign in to a sync server first (Settings › Sync): it makes the link and shows the album".into()));
+            }
+            app.ui.dialog = Some(Dialog::ShareLink { id, name, days: 0, originals: false, upload: false, password: String::new() });
+            Ok(Value::Null)
+        }
+        "view.syncStatus" => {
+            // the popover under the cloud button opens on the next frame
+            app.ui.sync_popover = true;
+            Ok(Value::Null)
+        }
+        "dialog.syncChoice" => {
+            if app.session.sync_conflict().is_none() {
+                return Some(Err("no sync choice is waiting (it comes after signing in to a server that has a library already)".into()));
+            }
+            app.ui.dialog = Some(Dialog::SyncChoice);
+            Ok(Value::Null)
+        }
         "dialog.newFolder" => {
             app.ui.dialog = Some(Dialog::NewAlbum {
                 name: p.get("name").and_then(Value::as_str).unwrap_or("").into(),

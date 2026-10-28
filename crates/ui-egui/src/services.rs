@@ -129,4 +129,6 @@ pub struct Services {
     pub restore_library: Option<HostAction>,
     /// The system appearance for Appearance Mode ▸ Auto, ahead of egui's own report.
     pub system_theme: Option<SystemThemeFn>,
+    /// Runs self-hosted sync requests off the UI thread ([`crate::sync_ui`]); `None`: this host doesn't sync.
+    pub sync_exec: Option<crate::sync_ui::SyncExec>,
 }

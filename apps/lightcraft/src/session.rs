@@ -244,6 +244,8 @@ pub(crate) fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::
         backup_library: None,
         restore_library: None,
         system_theme: appearance::service(),
+        // self-hosted sync (`docs/sync.md`): requests run on worker threads
+        sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
     }
 }
 

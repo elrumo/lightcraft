@@ -466,10 +466,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if shown == "none" {
             match app.renderer.failure_of(Slot::Main, id) {
                 Some(e) => {
+                    // a synced photo whose preview is still on its way isn't broken
+                    let waiting = app.session.awaiting_preview(&photo);
                     p.text(
                         canvas.center() - vec2(0.0, 10.0),
                         Align2::CENTER_CENTER,
-                        crate::i18n::tr("This photo can't be opened"),
+                        crate::i18n::tr(if waiting { "Downloading previews" } else { "This photo can't be opened" }),
                         t.semibold(14.0),
                         t.text,
                     );

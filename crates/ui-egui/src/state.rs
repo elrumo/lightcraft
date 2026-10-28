@@ -44,6 +44,9 @@ pub struct UiState {
     /// (`crate::frame_rate`). A debugging aid, never saved; `LIGHTCRAFT_FPS=1` starts with it on.
     #[serde(skip)]
     pub frame_rate: bool,
+    /// Open the sync status popover this frame (`view.syncStatus`): the cloud button's own, as if it had been clicked.
+    #[serde(skip)]
+    pub sync_popover: bool,
     pub view: ViewMode,
     pub left_panel: bool,
     pub right: RightPanel,
@@ -363,6 +366,7 @@ impl Default for UiState {
             language: crate::i18n::default_language(),
             preview_build_seen: None,
             unsaved_seen: false,
+            sync_popover: false,
             frame_rate: std::env::var("LIGHTCRAFT_FPS").is_ok_and(|v| matches!(v.trim(), "1" | "on" | "true" | "yes")),
             luminance_map_restore: None,
             view: ViewMode::Detail,

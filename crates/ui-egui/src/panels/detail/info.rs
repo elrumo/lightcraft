@@ -320,7 +320,13 @@ pub(crate) fn failed_pill(
     error: &str,
 ) {
     let offline = matches!(&photo.source, lightcraft_catalog::Source::File { path } if app.session.media.availability.is_offline(path));
-    let text = crate::i18n::tr(if offline { "Original offline · no smart preview" } else { "This photo can't be opened" });
+    let text = crate::i18n::tr(if app.session.awaiting_preview(photo) {
+        "Downloading previews"
+    } else if offline {
+        "Original offline · no smart preview"
+    } else {
+        "This photo can't be opened"
+    });
     let r = loupe_pill(ui, canvas, over, navigator, id, text, true);
     let resp = ui.interact(r, egui::Id::unique(("render-failed", id)), Sense::hover()).on_hover_text(error);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, format!("{text}: {error}")));

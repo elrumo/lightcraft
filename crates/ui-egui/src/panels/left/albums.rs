@@ -98,6 +98,15 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
                 }
                 resp = resp.on_hover_text(tip);
             }
+            // a check mark: this album's photos stay editable without a network (`album.makeAvailableOffline`)
+            if app.session.sync_state().is_some_and(|st| st.config.offline_albums.contains(&a.id)) {
+                let t = Tokens::get(ui.ctx());
+                let c = pos2(resp.rect.right().min(super::sections::visible_right(ui)) - 46.0, resp.rect.center().y);
+                let mark = Rect::from_center_size(c, vec2(12.0, 12.0));
+                paint(ui.painter(), mark, Icon::Check, t.text_dim);
+                register(ui, format!("offline:album:{}", a.id.0), mark);
+                resp = resp.on_hover_text(crate::i18n::tr("Available offline on this device"));
+            }
             if resp.clicked() {
                 let _ = app.run("library.source", json!({"kind": "album", "id": a.id.0}));
             }

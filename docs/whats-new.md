@@ -1,5 +1,19 @@
 # What's new in LightCraft
 
+## 2026-10-28
+
+### Sync your library with a server of your own
+- Settings ▸ Sync signs the app in to a LightCraft sync server you run yourself (`lightcraft-server`; see
+  docs/self-hosting.md and docs/sync.md). Edits, ratings, keywords, albums, presets and settings follow you between your
+  computers, small previews of every photo arrive first and originals are downloaded when you ask. Nothing syncs
+  until you sign in, and Sign Out takes the account's library off the device.
+- The cloud button in the top bar shows what syncing is doing (synced, syncing, paused, a choice waiting, an error) and
+  opens a popover with the uploads and downloads in flight, Pause, Sync Now and the server's own work. Signing in to a
+  server that already has a library, with photos here as well, asks how to combine the two before anything moves.
+- Right-click an album ▸ Share Link… makes a link anyone can open, optionally with a password, an end date, original
+  downloads and uploads from the people who open it. Make Available Offline keeps an album's previews (or its
+  originals) on this device. Photos in the folders the server reads in place show as folders in the sidebar.
+
 ## 2026-10-24
 
 ### Relative-date filters and smart albums follow the clock

@@ -477,7 +477,7 @@ previews`), the ones moving now first.
 
 The same numbers are the `sync.activity` command (`lightcraft-cli run --library DIR sync.activity refresh=true`, MCP,
 control channel) and part of `sync.status`; `ui.inspect` and `ui.widgets` list the popover and its parts (`icon:cloud`,
-`actions:syncStatus`, `section:syncDevice`, `section:syncServer`, `section:syncStorage`, `banner:serverDisk`,
+`popover:syncStatus`, `section:syncDevice`, `section:syncServer`, `section:syncStorage`, `banner:serverDisk`,
 `button:syncPause`, `button:syncNow`, `button:syncSettings`, `button:syncStatusPrimary`).
 
 ## Photos on a device

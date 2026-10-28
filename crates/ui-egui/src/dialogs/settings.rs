@@ -1,4 +1,4 @@
-//! The Settings dialog (⌘,): General, Import, Performance, Display, Interface, Slideshow, Faces,
+//! The Settings dialog (⌘,): General, Import, Sync, Performance, Display, Interface, Slideshow, Faces,
 //! AI Denoise.
 //!
 //! Changes apply immediately (no OK/Cancel). Where they are stored:
@@ -27,6 +27,7 @@ mod import;
 mod libraries;
 mod performance;
 mod slideshow;
+mod sync;
 mod widgets;
 
 pub use display::display_profile;
@@ -38,6 +39,7 @@ pub(crate) use libraries::{can_switch_library, free_name};
 pub use libraries::{forget_library, library_name, new_library, open_library, open_library_name, recent_libraries, remember_library};
 use performance::performance_tab;
 use slideshow::slideshow_tab;
+use sync::sync_tab;
 pub(crate) use widgets::{check, choices, heading, hint, row};
 
 pub mod slide_layout;
@@ -49,6 +51,7 @@ pub mod slide_titles;
 pub const TABS: &[(&str, &str)] = &[
     ("general", "General"),
     ("import", "Import"),
+    ("sync", "Sync"),
     ("performance", "Performance"),
     ("display", "Display"),
     ("interface", "Interface"),
@@ -67,6 +70,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &str) {
     let t = Tokens::get(ui.ctx());
     match tab {
         "import" => import_tab(app, ui, &t),
+        "sync" => sync_tab(app, ui, &t),
         "performance" => performance_tab(app, ui, &t),
         "display" => display_tab(app, ui, &t),
         "interface" => interface_tab(app, ui, &t),

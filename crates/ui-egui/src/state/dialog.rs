@@ -322,6 +322,21 @@ pub enum Dialog {
         /// A whole disk or share (`library.removeFolder` takes it only on request).
         disk: bool,
     },
+    /// Share Link… (an album's menu): how the link to album `id` works before it is made (`album.share`). The
+    /// password is never kept with the window state, nor told to the control channel.
+    ShareLink {
+        id: u64,
+        name: String,
+        /// Days until the link ends (0: when revoked).
+        days: u32,
+        originals: bool,
+        upload: bool,
+        #[serde(skip)]
+        password: String,
+    },
+    /// Signed in to a sync server that has a library already, and this library has photos too: add
+    /// this library to the server's, use the server's instead, or don't sync (`sync.resolveConflict`).
+    SyncChoice,
     /// Synchronize Folder: what changed in a library folder on disk, and what to do about it
     /// (`folder.synchronize`; the scan runs in [`crate::sync`]).
     SynchronizeFolder {

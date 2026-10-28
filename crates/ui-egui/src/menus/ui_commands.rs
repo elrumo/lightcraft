@@ -257,6 +257,11 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("app.openLogFolder", "Open Log Folder", None, "Help"),
     // the frame-rate display (`frame_rate`): a debugging aid, never saved
     ("view.frameRate", "Frame Rate", None, "Help>Debug"),
+    // sync with a LightCraft server (`docs/sync.md`): the popover the top bar's cloud button opens, the choice a sign-in waits
+    // for, and an album's link
+    ("view.syncStatus", "Sync Status", None, "File"),
+    ("dialog.syncChoice", "Choose What to Do with This Library…", None, ""),
+    ("dialog.shareLink", "Share Link…", None, ""),
     ("app.whatsNew", "What's New", None, "Help"),
     ("dialog.cull", "Assisted Culling…", None, "Photo"),
     ("app.help", "LightCraft Help", Some("F1"), "Help"),

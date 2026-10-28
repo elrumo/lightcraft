@@ -60,6 +60,13 @@ impl Caches {
     pub(crate) fn folder_tree_if_fresh(&self, cat: &lightcraft_catalog::Catalog) -> Option<std::sync::Arc<Vec<lightcraft_catalog::FolderNode>>> {
         self.folder_tree.as_ref().filter(|(r, _)| still_right(cat, *r, READS_FILE)).map(|(_, t)| t.clone())
     }
+    /// The library folders on the sync server, with their photo counts (the sidebar's Server Folders).
+    pub fn server_folders(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<std::collections::BTreeMap<String, usize>> {
+        let kept = self.server_folders.take().filter(|(r, _)| still_right(cat, *r, READS_FILE)).map(|(_, f)| f);
+        let f = kept.unwrap_or_else(|| std::sync::Arc::new(lightcraft_catalog::query::server_folders(cat)));
+        self.server_folders = Some((cat.revision, f.clone()));
+        f
+    }
     /// The library's keyword tree.
     pub fn keyword_tree(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>> {
         let kept = self.keyword_tree.take().filter(|(r, _)| still_right(cat, *r, READS_META)).map(|(_, t)| t);
