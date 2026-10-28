@@ -78,6 +78,22 @@ pub fn worker_main(store: String) {
     });
 }
 
+/// The bytes `job` needs from storage when the worker has not decoded its source yet: the
+/// original, else (a synced photo whose original is on the server) its downloaded previews.
+async fn read_original(backend: &Option<Backend>, job: &WireJob) -> Result<Option<Vec<u8>>, String> {
+    let Some(hash) = CORE.with(|c| c.borrow_mut().needs_original(job)) else { return Ok(None) };
+    let Some(b) = backend else { return Ok(None) };
+    if let Some(bytes) = b.read(&crate::store::storage_key(&hash)).await? {
+        return Ok(Some(bytes));
+    }
+    for key in crate::wire::proxy_keys(&hash, job.max_edge) {
+        if let Some(bytes) = b.read(&key).await? {
+            return Ok(Some(bytes));
+        }
+    }
+    Ok(None)
+}
+
 /// Run one job message and post the result.
 async fn handle(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Backend>, msg: JsValue) {
     let id = get(&msg, "id");
@@ -103,13 +119,7 @@ async fn handle(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Bac
             }
         }
         set(&out, "cacheMiss", &cache_miss.into());
-        let original = match CORE.with(|c| c.borrow_mut().needs_original(&job)) {
-            Some(hash) => match &backend {
-                Some(b) => b.read(&crate::store::storage_key(&hash)).await?,
-                None => None,
-            },
-            None => None,
-        };
+        let original = read_original(&backend, &job).await?;
         let rendered = CORE.with(|c| c.borrow_mut().render(&job, original.as_deref()))?;
         let mut stored = 0;
         if let (Some(b), Some(key)) = (&backend, job.thumb_key())

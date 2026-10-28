@@ -174,6 +174,7 @@ fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
 fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen: Rc<Cell<bool>>, ctx: egui::Context) -> Services {
     let (backup_backend, backup_files) = (backend.clone(), files);
     let restore_backend = backend.clone();
+    let sync_backend = backend.clone();
     Services {
         local_places: None,
         picker: None,
@@ -255,8 +256,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         pick_folder: None,
         // the browser reports prefers-color-scheme to egui
         system_theme: None,
-        // (the browser transport for sync comes with the web sync commit)
-        sync_exec: None,
+        sync_exec: Some(crate::sync::exec(sync_backend)),
     }
 }
 
@@ -300,6 +300,8 @@ struct Boot {
     index: ThumbIndex,
     /// The library folder in storage (`library`, or a restored backup's).
     lib_dir: String,
+    /// What storage holds for sync: preview files (`proxies/`) and originals by hash.
+    stored: Option<lightcraft_engine::cloud_sync::BrowserStore>,
     /// Library files that exist but couldn't be read (#1507): the library isn't opened and
     /// nothing is saved, so the stored copy stays as it was.
     load_error: Option<String>,
@@ -395,6 +397,14 @@ async fn boot(opts: Options) -> Boot {
             });
         }
     }
+    let mut stored = None;
+    if let Some(b) = &backend {
+        let list =
+            |dir: &'static str| async move { b.list(dir).await.unwrap_or_default().into_iter().collect::<std::collections::HashSet<String>>() };
+        let proxies = list(crate::sync::PROXIES.trim_end_matches('/')).await;
+        let originals = list("originals").await;
+        stored = Some(lightcraft_engine::cloud_sync::BrowserStore { prefix: crate::sync::PROXIES.into(), proxies, originals });
+    }
     log::info!(
         "lightcraft: storage {} opened in {:.0} ms ({} thumbnails indexed, {:.1} MB)",
         backend.as_ref().map_or("memory", |b| b.kind()),
@@ -402,7 +412,7 @@ async fn boot(opts: Options) -> Boot {
         index.len(),
         index.total() as f64 / 1e6
     );
-    Boot { opts, backend, files, index, lib_dir, load_error }
+    Boot { opts, backend, files, index, lib_dir, stored, load_error }
 }
 
 struct WebApp {
@@ -457,7 +467,7 @@ impl WebApp {
     /// browser storage (a read failure starts an empty session and a blocking `LibraryProblem`),
     /// load the stored UI state, start render workers and the optional benchmark.
     fn new(cc: &eframe::CreationContext<'_>, boot: Boot, chinese_font: Vec<u8>) -> Self {
-        let Boot { opts, backend, files, index, lib_dir, load_error } = boot;
+        let Boot { opts, backend, files, index, lib_dir, stored, load_error } = boot;
         let originals = Originals::default();
         let t = perf_now();
         let mut session = Session::new();
@@ -506,6 +516,8 @@ impl WebApp {
         }
         // previews are large (≤ 2560 px, f32): keep few in a 32-bit address space
         session.media.preview_capacity = 3;
+        // sync keeps photo files in browser storage
+        session.sync_store = stored;
         // nothing is saved while the stored library couldn't be read
         let frozen = Rc::new(Cell::new(read_failed));
         let mut app = LightcraftApp::new(session, services(originals.clone(), backend.clone(), files.clone(), frozen.clone(), cc.egui_ctx.clone()))
@@ -521,6 +533,10 @@ impl WebApp {
         }
         app.ui = app.ui.sanitized();
         app.library_problem = problem;
+        // the server that serves this page is the one to sign in to
+        if let Some(origin) = window().and_then(|w| w.location().origin().ok()).filter(|o| o.starts_with("http")) {
+            app.cloud_sync.form.server = origin;
+        }
         let n = opts.workers.unwrap_or_else(|| {
             let cores = window().map_or(1, |w| w.navigator().hardware_concurrency() as usize);
             cores.saturating_sub(1).clamp(1, 4)
@@ -586,6 +602,10 @@ impl WebApp {
             });
         }
         let Some(paths) = drained.pending else { return };
+        // (the originals this browser holds now, as far as sync is concerned)
+        if let Some(store) = self.app.session.sync_store.as_mut() {
+            store.originals.extend(paths.iter().filter_map(|p| crate::store::hash_of_path(p)).map(str::to_string));
+        }
         if !paths.is_empty() {
             match self.app.run("library.import", json!({"paths": paths})) {
                 // what the import did, not what was submitted: duplicates and unsupported files add nothing,
@@ -612,8 +632,73 @@ impl WebApp {
         {
             self.originals.prefetch(path);
         }
+        // a sign-out removed the account's library: its preview files go from memory and from storage (the
+        // originals stay, as imports do; a library of the next account is a new one)
+        let purge = self.app.session.take_sync_purge();
+        if !purge.is_empty() {
+            self.originals.forget_proxies();
+        }
         let Some(b) = &self.backend else { return };
+        if !purge.is_empty() {
+            let b = b.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                for key in &purge {
+                    if let Err(e) = b.remove(key).await {
+                        log::warn!("removing {key}: {e}");
+                    }
+                }
+            });
+        }
+        // what sync keeps in storage is known: a missing original is a photo whose file wasn't downloaded
+        // (its previews stand in), asked for again once sync has stored it
+        let synced = self.app.session.sync_store.as_ref().map(|s| s.originals.clone());
+        // the selected photos (an export of several): the ones this browser has no original of, and their previews
+        if let Some(store) = &self.app.session.sync_store {
+            for id in self.app.session.selection.ids.iter().take(500) {
+                if let Some(Source::File { path }) = self.app.session.catalog.photo(*id).map(|p| &p.source)
+                    && let Some(hash) = crate::store::hash_of_path(path)
+                    && !store.originals.contains(hash)
+                {
+                    self.originals.mark_absent(hash);
+                    let _ = self.originals.proxy(hash, lightcraft_engine::media::SourceLevel::Preview.max_edge());
+                }
+            }
+        }
+        if let Some(store) = &self.app.session.sync_store {
+            self.originals.retry_absent(|h| store.originals.contains(h), |name| store.proxies.contains(name));
+        }
+        // the active photo's previews, ahead of time, when its original isn't in memory
+        if let Some(id) = self.app.session.selection.active
+            && let Some(p) = self.app.session.catalog.photo(id)
+            && let Some(Source::File { path }) = Some(&p.source)
+            && !self.originals.contains(path)
+            && let Some(hash) = crate::store::hash_of_path(path)
+        {
+            let _ = self.originals.proxy(hash, lightcraft_engine::media::SourceLevel::Thumb.max_edge());
+        }
+        for key in self.originals.take_wanted_proxies() {
+            let (b, originals, ctx) = (b.clone(), self.originals.clone(), ctx.clone());
+            wasm_bindgen_futures::spawn_local(async move {
+                match b.read(&key).await {
+                    Ok(Some(bytes)) => {
+                        originals.insert_proxy(&key, Arc::from(bytes));
+                        ctx.request_repaint();
+                    }
+                    Ok(None) => originals.proxy_missing(&key),
+                    Err(e) => {
+                        log::warn!("loading {key}: {e}");
+                        originals.proxy_missing(&key);
+                    }
+                }
+            });
+        }
         for hash in self.originals.take_wanted() {
+            if let Some(have) = &synced
+                && !have.contains(&hash)
+            {
+                self.originals.load_missing(&hash);
+                continue;
+            }
             let (b, originals, ctx) = (b.clone(), self.originals.clone(), ctx.clone());
             wasm_bindgen_futures::spawn_local(async move {
                 match b.read(&storage_key(&hash)).await {
@@ -623,7 +708,7 @@ impl WebApp {
                     }
                     Ok(None) => {
                         log::warn!("original {hash} is not in browser storage");
-                        originals.load_failed(&hash);
+                        originals.load_missing(&hash);
                     }
                     Err(e) => {
                         log::warn!("loading original {hash}: {e}");

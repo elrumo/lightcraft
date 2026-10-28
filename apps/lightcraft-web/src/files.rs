@@ -195,8 +195,22 @@ impl Store for FilesStore {
     }
 }
 
-/// Names of the library files read at start-up.
-pub const LIBRARY_FILES: [&str; 6] = ["catalog.snap", "catalog.log", "presets.json", "view.json", "prefs.json", "ui.json"];
+/// Names of the library files read at start-up: the catalog, the settings, and what self-hosted
+/// sync keeps beside them (`docs/sync.md`: the sign-in, the changes not yet sent, what was uploaded,
+/// the presets and shared documents as last synced).
+pub const LIBRARY_FILES: [&str; 11] = [
+    "catalog.snap",
+    "catalog.log",
+    "presets.json",
+    "view.json",
+    "prefs.json",
+    "ui.json",
+    lightcraft_engine::cloud_sync::CONFIG,
+    lightcraft_engine::cloud_sync::OUTBOX,
+    lightcraft_engine::cloud_sync::UPLOADED,
+    lightcraft_engine::cloud_sync::PRESETS,
+    lightcraft_engine::cloud_sync::DOCS,
+];
 
 /// Is a browser storage error, by its `DOMException` name, "the entry doesn't exist"? Only
 /// `NotFoundError` is; anything else (security, type mismatch, an unreadable store) is a failure.
