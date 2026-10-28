@@ -46,5 +46,5 @@ lightcraft-merge = { workspace = true }
 serde_json = { workspace = true }
 toml = "1"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios")))'.dependencies]
 craft-update = { workspace = true }

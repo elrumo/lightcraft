@@ -37,6 +37,7 @@ pub mod proof;
 mod psd;
 mod sniff;
 pub mod space;
+mod system;
 mod tiff_codec;
 pub mod video;
 mod webp;
@@ -48,6 +49,7 @@ pub use encode::{
 pub use jxl_encode::{JxlColour, JxlEffort, JxlOptions, encode_jxl};
 pub use sniff::{Format, sniff};
 pub use space::{NamedSpace, SourceSpace, SpaceOrigin, Trc};
+pub use system::{SystemDecodeFn, SystemImage, SystemPixels, clear_system_decoder, has_system_decoder, set_system_decoder};
 
 use lightcraft_raster::{Plane, Rgb32f, Rgba8};
 use serde::{Deserialize, Serialize};
@@ -241,8 +243,10 @@ pub fn decode_unguarded(bytes: &[u8], format: Format, opts: &DecodeOptions) -> R
         Format::Jxl => jxl::decode(bytes, &opts),
         #[cfg(not(feature = "jxl"))]
         Format::Jxl => unsupported(),
-        Format::Heif => heif::decode(bytes, &opts),
-        Format::Avif | Format::RawTiffLike | Format::RawOther => unsupported(),
+        // the system's decoder first when the host installed one (iOS: ImageIO), see `system`
+        Format::Heif => system::decode(bytes, format, &opts).unwrap_or_else(|| heif::decode(bytes, &opts)),
+        Format::Avif => system::decode(bytes, format, &opts).unwrap_or_else(unsupported),
+        Format::RawTiffLike | Format::RawOther => unsupported(),
     }
 }
 

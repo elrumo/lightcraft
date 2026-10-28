@@ -1,22 +1,23 @@
-//! Software updates, background check at startup, and startup prompt modal.
+//! Software updates, background check at startup, and startup prompt modal. (Not on the web, which
+//! has no updater, and not on iOS, where the App Store or TestFlight updates the app.)
 
 use serde_json::Value;
 
 use crate::LightcraftApp;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
 use craft_update::updater::{Action, Status, Updater};
 
 pub(crate) struct Runtime {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     updater: Updater,
     /// The desktop app turns the check at start on; tests and the web build leave it off.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     startup_check: bool,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     check_requested: bool,
     /// The context of the last frame, to wake the UI when a check is queued from a menu callback.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     repaint: Option<egui::Context>,
     pub(crate) manual_window_open: bool,
     pub(crate) status_message: Option<String>,
@@ -25,13 +26,13 @@ pub(crate) struct Runtime {
 impl Default for Runtime {
     fn default() -> Self {
         Self {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
             updater: Updater::new(&craft_update::suite::LIGHTCRAFT, env!("CARGO_PKG_VERSION")),
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
             startup_check: false,
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
             check_requested: false,
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
             repaint: None,
             manual_window_open: false,
             status_message: None,
@@ -41,7 +42,7 @@ impl Default for Runtime {
 
 impl LightcraftApp {
     /// Whether the app asks for a newer release when it starts (off until the desktop app turns it on).
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     pub fn set_startup_update_check(&mut self, on: bool) {
         self.updates_rt.startup_check = on;
     }
@@ -49,11 +50,11 @@ impl LightcraftApp {
 
 /// The update prompt owns the keyboard while it is open: shortcuts must not reach the library behind it.
 pub(crate) fn blocks_input(app: &LightcraftApp) -> bool {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     {
         app.updates_rt.updater.prompt_open()
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_os = "ios"))]
     {
         let _ = app;
         false
@@ -61,7 +62,7 @@ pub(crate) fn blocks_input(app: &LightcraftApp) -> bool {
 }
 
 pub(crate) fn check(app: &mut LightcraftApp) -> Result<Value, String> {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     {
         app.updates_rt.check_requested = true;
         if let Some(ctx) = &app.updates_rt.repaint {
@@ -69,16 +70,21 @@ pub(crate) fn check(app: &mut LightcraftApp) -> Result<Value, String> {
         }
         Ok(Value::Null)
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_os = "ios"))]
     {
         app.updates_rt.manual_window_open = true;
-        app.updates_rt.status_message = Some("Update check is not supported in the web browser.".into());
+        let why = if cfg!(target_os = "ios") {
+            "Updates come through the App Store or TestFlight."
+        } else {
+            "Update check is not supported in the web browser."
+        };
+        app.updates_rt.status_message = Some(why.into());
         Ok(Value::Null)
     }
 }
 
 pub(crate) fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     {
         let rt = &mut app.updates_rt;
         rt.repaint = Some(ctx.clone());
@@ -89,12 +95,12 @@ pub(crate) fn tick(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
         rt.updater.tick(ctx);
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", target_os = "ios"))]
     let _ = (app, ctx);
 }
 
 pub(crate) fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     {
         // The restart helper is scheduled before the app closes, so no update starts over unsaved work.
         let clean = app.session.unsaved().is_none();
@@ -142,7 +148,7 @@ pub(crate) fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     }
 
     // Closing the window dismisses the outcome it showed.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     if !app.updates_rt.manual_window_open {
         app.updates_rt.updater.dismiss_status();
     }
@@ -157,7 +163,7 @@ mod tests {
     fn default_runtime_is_idle() {
         let rt = Runtime::default();
         assert!(!rt.manual_window_open);
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
         {
             assert!(!rt.startup_check);
             assert!(!rt.updater.prompt_open());
@@ -166,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
     fn startup_prompt_shows_and_closes() {
         let mut app = LightcraftApp::new(Session::new(), Default::default());
         let ctx = egui::Context::default();

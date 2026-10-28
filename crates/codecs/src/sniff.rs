@@ -73,6 +73,8 @@ impl Format {
         match self {
             #[cfg(not(feature = "jxl"))]
             Format::Jxl => Some("built without the `jxl` feature"),
+            // the host's decoder (iOS: ImageIO), see `crate::system`
+            Format::Avif | Format::Heif if crate::system::has_system_decoder(self) => None,
             #[cfg(not(feature = "heif"))]
             Format::Heif => Some(crate::heif::NOT_IN_BUILD),
             Format::Avif => Some("no pure-Rust, permissively licensed AV1 decoder yet"),

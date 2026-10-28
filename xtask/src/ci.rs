@@ -1,3 +1,4 @@
+use super::ios::{cmd_ios, cmd_ios_for, target_installed};
 use super::layers::cmd_layers;
 use super::raw_samples::RAW_SAMPLES;
 use super::wasm::{cmd_wasm, cmd_wasm_for};
@@ -255,7 +256,7 @@ pub(crate) fn cmd_ci(args: &[&str]) -> Result<(), String> {
     let wants = |step: &str| match &plan {
         None => true,
         Some(p) => match step {
-            "clippy" | "test" | "wasm" => p.rust(),
+            "clippy" | "test" | "wasm" | "ios" => p.rust(),
             "heif" => p.heif,
             "parity" => p.parity,
             _ => true,
@@ -342,6 +343,16 @@ pub(crate) fn cmd_ci(args: &[&str]) -> Result<(), String> {
         match plan.as_ref().filter(|p| !p.workspace_wide) {
             Some(p) => steps.push(("wasm", Box::new(|| cmd_wasm_for(Some(&p.packages))))),
             None => steps.push(("wasm", Box::new(cmd_wasm))),
+        }
+    }
+    if wants("ios") {
+        if target_installed() {
+            match plan.as_ref().filter(|p| !p.workspace_wide) {
+                Some(p) => steps.push(("ios", Box::new(|| cmd_ios_for(Some(&p.packages))))),
+                None => steps.push(("ios", Box::new(cmd_ios))),
+            }
+        } else {
+            eprintln!("\n(ci: the iOS check is skipped: `rustup target add aarch64-apple-ios` to run it)");
         }
     }
 

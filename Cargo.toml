@@ -43,6 +43,7 @@ lightcraft-heif = { path = "crates/heif" }
 lightcraft-segment = { path = "crates/segment" }
 lightcraft-geocode = { path = "crates/geocode" }
 lightcraft-slideshow = { path = "crates/slideshow" }
+lightcraft-ios-host = { path = "crates/ios-host" }
 lightcraft-testkit = { path = "crates/testkit" }
 
 # foundation
