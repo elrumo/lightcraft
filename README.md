@@ -24,7 +24,7 @@
 
 <p align="center">
   <b>Photo library and raw development; an open-source, non-destructive photo library and raw developer, built in pure Rust.</b><br>
-  Native on macOS, Windows and Linux. In the browser via WebAssembly. Drivable end to end by AI agents over MCP.
+  Native on macOS, Windows and Linux. In the browser via WebAssembly. On iPhone and iPad as an app in progress. Drivable end to end by AI agents over MCP.
 </p>
 
 <p align="center">
@@ -392,6 +392,7 @@ LightCraft is young and moving fast: **alpha**. **Where we honestly stand** (det
 | Slideshow playback, layouts, overlays, templates and PDF/JPEG/AV1 export | ✅ playback · 🚧 dedicated module editor and music ([details](docs/slideshow.md)) |
 | Video import/editing and Book module | ⬜ |
 | Web build (same UI in the browser via WASM): persistent library in OPFS/IndexedDB, Web Worker rendering, export downloads | ✅ · WebGPU, Safari/Firefox testing 🚧 |
+| iPhone and iPad app (the same engine and UI with a touch layout: Photos and Files import, share sheet, optional sync with your own server, [docs/ios.md](docs/ios.md)) | 🚧 written and type-checked; not yet run on a phone |
 
 <sub>✅ works today · 🚧 in progress · ⬜ not started</sub>
 
