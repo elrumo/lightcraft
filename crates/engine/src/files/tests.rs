@@ -2035,3 +2035,38 @@ fn existing_photo_settings_are_not_rewritten() {
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `photo.cameraTone`: a frontend that develops a raw itself gets the base curve this engine shows the raw through. A DNG's
+/// own tone curve is that curve (what a decode of the file finds, handed over as JSON); a raw with none gives `null`; the
+/// second ask is answered from the cached source and says the same.
+#[test]
+fn photo_camera_tone_gives_the_base_curve_a_file_gives_it() {
+    let plain = crate::tests_xmp::synthetic_dng_with(None, Default::default());
+    let mut raw = lightcraft_raw::decode(&plain).unwrap();
+    raw.color.profile.tone_curve = lightcraft_raw::profile::ToneCurve::from_tag(&[0.0, 0.0, 0.18, 0.3, 1.0, 1.0]);
+    let curved = lightcraft_raw::write_dng(&raw, &Default::default()).unwrap();
+    let dir = crate::tests_xmp::temp_dir("camera-tone");
+    let mut s = crate::Session::new().with_fs();
+    let mut import = |name: &str, bytes: &[u8]| {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let r = s.execute("library.import", &serde_json::json!({"paths": [path.to_string_lossy()]})).unwrap();
+        r["imported"][0].as_u64().unwrap()
+    };
+    let (curve, flat) = (import("curve.dng", &curved), import("flat.dng", &plain));
+    let asked = s.execute("photo.cameraTone", &serde_json::json!({"id": curve})).unwrap();
+    let tone: lightcraft_pipeline::tone::CameraTone = serde_json::from_value(asked["tone"].clone()).unwrap();
+    let found = load_bytes(&curved, 64).unwrap().1.camera_tone.expect("the DNG tone curve becomes the camera tone");
+    for (a, b) in tone.knots().iter().zip(found.knots()) {
+        assert!((a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6, "{a:?} vs {b:?}");
+    }
+    assert!(tone.chroma().iter().zip(found.chroma()).all(|(a, b)| (a - b).abs() < 1e-6), "{:?} vs {:?}", tone.chroma(), found.chroma());
+    assert!((tone.apply(0.18) - 0.3).abs() < 0.01, "{}", tone.apply(0.18));
+    assert_eq!(s.execute("photo.cameraTone", &serde_json::json!({"id": curve})).unwrap(), asked, "from the cached source");
+    // a raw nothing was fitted to has none
+    assert!(s.execute("photo.cameraTone", &serde_json::json!({"id": flat})).unwrap()["tone"].is_null());
+    // a photo that is not there
+    let e = s.execute("photo.cameraTone", &serde_json::json!({"id": 9999})).unwrap_err().to_string();
+    assert!(e.contains("no such photo 9999"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

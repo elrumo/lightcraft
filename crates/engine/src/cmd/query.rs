@@ -325,6 +325,20 @@ pub fn specs() -> Vec<CommandSpec> {
             let counts = lightcraft_catalog::tally::AlbumTally::of(&s.catalog);
             Ok(Value::Array(s.catalog.album_children(None).into_iter().map(|a| album_json(a, counts.counts(), &s.catalog, 0)).collect()))
         }),
+        cmd!(
+            query "photo.cameraTone",
+            "Camera Tone",
+            [],
+            None,
+            "{id?} → {tone: {knots: [[scene, display] × 32] (increasing linear luminance pairs), chroma: [×8] (colour scale at display luminance 0, 1/7 … 1)} | null} the base tone curve the photo's file gives it: what a raw is shown through before any edit (fitted to the camera's own picture, else a DNG's own curve). A frontend that develops a raw itself needs it to match this engine's render; `null` for a photo with none (a rendered file, a raw nothing was fitted to). Decodes the photo at thumbnail size when no source of it is cached; changes no edit",
+            always,
+            |s, p| {
+                let c = "photo.cameraTone";
+                let id = photo_arg(s, p, c)?;
+                let tone = s.camera_tone_of(id).map_err(|e| bad(c, e))?;
+                Ok(json!({"tone": tone.and_then(|t| serde_json::to_value(t).ok())}))
+            }
+        ),
         cmd!(query "photo.inspect", "Inspect Photo", [], None, "{id?}", always, |s, p| {
             let id = photo_arg(s, p, "photo.inspect")?;
             let ph = s.catalog.photo(id).ok_or_else(|| bad("photo.inspect", "no such photo"))?;

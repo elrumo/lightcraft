@@ -604,6 +604,19 @@ impl crate::Session {
         self.catalog.photo(id).and_then(|p| p.embedded_lens).or_else(|| self.source_info(id).lens)
     }
 
+    /// The base tone curve photo `id`'s file gives it ([`lightcraft_pipeline::SourceInfo::camera_tone`]): the curve a raw is
+    /// shown through before any edit, fitted to the camera's own picture or taken from a DNG's `ProfileToneCurve`. A source
+    /// the media cache holds (decoded, or a smart preview's) already knows it; otherwise the photo is decoded at thumbnail
+    /// size, which fits the same look as any larger level does. `None` for a photo with no such curve (a rendered file, a
+    /// raw nothing was fitted to). A decode records what every render does (the as-shot white balance): no edit.
+    pub fn camera_tone_of(&mut self, id: PhotoId) -> Result<Option<lightcraft_pipeline::tone::CameraTone>, String> {
+        let known = self.media.cached_source(id).is_some_and(|s| s.info.is_some() || s.from_proxy);
+        if !known {
+            self.source_now(id, SourceLevel::Thumb)?;
+        }
+        Ok(self.source_info(id).camera_tone)
+    }
+
     /// Borrow source mattes for selection notices without constructing render facts each frame.
     pub fn source_mattes(&self, id: PhotoId) -> Option<&lightcraft_pipeline::masks::Mattes> {
         self.media.cached_source(id).and_then(|s| s.info.as_ref()).and_then(|info| info.mattes.as_deref())
