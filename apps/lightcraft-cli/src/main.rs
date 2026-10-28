@@ -4,7 +4,7 @@
 //! lightcraft-cli run [--demo | --library DIR | --connect [ADDR]] [--import PATH]… CMD [key=value…]…
 //! lightcraft-cli mcp [--connect [ADDR]] [--demo] [--compact] [FILES/FOLDERS…]
 //! lightcraft-cli render <in> -o <out> [--set control=value]… [--settings FILE.json|FILE.lcpreset] [--preset ID] [--size N] [--quality Q]
-//! lightcraft-cli snapshot [--library DIR | --demo] [--script FILE.jsonl] [-o OUT.png] [--size WxH] [--scale S] [FILES…]
+//! lightcraft-cli snapshot [--library DIR | --demo] [--script FILE.jsonl] [-o OUT.png] [--size WxH] [--scale S] [--touch] [FILES…]
 //! lightcraft-cli merge hdr|panorama|hdr-panorama|hdr-batch [OPTIONS] FILES…
 //! lightcraft-cli synth-merge hdr|panorama -o DIR
 //! lightcraft-cli denoise-serve [--model ID] [--models DIR] [--listen ADDR] [--token-env VAR] [--run-on auto|gpu|cpu]
@@ -78,6 +78,8 @@ USAGE:
                           A failed request (\"ok\": false) does not stop the script, but the exit
                           status is non-zero when any request failed.
         -o, --output OUT  PNG path (a final screenshot is written here if the script took none)
+        --touch           a phone or tablet host: a window narrower than 900 points gets the compact
+                          layout (try --size 390x844)
         --size WxH        window size in points (default 1600x1000)
         --scale S         pixels per point (default 1)
   lightcraft-cli merge hdr|panorama|hdr-panorama|hdr-batch [OPTIONS] FILES…
@@ -772,11 +774,13 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     let mut output: Option<String> = None;
     let mut size = [1600.0f32, 1000.0];
     let mut scale = 1.0f32;
+    let mut touch = false;
     let mut files = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--demo" => {}
+            "--touch" => touch = true,
             "--library" => library = Some(take_value(args, &mut i, "--library")?.to_string()),
             "--script" => script = Some(take_value(args, &mut i, "--script")?.to_string()),
             "-o" | "--output" => output = Some(take_value(args, &mut i, "-o")?.to_string()),
@@ -825,6 +829,7 @@ fn snapshot(args: &[String]) -> Result<(), String> {
         })),
         // (a snapshot of a library signed in to a server shows the sync UI at work)
         sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
+        touch,
         ..Default::default()
     };
     let mut app = lightcraft_ui_egui::LightcraftApp::new(session, services);

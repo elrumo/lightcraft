@@ -8,10 +8,19 @@ impl LightcraftApp {
 
     /// Restyle `ctx` when the theme the settings select (Appearance Mode, the dark and light
     /// themes, the system's appearance in Auto) is not the one it shows. A no-op otherwise.
+    ///
+    /// It also decides the layout: a touch host ([`crate::Services::touch`]) with a window
+    /// narrower than [`crate::COMPACT_BELOW_PT`] gets the compact layout, styled for a finger on
+    /// top of the theme.
     pub fn sync_theme(&mut self, ctx: &egui::Context) {
+        self.compact = self.services.touch && ctx.content_rect().width() < crate::COMPACT_BELOW_PT;
+        ctx.data_mut(|d| d.insert_temp(crate::compact_id(), self.compact));
         let wanted = self.ui.settings.theme(self.system_theme(ctx));
-        if theme::current(ctx) != Some(wanted) {
+        if theme::current(ctx) != Some(wanted) || theme::touch_styled(ctx) != self.compact {
             theme::apply_kind(ctx, wanted);
+            if self.compact {
+                theme::apply_touch(ctx);
+            }
         }
     }
 

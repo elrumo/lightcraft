@@ -416,6 +416,8 @@ pub fn apply_kind(ctx: &egui::Context, kind: ThemeKind) {
     ctx.data_mut(|d| {
         d.insert_temp(egui::Id::NULL, t);
         d.insert_temp(theme_id(), kind);
+        // (the desktop metrics below replace a touch look)
+        d.remove::<bool>(touch_id());
     });
     let dark = kind.is_dark();
     let mut v = if dark { Visuals::dark() } else { Visuals::light() };
@@ -452,6 +454,44 @@ pub fn apply_kind(ctx: &egui::Context, kind: ThemeKind) {
         s.text_styles.insert(egui::TextStyle::Small, FontId::proportional(11.0));
         s.text_styles.insert(egui::TextStyle::Heading, FontId::new(16.0, FontFamily::Name(FONT_SEMIBOLD.into())));
         s.animation_time = 0.08;
+    });
+}
+
+fn touch_id() -> egui::Id {
+    egui::Id::unique("lc-touch-styled")
+}
+
+/// The compact (touch) layout's metrics are applied on top of the theme ([`apply_touch`]).
+pub fn touch_styled(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(touch_id())).unwrap_or(false)
+}
+
+/// Make the theme `ctx` is styled with fit a finger: larger type, rounder windows and controls,
+/// 44 pt rows ([`crate::TOUCH_ROW_H`]), a quarter-second animation time. Call it after
+/// [`apply_kind`]; the colours stay the theme's.
+pub fn apply_touch(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(touch_id(), true));
+    ctx.all_styles_mut(|s| {
+        let v = &mut s.visuals;
+        v.window_corner_radius = CornerRadius::same(13);
+        v.menu_corner_radius = CornerRadius::same(13);
+        v.window_stroke = Stroke::NONE;
+        let w = &mut v.widgets;
+        for wv in [&mut w.noninteractive, &mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+            wv.corner_radius = CornerRadius::same(9);
+        }
+        w.inactive.bg_stroke = Stroke::NONE;
+        w.hovered.bg_stroke = Stroke::NONE;
+        w.active.bg_stroke = Stroke::NONE;
+        s.spacing.item_spacing = egui::vec2(8.0, 8.0);
+        s.spacing.button_padding = egui::vec2(14.0, 8.0);
+        s.spacing.interact_size.y = crate::TOUCH_ROW_H;
+        s.text_styles.insert(egui::TextStyle::Body, FontId::proportional(16.0));
+        s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(16.0));
+        s.text_styles.insert(egui::TextStyle::Small, FontId::proportional(13.0));
+        s.text_styles.insert(egui::TextStyle::Heading, FontId::new(17.0, FontFamily::Name(FONT_SEMIBOLD.into())));
+        // (panels slide, switches and tiles fade over this: iOS's quick-but-visible quarter second)
+        s.animation_time = 0.25;
     });
 }
 

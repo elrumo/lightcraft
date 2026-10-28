@@ -16,6 +16,7 @@ mod drop_overlay;
 pub mod export_task;
 mod focus_scan;
 mod frame_rate;
+mod glass;
 pub mod haptics;
 pub mod headless;
 pub mod i18n;
@@ -154,6 +155,9 @@ pub struct LightcraftApp {
     /// The keyboard shortcuts editor is waiting for a key press for this command: no shortcut
     /// fires (the native menu bar drops its accelerators too) until it gets one or is cancelled.
     pub recording_shortcut: Option<String>,
+    /// The window is narrower than [`COMPACT_BELOW_PT`] on a touch host: one panel at a time, the
+    /// tools in a bottom tab bar and sheet (`panels::compact`). Set every frame by `sync_theme`.
+    pub compact: bool,
     /// A text field had the keyboard at the end of the last frame. egui drops the focus as Esc
     /// arrives, before the shortcuts are read, so this is how Esc there stays the field's own.
     pub text_focus: bool,
@@ -354,6 +358,26 @@ pub struct LightcraftApp {
     pub recent_checks: panels::library_problem::RecentChecks,
     /// The activity stack shows every task, not just the first few ("+N more" was clicked).
     pub activity_expanded: bool,
+}
+
+/// Content width (points) below which a touch host ([`Services::touch`]) uses the compact,
+/// touch-first layout. The desktop layout needs about 810 pt; iPhones are 375–440 pt wide in
+/// portrait, iPads 744–834 pt in portrait (compact, with a side panel) and 1024 pt and more in
+/// landscape (the desktop layout, touch-sized).
+pub const COMPACT_BELOW_PT: f32 = 900.0;
+
+/// Minimum height (points) of egui-drawn rows and buttons (context menus, combo boxes, dialogs) in
+/// the compact layout: Apple's 44 pt touch target.
+pub const TOUCH_ROW_H: f32 = 44.0;
+
+pub(crate) fn compact_id() -> egui::Id {
+    egui::Id::unique("lc-compact")
+}
+
+/// Whether this frame uses the compact layout, for widgets that only have the context (bigger
+/// touch targets).
+pub fn is_compact(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(compact_id())).unwrap_or(false)
 }
 
 /// How long a screenshot waits for in-flight renders before it is captured anyway (and the
@@ -580,6 +604,8 @@ pub struct Caches {
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
     filter_values: Option<(u64, std::sync::Arc<FilterValues>)>,
+    /// The values the phone's Filter page lists, with their photo counts.
+    filter_choices: Option<(u64, std::sync::Arc<panels::filter_sheet::Choices>)>,
     /// The albums' counts: the minute they are of (while a smart album asks about "the last N days"), the tally
     /// that follows edits, and the counts as the panels take them.
     album_counts:

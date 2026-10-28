@@ -402,6 +402,8 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     let popup_open = egui::Popup::is_any_open(ctx);
     // Esc that just took a text field's focus away (it gives back the field's text) does nothing else
     let popup_open = popup_open || app.text_focus;
+    // (a phone's menu or action sheet closes on Esc too)
+    let popup_open = popup_open || crate::panels::mobile::any_actions_open(ctx);
     ctx.input(|i| {
         // Enter opens the active grid photo; widgets, popups and custom bindings keep the key.
         if grid

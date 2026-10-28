@@ -20,6 +20,7 @@ mod geometry;
 mod info;
 mod masks;
 mod retouch;
+mod touch;
 mod window;
 
 pub(crate) use crop::crop_angle_label;
@@ -50,6 +51,8 @@ use masks::{RegionEdit, color_range_pick, mask_overlay, region_overlay};
 use retouch::{eye_overlay, remove_overlay};
 pub(crate) use window::overlay_supports_window;
 use window::{WindowCtx, WindowView, draw_window, request_window};
+
+pub use touch::pulled;
 
 /// An in-progress on-canvas gesture.
 #[derive(Clone, Debug)]
@@ -130,7 +133,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let full = ui.max_rect();
     let fullscreen = app.ui.fullscreen;
-    let show_film = app.ui.filmstrip && !fullscreen;
+    // the compact layout has no filmstrip (it would eat the loupe)
+    let show_film = app.ui.filmstrip && !fullscreen && !app.compact;
     let film_h = if show_film { t.film_h } else { 0.0 };
     let canvas = Rect::from_min_max(full.min, pos2(full.right(), full.bottom() - film_h));
     app.canvas_rect = Some(canvas);
@@ -154,13 +158,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let frame = Frame::with_lens(photo.width.max(1) as usize, photo.height.max(1) as usize, &d, !crop_tool, photo.embedded_lens.as_ref());
     let aspect = frame.aspect() as f32;
     let ppp = ui.ctx().pixels_per_point();
-    let area = canvas.shrink(if fullscreen {
+    // review mode (phone): the bars are away and the readout of the stars and flag is over the photo
+    let review = app.compact && app.ui.review && !fullscreen;
+    let margin = if fullscreen || review {
         0.0
     } else if crop_tool {
-        48.0
+        // (a phone's handles sit just outside the frame, and the panels under the photo are tall)
+        if app.compact { 22.0 } else { 48.0 }
     } else {
         24.0
-    });
+    };
+    // (on the phone the margin follows the bars away)
+    let margin = ui.ctx().animate_value_with_time(egui::Id::unique("loupe-margin"), margin, if app.compact { 0.2 } else { 0.0 });
+    let area = canvas.shrink(margin);
     let native = output_px(&frame);
     let texture_side = texture_side(ui.ctx());
     // two views (before, after): side by side or stacked
@@ -217,6 +227,25 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let before_img = in_pane(areas[0], img_rect);
     let before_target = in_pane(areas[0], target_rect);
     app.image_rect = Some(img_rect);
+    // the phone's carousel: a drag across a fitted photo carries it along
+    let zoomed = img_rect.width() > canvas.width() + 1.0 || img_rect.height() > canvas.height() + 1.0;
+    let tool_free = !matches!(right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye) && app.ui.tool.is_empty();
+    // a finger held on the photo shows the Before until it lifts (side by side, it is on screen)
+    let hold = if app.compact { touch::before_hold(ui, &resp, tool_free && !split) } else { touch::BeforeHold::default() };
+    let held = hold.on || hold.lifted;
+    let live = app.compact && tool_free && !zoomed && !app.ui.zoom_anim && !held && !ui.input(|i| i.multi_touch().is_some());
+    let moved = if app.compact { touch::swipe(app, ui, &resp, canvas, id, live) } else { touch::Moved::default() };
+    let mut img_rect = img_rect.translate(vec2(moved.slide, 0.0));
+    // pulled down: the photo follows the finger, smaller the further it goes
+    let pull_k = (moved.pull.y / canvas.height().max(1.0)).clamp(0.0, 1.0);
+    if moved.pull != egui::Vec2::ZERO {
+        img_rect = Rect::from_center_size(img_rect.center() + moved.pull, img_rect.size() * (1.0 - touch::PULL_SHRINK * pull_k));
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("loupe-pull"), if moved.dismiss { 0.0 } else { pull_k }));
+    if moved.dismiss {
+        // let go: back to the grid
+        let _ = app.run("view.back", json!({}));
+    }
     // request renders: the loupe at display resolution (drafts during drags)
     let interacting = app.session.interaction.is_some();
     let overlay = view_overlay(app, &d);
@@ -346,7 +375,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     {
         app.renderer.request_quick(Slot::Preview, q, 110);
     }
-    let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
+    let show_before = app.ui.before_after == BeforeAfter::Original || hold.on || ui.input(|i| i.key_down(egui::Key::Backslash));
     if (split || show_before || split_view)
         && let Some(job) = app.session.render_job(id, sw.max(8), sh.max(8), true, !crop_tool)
     {
@@ -561,6 +590,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             None => {}
         }
     }
+    if app.compact && !fullscreen {
+        touch::review_hud(ui, &p, canvas, &photo, review);
+    }
     if app.ui.settings.focus_point && !crop_tool {
         draw_focus_point(&p.with_clip_rect(img_rect.intersect(canvas)), img_rect, &photo, "canvas:focusPoint");
     }
@@ -598,7 +630,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     (true, Some(before), Some(q)) if before.contains(q) => (CanvasMap::new(&frame, before_img), before_img, *before),
                     _ => (map, img_rect, main_area),
                 };
-                general_interaction(app, ui, &resp, &map, img, pane, native, aspect)
+                general_interaction(app, ui, &resp, &map, img, pane, native, aspect, held)
             }
         }
     }
@@ -639,7 +671,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             None => {}
         }
     }
-    if let Some(why) = photo.preview_only.as_deref().filter(|_| !fullscreen) {
+    if let Some(why) = photo.preview_only.as_deref().filter(|_| !fullscreen && !review) {
         preview_only_pill(ui, canvas, why);
     }
     crate::widgets::context_menu(&resp, |ui| {
@@ -772,6 +804,7 @@ fn general_interaction(
     canvas: Rect,
     native: [usize; 2],
     aspect: f32,
+    held: bool,
 ) {
     if app.ui.tool == "wbPicker" {
         if resp.clicked()
@@ -805,7 +838,13 @@ fn general_interaction(
     }
     // click toggles Fit ↔ the chosen click-zoom ratio at the clicked point; drag pans when zoomed
     let zoomed = img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0;
-    if resp.double_clicked() || (resp.clicked() && !zoomed) {
+    // (a finger lifting from a hold on the Before is no tap, and while it holds it doesn't pan)
+    let (clicked, double_clicked) = (resp.clicked() && !held, resp.double_clicked() && !held);
+    // a double-click leaves the editor for the grid (the first click's zoom is taken back, so the
+    // photo isn't left magnified); on a touch layout the double tap zooms, below
+    // click toggles Fit ↔ the chosen click-zoom ratio at the clicked point; drag pans when zoomed.
+    // On a touch layout only a double tap zooms (a single tap must not move the photo).
+    if double_clicked || (clicked && !zoomed && !app.compact) {
         if let Some(q) = resp.interact_pointer_pos() {
             let u = ((q.x - img.left()) / img.width()).clamp(0.0, 1.0);
             let v = ((q.y - img.top()) / img.height()).clamp(0.0, 1.0);
@@ -813,12 +852,15 @@ fn general_interaction(
         }
         app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom as f32) } else { Zoom::Fit };
         app.ui.zoom_anim = true;
-    } else if resp.clicked() && zoomed {
+    } else if clicked && zoomed && !app.compact {
         app.ui.zoom = Zoom::Fit;
         app.ui.zoom_anim = true;
     }
-    if zoomed && resp.dragged() {
+    if zoomed && resp.dragged() && !held && !ui.input(|i| i.multi_touch().is_some()) {
         pan_image(app, canvas, img, resp.drag_delta());
+    }
+    if app.compact {
+        touch::tap(app, ui, resp, canvas, clicked, double_clicked);
     }
     let _ = (native, aspect);
 }

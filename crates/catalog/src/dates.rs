@@ -146,6 +146,73 @@ impl GroupBy {
     }
 }
 
+/// One month or year of the phone grid's Months / Years views: its key (`2025-08`, `2025`; empty for
+/// photos with no date), how many photos it has, and the ones it shows (indices into the list), the
+/// best first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DateBlock {
+    pub key: String,
+    pub count: usize,
+    pub shown: Vec<usize>,
+}
+
+impl Catalog {
+    /// The photos in `ids` grouped by capture month (`key_len` 7) or year (4), in the order they
+    /// come, each group showing up to `show` of them: the best (picked, then most stars) and the
+    /// rest spread evenly through it, in the group's own order. A group's count includes the photos
+    /// a collapsed stack's shown photo stands for (`stacked`, from [`Catalog::arrange_stacks_counted`]).
+    pub fn date_blocks(&self, ids: &[PhotoId], stacked: &std::collections::HashMap<PhotoId, usize>, key_len: usize, show: usize) -> Vec<DateBlock> {
+        let mut out: Vec<(String, Vec<usize>)> = Vec::new();
+        let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (i, id) in ids.iter().enumerate() {
+            let key = self.photo(*id).and_then(|p| p.captured.as_deref().and_then(|c| c.get(..key_len)).map(str::to_string)).unwrap_or_default();
+            match at.get(&key) {
+                Some(b) => {
+                    if let Some((_, members)) = out.get_mut(*b) {
+                        members.push(i);
+                    }
+                }
+                None => {
+                    at.insert(key.clone(), out.len());
+                    out.push((key, vec![i]));
+                }
+            }
+        }
+        let score = |i: usize| ids.get(i).and_then(|id| self.photo(*id)).map_or((false, 0), |p| (p.flag == crate::Flag::Pick, p.rating));
+        out.into_iter()
+            .map(|(key, members)| {
+                let best = members.iter().copied().max_by_key(|i| (score(*i), std::cmp::Reverse(*i))).unwrap_or(0);
+                let mut shown = vec![best];
+                let want = show.min(members.len());
+                let n = members.len();
+                let mut k = 0;
+                while shown.len() < want && k < n {
+                    // spread through the month: the photos at even steps from its start
+                    let pick = members.get(k * n / want.max(1)).copied().unwrap_or(best);
+                    if !shown.contains(&pick) {
+                        shown.push(pick);
+                    }
+                    k += 1;
+                }
+                for m in &members {
+                    if shown.len() >= want {
+                        break;
+                    }
+                    if !shown.contains(m) {
+                        shown.push(*m);
+                    }
+                }
+                // the rest in the month's own order
+                if let Some(rest) = shown.get_mut(1..) {
+                    rest.sort_unstable();
+                }
+                let count = members.iter().map(|i| ids.get(*i).and_then(|id| stacked.get(id)).copied().unwrap_or(1)).fold(0, usize::saturating_add);
+                DateBlock { key, count, shown }
+            })
+            .collect()
+    }
+}
+
 /// A run of consecutive photos with the same date (one header in the grid).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DateRun {
@@ -422,5 +489,44 @@ mod tests {
             shape(&c.date_runs(&arranged, SortKey::CaptureDate, GroupBy::Day))[..2],
             [("2026-09-30".into(), 0, 3), ("2026-08-01".into(), 3, 1)]
         );
+    }
+
+    /// The phone's month view: a block per month with the best photo first, then photos spread
+    /// through it, and a collapsed stack counted for all it stands for.
+    #[test]
+    fn date_blocks_show_the_best_photo_then_an_even_spread() {
+        let mut c = Catalog::new();
+        let times = [
+            ("2026-09-01T10:00:00", 0),
+            ("2026-09-05T10:00:00", 3),
+            ("2026-09-10T10:00:00", 0),
+            ("2026-09-15T10:00:00", 5),
+            ("2026-09-20T10:00:00", 0),
+            ("2026-09-25T10:00:00", 1),
+            ("2026-08-01T10:00:00", 0),
+        ];
+        let mut ids = Vec::new();
+        for (t, rating) in times {
+            let id = c.alloc_photo_id();
+            let mut p = Photo::new(id, Source::Demo { scene: 1 }, "a.jpg", "JPEG", 3, 2, "2026-10-01T00:00:00");
+            p.captured = Some(t.to_string());
+            p.rating = rating;
+            c.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+            ids.push(id);
+        }
+        let none = std::collections::HashMap::new();
+        let blocks = c.date_blocks(&ids, &none, 7, 3);
+        assert_eq!(blocks.iter().map(|b| (b.key.as_str(), b.count)).collect::<Vec<_>>(), [("2026-09", 6), ("2026-08", 1)]);
+        // the five-star photo first, then the month's first and its middle one
+        assert_eq!(blocks[0].shown, [3, 0, 2]);
+        assert_eq!(blocks[1].shown, [6]);
+        // asking for more than a month has shows all of it, the best still first
+        assert_eq!(c.date_blocks(&ids, &none, 7, 10)[0].shown, [3, 0, 1, 2, 4, 5]);
+        // a collapsed stack stands for its hidden members too
+        let stacked = std::collections::HashMap::from([(ids[1], 4)]);
+        assert_eq!(c.date_blocks(&ids, &stacked, 7, 3)[0].count, 9);
+        // no photos, no blocks; a key longer than the dates groups the photos without one together
+        assert!(c.date_blocks(&[], &none, 7, 3).is_empty());
+        assert_eq!(c.date_blocks(&ids, &none, 40, 3).len(), 1);
     }
 }

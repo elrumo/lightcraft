@@ -17,6 +17,7 @@ pub use view::{
     LightsOut, LoupeInfo, LoupeInfoField, MIN_PHOTO_WIDTH, PanelWidth, RIGHT_WIDTH, RightPanel, THUMB_SIZE_MAX, THUMB_SIZE_MIN, THUMB_SIZE_STEP,
     ToolOverlay, ViewMode, Zoom,
 };
+pub use view::{GridJump, GridSpan};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -223,6 +224,43 @@ pub struct UiState {
     /// section opens down to it and scrolls to it, once.
     #[serde(skip)]
     pub reveal_folder: Option<String>,
+    /// Compact layout: the grid is choosing photos (a tap adds or removes one; the action bar
+    /// works on the chosen ones). Entered with Select or a long press; `view.selectMode`.
+    #[serde(skip)]
+    pub select_mode: bool,
+    /// Compact layout: photos are being chosen from the library to add to this album (the album's +
+    /// ▸ LightCraft): All Photos in select mode, with Add in place of the action bar. Leaving select
+    /// mode goes back to the album.
+    #[serde(skip)]
+    pub adding_to: Option<u64>,
+    /// Compact layout: rate-and-review mode on a photo (a tap on it): the bars slide away and an up
+    /// or down swipe rates it (left half) or flags it (right half). `view.reviewMode`.
+    #[serde(skip)]
+    pub review: bool,
+    /// Compact layout: the Edit tool's group (`profile`, `light`, `color`, `effects`, `detail`,
+    /// `optics`, `lensBlur`, `calibration`); a phone shows one group at a time.
+    pub edit_group: String,
+    /// Compact layout: how tall the tool sheet is, as the stop (0 small, 1 medium, 2 large) it was
+    /// last left at (the grabber at its top snaps between them).
+    pub sheet_detent: u8,
+    /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
+    #[serde(skip)]
+    pub all_commands: bool,
+    /// Compact layout: the Filter page is open, at its first list (`""`) or at one of the lists it
+    /// opens (`type`, `camera`, `people`, `location`, `keyword`, `edited`); `view.filterSheet`.
+    #[serde(skip)]
+    pub filter_sheet: Option<String>,
+    /// Compact layout: photos across a row of the grid (a pinch changes it; one of
+    /// `panels::grid_zoom::STEPS`; `view.gridColumns`).
+    pub grid_columns: u8,
+    /// Compact layout: every photo, months or years (`view.gridSpan`).
+    #[serde(skip)]
+    pub grid_span: GridSpan,
+    /// Compact layout: where the grid goes on its next frame (after a change of span).
+    #[serde(skip)]
+    pub grid_jump: Option<GridJump>,
+    /// The grid last shown (justified or square): where Back from a photo goes.
+    pub grid_mode: ViewMode,
     /// Scroll the grid back to its top on the next frame (`view.scrollToTop`: iOS, a tap on the status bar).
     #[serde(skip)]
     pub scroll_top: bool,
@@ -355,6 +393,8 @@ pub struct UiState {
     pub status: String,
     #[serde(skip)]
     pub dialog: Option<Dialog>,
+    /// The dialog a phone is sliding its page away from, drawn from what it was when it closed.
+    pub dialog_leaving: Option<Dialog>,
     /// The Print dialog's page, selection and drag.
     #[serde(skip)]
     pub print: crate::print_view::PrintUi,
@@ -445,6 +485,17 @@ impl Default for UiState {
             reveal_keyword: None,
             reveal_folder: None,
             scroll_top: false,
+            select_mode: false,
+            adding_to: None,
+            review: false,
+            edit_group: "light".into(),
+            sheet_detent: 1,
+            all_commands: false,
+            filter_sheet: None,
+            grid_columns: 3,
+            grid_span: GridSpan::All,
+            grid_jump: None,
+            grid_mode: ViewMode::PhotoGrid,
             dragging_album: None,
             dragging_section: None,
             curve_channel: "parametric".into(),
@@ -500,6 +551,7 @@ impl Default for UiState {
             rechecked_library: None,
             status: String::new(),
             dialog: None,
+            dialog_leaving: None,
             print: Default::default(),
         }
     }
@@ -580,6 +632,10 @@ impl UiState {
         self.left_width = LEFT_WIDTH.clamp(self.left_width);
         self.right_width = RIGHT_WIDTH.clamp(self.right_width);
         self.brush_size = self.brush_size.clamp(0.002, 0.5);
+        self.grid_columns = crate::panels::grid_zoom::snap(self.grid_columns);
+        if !matches!(self.grid_mode, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+            self.grid_mode = ViewMode::PhotoGrid;
+        }
         self.sidebar.adopt_collapsed(&std::mem::take(&mut self.collapsed_sidebar));
         self.dialog = None;
         self.fullscreen = false;

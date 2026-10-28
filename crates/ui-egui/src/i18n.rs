@@ -434,6 +434,24 @@ pub fn date_group_label(key: &str, short: bool) -> String {
     tr(&label).to_string()
 }
 
+/// A count with its thousands grouped as the UI language writes them (41,721; 41.721; 41 721).
+pub fn grouped(n: usize) -> String {
+    let sep = match language() {
+        Locale::De | Locale::Es | Locale::PtBr | Locale::It | Locale::Id | Locale::Vi => '.',
+        Locale::Fr | Locale::Ru | Locale::Uk | Locale::Pl | Locale::Cs | Locale::Ka | Locale::Sv | Locale::Fi => '\u{a0}',
+        Locale::En | Locale::Ja | Locale::ZhHans | Locale::ZhHant => ',',
+    };
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() * 2);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(sep);
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// A capture time for display in the UI language (English: "March 30, 2022 at 10:11:11 PM");
 /// the metadata itself is never rewritten, and a value that doesn't parse is shown as it is.
 pub fn display_time(iso: &str) -> String {

@@ -211,6 +211,17 @@ impl Caches {
         self.date_groups = Some((cat.revision, g.clone()));
         g
     }
+    /// The values the phone's Filter page lists (cameras, people, keywords), with their photo counts.
+    pub fn filter_choices(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<crate::panels::filter_sheet::Choices> {
+        match &self.filter_choices {
+            Some((r, c)) if *r == cat.revision => c.clone(),
+            _ => {
+                let c = std::sync::Arc::new(crate::panels::filter_sheet::Choices::of(cat));
+                self.filter_choices = Some((cat.revision, c.clone()));
+                c
+            }
+        }
+    }
     /// Cameras, lenses and keywords in the library (filter bar pickers).
     pub fn filter_values(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<FilterValues> {
         match &self.filter_values {

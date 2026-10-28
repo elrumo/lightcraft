@@ -265,6 +265,8 @@ pub struct Headless {
     pub window_commands: Vec<ViewportCommand>,
     /// The pointer cursor the last frame asked for (what a real host would show).
     pub last_cursor: egui::CursorIcon,
+    /// The screen's safe area (a phone's status bar and home indicator), as a host reports it.
+    pub safe_area: Option<egui::SafeAreaInsets>,
     /// Test-only hook run after `raw_input_hook` and before `logic`/`ui`, as eframe does: it can
     /// create a prompt after the host input was already filtered for the previous frame.
     #[cfg(test)]
@@ -309,6 +311,7 @@ impl Headless {
             window_maximized: false,
             window_commands: vec![],
             last_cursor: egui::CursorIcon::Default,
+            safe_area: None,
             #[cfg(test)]
             after_raw_input_hook: None,
         }
@@ -341,10 +344,17 @@ impl Headless {
         self.quit
     }
 
+    /// Run one frame with these events in it (several at once, as a browser delivers a tap).
+    pub fn step_with(&mut self, events: impl IntoIterator<Item = egui::Event>) {
+        self.events.extend(events);
+        self.step();
+    }
+
     /// Run one frame.
     pub fn step(&mut self) {
         (self.size, self.pixels_per_point) = bounded_viewport(self.size, self.pixels_per_point);
         let mut raw = HeadlessView::raw_input(self.size, self.pixels_per_point, self.time, std::mem::take(&mut self.events));
+        raw.safe_area_insets = self.safe_area;
         raw.viewports.entry(ViewportId::ROOT).or_default().maximized = Some(self.window_maximized);
         raw.max_texture_side = (self.reported_texture_side != Some(self.max_texture_side)).then_some(self.max_texture_side);
         self.reported_texture_side = Some(self.max_texture_side);

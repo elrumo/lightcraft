@@ -1,5 +1,48 @@
 use super::*;
 
+/// How the phone's grid spans the library: every photo, a few of each month, or one card a year
+/// (as iOS's Photos offers them, `view.gridSpan`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GridSpan {
+    #[default]
+    All,
+    Months,
+    Years,
+}
+
+impl GridSpan {
+    pub const ALL: [GridSpan; 3] = [GridSpan::Years, GridSpan::Months, GridSpan::All];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            GridSpan::All => "all",
+            GridSpan::Months => "months",
+            GridSpan::Years => "years",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<GridSpan> {
+        GridSpan::ALL.into_iter().find(|s| s.id() == id)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GridSpan::All => "All",
+            GridSpan::Months => "Months",
+            GridSpan::Years => "Years",
+        }
+    }
+}
+
+/// Where the phone's grid goes once it is drawn in its new span: a photo, or the first photo of a
+/// month (`2025-08`) or a year (`2025`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GridJump {
+    Photo(u64),
+    Date(String),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ViewMode {

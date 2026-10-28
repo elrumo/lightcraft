@@ -168,6 +168,9 @@ pub struct Services {
     pub system_theme: Option<SystemThemeFn>,
     /// Runs self-hosted sync requests off the UI thread ([`crate::sync_ui`]); `None`: this host doesn't sync.
     pub sync_exec: Option<crate::sync_ui::SyncExec>,
+    /// The host is a phone or tablet: a window narrower than [`crate::COMPACT_BELOW_PT`] gets the
+    /// compact, touch-first layout (`panels::compact`) instead of the desktop one.
+    pub touch: bool,
     /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
     pub share_exports: Option<ShareExports>,
     /// Adds exports to the device's photo library (iOS: Save to Photos in the share sheet and the

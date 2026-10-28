@@ -253,7 +253,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         }
         if !d.move_files {
             field(ui, "Raw files", |ui| {
-                let r = ui.checkbox(&mut d.dng, crate::i18n::tr("Copy as DNG"));
+                let r = crate::widgets::check(ui, &mut d.dng, crate::i18n::tr("Copy as DNG"));
                 register(ui, "check:importDng", r.rect);
             });
         }

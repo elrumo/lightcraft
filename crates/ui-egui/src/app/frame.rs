@@ -429,6 +429,14 @@ impl LightcraftApp {
             self.end_frame(&ctx, t0);
             return;
         }
+        if self.compact {
+            // a phone or a narrow tablet: one panel at a time (its overlays are the desktop's, on top)
+            panels::compact::show(self, ui, notice_blocks);
+            (self.next_widgets, self.next_widget_hits) = widgets::take_registries(&ctx);
+            self.text_focus = ctx.egui_wants_keyboard_input();
+            self.end_frame(&ctx, t0);
+            return;
+        }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);

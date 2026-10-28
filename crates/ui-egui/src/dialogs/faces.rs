@@ -169,7 +169,7 @@ pub fn setup_banner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 fn gpu_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, gpu: &Value) {
     heading(ui, t, "Processor");
     let mut cpu = gpu["cpuOnly"].as_bool().unwrap_or(false);
-    let r = ui.checkbox(&mut cpu, crate::i18n::tr("Run face models on the CPU only"));
+    let r = crate::widgets::check(ui, &mut cpu, crate::i18n::tr("Run face models on the CPU only"));
     register(ui, "check:settings.facesCpuOnly", r.rect);
     if r.changed() {
         match app.run("faces.gpu", json!({"cpuOnly": cpu})) {

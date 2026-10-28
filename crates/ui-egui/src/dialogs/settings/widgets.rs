@@ -79,7 +79,7 @@ pub(crate) fn hint(ui: &mut egui::Ui, t: &Tokens, text: &str) {
 
 /// A checkbox addressable as `check:{id}`; true when toggled.
 pub(crate) fn check(ui: &mut egui::Ui, id: &str, value: &mut bool, label: &str) -> bool {
-    let r = ui.checkbox(value, crate::i18n::tr(label));
+    let r = crate::widgets::check(ui, value, crate::i18n::tr(label));
     register(ui, format!("check:{id}"), r.rect);
     r.changed()
 }

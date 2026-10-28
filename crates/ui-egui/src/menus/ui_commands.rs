@@ -221,6 +221,15 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("merge.hdrLast", "HDR with Last Settings", Some("Ctrl+Shift+H"), "Photo>Photo Merge"),
     ("merge.panoramaLast", "Panorama with Last Settings", Some("Ctrl+Shift+M"), "Photo>Photo Merge"),
     ("merge.hdrPanoramaLast", "HDR Panorama with Last Settings", None, "Photo>Photo Merge"),
+    // compact layout: choose photos by touch (Select, or a long press in the grid)
+    ("view.selectMode", "Select Photos", None, ""),
+    // compact layout: a photo with the bars away, where swipes rate and flag it
+    ("view.reviewMode", "Rate & Review", None, ""),
+    // compact layout: the Filter page (the filter button over the grid)
+    ("view.filterSheet", "Filter…", None, ""),
+    // compact layout: photos across the grid (a pinch), and every photo / months / years
+    ("view.gridColumns", "Grid Columns", None, ""),
+    ("view.gridSpan", "Years, Months or All Photos", None, ""),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     ("file.addFolder", "Import from Folder…", None, "File"),
     // the host's own pickers (iOS: Photos, Files); only in hosts that have them

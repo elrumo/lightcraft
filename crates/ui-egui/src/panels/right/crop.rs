@@ -70,7 +70,7 @@ fn custom_aspect(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 
 pub(super) fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
-    header(ui, "Crop");
+    tool_header(ui, "Crop");
     padded(ui, |ui| {
         let original = app.session.catalog.photo(id).map(|p| {
             let (w, h) = (p.width.max(1) as f64, p.height.max(1) as f64);
@@ -274,7 +274,7 @@ pub(super) fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 pub(super) fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
-    header(ui, "Remove");
+    tool_header(ui, "Remove");
     padded(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             for (label, tool) in [("Remove", "remove"), ("Content-Aware", "fill"), ("Heal", "heal"), ("Clone", "clone")] {

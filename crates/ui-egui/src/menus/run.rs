@@ -372,9 +372,78 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.toast(&ctx, crate::i18n::tr(if app.ui.auto_advance { "Auto Advance On" } else { "Auto Advance Off" }));
             Ok(json!({"autoAdvance": app.ui.auto_advance}))
         }
+        "view.selectMode" => {
+            // {on?: bool (default: toggle), id?: photo to start with (a long press)}
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.select_mode);
+            app.ui.select_mode = on;
+            if on {
+                if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                    app.ui.view = ViewMode::PhotoGrid;
+                }
+                let ids: Vec<u64> = p.get("id").and_then(Value::as_u64).into_iter().collect();
+                if let Err(e) = app.run("library.select", json!({"ids": ids})) {
+                    return Some(Err(e));
+                }
+            }
+            Ok(json!({"on": on, "selected": app.session.selection.ids.len()}))
+        }
+        "view.reviewMode" => {
+            // {on?: bool (default: toggle)}: a photo open in the compact layout, the bars away
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.review);
+            app.ui.review = on && app.ui.view == ViewMode::Detail && app.session.active().is_some();
+            Ok(json!({"on": app.ui.review}))
+        }
+        "view.gridColumns" => {
+            // {columns: n (snapped to the nearest the grid offers) | step: ±1 (fewer / more)}
+            let now = app.ui.grid_columns;
+            let columns = match (p.get("columns").and_then(Value::as_u64), p.get("step").and_then(Value::as_i64)) {
+                (Some(n), _) => crate::panels::grid_zoom::snap(u8::try_from(n.min(255)).unwrap_or(u8::MAX)),
+                (None, Some(step)) => crate::panels::grid_zoom::step(now, step),
+                (None, None) => return Some(Err("view.gridColumns: give `columns` or `step`".into())),
+            };
+            app.ui.grid_columns = columns;
+            Ok(json!({"columns": columns}))
+        }
+        "view.gridSpan" => {
+            // {span: "all" | "months" | "years", photo?: id, date?: "2025" | "2025-08" (where to go)}
+            let Some(span) = p.get("span").and_then(Value::as_str).and_then(crate::state::GridSpan::from_id) else {
+                return Some(Err("view.gridSpan: `span` is all, months or years".into()));
+            };
+            if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = if app.ui.grid_mode == ViewMode::SquareGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid };
+            }
+            app.ui.select_mode = false;
+            app.ui.grid_span = span;
+            app.ui.grid_jump = match (p.get("photo").and_then(Value::as_u64), p.get("date").and_then(Value::as_str)) {
+                (Some(id), _) => Some(crate::state::GridJump::Photo(id)),
+                (None, Some(d)) => Some(crate::state::GridJump::Date(d.to_string())),
+                _ => None,
+            };
+            Ok(json!({"span": span.id()}))
+        }
+        "view.filterSheet" => {
+            // {list?: "type" | "camera" | "people" | "keyword" | "edited", close?: bool}
+            if p.get("close").and_then(Value::as_bool) == Some(true) {
+                app.ui.filter_sheet = None;
+                return Some(Ok(json!({"open": false})));
+            }
+            let list = p.get("list").and_then(Value::as_str).unwrap_or("");
+            if !list.is_empty() && !crate::panels::filter_sheet::LISTS.iter().any(|(id, _, _)| *id == list) {
+                return Some(Err(format!("view.filterSheet: unknown list `{list}`")));
+            }
+            if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = if app.ui.grid_mode == ViewMode::SquareGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid };
+            }
+            app.ui.filter_sheet = Some(list.to_string());
+            Ok(json!({"open": true, "list": list}))
+        }
         "view.back" => {
             if app.ui.dialog.is_some() {
                 app.ui.dialog = None;
+            } else if app.ui.select_mode {
+                app.ui.select_mode = false;
+            } else if app.ui.review {
+                app.ui.review = false;
             } else if app.ui.lights_out != crate::state::LightsOut::On {
                 app.ui.lights_out = crate::state::LightsOut::On;
             } else if app.ui.keyword_painter.is_some() {
@@ -399,6 +468,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                         app.ui.view = ViewMode::People;
                         app.ui.person_page = name;
                     }
+                    _ if app.compact => app.ui.view = app.ui.grid_mode,
                     _ => app.ui.view = ViewMode::PhotoGrid,
                 }
             }

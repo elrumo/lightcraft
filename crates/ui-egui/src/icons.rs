@@ -114,6 +114,32 @@ pub enum Icon {
     Sun,
     /// Appearance Mode ▸ Dark: a crescent moon.
     Moon,
+    /// A flag with a tick on it: only the picked photos.
+    FlagChecked,
+    /// A person: a head over shoulders.
+    Person,
+    /// A camera: a body with a lens.
+    Camera,
+    /// Reset: an arrow turning back over a line.
+    Reset,
+    /// A map pin: a ring on a point.
+    Pin,
+    /// Undo: a hook arrow pointing back.
+    Undo,
+    /// Redo: the hook arrow pointing forward.
+    Redo,
+    /// Colour (white balance, saturation…): a drop.
+    Drop,
+    /// Effects (texture, clarity, vignette…): a frame with a darkened edge.
+    Vignette,
+    /// Detail (sharpening, noise): a sharp-edged triangle.
+    Detail,
+    /// Optics (lens corrections): two overlapping lens circles.
+    Lens,
+    /// Lens Blur: an aperture (a circle and the six blades of an iris around a hexagonal opening).
+    Aperture,
+    /// Automatic settings: a wand with sparks.
+    Wand,
 }
 
 struct Pen<'a> {
@@ -641,6 +667,72 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<
             for x in [6.8, 10.0, 13.2] {
                 pen.dot(x, 8.5, 1.1);
             }
+        }
+        FlagChecked => {
+            pen.line(&[(5.0, 17.0), (5.0, 3.5)]);
+            pen.closed(&[(5.0, 3.5), (15.0, 3.5), (12.5, 7.0), (15.0, 10.5), (5.0, 10.5)]);
+            pen.line(&[(7.3, 7.1), (8.9, 8.7), (11.8, 5.2)]);
+        }
+        Person => {
+            pen.circle(10.0, 6.5, 3.4);
+            pen.arc(10.0, 18.5, 7.0, 200.0, 340.0);
+        }
+        Camera => {
+            pen.rect(2.5, 6.0, 17.5, 16.0, 2.0);
+            pen.line(&[(7.0, 6.0), (8.3, 3.8), (11.7, 3.8), (13.0, 6.0)]);
+            pen.circle(10.0, 11.0, 3.0);
+        }
+        Reset => {
+            pen.arc(11.0, 12.0, 5.5, 180.0, 360.0);
+            pen.line(&[(3.0, 9.5), (5.5, 12.5), (8.0, 9.5)]);
+            pen.line(&[(3.0, 16.5), (17.0, 16.5)]);
+        }
+        Pin => {
+            pen.arc(10.0, 8.0, 5.5, 140.0, 400.0);
+            pen.line(&[(5.8, 11.5), (10.0, 18.0), (14.2, 11.5)]);
+            pen.circle(10.0, 8.0, 1.8);
+        }
+        Undo => {
+            pen.line(&[(5.0, 8.0), (13.0, 8.0)]);
+            pen.arc(13.0, 11.5, 3.5, -90.0, 90.0);
+            pen.line(&[(13.0, 15.0), (8.0, 15.0)]);
+            pen.line(&[(8.0, 5.0), (5.0, 8.0), (8.0, 11.0)]);
+        }
+        Redo => {
+            pen.line(&[(15.0, 8.0), (7.0, 8.0)]);
+            pen.arc(7.0, 11.5, 3.5, 90.0, 270.0);
+            pen.line(&[(7.0, 15.0), (12.0, 15.0)]);
+            pen.line(&[(12.0, 5.0), (15.0, 8.0), (12.0, 11.0)]);
+        }
+        Drop => {
+            pen.arc(10.0, 12.0, 5.0, -30.0, 210.0);
+            pen.line(&[(5.67, 9.5), (10.0, 2.5), (14.33, 9.5)]);
+        }
+        Vignette => {
+            pen.rect(3.0, 4.0, 17.0, 16.0, 2.0);
+            pen.p.add(Shape::ellipse_stroke(pen.pt(10.0, 10.0), vec2(5.0 * pen.k, 4.0 * pen.k), pen.s));
+        }
+        Detail => pen.closed(&[(10.0, 3.0), (16.5, 16.5), (3.5, 16.5)]),
+        Lens => {
+            pen.circle(8.0, 10.0, 5.0);
+            pen.circle(12.0, 10.0, 5.0);
+        }
+        Aperture => {
+            pen.circle(10.0, 10.0, 7.5);
+            // each blade's edge runs from a corner of the opening out to the rim, a sixth further round
+            for k in 0..6 {
+                let a = k as f32 * std::f32::consts::FRAC_PI_3;
+                let (ci, si) = (a.cos(), a.sin());
+                let (co, so) = ((a + 1.2).cos(), (a + 1.2).sin());
+                pen.line(&[(10.0 + 3.2 * ci, 10.0 + 3.2 * si), (10.0 + 7.5 * co, 10.0 + 7.5 * so)]);
+            }
+        }
+        Wand => {
+            pen.line(&[(4.0, 16.0), (12.0, 8.0)]);
+            pen.line(&[(14.5, 2.5), (14.5, 6.5)]);
+            pen.line(&[(12.5, 4.5), (16.5, 4.5)]);
+            pen.dot(7.0, 5.0, 0.9);
+            pen.dot(16.0, 11.0, 0.9);
         }
     }
 }

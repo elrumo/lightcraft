@@ -589,3 +589,18 @@ fn capture_time_invalid_calendar_anchor_keeps_other_targets_and_redo() {
         assert_eq!(s.pending_log, log);
     }
 }
+
+/// A sideways drag over the grid chooses the run from where it began to the finger, on top of what
+/// was chosen; one that began on a chosen photo takes the run away.
+#[test]
+fn a_run_of_photos_is_chosen_or_unchosen() {
+    let mut s = Session::with_demo();
+    let visible: Vec<u64> = s.visible_shared().1.iter().map(|i| i.0).collect();
+    let chosen = |s: &Session| s.selection.ids.iter().map(|i| i.0).collect::<std::collections::HashSet<u64>>();
+    s.execute("library.chooseRun", &json!({"base": [visible[10]], "from": 4, "to": 2, "adding": true})).unwrap();
+    assert_eq!(chosen(&s), [visible[10], visible[2], visible[3], visible[4]].into_iter().collect());
+    let base: Vec<u64> = chosen(&s).into_iter().collect();
+    s.execute("library.chooseRun", &json!({"base": base, "from": 3, "to": 4, "adding": false})).unwrap();
+    assert_eq!(chosen(&s), [visible[10], visible[2]].into_iter().collect());
+    assert!(s.execute("library.chooseRun", &json!({"from": 1})).is_err());
+}

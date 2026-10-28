@@ -262,6 +262,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         host_pick: None,
         haptic: None,
         clipboard_text: None,
+        touch: false,
     }
 }
 

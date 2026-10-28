@@ -1,16 +1,22 @@
 //! Window regions and panels.
 
 pub mod activity;
+pub mod alert;
 pub mod bottombar;
 pub mod chips;
+pub mod compact;
 pub mod compare;
 pub mod crop_overlay;
 pub mod denoise;
 pub mod detail;
 pub mod edit;
 pub mod empty_library;
+pub mod filter_sheet;
 pub mod filterbar;
 pub mod grid;
+pub mod grid_dates;
+pub mod grid_touch;
+pub mod grid_zoom;
 pub mod histogram;
 pub mod keyword_list;
 pub mod keywording;
@@ -19,6 +25,7 @@ pub mod left;
 pub mod library_problem;
 pub mod mask_effects;
 pub mod masking;
+pub mod mobile;
 pub mod notices;
 pub mod people;
 pub mod person;

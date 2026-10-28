@@ -251,6 +251,7 @@ pub(crate) fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::
         host_pick: None,
         haptic: None,
         clipboard_text: None,
+        touch: false,
     }
 }
 

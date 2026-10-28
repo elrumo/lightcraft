@@ -114,7 +114,7 @@ pub(super) fn slideshow_export_body(app: &mut LightcraftApp, ui: &mut egui::Ui, 
     });
     let note = match settings.format {
         Format::Pdf => {
-            let r = ui.checkbox(&mut settings.full_screen, crate::i18n::tr("Automatically show full screen"));
+            let r = crate::widgets::check(ui, &mut settings.full_screen, crate::i18n::tr("Automatically show full screen"));
             crate::widgets::register(ui, "check:slideshowExportFullScreen", r.rect);
             "One page per slide (the long side in pixels = points), with the slide duration and fade for the viewer's presentation mode."
         }

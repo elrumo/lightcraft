@@ -206,7 +206,7 @@ pub(super) fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut lightcraft
         (R::Megapixels, "Megapixels"),
         (R::Percent, "Percentage"),
     ];
-    let r_full = ui.checkbox(full, crate::i18n::tr("Full size"));
+    let r_full = crate::widgets::check(ui, full, crate::i18n::tr("Full size"));
     crate::widgets::register(ui, "check:exportFullSize", r_full.rect);
     if !*full {
         field(ui, "Resize to", |ui| {
@@ -248,7 +248,7 @@ pub(super) fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut lightcraft
                 r.height = h as u32;
             }
         }
-        let c = ui.checkbox(&mut r.dont_enlarge, crate::i18n::tr("Don't enlarge"));
+        let c = crate::widgets::check(ui, &mut r.dont_enlarge, crate::i18n::tr("Don't enlarge"));
         crate::widgets::register(ui, "check:exportDontEnlarge", c.rect);
     }
     let mut p = *ppi as f64;

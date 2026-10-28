@@ -29,6 +29,7 @@ use folders::{folder_rows, reveal_chosen};
 use keywords::keyword_rows;
 pub(crate) use local::{fs_cached, fs_cached_running, same_folder};
 use local::{local_now, local_rows};
+pub(crate) use rows::OPENED_AT;
 #[cfg(test)]
 pub(crate) use rows::{INDENT_STEP, MIN_INDENT_STEP};
 use rows::{LIBFOLDER_REVEALED, SCROLL_TO_ROW, row, set_tree_open};
@@ -45,18 +46,36 @@ use server::server_folders_section;
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let frame = egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider));
-    frame.show(ui, |ui| {
+    frame.show(ui, |ui| body(app, ui));
+}
+
+/// The "My Photos" sidebar content (library sources, albums, folders): the side panel on desktop,
+/// a page of its own in the compact layout.
+pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    let phone = crate::is_compact(ui.ctx());
+    // a phone's albums page: under its own title "Albums" the list starts at once
+    let page = phone && ui.ctx().content_rect().width() < super::compact::WIDE_PT;
+    {
         ui.spacing_mut().item_spacing.y = 0.0;
         // the title offers the sections' menu too: where hidden sections come back from
-        let (hr, title) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+        let (hr, title) = ui.allocate_exact_size(vec2(ui.available_width(), if page { 6.0 } else { 44.0 }), Sense::click());
         crate::widgets::announce(&title, crate::i18n::tr("My Photos"));
         register(ui, "sidebarTitle", hr);
         crate::widgets::context_menu(&title, |ui| sections_menu(app, ui, None));
         // the open library's name under the title, so nobody edits in the wrong one (issue #902)
         let library = crate::panels::settings::open_library_name(app);
         let title_y = if library.is_some() { hr.center().y - 7.0 } else { hr.center().y };
-        ui.painter().text(pos2(hr.left() + 18.0, title_y), Align2::LEFT_CENTER, crate::i18n::tr("My Photos"), t.semibold(15.0), t.text);
-        if let Some(name) = library {
+        if !page {
+            ui.painter().text(
+                pos2(hr.left() + 18.0, title_y),
+                Align2::LEFT_CENTER,
+                crate::i18n::tr("My Photos"),
+                if phone { t.semibold(20.0) } else { t.semibold(15.0) },
+                t.text,
+            );
+        }
+        if let Some(name) = library.as_ref().filter(|_| !page) {
             ui.painter().with_clip_rect(hr.shrink2(vec2(18.0, 0.0))).text(
                 pos2(hr.left() + 18.0, hr.center().y + 10.0),
                 Align2::LEFT_CENTER,
@@ -71,7 +90,25 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
         let counts = app.caches.counts(&app.session.catalog);
         let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
-        egui::ScrollArea::both().id_salt("left-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+        let carrying = app.ui.dragging_album.is_some() || app.ui.dragging_section.is_some();
+        let mut scroll = egui::ScrollArea::both().id_salt("left-scroll").auto_shrink([false, false]);
+        if phone && carrying {
+            // (a finger carrying an album moves it, not the list: the list scrolls at its edges, `drag_auto_scroll`)
+            scroll = scroll.scroll_source(egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() });
+        }
+        let out = scroll.show_viewport(ui, |ui, viewport| {
+            if page && let Some(name) = &library {
+                // the open library's name, so nobody edits in the wrong one (issue #902)
+                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+                ui.painter().with_clip_rect(r.shrink2(vec2(16.0, 0.0))).text(
+                    r.left_center() + vec2(16.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    name,
+                    t.font(13.0),
+                    t.text_dim,
+                );
+                register(ui, "label:libraryName", r);
+            }
             drag_auto_scroll(app, ui);
             // where the visible part of the content starts (screen y), for the pinned header
             let view_top = ui.cursor().top() + viewport.min.y;
@@ -86,15 +123,31 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 // where the visible part of the content ends (screen x), for what stays at the edge
                 d.insert_temp(egui::Id::unique("left-visible-right"), ui.cursor().left() + viewport.max.x);
             });
+            // (while People is shown, it is the row that is chosen)
+            let people_shown = app.ui.view == crate::state::ViewMode::People;
             let src = app.session.source;
             for (id, icon, label, count, s) in [
                 ("all", Icon::Photos, "All Photos", Some(total), LibrarySource::All),
                 ("recentlyAdded", Icon::Clock, "Recently Added", None, LibrarySource::RecentlyAdded),
-                ("picks", Icon::FlagPick, "Picks", Some(picks), LibrarySource::Picks),
             ] {
-                if row(app, ui, id, icon, label, count, src == s, 0.0).clicked() {
+                if row(app, ui, id, icon, label, count, src == s && !people_shown, 0.0).clicked() {
                     let _ = app.run("library.source", json!({"kind": id}));
+                    leave_people(app);
                 }
+            }
+            // the people named in the photos (the People view; on a phone, a screen of its own)
+            if phone {
+                let people = app.caches.people(&app.session.catalog, &lightcraft_catalog::Filter::default()).len();
+                if row(app, ui, "people", Icon::Person, "People", Some(people), people_shown, 0.0).clicked() {
+                    let _ = app.run("view.people", json!({}));
+                    if app.compact {
+                        app.ui.left_panel = false;
+                    }
+                }
+            }
+            if row(app, ui, "picks", Icon::FlagPick, "Picks", Some(picks), src == LibrarySource::Picks && !people_shown, 0.0).clicked() {
+                let _ = app.run("library.source", json!({"kind": "picks"}));
+                leave_people(app);
             }
             // photos whose files can't be found (checked every few seconds, not every frame)
             let missing = missing_count(app, ui);
@@ -170,10 +223,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 placed.push(at);
             }
             ui.data_mut(|d| d.remove::<String>(egui::Id::unique(SCROLL_TO_ROW)));
-            // room below the last section (a section dragged to the end is dropped here)
-            ui.add_space(SECTION_GAP * 2.0);
+            // room below the last section (a section dragged to the end is dropped here; on a phone,
+            // the last rows scroll up clear of Create New)
+            ui.add_space(if page { CREATE_H + 40.0 } else { SECTION_GAP * 2.0 });
             pinned_header(app, ui, &placed, view_top);
             section_drag(app, ui, &placed);
+            if page {
+                create_new(ui);
+            }
             // what the rows asked for becomes next frame's width
             let next = ui.data(|d| d.get_temp::<f32>(egui::Id::unique("left-content-width-next"))).unwrap_or(0.0);
             if (next - content_width(ui.ctx())).abs() > 0.5 {
@@ -188,5 +245,74 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.ctx().request_repaint();
             }
         });
-    });
+        if page {
+            super::mobile::scrolled(ui.ctx(), "albums", &out);
+            if carrying {
+                super::mobile::hold(ui.ctx());
+            }
+        }
+    }
+}
+
+/// Height of the phone's Create New capsule.
+const CREATE_H: f32 = 52.0;
+
+/// A phone's "+ Create New" (`button:createNew`): an outlined capsule floating over the bottom of the
+/// albums list. It offers what Albums' + does (the `newAlbum` sheet, [`new_album_rows`]). Call last
+/// in the list's scroll area.
+fn create_new(ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    let view = ui.clip_rect();
+    let label = crate::i18n::tr("Create New");
+    let galley = ui.painter().layout_no_wrap(label.to_string(), t.semibold(17.0), t.text);
+    let w = galley.size().x + 18.0 + 10.0 + 2.0 * 24.0;
+    let r = Rect::from_center_size(pos2(view.center().x, view.bottom() - 16.0 - CREATE_H / 2.0), vec2(w, CREATE_H));
+    let resp = ui.interact(r, egui::Id::unique("left-create-new"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    register(ui, "button:createNew", r);
+    let k = crate::glass::press(ui.ctx(), &resp);
+    let r = r.expand(2.0 * k);
+    let p = ui.painter();
+    p.rect_filled(r, CREATE_H / 2.0, t.chrome);
+    p.rect_stroke(r, CREATE_H / 2.0, egui::Stroke::new(2.0, t.text.gamma_multiply(0.85)), egui::StrokeKind::Inside);
+    let left = r.center().x - (galley.size().x + 28.0) / 2.0;
+    paint(p, Rect::from_min_size(pos2(left, r.center().y - 9.0), vec2(18.0, 18.0)), Icon::Plus, t.text);
+    p.galley(pos2(left + 28.0, r.center().y - galley.size().y / 2.0), galley, t.text);
+    if resp.clicked() {
+        super::mobile::open_actions(ui.ctx(), "newAlbum");
+    }
+}
+
+/// The phone's Create New sheet: what Albums' + offers (`new_album_menu`) as finger-sized rows.
+pub(crate) fn new_album_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    for (id, icon, label, command) in [
+        ("newAlbum", Icon::Album, "Album", "dialog.newAlbum"),
+        ("newSmartAlbum", Icon::SmartAlbum, "Smart Album", "dialog.smartAlbum"),
+        ("newSmartAlbumFromFilter", Icon::Filter, "Smart Album from Filter", "dialog.newSmartAlbum"),
+        ("newFolder", Icon::Folder, "Folder", "dialog.newFolder"),
+    ] {
+        if super::mobile::row(ui, id, Some(icon), crate::i18n::tr(label), true)
+            && let Err(e) = app.run(command, json!({}))
+        {
+            app.toast(ui.ctx(), e);
+        }
+    }
+    if app.session.catalog.album_children_are_ordered(None) {
+        super::mobile::row_gap(ui);
+        if super::mobile::row(ui, "sortAlbums", Some(Icon::Sort), crate::i18n::tr("Sort Albums A–Z"), true) {
+            let _ = app.run("album.sort", json!({}));
+        }
+    }
+}
+
+/// A collection picked while People is shown: its photos, in the grid People was opened from.
+pub(crate) fn leave_people(app: &mut LightcraftApp) {
+    if app.ui.view == crate::state::ViewMode::People {
+        app.ui.person_page = None;
+        app.ui.view = if app.ui.grid_mode == crate::state::ViewMode::SquareGrid {
+            crate::state::ViewMode::SquareGrid
+        } else {
+            crate::state::ViewMode::PhotoGrid
+        };
+    }
 }

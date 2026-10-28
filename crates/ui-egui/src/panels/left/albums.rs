@@ -1,5 +1,5 @@
 use super::folders::{folder_menu, is_within};
-use super::rows::{INDENT_STEP, indent_x, row_sensed, set_tree_open, tree_open, tree_toggle};
+use super::rows::{INDENT_STEP, PHONE_TRAIL, indent_x, more_button, open_row_menu, row_sensed, set_tree_open, tree_open, tree_toggle};
 use super::*;
 
 /// Albums: the tree of albums and the folders they are sorted into. `reveal`: an album just made,
@@ -26,6 +26,9 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
         return;
     }
     let Some(kids) = all.get(&parent) else { return };
+    // a phone's finger scrolls the list: a row is picked up by holding it (`lift`), not by any drag
+    let phone = crate::is_compact(ui.ctx());
+    let sense = if phone { Sense::click() } else { Sense::click_and_drag() };
     for a in kids {
         if a.folder {
             let open_id = egui::Id::unique(("folder-open", a.id.0));
@@ -34,12 +37,16 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
                 open = true;
                 set_tree_open(ui, open_id, true);
             }
-            let resp =
-                row_sensed(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, None, false, indent, Sense::click_and_drag(), None);
             // a folder is no source, so its row folds it too; the triangle is the same click, aimed
             let has_children = all.get(&Some(a.id)).is_some_and(|v| !v.is_empty());
+            // (a phone says how many albums it holds; it folds by a tap on the row)
+            let items = phone.then(|| all.get(&Some(a.id)).map_or(0, Vec::len));
+            let resp = row_sensed(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, items, false, indent, sense, None);
             if resp.drag_started() {
                 app.ui.dragging_album = Some(a.id.0);
+            }
+            if phone {
+                lift(app, ui, &resp, a.id.0);
             }
             if album_drag_over(app, ui, &resp, a, has_children.then_some(&mut open), indent) {
                 set_tree_open(ui, open_id, true);
@@ -47,17 +54,17 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             // what this frame draws; a click shows from the next one
             let draw_open = open;
             let mut toggled = false;
-            if has_children {
+            if has_children && !phone {
                 let tri = tree_toggle(ui, &resp, indent, open_id, &mut open, format!("albumToggle:{}", a.id.0));
                 toggled = tri.clicked();
                 // the triangle sits on the row and takes its clicks: the menu opens from it too
                 folder_menu(app, &tri, a);
             }
             // one click, one toggle: the triangle's is not the row's as well
-            if resp.clicked() && !toggled {
+            if resp.clicked() && !toggled && !lifted(ui) {
                 set_tree_open(ui, open_id, !open);
             }
-            folder_menu(app, &resp, a);
+            album_row_menu(app, ui, &resp, a, phone);
             if draw_open {
                 albums_tree(app, ui, all, Some(a.id), indent + INDENT_STEP, open_to);
             }
@@ -74,12 +81,15 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             // a smart album whose rules no longer check (an album they test was deleted) says so
             let problems = app.caches.smart_album_problems(&app.session.catalog).get(&a.id).cloned().unwrap_or_default();
             let label = if problems.is_empty() { label } else { format!("⚠ {label}") };
-            let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, Sense::click_and_drag(), None);
+            let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, sense, None);
             if !problems.is_empty() {
                 crate::widgets::register(ui, format!("albumProblem:{}", a.id.0), resp.rect);
             }
             if resp.drag_started() {
                 app.ui.dragging_album = Some(a.id.0);
+            }
+            if phone {
+                lift(app, ui, &resp, a.id.0);
             }
             album_drag_over(app, ui, &resp, a, None, indent);
             if !a.is_smart() {
@@ -101,18 +111,80 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             // a check mark: this album's photos stay editable without a network (`album.makeAvailableOffline`)
             if app.session.sync_state().is_some_and(|st| st.config.offline_albums.contains(&a.id)) {
                 let t = Tokens::get(ui.ctx());
-                let c = pos2(resp.rect.right().min(super::sections::visible_right(ui)) - 46.0, resp.rect.center().y);
+                let trail = if phone { 16.0 + PHONE_TRAIL + 10.0 } else { 46.0 };
+                let c = pos2(resp.rect.right().min(super::sections::visible_right(ui)) - trail, resp.rect.center().y);
                 let mark = Rect::from_center_size(c, vec2(12.0, 12.0));
                 paint(ui.painter(), mark, Icon::Check, t.text_dim);
                 register(ui, format!("offline:album:{}", a.id.0), mark);
                 resp = resp.on_hover_text(crate::i18n::tr("Available offline on this device"));
             }
-            if resp.clicked() {
+            if resp.clicked() && !lifted(ui) {
                 let _ = app.run("library.source", json!({"kind": "album", "id": a.id.0}));
             }
-            folder_menu(app, &resp, a);
+            album_row_menu(app, ui, &resp, a, phone);
         }
     }
+}
+
+/// An album or folder row's menu ([`folder_menu`]): a right click on a desktop; on a phone its "…"
+/// ([`more_button`]), and a row held still and let go without moving (`lift` picked it up). Not
+/// while it is carried, so the press that carries it doesn't also open the menu.
+fn album_row_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, a: &Album, phone: bool) {
+    if !phone {
+        folder_menu(app, resp, a);
+        return;
+    }
+    let kind = if a.folder { "folder" } else { "album" };
+    more_button(ui, resp, &format!("{kind}:{}", a.id.0));
+    if app.ui.dragging_album == Some(a.id.0) {
+        // dimmed where it was while the finger carries it
+        let t = Tokens::get(ui.ctx());
+        ui.painter().rect_filled(resp.rect, 0.0, t.chrome.gamma_multiply(0.55));
+        if ui.input(|i| i.pointer.primary_released()) && !moved(ui) {
+            let at = ui.input(|i| i.pointer.interact_pos()).unwrap_or(resp.rect.center());
+            open_row_menu(ui.ctx(), resp, at);
+            app.ui.dragging_album = None;
+        }
+        return;
+    }
+    folder_menu(app, resp, a);
+}
+
+/// Memory key: the press in progress picked up a row (its release is not a tap).
+const LIFTED: &str = "left-lifted";
+/// How far (points) a finger may wander and still be holding still.
+const LIFT_SLOP: f32 = 10.0;
+
+/// The press in progress (or the one just let go) picked up a row.
+fn lifted(ui: &egui::Ui) -> bool {
+    ui.data(|d| d.get_temp::<bool>(egui::Id::unique(LIFTED))).unwrap_or(false)
+}
+
+/// The finger has moved off where it came down.
+fn moved(ui: &egui::Ui) -> bool {
+    ui.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(o, p)| (p - o).length() > LIFT_SLOP))
+}
+
+/// A phone's album or folder row held still for a moment is picked up, as iOS's drag and drop
+/// lifts things: a tap of haptics, and the finger then carries it to a folder (or to Albums' header
+/// for the top level, `album_drag_over`) while the list scrolls at its edges. Let go where it was,
+/// it opens its menu instead (`album_row_menu`).
+fn lift(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, id: u64) {
+    if ui.input(|i| i.pointer.any_pressed()) {
+        ui.data_mut(|d| d.remove::<bool>(egui::Id::unique(LIFTED)));
+    }
+    if app.ui.dragging_album.is_some() || !resp.is_pointer_button_down_on() || lifted(ui) || moved(ui) || ui.input(|i| i.multi_touch().is_some()) {
+        return;
+    }
+    let held = ui.input(|i| i.pointer.press_start_time().map(|t| i.time - t)).unwrap_or(0.0);
+    if held < crate::panels::grid::LONG_PRESS_SECS {
+        // nothing else may come in while the finger rests: wake up when the time is up
+        ui.ctx().request_repaint_after(std::time::Duration::try_from_secs_f64(crate::panels::grid::LONG_PRESS_SECS - held).unwrap_or_default());
+        return;
+    }
+    ui.data_mut(|d| d.insert_temp(egui::Id::unique(LIFTED), true));
+    crate::haptics::tap(ui.ctx(), crate::haptics::Haptic::Medium);
+    app.ui.dragging_album = Some(id);
 }
 
 /// Whether the pointer is over `rect` and over what the panel shows of it (a row scrolled out of

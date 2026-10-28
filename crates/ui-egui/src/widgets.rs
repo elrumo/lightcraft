@@ -8,6 +8,8 @@ use lightcraft_develop::{ControlSpec, Track};
 use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 
+pub use touch::{TOUCH_SLIDER_ROW_H, check, ios_segmented, margin, side_pad, text_box};
+
 /// Standard dropdown chevrons, including settings, import/export and rule editors.
 pub fn combo_box(id: impl egui::AsIdSalt) -> craft_ui::ComboBox<'static> {
     craft_ui::ComboBox::from_id_salt(id)
@@ -348,15 +350,22 @@ const THUMB_RING: f32 = 7.0;
 pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_override: Option<&str>) -> SliderOut {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
-    let (row, _) = ui.allocate_exact_size(vec2(w, t.slider_row_h), Sense::hover());
-    let pad_l = 24.0;
-    let pad_r = 22.0;
+    // touch: the whole row is the grab zone (a finger's width is more than the track's), the
+    // track sits low in it under its label; the value follows the finger's movement rather than
+    // jumping to it, and a tap doesn't change it (as in iOS's own sliders)
+    let touch = crate::is_compact(ui.ctx());
+    let (row_h, track_dy) = if touch { (TOUCH_SLIDER_ROW_H, 3.0) } else { (t.slider_row_h, 0.0) };
+    let (row, _) = ui.allocate_exact_size(vec2(w, row_h), Sense::hover());
+    let (pad_l, pad_r) = side_pad(ui.ctx());
     let label_rect = Rect::from_min_size(pos2(row.left() + pad_l, row.top() + 4.0), vec2(w - pad_l - pad_r, 18.0));
-    let track_rect = Rect::from_min_max(pos2(row.left() + pad_l, row.top() + 22.0), pos2(row.right() - pad_r, row.top() + 40.0));
+    let track_rect =
+        Rect::from_min_max(pos2(row.left() + pad_l, row.top() + 22.0 + track_dy), pos2(row.right() - pad_r, row.top() + 40.0 + track_dy));
     let id = ui.scope_id().with(spec.id);
-    let resp = ui.interact(track_rect.expand2(vec2(8.0, 2.0)), id, if enabled { Sense::click_and_drag() } else { Sense::hover() });
+    let grab = if touch { row } else { track_rect.expand2(vec2(8.0, 2.0)) };
+    let resp = ui.interact(grab, id, if enabled { Sense::click_and_drag() } else { Sense::hover() });
     // Keyboard focus survives leaving the row; vertical wheel edits need a fresh click or drag
-    // in it (at most one slider is armed: `wheel_slider_key`).
+    // in it (at most one slider is armed: `wheel_slider_key`). (Not on a phone: no keys or wheel
+    // there, and a focused widget would hold the keyboard's Esc.)
     let wheel_id = id.with("wheel-rem");
     let mut wheel_armed = ui.data(|d| d.get_temp::<egui::Id>(wheel_slider_key())) == Some(id);
     let pointer_in_row = ui.rect_contains_pointer(row);
@@ -371,10 +380,10 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             })
         });
     // Tab reaching the slider selects it for arrow keys, not vertical wheel edits.
-    if enabled && resp.gained_focus() {
+    if enabled && !touch && resp.gained_focus() {
         ui.data_mut(|d| d.insert_temp(focused_slider_key(), id));
     }
-    let selected = enabled && (resp.clicked() || resp.drag_started());
+    let selected = enabled && !touch && (resp.clicked() || resp.drag_started());
     if selected {
         resp.request_focus();
         ui.data_mut(|d| d.insert_temp(focused_slider_key(), id));
@@ -541,22 +550,47 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         out.reset = true;
         out.value = Some(spec.default);
         v = spec.default;
-    } else {
-        if resp.drag_started() {
-            out.drag_started = true;
+        if touch {
+            crate::haptics::tap(ui.ctx(), crate::haptics::Haptic::Light);
         }
-        if (resp.dragged() || resp.drag_started())
+    } else {
+        // touch: a drag that sets off mostly up or down scrolls what holds the slider (the sheet)
+        let drag = if touch { touch_drag(ui, &resp, id) } else { None };
+        let sliding = match drag {
+            Some((mode, was)) => {
+                if mode == TouchDrag::Slide && was != Some(TouchDrag::Slide) {
+                    out.drag_started = true;
+                }
+                if mode == TouchDrag::Scroll && resp.dragged() {
+                    ui.scroll_with_delta(vec2(0.0, ui.input(|i| i.pointer.delta().y)));
+                }
+                if resp.drag_stopped() && was == Some(TouchDrag::Slide) {
+                    out.drag_stopped = true;
+                }
+                mode == TouchDrag::Slide
+            }
+            None => {
+                if resp.drag_started() {
+                    out.drag_started = true;
+                }
+                !touch
+            }
+        };
+        if sliding
+            && (resp.dragged() || resp.drag_started())
             && let Some(p) = resp.interact_pointer_pos()
         {
             let fine = ui.input(|i| i.modifiers.shift);
             let step = spec.step.max(1e-9);
-            let nv = if fine {
-                // a tenth of the pointer's movement along the track; the unrounded position is kept, so a
-                // slow drag adds up instead of rounding back to the same step every frame
+            let nv = if fine || touch {
+                // a tenth of the pointer's movement along the track (a finger moves the thumb from where
+                // it is, by all of it); the unrounded position is kept, so a slow drag adds up instead of
+                // rounding back to the same step every frame
                 let fine_id = id.with("fine-pos");
                 let dx = ui.input(|i| i.pointer.delta().x);
+                let k = if fine { 0.1 } else { 1.0 };
                 let kept = ui.data(|m| m.get_temp::<f64>(fine_id)).filter(|&p| ((spec.value_at(p) / step).round() * step - value).abs() < step / 2.0);
-                let pos = (kept.unwrap_or_else(|| spec.position(value)) + f64::from(dx / track_rect.width()) * 0.1).clamp(0.0, 1.0);
+                let pos = (kept.unwrap_or_else(|| spec.position(value)) + f64::from(dx / track_rect.width()) * k).clamp(0.0, 1.0);
                 ui.data_mut(|m| m.insert_temp(fine_id, pos));
                 spec.value_at(pos)
             } else {
@@ -566,8 +600,12 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             if (nv - value).abs() > 1e-12 {
                 out.value = Some(nv);
                 v = nv;
+                if touch {
+                    detent_haptic(ui.ctx(), spec, value, nv);
+                }
             }
         } else if resp.clicked()
+            && !touch
             && let Some(p) = resp.interact_pointer_pos()
             // a click on the thumb leaves it there, so the first click of a double-click on it isn't a
             // history step of its own before the reset
@@ -580,7 +618,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             out.drag_started = true;
             out.drag_stopped = true;
         }
-        if resp.drag_stopped() {
+        if resp.drag_stopped() && !touch {
             out.drag_stopped = true;
         }
         // a screen reader's increment / decrement (VoiceOver: Ctrl-Option-Up / Down)
@@ -663,16 +701,24 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     let hovered = resp.hovered() || resp.dragged();
     let text_c = if enabled { t.text_label } else { t.text_disabled };
     let p = ui.painter();
-    p.text(label_rect.left_center(), Align2::LEFT_CENTER, crate::i18n::tr(label_override.unwrap_or(spec.label)), t.font(12.5), text_c);
+    let font = t.font(if touch { 15.0 } else { 12.5 });
+    p.text(label_rect.left_center(), Align2::LEFT_CENTER, crate::i18n::tr(label_override.unwrap_or(spec.label)), font.clone(), text_c);
     if typing.is_none() {
-        p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown_value(spec, v), t.font(12.5), text_c);
+        p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown_value(spec, v), font, text_c);
         // the scrub pointer, as over Lightroom's values: a drag here changes the value
         if enabled && (value_resp.hovered() || scrub.is_some()) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
     }
-    let ring = THUMB_RING;
     let tx = to_x(v);
+    if touch {
+        // (the thumb turns into a lens of glass while the finger slides it)
+        let held = resp.dragged() && ui.data(|d| d.get_temp::<TouchDrag>(id.with("touch-drag"))) == Some(TouchDrag::Slide);
+        let lens = crate::glass::spring(ui.ctx(), id.with("lens"), if held { 1.0 } else { 0.0 }, 0.3, 0.7).max(0.0);
+        paint_ios_slider(ui, track_rect, &spec.track, &t, tx, to_x(spec.default), enabled, lens);
+        return out;
+    }
+    let ring = THUMB_RING;
     paint_track(ui, track_rect, &spec.track, &t, tx, ring);
     let p = ui.painter();
     let ring_c = if !enabled {
@@ -688,6 +734,115 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
     out
+}
+
+/// A touch slider drawn as iOS 26 draws its own: a 6 pt track, filled with the accent colour from
+/// where the control's default is to the thumb (so an edited slider shows how far it went, and a
+/// centred one fills outward from its middle), and a white capsule thumb with a soft shadow that
+/// swells into a lens of glass while it is held (`lens`, 0–1). Gradient tracks (temperature,
+/// hue…) keep their colours.
+fn paint_ios_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool, lens: f32) {
+    let p = ui.painter();
+    let y = rect.center().y;
+    const HALF: f32 = 3.0;
+    if let Some(stops) = track_stops(track) {
+        let n = stops.len().max(2) - 1;
+        let steps = 48;
+        for i in 0..steps {
+            let (a, b) = (i as f32 / steps as f32, (i + 1) as f32 / steps as f32);
+            let seg = (a * n as f32).floor() as usize;
+            let local = a * n as f32 - seg as f32;
+            let c = lerp(stops[seg.min(n)], stops[(seg + 1).min(n)], local);
+            let (x0, x1) = (rect.left() + rect.width() * a, rect.left() + rect.width() * b);
+            let r = egui::CornerRadius {
+                nw: if i == 0 { 3 } else { 0 },
+                sw: if i == 0 { 3 } else { 0 },
+                ne: if i + 1 == steps { 3 } else { 0 },
+                se: if i + 1 == steps { 3 } else { 0 },
+            };
+            p.rect_filled(Rect::from_min_max(pos2(x0, y - HALF), pos2(x1 + 0.5, y + HALF)), r, c);
+        }
+    } else {
+        p.rect_filled(Rect::from_min_max(pos2(rect.left(), y - HALF), pos2(rect.right(), y + HALF)), HALF, t.track);
+        let (a, b) = (from_x.min(thumb_x), from_x.max(thumb_x));
+        if enabled && b - a > 0.5 {
+            p.rect_filled(Rect::from_min_max(pos2(a, y - HALF), pos2(b, y + HALF)), HALF, t.accent);
+        }
+    }
+    // (a capsule wider than it is tall; at the ends of the track it stays clear of the panel's edge)
+    let size = vec2(38.0, 24.0) * (1.0 + 0.35 * lens);
+    let c = pos2(thumb_x.min(rect.right() - 8.0).max(rect.left() + 8.0), y);
+    let thumb = Rect::from_center_size(c, size);
+    let dark = crate::glass::is_dark(ui.ctx());
+    if lens > 0.01 {
+        crate::glass::paint(p, thumb, size.y / 2.0, None, 0.4 * lens);
+        // (the glass clears as it swells: what's left of the white thumb fades)
+        p.rect_filled(thumb, size.y / 2.0, Color32::from_white_alpha((255.0 * (1.0 - lens).max(0.0)) as u8));
+        return;
+    }
+    p.add(
+        egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(if dark { 90 } else { 45 }) }
+            .as_shape(thumb, size.y / 2.0),
+    );
+    p.rect_filled(thumb, size.y / 2.0, if enabled { Color32::WHITE } else { t.track });
+    if !dark {
+        p.rect_stroke(thumb, size.y / 2.0, Stroke::new(0.5, Color32::from_black_alpha(30)), egui::StrokeKind::Outside);
+    }
+}
+
+/// A tick when a finger's slide lands on the control's default or crosses it (the zero of most
+/// sliders), a light tap on reaching either end of its range.
+fn detent_haptic(ctx: &egui::Context, spec: &ControlSpec, from: f64, to: f64) {
+    use crate::haptics::{Haptic, tap};
+    let half_step = spec.step.max(1e-9) / 2.0;
+    let (was_on, on) = ((from - spec.default).abs() < half_step, (to - spec.default).abs() < half_step);
+    if on || (!was_on && (from - spec.default).signum() != (to - spec.default).signum()) {
+        tap(ctx, Haptic::Selection);
+    } else if to <= spec.min || to >= spec.max {
+        tap(ctx, Haptic::Light);
+    }
+}
+
+/// How a finger's drag on a touch slider is taken: undecided for its first few points, then a
+/// slide when it went mostly sideways, else a scroll of what holds the slider, as iOS tells them
+/// apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TouchDrag {
+    Pending,
+    Slide,
+    Scroll,
+}
+
+/// This frame's [`TouchDrag`] for the slider `id` and what it was on the previous frame; `None`
+/// when no drag is going on or ending.
+fn touch_drag(ui: &Ui, resp: &Response, id: egui::Id) -> Option<(TouchDrag, Option<TouchDrag>)> {
+    let key = id.with("touch-drag");
+    let was = ui.data(|d| d.get_temp::<TouchDrag>(key));
+    if resp.dragged() || resp.drag_started() {
+        let mode = match was {
+            Some(m) if m != TouchDrag::Pending => m,
+            _ => {
+                let moved = match (ui.input(|i| i.pointer.press_origin()), resp.interact_pointer_pos()) {
+                    (Some(o), Some(p)) => p - o,
+                    _ => egui::Vec2::ZERO,
+                };
+                if moved.length() < 8.0 {
+                    TouchDrag::Pending
+                } else if moved.x.abs() >= moved.y.abs() {
+                    TouchDrag::Slide
+                } else {
+                    TouchDrag::Scroll
+                }
+            }
+        };
+        ui.data_mut(|d| d.insert_temp(key, mode));
+        return Some((mode, was));
+    }
+    if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<TouchDrag>(key));
+        return was.map(|m| (m, was));
+    }
+    None
 }
 
 /// Convert vertical wheel movement to bounded slider steps, keeping sub-notch
@@ -817,6 +972,9 @@ pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response
 pub fn segmented(ui: &mut Ui, id: &str, items: &[(&str, &str)], active: Option<usize>, per_row: usize) -> Option<usize> {
     let t = Tokens::get(ui.ctx());
     let per_row = per_row.max(1);
+    if crate::is_compact(ui.ctx()) {
+        return touch::segments(ui, id, items.iter().map(|(label, key)| (*label, key.to_string())).collect(), active, per_row);
+    }
     let gap = 4.0;
     let w = ui.available_width();
     let seg_w = ((w - gap * (per_row as f32 - 1.0)) / per_row as f32).max(24.0);
@@ -1085,6 +1243,14 @@ pub(crate) fn one_line(painter: &egui::Painter, text: &str, font: egui::FontId, 
     painter.layout_job(job)
 }
 
+/// `label` without a trailing keyboard hint such as " (X)" or " (⇧O)": a phone has no keyboard.
+pub fn strip_key_hint(label: &str) -> &str {
+    match label.rfind(" (") {
+        Some(i) if label.ends_with(')') && label[i + 2..label.len() - 1].chars().count() <= 3 => &label[..i],
+        _ => label,
+    }
+}
+
 /// `text` shortened to fit `max` (as `width` measures it): leading folders drop first
 /// (`Users/me/Pictures/Lightroom` → `…/Pictures/Lightroom`) so the end of a path, which says the
 /// most, stays; a single name still too long loses its end (`2024-06-12 Tri…`: folders tend to
@@ -1120,6 +1286,7 @@ mod numeric_entry_tests;
 pub mod progress;
 pub mod rating;
 pub mod text_field;
+pub mod touch;
 
 #[cfg(test)]
 #[path = "widgets/tests_slider_reset.rs"]

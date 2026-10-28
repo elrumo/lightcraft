@@ -11,14 +11,18 @@ use lightcraft_catalog::{Catalog, ColorLabel, DateRun, Flag, GroupBy, PhotoId, S
 use serde_json::json;
 
 use crate::LightcraftApp;
+use crate::haptics::{self, Haptic};
 use crate::icons::{Icon, paint};
 use crate::render::Slot;
 use crate::state::ViewMode;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
+pub use super::grid_touch::LONG_PRESS_SECS;
+use super::grid_touch::{check_badge, cover_uv, long_pressed};
+
 /// Thumbnail render size (pixels, long edge) for a cell of `pts` points.
-fn thumb_px(pts: f32, ppp: f32) -> usize {
+pub(super) fn thumb_px(pts: f32, ppp: f32) -> usize {
     let px = (pts * ppp).ceil() as usize;
     if px <= 256 {
         256
@@ -75,8 +79,8 @@ const MAX_FOLLOWED: usize = 4096;
 #[derive(Default)]
 pub struct GridCache {
     runs: Option<(RunsKey, Arc<Vec<DateRun>>)>,
-    /// Layout by (runs key, width, thumbnail size, square).
-    layout: Option<((RunsKey, u32, u32, bool), Arc<GridLayout>)>,
+    /// Layout by (runs key, width, thumbnail size, square, phone tiles).
+    layout: Option<((RunsKey, u32, u32, bool, bool), Arc<GridLayout>)>,
     /// Stack index by generation.
     stacks: Option<(u64, Arc<StackIndex>)>,
     /// How many of the photos are browsed (Local) ones, by generation.
@@ -285,6 +289,9 @@ pub fn rows_between(rows: &[GridRow], top: f32, bottom: f32) -> &[GridRow] {
 
 fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    if matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+        app.ui.grid_mode = app.ui.view;
+    }
     let (generation, ids) = app.session.visible_shared();
     // header: source title + count
     let sel_n = app.session.selection.ids.len();
@@ -296,6 +303,11 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         Some(b) => {
             let local = app.caches.grid.local(&app.session.catalog, &ids, generation);
             folder_header(app, ui, &b, &ids, local, &cnt);
+        }
+        None if app.compact => {
+            let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::hover());
+            ui.painter().rect_filled(hr, 0.0, t.canvas);
+            super::compact::grid_header(app, ui, hr, &cnt);
         }
         None => {
             let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
@@ -330,26 +342,64 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             };
             super::empty_message(ui, ui.max_rect(), "No photos match the active filters", &body);
         } else if app.session.filter != Default::default() {
-            super::empty_message(
-                ui,
-                ui.max_rect(),
-                "No matching photos",
-                "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)",
-            );
+            let how = if app.compact {
+                "A filter is hiding this view's photos: change it, or clear it with the filter button"
+            } else {
+                "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)"
+            };
+            super::empty_message(ui, ui.max_rect(), "No matching photos", how);
         } else if app.session.source == lightcraft_engine::LibrarySource::Folder {
             super::empty_message(ui, ui.max_rect(), "No photos in this folder", "Turn on Include subfolders, or pick another folder under Local");
         } else if super::empty_library::shown(&app.session) {
             super::empty_library::show(app, ui, ui.max_rect());
         } else {
-            super::empty_message(ui, ui.max_rect(), "No photos", "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here");
+            // (a phone has no File menu, shortcuts or dropping: its + button, or the … menu)
+            let how = if !app.compact {
+                "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here"
+            } else if app.services.host_pick.is_some() {
+                "Tap + to add photos from Photos or Files"
+            } else {
+                "Import photos with … → Import Photos…"
+            };
+            super::empty_message(ui, ui.max_rect(), "No photos", how);
         }
         return;
     }
     let ppp = ui.ctx().pixels_per_point();
     let square = app.ui.view == ViewMode::SquareGrid;
-    let target = app.ui.thumb_size;
-    let avail_w = ui.available_width() - 8.0;
+    // a phone's Months and Years (`grid_dates`), faded in when the span changes
+    let span = if app.compact { app.ui.grid_span } else { crate::state::GridSpan::All };
+    if app.compact {
+        ui.multiply_opacity(super::mobile::enter(ui.ctx(), egui::Id::unique("grid-span-in"), span, 0.25));
+    }
+    if span != crate::state::GridSpan::All {
+        super::grid_zoom::forget(ui.ctx());
+        super::grid_dates::show(app, ui, &ids, generation, span);
+        return;
+    }
+    // a phone: a pinch changes how many photos a row holds, the photos gliding to their new places
+    let zoom = if app.compact {
+        let area = ui.available_rect_before_wrap();
+        super::grid_zoom::update(app, ui, area, generation)
+    } else {
+        super::grid_zoom::Zoom::none()
+    };
+    // phone squares: edge to edge, three across by default, 2 pt apart
+    let tiles = square && app.compact;
+    let cols = f32::from(app.ui.grid_columns.max(1));
+    let avail_w = if tiles { ui.available_width() } else { ui.available_width() - 8.0 };
+    // phone: about `grid_columns` photos across (and, through `resolve_group`, month headers rather
+    // than one per day at three)
+    let target = if tiles {
+        ((avail_w - (cols - 1.0) * TILE_GAP) / cols).floor().max(8.0)
+    } else if app.compact {
+        (avail_w / cols).max(24.0)
+    } else {
+        app.ui.thumb_size
+    };
     let by = resolve_group(app.session.sort.group, target);
+    // (a phone heads its months, not its days: a day's few photos would leave most rows half empty)
+    let by = if app.compact && by == GroupBy::Day && app.session.sort.group == GroupBy::Auto { GroupBy::Month } else { by };
     let group_key = match app.session.source {
         lightcraft_engine::LibrarySource::RecentlyDeleted => None,
         lightcraft_engine::LibrarySource::RecentlyAdded => Some(SortKey::ImportDate),
@@ -360,7 +410,8 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let runs = app.caches.grid.runs(stats, &app.session.catalog, &ids, runs_key, square);
     // the layout only changes with the photos (and their shapes), the grouping, the width and
     // the thumbnail size
-    let lay_key = (runs_key, avail_w.to_bits(), target.to_bits(), square);
+    // (phone tiles have their own width and size, and gaps)
+    let lay_key = (runs_key, avail_w.to_bits(), target.to_bits(), square, tiles);
     let lay = match &app.caches.grid.layout {
         Some((k, l)) if *k == lay_key => l.clone(),
         _ => {
@@ -373,28 +424,57 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 app.caches.grid.shapes()
             };
             let spans: Vec<(usize, usize)> = runs.iter().map(|r| (r.start, r.count)).collect();
-            let l = Arc::new(layout(shapes, &spans, avail_w, target, square));
+            let l = Arc::new(layout(shapes, &spans, avail_w, target, square, tiles));
             app.caches.grid.layout = Some((lay_key, l.clone()));
             l
         }
     };
     let stacks = app.caches.grid.stacks(stats, &app.session.catalog, generation);
-    let total_h = lay.height + 12.0;
+    // (a phone leaves room under the last row for the Years / Months / All capsule)
+    let total_h = lay.height + if app.compact { super::grid_dates::bottom_room(ui) } else { 12.0 };
     let active = app.session.selection.active;
+    // where the grid has to go this frame: the photo under the fingers stays under them when the
+    // columns change; a month or photo picked in Months
+    let top = ui.available_rect_before_wrap().top();
+    let mut forced: Option<f32> = None;
+    if zoom.changed
+        && let Some((i, u)) = zoom.anchor
+        && let Some(c) = lay.cells.get(i)
+    {
+        forced = Some(super::grid_zoom::offset_for(*c, u, zoom.focal, top));
+    }
+    if let Some(jump) = app.ui.grid_jump.take() {
+        forced = super::grid_touch::jump_offset(app, &ids, &lay, &runs, &jump).or(forced);
+    }
     // bring the active photo into view when it changes (keyboard, click, command) or the grid
     // comes back on screen; otherwise the scroll position is the user's
-    let scroll_to: Option<Rect> = if follow_active(ui.ctx(), egui::Id::unique("grid-follow-active"), active, app.session.source) {
-        active.and_then(|a| ids.iter().position(|x| *x == a)).and_then(|i| lay.cells.get(i).copied())
-    } else {
-        None
-    };
+    let follow = follow_active(ui.ctx(), egui::Id::unique("grid-follow-active"), active, app.session.source);
+    let scroll_to: Option<Rect> =
+        if follow && forced.is_none() { active.and_then(|a| ids.iter().position(|x| *x == a)).and_then(|i| lay.cells.get(i).copied()) } else { None };
     let mut visible_ids = HashSet::new();
     let mut visited = 0u64;
     // a wheel notch scrolls a third of the grid's height
     let scroll_rect = ui.available_rect_before_wrap();
     crate::widgets::register(ui, "grid:scroll", scroll_rect);
     let wheel = wheel_step(ui, egui::Id::unique("grid-wheel"), scroll_rect, scroll_rect.height(), false);
-    egui::ScrollArea::vertical().id_salt("grid-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+    // a phone: a finger's drag scrolls the grid (its cells take only taps), except while a
+    // sideways drag is choosing photos (`drag_choose`)
+    let source = if !app.compact {
+        egui::scroll_area::ScrollSource::default()
+    } else if zoom.pinching || ui.data(|d| d.get_temp::<super::grid_touch::DragChoose>(egui::Id::unique(super::grid_touch::DRAG_CHOOSE))).is_some() {
+        egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() }
+    } else {
+        egui::scroll_area::ScrollSource::ALL
+    };
+    // (a phone has its own handle to drag: `scrubber`)
+    let bars =
+        if app.compact { egui::scroll_area::ScrollBarVisibility::AlwaysHidden } else { egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded };
+    let mut scroll =
+        egui::ScrollArea::vertical().id_salt("grid-scroll").scroll_source(source).scroll_bar_visibility(bars).auto_shrink([false, false]);
+    if let Some(o) = forced {
+        scroll = scroll.vertical_scroll_offset(o);
+    }
+    scroll.show_viewport(ui, |ui, viewport| {
         if wheel != egui::Vec2::ZERO {
             ui.scroll_with_delta_animation(wheel, egui::style::ScrollAnimation::none());
         }
@@ -408,8 +488,12 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if std::mem::take(&mut app.ui.scroll_top) {
             ui.scroll_to_rect(Rect::from_min_size(origin, vec2(1.0, 1.0)), Some(egui::Align::TOP));
         }
-        // only the rows on screen and a screen above and below it (their thumbnails are prefetched)
-        let prefetch = viewport.expand2(vec2(0.0, viewport.height()));
+        // only the rows on screen and a screen above and below it (their thumbnails are prefetched);
+        // more of them while a pinch draws the grid smaller
+        let seen = zoom.visible(viewport, origin);
+        let prefetch = seen.expand2(vec2(0.0, viewport.height()));
+        let clip = ui.clip_rect();
+        let mut drawn: Vec<(usize, Rect)> = Vec::new();
         for row in rows_between(&lay.rows, prefetch.top(), prefetch.bottom()) {
             for i in row.start..row.end {
                 let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
@@ -418,18 +502,39 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     continue;
                 }
                 visible_ids.insert(id);
-                let r = rect.translate(origin.to_vec2());
-                let onscreen = rect.intersects(viewport);
+                let r = zoom.place(i, rect.translate(origin.to_vec2()));
+                let onscreen = r.intersects(clip);
                 cell(app, ui, id, r, square, onscreen, ppp);
                 if let Some((sid, pos)) = stacks.get(&id) {
                     stack_badge(app, ui, id, *sid, *pos, r, square);
                 }
+                if app.compact && onscreen {
+                    drawn.push((i, r));
+                }
             }
         }
+        if app.compact {
+            // photos gliding off the screen to places further up or down
+            let gone: Vec<usize> = zoom.gliding().filter(|i| !drawn.iter().any(|(d, _)| d == i)).collect();
+            for i in gone {
+                let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
+                let r = zoom.place(i, rect.translate(origin.to_vec2()));
+                if r.intersects(clip) {
+                    visible_ids.insert(id);
+                    cell(app, ui, id, r, square, true, ppp);
+                }
+            }
+            super::grid_zoom::remember(ui.ctx(), generation, app.ui.grid_columns, drawn);
+            super::grid_touch::long_press(app, ui, &ids, &lay, origin);
+        }
+        if app.compact && app.ui.select_mode {
+            super::grid_touch::drag_choose(app, ui, &ids, &lay, origin);
+        }
         // date headers (top to bottom); the current group's header sticks to the top while its
-        // photos scroll by
-        let first = lay.headers.partition_point(|h| h.bottom() < viewport.top());
-        for (g, hr) in lay.headers.iter().enumerate().skip(first) {
+        // photos scroll by (not while a pinch moves the photos about)
+        let headers: &[Rect] = if zoom.moving() { &[] } else { &lay.headers };
+        let first = headers.partition_point(|h| h.bottom() < viewport.top());
+        for (g, hr) in headers.iter().enumerate().skip(first) {
             if hr.top() > viewport.bottom() {
                 break;
             }
@@ -437,17 +542,20 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 group_header(app, ui, run, &ids, hr.translate(origin.to_vec2()), false);
             }
         }
-        let sticky = lay.headers.partition_point(|h| h.top() <= viewport.top()).checked_sub(1);
+        let sticky = headers.partition_point(|h| h.top() <= viewport.top()).checked_sub(1);
         if let Some(g) = sticky
-            && let Some(head) = lay.headers.get(g)
+            && let Some(head) = headers.get(g)
             && head.top() < viewport.top()
             && let Some(run) = runs.get(g)
         {
             // pushed up by the next header as it arrives
-            let next_top = lay.headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
+            let next_top = headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
             let y = viewport.top().min(next_top - HEADER_H);
             let hr = Rect::from_min_size(pos2(0.0, y), vec2(area.width(), HEADER_H)).translate(origin.to_vec2());
             group_header(app, ui, run, &ids, hr, true);
+        }
+        if app.compact {
+            super::grid_touch::scrubber(app, ui, viewport, total_h, &ids, &lay);
         }
     });
     app.caches.grid_stats.cells_visited += visited;
@@ -523,6 +631,9 @@ pub(crate) fn wheel_step(ui: &egui::Ui, key: egui::Id, area: Rect, span: f32, si
 /// Height of a date header row (points).
 pub const HEADER_H: f32 = 40.0;
 
+/// Space between the phone's square tiles (points).
+pub const TILE_GAP: f32 = 2.0;
+
 /// Cell rectangles (one per photo, in order), date-header rectangles (one per group, top to
 /// bottom), the rows of cells (top to bottom, for finding the visible ones by binary search) and
 /// the total height of the grid content.
@@ -589,11 +700,19 @@ pub fn resolve_group(by: GroupBy, thumb_size: f32) -> GroupBy {
 /// about `target` high (square cells about `target` wide). Every group starts on a new row
 /// below its header. Justified rows fill the width exactly except a group's last row, which keeps
 /// the target height.
-pub fn layout(aspects: &[f32], groups: &[(usize, usize)], avail_w: f32, target: f32, square: bool) -> GridLayout {
+pub fn layout(aspects: &[f32], groups: &[(usize, usize)], avail_w: f32, target: f32, square: bool, tiles: bool) -> GridLayout {
     let n = aspects.len();
     let whole = [(0, n)];
     let (groups, headed) = if groups.is_empty() { (&whole[..], false) } else { (groups, true) };
-    let gap = if square { 1.0 } else { 6.0 };
+    let gap = if tiles {
+        TILE_GAP
+    } else if square {
+        1.0
+    } else {
+        6.0
+    };
+    // phone tiles run to the screen's edges
+    let left = if tiles { 0.0 } else { 4.0 };
     let mut out = GridLayout { cells: vec![Rect::NOTHING; n], headers: Vec::with_capacity(groups.len()), rows: Vec::new(), height: 0.0 };
     let mut y = 4.0f32;
     for &(start, count) in groups {
@@ -611,7 +730,7 @@ pub fn layout(aspects: &[f32], groups: &[(usize, usize)], avail_w: f32, target: 
             for i in start..end {
                 let k = (i - start) as f32;
                 let (c, r) = (k % cols, (k / cols).floor());
-                out.cells[i] = Rect::from_min_size(pos2(4.0 + c * (cw + gap), y + r * (cw + gap)), vec2(cw, cw));
+                out.cells[i] = Rect::from_min_size(pos2(left + c * (cw + gap), y + r * (cw + gap)), vec2(cw, cw));
             }
             let per_row = (cols as usize).max(1);
             for (r, row_start) in (start..end).step_by(per_row).enumerate() {
@@ -783,7 +902,8 @@ pub const PREFETCH_THUMB_PRIORITY: u32 = 5;
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
-    let resp = ui.interact(r, egui::Id::unique(("cell", id.0)), Sense::click_and_drag());
+    // (a phone's cells take only taps and long presses: a drag scrolls the grid)
+    let resp = ui.interact(r, egui::Id::unique(("cell", id.0)), if app.compact { Sense::click() } else { Sense::click_and_drag() });
     register(ui, format!("thumb:{}", id.0), r);
     let state = app.session.selection.state_of(id);
     let selected = state != lightcraft_engine::SelectionState::NotSelected;
@@ -802,8 +922,11 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, &spoken));
     let active = state == lightcraft_engine::SelectionState::Active;
+    let tiles = square && app.compact;
     let p = ui.painter();
-    let img_rect = if square {
+    let img_rect = if tiles {
+        r
+    } else if square {
         let base = if selected { t.cell_selected } else { t.cell };
         p.rect_filled(r, 0.0, crate::theme::label_background(base, photo.label, selected));
         Rect::from_min_max(r.min + vec2(10.0, 24.0), r.max - vec2(10.0, 10.0))
@@ -813,26 +936,41 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     // thumbnail
     let size = thumb_px(img_rect.width().max(img_rect.height()), ppp);
     request_thumb(app, id, size, if onscreen { 10 } else { PREFETCH_THUMB_PRIORITY });
+    // (choosing by touch draws its own frame: `check_badge`)
+    let choosing = app.compact && app.ui.select_mode;
+    // (the rings are the page's text colour: white on the dark pages, black on the light ones)
+    let dark = crate::glass::is_dark(ui.ctx());
+    let (ring, ring_sel) = if dark { (Color32::WHITE, Color32::from_gray(170)) } else { (t.text, t.text_dim) };
     if let Some(tex) = app.renderer.thumb(id) {
         let [tw, th] = tex.size;
-        // Preserve the decoded preview's ratio when it differs from the catalog dimensions.
-        let fit = super::detail::fit_texture_rect(img_rect, [tw, th]);
-        p.image(tex.tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-        if active {
-            p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
-        } else if selected {
-            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Outside);
+        // Preserve the decoded preview's ratio when it differs from the catalog dimensions
+        // (phone tiles: the photo fills its square, the long side cropped).
+        let fit = if tiles { img_rect } else { super::detail::fit_texture_rect(img_rect, [tw, th]) };
+        let uv = if tiles { cover_uv(tw as f32, th as f32) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
+        // a thumbnail that was not there yet fades in (one that was, shows at once: it has no stored 0)
+        let fade = if app.compact { ui.ctx().animate_bool_with_time(egui::Id::unique(("thumb-in", id.0)), true, 0.2) } else { 1.0 };
+        p.image(tex.tex.id(), fit, uv, Color32::WHITE.gamma_multiply(fade));
+        if active && !choosing && tiles {
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring), StrokeKind::Inside);
+        } else if active && !choosing {
+            p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, ring), StrokeKind::Outside);
+        } else if selected && !choosing && tiles {
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring_sel), StrokeKind::Inside);
+        } else if selected && !choosing {
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring_sel), StrokeKind::Outside);
         }
     } else {
-        let ph = img_rect.shrink(if square { 20.0 } else { 0.0 });
+        let ph = img_rect.shrink(if square && !tiles { 20.0 } else { 0.0 });
         p.rect_filled(ph, 0.0, t.skeleton);
+        if app.compact {
+            let _ = ui.ctx().animate_bool_with_time(egui::Id::unique(("thumb-in", id.0)), false, 0.0);
+        }
         // not drawn yet (or unreadable): the selection is still visible
-        if active {
-            p.rect_stroke(ph, 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
-        } else if selected {
-            // a light theme's skeleton is itself mid-grey: the ring takes the dim text colour
-            let ring = if t.skeleton.r() > 0x80 { t.text_dim } else { Color32::from_gray(170) };
-            p.rect_stroke(ph, 0.0, Stroke::new(2.0, ring), StrokeKind::Outside);
+        let side = if tiles { StrokeKind::Inside } else { StrokeKind::Outside };
+        if active && !choosing {
+            p.rect_stroke(ph, 0.0, Stroke::new(2.0, ring), side);
+        } else if selected && !choosing {
+            p.rect_stroke(ph, 0.0, Stroke::new(2.0, ring_sel), side);
         }
         if app.renderer.failure(Slot::Thumb(id)).is_some() {
             // unreadable / missing file
@@ -840,7 +978,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
     }
     // labels and badges
-    if square && app.ui.show_filenames {
+    if square && !tiles && app.ui.show_filenames {
         let m = &photo.meta;
         let name = match app.ui.grid_info.as_str() {
             "exposure" => {
@@ -864,7 +1002,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         let fmt = photo.format.clone();
         let g = p.layout_no_wrap(fmt, t.semibold(9.0), t.text_label);
         let br = Rect::from_min_size(pos2(r.right() - g.size().x - 14.0, r.top() + 5.0), g.size() + vec2(8.0, 3.0));
-        p.rect_filled(br, 2.0, Color32::from_gray(26));
+        p.rect_filled(br, 2.0, if crate::glass::is_dark(ui.ctx()) { Color32::from_gray(26) } else { t.inset });
         p.galley(br.min + vec2(4.0, 1.5), g, t.text_label);
     }
     let show_badges = match app.ui.settings.grid_badges {
@@ -942,6 +1080,28 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
             let has = photo.meta.keywords.iter().any(|x| x.eq_ignore_ascii_case(&k));
             let key = if has { "removeKeywords" } else { "addKeywords" };
             let _ = app.run("photo.setMeta", json!({"ids": [id.0], key: [k]}));
+        }
+        return;
+    }
+    if app.compact {
+        // touch: a tap opens the photo (no double-tap, no modifiers); choosing photos, it adds or
+        // removes it; a long press starts choosing (there is no right click: the action bar and
+        // Menu have what the context menu would)
+        // (a long press is answered while the finger is down, `long_press`: its release is no tap)
+        let tapped = resp.clicked() && !long_pressed(ui);
+        if app.ui.select_mode {
+            check_badge(ui, img_rect, selected, &t, egui::Id::unique(("check", id.0)));
+            if tapped {
+                let _ = app.run("library.select", json!({"ids": [id.0], "mode": "toggle"}));
+                haptics::tap(ui.ctx(), Haptic::Selection);
+            }
+        } else if tapped {
+            let _ = app.run("library.select", json!({"ids": [id.0]}));
+            let _ = app.run("view.detail", json!({}));
+        } else if resp.clicked_by(egui::PointerButton::Secondary) {
+            // a right click (a mouse on a narrow window) starts choosing too
+            let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
+            haptics::tap(ui.ctx(), Haptic::Medium);
         }
         return;
     }
@@ -1486,7 +1646,7 @@ mod tests {
     #[test]
     fn ungrouped_justified_rows_fill_the_width() {
         let aspects = [1.5f32, 1.5, 0.66, 1.0, 1.5, 1.5, 1.5];
-        let l = layout(&aspects, &[], 600.0, 150.0, false);
+        let l = layout(&aspects, &[], 600.0, 150.0, false, false);
         assert!(l.headers.is_empty());
         assert_eq!(l.cells.len(), aspects.len());
         // full rows end at the right edge; rows are at most the target height
@@ -1502,7 +1662,7 @@ mod tests {
     #[test]
     fn groups_start_new_rows_below_their_headers() {
         let aspects = [1.5f32; 7];
-        let l = layout(&aspects, &[(0, 2), (2, 5)], 1000.0, 200.0, false);
+        let l = layout(&aspects, &[(0, 2), (2, 5)], 1000.0, 200.0, false, false);
         assert_eq!(l.headers.len(), 2);
         assert_eq!(l.headers[0].top(), 4.0);
         assert_eq!(l.headers[0].height(), HEADER_H);
@@ -1536,7 +1696,7 @@ mod tests {
         let aspects: Vec<f32> = (0..500).map(|i| [1.5f32, 0.66, 1.0, 1.78][i % 4]).collect();
         let groups = [(0, 7), (7, 200), (207, 1), (208, 292)];
         for square in [false, true] {
-            let l = layout(&aspects, &groups, 900.0, 140.0, square);
+            let l = layout(&aspects, &groups, 900.0, 140.0, square, false);
             let mut next = 0;
             for (k, row) in l.rows.iter().enumerate() {
                 assert_eq!(row.start, next, "rows are contiguous");
@@ -1562,7 +1722,7 @@ mod tests {
 
     #[test]
     fn square_grid_groups_and_auto_levels() {
-        let l = layout(&[1.0; 5], &[(0, 3), (3, 2)], 400.0, 100.0, true);
+        let l = layout(&[1.0; 5], &[(0, 3), (3, 2)], 400.0, 100.0, true, false);
         // 4 columns: group 1 fills 3 cells of a row, group 2 starts a new row
         assert_eq!(l.cells[0].top(), l.cells[2].top());
         assert_eq!(l.cells[3].left(), 4.0);

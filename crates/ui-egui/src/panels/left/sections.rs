@@ -1,5 +1,5 @@
 use super::albums::top_level_drop_target;
-use super::rows::{ROW_HEIGHT, note_width};
+use super::rows::{ROW_HEIGHT, entrance, note_width};
 use super::*;
 
 /// Space above a section's header.
@@ -7,6 +7,23 @@ pub(super) const SECTION_GAP: f32 = 10.0;
 
 /// Height of a section's header.
 const SECTION_HEADER: f32 = 34.0;
+
+/// On a phone: more room above a section, and a taller header for its larger title.
+const PHONE_SECTION_GAP: f32 = 20.0;
+const PHONE_SECTION_HEADER: f32 = 48.0;
+
+/// A section header's height here (a phone's is taller).
+fn header_h(ui: &egui::Ui) -> f32 {
+    if crate::is_compact(ui.ctx()) { PHONE_SECTION_HEADER } else { SECTION_HEADER }
+}
+
+/// A heading (a section's title…) at `at` in `font` and `color`; on a phone a larger, bolder one.
+/// Returns where it was painted.
+fn heading(ui: &egui::Ui, at: egui::Pos2, label: &str, font: egui::FontId, color: egui::Color32) -> Rect {
+    let t = Tokens::get(ui.ctx());
+    let (font, color) = if crate::is_compact(ui.ctx()) { (t.semibold(20.0), t.text) } else { (font, color) };
+    ui.painter().text(at, Align2::LEFT_CENTER, label, font, color)
+}
 
 /// One sidebar section: the gap above it, its header, and (while it is open) the rows `body`
 /// draws. Every section goes through here, so they all fold, space and announce themselves alike.
@@ -18,13 +35,16 @@ pub(super) fn section(
     rows: usize,
     body: impl FnOnce(&mut LightcraftApp, &mut egui::Ui),
 ) -> PlacedSection {
-    ui.add_space(SECTION_GAP);
-    let (header, _) = ui.allocate_exact_size(vec2(ui.available_width(), SECTION_HEADER), Sense::hover());
-    // a hairline in the gap above tells the sections apart
+    let phone = crate::is_compact(ui.ctx());
+    ui.add_space(if phone { PHONE_SECTION_GAP } else { SECTION_GAP });
+    let (header, _) = ui.allocate_exact_size(vec2(ui.available_width(), header_h(ui)), Sense::hover());
+    // a hairline in the gap above tells the sections apart (a phone's bold headings need none)
     let t = Tokens::get(ui.ctx());
     let edge = visible_right(ui).min(header.right());
     let y = header.top() - SECTION_GAP / 2.0;
-    ui.painter().hline(header.left() + 18.0..=(edge - 18.0).max(header.left() + 18.0), y, egui::Stroke::new(1.0, t.divider));
+    if !phone {
+        ui.painter().hline(header.left() + 18.0..=(edge - 18.0).max(header.left() + 18.0), y, egui::Stroke::new(1.0, t.divider));
+    }
     let show = egui::Id::unique("left-show-section");
     if let Some((asked, frame)) = ui.data(|d| d.get_temp::<(SidebarSection, u64)>(show))
         && asked == section
@@ -61,9 +81,10 @@ pub(super) fn visible_right(ui: &egui::Ui) -> f32 {
 /// next section's header pushes it out as it arrives. `view_top`: where the visible part starts.
 pub(super) fn pinned_header(app: &mut LightcraftApp, ui: &mut egui::Ui, placed: &[PlacedSection], view_top: f32) {
     let pinned = placed.iter().find(|p| p.open && p.top < view_top && p.bottom > view_top);
+    let h = header_h(ui);
     let rect = pinned.map(|p| {
-        let top = view_top.min(p.bottom - SECTION_HEADER);
-        Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=top + SECTION_HEADER)
+        let top = view_top.min(p.bottom - h);
+        Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=top + h)
     });
     // rows ask where it is (next frame: they are laid out before it)
     ui.data_mut(|d| d.insert_temp(egui::Id::unique("left-pinned-rect"), rect));
@@ -191,7 +212,11 @@ fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, section: SidebarSe
     let id = section.id();
     let title = crate::i18n::tr(section.title());
     let (interact, widget) = if pinned { ("sidebar-section-pinned", "sidebarSectionPinned") } else { ("sidebar-section", "sidebarSection") };
-    let resp = ui.interact(r, ui.scope_id().with((interact, id)), Sense::click_and_drag());
+    // (a phone's finger on a header scrolls the list: sections move with its menu's Move Up / Down)
+    let phone = crate::is_compact(ui.ctx());
+    let resp = ui.interact(r, ui.scope_id().with((interact, id)), if phone { Sense::click() } else { Sense::click_and_drag() });
+    // (on a phone it comes in with the rows: `entrance`)
+    let first = ui.painter().add(egui::Shape::Noop);
     register(ui, format!("{widget}:{id}"), r);
     let toggled = resp.clicked();
     if toggled {
@@ -215,11 +240,20 @@ fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, section: SidebarSe
         let bar = Rect::from_min_max(r.min + vec2(8.0, 2.0), pos2((edge - 8.0).max(r.left() + 8.0), r.bottom() - 2.0));
         ui.painter().rect_filled(bar, 4.0, t.hover.gamma_multiply(0.6));
     }
-    let c = pos2(r.left() + 10.0, r.center().y);
-    register(ui, format!("{widget}Chevron:{id}"), Rect::from_center_size(c, vec2(16.0, 16.0)));
-    let col = if hovered { t.text } else { t.text_dim };
-    paint(ui.painter(), Rect::from_center_size(c, vec2(16.0, 16.0)), if open { Icon::ChevronDown } else { Icon::ChevronRight }, col);
-    ui.painter().text(pos2(r.left() + 18.0, r.center().y), Align2::LEFT_CENTER, title, t.semibold(13.5), t.text_label);
+    if phone {
+        // the title, and a chevron after it that turns down while the section is open
+        let title = heading(ui, pos2(r.left() + 18.0, r.center().y), title, t.semibold(13.5), t.text_label);
+        let c = pos2(title.right() + 14.0, r.center().y + 1.0);
+        register(ui, format!("{widget}Chevron:{id}"), Rect::from_center_size(c, vec2(14.0, 14.0)));
+        let turn = if open { std::f32::consts::FRAC_PI_2 } else { 0.0 };
+        crate::icons::paint_turned(ui.painter(), Rect::from_center_size(c, vec2(14.0, 14.0)), Icon::ChevronRight, t.text_dim, turn);
+    } else {
+        let c = pos2(r.left() + 10.0, r.center().y);
+        register(ui, format!("{widget}Chevron:{id}"), Rect::from_center_size(c, vec2(16.0, 16.0)));
+        let col = if hovered { t.text } else { t.text_dim };
+        paint(ui.painter(), Rect::from_center_size(c, vec2(16.0, 16.0)), if open { Icon::ChevronDown } else { Icon::ChevronRight }, col);
+        heading(ui, pos2(r.left() + 18.0, r.center().y), title, t.semibold(13.5), t.text_label);
+    }
     let button = header_button(section);
     // (an album being dragged puts "Top Level" in the Albums header)
     let room = !(section == SidebarSection::Albums && app.ui.dragging_album.is_some());
@@ -234,6 +268,15 @@ fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, section: SidebarSe
     }
     if let Some(button) = button {
         show_header_button(app, ui, r, &button);
+    }
+    if phone && !pinned {
+        let (dy, alpha) = entrance(ui, r);
+        if alpha < 1.0 {
+            let last = ui.painter().add(egui::Shape::Noop);
+            ui.ctx().graphics_mut(|g| g.entry(ui.layer_id()).transform_range(first, last, egui::emath::TSTransform::from_translation(vec2(0.0, dy))));
+            // (faded by the page's own colour over where it is drawn now)
+            ui.painter().rect_filled(r.translate(vec2(0.0, dy)).expand2(vec2(0.0, 2.0)), 0.0, t.chrome.gamma_multiply(1.0 - alpha));
+        }
     }
     HeaderOutcome { open, toggled }
 }
@@ -290,6 +333,12 @@ fn show_header_button(app: &mut LightcraftApp, ui: &mut egui::Ui, header: Rect, 
         HeaderAction::Run(run) => {
             if resp.clicked() {
                 run(app, ui.ctx());
+            }
+        }
+        // (a phone's Albums + opens the Create New sheet: `new_album_rows`)
+        HeaderAction::Menu(_) if button.id == "albumNew" && crate::is_compact(ui.ctx()) => {
+            if resp.clicked() {
+                crate::panels::mobile::open_actions(ui.ctx(), "newAlbum");
             }
         }
         HeaderAction::Menu(items) => {

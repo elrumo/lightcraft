@@ -111,7 +111,7 @@ fn length(ui: &mut Ui, id: &str, inches: f64, unit: Unit, min_in: f64, max_in: f
 
 fn check(ui: &mut Ui, id: &str, label: &str, value: bool) -> Option<bool> {
     let mut v = value;
-    let r = ui.checkbox(&mut v, crate::i18n::tr(label));
+    let r = crate::widgets::check(ui, &mut v, crate::i18n::tr(label));
     register(ui, format!("check:{id}"), r.rect);
     r.changed().then_some(v)
 }

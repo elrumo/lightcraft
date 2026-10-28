@@ -15,19 +15,36 @@ const GRADING_TABS: [(&str, &str, Icon); 4] = [
 const GRADING_WHEELS: [(&str, &str); 3] = [("shadows", "Shadows"), ("midtones", "Midtones"), ("highlights", "Highlights")];
 
 pub(super) fn grading(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, photo: PhotoId) {
-    let mode = GRADING_TABS.iter().find(|(k, ..)| *k == app.ui.grading_mode).map_or("3way", |(k, ..)| *k);
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 6, bottom: 2 }).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            for (key, tip, icon) in GRADING_TABS {
-                if crate::widgets::icon_button(ui, &format!("grading-{key}"), icon, vec2(28.0, 28.0), key == mode, true, crate::i18n::tr(tip))
-                    .clicked()
-                {
-                    app.ui.grading_mode = key.to_string();
+    let mut mode = GRADING_TABS.iter().find(|(k, ..)| *k == app.ui.grading_mode).map_or("3way", |(k, ..)| *k);
+    if app.compact {
+        // a phone shows one wheel at a time, picked in a segmented control (three wheels don't fit)
+        if mode == "3way" {
+            mode = "midtones";
+        }
+        let ranges: Vec<(&str, &str)> = GRADING_WHEELS.iter().map(|(k, label)| (*label, *k)).collect();
+        let chosen = GRADING_WHEELS.iter().position(|(k, _)| *k == mode);
+        let tapped = egui::Frame::NONE
+            .inner_margin(crate::widgets::margin(ui.ctx(), 8, 4))
+            .show(ui, |ui| crate::widgets::segmented(ui, "gradingRange", &ranges, chosen, 3))
+            .inner;
+        if let Some(i) = tapped {
+            mode = GRADING_WHEELS[i].0;
+            app.ui.grading_mode = mode.to_string();
+        }
+    } else {
+        egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 6, 2)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for (key, tip, icon) in GRADING_TABS {
+                    if crate::widgets::icon_button(ui, &format!("grading-{key}"), icon, vec2(28.0, 28.0), key == mode, true, crate::i18n::tr(tip))
+                        .clicked()
+                    {
+                        app.ui.grading_mode = key.to_string();
+                    }
                 }
-            }
+            });
         });
-    });
+    }
     let w = ui.available_width();
     if mode == "3way" {
         // three wheels of one size: midtones on top, shadows and highlights below
@@ -46,7 +63,8 @@ pub(super) fn grading(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSet
         }
     } else {
         let i = GRADING_WHEELS.iter().position(|(k, _)| *k == mode).unwrap_or(1);
-        let rad = (w * 0.3).clamp(40.0, 80.0);
+        // (a phone's wheel is as wide as a thumb can use)
+        let rad = if app.compact { ((w - 2.0 * crate::widgets::side_pad(ui.ctx()).0) / 2.0).clamp(40.0, 105.0) } else { (w * 0.3).clamp(40.0, 80.0) };
         let (area, _) = ui.allocate_exact_size(vec2(w, rad * 2.0 + 40.0), Sense::hover());
         grading_wheel(app, ui, d, photo, i, pos2(area.center().x, area.top() + rad + 10.0), rad, false);
         for part in ["hue", "sat", "lum"] {

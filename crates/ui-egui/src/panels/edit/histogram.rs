@@ -236,7 +236,7 @@ pub(super) fn histogram(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId)
 pub(super) fn soft_proofing(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     use lightcraft_engine::pipeline::OutputSpace;
     let t = Tokens::get(ui.ctx());
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 8, bottom: 6 }).show(ui, |ui| {
+    egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 8, 6)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new(crate::i18n::tr("Soft Proofing")).color(t.text).strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -295,7 +295,7 @@ pub(super) fn soft_proofing(app: &mut LightcraftApp, ui: &mut egui::Ui, id: Phot
                 }
             });
             let mut paper = app.ui.proof_paper_ink;
-            let r = ui.checkbox(&mut paper, crate::i18n::tr("Simulate Paper & Ink"));
+            let r = crate::widgets::check(ui, &mut paper, crate::i18n::tr("Simulate Paper & Ink"));
             register(ui, "button:proofPaperInk", r.rect);
             if r.changed() {
                 let _ = app.run("view.softProof", json!({"paperInk": paper}));

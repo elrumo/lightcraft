@@ -107,7 +107,8 @@ pub(super) fn folder_tree(
 }
 
 pub(super) fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
-    crate::widgets::context_menu(resp, |ui| {
+    // (a phone's "…" opens it too, at the finger: `row_popup`)
+    super::rows::row_popup(resp).show(|ui| {
         if a.folder {
             // the same commands as File ▸ New…, aimed at this folder
             crate::widgets::menu_button(ui, crate::i18n::tr("New"), |ui| {

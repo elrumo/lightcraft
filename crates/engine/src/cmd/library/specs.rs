@@ -199,6 +199,32 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"path": path, "label": label}))
             }
         ),
+        cmd!(
+            "library.chooseRun",
+            "Choose a Run of Photos",
+            [],
+            None,
+            "{base: [ids] chosen before the drag, from, to: grid indexes, adding: bool} chooses (or, with adding false, unchooses) the run of grid photos from `from` to `to` on top of `base`, as a sideways drag over the phone's grid does → {chosen}",
+            always,
+            |s, p| {
+                let c = "library.chooseRun";
+                let index =
+                    |k: &str| p.get(k).and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad(c, format!("missing `{k}`")));
+                let (from, to) = (index("from")?, index("to")?);
+                let adding = p.get("adding").and_then(Value::as_bool).unwrap_or(true);
+                let base: Vec<u64> = p.get("base").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_u64).collect();
+                let visible = s.visible_shared().1;
+                let run: std::collections::HashSet<u64> = visible.get(from.min(to)..=from.max(to)).unwrap_or(&[]).iter().map(|i| i.0).collect();
+                let mut chosen: Vec<u64> = base.iter().copied().filter(|i| adding || !run.contains(i)).collect();
+                if adding {
+                    // (a set: the base can be thousands of photos, and the run hundreds)
+                    let base: std::collections::HashSet<u64> = base.iter().copied().collect();
+                    chosen.extend(visible.iter().map(|i| i.0).filter(|i| run.contains(i) && !base.contains(i)));
+                }
+                s.execute("library.select", &json!({"ids": chosen}))?;
+                Ok(json!({"chosen": chosen.len()}))
+            }
+        ),
         cmd!("library.clearFilter", "Clear Filters", ["View"], None, "{}", always, |s, _| {
             s.filter = Default::default();
             s.shelved_filter = None;

@@ -32,6 +32,7 @@ impl LightcraftApp {
             native_menu: false,
             native_shortcuts: Default::default(),
             recording_shortcut: None,
+            compact: false,
             text_focus: false,
             headless_host: false,
             notices: vec![],
@@ -592,6 +593,7 @@ impl LightcraftApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         i18n::set_language(self.ui.language);
         let ctx = ui.ctx().clone();
+        panels::mobile::edit_menu_event(&ctx);
         if !self.fonts_ready {
             ctx.request_repaint();
             return;
