@@ -260,6 +260,7 @@ use control ids and ranges from `develop.controls` rather than translated labels
 | Read selection and active photo | `library.state {}` | `selection: {ids, active}`; `active` is `null` when no photo is active |
 | Read photo identity and settings together | `photo.inspect {}` | Active photo's `id`, `develop`, rating, flag and history in one reply |
 | Read a specific photo without selecting it | `photo.inspect {id}` / `develop.get {id}` | Photo details / full develop JSON; omitting `id` reads the active photo |
+| Read the base tone curve a raw is shown through | `photo.cameraTone {id?}` | `{tone: {knots: [[scene, display] × 32], chroma: [× 8]}}`, or `{tone: null}` for a photo whose file gives none (a rendered file, a raw nothing was fitted to). It is the curve fitted to the camera's own picture, else a DNG's own, that this engine tones a raw with before any edit; a native (non-Rust) frontend that develops raws itself needs it to match. Decodes the photo at thumbnail size when no source of it is cached; changes no edit |
 | Read global slider metadata and values | `develop.controls {section?}` | Array of `{id, label, section, min, max, default, step, decimals, track, value}` for the active photo |
 | Set absolute slider values | `develop.set {values: {"light.exposure": 0.7}}` | Undoable edit of the active photo; also accepts `{control, value}` |
 | Move a relative control | `develop.adjust {control: "light.exposure", delta: 0.1}` | Adds to the current value, clamped to the control's range |
