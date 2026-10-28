@@ -430,6 +430,8 @@ pub struct Session {
     /// Storage keys of the host's synced files that signing out left to delete (the browser's previews), until the host
     /// takes them ([`Session::take_sync_purge`]).
     sync_purge: Vec<String>,
+    /// What an export may take in memory, when the host said ([`Session::set_export_limit`]); `None`: the platform's.
+    pub export_limit: Option<Option<usize>>,
     /// Adds exported files to Apple Photos ([`apple_photos`]): `/usr/bin/osascript`, installed by
     /// [`Session::with_fs`] on macOS; `None` elsewhere and in sessions without a file system. Tests
     /// put a fake here.
@@ -555,6 +557,7 @@ impl Session {
             sync: None,
             sync_store: None,
             sync_purge: Vec::new(),
+            export_limit: None,
             #[cfg(not(target_arch = "wasm32"))]
             apple_photos: None,
             #[cfg(not(target_arch = "wasm32"))]

@@ -131,9 +131,20 @@ fn prepare_guarded(
     let (full_px, long) = ((p.width as usize).saturating_mul(p.height as usize), p.width.max(p.height) as usize);
     let (work, weight) = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
-        if o.on_server {
+        // what this render needs against what this device may use: over it, the sync server renders (or says why not)
+        let need = crate::memory::export_need(full_px, w.saturating_mul(h));
+        let too_big = session.export_limit().is_some_and(|limit| need > limit);
+        if o.on_server || too_big {
             let Some(target) = session.sync_render_target(p) else {
-                return Err(format!("{}: the sync server has no original of this photo to render (sign in, and let it upload)", p.file_name));
+                return Err(if o.on_server {
+                    format!("{}: the sync server has no original of this photo to render (sign in, and let it upload)", p.file_name)
+                } else {
+                    format!(
+                        "{}: a {w} × {h} export needs about {} MB, more than this device can allow. Export it smaller, or sign in to a sync server that has the original and it renders there",
+                        p.file_name,
+                        need >> 20
+                    )
+                });
             };
             let settings = serde_json::to_value(&*p.develop).map_err(|e| e.to_string())?;
             let request =

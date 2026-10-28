@@ -181,6 +181,22 @@ fn presets_conflicts_and_subfolders() {
     assert_eq!(written, ["out/Sub/LC01347.png"]);
 }
 
+/// A device that can only allow so much memory (an iPhone) refuses a render that needs more, and says what to do
+/// (the sync server renders it when one has the original); a smaller export, and a device with no limit, go on.
+#[test]
+fn an_export_over_the_devices_memory_limit_is_refused() {
+    let mut s = Session::with_demo();
+    let id = s.active().unwrap();
+    let o = ExportOptions::from_json(&json!({"format": "png", "width": 400}));
+    s.set_export_limit(Some(1024));
+    let e = crate::export::prepare_export(&mut s, id, &o, 1).err().expect("refused");
+    assert!(e.contains("more than this device can allow") && e.contains("sync server"), "{e}");
+    s.set_export_limit(Some(64 << 30));
+    assert!(crate::export::prepare_export(&mut s, id, &o, 1).is_ok());
+    s.set_export_limit(None);
+    assert!(crate::export::prepare_export(&mut s, id, &o, 1).is_ok());
+}
+
 #[test]
 fn prepared_exports_run_on_another_thread() {
     fn send<T: Send>(_: &T) {}

@@ -21,16 +21,32 @@ use serde::Serialize;
 /// The rest is headroom for what isn't cached (renders in progress, textures, the UI). An export
 /// batch may, in addition, hold up to twice the budget in photos rendering side by side
 /// ([`export_gate`]): transient memory, given back when the batch ends. Default:
-/// a quarter of the machine's RAM, at most 1.5 GiB (`LIGHTCRAFT_MEMORY_MB` overrides it).
+/// a quarter of the machine's RAM, at most 1.5 GiB (`LIGHTCRAFT_MEMORY_MB` overrides it); on iOS
+/// see [`budget_for_limit`].
 pub fn default_budget() -> usize {
     if let Some(mb) = std::env::var("LIGHTCRAFT_MEMORY_MB").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|m| *m >= 64) {
         return mb << 20;
+    }
+    if cfg!(target_os = "ios") {
+        // the host passes the real limit to `Session::set_memory_budget(budget_for_limit(..))` at launch
+        return budget_for_limit(None);
     }
     let cap = 3usize << 29; // 1.5 GiB
     match total_ram() {
         Some(ram) => (ram / 4).clamp(256 << 20, cap),
         None => cap,
     }
+}
+
+/// The budget on iOS, where the system ends an app that goes over its memory limit (a fraction
+/// of the device's RAM that depends on the model) instead of swapping: a third of what the app
+/// may still allocate at launch (`available`, from `lightcraft_sysmem::available_memory`),
+/// between 256 MiB and 1 GiB, leaving two thirds for decodes and renders in progress, textures
+/// and the UI. Unknown (the simulator): 768 MiB.
+pub fn budget_for_limit(available: Option<usize>) -> usize {
+    const MIN: usize = 256 << 20;
+    const MAX: usize = 1 << 30;
+    available.filter(|a| *a > 0).map_or(768 << 20, |a| a / 3).clamp(MIN, MAX)
 }
 
 /// What an export needs at its peak on top of the app's own memory: about 56 bytes per source pixel (the decoded floats,
@@ -40,6 +56,31 @@ pub fn default_budget() -> usize {
 /// process holds at any size; deliberately a little high.
 pub fn export_need(source_px: usize, output_px: usize) -> usize {
     source_px.saturating_mul(56).saturating_add(output_px.saturating_mul(104))
+}
+
+/// What an export may take on this device, where going over ends the app: on iOS the system ends an app that
+/// exceeds its limit, so two budgets (the budget is a third of what the app may allocate at launch); elsewhere memory
+/// swaps instead, so there is no limit unless `LIGHTCRAFT_EXPORT_MEMORY_MB` sets one. A render over it is not tried
+/// here: it goes to the sync server, or fails with a message ([`crate::export`]).
+pub fn export_limit() -> Option<usize> {
+    if let Some(mb) = std::env::var("LIGHTCRAFT_EXPORT_MEMORY_MB").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|m| *m > 0) {
+        return Some(mb << 20);
+    }
+    cfg!(target_os = "ios").then(|| budget().saturating_mul(2))
+}
+
+impl crate::Session {
+    /// What an export from this session may take: what its host set ([`crate::Session::set_export_limit`]), else the
+    /// platform's ([`export_limit`]).
+    pub fn export_limit(&self) -> Option<usize> {
+        self.export_limit.unwrap_or_else(export_limit)
+    }
+
+    /// Say what an export from this session may take (`None`: no limit). A host that knows the app's real limit (the
+    /// iOS app) says so here; the render a sync server makes for a device has none of its own.
+    pub fn set_export_limit(&mut self, bytes: Option<usize>) {
+        self.export_limit = Some(bytes);
+    }
 }
 
 /// Physical memory (bytes), when the platform tells us without native calls. On Linux, a container's
@@ -328,11 +369,65 @@ impl crate::Session {
         self.media.set_budget(cache_share(b));
         b
     }
+
+    /// The system is short of memory (an iOS memory warning; the app is ended if it doesn't give
+    /// some back): forget the decoded sources (decoded again when next shown), the GPU's pooled
+    /// buffers, and hand freed pages back to the system. Returns the bytes freed from the caches.
+    /// Rendered previews stay: they are small and redrawing the grid without them is slow.
+    pub fn release_memory(&mut self) -> usize {
+        let held = self.memory_report().engine_bytes;
+        self.media.clear_sources();
+        lightcraft_gpu::trim_pool(0);
+        release();
+        held.saturating_sub(self.memory_report().engine_bytes)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_ios_budget_follows_the_app_memory_limit() {
+        // a 4 GB limit (a recent iPhone Pro): 1 GiB at most
+        assert_eq!(budget_for_limit(Some(4_000_000_000)), 1 << 30);
+        // a 1.5 GB limit: a third
+        assert_eq!(budget_for_limit(Some(1_500_000_000)), 500_000_000);
+        // nearly nothing left: still enough for a preview
+        assert_eq!(budget_for_limit(Some(100 << 20)), 256 << 20);
+        // unknown (simulator) or none
+        assert_eq!(budget_for_limit(None), 768 << 20);
+        assert_eq!(budget_for_limit(Some(0)), 768 << 20);
+    }
+
+    /// A memory warning drops the decoded sources; photos still render afterwards.
+    #[test]
+    fn releasing_memory_drops_decoded_sources_and_keeps_working() {
+        let mut s = crate::Session::with_demo();
+        let ids: Vec<_> = s.catalog.photos().take(3).map(|p| p.id).collect();
+        for id in &ids {
+            s.render_now(*id, 256, 256).unwrap();
+        }
+        let before = s.memory_report();
+        let sources = before.thumb_sources.bytes + before.preview_sources.bytes + before.full_source.bytes;
+        assert!(sources > 0, "{before:?}");
+        let freed = s.release_memory();
+        assert!(freed >= sources, "freed {freed} of {sources}");
+        let after = s.memory_report();
+        assert_eq!(after.thumb_sources.bytes + after.preview_sources.bytes + after.full_source.bytes, 0, "{after:?}");
+        assert!(s.render_now(ids[0], 256, 256).is_ok());
+    }
+
+    /// A session's own export limit wins over the platform's; none means none.
+    #[test]
+    fn a_session_says_what_an_export_may_take() {
+        let mut s = crate::Session::new();
+        assert_eq!(s.export_limit(), export_limit());
+        s.set_export_limit(Some(1 << 30));
+        assert_eq!(s.export_limit(), Some(1 << 30));
+        s.set_export_limit(None);
+        assert_eq!(s.export_limit(), None);
+    }
 
     #[test]
     fn export_needs_follow_the_pixels() {
