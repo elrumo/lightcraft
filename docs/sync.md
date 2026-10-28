@@ -724,4 +724,5 @@ v1, honestly:
 - **Plain HTTP, sized for a household**: TLS is the proxy's or the tailnet's job ([above](#tls-a-reverse-proxy-or-a-private-network));
   the server itself is hardened against stalled clients ([Security](#security)), but it serves a thread per
   connection: right for a home server or a small group, not the open internet at scale.
+- **Imported presets without an id of their own can collide**: two different presets with the same group and name and no UUID (some imported XMP presets), imported on two devices before those devices sync, get the same id, and one replaces the other. Presets made in LightCraft carry their device's id space and never collide.
 - **Joining two existing libraries adds only**: [this library's photos are added to the server's](#when-this-library-and-the-servers-both-have-photos) (or replaced by it); photos without a content hash (very old libraries) can't be recognised as the same and are added again.

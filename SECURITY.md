@@ -44,6 +44,7 @@ Security reports may cover:
 - engine command validation and serialization/deserialization;
 - the desktop control channel, the MCP server, and the MCP-to-app connection;
 - the WebAssembly build;
+- the optional sync server (`lightcraft-server`): accounts, sign-in and device tokens, album share links and guest uploads, library-folder and path handling, and the sync protocol ([docs/sync.md](docs/sync.md));
 - GPU resource validation or driver-facing input handling;
 - dependencies, CI, packaging, signing, checksums, and release artifact integrity.
 
@@ -52,3 +53,5 @@ General bugs without a security impact should use the project's normal issue and
 ## Current limitations
 
 The control channel (`lightcraft --control PORT`) listens on loopback only and has no authentication, so any local process can drive the app while it is enabled; only enable it when you need it ([control-protocol.md](docs/control-protocol.md)).
+
+The sync server (`lightcraft-server`) speaks plain HTTP and signs users in with a password; put it behind TLS (a reverse proxy such as Caddy, or a private network) before exposing it to the internet ([self-hosting.md](docs/self-hosting.md)), and keep its data directory private: it holds the accounts, device tokens and every user's photos.

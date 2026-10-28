@@ -143,7 +143,8 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 
 ## Map of the code
 `geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
-→ `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop), `lightcraft-cli` (render/commands/MCP). `scenes` generates demo
+→ `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop), `lightcraft-cli` (render/commands/MCP), `lightcraft-server`
+(optional self-hosted sync, `docs/sync.md`; the devices' side is `catalog::sync` + `engine::cloud_sync`). `scenes` generates demo
 photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `corpus`, `stats`); `testkit` = test helpers
 (dev-dependency only). `flake.nix` +
 `nix/package.nix` = the Nix package (`nix build` builds both binaries with the craft-fonts input, installs the

@@ -332,8 +332,13 @@ lightcraft --control 7980 ~/Pictures/trip
   through a shoot takes ~50 ms per photo.
 - **Background rendering.** A worker pool renders the loupe, before/after and every visible thumbnail off the UI
   thread: drafts during drags, full quality on release.
-- **Local-first.** No account, no cloud, no telemetry, no subscription. Your catalog is an append-only log of
-  human-readable operations you can diff, back up or replay.
+- **Local-first.** No account, no cloud, no telemetry, no subscription, unless you choose to run your own sync
+  server (next). Your catalog is an append-only log of human-readable operations you can diff, back up or replay.
+- **Optional self-hosted sync.** Run `lightcraft-server` (Docker, a Mac login item or a plain binary; see
+  [docs/self-hosting.md](docs/self-hosting.md)) on a computer or NAS you own and sign in from Settings ▸ Sync: your
+  library (edits, ratings, albums, presets) follows you between your computers and the web build, previews first and
+  originals on request. Photo folders already on the server are read in place, and an album can be shared as a link.
+  Nothing syncs until you sign in, and the server is yours, not ours ([docs/sync.md](docs/sync.md)).
 
 <br>
 

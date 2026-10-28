@@ -162,6 +162,14 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
   (no params: a command that takes photo ids then acts on the selection). Any other text that
   isn't an object rejects the promise and runs nothing, as the control channel and MCP do, so a
   typo can't run a command on the selection. This is how the headless-Chrome checks drive the page.
+- **Optional sync with your own server** ([sync.md](sync.md)). A page served by `lightcraft-server --web` is
+  on the server's own origin, so Settings ▸ Sync already holds its address and the requests are same-origin
+  `fetch` calls (`apps/lightcraft-web/src/sync.rs`; a page on another origin needs the server's `--cors-origin`).
+  The sync state (`sync.json`, `sync.outbox`, `sync.uploaded`, `sync.presets`, `sync.docs`) lives beside the catalog,
+  the smart and mini previews the server sends in `proxies/<hash>.lcsp|.lcsm`, and downloaded originals in
+  `originals/<hash>`. A photo whose original isn't downloaded renders from its previews (the mini one until the
+  smart one arrives); an export over 2560 px needs the original (Make Available Offline). Signing out removes the
+  account's library and its previews from the browser. Nothing syncs until you sign in.
 - **The page title names the open photo**: `<file name> — LightCraft`, with ` •` after the name while
   changes are not yet written to browser storage (`LightcraftApp::page_title`). eframe's web runner
   ignores the window title the desktop app sets, and a host that embeds the page reads this title to
