@@ -139,6 +139,7 @@ pub fn run(args: &[&str]) -> Result<(), String> {
         std::fs::copy(root().join("apps/lightcraft-web").join(f), out.join(f)).map_err(|e| format!("copy {f}: {e}"))?;
     }
     let chinese_font = copy_chinese_font(&out)?;
+    write_version(&out)?;
 
     // precompressed copies (skipped for --dev: they'd only slow the edit loop down)
     println!("\n{:<26} {:>12} {:>12} {:>12}", "file", "bytes", "gzip -9", "brotli -11");
@@ -170,6 +171,15 @@ pub fn run(args: &[&str]) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// `version.json` beside the bundle: the version and commit it was built from (with `-dirty` for
+/// uncommitted changes), which the sync server's admin page shows.
+fn write_version(out: &Path) -> Result<(), String> {
+    let manifest = std::fs::read_to_string(root().join("Cargo.toml")).map_err(|e| format!("Cargo.toml: {e}"))?;
+    let version = crate::build_info::version(&crate::version::read(&manifest)?);
+    let json = serde_json::json!({"version": version, "commit": crate::build_info::commit(&root(), true)}).to_string();
+    std::fs::write(out.join("version.json"), json).map_err(|e| format!("version.json: {e}"))
 }
 
 fn gzip(data: &[u8]) -> Result<Vec<u8>, String> {
@@ -307,6 +317,17 @@ mod tests {
         };
         assert!(is_profile(WEB_PROFILE), "`{WEB_PROFILE}` is no longer a profile in Cargo.toml");
         assert!(!is_profile(SITE_DIR), "`{SITE_DIR}` is a Cargo profile name; pick a different bundle directory");
+    }
+
+    #[test]
+    fn server_image_copies_the_bundle_directory() {
+        // The Docker image copies the bundle out of `target/<SITE_DIR>`; pointing it anywhere else
+        // (it once said `target/web`, the cargo profile directory) ships a server without
+        // index.html, which answers `/` with {"error":"not found"} while /admin still works.
+        let dockerfile = std::fs::read_to_string(root().join("apps/lightcraft-server/Dockerfile")).unwrap();
+        let copies = dockerfile.lines().any(|l| l.contains(&format!("find target/{SITE_DIR} ")) && l.contains("cp "));
+        assert!(copies, "apps/lightcraft-server/Dockerfile no longer copies target/{SITE_DIR}");
+        assert!(dockerfile.contains("test -f /out/index.html"), "the Dockerfile must fail the build when the bundle has no index.html");
     }
 
     #[test]

@@ -1,0 +1,11 @@
+target
+target-*
+corpus
+plan
+dist
+log
+.git
+.claude
+/temp
+**/node_modules
+**/.git

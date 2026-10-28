@@ -5,6 +5,7 @@
 
 mod assets;
 mod bench;
+mod build_info;
 mod ci_lock;
 mod ci_quick;
 mod ci_report;
