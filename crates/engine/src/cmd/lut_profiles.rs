@@ -202,6 +202,19 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             import
         ),
+        cmd!(
+            query "profile.lutFile",
+            "Profile LUT File",
+            [],
+            None,
+            "{id: lut:…} → {file: path | null} the `.cube` file behind an imported profile or an app pack's profile: what a frontend that applies LUT profiles itself reads (the file is read-only to it). `null` for an id nothing is registered under, or a table with no file. Changes nothing",
+            always,
+            |s, p| {
+                let id = str_param(p, "id").ok_or_else(|| bad("profile.lutFile", "missing id"))?;
+                let file = s.lut_profiles.iter().chain(s.pack_profiles()).find(|x| x.id == id).map(|x| x.file.as_str()).filter(|f| !f.is_empty());
+                Ok(json!({"file": file}))
+            }
+        ),
         cmd!("profile.deleteImported", "Delete Imported Profile", [], None, "{id: lut:…}", always, |s, p| {
             let id = str_param(p, "id").ok_or_else(|| bad("profile.deleteImported", "missing id"))?.to_string();
             let Some(i) = s.lut_profiles.iter().position(|x| x.id == id) else {
