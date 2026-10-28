@@ -112,8 +112,8 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         ui.ctx().data_mut(|m| m.insert_temp(egui::Id::unique(GRID_BOTTOM), grid.inner_rect.bottom()));
     }
     ui.add_space(4.0);
-    // options
-    if !d.sources.is_empty() {
+    // options (staged: the host's temporary folder means nothing to the user)
+    if !d.sources.is_empty() && !d.staged {
         field(ui, "Source", |ui| {
             // (whether each source is a folder is checked off the UI thread, once)
             let joined = d.sources.join("\n");
@@ -131,47 +131,62 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
                 .small(),
         );
     }
-    field(ui, "Transfer", |ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if crate::widgets::text_button(ui, "importAdd", crate::i18n::tr("Add in place"), !d.copy)
-            .on_hover_text(crate::i18n::tr("Reference the files where they are"))
-            .clicked()
-        {
-            d.copy = false;
-            d.move_files = false;
-        }
-        let can_copy = app.session.library.as_ref().is_some_and(|l| l.on_disk) || app.services.pick_folder.is_some();
-        let r =
-            ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", crate::i18n::tr("Copy"), d.copy && !d.move_files)).inner;
-        if r.on_hover_text(crate::i18n::tr("Copy the files (into the library's Originals/, or a folder you choose)")).clicked() {
-            d.copy = true;
-            d.move_files = false;
-        }
-        let r =
-            ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importMove", crate::i18n::tr("Move"), d.copy && d.move_files)).inner;
-        if r.on_hover_text(crate::i18n::tr("Move the files (into the library's Originals/, or a folder you choose), removing them from the source"))
-            .clicked()
-        {
-            d.copy = true;
-            d.move_files = true;
-        }
-    });
-    let r = ui.label(
-        egui::RichText::new(crate::i18n::tr(match (d.copy, d.move_files) {
-            (true, false) => {
-                "Copy: the files are copied to the folder below and the library uses the copies; the originals are left as they are."
+    if d.staged {
+        // the host's temporary copies go into the library: nothing to choose
+        let r = ui.label(
+            egui::RichText::new(crate::i18n::tr("The photos are copied into the library; the originals in Photos or Files are left as they are."))
+                .color(t.text_dim)
+                .small(),
+        );
+        register(ui, "label:importModeHelp", r.rect);
+    } else {
+        field(ui, "Transfer", |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if crate::widgets::text_button(ui, "importAdd", crate::i18n::tr("Add in place"), !d.copy)
+                .on_hover_text(crate::i18n::tr("Reference the files where they are"))
+                .clicked()
+            {
+                d.copy = false;
+                d.move_files = false;
             }
-            (true, true) => {
-                "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are."
+            let can_copy = app.session.library.as_ref().is_some_and(|l| l.on_disk) || app.services.pick_folder.is_some();
+            let r = ui
+                .add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", crate::i18n::tr("Copy"), d.copy && !d.move_files))
+                .inner;
+            if r.on_hover_text(crate::i18n::tr("Copy the files (into the library's Originals/, or a folder you choose)")).clicked() {
+                d.copy = true;
+                d.move_files = false;
             }
-            _ => "Add in place: the library references the files where they are; nothing is copied or moved.",
-        }))
-        .color(if d.copy && d.move_files { t.caution } else { t.text_dim })
-        .small(),
-    );
-    register(ui, "label:importModeHelp", r.rect);
+            let r = ui
+                .add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importMove", crate::i18n::tr("Move"), d.copy && d.move_files))
+                .inner;
+            if r.on_hover_text(crate::i18n::tr(
+                "Move the files (into the library's Originals/, or a folder you choose), removing them from the source",
+            ))
+            .clicked()
+            {
+                d.copy = true;
+                d.move_files = true;
+            }
+        });
+        let r = ui.label(
+            egui::RichText::new(crate::i18n::tr(match (d.copy, d.move_files) {
+                (true, false) => {
+                    "Copy: the files are copied to the folder below and the library uses the copies; the originals are left as they are."
+                }
+                (true, true) => {
+                    "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are."
+                }
+                _ => "Add in place: the library references the files where they are; nothing is copied or moved.",
+            }))
+            .color(if d.copy && d.move_files { t.caution } else { t.text_dim })
+            .small(),
+        );
+        register(ui, "label:importModeHelp", r.rect);
+    }
     if d.copy {
-        field(ui, if d.move_files { "Move to" } else { "Copy to" }, |ui| {
+        // (the host's copies are moved, but to the user the photos are copied: the originals stay)
+        field(ui, if d.move_files && !d.staged { "Move to" } else { "Copy to" }, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let shown = if d.destination.trim().is_empty() { crate::i18n::tr("Library Originals").to_string() } else { d.destination.clone() };
             ui.label(egui::RichText::new(shown).color(Tokens::get(ui.ctx()).text_label));

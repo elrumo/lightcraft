@@ -223,6 +223,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("merge.hdrPanoramaLast", "HDR Panorama with Last Settings", None, "Photo>Photo Merge"),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     ("file.addFolder", "Import from Folder…", None, "File"),
+    // the host's own pickers (iOS: Photos, Files); only in hosts that have them
+    ("file.importFromPhotos", "Import from Photos…", None, "File"),
+    ("file.importFromFiles", "Import from Files…", None, "File"),
+    ("file.importFolderFromFiles", "Import Folder from Files…", None, "File"),
     // {path?, into?: open | new, name?, location?}: asks where the catalog goes unless `into` (or
     // Settings) says (#2672, `lightroom_destination`)
     ("file.importLightroom", "Import Lightroom Catalog…", None, "File"),
@@ -282,4 +286,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.captureTime", "Edit Capture Time…", None, "Photo"),
     ("photo.tagFromTracklog", "Auto-Tag from Tracklog…", None, "Photo"),
     ("app.exportPrevious", "Export with Previous", Some("Cmd+Alt+Shift+E"), "File"),
+    // iOS: the last export's settings, the files into the device's photo library
+    ("app.saveToPhotos", "Save to Photos", None, "File"),
+    // back to the top of the grid (iOS: a tap on the status bar)
+    ("view.scrollToTop", "Scroll to Top", None, ""),
 ];

@@ -257,6 +257,11 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         // the browser reports prefers-color-scheme to egui
         system_theme: None,
         sync_exec: Some(crate::sync::exec(sync_backend)),
+        share_exports: None,
+        save_to_photos: None,
+        host_pick: None,
+        haptic: None,
+        clipboard_text: None,
     }
 }
 

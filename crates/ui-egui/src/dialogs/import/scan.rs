@@ -8,6 +8,8 @@ pub struct ScanTask {
     rx: std::sync::mpsc::Receiver<ScanOutput>,
     /// Open the review with "copy into the library" checked (a camera / card).
     pub copy: bool,
+    /// The host's temporary copies ([`ImportDialog::staged`]).
+    staged: bool,
     /// Open the review with this album chosen (an album's context menu ▸ Import…).
     pub album: Option<u64>,
     /// Browsing a folder (Local): the photos are read in place instead of opening the review.
@@ -54,6 +56,19 @@ pub(crate) fn cards_seen(app: &mut LightcraftApp, now: Vec<lightcraft_engine::de
 
 /// Scan `paths` in the background, then open the review dialog (see [`poll_scan`]).
 pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String> {
+    scan(app, paths, false)
+}
+
+/// [`open`] for files the host copied into a temporary folder of its own (iOS: the Photos and
+/// Files pickers): the review moves them into the library ([`ImportDialog::staged`]).
+pub fn open_staged(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String> {
+    if !app.session.library.as_ref().is_some_and(|l| l.on_disk) {
+        return Err("photos can't be imported: the library isn't saved on this device (see the log for why it couldn't be opened)".into());
+    }
+    scan(app, paths, true)
+}
+
+fn scan(app: &mut LightcraftApp, paths: Vec<String>, staged: bool) -> Result<Value, String> {
     if app.scan.is_some() {
         return Err("a scan is already running".into());
     }
@@ -73,7 +88,7 @@ pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String
     #[cfg(target_arch = "wasm32")]
     job();
     let guard = scan_guard(app, &progress, false);
-    app.scan = Some(ScanTask { progress, rx, copy: false, album: None, browse: false, sources, guard });
+    app.scan = Some(ScanTask { progress, rx, copy: staged, staged, album: None, browse: false, sources, guard });
     Ok(json!({"scanning": true}))
 }
 
@@ -135,7 +150,7 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     #[cfg(target_arch = "wasm32")]
     job();
     let guard = scan_guard(app, &progress, true);
-    app.scan = Some(ScanTask { progress, rx, copy: false, album: None, browse: true, sources: Vec::new(), guard });
+    app.scan = Some(ScanTask { progress, rx, copy: false, staged: false, album: None, browse: true, sources: Vec::new(), guard });
     app.renderer.forget_imports();
     Ok(json!({"path": dir_s, "subfolders": subfolders, "scanning": true}))
 }
@@ -210,6 +225,8 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
         .collect();
     d.set_trashed(trashed);
     d.copy = task.copy;
+    d.staged = task.staged;
+    d.move_files = task.staged;
     // only an album the review offers (it may have been deleted while the scan ran)
     d.album = task.album.filter(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(*id)).is_some_and(|a| !a.folder && !a.is_smart()));
     d.sources = task.sources;
@@ -250,7 +267,7 @@ pub(crate) fn stall_scan_of(app: &mut LightcraftApp, browse: bool) -> Box<dyn st
     let progress = std::sync::Arc::new(ScanProgress::default());
     let (tx, rx) = std::sync::mpsc::channel::<ScanOutput>();
     let guard = scan_guard(app, &progress, false);
-    app.scan = Some(ScanTask { progress, rx, copy: false, album: None, browse, sources: Vec::new(), guard });
+    app.scan = Some(ScanTask { progress, rx, copy: false, staged: false, album: None, browse, sources: Vec::new(), guard });
     Box::new(tx)
 }
 

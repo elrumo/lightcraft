@@ -16,6 +16,7 @@ mod drop_overlay;
 pub mod export_task;
 mod focus_scan;
 mod frame_rate;
+pub mod haptics;
 pub mod headless;
 pub mod i18n;
 pub mod icons;
@@ -25,6 +26,8 @@ pub mod menus;
 mod model_setup;
 pub mod panels;
 pub mod pick;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod prefs;
 pub mod recheck;
 pub mod region;
 pub mod reload;
@@ -85,8 +88,8 @@ pub use clock::{monotonic_ms, now_ms};
 #[cfg(target_os = "linux")]
 pub use services::OpenModelFolderFn;
 pub use services::{
-    CheckEditorFn, HostAction, OpenAllWithFn, OpenUrlFn, OpenWithFn, PickFiles, PickFolder, PngEncode, RevealFn, SaveFile, ScreenProfileFn, Services,
-    SharedWrite, SystemThemeFn, WriteFn,
+    CheckEditorFn, HostAction, HostPick, OpenAllWithFn, OpenUrlFn, OpenWithFn, PickFiles, PickFolder, PickSource, PngEncode, RevealFn, SaveDone,
+    SaveFile, SaveToPhotos, SavedInbox, ScreenProfileFn, Services, ShareExports, SharedWrite, SystemThemeFn, WriteFn,
 };
 use state::{GestureFrame, InjectedPress};
 
@@ -310,6 +313,8 @@ pub struct LightcraftApp {
     pub shown_library: Option<u64>,
     /// A background export in progress.
     pub export: Option<export_task::ExportTask>,
+    /// How saves to the device's photo library ended, taken by [`export_task::poll`] (they finish on the host's own thread).
+    pub saved: SavedInbox,
     /// Background file-system work of other commands (Find Missing Photos, auto import…).
     pub tasks: tasks::Tasks,
     /// The files of the last finished background export (`ui.inspect` → `export.last`).

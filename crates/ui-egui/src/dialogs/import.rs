@@ -34,7 +34,7 @@ pub use body::{DEFAULT_FOLDER_TEMPLATE, body, example_destination, source_summar
 pub(crate) use body::{DIALOG_SIZE, note_dialog_bottom};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use scan::cards_seen;
-pub use scan::{ScanTask, browse, open, poll_scan, running};
+pub use scan::{ScanTask, browse, open, open_staged, poll_scan, running};
 #[cfg(test)]
 pub(crate) use scan::{stall_scan, stall_scan_of};
 pub(crate) use tags::{tag_field_width, tag_help, tag_toggle, unknown_tags_warning};
@@ -72,6 +72,11 @@ pub struct ImportDialog {
     pub metadata_preset: String,
     /// Copy: raws are copied as DNG.
     pub dng: bool,
+    /// The files are the host's temporary copies (iOS pickers hand over copies in the app's tmp
+    /// folder, which the system may empty): they are always moved into the library's Originals/,
+    /// never added in place.
+    #[serde(default)]
+    pub staged: bool,
     /// Per candidate: the library already has it in Recently Deleted ([`ImportDialog::set_trashed`]).
     pub trashed: Vec<bool>,
     /// What to do with those: `restore` (the default: the photo comes back with its edits), `fresh`

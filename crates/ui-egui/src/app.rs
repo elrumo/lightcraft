@@ -106,6 +106,7 @@ impl LightcraftApp {
             review_pending: None,
             shown_library: None,
             export: None,
+            saved: Default::default(),
             tasks: Default::default(),
             last_export_result: None,
             slideshow_export_reported: true,
@@ -572,6 +573,8 @@ impl LightcraftApp {
             frame_rate::forget(ctx);
         }
         panels::edit::wheel_pointer_frame_end(ctx);
+        // (the taps the panels asked for this frame, to the host's Taptic Engine if it has one)
+        haptics::flush(ctx, self.services.haptic.as_ref());
         ctx.output(|o| {
             for c in &o.commands {
                 if let egui::OutputCommand::CopyText(text) = c {

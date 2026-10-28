@@ -41,8 +41,10 @@ mod window_gpu;
 
 use dialog_filter::FileDialogExt as _;
 use lightcraft_engine::Session;
+#[cfg(test)]
+use lightcraft_ui_egui::UiState;
 use lightcraft_ui_egui::panels::library_problem::{Launch, LibraryProblem};
-use lightcraft_ui_egui::{LightcraftApp, Services, UiState};
+use lightcraft_ui_egui::{LightcraftApp, Services};
 
 mod gpu_crash;
 mod launch;

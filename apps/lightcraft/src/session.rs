@@ -246,6 +246,11 @@ pub(crate) fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::
         system_theme: appearance::service(),
         // self-hosted sync (`docs/sync.md`): requests run on worker threads
         sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
+        share_exports: None,
+        save_to_photos: None,
+        host_pick: None,
+        haptic: None,
+        clipboard_text: None,
     }
 }
 

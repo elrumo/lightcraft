@@ -959,10 +959,22 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                             opts.start_number = v as u32;
                         }
                     }
+                    // iOS: no folder to choose; the share sheet saves or sends the photos
+                    let shares = app.services.share_exports.is_some();
+                    if shares {
+                        let r = ui.label(
+                            egui::RichText::new(crate::i18n::tr(
+                                "When the export is done, the share sheet opens: save the photos to Photos or Files, or send them to another app.",
+                            ))
+                            .color(t.text_dim)
+                            .small(),
+                        );
+                        crate::widgets::register(ui, "label:exportShareHelp", r.rect);
+                    }
                     // like Lightroom Classic's Export To: one folder, or each photo's own folder (not on
                     // the web, where originals live in the browser's storage, not in folders)
                     use lightcraft_engine::export::DestinationMode as D;
-                    if !cfg!(target_arch = "wasm32") || opts.destination_mode != D::SpecificFolder {
+                    if !shares && (!cfg!(target_arch = "wasm32") || opts.destination_mode != D::SpecificFolder) {
                     choices(
                         ui,
                         "Export to",
@@ -971,7 +983,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                         &mut opts.destination_mode,
                     );
                     }
-                    if opts.destination_mode == D::SpecificFolder {
+                    if !shares && opts.destination_mode == D::SpecificFolder {
                         field(ui, "Folder", |ui| {
                             trailing_button_row(ui, |ui| {
                                 if app.services.pick_folder.is_some()
@@ -985,9 +997,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                             });
                         });
                     }
+                    if !shares {
                     field(ui, "Subfolder", |ui| {
                         crate::widgets::named(ui.add(egui::TextEdit::singleline(&mut opts.subfolder).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY)), crate::i18n::tr("Subfolder"))
                     });
+                    }
                     use lightcraft_engine::export::Conflict as K;
                     choices(
                         ui,
@@ -1306,7 +1320,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                 let ok = match &dlg {
                     Dialog::Import { opts } => {
                         let n = opts.selected_paths().len();
-                        let verb = if opts.copy && opts.move_files { "Move" } else { "Import" };
+                        let verb = if opts.copy && opts.move_files && !opts.staged { "Move" } else { "Import" };
                         add_label = crate::i18n::tr_format!("{verb} {n} Photo{}", if n == 1 { "" } else { "s" }, verb = crate::i18n::tr(verb), n = n);
                         add_label.as_str()
                     }

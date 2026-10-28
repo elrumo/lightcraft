@@ -1426,9 +1426,24 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if paths.is_empty() {
                 return Some(Ok(Value::Null));
             }
-            // review first: the import dialog lists what was found
-            let r = crate::import::open(app, paths);
+            // review first: the import dialog lists what was found. `staged`: the host copied the
+            // files into a temporary folder of its own (iOS pickers); they are moved into the library
+            let r = if p.get("staged").and_then(Value::as_bool).unwrap_or(false) {
+                crate::import::open_staged(app, paths)
+            } else {
+                crate::import::open(app, paths)
+            };
             import_into_album(app, p, r)
+        }
+        "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => {
+            // the host's picker shows over the app; its picks come back as file.addPhotos {staged}
+            let source = match id {
+                "file.importFromPhotos" => crate::PickSource::Photos,
+                "file.importFromFiles" => crate::PickSource::Files,
+                _ => crate::PickSource::Folder,
+            };
+            let Some(pick) = app.services.host_pick.as_mut() else { return Some(Err("this app has no photo picker".into())) };
+            pick(source).map(|()| json!({"picking": true}))
         }
         "file.importLightroom" => {
             // where the catalog goes (#2672): checked before a file dialog opens
@@ -2018,6 +2033,23 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Some(prev) => crate::control::export_active(app, &lightcraft_engine::export::ExportOptions::known_keys_only(&prev)),
             None => Err("nothing exported yet — use Export…".into()),
         },
+        "app.saveToPhotos" => {
+            // the last export's settings (else 2048 px JPEGs) and photos: the call's own `ids` / `preset` / … win
+            let mut params = match app.session.last_export.clone() {
+                Some(prev) if p.get("preset").is_none() => lightcraft_engine::export::ExportOptions::known_keys_only(&prev),
+                _ => lightcraft_engine::export::ExportOptions { resize: Some(Default::default()), ..Default::default() }.to_json(),
+            };
+            if let (Some(own), Some(extra)) = (params.as_object_mut(), p.as_object()) {
+                own.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+            }
+            params["sendTo"] = json!("photos");
+            params["background"] = json!(true);
+            crate::control::export_active(app, &params)
+        }
+        "view.scrollToTop" => {
+            app.ui.scroll_top = true;
+            Ok(Value::Null)
+        }
         _ => return None,
     };
     Some(r)

@@ -529,8 +529,23 @@ pub fn default_export_dir() -> String {
 pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
     use lightcraft_engine::export::{Destination, ExportOptions, export_batch};
     let p = &app.session.export_params(p)?;
+    let send = SendTo::of(p)?;
+    if send == SendTo::Photos && app.services.save_to_photos.is_none() {
+        return Err("this device has no photo library to save to".into());
+    }
+    // (`sendTo` is this host's hand-off, not an export option: the strict check would refuse it)
+    let mut options = p.clone();
+    if let Some(o) = options.as_object_mut() {
+        o.remove("sendTo");
+    }
     // the format follows `path` (JPEG when it names none), and `bitDepth` is checked against it
-    let opts = ExportOptions::from_params(p).map_err(|e| e.to_string())?;
+    let mut opts = ExportOptions::from_params(&options).map_err(|e| e.to_string())?;
+    {
+        use lightcraft_engine::export::ExportFormat as F;
+        if send == SendTo::Photos && !matches!(opts.format, F::Jpeg | F::Png | F::Tiff | F::Dng) {
+            return Err("Photos keeps JPEG, PNG, TIFF and DNG files: choose one of those to save to Photos, or share the files instead".into());
+        }
+    }
     let ids: Vec<_> = match p.get("ids").filter(|v| !v.is_null()) {
         // `ids` that aren't photo ids are an error, not "export the selection"
         Some(v) => v
@@ -557,8 +572,8 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     // than a silent write into the working directory. No folder at all (e.g. File → Export with
     // Preset): the last export's, else the default. "Same folder as original photo" needs none:
     // each photo goes to its own folder.
-    let exact = p.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).map(str::to_string);
-    let dir = match p.get("dir").and_then(Value::as_str) {
+    let mut exact = p.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).map(str::to_string);
+    let mut dir = match p.get("dir").and_then(Value::as_str) {
         Some(d) => d.trim().to_string(),
         None => {
             let last_dir =
@@ -566,6 +581,18 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
             last_dir.map(str::to_string).unwrap_or_else(default_export_dir)
         }
     };
+    // iOS: into the host's staging folder (emptied first), then the share sheet
+    if let Some(share) = &app.services.share_exports {
+        // (the running export's files are in that folder, waiting for its share sheet)
+        if app.export.is_some() {
+            return Err("an export is already running".into());
+        }
+        dir = share.dir.clone();
+        exact = None;
+        opts.subfolder.clear();
+        opts.destination_mode = lightcraft_engine::export::DestinationMode::SpecificFolder;
+        empty_folder(std::path::Path::new(&dir));
+    }
     let own_folders = opts.destination_mode == lightcraft_engine::export::DestinationMode::SameAsOriginal;
     if dir.is_empty() && exact.is_none() && !own_folders {
         return Err(NO_EXPORT_FOLDER.into());
@@ -576,10 +603,11 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     let background = p.get("background").and_then(Value::as_bool).unwrap_or(false) && app.services.write_shared.is_some();
     let out = if background {
         let items = lightcraft_engine::export::prepare_batch(&mut app.session, &ids, &opts)?;
-        crate::export_task::start(app, items, opts, to, after)?
+        crate::export_task::start(app, items, opts, to, send, after)?
     } else {
         let w = app.services.write.as_mut().ok_or("no writer")?;
         let files = export_batch(&mut app.session, &ids, &opts, &to, &mut |path, bytes| w(path, bytes), &|path| std::path::Path::new(path).exists())?;
+        deliver(app, &files, send);
         let mut out = json!({"files": files});
         // Photos may take minutes (and waits for the permission prompt): in the desktop app on a
         // worker, never on this (UI) thread; the app announces the outcome and
@@ -589,16 +617,91 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
         }
         out
     };
-    // remember for Export with Previous (and to prefill the dialog)
+    // remember for Export with Previous (and to prefill the dialog); a staging folder isn't the
+    // user's choice (and moves with an iOS app update)
     let mut last = p.clone();
     if let Some(o) = last.as_object_mut() {
         o.remove("ids");
         o.remove("path");
-        o.insert("dir".into(), json!(dir));
+        o.remove("sendTo");
+        if app.services.share_exports.is_none() {
+            o.insert("dir".into(), json!(dir));
+        } else {
+            o.remove("dir");
+        }
     }
     app.session.last_export = Some(last);
     let _ = app.session.save_prefs();
     Ok(out)
+}
+
+/// Where `app.export` sends the files it wrote (its `sendTo` param).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SendTo {
+    /// The system's share sheet, when the host has one; otherwise they stay in their folder.
+    #[default]
+    Share,
+    /// The device's photo library ([`crate::Services::save_to_photos`]).
+    Photos,
+}
+
+impl SendTo {
+    /// `sendTo` of export params: `share` (the default) or `photos`.
+    pub fn of(p: &Value) -> Result<SendTo, String> {
+        match p.get("sendTo").and_then(Value::as_str) {
+            None | Some("share") => Ok(SendTo::Share),
+            Some("photos") => Ok(SendTo::Photos),
+            Some(other) => Err(format!("unknown `sendTo` \"{other}\" (share or photos)")),
+        }
+    }
+}
+
+/// Hand on what an export wrote: to the share sheet or the photo library.
+pub fn deliver(app: &mut LightcraftApp, files: &[Value], to: SendTo) {
+    match to {
+        SendTo::Share => share_exported(app, files),
+        SendTo::Photos => save_exported(app, files),
+    }
+}
+
+/// The paths an export wrote (`files`: its per-photo results).
+fn written_paths(files: &[Value]) -> Vec<String> {
+    files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).map(str::to_string).collect()
+}
+
+/// Add what an export wrote to the device's photo library. How it went arrives in `app.saved`
+/// (`export_task::poll` says so); nothing is said here.
+fn save_exported(app: &mut LightcraftApp, files: &[Value]) {
+    let paths = written_paths(files);
+    if paths.is_empty() {
+        return;
+    }
+    let inbox = app.saved.clone();
+    if let Some(save) = app.services.save_to_photos.as_mut() {
+        save(&paths, Box::new(move |r| inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(r)));
+    }
+}
+
+/// Offer what an export wrote to the system's share sheet, when the host shares exports
+/// ([`crate::ShareExports`]).
+pub fn share_exported(app: &mut LightcraftApp, files: &[Value]) {
+    let paths = written_paths(files);
+    if let Some(share) = app.services.share_exports.as_mut()
+        && !paths.is_empty()
+    {
+        (share.share)(&paths);
+    }
+}
+
+/// Remove the files left in the share staging folder by an earlier export (they were shared, or
+/// the share sheet was dismissed); subfolders and anything that can't be removed are left.
+fn empty_folder(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if e.file_type().is_ok_and(|t| t.is_file()) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 /// Resolve one queued synthetic-input control request against the **current** layout.

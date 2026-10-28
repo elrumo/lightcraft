@@ -223,6 +223,9 @@ pub struct UiState {
     /// section opens down to it and scrolls to it, once.
     #[serde(skip)]
     pub reveal_folder: Option<String>,
+    /// Scroll the grid back to its top on the next frame (`view.scrollToTop`: iOS, a tap on the status bar).
+    #[serde(skip)]
+    pub scroll_top: bool,
     /// An album or folder row being dragged in the sidebar (dropped on a folder to move it there).
     #[serde(skip)]
     pub dragging_album: Option<u64>,
@@ -441,6 +444,7 @@ impl Default for UiState {
             reveal_album: None,
             reveal_keyword: None,
             reveal_folder: None,
+            scroll_top: false,
             dragging_album: None,
             dragging_section: None,
             curve_channel: "parametric".into(),

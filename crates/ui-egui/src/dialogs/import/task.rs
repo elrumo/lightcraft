@@ -215,6 +215,7 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
         album = r["id"].as_u64();
     }
     let mode = match (d.copy, d.move_files) {
+        _ if d.staged => "move",
         (false, _) => "add",
         (true, false) => "copy",
         (true, true) => "move",
@@ -232,7 +233,7 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
     if !d.metadata_preset.is_empty() {
         params["metadataPreset"] = json!(d.metadata_preset);
     }
-    if d.copy {
+    if d.copy || d.staged {
         if !d.destination.trim().is_empty() {
             params["destination"] = json!(d.destination.trim());
         }

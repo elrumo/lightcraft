@@ -48,6 +48,43 @@ pub type HostAction = Box<dyn FnMut(&mut Session) -> Result<Value, String>>;
 /// last heard and wakes the UI itself when that changes; it is never polled for changes.
 pub type SystemThemeFn = Box<dyn Fn(&egui::Context) -> Option<egui::Theme>>;
 
+/// Where the host's own picker takes photos from ([`Services::host_pick`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickSource {
+    /// The system photo library (iOS: Photos).
+    Photos,
+    /// Image files (iOS: Files, iCloud Drive, external drives).
+    Files,
+    /// A folder of photos (iOS: a folder in Files).
+    Folder,
+}
+
+/// Show the host's picker for `source`. It returns at once; the picked photos arrive later as
+/// `file.addPhotos {paths, staged: true}` (copies in the host's staging folder).
+pub type HostPick = Box<dyn FnMut(PickSource) -> Result<(), String>>;
+
+/// Exports handed to the system instead of written to a folder the user chooses (iOS: the share
+/// sheet, with Save Image, Save to Files, AirDrop and other apps). The export dialog then has no
+/// folder field; each export empties `dir` first, writes there and offers what it wrote.
+pub struct ShareExports {
+    /// Where exports are written (the host's own staging folder; emptied before each export).
+    pub dir: String,
+    /// Offer the exported files (absolute paths, at least one).
+    pub share: Box<dyn FnMut(&[String])>,
+}
+
+/// How a save to the photo library ended: how many photos went in, or why none did. Called on any
+/// thread.
+pub type SaveDone = Box<dyn FnOnce(Result<usize, String>) + Send>;
+
+/// Add exported files (absolute paths, at least one) to the device's photo library (iOS: PhotoKit).
+/// It returns at once and calls the `SaveDone` when the library has them (or has refused), after
+/// which the host asks for a repaint. The files stay where they are.
+pub type SaveToPhotos = Box<dyn FnMut(&[String], SaveDone)>;
+
+/// What finished saves (see [`SaveToPhotos`]) left for the app to say, taken by `export_task::poll`.
+pub type SavedInbox = std::sync::Arc<std::sync::Mutex<Vec<Result<usize, String>>>>;
+
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
 pub struct Services {
@@ -131,4 +168,19 @@ pub struct Services {
     pub system_theme: Option<SystemThemeFn>,
     /// Runs self-hosted sync requests off the UI thread ([`crate::sync_ui`]); `None`: this host doesn't sync.
     pub sync_exec: Option<crate::sync_ui::SyncExec>,
+    /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
+    pub share_exports: Option<ShareExports>,
+    /// Adds exports to the device's photo library (iOS: Save to Photos in the share sheet and the
+    /// photo's top bar; needs [`Services::share_exports`], whose folder the files are written to).
+    pub save_to_photos: Option<SaveToPhotos>,
+    /// The host's own pickers (iOS: Photos, Files): File ▸ Import from Photos… / from Files… /
+    /// Folder from Files…, and the compact grid's + button.
+    pub host_pick: Option<HostPick>,
+    /// Plays haptic feedback (iOS: the Taptic Engine); the compact layout asks for it on touch
+    /// gestures and choices (`haptics`).
+    pub haptic: Option<crate::haptics::PlayHaptic>,
+    /// The system clipboard's text, for Paste in a text field's touch edit menu (iOS: the on-screen
+    /// keyboard has no ⌘V). A host that can only read it asynchronously starts the read here,
+    /// returns `None` and sends the text itself as an `egui::Event::Paste` on a later frame.
+    pub clipboard_text: Option<Box<dyn FnMut() -> Option<String>>>,
 }

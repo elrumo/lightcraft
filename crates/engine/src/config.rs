@@ -36,8 +36,10 @@ enum Platform {
 /// LightCraft's settings folder. A nonempty `$LIGHTCRAFT_CONFIG_DIR` overrides portable mode and the
 /// platform default. The override is the complete directory; no application-name suffix is appended. An
 /// explicitly empty value disables the settings directory instead of falling back to a personal profile.
+/// On iOS `$HOME` is the app's container, where only `Documents/`, `Library/` and `tmp/` are the app's to
+/// write: it takes the macOS layout.
 pub fn config_dir() -> Option<PathBuf> {
-    let platform = if cfg!(target_os = "macos") {
+    let platform = if cfg!(any(target_os = "macos", target_os = "ios")) {
         Platform::Mac
     } else if cfg!(windows) {
         Platform::Windows

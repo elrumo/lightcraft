@@ -404,6 +404,10 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if let Some(r) = scroll_to {
             ui.scroll_to_rect(r.translate(origin.to_vec2()), None);
         }
+        // back to the top (view.scrollToTop), sliding there
+        if std::mem::take(&mut app.ui.scroll_top) {
+            ui.scroll_to_rect(Rect::from_min_size(origin, vec2(1.0, 1.0)), Some(egui::Align::TOP));
+        }
         // only the rows on screen and a screen above and below it (their thumbnails are prefetched)
         let prefetch = viewport.expand2(vec2(0.0, viewport.height()));
         for row in rows_between(&lay.rows, prefetch.top(), prefetch.bottom()) {

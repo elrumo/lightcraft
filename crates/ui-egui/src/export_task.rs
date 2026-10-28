@@ -16,6 +16,7 @@ use lightcraft_engine::export::{AfterExport, Destination, ExportOptions, Prepare
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
+use crate::control::SendTo;
 
 pub struct ExportTask {
     pub total: usize,
@@ -27,6 +28,8 @@ pub struct ExportTask {
     rx: Receiver<Result<(Vec<Value>, Option<Value>, bool), String>>,
     /// The export's row in the activity stack (`activity.cancel` sets `cancel`).
     guard: TaskGuard,
+    /// Where the files go once they are written.
+    send: SendTo,
 }
 
 impl ExportTask {
@@ -39,7 +42,14 @@ impl ExportTask {
 
 /// Start exporting `items` in the background, then do `after` with the files written (Add to Apple
 /// Photos). Errors per photo are collected, not fatal.
-pub fn start(app: &mut LightcraftApp, items: Vec<PreparedExport>, opts: ExportOptions, to: Destination, after: AfterExport) -> Result<Value, String> {
+pub fn start(
+    app: &mut LightcraftApp,
+    items: Vec<PreparedExport>,
+    opts: ExportOptions,
+    to: Destination,
+    send: SendTo,
+    after: AfterExport,
+) -> Result<Value, String> {
     if app.export.is_some() {
         return Err("an export is already running".into());
     }
@@ -81,7 +91,7 @@ pub fn start(app: &mut LightcraftApp, items: Vec<PreparedExport>, opts: ExportOp
     std::thread::Builder::new().name("export".into()).spawn(work).map_err(|e| e.to_string())?;
     #[cfg(target_arch = "wasm32")]
     work();
-    app.export = Some(ExportTask { total, progress, cancel, rx, guard });
+    app.export = Some(ExportTask { total, progress, cancel, rx, guard, send });
     Ok(json!({"background": true, "total": total}))
 }
 
@@ -128,7 +138,7 @@ pub fn start_contact_sheet(app: &mut LightcraftApp, params: &Value) -> Result<Va
     work();
     let row = app.session.activity.start("export", "Exporting contact sheet", Cancel::Flag(cancel.clone()));
     row.progress(0, total as u64);
-    app.export = Some(ExportTask { total, progress, cancel, rx, guard: row });
+    app.export = Some(ExportTask { total, progress, cancel, rx, guard: row, send: SendTo::default() });
     Ok(json!({"background": true, "total": total}))
 }
 
@@ -181,7 +191,7 @@ pub fn start_print(app: &mut LightcraftApp, params: &Value) -> Result<Value, Str
     work();
     let row = app.session.activity.start("export", "Printing to PDF", Cancel::Flag(cancel.clone()));
     row.progress(0, total as u64);
-    app.export = Some(ExportTask { total, progress, cancel, rx, guard: row });
+    app.export = Some(ExportTask { total, progress, cancel, rx, guard: row, send: SendTo::default() });
     Ok(json!({"background": true, "total": total}))
 }
 
@@ -234,11 +244,19 @@ pub fn poll_photos(_: &mut LightcraftApp, _: &egui::Context) {}
 
 /// Per frame: keep the activity row up to date; when the batch finishes, report it.
 pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
+    // saves to the photo library finish on the host's own thread
+    let saved = std::mem::take(&mut *app.saved.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    for r in saved {
+        match r {
+            Ok(n) => app.toast(ctx, crate::i18n::tr_format!("Saved {n} photo{} to Photos", if n == 1 { "" } else { "s" }, n = n)),
+            Err(e) => app.toast_error(ctx, e),
+        }
+    }
     let Some(task) = &app.export else { return };
     match task.rx.try_recv() {
         Ok(r) => {
             let cancelled = matches!(&r, Ok((_, _, true)));
-            let total = task.total;
+            let (total, send) = (task.total, task.send);
             app.export = None;
             // Photos refused (permission, not installed…): leave the way out on screen longer
             let photos_failed = matches!(&r, Ok((_, Some(p), _)) if p.get("error").is_some());
@@ -269,7 +287,12 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
                         m += " · ";
                         m += &apple_photos_note(photos);
                     }
+                    crate::control::deliver(app, &files, send);
                     app.last_export_result = Some(json!({"files": files, "cancelled": cancelled, "applePhotos": photos}));
+                    // (a save says how it went when it is done; nothing to add if it is going well)
+                    if send == SendTo::Photos && ok > 0 && failed.is_empty() && !cancelled {
+                        return;
+                    }
                     m
                 }
                 Err(e) => e,

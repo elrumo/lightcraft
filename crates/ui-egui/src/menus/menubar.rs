@@ -129,6 +129,9 @@ const LAYOUT: &[(&str, &[&str])] = &[
         &[
             "file.addPhotos",
             "file.addFolder",
+            "file.importFromPhotos",
+            "file.importFromFiles",
+            "file.importFolderFromFiles",
             "@Import from Device",
             "---",
             "app.newLibrary",
@@ -154,6 +157,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "dialog.export",
             "app.exportPrevious",
+            "app.saveToPhotos",
             "@Export with Preset",
             "---",
             "library.toggleAutoWriteXmp",
@@ -369,6 +373,11 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
     match id {
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
+        // iOS: the photo library
+        "app.saveToPhotos" => app.services.save_to_photos.is_some(),
+        // the host's own pickers replace the desktop's file and folder dialogs (iOS)
+        "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => app.services.host_pick.is_some(),
+        "file.addPhotos" | "file.addFolder" => app.services.host_pick.is_none(),
         // only once this library syncs (Settings ▸ Sync), on a host that can
         "sync.now" | "sync.pause" | "sync.downloadOriginals" | "album.makeAvailableOffline" | "photo.makeAvailableOffline" => {
             app.services.sync_exec.is_some() && app.session.sync_state().is_some()
