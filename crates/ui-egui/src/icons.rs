@@ -140,6 +140,42 @@ pub enum Icon {
     Aperture,
     /// Automatic settings: a wand with sparks.
     Wand,
+    /// Crop corners round a small turning arrow: level the horizon by itself.
+    CropAuto,
+    /// Three bars of different lengths: the list of aspect ratios.
+    Ratios,
+    /// A post: a square frame with a camera glyph in it.
+    PostFrame,
+    /// A short video: a tall frame with a note in it.
+    VideoFrame,
+    /// A spirit level: straighten along a line drawn on the photo.
+    Straighten,
+    /// Flip top to bottom (`Flip` is left to right).
+    FlipV,
+    /// Upright Auto: a photo with a spark.
+    UprightAuto,
+    /// Upright Guided: a drawn line with a node.
+    UprightGuided,
+    /// Upright Level: a frame with a horizontal line.
+    UprightLevel,
+    /// Upright Vertical: a frame with a vertical line.
+    UprightVertical,
+    /// Upright Full: a frame with a grid.
+    UprightFull,
+    /// Heal: a sticking plaster across.
+    Heal,
+    /// Clone: a rubber stamp.
+    Stamp,
+    /// A brush's feather: a dot that fades out at its edge.
+    Feather,
+    /// A brush's flow: a chequered square.
+    Flow,
+    /// Add to or subtract from a mask: a − and a + in two rings.
+    PlusMinus,
+    /// A closed padlock (the crop's aspect ratio is locked).
+    Lock,
+    /// An open padlock (the crop is free).
+    LockOpen,
 }
 
 struct Pen<'a> {
@@ -733,6 +769,122 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<
             pen.line(&[(12.5, 4.5), (16.5, 4.5)]);
             pen.dot(7.0, 5.0, 0.9);
             pen.dot(16.0, 11.0, 0.9);
+        }
+        CropAuto => {
+            pen.line(&[(2.5, 7.0), (2.5, 2.5), (7.0, 2.5)]);
+            pen.line(&[(13.0, 2.5), (17.5, 2.5), (17.5, 7.0)]);
+            pen.line(&[(2.5, 13.0), (2.5, 17.5), (7.0, 17.5)]);
+            pen.line(&[(13.0, 17.5), (17.5, 17.5), (17.5, 13.0)]);
+            pen.arc(10.0, 10.0, 3.6, 190.0, 440.0);
+            pen.line(&[(5.6, 7.2), (6.4, 9.6), (8.8, 8.6)]);
+        }
+        Ratios => {
+            pen.rect_fill(3.0, 3.5, 17.0, 7.0, 1.0);
+            pen.rect_fill(3.0, 8.5, 12.5, 12.0, 1.0);
+            pen.rect_fill(3.0, 13.5, 8.0, 17.0, 1.0);
+        }
+        PostFrame => {
+            pen.line(&[(2.5, 7.0), (2.5, 2.5), (7.0, 2.5)]);
+            pen.line(&[(13.0, 2.5), (17.5, 2.5), (17.5, 7.0)]);
+            pen.line(&[(2.5, 13.0), (2.5, 17.5), (7.0, 17.5)]);
+            pen.line(&[(13.0, 17.5), (17.5, 17.5), (17.5, 13.0)]);
+            pen.rect(6.0, 6.0, 14.0, 14.0, 2.5);
+            pen.circle(10.0, 10.0, 2.2);
+            pen.dot(12.2, 7.8, 0.6);
+        }
+        VideoFrame => {
+            pen.line(&[(2.5, 7.0), (2.5, 2.5), (7.0, 2.5)]);
+            pen.line(&[(13.0, 2.5), (17.5, 2.5), (17.5, 7.0)]);
+            pen.line(&[(2.5, 13.0), (2.5, 17.5), (7.0, 17.5)]);
+            pen.line(&[(13.0, 17.5), (17.5, 17.5), (17.5, 13.0)]);
+            pen.line(&[(11.5, 13.0), (11.5, 6.0), (14.0, 7.5)]);
+            pen.circle(9.8, 13.2, 1.7);
+        }
+        Straighten => {
+            pen.rect(2.5, 7.0, 17.5, 13.0, 2.0);
+            pen.line(&[(7.0, 7.0), (7.0, 9.5)]);
+            pen.line(&[(13.0, 7.0), (13.0, 9.5)]);
+            pen.circle(10.0, 10.0, 1.3);
+        }
+        FlipV => {
+            pen.line(&[(2.5, 10.0), (17.5, 10.0)]);
+            pen.closed(&[(5.0, 8.0), (15.0, 8.0), (15.0, 3.0)]);
+            pen.fill(&[(5.0, 12.0), (15.0, 12.0), (15.0, 17.0)], color);
+        }
+        UprightAuto => {
+            pen.rect(2.5, 6.0, 14.0, 16.5, 1.0);
+            pen.line(&[(2.5, 13.5), (6.0, 10.5), (9.5, 13.0), (11.5, 11.5), (14.0, 13.5)]);
+            pen.line(&[(16.0, 2.0), (16.0, 6.0)]);
+            pen.line(&[(14.0, 4.0), (18.0, 4.0)]);
+        }
+        UprightGuided => {
+            pen.line(&[(10.0, 3.0), (10.0, 17.0)]);
+            pen.line(&[(10.0, 10.0), (16.5, 7.0)]);
+            pen.circle(10.0, 10.0, 1.6);
+            pen.dot(16.5, 7.0, 1.1);
+        }
+        UprightLevel => {
+            pen.rect(3.0, 3.0, 17.0, 17.0, 1.5);
+            pen.line(&[(3.0, 10.0), (17.0, 10.0)]);
+        }
+        UprightVertical => {
+            pen.rect(3.0, 3.0, 17.0, 17.0, 1.5);
+            pen.line(&[(10.0, 3.0), (10.0, 17.0)]);
+        }
+        UprightFull => {
+            pen.rect(3.0, 3.0, 17.0, 17.0, 1.5);
+            pen.line(&[(3.0, 10.0), (17.0, 10.0)]);
+            pen.line(&[(10.0, 3.0), (10.0, 17.0)]);
+        }
+        Heal => {
+            pen.closed(&[(17.4, 6.8), (13.2, 2.6), (2.6, 13.2), (6.8, 17.4)]);
+            pen.line(&[(13.9, 10.4), (9.6, 6.1)]);
+            pen.line(&[(10.4, 13.9), (6.1, 9.6)]);
+            for (x, y) in [(10.0, 10.0), (11.2, 8.8), (8.8, 11.2)] {
+                pen.dot(x, y, 0.55);
+            }
+        }
+        Stamp => {
+            pen.circle(10.0, 4.5, 2.2);
+            pen.line(&[(8.6, 6.4), (8.6, 10.5)]);
+            pen.line(&[(11.4, 6.4), (11.4, 10.5)]);
+            pen.rect(3.5, 10.5, 16.5, 14.0, 1.0);
+            pen.line(&[(3.5, 17.0), (16.5, 17.0)]);
+        }
+        Feather => {
+            for (r, a) in [(7.5, 0.18), (6.2, 0.35), (4.8, 0.6), (3.4, 1.0)] {
+                pen.p.circle_filled(pen.pt(10.0, 10.0), r * k, color.gamma_multiply(a));
+            }
+        }
+        Flow => {
+            pen.rect(3.0, 3.0, 17.0, 17.0, 1.5);
+            for i in 0..4 {
+                for j in 0..4 {
+                    if (i + j) % 2 == 0 {
+                        let (x, y) = (3.0 + i as f32 * 3.5, 3.0 + j as f32 * 3.5);
+                        pen.rect_fill(x, y, x + 3.5, y + 3.5, 0.0);
+                    }
+                }
+            }
+        }
+        PlusMinus => {
+            pen.circle(7.0, 12.0, 4.5);
+            pen.line(&[(5.0, 12.0), (9.0, 12.0)]);
+            pen.circle(13.0, 8.0, 4.5);
+            pen.line(&[(11.0, 8.0), (15.0, 8.0)]);
+            pen.line(&[(13.0, 6.0), (13.0, 10.0)]);
+        }
+        Lock => {
+            pen.rect_fill(4.5, 9.0, 15.5, 17.5, 1.5);
+            pen.line(&[(7.0, 9.0), (7.0, 6.5)]);
+            pen.arc(10.0, 6.5, 3.0, 180.0, 360.0);
+            pen.line(&[(13.0, 6.5), (13.0, 9.0)]);
+        }
+        LockOpen => {
+            pen.rect(4.5, 9.0, 15.5, 17.5, 1.5);
+            pen.line(&[(7.0, 9.0), (7.0, 6.0)]);
+            pen.arc(10.0, 6.0, 3.0, 180.0, 360.0);
+            pen.line(&[(13.0, 6.0), (13.0, 7.0)]);
         }
     }
 }

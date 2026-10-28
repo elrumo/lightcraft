@@ -328,3 +328,217 @@ fn deleting_photos_asks_with_an_alert_on_a_phone() {
     click(&mut h, "button:alertOk");
     assert!(h.app.ui.dialog.is_none() && h.app.session.catalog.photo(id).expect("photo").deleted, "the action moves it to Recently Deleted");
 }
+
+/// One-finger events in the photo's normalized coordinates, one request each (so each is a frame
+/// of its own, as a finger's samples are).
+fn finger(h: &mut Headless, events: &[(&str, f32, f32)]) {
+    for (k, x, y) in events {
+        let r = h.request("ui.pointer", json!({"events": [{"kind": k, "x": x, "y": y}]}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+    h.settle(SETTLE);
+}
+
+fn develop(h: &Headless) -> std::sync::Arc<lightcraft_develop::DevelopSettings> {
+    h.app.session.develop_of(h.app.session.active().expect("photo")).expect("settings")
+}
+
+/// The Crop tool on a phone is a screen of its own (Lightroom's mobile app): the tool bar and the
+/// sheet make way for a title, the angle dial, four round buttons, the Aspect / Geometry tabs and a
+/// bar with ✕ and ✓; every control is a finger wide.
+#[test]
+fn phone_crop_is_a_screen_of_its_own() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    click(&mut h, "icon:crop");
+    assert_eq!(h.app.ui.right, RightPanel::Crop);
+    assert!(!has(&h, "icon:edit") && !has(&h, "sheet:grabber"), "no tool bar or sheet while cropping");
+    for w in ["icon:cropCancel", "icon:cropDone", "icon:undo", "icon:cropAuto", "icon:cropLock", "icon:cropRotate", "icon:cropMore"] {
+        let r = rect(&h, w);
+        assert!(r.width() >= 43.9 && r.height() >= 43.9, "{w} is a finger wide: {r:?}");
+    }
+    for w in [
+        "dial:angle",
+        "button:cropTab-aspect",
+        "button:cropTab-geometry",
+        "button:cropOriginal",
+        "button:cropRatios",
+        "button:cropInstagram",
+        "button:cropTikTok",
+    ] {
+        assert!(has(&h, w), "{w} is on the Aspect tab");
+    }
+    // untouched, the photo is cropped to its own shape (locked or not: the lock is open)
+    assert!(h.app.session.develop_of(id).expect("settings").crop.aspect.is_none());
+    // the Ratios button opens a menu of them; choosing one locks the crop to it
+    click(&mut h, "button:cropRatios");
+    assert!(has(&h, "button:cropAspect-4x5"), "the ratios are listed");
+    click(&mut h, "button:cropAspect-4x5");
+    // (a named ratio is stored turned to the crop's orientation, landscape here: issue #2253)
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((500, 400)), "4 × 5 is locked");
+    // the lock frees it again
+    click(&mut h, "icon:cropLock");
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, None, "unlocked: free");
+    // Instagram's formats are in a menu of their own
+    click(&mut h, "button:cropInstagram");
+    click(&mut h, "button:cropAspect-100x191");
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((19100, 10000)), "Landscape is 1.91 : 1");
+}
+
+/// Dragging the dial straightens the photo (one undo step); the round buttons rotate and flip.
+#[test]
+fn the_crop_dial_straightens_and_the_buttons_rotate() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    click(&mut h, "icon:crop");
+    let angle = |h: &Headless| h.app.session.develop_of(id).expect("settings").crop.geometry.angle;
+    assert_eq!(angle(&h), 0.0);
+    let steps = h.app.session.undo.len();
+    let dial = rect(&h, "dial:angle").center();
+    // the ruler follows the finger: 70 pt to the left reads about 10° higher
+    drag(&mut h, dial, dial - vec2(70.0, 0.0));
+    assert!((angle(&h) - 10.0).abs() < 1.5, "angle {}", angle(&h));
+    assert_eq!(h.app.session.undo.len(), steps + 1, "the drag is one undo step");
+    click(&mut h, "icon:cropRotate");
+    assert!(h.app.session.develop_of(id).expect("settings").orientation.swaps_axes(), "turned a quarter");
+    click(&mut h, "icon:cropMore");
+    click(&mut h, "button:cropFlipH");
+    assert!(h.app.session.develop_of(id).expect("settings").crop.flip_h);
+    click(&mut h, "icon:cropMore");
+    click(&mut h, "button:cropStraighten");
+    assert_eq!(h.app.ui.tool, "straighten", "the line tool is on");
+    assert!(has(&h, "button:straightenCancel"), "and says how to leave it");
+    click(&mut h, "button:straightenCancel");
+    assert!(h.app.ui.tool.is_empty());
+}
+
+/// ✓ keeps what was done; ✕ undoes all of it (the aspect, the angle, the turn) and leaves what was
+/// done before the screen opened alone. Both go back to Edit.
+#[test]
+fn the_crop_screens_cross_undoes_it_and_its_tick_keeps_it() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    let r = h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 0.7}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let before = h.app.session.develop_of(id).expect("settings");
+    click(&mut h, "icon:crop");
+    click(&mut h, "button:cropRatios");
+    click(&mut h, "button:cropAspect-1x1");
+    let dial = rect(&h, "dial:angle").center();
+    drag(&mut h, dial, dial - vec2(35.0, 0.0));
+    click(&mut h, "icon:cropRotate");
+    assert_ne!(*h.app.session.develop_of(id).expect("settings"), *before, "the crop changed the photo");
+    click(&mut h, "icon:cropCancel");
+    assert_eq!(h.app.ui.right, RightPanel::Edit, "back to Edit");
+    assert_eq!(*h.app.session.develop_of(id).expect("settings"), *before, "everything since the screen opened is undone, the exposure kept");
+    assert!(!has(&h, "dial:angle") && has(&h, "icon:edit"), "the tool bar is back");
+    // and ✓ keeps it
+    click(&mut h, "icon:crop");
+    click(&mut h, "button:cropRatios");
+    click(&mut h, "button:cropAspect-1x1");
+    click(&mut h, "icon:cropDone");
+    assert_eq!(h.app.ui.right, RightPanel::Edit);
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((100, 100)), "the square crop stays");
+}
+
+/// Held sideways the crop screen's title, panel and bar are a column on the right and the dial shares
+/// a row with the round buttons under the photo.
+#[test]
+fn the_crop_screen_fits_a_phone_held_sideways() {
+    let mut h = detail([844.0, 390.0]);
+    click(&mut h, "icon:crop");
+    let (cancel, done, dial, auto, photo) =
+        (rect(&h, "icon:cropCancel"), rect(&h, "icon:cropDone"), rect(&h, "dial:angle"), rect(&h, "icon:cropAuto"), h.app.image_rect.expect("loupe"));
+    assert!(cancel.left() > 844.0 - 330.0 && done.right() <= 844.0, "the bar is in the column on the right: {cancel:?} {done:?}");
+    assert!(
+        auto.center().y > photo.bottom() && (dial.center().y - auto.center().y).abs() < 30.0,
+        "the dial and the buttons share a row under the photo"
+    );
+    assert!(photo.height() > 200.0, "the photo keeps its room: {photo:?}");
+}
+
+/// Remove on a phone is a screen of its own, as Lightroom's mobile app has it: the tool (one tile
+/// with a menu of Remove, Heal, Clone) beside its size, a bar with ✕ and ✓ instead of the tool bar;
+/// Heal and Clone add feather and opacity; ✕ undoes what was done there.
+#[test]
+fn phone_remove_is_a_screen_with_the_tool_and_its_size() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:remove");
+    assert!(!has(&h, "icon:edit") && !has(&h, "sheet:grabber"), "the tool bar and the sheet make way");
+    let (tile, size) = (rect(&h, "button:removeTool"), rect(&h, "slider:ui.removeSize"));
+    assert!(tile.width() >= 44.0 && (size.center().y - tile.center().y).abs() < 30.0 && size.left() > tile.right(), "{tile:?} {size:?}");
+    assert!(!has(&h, "slider:ui.removeFeather"), "Remove has only a size");
+    click(&mut h, "button:removeTool");
+    click(&mut h, "button:removeMode-heal");
+    assert_eq!(h.app.ui.tool, "heal");
+    assert!(has(&h, "slider:ui.removeFeather") && has(&h, "slider:ui.removeOpacity"));
+    // a fast stroke (three samples far apart) is one spot; ✕ takes it back and leaves the screen
+    finger(&mut h, &[("down", 0.2, 0.4), ("drag", 0.5, 0.45), ("drag", 0.7, 0.6), ("up", 0.7, 0.6)]);
+    assert_eq!(develop(&h).spots.len(), 1);
+    assert!(develop(&h).spots[0].points.len() >= 3, "{:?}", develop(&h).spots[0].points);
+    click(&mut h, "icon:removeCancel");
+    assert!(develop(&h).spots.is_empty(), "✕ undid the spot");
+    assert_eq!(h.app.ui.right, RightPanel::Edit);
+}
+
+/// Tapping a spot's pin on a phone opens its options: its tool, and delete.
+#[test]
+fn phone_spot_pin_opens_its_options() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:remove");
+    finger(&mut h, &[("down", 0.4, 0.5), ("up", 0.4, 0.5)]);
+    assert_eq!(develop(&h).spots.len(), 1);
+    let r = h.request("engine.execute", json!({"command": "spot.select", "params": {"index": null}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    click(&mut h, "spotPin:0");
+    assert_eq!(h.app.session.active_spot, Some(0));
+    assert!(has(&h, "actions:spotPin"), "the pin's menu is open");
+    click(&mut h, "button:spotMode-clone");
+    assert_eq!(develop(&h).spots[0].mode, lightcraft_develop::SpotMode::Clone);
+    click(&mut h, "spotPin:0");
+    click(&mut h, "button:spotDelete");
+    assert!(develop(&h).spots.is_empty());
+}
+
+/// A Color Range mask takes its colour from a tap on the photo, with the Masking tool open.
+#[test]
+fn phone_color_range_picks_from_a_tap() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:masking");
+    click(&mut h, "button:maskNew");
+    click(&mut h, "button:maskNew-colorRange");
+    finger(&mut h, &[("down", 0.5, 0.5), ("up", 0.5, 0.5)]);
+    match &develop(&h).masks[0].components[0].shape {
+        lightcraft_develop::MaskShape::ColorRange { samples, .. } => assert_eq!(samples.len(), 1),
+        other => panic!("a colour range: {other:?}"),
+    }
+}
+
+/// The brush on a phone: its tools in a column over the photo's left edge; a stroke painted fast
+/// is one mask with one stroke.
+#[test]
+fn phone_brush_paints_one_mask() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:masking");
+    click(&mut h, "button:maskNew");
+    click(&mut h, "button:maskNew-brush");
+    assert_eq!(h.app.ui.tool, "brush");
+    let (paint, photo) = (rect(&h, "button:brush-paint"), rect(&h, "canvas:image"));
+    assert!(paint.left() < photo.center().x && paint.width() >= 44.0, "over the photo's left edge: {paint:?}");
+    click(&mut h, "button:brush-erase");
+    assert!(h.app.ui.brush_erase);
+    click(&mut h, "button:brush-paint");
+    finger(&mut h, &[("down", 0.2, 0.4), ("drag", 0.5, 0.45), ("drag", 0.7, 0.6), ("up", 0.7, 0.6)]);
+    let masks = &develop(&h).masks;
+    assert_eq!(masks.len(), 1);
+    match &masks[0].components[..] {
+        [lightcraft_develop::MaskComponent { shape: lightcraft_develop::MaskShape::Brush { strokes }, .. }] => {
+            assert_eq!(strokes.len(), 1);
+            // (a finger held still records nothing more: the two places it was dragged to)
+            assert!(strokes[0].points.len() >= 2, "{:?}", strokes[0].points);
+        }
+        other => panic!("one brush part: {other:?}"),
+    }
+    assert!(has(&h, "component:0") && has(&h, "button:maskCombine"), "its part and ± under it");
+}

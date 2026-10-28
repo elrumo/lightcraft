@@ -311,46 +311,11 @@ pub(super) fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     // brush settings; with a spot selected they edit that spot too
     let sel = app.session.active_spot.and_then(|i| d.spots.get(i).map(|sp| (i, sp.clone())));
     if let Some((i, sp)) = &sel {
-        (app.ui.remove_size, app.ui.remove_feather, app.ui.remove_opacity) = (sp.size as f32, sp.feather as f32, sp.opacity as f32);
         divider(ui);
-        let mode = match sp.mode {
-            lightcraft_develop::SpotMode::Heal => "Heal",
-            lightcraft_develop::SpotMode::Clone => "Clone",
-            lightcraft_develop::SpotMode::Remove => "Remove",
-            lightcraft_develop::SpotMode::Fill => "Content-Aware",
-        };
+        let mode = spot_mode_name(sp.mode);
         crate::panels::edit::sub_title(ui, &crate::i18n::tr_format!("{mode} spot {} of {}", i + 1, d.spots.len(), mode = crate::i18n::tr(mode)));
     }
-    let plain = |id: &'static str, label: &'static str, min: f64, max: f64, default: f64| lightcraft_develop::ControlSpec {
-        id,
-        label,
-        section: lightcraft_develop::Section::Detail,
-        min,
-        max,
-        default,
-        step: 1.0,
-        decimals: 0,
-        track: lightcraft_develop::Track::Plain,
-    };
-    let sliders = [
-        (plain("ui.removeSize", "Size", 1.0, 250.0, 20.0), "size", (app.ui.remove_size * 1000.0) as f64),
-        (plain("ui.removeFeather", "Feather", 0.0, 100.0, 50.0), "feather", app.ui.remove_feather as f64),
-        (plain("ui.removeOpacity", "Opacity", 0.0, 100.0, 100.0), "opacity", app.ui.remove_opacity as f64),
-    ];
-    for (spec, key, v) in sliders {
-        let out = slider(ui, &spec, v, true, None);
-        let scale = if key == "size" { 1000.0 } else { 1.0 };
-        if let Some(v) = out.value {
-            match key {
-                "size" => app.ui.remove_size = (v / scale) as f32,
-                "feather" => app.ui.remove_feather = v as f32,
-                _ => app.ui.remove_opacity = v as f32,
-            }
-        }
-        if sel.is_some() {
-            crate::panels::edit::apply_slider_out(app, &spec, out, |app, v| app.run("spot.update", json!({key: v / scale})));
-        }
-    }
+    spot_sliders(app, ui, &d, &["size", "feather", "opacity"]);
     if sel.is_some() {
         padded(ui, |ui| {
             ui.horizontal(|ui| {
@@ -394,6 +359,55 @@ pub(super) fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         }
     });
+}
+
+/// What a spot's mode is called.
+pub(crate) fn spot_mode_name(mode: lightcraft_develop::SpotMode) -> &'static str {
+    match mode {
+        lightcraft_develop::SpotMode::Heal => "Heal",
+        lightcraft_develop::SpotMode::Clone => "Clone",
+        lightcraft_develop::SpotMode::Remove => "Remove",
+        lightcraft_develop::SpotMode::Fill => "Content-Aware",
+    }
+}
+
+/// The brush's sliders named in `keys` (`size`, `feather`, `opacity`); with a spot selected they
+/// show, and edit, that spot's.
+pub(crate) fn spot_sliders(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &lightcraft_develop::DevelopSettings, keys: &[&str]) {
+    let sel = app.session.active_spot.and_then(|i| d.spots.get(i).map(|sp| (i, sp.clone())));
+    if let Some((_, sp)) = &sel {
+        (app.ui.remove_size, app.ui.remove_feather, app.ui.remove_opacity) = (sp.size as f32, sp.feather as f32, sp.opacity as f32);
+    }
+    let plain = |id: &'static str, label: &'static str, min: f64, max: f64, default: f64| lightcraft_develop::ControlSpec {
+        id,
+        label,
+        section: lightcraft_develop::Section::Detail,
+        min,
+        max,
+        default,
+        step: 1.0,
+        decimals: 0,
+        track: lightcraft_develop::Track::Plain,
+    };
+    let sliders = [
+        (plain("ui.removeSize", "Size", 1.0, 250.0, 20.0), "size", (app.ui.remove_size * 1000.0) as f64),
+        (plain("ui.removeFeather", "Feather", 0.0, 100.0, 50.0), "feather", app.ui.remove_feather as f64),
+        (plain("ui.removeOpacity", "Opacity", 0.0, 100.0, 100.0), "opacity", app.ui.remove_opacity as f64),
+    ];
+    for (spec, key, v) in sliders.into_iter().filter(|(_, key, _)| keys.contains(key)) {
+        let out = slider(ui, &spec, v, true, None);
+        let scale = if key == "size" { 1000.0 } else { 1.0 };
+        if let Some(v) = out.value {
+            match key {
+                "size" => app.ui.remove_size = (v / scale) as f32,
+                "feather" => app.ui.remove_feather = v as f32,
+                _ => app.ui.remove_opacity = v as f32,
+            }
+        }
+        if sel.is_some() {
+            crate::panels::edit::apply_slider_out(app, &spec, out, |app, v| app.run("spot.update", json!({key: v / scale})));
+        }
+    }
 }
 
 /// Tool Overlay: when the spot and mask pins show on the photo (Auto / Always / Selected / Never;

@@ -250,6 +250,17 @@ pub struct UiState {
     /// opens (`type`, `camera`, `people`, `location`, `keyword`, `edited`); `view.filterSheet`.
     #[serde(skip)]
     pub filter_sheet: Option<String>,
+    /// Compact layout: the undo stack's depth when a tool screen (Crop, Remove, Masking) opened, so
+    /// its ✕ can undo every step taken since.
+    #[serde(skip)]
+    pub screen_undo_base: Option<usize>,
+    /// Compact layout: the Crop screen shows its Geometry tab, not Aspect.
+    #[serde(skip)]
+    pub crop_geometry: bool,
+    /// Compact layout: the Masking screen's open adjustment group (`mask`, `light`, `color`,
+    /// `effects`, `detail`, `optics`), empty when its sheet is closed.
+    #[serde(skip)]
+    pub mask_group: String,
     /// Compact layout: photos across a row of the grid (a pinch changes it; one of
     /// `panels::grid_zoom::STEPS`; `view.gridColumns`).
     pub grid_columns: u8,
@@ -492,6 +503,9 @@ impl Default for UiState {
             sheet_detent: 1,
             all_commands: false,
             filter_sheet: None,
+            screen_undo_base: None,
+            crop_geometry: false,
+            mask_group: String::new(),
             grid_columns: 3,
             grid_span: GridSpan::All,
             grid_jump: None,

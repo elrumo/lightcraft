@@ -614,9 +614,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if !matches!(right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye) {
         general_cursor(app, ui, &resp, img_rect, main_area);
     }
+    // (the phone's Geometry tab shows the photo as the sliders change it, with no crop frame)
+    let crop_frame = !(app.compact && app.ui.crop_geometry && app.ui.tool.is_empty());
     if !navigating {
         match right {
-            RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
+            RightPanel::Crop if crop_frame => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
             RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
             RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
             RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),

@@ -55,16 +55,27 @@ pub(super) fn crop_overlay(
     }
     // handles: 0..3 corners, 4..7 edges (top, right, bottom, left)
     let handles: Vec<Pos2> = (0..8).map(|i| if i < 4 { pts[i] } else { lerp(pts[i - 4], pts[(i - 3) % 4], 0.5) }).collect();
+    // touch: handles about a finger wide (the drawn marks grow too), grabbed by the nearest one in reach
+    let (reach, grow) = if app.compact { (super::touch::TOUCH_HANDLE_REACH, 2.0) } else { (12.0, 1.0) };
     for (i, h) in handles.iter().enumerate() {
-        register(ui, format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0)));
+        register(ui, format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0) * grow));
+        if app.compact {
+            continue;
+        }
         let s = if i < 4 { 12.0 } else { 9.0 };
         p.rect_filled(Rect::from_center_size(*h, vec2(s, 3.0)), 0.0, Color32::WHITE);
         p.rect_filled(Rect::from_center_size(*h, vec2(3.0, s)), 0.0, Color32::WHITE);
+    }
+    if app.compact {
+        bracket_handles(p, &pts);
     }
     // the keyboard: each handle (and the box itself) a stand-in Tab reaches and the arrows move
     if crop_keys(app, ui, map, &handles, &pts, d, frame) {
         return;
     }
+    let grab = |q: Pos2| {
+        handles.iter().enumerate().filter(|(_, h)| h.distance(q) < reach).min_by(|a, b| a.1.distance(q).total_cmp(&b.1.distance(q))).map(|(i, _)| i)
+    };
     let inside = |q: Pos2| {
         let n = map.norm(q);
         let s = to_straight(n, d.crop.geometry.angle, frame);
@@ -89,7 +100,7 @@ pub(super) fn crop_overlay(
             Some(Gesture::CropHandle { handle, .. }) => Some(usize::from(handle)),
             _ => None,
         };
-        let near = held.or_else(|| handles.iter().position(|h| h.distance(hq) < 12.0)).filter(|_| !rotating);
+        let near = held.or_else(|| grab(hq)).filter(|_| !rotating);
         let cursor = match near {
             Some(0 | 2) => egui::CursorIcon::ResizeNwSe,
             Some(1 | 3) => egui::CursorIcon::ResizeNeSw,
@@ -109,14 +120,23 @@ pub(super) fn crop_overlay(
     // the angle next to the pointer, drawn once this frame's rotation is applied (below)
     let readout_at = pointer.filter(|_| rotating);
     let mut shown_angle = d.crop.geometry.angle;
-    // double-click inside the crop box applies the crop (same as Return / Done)
+    // a finger's double tap on the photo resets the crop (the tool stays open; ✕ or undo bring it
+    // back); a mouse's double-click inside the crop box applies it (same as Return / Done)
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
-        && inside(q)
-        && !handles.iter().any(|h| h.distance(q) < 12.0)
     {
-        let _ = app.run("tool.done", json!({}));
-        return;
+        if super::touch::touch_input(ui) {
+            if map.rect.contains(q) {
+                if d.crop != Default::default() {
+                    let _ = app.run("crop.reset", json!({}));
+                    crate::haptics::tap(ui.ctx(), crate::haptics::Haptic::Light);
+                }
+                return;
+            }
+        } else if inside(q) && grab(q).is_none() {
+            let _ = app.run("tool.done", json!({}));
+            return;
+        }
     }
     // egui reports a drag only once the pointer has moved a few px: the zone is where the button
     // went down, where the cursor showed it, not where the pointer is by then
@@ -130,7 +150,7 @@ pub(super) fn crop_overlay(
             return;
         }
         let d = app.session.develop_of(id).unwrap_or_default();
-        app.gesture = Some(match handles.iter().position(|h| h.distance(q) < 12.0) {
+        app.gesture = Some(match grab(q) {
             Some(h) => Gesture::CropHandle { handle: h as u8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle },
             None if inside(q) => Gesture::CropHandle { handle: 8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle },
             None => {
@@ -172,6 +192,32 @@ pub(super) fn crop_overlay(
     if let Some(at) = readout_at {
         // the canvas (the loupe's own rect), not the photo: rotating happens in the margin around it
         angle_readout(ui, at, shown_angle, resp.rect);
+    }
+}
+
+/// A phone's crop handles, as Lightroom's mobile app draws them: a thick bracket round each corner
+/// and a short bar in the middle of each edge, hugging the frame's outside (so the photo stays
+/// visible), on a dark halo.
+fn bracket_handles(p: &egui::Painter, pts: &[Pos2]) {
+    const ARM: f32 = 22.0;
+    const BAR: f32 = 28.0;
+    const W: f32 = 4.0;
+    let n = pts.len();
+    for (i, c) in pts.iter().enumerate() {
+        let (Some(next), Some(prev)) = (pts.get((i + 1) % n.max(1)), pts.get((i + n - 1) % n.max(1))) else { continue };
+        let (u, v) = ((*next - *c).normalized(), (*prev - *c).normalized());
+        // (the corner moves out along both edges, so the stroke lies outside the frame)
+        let corner = *c - (u + v) * (W / 2.0);
+        let line = vec![corner + u * (ARM + W / 2.0), corner, corner + v * (ARM + W / 2.0)];
+        p.add(egui::Shape::line(line.clone(), Stroke::new(W + 2.0, Color32::from_black_alpha(90))));
+        p.add(egui::Shape::line(line, Stroke::new(W, Color32::WHITE)));
+        // the bar on the edge from this corner to the next, pushed out by the edge's normal
+        let mid = c.lerp(*next, 0.5);
+        let out = -v * (W / 2.0);
+        let along = u * (BAR / 2.0);
+        let bar = vec![mid + out - along, mid + out + along];
+        p.add(egui::Shape::line(bar.clone(), Stroke::new(W + 2.0, Color32::from_black_alpha(90))));
+        p.add(egui::Shape::line(bar, Stroke::new(W, Color32::WHITE)));
     }
 }
 

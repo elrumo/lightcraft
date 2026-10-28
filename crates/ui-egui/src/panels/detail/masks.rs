@@ -359,7 +359,7 @@ pub(super) fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &eg
                 && let Some(at) = component_pin(&c.shape)
             {
                 let q = map.screen(at);
-                pin(&pins, q, sel);
+                pin(&pins, q, sel, app.compact);
                 register(ui, format!("maskPin:{}:{ci}", m.id), Rect::from_center_size(q, vec2(14.0, 14.0)));
                 grips.push((m.id, ci, 0, q));
             }
@@ -481,15 +481,29 @@ pub(super) fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &eg
         return;
     }
     // the grip under the pointer: the selected mask's first, then the nearest
+    let reach = if app.compact { super::touch::TOUCH_HANDLE_REACH } else { 10.0 };
     let hit = |q: Pos2| {
         grips
             .iter()
-            .filter(|g| g.3.distance(q) < 10.0)
+            .filter(|g| g.3.distance(q) < reach)
             .min_by(|a, b| {
                 (Some(a.0) != active, a.3.distance(q)).partial_cmp(&(Some(b.0) != active, b.3.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
             })
             .copied()
     };
+    // a phone: tapping a pin selects its mask and opens its options
+    if app.compact
+        && resp.clicked()
+        && let Some(q) = resp.interact_pointer_pos()
+        && let Some((mid, _, 0, at)) = hit(q)
+    {
+        if Some(mid) != active {
+            let _ = app.run("mask.select", json!({"id": mid}));
+        }
+        app.gesture = None;
+        crate::panels::mobile::open_menu(ui.ctx(), "maskPin", Rect::from_center_size(at, vec2(28.0, 28.0)));
+        return;
+    }
     if resp.clicked()
         && let Some(q) = resp.interact_pointer_pos()
         && let Some((mid, ..)) = hit(q)
@@ -593,15 +607,18 @@ fn frame_long_norm(map: &CanvasMap) -> (f64, f64) {
 /// Auto's condition for the Tool Overlay (Shift+H): the pointer is over the photo, or a pin is
 /// being dragged.
 pub(super) fn pins_live(app: &LightcraftApp, resp: &egui::Response, map: &CanvasMap) -> bool {
-    resp.hover_pos().is_some_and(|q| map.rect.contains(q))
+    // (a phone has no pointer to hover with: its pins stay)
+    app.compact
+        || resp.hover_pos().is_some_and(|q| map.rect.contains(q))
         || matches!(app.gesture, Some(Gesture::SpotMove { .. } | Gesture::MaskHandle { .. }))
         // a handle moved with the keyboard stays shown while it has the focus
         || crate::canvas_keys::has_focus(&resp.ctx)
 }
 
-pub(super) fn pin(p: &egui::Painter, c: Pos2, sel: bool) {
-    p.circle_filled(c, 6.0, if sel { Color32::from_rgb(1, 101, 221) } else { Color32::from_gray(200) });
-    p.circle_stroke(c, 6.0, Stroke::new(1.5, Color32::WHITE));
+pub(super) fn pin(p: &egui::Painter, c: Pos2, sel: bool, touch: bool) {
+    let r = if touch { 11.0 } else { 6.0 };
+    p.circle_filled(c, r, if sel { Color32::from_rgb(1, 101, 221) } else { Color32::from_gray(200) });
+    p.circle_stroke(c, r, Stroke::new(1.5, Color32::WHITE));
 }
 
 /// The pen pressure (0..1) reported this frame: the force of the latest touch or pen event that carries one (winit

@@ -44,7 +44,7 @@ pub(super) fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &
             register(ui, format!("spotSource:{i}"), Rect::from_center_size(sq, vec2(14.0, 14.0)));
             grips.push((i, true, sq, r));
         }
-        pin(p, tq, sel);
+        pin(p, tq, sel, app.compact);
         register(ui, format!("spotPin:{i}"), Rect::from_center_size(tq, vec2(14.0, 14.0)));
         grips.push((i, false, tq, r));
     }
@@ -53,10 +53,11 @@ pub(super) fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &
     }
     let r = (app.ui.remove_size as f64 * long) as f32;
     // a target or source under `q`: the selected spot's first, then the nearest pin
+    let min_reach = if app.compact { super::touch::TOUCH_HANDLE_REACH } else { 8.0 };
     let hit = |q: Pos2| {
         grips
             .iter()
-            .filter(|g| g.2.distance(q) < g.3.max(8.0))
+            .filter(|g| g.2.distance(q) < g.3.max(min_reach))
             .min_by(|a, b| {
                 (Some(a.0) != active, a.2.distance(q)).partial_cmp(&(Some(b.0) != active, b.2.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
             })
@@ -99,9 +100,13 @@ pub(super) fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &
         return;
     }
     if resp.clicked()
-        && let Some((spot, ..)) = press.and_then(hit)
+        && let Some((spot, _, at, _)) = press.and_then(hit)
     {
         let _ = app.run("spot.select", json!({"index": spot}));
+        // a phone: the spot's options (its tool, a new source, delete) by its pin
+        if app.compact {
+            crate::panels::mobile::open_menu(ui.ctx(), "spotPin", Rect::from_center_size(at, vec2(28.0, 28.0)));
+        }
         return;
     }
     if let Some(q) = resp.interact_pointer_pos()

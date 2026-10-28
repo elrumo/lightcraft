@@ -90,14 +90,25 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, notice_blocks: bool) {
     let tool = !app.ui.tool.is_empty() || matches!(app.ui.right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye);
     app.ui.review &= detail && !tool;
     let bars = !app.ui.review;
-    top_bar(app, ui, &t, bars);
-    // the bars below are called every frame, shown or not, so that they slide in and out
-    action_bar(app, ui, &t, app.ui.select_mode);
-    let edit = !app.ui.presets && matches!(app.ui.right, RightPanel::Edit);
-    tool_bar(app, ui, &t, landscape, wide, detail && bars);
-    // (held sideways, the groups are at the top of the side panel: `sheet`)
-    group_bar(app, ui, &t, wide, detail && bars && edit && !landscape);
-    sheet(app, ui, &t, wide, landscape, detail && bars && (app.ui.right != RightPanel::None || app.ui.presets));
+    // Crop, Remove and Masking have a screen of their own in place of the bars and the sheet
+    let (crop, remove, masking) = (super::crop_mobile::open(app), super::remove_mobile::open(app), super::mask_mobile::open(app));
+    track_screen(app, crop || remove || masking);
+    if crop {
+        super::crop_mobile::show(app, ui, &t, landscape);
+    } else if remove {
+        super::remove_mobile::show(app, ui, &t, landscape);
+    } else if masking {
+        super::mask_mobile::show(app, ui, &t, landscape);
+    } else {
+        top_bar(app, ui, &t, bars);
+        // the bars below are called every frame, shown or not, so that they slide in and out
+        action_bar(app, ui, &t, app.ui.select_mode);
+        let edit = !app.ui.presets && matches!(app.ui.right, RightPanel::Edit);
+        tool_bar(app, ui, &t, landscape, wide, detail && bars);
+        // (held sideways, the groups are at the top of the side panel: `sheet`)
+        group_bar(app, ui, &t, wide, detail && bars && edit && !landscape);
+        sheet(app, ui, &t, wide, landscape, detail && bars && (app.ui.right != RightPanel::None || app.ui.presets));
+    }
     let bg = if detail { t.canvas } else { t.grid_bg };
     if wide {
         // (sliding in and out at the left edge)
@@ -110,6 +121,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, notice_blocks: bool) {
             .show_collapsible(ui, &mut open, |ui| super::left::body(app, ui));
     }
     content(app, ui, bg);
+    if masking {
+        super::mask_mobile::floating(app, &ctx);
+    }
     albums(app, &ctx, albums_page);
     super::filter_sheet::show(app, &ctx);
     if !albums_page && !app.ui.select_mode {
@@ -121,6 +135,29 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, notice_blocks: bool) {
     mobile::all_commands_page(app, &ctx);
     mobile::edit_menu(app, &ctx);
     mobile::stack_behind(&ctx, ui.layer_id(), backdrop);
+}
+
+/// Called every frame with whether a tool's screen (Crop, Remove, Masking) is open: remembers where the undo stack
+/// stood when it opened (and starts Crop on its Aspect tab).
+fn track_screen(app: &mut LightcraftApp, open: bool) {
+    match (open, app.ui.screen_undo_base) {
+        (true, None) => {
+            app.ui.screen_undo_base = Some(app.session.undo.len());
+            app.ui.crop_geometry = false;
+        }
+        (false, Some(_)) => app.ui.screen_undo_base = None,
+        _ => {}
+    }
+}
+
+/// A tool screen's ✕: undo every step taken since it opened, then back to Edit.
+pub(super) fn cancel_screen(app: &mut LightcraftApp) {
+    let _ = app.session.end_interaction();
+    let base = app.ui.screen_undo_base.unwrap_or(app.session.undo.len());
+    while app.session.undo.len() > base && app.run("edit.undo", json!({})).is_ok() {}
+    app.ui.tool.clear();
+    app.gesture = None;
+    app.ui.right = RightPanel::Edit;
 }
 
 /// The albums list (My Photos) as a page with a ✕ at its top right, as Lightroom's mobile app has
@@ -292,6 +329,9 @@ fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: boo
 
 /// Every menu and action sheet of the compact layout (each draws only while it's open).
 fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
+    super::crop_mobile::menus(app, ctx);
+    super::remove_mobile::menus(app, ctx);
+    super::mask_mobile::menus(app, ctx);
     mobile::actions(ctx, "add", Some("Add Photos From"), |ui| {
         // in an album, the library's own photos too
         let album = plain_album(app);

@@ -8,8 +8,9 @@
 //! - `ui.clickWidget {id, count?}`: click a widget by automation id (real egui input)
 //! - `ui.dragWidget {id, toX?, toY?, dx?, dy?}`: drag from a widget's centre
 //! - `ui.move/click/drag {x, y, …}`: raw pointer input in screen points
-//! - `ui.pointer {events: [{kind: down|drag|up, x, y}], space: "image"}`: gestures in normalized
-//!   image coordinates (brush strokes, crop handles…) — mapped to screen and injected as real input
+//! - `ui.pointer {events: [{kind: down|drag|up, x, y}], space: "image", touch?}`: gestures in normalized
+//!   image coordinates (brush strokes, crop handles…) — mapped to screen and injected as real input;
+//!   `touch`: a finger on a touch screen (its touch events with the pointer's), not a mouse
 //! - `ui.key {key, shift?, alt?, cmd?}` / `ui.text {text}` / `ui.scroll {dx, dy, source?, unit?, phase?}`
 //! - `ui.set {view?, panel?, filmstrip?, leftPanel?, zoom?, …}` / `ui.dialog.confirm|cancel`
 //! - `ui.screenshot {path?, headless?}` (headless: CPU-rendered, no compositor needed), `ui.resize {width, height}`, `ui.render {id?, size?, path?}`, `app.quit`
@@ -776,19 +777,30 @@ pub(crate) fn gesture_events(app: &mut LightcraftApp, ctx: &egui::Context, metho
             let Some(img) = app.image_rect else { return Err("no image on screen (switch to Detail view)".into()) };
             let Some(events) = p.get("events").and_then(Value::as_array) else { return Err("missing `events`".into()) };
             let m = modifiers(p);
+            // a finger: a touch screen sends its touch events along with the pointer's
+            let touch = p.get("touch").and_then(Value::as_bool).unwrap_or(false);
+            let finger = |phase, pos| egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(0), phase, pos, force: None };
             for e in events {
                 let x = e.get("x").and_then(Value::as_f64).unwrap_or(0.5) as f32;
                 let y = e.get("y").and_then(Value::as_f64).unwrap_or(0.5) as f32;
                 let pos = egui::pos2(img.left() + x * img.width(), img.top() + y * img.height());
-                match e.get("kind").and_then(Value::as_str).unwrap_or("move") {
+                let phase = match e.get("kind").and_then(Value::as_str).unwrap_or("move") {
                     "down" => {
                         app.synthetic.push(egui::Event::PointerMoved(pos));
                         app.synthetic.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: m });
+                        egui::TouchPhase::Start
                     }
                     "up" => {
-                        app.synthetic.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: m })
+                        app.synthetic.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: m });
+                        egui::TouchPhase::End
                     }
-                    _ => app.synthetic.push(egui::Event::PointerMoved(pos)),
+                    _ => {
+                        app.synthetic.push(egui::Event::PointerMoved(pos));
+                        egui::TouchPhase::Move
+                    }
+                };
+                if touch {
+                    app.synthetic.push(finger(phase, pos));
                 }
             }
             ctx.request_repaint();

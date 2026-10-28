@@ -434,3 +434,12 @@ pub(super) fn tap(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response,
     }
     ui.data_mut(|m| m.insert_temp(key, tap));
 }
+
+/// Is a finger on a touch screen behind this frame's pointer input (rather than a mouse)? Also in
+/// the frame a finger lifts: its touch has ended then, but the end comes with the pointer's release.
+pub(super) fn touch_input(ui: &egui::Ui) -> bool {
+    ui.input(|i| i.any_touches() || i.events.iter().any(|e| matches!(e, egui::Event::Touch { .. })))
+}
+
+/// How far (points) from a handle, a pin or a corner a finger still grabs it (the mark is 44 pt wide with margin).
+pub(super) const TOUCH_HANDLE_REACH: f32 = 28.0;

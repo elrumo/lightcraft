@@ -41,7 +41,7 @@ pub fn local_get(a: &LocalAdjustments, key: &str) -> f64 {
     serde_json::to_value(a).ok().and_then(|v| v.get(key).and_then(|x| x.as_f64())).unwrap_or(0.0)
 }
 
-fn kind_label(s: &MaskShape) -> (&'static str, Icon) {
+pub(crate) fn kind_label(s: &MaskShape) -> (&'static str, Icon) {
     match s {
         MaskShape::Brush { .. } => ("Brush", Icon::Brush),
         MaskShape::Linear { .. } => ("Linear Gradient", Icon::Linear),
@@ -130,26 +130,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 ui.painter().galley(at, g, t.text_dim);
                 let resp = if elided { resp.on_hover_text(label) } else { resp };
                 if resp.clicked() {
-                    match *kind {
-                        "colorRange" => {
-                            // an empty colour range; clicking the photo samples it
-                            let _ = app.run("mask.add", json!({"kind": "colorRange"}));
-                            app.ui.tool = "colorRange".into();
-                            app.toast(ui.ctx(), crate::i18n::tr("Click the photo to pick a colour · ⇧-click adds more"));
-                        }
-                        "object" => start_object(app, ui.ctx(), "new"),
-                        "prompt" => start_describe(app, "new"),
-                        "brush" => {
-                            let _ = app.run("tool.brush", json!({"new": true}));
-                        }
-                        "linear" | "radial" => {
-                            app.ui.tool = kind.to_string();
-                            let _ = app.run("mask.add", json!({"kind": kind}));
-                        }
-                        k => {
-                            let _ = app.run("mask.add", json!({"kind": k}));
-                        }
-                    }
+                    create(app, ui.ctx(), kind);
                 }
                 if i % cols == cols - 1 {
                     ui.end_row();
@@ -388,6 +369,66 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let out = slider(ui, s, v, true, None);
         apply_slider_out(app, s, out, |app, v| app.run("mask.adjust", json!({"values": {s.id: v}})));
     }
+    amount_slider(app, ui, &m);
+    refine_slider(app, ui, &m);
+    ui.add_space(30.0);
+    let _ = Stroke::NONE;
+}
+
+/// Start a new mask of `kind` (a tile of Create New Mask): the kinds that wait for a click on the
+/// photo, a stroke or a model get what they need.
+pub(crate) fn create(app: &mut LightcraftApp, ctx: &egui::Context, kind: &str) {
+    match kind {
+        "colorRange" => {
+            // an empty colour range; clicking the photo samples it
+            let _ = app.run("mask.add", json!({"kind": "colorRange"}));
+            app.ui.tool = "colorRange".into();
+            let how = if app.compact { "Tap the photo to pick a colour" } else { "Click the photo to pick a colour · ⇧-click adds more" };
+            app.toast(ctx, crate::i18n::tr(how));
+        }
+        "object" => start_object(app, ctx, "new"),
+        "prompt" => start_describe(app, "new"),
+        "brush" => {
+            let _ = app.run("tool.brush", json!({"new": true}));
+        }
+        "linear" | "radial" => {
+            app.ui.tool = kind.to_string();
+            let _ = app.run("mask.add", json!({"kind": kind}));
+        }
+        k => {
+            let _ = app.run("mask.add", json!({"kind": k}));
+        }
+    }
+}
+
+/// The kinds a mask can be given more of (Add, Subtract, Intersect): (kind, name).
+pub(crate) const COMPONENT_KINDS: [(&str, &str); 8] = [
+    ("object", "Object"),
+    ("prompt", "Describe…"),
+    ("brush", "Brush"),
+    ("linear", "Linear Gradient"),
+    ("radial", "Radial Gradient"),
+    ("sky", "Sky"),
+    ("subject", "Subject"),
+    ("luminanceRange", "Luminance Range"),
+];
+
+/// Add a part of `kind` to the selected mask with `op` (`add`, `subtract` or `intersect`).
+pub(crate) fn add_component(app: &mut LightcraftApp, ctx: &egui::Context, op: &str, kind: &str) {
+    match kind {
+        "object" => start_object(app, ctx, op),
+        "prompt" => start_describe(app, op),
+        "brush" => {
+            let _ = app.run("tool.brush", json!({"op": op}));
+        }
+        k => {
+            let _ = app.run("mask.addComponent", json!({"op": op, "kind": k}));
+        }
+    }
+}
+
+/// The selected mask's Amount slider.
+pub(crate) fn amount_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &lightcraft_develop::Mask) {
     let amt = ControlSpec {
         id: "amount",
         label: "Amount",
@@ -401,6 +442,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     };
     let out = slider(ui, &amt, m.adjust.amount, true, None);
     apply_slider_out(app, &amt, out, |app, v| app.run("mask.adjust", json!({"values": {"amount": v}})));
+}
+
+/// The selected mask's Refine Edges slider.
+pub(crate) fn refine_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &lightcraft_develop::Mask) {
     let refine = ControlSpec {
         id: "refine",
         label: "Refine Edges",
@@ -414,8 +459,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     };
     let out = slider(ui, &refine, m.refine, true, None);
     apply_slider_out(app, &refine, out, |app, v| app.run("mask.refine", json!({"value": v})));
-    ui.add_space(30.0);
-    let _ = Stroke::NONE;
 }
 
 /// Translate fixed action labels, but never mutate or translate user-entered mask names.
@@ -453,7 +496,7 @@ fn mask_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: u32, name: &str, vi
 pub const OVERLAY_COLORS: [[u8; 3]; 5] = [[230, 30, 40], [40, 200, 70], [40, 110, 240], [250, 210, 30], [255, 255, 255]];
 
 /// How the selected mask is shown: overlay mode, colour, opacity, pins.
-fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+pub(crate) fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     use lightcraft_pipeline::MaskView;
     let t = Tokens::get(ui.ctx());
     let view = MaskView::parse(&app.ui.mask_overlay_mode).unwrap_or_default();
@@ -511,7 +554,7 @@ fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 
 /// Controls for a range component: the selected range (two handles over a dark → light bar),
 /// Smoothness, and Show Luminance Map; colour ranges get Refine.
-fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape: &MaskShape) {
+pub(crate) fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape: &MaskShape) {
     let t = Tokens::get(ui.ctx());
     let update = |app: &mut LightcraftApp, shape: MaskShape| {
         let _ = app.run("mask.update", json!({"component": comp, "shape": shape}));
@@ -784,7 +827,7 @@ fn enter_submits(working: bool, lost_focus: bool, enter_pressed: bool) -> bool {
 }
 
 /// The Describe field: type what to select ("sky", "the red car") and press Return.
-fn describe_field(app: &mut LightcraftApp, ui: &mut egui::Ui, new_mask: bool) {
+pub(crate) fn describe_field(app: &mut LightcraftApp, ui: &mut egui::Ui, new_mask: bool) {
     let Some((op, mut text)) = app.ui.describe.clone() else { return };
     // a new mask's field sits under the tiles; one that combines, under the selected mask
     if (op == "new") != new_mask {

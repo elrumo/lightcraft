@@ -18,8 +18,8 @@ mod keywords;
 
 #[cfg(test)]
 use crop::aspect_label;
-pub(crate) use crop::tool_overlay_options;
 use crop::{crop, red_eye, remove};
+pub(crate) use crop::{spot_mode_name, spot_sliders, tool_overlay_options};
 #[cfg(test)]
 use history::{HistoryRow, history_row, short_time};
 use history::{activity, versions};
