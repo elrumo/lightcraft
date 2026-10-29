@@ -196,6 +196,51 @@ fn a_person_shows_their_photos_and_a_bad_request_is_an_error() {
 }
 
 #[test]
+fn a_person_listed_before_the_faces_were_grouped_again_is_still_found() {
+    let mut s = demo();
+    scanned(&mut s);
+    let clusters = s.people_clusters(false).unwrap();
+    let person = clusters.iter().find(|c| c.members.len() > 1).expect("a person with several faces");
+    // (a person is named by their best face: when the groups form again another face can be the best, and the list an app
+    // made a moment before names the person by a face that is not the best any more)
+    let (best, other) = (person.id.clone(), person.members[1].id());
+    assert_ne!(best, other);
+    assert!(clusters.iter().all(|c| c.id != other), "no person is called by that face now");
+
+    let r = s.execute("people.name", &json!({"cluster": other, "name": "Ada"})).unwrap();
+    assert!(r["faces"].as_u64().unwrap() >= 1, "{r}");
+    let all = people(&mut s, true);
+    let ada = all.iter().find(|p| p["id"] == best.as_str()).expect("the person");
+    assert_eq!(ada["name"], "Ada", "{ada}");
+    assert!(s.execute("people.show", &json!({"cluster": other})).is_ok());
+
+    // a face nobody has is still a person that is no longer there
+    let gone = s.execute("people.name", &json!({"cluster": "ffffffffffffffffffffffffffffffff.3", "name": "Ada"})).unwrap_err().to_string();
+    assert!(gone.contains("no longer there"), "{gone}");
+}
+
+#[test]
+fn a_person_the_server_listed_is_found_by_any_of_their_faces_too() {
+    let mut s = demo();
+    scanned(&mut s);
+    let clusters = s.people_clusters(false).unwrap();
+    let person = clusters.iter().find(|c| c.members.len() > 1).expect("a person with several faces").clone();
+
+    // a device that finds no faces itself (iOS, the web) names the people the sync server found
+    let mut thin = Session::with_demo();
+    thin.vision.text_edge = 192;
+    thin.vision.remote.set_status(Some(json!({"available": true, "faces": {"enabled": true}})));
+    thin.vision.remote.people = Some((web_time::Instant::now(), clusters.clone()));
+    let listed = people(&mut thin, false);
+    assert!(listed.iter().any(|p| p["id"] == person.id.as_str()), "the server's person is listed");
+
+    // the server has grouped them again since: the list's id is another face of the person's group now
+    let r = thin.execute("people.name", &json!({"cluster": person.members[1].id(), "name": "Ada"})).unwrap();
+    assert!(r["faces"].as_u64().unwrap() >= 1, "{r}");
+    assert!(named_faces(&thin, "Ada") >= 1);
+}
+
+#[test]
 fn faces_survive_a_restart_and_can_be_forgotten() {
     let dir = temp_dir("persist");
     let mut s = Session::new();

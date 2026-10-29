@@ -37,7 +37,7 @@ to its licence, and everything else works without it.
   | `vision.setHelper {parts}` / `vision.helper` | the work this device does for its server instead of the server (`search`, `text`, `faces`, `sensitive`), and how it is going; see *A device as the server's processing unit* |
   | `vision.setText {on}` | also read and search the text printed in photos (off until turned on; saved with the library) |
   | `vision.setFaces {on}` / `vision.faces.download {acknowledged: true}` / `vision.faces.cancel` | find the people in photos (off until turned on and the user agreed to the models), and download or stop the face models |
-  | `people.list {all?, limit?, wait?}` / `people.name {cluster, name}` / `people.show {cluster}` / `people.deleteData` | the people found (unnamed ones, and named ones with faces to confirm), name one, show their photos, forget every face |
+  | `people.list {all?, limit?, wait?}` / `people.name {cluster, name}` / `people.show {cluster}` / `people.deleteData` | the people found (unnamed ones, and named ones with faces to confirm), name one, show their photos, forget every face. A person's `id` is the id of their best face, and the groups form again as faces come in (or as the server's people arrive), so a list can be a moment old: `cluster` also takes the id of any face the person's group had, and finds the group that face is in now |
   | `vision.text.download {acknowledged: true}` / `vision.text.cancel` | download (resumable, SHA-256-checked) or stop the text-reading models |
 
 ## How it works

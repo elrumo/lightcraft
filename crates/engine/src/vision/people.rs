@@ -38,6 +38,13 @@ pub struct FaceRef {
     pub score: f32,
 }
 
+impl FaceRef {
+    /// The name of this face to refer to it by (`<photo key>.<face number>`: the same as [`cluster::face_id`] gives the face).
+    pub fn id(&self) -> String {
+        format!("{}.{}", self.key.to_hex(), self.index)
+    }
+}
+
 /// The faces that look like one person.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cluster {
@@ -258,10 +265,18 @@ impl Session {
     }
 
     /// Finds `cluster` among the people, or says to look again (people are regrouped as photos are
-    /// added, so an id can go away).
+    /// added, so an id can go away). A person is named by their best face, and when the faces are
+    /// grouped again another face can be the best one, or the group can have joined another: the id
+    /// of a face the person had then finds the group that face is in now, so a list the app made a
+    /// moment ago still names the person it showed.
     fn people_cluster(&mut self, id: &str) -> Result<Cluster, String> {
         let clusters = self.people_clusters(false)?;
-        clusters.iter().find(|c| c.id == id).cloned().ok_or_else(|| "that person is no longer there: look at the people again".to_string())
+        clusters
+            .iter()
+            .find(|c| c.id == id)
+            .or_else(|| clusters.iter().find(|c| c.members.iter().any(|m| m.id() == id)))
+            .cloned()
+            .ok_or_else(|| "that person is no longer there: look at the people again".to_string())
     }
 
     /// Names a person (`people.name`): their faces become face regions with that name on each of
