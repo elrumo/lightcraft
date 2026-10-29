@@ -102,7 +102,9 @@ fn a_new_import_keeps_the_whole_sensor_with_the_frame_as_its_import_crop() {
     // a file with no crop of its own is as it always was
     let plain = photo("P1002300.RW2");
     assert_eq!((plain.width, plain.height), (96, 72));
-    assert!(plain.import_look.is_none() && plain.develop.crop.geometry.rect == lightcraft_geom::Rect::UNIT);
+    // (its import look, if any, is only the colour noise reduction a raw starts with: no crop)
+    assert!(plain.import_look.as_ref().is_none_or(|l| l.crop.geometry.rect == lightcraft_geom::Rect::UNIT));
+    assert!(plain.develop.crop.geometry.rect == lightcraft_geom::Rect::UNIT);
     let _ = std::fs::remove_dir_all(&src);
 }
 
