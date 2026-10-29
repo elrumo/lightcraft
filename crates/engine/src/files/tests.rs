@@ -2064,6 +2064,9 @@ fn photo_camera_tone_gives_the_base_curve_a_file_gives_it() {
     assert!(tone.chroma().iter().zip(found.chroma()).all(|(a, b)| (a - b).abs() < 1e-6), "{:?} vs {:?}", tone.chroma(), found.chroma());
     assert!((tone.apply(0.18) - 0.3).abs() < 0.01, "{}", tone.apply(0.18));
     assert_eq!(s.execute("photo.cameraTone", &serde_json::json!({"id": curve})).unwrap(), asked, "from the cached source");
+    // the scene-linear light of that decode, as nine luminances that do not decrease (a frontend with another decoder scales its light to them)
+    let level: Vec<f64> = serde_json::from_value(asked["level"].clone()).expect("the decode's light is handed over");
+    assert!(level.len() == 9 && level.iter().all(|v| v.is_finite() && *v > 0.0) && level.windows(2).all(|w| w[0] <= w[1]), "{level:?}");
     // a raw nothing was fitted to has none
     assert!(s.execute("photo.cameraTone", &serde_json::json!({"id": flat})).unwrap()["tone"].is_null());
     // a photo that is not there

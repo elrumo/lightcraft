@@ -635,6 +635,14 @@ impl crate::Session {
         Ok(self.source_info(id).camera_tone)
     }
 
+    /// The luminance quantiles ([`crate::scene_level`]) of the scene-linear picture photo `id`'s file develops to, for a frontend that
+    /// develops raws with another decoder and has to bring its light to this one's scale before the camera tone curve acts on it. Read
+    /// from a cached source decoded from the file (call [`Self::camera_tone_of`] first so one is cached); `None` for a source that is
+    /// a smart preview or a rendered file, and for a picture too small to say. Changes nothing.
+    pub fn scene_level_of(&self, id: PhotoId) -> Option<[f32; 9]> {
+        self.media.cached_source(id).filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy).and_then(|s| crate::scene_level::luminance_quantiles(&s.image))
+    }
+
     /// Borrow source mattes for selection notices without constructing render facts each frame.
     pub fn source_mattes(&self, id: PhotoId) -> Option<&lightcraft_pipeline::masks::Mattes> {
         self.media.cached_source(id).and_then(|s| s.info.as_ref()).and_then(|info| info.mattes.as_deref())
