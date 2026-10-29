@@ -115,6 +115,11 @@ fn lens_profile(s: &mut Session, p: &Value) -> Result<Value> {
         Some(id) => lightcraft_catalog::PhotoId(id),
         None => s.active().ok_or_else(|| bad(C, "no photo selected"))?,
     };
+    s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?;
+    // (a frontend that draws the photo itself must see what a render here would: a decode has had its say)
+    if p.get("decode").and_then(Value::as_bool) == Some(true) {
+        s.ensure_decoded(id).map_err(|e| bad(C, e))?;
+    }
     let photo = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?;
     let (lens_name, camera_name, enabled, raw) =
         (photo.meta.lens.clone(), photo.meta.camera.clone(), photo.develop.optics.lens_profile, photo.develops_raw());
@@ -143,6 +148,8 @@ fn lens_profile(s: &mut Session, p: &Value) -> Result<Value> {
         "vignetting": lens.is_some_and(|l| l.vignette.is_some()),
         "profile": profile,
         "enabled": enabled,
+        // the data itself (the `EmbeddedLens` a render applies), for a frontend that draws the photo: `null` for a photo with none
+        "correction": lens.and_then(|l| serde_json::to_value(l).ok()),
     }))
 }
 
@@ -250,7 +257,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Lens Profile",
             [],
             None,
-            "{id?} → {id, raw, lens, origin: file|measured|database|null, serial, distortion, vignetting, profile: {maker, model, mounts}|null, enabled} — the photo's lens correction (Enable Profile Corrections applies it) and where it comes from",
+            "{id?, decode?: bool} → {id, raw, lens, origin: file|measured|database|null, serial, distortion, vignetting, profile: {maker, model, mounts}|null, enabled, correction: {warp?, stages?, vignette?: {k: [×5], center: {x, y}, radius}, origin?}|null} — the photo's lens correction (Enable Profile Corrections applies it) and where it comes from; `correction` is the data a render applies, in the EXIF-oriented photo (the vignette's gain is `1 + k0 r² + … + k4 r¹⁰`, `r` the distance from `center · (w, h)` over `radius · long edge`; the user's rotation and flips come on top). `decode: true` first decodes a raw not yet decoded (at thumbnail size, changing no edit), which records the vignetting measured from a CR3's camera JPEG",
             always,
             lens_profile
         ),

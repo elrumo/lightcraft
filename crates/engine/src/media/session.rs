@@ -611,6 +611,17 @@ impl crate::Session {
         self.catalog.photo(id).and_then(|p| p.embedded_lens).or_else(|| self.source_info(id).lens)
     }
 
+    /// Makes sure a decode of photo `id` is cached, so [`Self::embedded_lens`] sees the lens data the decoder finds (the vignetting
+    /// a CR3's camera corrected in its JPEG is measured from the pixels, so a raw not yet decoded has none). A source the media
+    /// cache holds already has it; otherwise the photo is decoded at thumbnail size. Changes no edit.
+    pub fn ensure_decoded(&mut self, id: PhotoId) -> Result<(), String> {
+        let known = self.media.cached_source(id).is_some_and(|s| s.info.is_some() || s.from_proxy);
+        if !known {
+            self.source_now(id, SourceLevel::Thumb)?;
+        }
+        Ok(())
+    }
+
     /// The base tone curve photo `id`'s file gives it ([`lightcraft_pipeline::SourceInfo::camera_tone`]): the curve a raw is
     /// shown through before any edit, fitted to the camera's own picture or taken from a DNG's `ProfileToneCurve`. A source
     /// the media cache holds (decoded, or a smart preview's) already knows it; otherwise the photo is decoded at thumbnail
