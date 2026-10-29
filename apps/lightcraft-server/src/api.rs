@@ -319,6 +319,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Post, ["index", "text"]) => crate::vision::text_upload(st, req, &l, &who.user),
         (Method::Get, ["people", "status"]) => crate::vision::people_status(st, &l, &who.user),
         (Method::Get, ["people", "clusters"]) => crate::vision::people_clusters(st, &l, &who.user),
+        (Method::Get, ["faces", "tile"]) => crate::vision::face_tile(st, &l, &who.user, q),
         (Method::Get, ["sensitive"]) => crate::sensitive::list(st, &l, &who.user),
         (Method::Get, ["index", "faces", "keys"]) => crate::vision::face_keys(st, &who.user),
         (Method::Post, ["index", "faces"]) => crate::vision::face_upload(st, req, &l, &who.user),
@@ -783,14 +784,14 @@ pub(crate) fn over_quota(st: &State, user: &str, incoming: u64) -> Option<Resp> 
 /// A device asked for a preview that isn't there, for a photo whose original this server has (uploaded, or in a
 /// library folder): have its previews built before the rest of the queue ([`crate::folders::Scanner::rush`]).
 /// `None`: the server has no such original, so there is nothing to wait for.
-fn rush_preview(st: &State, l: &Mutex<UserLib>, user: &str, dir: &Path, hash: &str) -> Option<PreviewState> {
+pub(crate) fn rush_preview(st: &State, l: &Mutex<UserLib>, user: &str, dir: &Path, hash: &str) -> Option<PreviewState> {
     let original = blob_path(dir, "original", hash).filter(|p| p.is_file()).or_else(|| folder_original_path(st, l, user, hash))?;
     Some(st.folders.rush(dir, user, hash.to_string(), original))
 }
 
 /// The answer to a preview that isn't there yet: `404` as for any file the server doesn't have, and in the body, which
 /// devices from before it ignore, whether the server is making it (`queued`: ask again in a few seconds) or can't (`failed`).
-fn preview_not_yet(state: PreviewState) -> Resp {
+pub(crate) fn preview_not_yet(state: PreviewState) -> Resp {
     let msg = match state {
         PreviewState::Failed => "the server can't make this preview",
         _ => "the server is making this preview",

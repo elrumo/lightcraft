@@ -1013,7 +1013,10 @@ impl Engine {
         }
         // (a synced photo's variant waits for its preview: keep asking the server for it, as a grid cell does every frame)
         for (job, _) in self.variants.values() {
-            self.session.note_thumb_ask(job.photo, true);
+            // (a face the server cuts is no reason to download the whole preview: until the tile can't be had, and the render fails)
+            if job.server_tile.is_none() || self.sched.failure(Slot::Variant(job.key)).is_some() {
+                self.session.note_thumb_ask(job.photo, true);
+            }
         }
         let mut collect = Collect::default();
         let polled = self.sched.poll(&mut self.session, &mut collect);

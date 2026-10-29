@@ -2,12 +2,14 @@
 //!
 //! The UI draws the markers itself (it keeps the viewport); this module is what both it and the
 //! `map.*` commands (CLI, MCP, control channel) ask: *which photos have a position*, *how do they
-//! group at this zoom*, *where is this photo*.
+//! group at this zoom*, *where is this photo*, *what route do the photos suggest*.
 
 use lightcraft_catalog::{Catalog, Flag, Photo, PhotoId};
 use lightcraft_geo::cluster::{Cluster, Point, cluster};
 use lightcraft_geo::geodesy::unproject;
+use lightcraft_geo::route::{Fix, Routes};
 use lightcraft_geo::{Gazetteer, PlaceName};
+use lightcraft_meta::DateTime;
 use serde_json::{Value, json};
 
 /// Which photo stands for a group of photos on one marker: the best rated, picks first.
@@ -97,6 +99,97 @@ pub fn cluster_json(c: &Cluster, pts: &[Point], with_ids: usize) -> Value {
 /// Group `points` for a map at `zoom` with markers about `cell_px` pixels wide.
 pub fn markers(points: &[Point], zoom: f64, cell_px: f64) -> Vec<Cluster> {
     cluster(points, zoom, cell_px)
+}
+
+/// The photos of a route estimate: where and when, and what was left out.
+#[derive(Debug, Default)]
+pub struct RouteFixes {
+    pub fixes: Vec<Fix>,
+    /// Ids that are no photo of this library.
+    pub unknown: usize,
+    /// Photos without a GPS position.
+    pub no_gps: usize,
+    /// Photos with a position and no capture time, or only a date.
+    pub no_time: usize,
+    /// Fixes whose capture time had no zone, so one was taken from the longitude.
+    pub zone_estimated: usize,
+}
+
+/// The position and the moment of each of `ids` (a photo listed twice counts once). A capture time
+/// is the camera's clock: with a recorded offset it is exact, without one the zone of the
+/// photo's longitude (to the hour) stands in, which orders and paces photos across zones well
+/// enough for a route that is an estimate anyway.
+pub fn route_fixes(cat: &Catalog, ids: &[PhotoId]) -> RouteFixes {
+    let mut out = RouteFixes::default();
+    let mut seen = std::collections::HashSet::new();
+    for id in ids {
+        if !seen.insert(id.0) {
+            continue;
+        }
+        let Some(p) = cat.photo(*id) else {
+            out.unknown += 1;
+            continue;
+        };
+        let Some((lat, lon)) = p.meta.gps else {
+            out.no_gps += 1;
+            continue;
+        };
+        // a date alone is too coarse to place a photo between two others
+        let Some(dt) = p.captured.as_deref().filter(|c| c.contains('T')).and_then(DateTime::parse_iso) else {
+            out.no_time += 1;
+            continue;
+        };
+        let mut time = dt.unix_seconds() as f64 + f64::from(dt.millis) / 1000.0;
+        if dt.offset_minutes.is_none() {
+            time -= (lon / 15.0).round().clamp(-12.0, 14.0) * 3600.0;
+            out.zone_estimated += 1;
+        }
+        out.fixes.push(Fix { id: id.0, time, lat, lon });
+    }
+    out
+}
+
+/// A moment as the `…Z` text the other commands use.
+fn iso(t: f64) -> String {
+    format!("{}Z", lightcraft_catalog::dates::civil(t.floor() as i64))
+}
+
+/// The answer of `map.route`: the routes with their stops, legs and lines.
+pub fn route_json(found: &RouteFixes, routes: &Routes) -> Value {
+    let routes_json: Vec<Value> = routes
+        .routes
+        .iter()
+        .map(|r| {
+            let stops: Vec<Value> = r
+                .stops
+                .iter()
+                .map(|s| json!({"lat": s.lat, "lon": s.lon, "arrive": s.arrive, "leave": s.leave, "count": s.photos.len(), "photos": s.photos}))
+                .collect();
+            let legs: Vec<Value> = r
+                .legs
+                .iter()
+                .map(|l| {
+                    json!({
+                        "from": l.from, "to": l.to,
+                        "distanceKm": l.distance_km, "durationS": l.duration_s, "speedKmh": l.speed_kmh,
+                        "mode": l.mode.as_str(), "arc": l.arc,
+                        "lines": l.lines.iter().map(|line| line.iter().map(|(la, lo)| json!([la, lo])).collect::<Vec<_>>()).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            json!({
+                "start": r.start(), "end": r.end(), "startIso": iso(r.start()), "endIso": iso(r.end()),
+                "distanceKm": r.distance_km(), "stops": stops, "legs": legs,
+            })
+        })
+        .collect();
+    json!({
+        "estimated": true,
+        "photos": found.fixes.len().saturating_sub(routes.skipped),
+        "zoneEstimated": found.zone_estimated,
+        "skipped": {"noGps": found.no_gps, "noTime": found.no_time, "unknown": found.unknown, "invalid": routes.skipped},
+        "routes": routes_json,
+    })
 }
 
 #[cfg(test)]

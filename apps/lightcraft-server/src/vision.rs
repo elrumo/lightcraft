@@ -13,6 +13,7 @@
 //! POST /api/index/text               text a device read (see `lightcraft_vision::TextIndex::export`)
 //! GET  /api/people/status            {available, enabled, installed, engine, faces, photos, total}
 //! GET  /api/people/clusters          {engine, faces, photos, clusters: [{id, members: [[photo, face, x0, y0, x1, y1, score]]}]}
+//! GET  /api/faces/tile?hash=&x0=&y0=&x1=&y1=&edge=   a face's tile (JPEG, a few KB) cut from the photo's preview
 //! GET  /api/index/faces/keys         {engine, keys: [content hash]} the server has looked at
 //! POST /api/index/faces              faces a device found (see `lightcraft_vision::faces::index::FaceIndex::export`)
 //! DELETE /api/index/faces            forget every face (always allowed)
@@ -41,7 +42,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::http::Request;
@@ -54,6 +55,7 @@ use serde_json::json;
 use crate::State;
 use crate::accounts;
 use crate::api::{self, Resp, UserLib, error};
+use crate::folders::PreviewState;
 use crate::switch::{Part, Switch};
 
 /// Long edge of the rendering a photo is embedded from.
@@ -1398,6 +1400,88 @@ pub(crate) fn people_clusters(st: &State, l: &Mutex<UserLib>, user: &str) -> Res
     let body = json!({"engine": v.faces_engine(), "faces": at.0, "photos": at.1, "clusters": clusters}).to_string();
     lock(&v.people).insert(user.to_string(), (at, Arc::new(body.clone())));
     api::raw_json(200, body)
+}
+
+/// Face tiles cut at once at most (each decodes a preview and renders it); the others wait a moment, then are told to come
+/// back (`503`).
+fn tile_slots() -> &'static crate::render::Slots {
+    static SLOTS: OnceLock<crate::render::Slots> = OnceLock::new();
+    SLOTS.get_or_init(|| crate::render::Slots::new(2, Duration::from_secs(3)))
+}
+
+/// A face tile's edge, in pixels, at least and at most (what devices render them at: `lightcraft_engine::media::face_edge`).
+const TILE_EDGE: std::ops::RangeInclusive<usize> = 16..=512;
+/// The long edge of a mini preview: a face that is big enough in a photo is cut from it, the others from the smart preview.
+const MINI_EDGE: usize = 512;
+
+/// `GET /api/faces/tile?hash=<content hash>&x0=&y0=&x1=&y1=&edge=`: the picture of a face for a People card, a few KB of JPEG
+/// cut from the preview this server keeps, for a device that has no preview of the photo yet (it would download a whole one,
+/// about 1 MB, for each face). `x0 … y1` is the square around the face, normalized on the upright photo, as the device's own
+/// face tiles are cut; `edge` the tile's side. The photo is rendered neutrally (as for search), like the previews it comes
+/// from: a device asks only for photos it has not edited. `404` when the server has no preview of the photo (yet).
+pub(crate) fn face_tile(st: &State, l: &Mutex<UserLib>, user: &str, q: &str) -> Resp {
+    if let Some(r) = faces_refused(st, user) {
+        return r;
+    }
+    let num = |k: &str| api::query(q, k).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite());
+    let (Some(key), Some(x0), Some(y0), Some(x1), Some(y1)) =
+        (api::query(q, "hash").and_then(Key::from_hex), num("x0"), num("y0"), num("x1"), num("y1"))
+    else {
+        return error(400, "a face tile needs hash (32 hex digits), x0, y0, x1 and y1 (the square around the face, normalized on the upright photo)");
+    };
+    let edge = api::query(q, "edge").and_then(|v| v.parse::<usize>().ok()).unwrap_or(160).clamp(*TILE_EDGE.start(), *TILE_EDGE.end());
+    let square = [x0.clamp(0.0, 1.0), y0.clamp(0.0, 1.0), x1.clamp(0.0, 1.0), y1.clamp(0.0, 1.0)];
+    if square[2] - square[0] < 0.001 || square[3] - square[1] < 0.001 {
+        return error(400, "the square around the face is empty");
+    }
+    let hash = key.to_hex();
+    let (photo, blobs) = {
+        let l = lock(l);
+        let photo = l.core.catalog().photos().find(|p| p.in_library() && p.content_hash.as_deref().and_then(Key::from_hex) == Some(key)).cloned();
+        (photo, l.dir.join("blobs"))
+    };
+    let Some(photo) = photo else {
+        return error(404, "this server has no such photo");
+    };
+    // (the preview that holds the square at the tile's size: a mini one when it does, else the smart one)
+    let Some(wanted) = lightcraft_engine::face_tiles::tile_source_edge(&photo, square, edge) else {
+        return error(400, "the square around the face is empty");
+    };
+    let order = if wanted <= MINI_EDGE { ["mini", "smart"] } else { ["smart", "mini"] };
+    let find = || order.iter().find_map(|kind| api::blob_path(&blobs, kind, &hash).filter(|p| p.is_file()));
+    let path = match find() {
+        Some(p) => p,
+        // (a device waits for the tile: the preview is built before the rest of the queue, as when it asks for the preview itself)
+        None => match api::rush_preview(st, l, user, &blobs, &hash) {
+            Some(PreviewState::Built) => match find() {
+                Some(p) => p,
+                None => return error(404, "this server has no preview of this photo"),
+            },
+            Some(state) => return api::preview_not_yet(state),
+            None => return error(404, "this server has no preview of this photo"),
+        },
+    };
+    let Some(_slot) = tile_slots().acquire(tile_slots().wait()) else {
+        let mut resp = error(503, "the server is busy cutting face tiles: try again in a moment");
+        if let Some(h) = api::header("Retry-After", "2") {
+            resp.add_header(h);
+        }
+        return resp;
+    };
+    let tile = guard::catch("cutting a face tile", || lightcraft_engine::face_tiles::tile_from_preview(&photo, &path, square, edge)).and_then(|t| t);
+    match tile {
+        Ok(img) => match lightcraft_preview::encode_jpeg(&img) {
+            Some(jpeg) => {
+                let mut resp = api::bytes(200, "image/jpeg", jpeg);
+                if let Some(h) = api::header("Cache-Control", "private, max-age=86400") {
+                    resp.add_header(h);
+                }
+                resp
+            }
+            None => error(500, "can't encode the face tile"),
+        },
+        Err(e) => error(422, format!("can't cut a face tile from this photo: {e}")),
+    }
 }
 
 /// `GET /api/index/faces/keys`

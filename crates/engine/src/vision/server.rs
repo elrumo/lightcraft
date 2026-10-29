@@ -535,7 +535,7 @@ impl Session {
     }
 
     /// The server's people arrived: as clusters of faces of photos this device has.
-    fn people_arrived(&mut self, d: &Done) {
+    pub(super) fn people_arrived(&mut self, d: &Done) {
         self.vision.remote.people_asked = None;
         if !d.ok() {
             log::warn!("asking the server for the people: {}", why(d));
@@ -547,7 +547,6 @@ impl Session {
             .into_iter()
             .flatten()
             .filter_map(|c| {
-                let id = c["id"].as_str()?.to_string();
                 let members: Vec<FaceRef> = c["members"]
                     .as_array()?
                     .iter()
@@ -563,7 +562,11 @@ impl Session {
                         })
                     })
                     .collect();
-                (!members.is_empty()).then_some(Cluster { id, members, centroid: Vec::new() })
+                // (the server names a person by its best face, which can be on a photo this device has not got yet, and no
+                // face of theirs here has that id: a person is named by the best face of those that are here, which the
+                // id a list showed finds again by any face they have, whichever way the server groups them next)
+                let id = members.first()?.id();
+                Some(Cluster { id, members, centroid: Vec::new() })
             })
             .collect();
         let r = &mut self.vision.remote;

@@ -8,6 +8,8 @@
 //!   positions grouped into markers.
 //! - [`land`] — the world's coastlines as a triangle mesh (Natural Earth), drawn when no map tiles
 //!   are available.
+//! - [`route`] — an estimated path through photos that have a position, by the time they were taken.
+//! - [`track`] — recorded tracks: packed for storing and syncing, what they cover, cut into pieces.
 //! - [`text::normalize`] — case and accent folding shared by the name table and the search.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -17,8 +19,10 @@ mod codec;
 pub mod gazetteer;
 pub mod geodesy;
 pub mod land;
+pub mod route;
 pub mod text;
 pub mod tiles;
+pub mod track;
 
 pub use codec::DataError;
 pub use gazetteer::{City, Country, Gazetteer, Kind, LOCATE_KM, Located, MAX_NAME_WORDS, PlaceFilter, PlaceId, PlaceName, Region, city_radius_km};

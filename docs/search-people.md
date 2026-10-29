@@ -37,7 +37,7 @@ to its licence, and everything else works without it.
   | `vision.setHelper {parts}` / `vision.helper` | the work this device does for its server instead of the server (`search`, `text`, `faces`, `sensitive`), and how it is going; see *A device as the server's processing unit* |
   | `vision.setText {on}` | also read and search the text printed in photos (off until turned on; saved with the library) |
   | `vision.setFaces {on}` / `vision.faces.download {acknowledged: true}` / `vision.faces.cancel` | find the people in photos (off until turned on and the user agreed to the models), and download or stop the face models |
-  | `people.list {all?, limit?, wait?}` / `people.name {cluster, name}` / `people.show {cluster}` / `people.deleteData` | the people found (unnamed ones, and named ones with faces to confirm), name one, show their photos, forget every face |
+  | `people.list {all?, limit?, wait?}` / `people.name {cluster, name}` / `people.show {cluster}` / `people.deleteData` | the people found (unnamed ones, and named ones with faces to confirm), name one, show their photos, forget every face. A person's `id` is the id of their best face, and the groups form again as faces come in (or as the server's people arrive), so a list can be a moment old: `cluster` also takes the id of any face the person's group had, and finds the group that face is in now. For the people a sync server found, the id is the best face of theirs on a photo this device has (the server's own best face can be on one that has not synced yet) |
   | `vision.text.download {acknowledged: true}` / `vision.text.cancel` | download (resumable, SHA-256-checked) or stop the text-reading models |
 
 ## How it works
@@ -136,10 +136,21 @@ found (`people.deleteData` asks it to, or `DELETE /api/index/faces`).
 ```text
 GET    /api/people/status            {available, enabled (an admin allowed it), installed, engine, faces, photos, total}
 GET    /api/people/clusters          {engine, faces, photos, clusters: [{id, members: [[photo, face, x0, y0, x1, y1, score]]}]}   403 until allowed
+GET    /api/faces/tile?hash=&x0=&y0=&x1=&y1=&edge=   a face's picture, a few KB of JPEG (below)                            403 until allowed
 GET    /api/index/faces/keys         {engine, keys: [content hash]}                                                              403 until allowed
 POST   /api/index/faces              faces a device found (checked whole; photos not in the library are skipped)                 403 until allowed
 DELETE /api/index/faces              forget every face (always allowed)
 ```
+
+**Face tiles.** A People card shows a face, and a device that has none of a synced photo's previews yet would download the
+whole smart preview (about 1 MB) for each face just to cut a few KB out of it. Such a device asks the server instead:
+`GET /api/faces/tile` cuts the square around the face (`x0 … y1`, normalized on the upright photo, as the device cuts its
+own tiles) from the mini preview when that holds the face at the tile's size, else from the smart preview, renders it
+neutrally (as for search) and sends it as a JPEG, `edge` pixels across (16 to 512). Only for a photo that is as imported
+(unedited, uncropped, upright) and none of whose previews is on the device; every other tile, and any tile the server can't
+cut (an older server, finding people off for the user, previews not built yet, offline), is rendered on the device as
+before, so the previews are downloaded only then. `404` when the server has no such photo or preview, `400` for a request
+that is no tile, `503` (`Retry-After`) while it is busy cutting others.
 
 Known limits: faces under about 32 px in the 1280 px view and faces turned away from the camera are missed or unreliable;
 grouping is one quick pass (no hierarchy, no learning from your corrections); there is no "not this person", no merge by
