@@ -6,7 +6,9 @@
 //! (`~/.config/systemd/user/lightbites-server.service`) and `~/.local/share/lightbites-server`. `uninstall` stops it and
 //! removes the agent and the program; the data stays. `start`, `stop` and `status` control the installed agent without
 //! removing it (a stopped server stays stopped across logins until `start`); `status --porcelain` prints one word
-//! (`running`, `stopped` or `not-installed`) for the menu-bar app and scripts. Windows uses its own service manager
+//! (`running`, `stopped` or `not-installed`) for the menu-bar app and scripts. On a Mac, `install` also starts the
+//! menu-bar app that came in the zip with a second launchd agent (`ai.lightcraft.server.menubar`), so its icon is there
+//! now and at every login; `uninstall` removes it. Windows uses its own service manager
 //! (docs/self-hosting.md).
 
 use std::path::{Path, PathBuf};
@@ -14,6 +16,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const LABEL: &str = "ai.lightcraft.server";
+const MENUBAR_LABEL: &str = "ai.lightcraft.server.menubar";
 const UNIT: &str = "lightbites-server.service";
 /// Most nested folders `copy_dir` follows (the web build is two or three deep).
 const MAX_DEPTH: usize = 8;
@@ -38,6 +41,15 @@ fn plist(program: &Path, data: &Path, listen: &str, web: &Path, log: &Path) -> S
     let log = xml(&log.to_string_lossy());
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key><string>{LABEL}</string>\n  <key>ProgramArguments</key>\n  <array>\n{args}  </array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>StandardOutPath</key><string>{log}</string>\n  <key>StandardErrorPath</key><string>{log}</string>\n</dict>\n</plist>\n"
+    )
+}
+
+/// The launchd agent that shows the menu-bar icon at login. No `KeepAlive`: the icon's Quit item must stay quit.
+fn menubar_plist(program: &Path, port: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key><string>{MENUBAR_LABEL}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>--port</string>\n    <string>{}</string>\n  </array>\n  <key>RunAtLoad</key><true/>\n  <key>ProcessType</key><string>Interactive</string>\n</dict>\n</plist>\n",
+        xml(&program.to_string_lossy()),
+        xml(port)
     )
 }
 
@@ -102,6 +114,8 @@ struct Paths {
     app: PathBuf,
     /// The launchd plist (macOS) or the systemd unit (Linux).
     agent: PathBuf,
+    /// The menu-bar icon's launchd plist (macOS; unused on Linux).
+    menubar_agent: PathBuf,
     log: PathBuf,
     /// launchd's `gui/<uid>` domain (macOS); empty on Linux.
     domain: String,
@@ -136,6 +150,7 @@ fn paths() -> Result<Paths, String> {
         Ok(Paths {
             app: home.join("Library/Application Support/LightCraft Server"),
             agent: home.join(format!("Library/LaunchAgents/{LABEL}.plist")),
+            menubar_agent: home.join(format!("Library/LaunchAgents/{MENUBAR_LABEL}.plist")),
             log: home.join("Library/Logs/LightCraft Server/server.log"),
             domain: format!("gui/{uid}"),
         })
@@ -146,6 +161,7 @@ fn paths() -> Result<Paths, String> {
         Ok(Paths {
             app: xdg("XDG_DATA_HOME", ".local/share").join("lightbites-server"),
             agent: xdg("XDG_CONFIG_HOME", ".config").join("systemd/user").join(UNIT),
+            menubar_agent: PathBuf::new(),
             log: xdg("XDG_STATE_HOME", ".local/state").join("lightbites-server/server.log"),
             domain: String::new(),
         })
@@ -172,6 +188,25 @@ fn unload(p: &Paths) {
         run("launchctl", &["bootout", &format!("{}/{LABEL}", p.domain)]);
     } else {
         systemctl(&["stop", UNIT]);
+    }
+}
+
+/// Quits the menu-bar icon's agent (macOS; nothing to quit the first time).
+fn unload_menubar(p: &Paths) {
+    if cfg!(target_os = "macos") {
+        run("launchctl", &["bootout", &format!("{}/{MENUBAR_LABEL}", p.domain)]);
+    }
+}
+
+/// Starts the menu-bar icon now and at every login. Best effort: the server works without its icon.
+fn load_menubar(p: &Paths, program_dir: &Path, port: &str) {
+    let program = program_dir.join("lightbites-menubar");
+    if !cfg!(target_os = "macos") || !program.is_file() {
+        return;
+    }
+    if std::fs::write(&p.menubar_agent, menubar_plist(&program, port)).is_ok() {
+        let path = p.menubar_agent.to_string_lossy();
+        let _ = run("launchctl", &["bootstrap", &p.domain, &path]) || run("launchctl", &["load", "-w", &path]);
     }
 }
 
@@ -207,6 +242,7 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
 
     // stop the old copy before replacing it (nothing to stop the first time)
     unload(&p);
+    unload_menubar(&p);
 
     if exe != installed_exe {
         std::fs::create_dir_all(&program_dir).map_err(|e| format!("{}: {e}", program_dir.display()))?;
@@ -236,8 +272,9 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     std::fs::write(&p.agent, agent_file(&p, &installed_exe, &data, listen, &installed_web)).map_err(|e| format!("{}: {e}", p.agent.display()))?;
     enable(&p);
     load(&p)?;
-
     let port = listen.rsplit(':').next().unwrap_or("8080");
+    load_menubar(&p, &program_dir, port);
+
     println!("LightCraft Server is installed and running (it starts at every login).");
     println!("  admin page: http://localhost:{port}/admin");
     println!("  data:       {}", data.display());
@@ -339,7 +376,11 @@ pub fn uninstall() -> Result<(), String> {
     disable(&p);
     unload(&p);
     enable(&p);
+    unload_menubar(&p);
     let _ = std::fs::remove_file(&p.agent);
+    if cfg!(target_os = "macos") {
+        let _ = std::fs::remove_file(&p.menubar_agent);
+    }
     if !cfg!(target_os = "macos") {
         systemctl(&["daemon-reload"]);
     }
@@ -371,6 +412,20 @@ mod tests {
     }
 
     #[test]
+    fn menubar_plist_runs_the_icon_at_login_with_the_port_and_without_keepalive() {
+        let p = menubar_plist(Path::new("/a & b/lightbites-menubar"), "9090");
+        assert!(p.contains("<string>/a &amp; b/lightbites-menubar</string>\n    <string>--port</string>\n    <string>9090</string>"));
+        assert!(p.contains("<key>RunAtLoad</key><true/>"));
+        assert!(!p.contains("KeepAlive"));
+        if cfg!(target_os = "macos") {
+            let file = std::env::temp_dir().join(format!("lc-menubar-plist-{}.plist", std::process::id()));
+            std::fs::write(&file, &p).unwrap();
+            assert!(run("plutil", &["-lint", &file.to_string_lossy()]), "plutil rejected:\n{p}");
+            std::fs::remove_file(&file).unwrap();
+        }
+    }
+
+    #[test]
     fn unit_quotes_words_and_escapes_what_systemd_expands() {
         let u = unit(Path::new("/a b/lightbites-server"), Path::new("/d%1/$x"), "0.0.0.0:8080", Path::new("/w"), Path::new("/l 100%.log"));
         assert!(
@@ -387,6 +442,7 @@ mod tests {
         let p = Paths {
             app: PathBuf::from("/Users/a b/Library/Application Support/LightCraft Server"),
             agent: PathBuf::new(),
+            menubar_agent: PathBuf::new(),
             log: PathBuf::new(),
             domain: String::new(),
         };
