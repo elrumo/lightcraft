@@ -28,6 +28,16 @@ pub(crate) fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens)
     if let Some(v) = preset_combo(app, ui, t, "settingsRawPreset", crate::i18n::tr("Raw photos"), d.raw_preset.as_deref(), "LightCraft Default") {
         let _ = app.run("library.preferences", json!({"import": {"rawPreset": v}}));
     }
+    // under the raw preset (a preset that sets Detail wins); part of the photo's import look, so it isn't an edit
+    row(ui, t, "Color Noise Reduction", |ui| {
+        let mut v = d.color_noise_reduction();
+        let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).step_by(1.0).max_decimals(0));
+        register(ui, "slider:settingsImportColorNoise".to_string(), r.rect);
+        // (saved when let go, not on every step of a drag)
+        if r.drag_stopped() || (r.changed() && !r.dragged()) {
+            let _ = app.run("library.preferences", json!({"import": {"colorNoiseReduction": v}}));
+        }
+    });
     let mut per = d.per_camera;
     row(ui, t, "", |ui| {
         if check(ui, "settings.perCamera", &mut per, "Use camera-specific defaults") {
