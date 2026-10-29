@@ -75,6 +75,39 @@ fn photo_arg(s: &Session, p: &Value, c: &str) -> crate::Result<PhotoId> {
     }
 }
 
+/// `photo.mattes`' answer for a source's `mattes`: its depth as a [`lightcraft_develop::DepthMap`] and each matte as deflated,
+/// base64 alpha bytes (the encoding of `SegMask::from_logits`).
+fn mattes_json(m: &lightcraft_pipeline::masks::Mattes) -> Value {
+    use base64::Engine as _;
+    use lightcraft_raster::resample::{Filter, resize};
+    let depth = m.depth().and_then(|d| {
+        // (a map larger than the settings keep is box-reduced, aspect kept)
+        let side = lightcraft_develop::segmask::MAX_DEPTH_SIDE;
+        let long = d.width.max(d.height);
+        let map = if long > side {
+            let k = side as f64 / long as f64;
+            let small = resize(
+                d,
+                ((d.width as f64 * k).round() as usize).clamp(1, side),
+                ((d.height as f64 * k).round() as usize).clamp(1, side),
+                Filter::Box,
+            );
+            lightcraft_develop::DepthMap::from_nearness(small.width, small.height, &small.data)
+        } else {
+            lightcraft_develop::DepthMap::from_nearness(d.width, d.height, &d.data)
+        };
+        map.and_then(|m| serde_json::to_value(m).ok())
+    });
+    let mattes: Vec<Value> = m
+        .iter()
+        .map(|(kind, img)| {
+            let z = miniz_oxide::deflate::compress_to_vec(&img.data, 8);
+            json!({"kind": kind.code(), "w": img.width, "h": img.height, "data": base64::engine::general_purpose::STANDARD.encode(z)})
+        })
+        .collect();
+    json!({"depth": depth, "mattes": mattes})
+}
+
 /// The most photos `catalog.describe` answers at once.
 const DESCRIBE_MAX: usize = 1000;
 
@@ -337,6 +370,20 @@ pub fn specs() -> Vec<CommandSpec> {
                 let id = photo_arg(s, p, c)?;
                 let tone = s.camera_tone_of(id).map_err(|e| bad(c, e))?;
                 Ok(json!({"tone": tone.and_then(|t| serde_json::to_value(t).ok()), "level": s.scene_level_of(id)}))
+            }
+        ),
+        cmd!(
+            query "photo.mattes",
+            "Photo Mattes",
+            [],
+            None,
+            "{id?} → {depth: {w, h, data} | null, mattes: [{kind: 0..5, w, h, data}]} the photo's own depth and segmentation mattes, for a frontend that draws Sky, Subject, Background, People and Depth Range masks itself. `depth` is nearness (1 nearest, 0 farthest) over the EXIF-oriented picture as a develop `DepthMap` (`lens_blur.depth`'s form: 8-bit, each byte as its difference from the one to its left, deflated, base64; a plane larger than 2048 px is box-reduced first); `null` when the source has none. Each of `mattes` is one stored matte: `kind` 0 sky, 1 person, 2 skin, 3 hair, 4 teeth, 5 glasses, and `data` the base64 of the raw deflate of its `w * h` alpha bytes (0..255, row-major, oriented like the picture). Lens Blur's estimate is not here (it is in the settings). Decodes the photo at thumbnail size when no source of it is cached; changes no edit",
+            always,
+            |s, p| {
+                let c = "photo.mattes";
+                let id = photo_arg(s, p, c)?;
+                let mattes = s.mattes_of(id).map_err(|e| bad(c, e))?;
+                Ok(mattes.map_or_else(|| json!({"depth": null, "mattes": []}), |m| mattes_json(&m)))
             }
         ),
         cmd!(query "photo.inspect", "Inspect Photo", [], None, "{id?}", always, |s, p| {

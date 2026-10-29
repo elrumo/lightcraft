@@ -18,6 +18,69 @@ fn selection_notices_borrow_the_same_mattes_as_render_facts() {
     assert!(std::sync::Arc::ptr_eq(session.source_info(id).mattes.as_ref().unwrap(), &mattes));
 }
 
+/// `photo.mattes`: a frontend that draws AI masks itself gets the photo's own mattes and depth. Each matte comes back as the
+/// deflated, base64 bytes it is stored in, the depth as the develop `DepthMap`; a photo with none answers an empty list, and
+/// asking changes no edit.
+#[test]
+fn photo_mattes_gives_the_mattes_and_depth_a_source_carries() {
+    use base64::Engine as _;
+    use lightcraft_pipeline::masks::{MatteKind, Mattes};
+    use lightcraft_raster::{Image, Plane};
+    let mut s = crate::Session::with_demo();
+    let with = s.active().unwrap();
+    let without = s.catalog.photos().map(|p| p.id).find(|id| *id != with).unwrap();
+    let sky = Image { width: 6, height: 4, data: (0..24u8).map(|i| i * 10).collect() };
+    let person = Image { width: 5, height: 3, data: (0..15u8).map(|i| 255 - i * 17).collect() };
+    let near = Plane { width: 7, height: 5, data: (0..35).map(|i| i as f32 / 34.0).collect() };
+    let mut mattes = Mattes::default();
+    mattes.push(MatteKind::Sky, sky.clone());
+    mattes.push(MatteKind::Person, person.clone());
+    mattes.set_depth(near.clone());
+    let carry = |s: &mut crate::Session, mattes: Mattes| {
+        let info = lightcraft_pipeline::SourceInfo { mattes: Some(std::sync::Arc::new(mattes)), ..Default::default() };
+        let image = std::sync::Arc::new(lightcraft_raster::Rgb32f::new(8, 8));
+        s.media.insert_source(with, SourceLevel::Thumb, DecodedSource::new(image, Some(info)));
+    };
+    carry(&mut s, mattes);
+    let edit = s.catalog.photo(with).unwrap().develop.clone();
+
+    let asked = s.execute("photo.mattes", &serde_json::json!({})).unwrap();
+    assert_eq!(s.execute("photo.mattes", &serde_json::json!({"id": with.0})).unwrap(), asked, "the active photo, or by id");
+    let planes = asked["mattes"].as_array().unwrap();
+    assert_eq!(planes.len(), 2, "{asked}");
+    for (got, kind, want) in [(&planes[0], MatteKind::Sky, &sky), (&planes[1], MatteKind::Person, &person)] {
+        assert_eq!(
+            (got["kind"].as_u64(), got["w"].as_u64(), got["h"].as_u64()),
+            (Some(u64::from(kind.code())), Some(want.width as u64), Some(want.height as u64))
+        );
+        let z = base64::engine::general_purpose::STANDARD.decode(got["data"].as_str().unwrap()).unwrap();
+        assert_eq!(miniz_oxide::inflate::decompress_to_vec(&z).unwrap(), want.data, "{kind:?}");
+    }
+    let depth: lightcraft_develop::DepthMap = serde_json::from_value(asked["depth"].clone()).unwrap();
+    assert_eq!((depth.w, depth.h), (7, 5));
+    let got = depth.nearness().unwrap();
+    assert!(got.iter().zip(&near.data).all(|(a, b)| (a - b).abs() <= 0.5 / 255.0 + 1e-6), "{got:?}");
+    assert_eq!(s.catalog.photo(with).unwrap().develop, edit, "asking changes no edit");
+
+    // a depth plane larger than a DepthMap holds is box-reduced, aspect kept
+    let mut wide = Mattes::default();
+    wide.set_depth(Plane { width: 3000, height: 30, data: vec![0.5; 3000 * 30] });
+    carry(&mut s, wide);
+    let asked = s.execute("photo.mattes", &serde_json::json!({})).unwrap();
+    let depth: lightcraft_develop::DepthMap = serde_json::from_value(asked["depth"].clone()).unwrap();
+    assert_eq!((depth.w, depth.h), (2048, 20));
+    assert!(depth.nearness().unwrap().iter().all(|v| (v - 0.5).abs() < 0.01));
+    assert_eq!(asked["mattes"], serde_json::json!([]), "depth alone");
+
+    // a photo whose source has neither
+    assert_eq!(s.execute("photo.mattes", &serde_json::json!({"id": without.0})).unwrap(), serde_json::json!({"depth": null, "mattes": []}));
+    // a photo that is not there, and no photo at all
+    let e = s.execute("photo.mattes", &serde_json::json!({"id": 9999})).unwrap_err().to_string();
+    assert!(e.contains("no such photo 9999"), "{e}");
+    let e = crate::Session::new().execute("photo.mattes", &serde_json::json!({})).unwrap_err().to_string();
+    assert!(e.contains("no photo"), "{e}");
+}
+
 /// A loupe job with a display fit returns its image shrunk to the drawn size, aspect kept;
 /// a draft, and a render no larger than the drawn size, are left as rendered.
 #[test]
