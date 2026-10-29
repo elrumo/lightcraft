@@ -133,6 +133,27 @@ pub fn apply_default_crop(p: &mut Photo, crop: Option<[f64; 4]>) {
     p.import_look = Some(look);
 }
 
+/// What a photo's settings start from, before any default preset: the camera defaults, and for a raw developed from its
+/// sensor data (not shown from its embedded JPEG) the colour noise reduction `d` asks for ([`ImportDefaults::color_noise_reduction`]).
+fn starting_look(p: &Photo, d: &ImportDefaults) -> lightcraft_develop::DevelopSettings {
+    let mut base = p.camera_defaults();
+    if p.develops_raw() {
+        base.detail.nr_color = d.color_noise_reduction();
+    }
+    base
+}
+
+/// Give a photo that comes in without a session (the sync server's folder scan and a visitor's upload) the look a desktop
+/// import with the default settings gives it: [`starting_look`], remembered as its import look when it differs from the
+/// camera's defaults, so the same file looks the same whichever way it came in. No default preset: those are a person's, in
+/// Settings → Import. Call it before [`apply_default_crop`].
+pub fn apply_default_look(p: &mut Photo) {
+    let camera = p.camera_defaults();
+    let look = std::sync::Arc::new(starting_look(p, &ImportDefaults::default()));
+    p.develop = look.clone();
+    p.import_look = (*look != camera).then_some(look);
+}
+
 /// Give a freshly imported photo its default settings: the camera defaults, then the matching
 /// default preset ([`ImportDefaults::preset_for`]), remembered as the photo's import look.
 pub fn apply_import_defaults(s: &Session, p: &mut Photo) {
@@ -150,11 +171,7 @@ pub fn apply_import_defaults(s: &Session, p: &mut Photo) {
     let camera = p.camera_defaults();
     // a raw shown from its embedded JPEG gets the rendered-file default, not the raw one
     let raw = p.develops_raw();
-    // a raw's colour noise reduction is the user's (Settings → Import): under the preset, and part of the import look
-    let mut base = camera.clone();
-    if raw {
-        base.detail.nr_color = d.color_noise_reduction();
-    }
+    let base = starting_look(p, d);
     let preset = s.import_defaults.preset_for(raw, &p.meta.camera).and_then(|id| s.presets.iter().find(|x| x.id == id));
     let look = match preset {
         // a preset carries no Upright correction (an old one may still hold one: not this photo's)

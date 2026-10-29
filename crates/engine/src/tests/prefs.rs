@@ -500,6 +500,34 @@ fn raw_colour_noise_reduction_is_part_of_the_import_look() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
+/// A photo that comes in with no session (the sync server's folder scan, a visitor's upload) starts as a desktop import with
+/// the default settings gives it, a raw's colour noise reduction included, so the same file looks the same either way.
+#[test]
+fn a_photo_imported_without_a_session_starts_as_a_default_desktop_import() {
+    let src = temp_dir("nr-nosession");
+    dng(&src, "a.dng", "Nikon", "Z 9");
+    png(&src.join("plain.png"));
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+
+    for name in ["a.dng", "plain.png"] {
+        let imported = photo_named(&s, name).clone();
+        // the same file as a server describes it: a bare photo, with the camera's defaults
+        let mut bare = imported.clone();
+        bare.develop = Arc::new(bare.camera_defaults());
+        bare.import_look = None;
+        crate::import::apply_default_look(&mut bare);
+        assert_eq!(bare.develop, imported.develop, "{name}: the settings");
+        assert_eq!(bare.import_look, imported.import_look, "{name}: the import look");
+        assert!(!bare.is_edited(), "{name}: the import look is not an edit");
+    }
+    let raw = photo_named(&s, "a.dng");
+    assert_eq!((raw.develop.detail.nr_color, raw.import_look.is_some()), (100.0, true), "a raw is remembered with its colour noise reduction");
+    let other = photo_named(&s, "plain.png");
+    assert_eq!((other.develop.detail.nr_color, other.import_look.is_some()), (0.0, false), "a picture has no import look");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
 /// What the developer reads is a number from 0 to 100 whatever a hand-edited or synced prefs.json holds.
 #[test]
 fn colour_noise_reduction_default_is_kept_in_range() {

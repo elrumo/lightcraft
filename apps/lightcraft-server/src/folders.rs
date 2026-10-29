@@ -386,8 +386,9 @@ fn describe_info(file: &Found, hash: &str, info: lightcraft_engine::media::Probe
     p.embedded_lens = info.embedded_lens;
     p.preview_only = info.preview_only;
     p.server_path = Some(file.key.clone());
-    p.develop = Arc::new(p.camera_defaults());
-    // the crop the file asks for by itself (an Olympus body's aspect-ratio setting): part of the import look, as on a desktop
+    // the look a desktop import with the default settings gives (a raw's colour noise reduction), then the crop the file asks for by
+    // itself (an Olympus body's aspect-ratio setting): both part of the import look, as on a desktop
+    lightcraft_engine::import::apply_default_look(&mut p);
     lightcraft_engine::import::apply_default_crop(&mut p, info.default_crop);
     // the XMP sidecar (or a raw's own XMP): ratings, keywords, Lightroom edits
     let raw = p.kind == MediaKind::Raw;
