@@ -1,6 +1,6 @@
 //! Small documents a user's devices share beside the library: their export, metadata and filter
 //! presets, curve presets, label and keyword sets, LUT profiles, the order of the develop preset
-//! groups and a few preferences (`GET` / `PUT /api/docs/<name>`). The server doesn't read them: a document is a versioned JSON
+//! groups, the presets and groups they hid and a few preferences (`GET` / `PUT /api/docs/<name>`). The server doesn't read them: a document is a versioned JSON
 //! array the devices merge themselves (like the presets document, `/api/presets`), so a change
 //! made on two devices at once is merged by the second one to write, not lost. A `PUT` names the
 //! version it changed; a stale one gets `412` with the current document.
@@ -14,7 +14,7 @@ use lightcraft_catalog::sync::proto::Doc;
 
 /// The documents a device may keep here. (Preferences that name a place on one computer — folders,
 /// caches, the external editor — are not among them: they stay per device.)
-pub const NAMES: [&str; 10] = [
+pub const NAMES: [&str; 11] = [
     "export-presets",
     "metadata-presets",
     "filter-presets",
@@ -24,6 +24,8 @@ pub const NAMES: [&str; 10] = [
     "lut-profiles",
     "prefs",
     "preset-groups",
+    // the presets and groups a user hid (one item each: `{id: "preset:<id>"}` / `{id: "group:<name>"}`)
+    "hidden-presets",
     // the Hidden password's hash (an argon2id string; the server never reads it)
     "privacy",
 ];

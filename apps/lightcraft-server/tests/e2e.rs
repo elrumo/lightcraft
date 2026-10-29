@@ -903,6 +903,9 @@ fn shared_documents_are_versioned_and_only_known_names_are_kept() {
     // the versions come with every pull
     let (_, b, _) = call("GET", &format!("{base}/api/ops?since=0"), &token, None, &[]);
     assert_eq!(json_of(&b)["docs"], json!({"export-presets": 2}));
+    // every name the client syncs (`cloud_sync::docs::SPECS`) is kept, or the client leaves that document alone
+    assert_eq!(call("GET", &doc("hidden-presets"), &token, None, &[]).0, 200);
+    assert_eq!(put("hidden-presets", json!({"version": 0, "items": [{"id": "preset:lc.moody"}]})), (200, json!({"version": 1})));
     // what is refused: other names (no path tricks), items that aren't a list, junk, too much
     assert_eq!(call("GET", &doc("users"), &token, None, &[]).0, 404);
     assert_eq!(call("GET", &doc("..%2fpresets"), &token, None, &[]).0, 404);
