@@ -428,8 +428,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 }))
             }
         ),
-        cmd!(query "develop.controls", "List Develop Controls", [], None, "{section?} — every slider with range, default and current value; white balance as the active photo shows it: Kelvin (the effective white for As Shot and presets) for a raw, `wb.tempRel` / `wb.tintRel` (−100…100, relative to the photo's own colour; `develop.set` takes them) for a rendered photo", always, |s, p| {
-            let active = s.active();
+        cmd!(query "develop.controls", "List Develop Controls", [], None, "{section?, id?} — every slider with range, default and current value (of photo `id`, else the active photo); white balance as that photo shows it: Kelvin (the effective white for As Shot and presets) for a raw, `wb.tempRel` / `wb.tintRel` (−100…100, relative to the photo's own colour; `develop.set` takes them) for a rendered photo", always, |s, p| {
+            // a photo that is not the active one (a frontend drawing it without opening it); an id the library lacks is the active photo's
+            let active = p.get("id").and_then(Value::as_u64).map(PhotoId).filter(|id| s.catalog.photo(*id).is_some()).or_else(|| s.active());
             let d = active.and_then(|id| s.develop_of(id)).unwrap_or_default();
             let sec = p.get("section").and_then(|v| serde_json::from_value::<lightcraft_develop::Section>(v.clone()).ok());
             // white balance as this photo shows it (the egui app's Color group does the same)

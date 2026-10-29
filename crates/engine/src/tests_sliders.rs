@@ -253,3 +253,25 @@ fn every_local_slider_goes_through_the_mask_commands() {
         s.execute("mask.adjust", &json!({"id": mask, "values": {spec.id: spec.default}})).unwrap();
     }
 }
+
+/// `develop.controls {id}` lists the sliders of that photo, not the active one's (a frontend drawing a photo it has not opened asks
+/// this); an id the library lacks is the active photo's list.
+#[test]
+fn the_controls_of_a_photo_that_is_not_the_active_one() {
+    let mut s = Session::with_demo();
+    let vis = s.visible_cloned();
+    let (a, b) = (vis[0], vis[1]);
+    s.execute("library.select", &json!({"ids": [a.0], "active": a.0})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+    let exposure = |s: &mut Session, params: Value| {
+        let all = s.execute("develop.controls", &params).unwrap();
+        all.as_array().unwrap().iter().find(|c| c["id"] == "light.exposure").unwrap()["value"].as_f64().unwrap()
+    };
+    assert_eq!(exposure(&mut s, json!({})), 0.5, "the active photo");
+    assert_eq!(exposure(&mut s, json!({"id": a.0})), 0.5, "the active photo, by its id");
+    assert_eq!(exposure(&mut s, json!({"id": b.0})), 0.0, "another photo, which is unedited");
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": -1.0, "ids": [b.0]})).unwrap();
+    assert_eq!(exposure(&mut s, json!({"id": b.0})), -1.0, "another photo after an edit of it");
+    assert_eq!(exposure(&mut s, json!({})), 0.5, "the active photo is untouched");
+    assert_eq!(exposure(&mut s, json!({"id": 987_654_321u64})), 0.5, "an id the library lacks: the active photo");
+}
