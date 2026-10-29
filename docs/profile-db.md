@@ -24,7 +24,10 @@ app ships without one, and a frontend downloads it only from an address it is gi
   - `measured`: a Canon CR3's vignetting, measured from its camera JPEG.
   - `database`: a lens profile, reported with its maker, model and mounts.
 
-  It also reports whether **Enable Profile Corrections** is on.
+  It also reports whether **Enable Profile Corrections** is on, and the correction itself as `correction` (the data a render
+  applies: a `vignette` with the gain's coefficients, centre and radius, a `warp` or `stages`; `null` for none), so that a
+  native (non-Rust) frontend that draws the photo can apply it. With `decode: true` a raw that was not yet decoded is
+  decoded first (at thumbnail size, no edit made), which records a CR3's measured vignette.
 
 The database is kept in `<settings>/profile-db/`, or in `LIGHTCRAFT_PROFILE_DB` when that is set. The folder holds
 `index.json`, `files/<sha256>` and `feed.json` (the last check). It is read on first use and read again after an

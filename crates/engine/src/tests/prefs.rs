@@ -93,7 +93,11 @@ fn raw_and_other_defaults_are_applied_on_import() {
     s2.execute("library.import", &json!({"paths": [src.join("canon.dng").to_string_lossy()]})).unwrap();
     let c = s2.catalog.photos().next().unwrap();
     assert_eq!(c.develop.light.contrast, 0.0, "per-camera defaults are off unless enabled");
-    assert!(c.import_look.is_none());
+    assert_eq!(
+        c.import_look.as_ref().map(|l| (l.light.contrast, l.detail.nr_color)),
+        Some((0.0, 100.0)),
+        "no preset: the import look holds only the colour noise reduction a raw starts with"
+    );
     let _ = std::fs::remove_dir_all(&src);
 }
 
@@ -108,7 +112,7 @@ fn preferences_persist_with_the_library() {
         s.execute("library.xmpPreferences", &json!({"autoWrite": true})).unwrap();
         s.execute(
             "library.preferences",
-            &json!({"import": {"rawPreset": "user.rawlook", "perCamera": true, "showOnCard": true}, "camera": {"camera": "Canon EOS R5", "preset": "user.canonlook"}, "cacheMb": 512}),
+            &json!({"import": {"rawPreset": "user.rawlook", "perCamera": true, "showOnCard": true, "colorNoiseReduction": 55}, "camera": {"camera": "Canon EOS R5", "preset": "user.canonlook"}, "cacheMb": 512}),
         )
         .unwrap();
         s.close_library().unwrap();
@@ -119,6 +123,7 @@ fn preferences_persist_with_the_library() {
     assert_eq!(s.import_defaults.raw_preset.as_deref(), Some("user.rawlook"));
     assert!(s.import_defaults.per_camera);
     assert!(s.import_defaults.show_on_card);
+    assert_eq!(s.import_defaults.color_noise_reduction, 55.0);
     assert_eq!(s.import_defaults.cameras.len(), 1);
     assert_eq!(s.import_defaults.preset_for(true, "Canon EOS R5"), Some("user.canonlook"));
     assert_eq!(s.cache_mb, 512);
@@ -137,6 +142,7 @@ fn preferences_persist_with_the_library() {
     drop(s);
     let mut s = Session::new().with_fs();
     s.open_library(&lib, false).unwrap();
+    assert_eq!(s.import_defaults.color_noise_reduction, 100.0, "a prefs.json from before the setting has the default");
     assert_eq!(s.last_export, Some(json!({"format": "png"})));
     assert_eq!(s.import_defaults, Default::default());
     let _ = std::fs::remove_dir_all(&lib);
@@ -430,4 +436,76 @@ fn slideshow_playback_settings_persist_with_the_library() {
     assert_eq!((s.slideshow.slide_duration, s.slideshow.fade_duration), (120.0, 0.0));
     drop(s);
     let _ = std::fs::remove_dir_all(&lib);
+}
+
+/// Settings → Import → colour noise reduction: a raw is imported with it (100 unless chosen), as part of its import look.
+#[test]
+fn raw_colour_noise_reduction_is_part_of_the_import_look() {
+    let src = temp_dir("nr");
+    dng(&src, "a.dng", "Nikon", "Z 9");
+    dng(&src, "b.dng", "Nikon", "Z 8");
+    dng(&src, "c.dng", "Nikon", "Z 7");
+    png(&src.join("plain.png"));
+    let import = |s: &mut Session, name: &str| {
+        s.execute("library.import", &json!({"paths": [src.join(name).to_string_lossy()]})).unwrap();
+    };
+    let mut s = Session::new().with_fs();
+    assert_eq!(s.import_defaults.color_noise_reduction(), 100.0, "unset: 100");
+
+    import(&mut s, "a.dng");
+    let a = photo_named(&s, "a.dng");
+    assert_eq!(a.kind, MediaKind::Raw);
+    assert_eq!(a.develop.detail.nr_color, 100.0);
+    assert!(!a.is_edited(), "the default is the import look, not an edit");
+    assert!(crate::import::has_import_look(a), "an unedited raw is still what the camera's preview shows");
+    let a_id = a.id;
+
+    // moving it is an edit (and the preview no longer stands in for it); Reset returns to the default
+    s.execute("library.select", &json!({"ids": [a_id.0]})).unwrap();
+    s.execute("develop.set", &json!({"control": "detail.nrColor", "value": 30.0})).unwrap();
+    let a = s.catalog.photo(a_id).unwrap();
+    assert!(a.is_edited() && !crate::import::has_import_look(a));
+    s.execute("develop.reset", &json!({})).unwrap();
+    let a = s.catalog.photo(a_id).unwrap();
+    assert_eq!(a.develop.detail.nr_color, 100.0);
+    assert!(!a.is_edited());
+
+    // the setting changes what comes in next; the photo already there keeps its own
+    let r = s.execute("library.preferences", &json!({"import": {"colorNoiseReduction": 40}})).unwrap();
+    assert_eq!(r["import"]["colorNoiseReduction"].as_f64(), Some(40.0), "{r}");
+    import(&mut s, "b.dng");
+    let b = photo_named(&s, "b.dng");
+    assert_eq!(b.develop.detail.nr_color, 40.0);
+    assert!(!b.is_edited() && crate::import::has_import_look(b));
+    assert_eq!(s.catalog.photo(a_id).unwrap().develop.detail.nr_color, 100.0);
+    assert!(!s.catalog.photo(a_id).unwrap().is_edited(), "photos imported before keep their look");
+
+    // a value that isn't 0..100 is refused and changes nothing; null goes back to the default
+    for bad in [json!(101), json!(-1), json!("lots"), json!(true)] {
+        assert!(s.execute("library.preferences", &json!({"import": {"colorNoiseReduction": bad}})).is_err(), "{bad}");
+    }
+    assert_eq!(s.import_defaults.color_noise_reduction, 40.0);
+    s.execute("library.preferences", &json!({"import": {"colorNoiseReduction": null}})).unwrap();
+    assert_eq!(s.import_defaults.color_noise_reduction, 100.0);
+
+    // a raw preset that sets Detail wins over it; one that doesn't leaves it alone
+    s.presets.push(user_preset("user.detail", json!({"detail": {"nr_color": 10.0}})));
+    s.execute("library.preferences", &json!({"import": {"rawPreset": "user.detail"}})).unwrap();
+    import(&mut s, "c.dng");
+    assert_eq!(photo_named(&s, "c.dng").develop.detail.nr_color, 10.0);
+
+    // a file that isn't a developed raw has none
+    import(&mut s, "plain.png");
+    assert_eq!(photo_named(&s, "plain.png").develop.detail.nr_color, 0.0);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+/// What the developer reads is a number from 0 to 100 whatever a hand-edited or synced prefs.json holds.
+#[test]
+fn colour_noise_reduction_default_is_kept_in_range() {
+    let mut d = crate::import::ImportDefaults::default();
+    for (stored, read) in [(55.0, 55.0), (250.0, 100.0), (-5.0, 0.0), (f64::NAN, 100.0), (f64::INFINITY, 100.0)] {
+        d.color_noise_reduction = stored;
+        assert_eq!(d.color_noise_reduction(), read, "{stored}");
+    }
 }

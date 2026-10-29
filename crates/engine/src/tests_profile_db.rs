@@ -267,10 +267,19 @@ fn lens_profile_says_where_a_photos_correction_comes_from() {
     let ask = |s: &mut crate::Session| s.execute("photo.lensProfile", &json!({"id": id.0})).unwrap();
     let r = ask(&mut s);
     assert_eq!((r["origin"].clone(), r["raw"].clone()), (json!(null), json!(false)), "{r}");
+    assert!(r["correction"].is_null(), "{r}");
     let measured = EmbeddedLens { vignette: Some(Default::default()), origin: LensOrigin::Measured, ..Default::default() };
     s.catalog.apply(Op::SetEmbeddedLens { id, lens: Some(Box::new(measured)) }).unwrap();
     let r = ask(&mut s);
     assert_eq!((r["origin"].clone(), r["vignetting"].clone(), r["distortion"].clone()), (json!("measured"), json!(true), json!(false)));
+    // the correction itself, for a frontend that draws the photo
+    assert_eq!(r["correction"]["vignette"]["k"].as_array().map(Vec::len), Some(5), "{r}");
+    assert!(r["correction"]["warp"].is_null() && r["correction"]["vignette"]["center"]["x"].is_number(), "{r}");
+    assert_eq!(
+        s.execute("photo.lensProfile", &json!({"id": id.0, "decode": true})).unwrap()["correction"],
+        r["correction"],
+        "a decode adds nothing to a lens the catalog has"
+    );
     let profile = EmbeddedLens { warp: Some(Default::default()), origin: LensOrigin::Database { serial: 4 }, ..Default::default() };
     s.catalog.apply(Op::SetEmbeddedLens { id, lens: Some(Box::new(profile)) }).unwrap();
     let r = ask(&mut s);

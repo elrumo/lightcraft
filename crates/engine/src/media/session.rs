@@ -611,6 +611,17 @@ impl crate::Session {
         self.catalog.photo(id).and_then(|p| p.embedded_lens).or_else(|| self.source_info(id).lens)
     }
 
+    /// Makes sure a decode of photo `id` is cached, so [`Self::embedded_lens`] sees the lens data the decoder finds (the vignetting
+    /// a CR3's camera corrected in its JPEG is measured from the pixels, so a raw not yet decoded has none). A source the media
+    /// cache holds already has it; otherwise the photo is decoded at thumbnail size. Changes no edit.
+    pub fn ensure_decoded(&mut self, id: PhotoId) -> Result<(), String> {
+        let known = self.media.cached_source(id).is_some_and(|s| s.info.is_some() || s.from_proxy);
+        if !known {
+            self.source_now(id, SourceLevel::Thumb)?;
+        }
+        Ok(())
+    }
+
     /// The base tone curve photo `id`'s file gives it ([`lightcraft_pipeline::SourceInfo::camera_tone`]): the curve a raw is
     /// shown through before any edit, fitted to the camera's own picture or taken from a DNG's `ProfileToneCurve`. A source
     /// the media cache holds (decoded, or a smart preview's) already knows it; otherwise the photo is decoded at thumbnail
@@ -622,6 +633,14 @@ impl crate::Session {
             self.source_now(id, SourceLevel::Thumb)?;
         }
         Ok(self.source_info(id).camera_tone)
+    }
+
+    /// The luminance quantiles ([`crate::scene_level`]) of the scene-linear picture photo `id`'s file develops to, for a frontend that
+    /// develops raws with another decoder and has to bring its light to this one's scale before the camera tone curve acts on it. Read
+    /// from a cached source decoded from the file (call [`Self::camera_tone_of`] first so one is cached); `None` for a source that is
+    /// a smart preview or a rendered file, and for a picture too small to say. Changes nothing.
+    pub fn scene_level_of(&self, id: PhotoId) -> Option<[f32; 9]> {
+        self.media.cached_source(id).filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy).and_then(|s| crate::scene_level::luminance_quantiles(&s.image))
     }
 
     /// Borrow source mattes for selection notices without constructing render facts each frame.
@@ -749,6 +768,8 @@ fn at_camera_frame(p: &Photo) -> bool {
     let Some(look) = &p.import_look else { return false };
     let mut defaults = p.camera_defaults();
     defaults.crop.geometry.rect = look.crop.geometry.rect;
+    // (the colour noise reduction import gave it is not a departure, as in `has_import_look`)
+    defaults.detail.nr_color = look.detail.nr_color;
     p.format.eq_ignore_ascii_case("RW2") && p.develop_is(defaults)
 }
 
