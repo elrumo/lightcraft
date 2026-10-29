@@ -240,6 +240,47 @@ fn a_person_the_server_listed_is_found_by_any_of_their_faces_too() {
     assert!(named_faces(&thin, "Ada") >= 1);
 }
 
+/// A member of a person as the server lists it: `[photo, face, x0, y0, x1, y1, score]`.
+fn server_member(on: &Session, m: &super::FaceRef) -> Value {
+    let photo = on.vision_keys().get(&m.key).and_then(|ids| ids.first()).map_or(9_999_999, |id| id.0);
+    json!([photo, m.index, m.rect[0], m.rect[1], m.rect[2], m.rect[3], m.score])
+}
+
+/// What the server answers to `GET /api/people/clusters`: one person, by the id it gives them.
+fn server_says(on: &mut Session, id: &str, members: Vec<Value>) {
+    let body = json!({"clusters": [{"id": id, "members": members}]}).to_string();
+    on.people_arrived(&crate::cloud_sync::Done { id: 0, status: 200, body });
+}
+
+#[test]
+fn a_server_person_listed_before_the_server_grouped_them_again_is_still_found() {
+    let mut s = demo();
+    scanned(&mut s);
+    let clusters = s.people_clusters(false).unwrap();
+    let person = clusters.iter().find(|c| c.members.len() > 2).expect("a person with three faces").clone();
+    let m = &person.members;
+
+    let mut thin = Session::with_demo();
+    thin.vision.text_edge = 192;
+    thin.vision.remote.set_status(Some(json!({"available": true, "faces": {"enabled": true}})));
+
+    // the server's best face of them is on a photo this device has not got yet (a library that is still syncing)
+    let faces = vec![json!([9_999_999u64, 0, 0.1, 0.1, 0.2, 0.2, 0.9]), server_member(&thin, &m[0]), server_member(&thin, &m[1])];
+    server_says(&mut thin, "00000000000000000000000000000001.0", faces);
+    let listed = people(&mut thin, true);
+    let id = listed[0]["id"].as_str().expect("an id").to_string();
+    assert_eq!(id, m[0].id(), "named by their best face here, not by the server's, which no face here has");
+
+    // the server groups the faces again: another face it has and this device has not is the best now, and the order changed
+    let faces = vec![json!([9_999_998u64, 0, 0.3, 0.3, 0.4, 0.4, 0.95]), server_member(&thin, &m[1]), server_member(&thin, &m[0])];
+    server_says(&mut thin, "00000000000000000000000000000002.0", faces);
+    assert_eq!(people(&mut thin, true)[0]["id"], m[1].id().as_str(), "the id changed under the list the app holds");
+
+    let r = thin.execute("people.name", &json!({"cluster": id, "name": "Ada"})).unwrap();
+    assert!(r["faces"].as_u64().unwrap() >= 1, "{r}");
+    assert!(named_faces(&thin, "Ada") >= 1);
+}
+
 #[test]
 fn faces_survive_a_restart_and_can_be_forgotten() {
     let dir = temp_dir("persist");

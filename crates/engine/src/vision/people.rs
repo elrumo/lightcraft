@@ -48,7 +48,8 @@ impl FaceRef {
 /// The faces that look like one person.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cluster {
-    /// Names the person: the id of their best face (`<photo key>.<face number>`).
+    /// Names the person: the id of their best face (`<photo key>.<face number>`); for the people a sync server found, the best
+    /// face of theirs that is on a photo this device has.
     pub id: String,
     /// The best face first.
     pub members: Vec<FaceRef>,
