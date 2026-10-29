@@ -18,7 +18,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, PoisonError};
+use std::sync::PoisonError;
 
 use lightcraft_catalog::sync::original_path;
 use lightcraft_catalog::{AlbumId, MediaKind, Op, Photo, PhotoId, Source};
@@ -307,8 +307,9 @@ fn describe(f: &Received, bytes: &[u8], now: &str, who: &str) -> Result<Photo, S
     p.content_hash = Some(f.hash.clone());
     p.embedded_lens = info.embedded_lens;
     p.preview_only = info.preview_only;
-    p.develop = Arc::new(p.camera_defaults());
-    // the crop the file asks for by itself (an Olympus body's aspect-ratio setting): part of the import look, as on a desktop
+    // the look a desktop import with the default settings gives (a raw's colour noise reduction), then the crop the file asks for by
+    // itself (an Olympus body's aspect-ratio setting): both part of the import look, as on a desktop
+    lightcraft_engine::import::apply_default_look(&mut p);
     lightcraft_engine::import::apply_default_crop(&mut p, info.default_crop);
     // a raw's own XMP (its edits from the camera's app)
     if p.kind == MediaKind::Raw
