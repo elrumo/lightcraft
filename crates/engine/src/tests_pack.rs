@@ -76,6 +76,13 @@ fn a_pack_brings_profiles_and_built_in_presets_that_are_not_saved() {
     assert_eq!(group["profiles"].as_array().unwrap().len(), 2, "{menu}");
     assert!(group.get("imported").is_none(), "{group}");
 
+    // a frontend that applies the table itself is told the file: a pack's profile has one, an unknown id none
+    let file = s.execute("profile.lutFile", &json!({"id": warm})).unwrap();
+    let file = file["file"].as_str().expect("a pack's profile has a file");
+    assert!(file.ends_with("Warm.cube") && Path::new(file).is_file(), "{file}");
+    assert!(s.execute("profile.lutFile", &json!({"id": "lut:nothing"})).unwrap()["file"].is_null());
+    assert!(s.execute("profile.lutFile", &json!({})).is_err(), "an id is required");
+
     // the preset applies the look: the photo renders differently
     let png_dir = temp_dir("png");
     let png = png_dir.join("a.png");

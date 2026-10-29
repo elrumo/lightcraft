@@ -330,13 +330,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "Camera Tone",
             [],
             None,
-            "{id?} → {tone: {knots: [[scene, display] × 32] (increasing linear luminance pairs), chroma: [×8] (colour scale at display luminance 0, 1/7 … 1)} | null} the base tone curve the photo's file gives it: what a raw is shown through before any edit (fitted to the camera's own picture, else a DNG's own curve). A frontend that develops a raw itself needs it to match this engine's render; `null` for a photo with none (a rendered file, a raw nothing was fitted to). Decodes the photo at thumbnail size when no source of it is cached; changes no edit",
+            "{id?} → {tone: {knots: [[scene, display] × 32] (increasing linear luminance pairs), chroma: [×8] (colour scale at display luminance 0, 1/7 … 1)} | null, level: [×9] | null (the luminance of this engine's scene-linear picture of a raw at the deciles 0.1 … 0.9: the same scene developed with another decoder differs by one factor at every decile, which a frontend that develops raws itself uses to bring its light to the scale the curve is fitted in; null when no decode of the file is known)} the base tone curve the photo's file gives it: what a raw is shown through before any edit (fitted to the camera's own picture, else a DNG's own curve). A frontend that develops a raw itself needs it to match this engine's render; `null` for a photo with none (a rendered file, a raw nothing was fitted to). Decodes the photo at thumbnail size when no source of it is cached; changes no edit",
             always,
             |s, p| {
                 let c = "photo.cameraTone";
                 let id = photo_arg(s, p, c)?;
                 let tone = s.camera_tone_of(id).map_err(|e| bad(c, e))?;
-                Ok(json!({"tone": tone.and_then(|t| serde_json::to_value(t).ok())}))
+                Ok(json!({"tone": tone.and_then(|t| serde_json::to_value(t).ok()), "level": s.scene_level_of(id)}))
             }
         ),
         cmd!(query "photo.inspect", "Inspect Photo", [], None, "{id?}", always, |s, p| {
@@ -428,8 +428,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 }))
             }
         ),
-        cmd!(query "develop.controls", "List Develop Controls", [], None, "{section?} — every slider with range, default and current value; white balance as the active photo shows it: Kelvin (the effective white for As Shot and presets) for a raw, `wb.tempRel` / `wb.tintRel` (−100…100, relative to the photo's own colour; `develop.set` takes them) for a rendered photo", always, |s, p| {
-            let active = s.active();
+        cmd!(query "develop.controls", "List Develop Controls", [], None, "{section?, id?} — every slider with range, default and current value (of photo `id`, else the active photo); white balance as that photo shows it: Kelvin (the effective white for As Shot and presets) for a raw, `wb.tempRel` / `wb.tintRel` (−100…100, relative to the photo's own colour; `develop.set` takes them) for a rendered photo", always, |s, p| {
+            // a photo that is not the active one (a frontend drawing it without opening it); an id the library lacks is the active photo's
+            let active = p.get("id").and_then(Value::as_u64).map(PhotoId).filter(|id| s.catalog.photo(*id).is_some()).or_else(|| s.active());
             let d = active.and_then(|id| s.develop_of(id)).unwrap_or_default();
             let sec = p.get("section").and_then(|v| serde_json::from_value::<lightcraft_develop::Section>(v.clone()).ok());
             // white balance as this photo shows it (the egui app's Color group does the same)

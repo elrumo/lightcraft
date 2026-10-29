@@ -70,6 +70,40 @@ struct RenderWork {
     hdr_job: Option<crate::media::RenderJob>,
     meta: Option<Metadata>,
     opts: ExportOptions,
+    /// The size [`output_size`] gives, which a host's picture must match.
+    size: (usize, usize),
+    /// The picture a host drew in place of `job`'s ([`PreparedExport::with_host_pixels`]).
+    host: Option<HostPixels>,
+}
+
+/// The most pixels of a host's picture (it is read whole).
+const HOST_PIXELS_MAX: usize = 1 << 28;
+
+/// A picture a host drew for a photo, kept in a file of `width × height` RGBA8 pixels (opaque, sRGB, upright, cropped:
+/// what a render of the photo at the export's size is). `app.export`'s `hostPixels` hands them over, one per photo, for a
+/// frontend with a renderer of its own; the export encodes and places them exactly as it does its own render (sharpening,
+/// watermark, metadata, the profile, the name), so only the pixels come from the host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostPixels {
+    pub file: String,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl HostPixels {
+    /// The picture as a render, or `None` when the file is gone, empty, too big or not `width × height × 4` bytes.
+    fn read(&self) -> Option<lightcraft_pipeline::Rendered> {
+        let n = self.width.checked_mul(self.height).filter(|n| (1..=HOST_PIXELS_MAX).contains(n))?;
+        if std::fs::metadata(&self.file).ok()?.len() != u64::try_from(n.checked_mul(4)?).ok()? {
+            return None;
+        }
+        let bytes = std::fs::read(&self.file).ok()?;
+        let mut data = bytes.as_chunks::<4>().0.to_vec();
+        // a photo has no transparency: whatever alpha the host wrote, the file is opaque
+        data.iter_mut().for_each(|p| p[3] = 255);
+        let image = Rgba8 { width: self.width, height: self.height, data };
+        Some(lightcraft_pipeline::Rendered { histogram: lightcraft_raster::Histogram::of_srgb8(&image), image, deep: None })
+    }
 }
 
 /// An export the sync server renders ([`crate::cloud_sync::render_on_server`]).
@@ -208,7 +242,7 @@ fn prepare_guarded(
             return Err(format!("{label}: {why}"));
         }
         let hdr_job = if gain_map { Some(session.export_job(id, w, h, o.effective_space(), OutputDepth::F32Hdr)?) } else { None };
-        (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone() })), weight)
+        (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone(), size: (w, h), host: None })), weight)
     } else {
         let lightcraft_catalog::Source::File { path } = &p.source else {
             return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
@@ -364,6 +398,24 @@ impl PreparedExport {
         }
     }
 
+    /// Use `host`'s picture for this photo instead of rendering it, when it can stand in for the render: a rendered
+    /// format written 8-bit in sRGB (not HDR), at the size [`output_size`] gives (to a pixel). `false`, and the export
+    /// renders the photo itself, when it cannot; the same when the file turns out unreadable as the export runs.
+    pub fn with_host_pixels(&mut self, host: HostPixels) -> bool {
+        let Work::Render(w) = &mut self.work else { return false };
+        let o = &w.opts;
+        let fits = w.hdr_job.is_none()
+            && !o.hdr_output()
+            && o.effective_space() == OutputSpace::Srgb
+            && o.effective_depth() == OutputDepth::U8
+            && host.width.abs_diff(w.size.0) <= 1
+            && host.height.abs_diff(w.size.1) <= 1;
+        if fits {
+            w.host = Some(host);
+        }
+        fits
+    }
+
     /// Let `cancel` (the export's flag) end a wait for a busy sync server.
     pub fn set_cancel(&mut self, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         if let Work::Server(w) = &mut self.work {
@@ -375,7 +427,10 @@ impl PreparedExport {
         let file_name = self.file_name;
         match self.work {
             Work::Render(w) => {
-                let RenderWork { job, hdr_job, meta, opts } = *w;
+                let RenderWork { job, hdr_job, meta, opts, host, .. } = *w;
+                if let Some(r) = host.as_ref().and_then(HostPixels::read) {
+                    return encode_render_export(file_name, r, None, &opts, meta.as_ref());
+                }
                 let result = job.run();
                 let r = result.rendered?;
                 let gpu_fallback = result.gpu_fallback;

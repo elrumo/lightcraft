@@ -141,9 +141,8 @@ login, until you `start` it.
 
 `status` exits with 1 when the server is stopped, and `status --porcelain` prints one word (`running`, `stopped` or
 `not-installed`) for scripts. For a menu-bar icon with the status and Start / Stop items, run `lightbites-menubar`
-(`lightbites-server install` puts it beside the server; it calls these same commands; `--port N` sets the port its *Open Admin Page* item uses). The icon is green when the
-server is running, grey when it is stopped and orange when it is not installed. To have the icon at every login, add
-`lightbites-menubar` to System Settings ▸ General ▸ Login Items.
+(`lightbites-server install` puts it beside the server, starts it and has it start at every login with a launchd agent, `~/Library/LaunchAgents/ai.lightcraft.server.menubar.plist`; it calls these same commands; `--port N` sets the port its *Open Admin Page* item uses, and `install` passes the port of `--listen`). The icon is green when the
+server is running, grey when it is stopped and orange when it is not installed. *Quit* in its menu closes it until the next login; `uninstall` removes the agent.
 
 Remove it with `~/Library/Application\ Support/LightCraft\ Server/program/lightbites-server uninstall`: it stops the
 server and removes the agent and the program, and keeps your data. The Mac must be awake and logged in for the server

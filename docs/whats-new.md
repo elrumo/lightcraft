@@ -1,5 +1,14 @@
 # What's new in LightCraft
 
+## 2026-10-29
+
+### Raws start with strong colour noise reduction
+- A raw imported from now on starts with Color Noise Reduction at 100; it was 25, Lightroom's default. Settings ▸ Import ▸
+  Raw defaults has a slider to choose another value (`library.preferences`, `import.colorNoiseReduction`).
+- It is part of the photo's import look: not an edit, and Reset returns to it. A raw preset that sets Detail still wins.
+- Photos already in the library keep the value they have, and photos with no sensor data to develop (JPEG, PNG, a raw
+  shown from its embedded preview) start at 0 as before.
+
 ## 2026-10-25
 
 ### Sliders that do what they say
