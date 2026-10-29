@@ -535,6 +535,10 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
   device asks again after a few seconds (not a failed transfer: nothing is reported, and it isn't the minute a file the
   server doesn't have waits). `{"previews": "failed"}` is a file the server couldn't read; a plain `404` is a photo it
   has no original of. A `HEAD` only looks.
+- **A face on a People card** of a photo none of whose previews is here comes from the server as a few KB of JPEG
+  (`GET /api/faces/tile`, [search-people.md](search-people.md) → People), not from a whole smart preview downloaded for
+  it. Only for an unedited, uncropped, upright photo of a user the server finds the faces of; the others, and a server
+  that can't, leave the tile to the device and its previews, downloaded as for any photo shown.
 - **Download all small previews** (Settings ▸ Sync, or `sync.allPreviews {on}`): the whole library browses offline.
   The setting says how many photos lack one and about how much they take (at what the server's small previews weigh
   on average; `sync.usage` → `previewsLeft`). Off, the default: a library of 200,000 photos costs only what you look at.

@@ -480,6 +480,7 @@ impl Session {
             hdr_view: false,
             slide: None,
             preview_cut: None,
+            server_tile: None,
             display_fit: None,
         };
         let embedded = match (&self.media.preview_loader, c.kind) {
