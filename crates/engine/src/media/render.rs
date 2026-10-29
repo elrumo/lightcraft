@@ -40,6 +40,9 @@ pub struct RenderJob {
     /// A face tile that can be cut from the raw's embedded preview, tried before `source`
     /// ([`crate::Session::face_job`]; `None` for every other job).
     pub preview_cut: Option<crate::face_tiles::PreviewCut>,
+    /// A face tile the sync server cuts, tried after `preview_cut` and before `source` ([`crate::face_tiles::ServerTile`]; `None` for
+    /// every other job).
+    pub server_tile: Option<crate::face_tiles::ServerTile>,
     /// Shrink a full-quality result to fit this size (physical pixels) with a Lanczos filter once
     /// it is rendered. The loupe renders a little larger than it is drawn (its edge is rounded up
     /// to a 64 px step) and the window would otherwise shrink the texture with 2-tap bilinear sampling, which blurs fine detail at
@@ -173,6 +176,7 @@ impl RenderJob {
         self.cache = None;
         self.view_cache = None;
         self.preview_cut = None;
+        self.server_tile = None;
         self
     }
 
@@ -276,8 +280,10 @@ impl RenderJob {
             };
         }
         // a face tile of an unedited raw: cut from the camera's embedded preview when it is big enough
-        // (the sensor data is never read for it), else rendered from `source` below
-        if let Some(image) = self.preview_cut.as_ref().and_then(|c| c.cut()) {
+        // (the sensor data is never read for it); of a synced photo with no preview here: cut by the server, a few KB
+        // instead of its whole preview; else rendered from `source` below
+        let tile = self.preview_cut.as_ref().and_then(|c| c.cut()).or_else(|| self.server_tile.as_ref().and_then(|t| t.fetch()));
+        if let Some(image) = tile {
             if let Some((cache, key)) = &self.cache {
                 cache.put_at(self.cache_generation, *key, Arc::new(image.clone()));
             }

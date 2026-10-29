@@ -86,6 +86,85 @@ impl PreviewCut {
     }
 }
 
+/// A face tile the sync server cuts from the previews it keeps (`GET /api/faces/tile`), for a synced photo none of
+/// whose previews is on this device yet: a few kilobytes for the face, where cutting it here needs the photo's whole
+/// smart preview (about 1 MB) downloaded first, once for every face (issue HB-159). [`crate::media::RenderJob::run`]
+/// tries it after [`PreviewCut`] and before the job's own source, which stays the way a tile comes when the server can't
+/// give it (offline, an older server, finding people off for the user, previews not built yet).
+#[derive(Clone)]
+pub struct ServerTile {
+    /// The request: the server's address, the photo's content hash, the square around the face, the tile's edge.
+    pub url: String,
+    /// This device's token.
+    pub token: String,
+    /// The tile's edge, pixels.
+    pub edge: usize,
+}
+
+/// Largest side a tile from the server may have, and the most its sides may differ by.
+const TILE_MAX_SIDE: usize = 512;
+const TILE_SQUARE: f64 = 1.05;
+
+impl ServerTile {
+    /// The tile, or `None` when the server can't give it now (see the type): the job's own source renders it then.
+    pub fn fetch(&self) -> Option<Rgba8> {
+        let bytes = crate::cloud_sync::fetch_face_tile(&self.url, &self.token)?;
+        self.sized(lightcraft_preview::decode_jpeg(&bytes)?)
+    }
+
+    /// `img` as the tile: a square of a sensible size, at the tile's edge.
+    fn sized(&self, img: Rgba8) -> Option<Rgba8> {
+        let (w, h) = (img.width, img.height);
+        if w < 8 || h < 8 || w.max(h) > TILE_MAX_SIDE || img.data.len() != w.checked_mul(h)? {
+            return None;
+        }
+        if w.max(h) as f64 / w.min(h) as f64 > TILE_SQUARE {
+            return None;
+        }
+        let edge = self.edge.clamp(1, crate::media::SourceLevel::Thumb.max_edge());
+        if (w, h) == (edge, edge) {
+            return Some(img);
+        }
+        Some(resize(&img.to_linear(), edge, edge, Filter::Mitchell).to_srgb8())
+    }
+}
+
+/// The long edge of a photo's picture that leaves `edge` pixels across `square` (the square around a face, normalized on the
+/// upright photo, `[x0, y0, x1, y1]`): what [`tile_from_preview`] renders the preview at, and so which preview serves it (a mini preview holds a
+/// big face at the size of a tile, a small one needs the smart preview). `None` for a square that is empty or not finite.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn tile_source_edge(photo: &lightcraft_catalog::Photo, square: [f64; 4], edge: usize) -> Option<usize> {
+    let [x0, y0, x1, y1] = square;
+    let (fw, fh) = (x1 - x0, y1 - y0);
+    if !square.iter().all(|v| v.is_finite()) || fw <= 0.0 || fh <= 0.0 {
+        return None;
+    }
+    let edge = edge.clamp(16, crate::media::SourceLevel::Thumb.max_edge());
+    let along_long = if photo.width >= photo.height { fw } else { fh };
+    let needed = (edge as f64 / along_long.clamp(1e-6, 1.0)).ceil();
+    Some(needed.clamp(16.0, crate::media::SourceLevel::Preview.max_edge() as f64) as usize)
+}
+
+/// The tile the server serves: the square `square` around a face (`[x0, y0, x1, y1]`, normalized on the upright photo), cut from the neutral
+/// rendering of `photo`'s preview file, `edge` pixels across, rendered at [`tile_source_edge`].
+#[cfg(not(target_arch = "wasm32"))]
+pub fn tile_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::path::Path, square: [f64; 4], edge: usize) -> Result<Rgba8, String> {
+    let needed = tile_source_edge(photo, square, edge).ok_or("the square around the face is empty")?;
+    let edge = edge.clamp(16, crate::media::SourceLevel::Thumb.max_edge());
+    let img = crate::vision::neutral_from_preview(photo, preview, needed)?;
+    let cut = PreviewCut {
+        path: String::new(),
+        loader: std::sync::Arc::new(|_, _| None),
+        want: needed,
+        min: 1,
+        rect: Rect { x0: square[0], y0: square[1], x1: square[2], y1: square[3] },
+        // (the picture is the photo's own frame: nothing to compare)
+        aspect: img.width as f64 / img.height.max(1) as f64,
+        edge,
+    };
+    cut.cut_from(&img).ok_or_else(|| "the square around the face is not inside the photo".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +191,38 @@ mod tests {
         // red follows x: the box starts at half the width
         let red = out.data[16 * 32 + 16][0];
         assert!((125..=160).contains(&red), "{red}");
+    }
+
+    fn server_tile(edge: usize) -> ServerTile {
+        ServerTile { url: String::new(), token: String::new(), edge }
+    }
+
+    /// What the server sends is checked before it is a tile: a square of a sensible size, at the tile's edge.
+    #[test]
+    fn a_tile_from_the_server_is_checked_and_sized() {
+        let t = server_tile(32);
+        assert_eq!(t.sized(picture(32, 32)).map(|i| (i.width, i.height)), Some((32, 32)), "as asked");
+        assert_eq!(t.sized(picture(64, 64)).map(|i| (i.width, i.height)), Some((32, 32)), "another size is resized");
+        assert_eq!(t.sized(picture(16, 16)).map(|i| (i.width, i.height)), Some((32, 32)));
+        assert!(t.sized(picture(64, 32)).is_none(), "not a square");
+        assert!(t.sized(picture(4, 4)).is_none(), "too small to be a face");
+        assert!(t.sized(picture(1024, 1024)).is_none(), "not a tile");
+        assert!(t.sized(Rgba8::new(0, 0)).is_none(), "empty");
+        let short = Rgba8 { width: 32, height: 32, data: vec![[0; 4]; 10] };
+        assert!(t.sized(short).is_none(), "a buffer shorter than its size");
+        assert!(server_tile(32).fetch().is_none(), "no server to ask");
+    }
+
+    /// A server that can't be reached is left alone for a while, and so is the request: the tile is the photo's preview's then.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_tile_the_server_could_not_give_is_not_asked_for_again_for_a_while() {
+        let asked = ServerTile { url: "http://127.0.0.1:1/api/faces/tile?hash=00&edge=32".into(), token: "t".into(), edge: 32 };
+        assert!(!crate::cloud_sync::face_tile_unavailable(&asked.url));
+        assert!(asked.fetch().is_none(), "nothing listens there");
+        assert!(crate::cloud_sync::face_tile_unavailable(&asked.url), "this request");
+        assert!(crate::cloud_sync::face_tile_unavailable("http://127.0.0.1:1/api/faces/tile?hash=11&edge=32"), "the server, which can't be reached");
+        assert!(!crate::cloud_sync::face_tile_unavailable("http://127.0.0.2:1/api/faces/tile?hash=00&edge=32"), "another server");
     }
 
     /// A preview too small, of another shape, empty, or a box that is no box: no tile, no panic.
