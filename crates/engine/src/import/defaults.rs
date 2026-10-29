@@ -1,8 +1,9 @@
 use super::*;
 
 /// The develop settings a photo gets on import: raws start from their as-shot white balance with
-/// default sharpening / colour noise reduction, and file-embedded lens corrections on (as the
-/// camera intended); a user default preset ([`ImportDefaults`]) goes on top.
+/// default sharpening and the colour noise reduction the user chose ([`ImportDefaults::color_noise_reduction`]),
+/// and file-embedded lens corrections on (as the camera intended); a user default preset
+/// ([`ImportDefaults`]) goes on top.
 pub fn import_defaults(p: &Photo) -> lightcraft_develop::DevelopSettings {
     p.import_defaults()
 }
@@ -10,12 +11,20 @@ pub fn import_defaults(p: &Photo) -> lightcraft_develop::DevelopSettings {
 /// Does the photo still look as the camera rendered it (its embedded camera preview is then a
 /// fair stand-in)? Not when a default preset changed it on import.
 pub fn has_import_look(p: &Photo) -> bool {
-    p.develop_is(p.camera_defaults())
+    // the colour noise reduction a raw was imported with ([`ImportDefaults::color_noise_reduction`]) smooths chroma noise
+    // only, which the camera's own preview doesn't show either way; moving it afterwards is an edit
+    let mut camera = p.camera_defaults();
+    camera.detail.nr_color = p.import_defaults().detail.nr_color;
+    p.develop_is(camera)
 }
+
+/// The colour noise reduction (0–100) a raw developed from its sensor data is imported with when Settings → Import
+/// doesn't say otherwise. (The camera defaults give a raw 25, Lightroom's; this is what [`ImportDefaults`] starts at.)
+pub const DEFAULT_COLOR_NOISE_REDUCTION: f64 = 100.0;
 
 /// User defaults applied on import (Settings → Import; saved in the library's `prefs.json`).
 /// Presets are referenced by id; a preset that no longer exists is ignored.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ImportDefaults {
     /// Preset applied to raw files (`None` = the LightCraft default).
@@ -46,6 +55,32 @@ pub struct ImportDefaults {
     pub ignore: Vec<String>,
     /// Open the import review when a camera or memory card is connected.
     pub show_on_card: bool,
+    /// Colour noise reduction (0–100) a raw developed from its sensor data starts with, under the raw preset (a preset
+    /// that sets Detail wins). It is part of the photo's import look, so it isn't an edit and Reset returns to it;
+    /// photos already in the library keep what they have. Read through [`ImportDefaults::color_noise_reduction`].
+    pub color_noise_reduction: f64,
+}
+
+impl Default for ImportDefaults {
+    fn default() -> Self {
+        // (every field named, so a new one can't be forgotten here)
+        ImportDefaults {
+            raw_preset: None,
+            per_camera: false,
+            cameras: Vec::new(),
+            other_preset: None,
+            copyright: String::new(),
+            creator: String::new(),
+            metadata_preset: None,
+            auto_folder: None,
+            auto_copy: false,
+            auto_album: None,
+            auto_subfolders: false,
+            ignore: Vec::new(),
+            show_on_card: false,
+            color_noise_reduction: DEFAULT_COLOR_NOISE_REDUCTION,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -58,6 +93,12 @@ pub struct CameraDefault {
 }
 
 impl ImportDefaults {
+    /// [`ImportDefaults::color_noise_reduction`] as a develop slider takes it: a value from a hand-edited or synced
+    /// `prefs.json` that is out of range, or not a number, is brought back (not a number: the default).
+    pub fn color_noise_reduction(&self) -> f64 {
+        if self.color_noise_reduction.is_finite() { self.color_noise_reduction.clamp(0.0, 100.0) } else { DEFAULT_COLOR_NOISE_REDUCTION }
+    }
+
     /// The preset id that applies to a photo of this kind and camera, if any.
     pub fn preset_for(&self, raw: bool, camera: &str) -> Option<&str> {
         if !raw {
@@ -106,20 +147,21 @@ pub fn apply_import_defaults(s: &Session, p: &mut Photo) {
     if let Some(mp) = d.metadata_preset.as_ref().and_then(|n| s.metadata_presets.iter().find(|m| m.name.eq_ignore_ascii_case(n))) {
         crate::cmd::metadata::apply_to(&mut p.meta, &mp.fields);
     }
-    let base = p.camera_defaults();
+    let camera = p.camera_defaults();
     // a raw shown from its embedded JPEG gets the rendered-file default, not the raw one
     let raw = p.develops_raw();
-    let preset = s.import_defaults.preset_for(raw, &p.meta.camera).and_then(|id| s.presets.iter().find(|x| x.id == id));
-    match preset {
-        Some(pr) => {
-            // a preset carries no Upright correction (an old one may still hold one: not this photo's)
-            let look = std::sync::Arc::new(crate::upright_transfer::apply_preset(p, &base, pr, 1.0));
-            p.develop = look.clone();
-            p.import_look = (*look != base).then_some(look);
-        }
-        None => {
-            p.develop = std::sync::Arc::new(base);
-            p.import_look = None;
-        }
+    // a raw's colour noise reduction is the user's (Settings → Import): under the preset, and part of the import look
+    let mut base = camera.clone();
+    if raw {
+        base.detail.nr_color = d.color_noise_reduction();
     }
+    let preset = s.import_defaults.preset_for(raw, &p.meta.camera).and_then(|id| s.presets.iter().find(|x| x.id == id));
+    let look = match preset {
+        // a preset carries no Upright correction (an old one may still hold one: not this photo's)
+        Some(pr) => std::sync::Arc::new(crate::upright_transfer::apply_preset(p, &base, pr, 1.0)),
+        None => std::sync::Arc::new(base),
+    };
+    p.develop = look.clone();
+    // remembered only when it differs from what the camera gives: a photo with no user default has none
+    p.import_look = (*look != camera).then_some(look);
 }

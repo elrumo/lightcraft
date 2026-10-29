@@ -749,6 +749,8 @@ fn at_camera_frame(p: &Photo) -> bool {
     let Some(look) = &p.import_look else { return false };
     let mut defaults = p.camera_defaults();
     defaults.crop.geometry.rect = look.crop.geometry.rect;
+    // (the colour noise reduction import gave it is not a departure, as in `has_import_look`)
+    defaults.detail.nr_color = look.detail.nr_color;
     p.format.eq_ignore_ascii_case("RW2") && p.develop_is(defaults)
 }
 

@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd};
-use crate::import::{CameraDefault, ImportDefaults};
+use crate::import::{CameraDefault, DEFAULT_COLOR_NOISE_REDUCTION, ImportDefaults};
 use crate::{Result, Session};
 
 const ID: &str = "library.preferences";
@@ -45,6 +45,17 @@ fn prefs(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(v) = i.get("showOnCard").and_then(Value::as_bool) {
             d.show_on_card = v;
+        }
+        // null = back to the default (`DEFAULT_COLOR_NOISE_REDUCTION`)
+        match i.get("colorNoiseReduction") {
+            Some(Value::Null) => d.color_noise_reduction = DEFAULT_COLOR_NOISE_REDUCTION,
+            Some(v) => {
+                d.color_noise_reduction = v
+                    .as_f64()
+                    .filter(|n| n.is_finite() && (0.0..=100.0).contains(n))
+                    .ok_or_else(|| bad(ID, "colorNoiseReduction must be a number from 0 to 100 (or null for the default)"))?;
+            }
+            None => {}
         }
         if let Some(v) = i.get("copyright").and_then(Value::as_str) {
             d.copyright = v.trim().to_string();
@@ -124,7 +135,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Library Preferences",
         [],
         None,
-        "{import?: {rawPreset?: presetId|\"default\", otherPreset?: presetId|\"default\", perCamera?: bool, cameras?: [{camera: \"Make Model\", preset: presetId|null}], copyright?: text, creator?: text (given to imported photos without one), ignore?: [name pattern] (or text, one per line: files and folders scanning and importing skip, wherever they are below the folder chosen — `*` any run of characters, `?` one, any letter case, e.g. `*.fcpbundle`), showOnCard?: bool (open the import review when a camera or card is connected)}, camera?: {camera, preset?, remove?: bool}, cacheMb?: n (0 = default), forgetLocalDays?: n (forget untouched Local photos of folders not browsed for n days; 0 = never)} — develop defaults applied on import (raws / other images / per camera) and the thumbnail cache size, saved with the library → {xmp, import, cacheMb, forgetLocalDays, persistent}",
+        "{import?: {rawPreset?: presetId|\"default\", otherPreset?: presetId|\"default\", perCamera?: bool, cameras?: [{camera: \"Make Model\", preset: presetId|null}], copyright?: text, creator?: text (given to imported photos without one), ignore?: [name pattern] (or text, one per line: files and folders scanning and importing skip, wherever they are below the folder chosen — `*` any run of characters, `?` one, any letter case, e.g. `*.fcpbundle`), showOnCard?: bool (open the import review when a camera or card is connected), colorNoiseReduction?: 0..100 | null (the colour noise reduction a raw developed from its sensor data is imported with, as part of its import look; null or unset = 100; photos already in the library keep theirs)}, camera?: {camera, preset?, remove?: bool}, cacheMb?: n (0 = default), forgetLocalDays?: n (forget untouched Local photos of folders not browsed for n days; 0 = never)} — develop defaults applied on import (raws / other images / per camera) and the thumbnail cache size, saved with the library → {xmp, import, cacheMb, forgetLocalDays, persistent}",
         always,
         prefs
     )]
