@@ -1842,6 +1842,35 @@ impl Session {
         (!in_store).then_some(key)
     }
 
+    /// The face tile the sync server can cut for `p`, when that is how this device should get it ([`crate::face_tiles::ServerTile`]):
+    /// a synced photo none of whose previews is here, as imported (upright, uncropped, unedited: the server renders its
+    /// previews neutrally), for a user the server finds the faces of. `square` is the square around the face as
+    /// [`Session::face_job`] cuts it, `edge` the tile's size.
+    pub(crate) fn server_face_tile(&self, p: &Photo, square: lightcraft_geom::Rect, edge: usize) -> Option<crate::face_tiles::ServerTile> {
+        // (the browser's own requests are the web build's; it renders from the preview it asks for)
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (p, square, edge);
+            None
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let st = self.sync.as_ref().filter(|st| st.has_token() && !st.config.paused && !st.config.leaving)?;
+            if !self.vision.server_faces() || p.develop.orientation != lightcraft_geom::Orientation::Normal || p.is_cropped() || p.is_edited() {
+                return None;
+            }
+            let key = self.remote_key(p)?;
+            if self.synced_tier(p) != Some(0) || ![square.x0, square.y0, square.x1, square.y1].iter().all(|v| v.is_finite()) {
+                return None;
+            }
+            let path =
+                format!("/api/faces/tile?hash={key}&x0={:.6}&y0={:.6}&x1={:.6}&y1={:.6}&edge={edge}", square.x0, square.y0, square.x1, square.y1);
+            let url = st.url(&path);
+            // (one the server could not give a moment ago: the photo's preview is asked for instead, and renders it)
+            (!face_tile_unavailable(&url)).then(|| crate::face_tiles::ServerTile { url, token: st.config.token.clone(), edge })
+        }
+    }
+
     /// Which previews a synced photo whose original isn't on this device has here: 0 none, 1 the
     /// mini, 2 the smart preview (`None`: not such a photo). Part of render keys, so a view rendered
     /// from the mini preview renders again once the smart one arrives.
@@ -3106,6 +3135,102 @@ pub fn run(task: &Task) -> Done {
     .unwrap_or_else(|e| Done::failed(id, e))
 }
 
+/// How long face tiles are left alone after the server could not be reached for one: each such request waits for a
+/// connection on a render worker, and a screenful of faces would hold every worker for as long as that takes.
+#[cfg(not(target_arch = "wasm32"))]
+const TILE_PAUSE: Duration = Duration::from_secs(20);
+
+/// How long a face tile the server could not give is not asked for again (the photo's own preview serves it meanwhile): its
+/// previews may be built by then.
+#[cfg(not(target_arch = "wasm32"))]
+const TILE_RETRY: Duration = Duration::from_secs(60);
+
+/// The most failed requests remembered.
+#[cfg(not(target_arch = "wasm32"))]
+const TILE_FAILED_MAX: usize = 512;
+
+/// What face tile requests have taught about the servers they went to.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct TileServers {
+    /// Servers with no such route (older than this app).
+    old: Vec<String>,
+    /// Servers that could not be reached: no request to them before then.
+    paused_until: HashMap<String, Instant>,
+    /// Requests that failed or were refused, and when.
+    failed: HashMap<String, Instant>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn tile_servers() -> &'static std::sync::Mutex<TileServers> {
+    static SERVERS: std::sync::OnceLock<std::sync::Mutex<TileServers>> = std::sync::OnceLock::new();
+    SERVERS.get_or_init(Default::default)
+}
+
+/// The server a face tile request goes to: its address.
+#[cfg(not(target_arch = "wasm32"))]
+fn tile_server(url: &str) -> &str {
+    url.split("/api/").next().unwrap_or(url)
+}
+
+/// Whether a face tile request is known not to be worth making now (an older server, one that can't be reached, this very
+/// request refused a moment ago): [`Session::face_job`] then leaves the tile to the photo's preview, which it asks for.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn face_tile_unavailable(url: &str) -> bool {
+    let servers = tile_servers().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    servers.old.iter().any(|s| s == tile_server(url))
+        || servers.paused_until.get(tile_server(url)).is_some_and(|t| Instant::now() < *t)
+        || servers.failed.get(url).is_some_and(|t| t.elapsed() < TILE_RETRY)
+}
+
+/// A face tile from the server (`GET /api/faces/tile`, a few KB of JPEG), asked for in place; `None` when it can't be had
+/// now. Blocking: it runs in a render job ([`crate::face_tiles::ServerTile`]). A server that has no such route (older than
+/// this app) is not asked again, one that can't be reached is left alone for [`TILE_PAUSE`], and a refusal about the photo
+/// or the user (previews not built yet, finding people off) fails only this tile, for [`TILE_RETRY`].
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn fetch_face_tile(url: &str, token: &str) -> Option<Vec<u8>> {
+    if url.is_empty() || face_tile_unavailable(url) {
+        return None;
+    }
+    let failure = match net::get_bytes(url, token) {
+        Ok(bytes) => return Some(bytes),
+        Err(e) => e,
+    };
+    let mut servers = tile_servers().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    match &failure {
+        net::GetError::Status(status, body) => {
+            log::debug!("sync: no face tile from the server ({status}): {body}");
+            if *status == 404 && why_is_no_route(body) {
+                servers.old.push(tile_server(url).to_string());
+            }
+        }
+        net::GetError::Unreachable(why) => {
+            log::debug!("sync: no face tile from the server: {why}");
+            servers.paused_until.insert(tile_server(url).to_string(), Instant::now() + TILE_PAUSE);
+        }
+    }
+    if servers.failed.len() >= TILE_FAILED_MAX {
+        servers.failed.retain(|_, t| t.elapsed() < TILE_RETRY);
+    }
+    if servers.failed.len() >= TILE_FAILED_MAX {
+        servers.failed.clear();
+    }
+    servers.failed.insert(url.to_string(), Instant::now());
+    None
+}
+
+/// A server on the web build never has a tile asked of it from here (the browser's own requests do that work).
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn fetch_face_tile(_url: &str, _token: &str) -> Option<Vec<u8>> {
+    None
+}
+
+/// Whether a `404`'s body is the server saying it has no such route (not a file it hasn't got).
+#[cfg(not(target_arch = "wasm32"))]
+fn why_is_no_route(body: &str) -> bool {
+    body.contains("no route")
+}
+
 /// The shared HTTP client (pure-Rust TLS, Mozilla roots): sync and map tiles use it.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn http_agent() -> &'static ureq::Agent {
@@ -3198,6 +3323,32 @@ mod net {
     /// A `404` for the route itself (an older server), not for a missing original.
     fn why_is_route(body: &[u8]) -> bool {
         String::from_utf8_lossy(body).contains("no route")
+    }
+
+    /// Why a small file could not be had: the server could not be reached (or broke off), or it answered with a status.
+    pub(super) enum GetError {
+        Unreachable(String),
+        Status(u16, String),
+    }
+
+    /// The most a face tile may weigh (they are a few KB).
+    const TILE_MAX_BYTES: u64 = 1 << 20;
+
+    /// `GET` a small file into memory, giving up soon (a render job waits for it).
+    pub(super) fn get_bytes(url: &str, token: &str) -> Result<Vec<u8>, GetError> {
+        let auth = format!("Bearer {token}");
+        let mut resp = agent()
+            .get(url)
+            .header("Authorization", &auth)
+            .config()
+            .timeout_connect(Some(Duration::from_secs(5)))
+            .timeout_recv_response(Some(Duration::from_secs(15)))
+            .build()
+            .call()
+            .map_err(|e| GetError::Unreachable(e.to_string()))?;
+        let status = resp.status().as_u16();
+        let body = resp.body_mut().with_config().limit(TILE_MAX_BYTES).read_to_vec().map_err(|e| GetError::Unreachable(e.to_string()))?;
+        if (200..300).contains(&status) { Ok(body) } else { Err(GetError::Status(status, String::from_utf8_lossy(&body).into_owned())) }
     }
 
     pub(super) fn http(method: &str, url: &str, token: &str, body: &Body, save_to: Option<&str>) -> Result<(u16, String), String> {

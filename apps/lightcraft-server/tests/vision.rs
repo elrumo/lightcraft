@@ -891,6 +891,114 @@ fn a_thin_client_lists_and_names_the_servers_people_and_can_make_it_forget() {
     assert_eq!(get(&f.ann, "/api/people/status").1["photos"], 0, "the server forgot");
 }
 
+/// `GET` a file: the status and the bytes.
+fn get_bytes(w: &Who, path: &str) -> (u16, Vec<u8>) {
+    let mut r = agent().get(format!("{}{path}", w.url)).header("Authorization", format!("Bearer {}", w.token)).call().unwrap();
+    let status = r.status().as_u16();
+    (status, r.body_mut().read_to_vec().unwrap_or_default())
+}
+
+#[test]
+fn the_server_cuts_a_face_tile_from_its_preview_for_a_device_that_has_none() {
+    let f = fixture_full("faces-tile", None, None, Some(Arc::new(lightcraft_vision::fake::FakeFaces)));
+    let (_, snap) = get(&f.ann, "/api/snapshot");
+    let hash_of = |name: &str| {
+        snap["catalog"]["photos"].as_object().unwrap().values().find(|p| p["file_name"] == name).unwrap()["content_hash"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (red, green) = (hash_of("red.png"), hash_of("green.png"));
+    // (a square around a face, as a device asks: 32 pixels across on this 64 x 48 photo)
+    let square = "x0=0.1&y0=0.1&x1=0.6&y1=0.7667";
+    let tile = |hash: &str, edge: usize| get_bytes(&f.ann, &format!("/api/faces/tile?hash={hash}&{square}&edge={edge}"));
+
+    // finding people is off for ann until an admin turns it on: nothing is served
+    let (status, body) = tile(&red, 32);
+    assert_eq!(status, 403, "{}", String::from_utf8_lossy(&body));
+    accounts::set_faces(&f.data, "ann", true).unwrap();
+    looked(&f, 4);
+
+    // a tile is a few KB of JPEG of the face, in the photo's colours, at the size asked for
+    for (hash, want) in [(&red, [220.0, 20.0, 20.0]), (&green, [20.0, 200.0, 40.0])] {
+        let (status, jpeg) = tile(hash, 32);
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&jpeg));
+        assert!(jpeg.len() < 20_000, "{} bytes", jpeg.len());
+        let img = lightcraft_preview::decode_jpeg(&jpeg).expect("a JPEG");
+        assert_eq!((img.width, img.height), (32, 32));
+        let mean = |c: usize| img.data.iter().map(|p| f64::from(p[c])).sum::<f64>() / img.data.len() as f64;
+        for (c, want) in want.iter().enumerate() {
+            assert!((mean(c) - want).abs() < 25.0, "channel {c}: {} is not near {want}", mean(c));
+        }
+    }
+    let big = lightcraft_preview::decode_jpeg(&tile(&red, 96).1).expect("a JPEG");
+    assert_eq!((big.width, big.height), (96, 96), "the size a device renders its tiles at");
+
+    // what is refused: no sign-in, a request that is no tile, a photo the server doesn't have
+    let anon = agent().get(format!("{}/api/faces/tile?hash={red}&{square}", f.ann.url)).call().unwrap();
+    assert_eq!(anon.status().as_u16(), 401);
+    for (what, path) in [
+        ("no hash", format!("/api/faces/tile?{square}")),
+        ("a hash that is none", format!("/api/faces/tile?hash=xyz&{square}")),
+        ("no square", format!("/api/faces/tile?hash={red}")),
+        ("a square that is not a number", format!("/api/faces/tile?hash={red}&x0=a&y0=0&x1=1&y1=1")),
+        ("an empty square", format!("/api/faces/tile?hash={red}&x0=0.5&y0=0.5&x1=0.5&y1=0.9")),
+        ("a square outside the photo", format!("/api/faces/tile?hash={red}&x0=2&y0=2&x1=3&y1=3")),
+        ("a square that is not finite", format!("/api/faces/tile?hash={red}&x0=NaN&y0=0&x1=1&y1=1")),
+    ] {
+        let (status, body) = get_bytes(&f.ann, &path);
+        assert_eq!(status, 400, "{what}: {}", String::from_utf8_lossy(&body));
+    }
+    let (status, body) = tile(&"0".repeat(32), 32);
+    assert_eq!(status, 404, "{}", String::from_utf8_lossy(&body));
+    // (an edge nobody renders tiles at is brought into range, not refused or trusted)
+    let tiny = lightcraft_preview::decode_jpeg(&tile(&red, 1).1).expect("a JPEG");
+    assert_eq!((tiny.width, tiny.height), (16, 16));
+    let huge = lightcraft_preview::decode_jpeg(&tile(&red, 100_000).1).expect("a JPEG");
+    assert_eq!((huge.width, huge.height), (512, 512));
+
+    // bob has nothing: finding people is off for him, and this is his library, not ann's
+    let bob = login(&f.server, "bob", "battery staple");
+    assert_eq!(get_bytes(&bob, &format!("/api/faces/tile?hash={red}&{square}")).0, 403);
+}
+
+#[test]
+fn a_device_with_no_preview_gets_a_synced_photos_face_tile_from_the_server() {
+    let f = fixture_full("faces-tile-device", None, None, Some(Arc::new(lightcraft_vision::fake::FakeFaces)));
+    accounts::set_faces(&f.data, "ann", true).unwrap();
+    looked(&f, 4);
+    let mut s = device(&f, "faces-tile-device-dir", None);
+    s.vision_probe_server();
+    sync(&mut s);
+    assert!(s.vision.server_faces(), "the server finds people for this user");
+    let (red, green) = (photo_named(&s, "red"), photo_named(&s, "green"));
+    let face = lightcraft_geom::Rect { x0: 0.1, y0: 0.2, x1: 0.45, y1: 0.8 };
+
+    // none of its previews is here, so the server cuts the tile: the job carries the request, and the picture is the face's
+    let job = s.face_job(red, face, 48).unwrap();
+    let ask = job.server_tile.clone().expect("the server is asked for this tile");
+    assert!(ask.url.contains("/api/faces/tile?hash=") && ask.url.contains("edge=48"), "{}", ask.url);
+    // (asked for directly too: the job falls back to rendering the preview itself, which is red as well)
+    let sent = ask.fetch().expect("the server answers with the tile");
+    assert_eq!((sent.width, sent.height), (48, 48));
+    let img = job.run().rendered.expect("a tile").image;
+    assert_eq!((img.width, img.height), (48, 48));
+    let centre = img.data[24 * 48 + 24];
+    assert!(centre[0] > 180 && centre[1] < 70 && centre[2] < 70, "red.png's face: {centre:?}");
+
+    // an edited photo's tile is its own render, not the server's neutral one
+    s.execute("library.select", &json!({"ids": [green.0]})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    assert!(s.face_job(green, face, 48).unwrap().server_tile.is_none());
+    assert!(s.face_job(red, face, 48).unwrap().server_tile.is_some(), "the others still come from the server");
+
+    // finding people off for the user: the server refuses, and the tile is rendered the way it always was
+    accounts::set_faces(&f.data, "ann", false).unwrap();
+    let ask = s.face_job(red, face, 64).unwrap().server_tile.expect("(this device has not heard of the change yet)");
+    assert!(ask.fetch().is_none(), "refused: no tile, the job's own source renders it");
+    assert!(s.face_job(red, face, 64).unwrap().server_tile.is_none(), "not asked for again for a while: the photo's preview is asked for instead");
+}
+
 fn admin_login(server: &Server, user: &str, password: &str) -> Who {
     let url = format!("http://{}", server.addr());
     let body = json!({"user": user, "password": password}).to_string();

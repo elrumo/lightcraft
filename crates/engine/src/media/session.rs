@@ -122,6 +122,7 @@ impl crate::Session {
             hdr_view: false,
             slide: None,
             preview_cut: None,
+            server_tile: None,
             display_fit: None,
         })
     }
@@ -182,6 +183,7 @@ impl crate::Session {
             hdr_view: false,
             slide: None,
             preview_cut: None,
+            server_tile: None,
             display_fit: None,
         })
     }
@@ -192,12 +194,11 @@ impl crate::Session {
     /// between two steps reuses the cached one). An unedited raw's tile is cut from the camera's
     /// embedded preview when that holds the square at [`crate::face_tiles::SOFT_LIMIT`] of the
     /// size asked or more ([`crate::face_tiles`]); else, and for every other photo, the source
-    /// level is the smallest that keeps the face sharp, up to the preview. Cached (memory and the
+    /// level is the smallest that keeps the face sharp, up to the preview; a synced photo with no
+    /// preview here gets its tile from the server first ([`crate::face_tiles::ServerTile`]). Cached (memory and the
     /// library's thumbnail cache on disk) like [`Self::variant_job`], and `key` likewise follows
     /// the content: a later launch shows the tile without reading the original.
     pub fn face_job(&mut self, id: PhotoId, face: lightcraft_geom::Rect, edge: usize) -> Option<RenderJob> {
-        // (a synced photo's tile is cut from its preview: shown, so download it like a grid cell's)
-        self.note_thumb_ask(id, true);
         let p = self.catalog.photo(id)?.clone();
         // `face` is on the upright (EXIF-oriented) photo; the crop below is in the frame after the
         // user's Rotate Left/Right, so carry the box (and the photo's size) over to it.
@@ -221,6 +222,13 @@ impl crate::Session {
         let source = self.media.source_ref(&p, level);
         let ck = Self::variant_key(&p, &settings, edge);
         let preview_cut = self.face_preview_cut(&p, rect, edge, needed as usize);
+        // a synced photo with no preview here: the server cuts the tile (a few KB, [`crate::face_tiles::ServerTile`]), and the
+        // preview is asked for only if it can't. Any other synced photo's tile is cut from its preview: shown, so
+        // download it like a grid cell's
+        let server_tile = self.server_face_tile(&p, rect, edge);
+        if server_tile.is_none() {
+            self.note_thumb_ask(id, true);
+        }
         Some(RenderJob {
             request_id: 0,
             cache_generation: self.media.rendered.generation(),
@@ -241,6 +249,7 @@ impl crate::Session {
             hdr_view: false,
             slide: None,
             preview_cut,
+            server_tile,
             display_fit: None,
         })
     }
@@ -640,7 +649,10 @@ impl crate::Session {
     /// from a cached source decoded from the file (call [`Self::camera_tone_of`] first so one is cached); `None` for a source that is
     /// a smart preview or a rendered file, and for a picture too small to say. Changes nothing.
     pub fn scene_level_of(&self, id: PhotoId) -> Option<[f32; 9]> {
-        self.media.cached_source(id).filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy).and_then(|s| crate::scene_level::luminance_quantiles(&s.image))
+        self.media
+            .cached_source(id)
+            .filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy)
+            .and_then(|s| crate::scene_level::luminance_quantiles(&s.image))
     }
 
     /// Borrow source mattes for selection notices without constructing render facts each frame.

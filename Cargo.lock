@@ -5001,6 +5001,7 @@ dependencies = [
  "lightcraft-catalog",
  "lightcraft-codecs",
  "lightcraft-engine",
+ "lightcraft-geom",
  "lightcraft-preview",
  "lightcraft-raster",
  "lightcraft-sysmem",
