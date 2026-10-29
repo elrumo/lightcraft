@@ -48,6 +48,40 @@ pub fn specs() -> Vec<CommandSpec> {
                 None => json!({"located": 0, "south": null, "west": null, "north": null, "east": null}),
             })
         }),
+        cmd!(query "map.route", "Estimated Route Between Photos", [], None,
+            "{ids?: photo ids (default the visible photos), stopRadius?: metres within which photos taken one after another are one stop (150), gapHours?: a pause this long between two photos ends a route (36), arcKm?: legs at least this long are great-circle arcs (300), detail?: the most intervals one leg's line is cut into, 2..256 (48)} → {estimated: true, photos, zoneEstimated, skipped: {noGps, noTime, unknown, invalid}, routes: [{start, end, startIso, endIso, distanceKm, stops: [{lat, lon, arrive, leave, count, photos}], legs: [{from, to, distanceKm, durationS, speedKmh, mode: walk|bike|road|flight, arc, lines: [[[lat, lon], …], …]}]}]} — a smooth path through the photos that have a GPS position and a capture time, in time order. An estimate, not a recording: a leg is a great-circle arc (flights and long legs) or a smooth curve through the stops, its mode is guessed from its speed, and a capture time with no recorded zone is placed by the zone of its longitude. `lines` has more than one piece only where a leg crosses the antimeridian. Times are seconds since 1970 (UTC)",
+            always, |s, p| {
+            const C: &str = "map.route";
+            let ids = match p.get("ids") {
+                None | Some(Value::Null) => s.visible_cloned(),
+                Some(Value::Array(a)) => a
+                    .iter()
+                    .map(|v| v.as_u64().map(lightcraft_catalog::PhotoId).ok_or_else(|| bad(C, "ids are photo ids")))
+                    .collect::<Result<Vec<_>, _>>()?,
+                Some(_) => return Err(bad(C, "ids is a list of photo ids")),
+            };
+            let defaults = lightcraft_geo::route::Params::default();
+            let stop_radius = f64_or(p, "stopRadius", defaults.stop_radius_m);
+            let gap_hours = f64_or(p, "gapHours", defaults.gap_s / 3600.0);
+            let arc_km = f64_or(p, "arcKm", defaults.arc_km);
+            let detail = p.get("detail").and_then(Value::as_u64).map_or(defaults.detail, |d| usize::try_from(d).unwrap_or(usize::MAX));
+            if !stop_radius.is_finite() || !(0.0..=100_000.0).contains(&stop_radius) {
+                return Err(bad(C, "stopRadius is 0..100000 metres"));
+            }
+            if !gap_hours.is_finite() || !(0.001..=1_000_000.0).contains(&gap_hours) {
+                return Err(bad(C, "gapHours is more than 0 and at most 1000000"));
+            }
+            if !arc_km.is_finite() || !(0.0..=1_000_000.0).contains(&arc_km) {
+                return Err(bad(C, "arcKm is 0..1000000 kilometres"));
+            }
+            if !(2..=256).contains(&detail) {
+                return Err(bad(C, "detail is 2..256"));
+            }
+            let found = crate::map::route_fixes(&s.catalog, &ids);
+            let params = lightcraft_geo::route::Params { stop_radius_m: stop_radius, gap_s: gap_hours * 3600.0, detail, arc_km };
+            let routes = lightcraft_geo::route::estimate(&found.fixes, &params);
+            Ok(crate::map::route_json(&found, &routes))
+        }),
         cmd!(query "map.place", "Find a Place", [], None,
             "{query} → [{label, kind: city|region|country, south, west, north, east}] — what a place name means (offline gazetteer), best match first, with the map box that shows it",
             always, |_, p| {

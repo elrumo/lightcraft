@@ -111,3 +111,116 @@ fn searching_by_place_through_the_library_filter() {
     assert_eq!(s.visible_cloned().len(), ids.len());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// The five geotagged photos on a made-up trip: two at one spot in Madrid, its suburb two hours later,
+/// Paris three hours after that, and Sydney a week later.
+fn on_a_trip(s: &mut Session) -> Vec<u64> {
+    let ids = geotag(s);
+    for (i, t) in
+        ["2026-03-01T09:00:00", "2026-03-01T09:05:00", "2026-03-01T11:00:00", "2026-03-01T14:00:00", "2026-03-09T09:00:00"].iter().enumerate()
+    {
+        s.execute("photo.setCaptureTime", &json!({"ids": [ids[i]], "time": t})).unwrap();
+    }
+    ids
+}
+
+#[test]
+fn map_route_estimates_a_path_through_the_photos_in_time_order() {
+    let (mut s, dir) = open("route");
+    let ids = on_a_trip(&mut s);
+    let r = s.execute("map.route", &json!({})).unwrap();
+    assert_eq!(r["estimated"], true);
+    assert_eq!((r["photos"].as_u64(), r["zoneEstimated"].as_u64()), (Some(5), Some(5)));
+    assert_eq!(r["skipped"]["noGps"].as_u64().unwrap() + 5, ids.len() as u64);
+    let routes = r["routes"].as_array().unwrap();
+    assert_eq!(routes.len(), 2, "Sydney is a week later: {r}");
+    let trip = &routes[0];
+    assert_eq!((trip["startIso"].as_str(), trip["endIso"].as_str()), (Some("2026-03-01T09:00:00Z"), Some("2026-03-01T14:00:00Z")));
+    assert_eq!(trip["stops"].as_array().unwrap().len(), 3, "the two photos at one spot are one stop");
+    assert_eq!(trip["stops"][0]["photos"], json!([ids[0], ids[1]]));
+    assert_eq!(trip["stops"][0]["count"], 2);
+    let (bike, flight) = (&trip["legs"][0], &trip["legs"][1]);
+    assert_eq!((bike["mode"].as_str(), bike["arc"].as_bool()), (Some("bike"), Some(false)));
+    assert_eq!((flight["mode"].as_str(), flight["arc"].as_bool()), (Some("flight"), Some(true)));
+    assert!(flight["distanceKm"].as_f64().unwrap() > 1000.0);
+    let line = flight["lines"][0].as_array().unwrap();
+    assert!(line.len() > 10, "{}", line.len());
+    assert_eq!(line[0], json!([trip["stops"][1]["lat"], trip["stops"][1]["lon"]]), "the line leaves the stop");
+    assert_eq!(line[line.len() - 1], json!([trip["stops"][2]["lat"], trip["stops"][2]["lon"]]), "and reaches the next");
+    assert_eq!((routes[1]["stops"].as_array().unwrap().len(), routes[1]["legs"].as_array().unwrap().len()), (1, 0));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn map_route_takes_photos_parameters_and_follows_the_filter() {
+    let (mut s, dir) = open("route-params");
+    let ids = on_a_trip(&mut s);
+    // photos given out of order are put in time order, and one listed twice counts once
+    let r = s.execute("map.route", &json!({"ids": [ids[3], ids[2], ids[2]]})).unwrap();
+    assert_eq!((r["routes"].as_array().unwrap().len(), r["photos"].as_u64()), (1, Some(2)));
+    assert_eq!(r["routes"][0]["stops"][0]["photos"], json!([ids[2]]));
+    let gone = s.execute("map.route", &json!({"ids": [999_999_999u64]})).unwrap();
+    assert_eq!((gone["skipped"]["unknown"].as_u64(), gone["routes"].as_array().map(Vec::len)), (Some(1), Some(0)));
+    // a pause of an hour ends a route: the suburb and Paris are each alone
+    let split = s.execute("map.route", &json!({"gapHours": 1})).unwrap();
+    assert_eq!(split["routes"].as_array().unwrap().len(), 4);
+    // a wide stop radius takes the suburb into the stop of the two photos
+    let wide = s.execute("map.route", &json!({"stopRadius": 50_000})).unwrap();
+    assert_eq!((wide["routes"][0]["stops"].as_array().unwrap().len(), wide["routes"][0]["stops"][0]["count"].as_u64()), (2, Some(3)));
+    // a coarse line has three points
+    let coarse = s.execute("map.route", &json!({"detail": 2})).unwrap();
+    assert!(coarse["routes"][0]["legs"][1]["lines"][0].as_array().unwrap().len() <= 3);
+    // the route follows the filter, as the markers do
+    s.execute("photo.rate", &json!({"ids": [ids[3]], "rating": 5})).unwrap();
+    s.execute("library.filter", &json!({"rating": 5})).unwrap();
+    let one = s.execute("map.route", &json!({})).unwrap();
+    assert_eq!(
+        (one["photos"].as_u64(), one["routes"][0]["stops"].as_array().map(Vec::len), one["routes"][0]["legs"].as_array().map(Vec::len)),
+        (Some(1), Some(1), Some(0))
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn map_route_rejects_nonsense() {
+    let (mut s, dir) = open("route-bad");
+    on_a_trip(&mut s);
+    for p in [
+        json!({"ids": "all"}),
+        json!({"ids": [1, "x"]}),
+        json!({"stopRadius": -1}),
+        json!({"stopRadius": 1e9}),
+        json!({"gapHours": 0}),
+        json!({"arcKm": -5}),
+        json!({"detail": 1}),
+        json!({"detail": 257}),
+        json!({"detail": u64::MAX}),
+    ] {
+        assert!(s.execute("map.route", &p).is_err(), "{p}");
+    }
+    assert!(s.execute("map.route", &json!({"ids": [], "detail": 256, "arcKm": 0, "stopRadius": 0, "gapHours": 0.5})).is_ok());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn route_fixes_read_the_capture_time_with_or_without_a_zone() {
+    use lightcraft_catalog::{Op, PhotoId};
+    let (mut s, dir) = open("route-fixes");
+    let ids = geotag(&mut s);
+    for (i, c) in [Some("2026-03-01T09:00:00+02:00"), Some("2026-03-01T09:00:00"), Some("2026-03-01"), None, Some("2026-03-01T20:00:00")]
+        .into_iter()
+        .enumerate()
+    {
+        s.catalog.apply(Op::SetCaptured { id: PhotoId(ids[i]), captured: c.map(str::to_string) }).unwrap();
+    }
+    let visible = s.visible_cloned();
+    let found = crate::map::route_fixes(&s.catalog, &visible);
+    // a date alone and no time at all can't place a photo
+    assert_eq!((found.fixes.len(), found.no_time, found.zone_estimated), (3, 2, 2));
+    let at = |i: usize| found.fixes.iter().find(|f| f.id == ids[i]).map(|f| f.time);
+    let t = |iso: &str| lightcraft_meta::DateTime::parse_iso(iso).unwrap().unix_seconds() as f64;
+    assert_eq!(at(0), Some(t("2026-03-01T07:00:00Z")), "a recorded offset is exact");
+    assert_eq!(at(1), Some(t("2026-03-01T09:00:00Z")), "Madrid's longitude is zone 0");
+    assert_eq!(at(4), Some(t("2026-03-01T10:00:00Z")), "Sydney's longitude is zone +10");
+    let _ = std::fs::remove_dir_all(dir);
+}

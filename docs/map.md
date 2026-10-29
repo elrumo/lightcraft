@@ -42,6 +42,35 @@ tiles; any `https://…/{z}/{x}/{y}.png` address works), are saved on disk in th
   deploy LightCraft for many people (the web build on a shared server), point the tile server setting at your own
   or a commercial one.
 
+## Estimated routes
+
+`map.route` works out a smooth path through the photos that have a GPS position *and* a capture time, even when
+they were tagged by hand or by a camera and no track log exists. It is an estimate, not a recording, and its answer
+says so (`estimated: true`): a screen should show it as one (dashed, say, and labelled).
+
+- **Which photos.** The visible ones (the current view and filter, as `map.points` does), or the `ids` given.
+- **Routes.** Photos are put in time order. A pause of more than `gapHours` (36) between two photos ends a route
+  and starts the next, so a trip and the one after it are never joined by a line across the weeks between them.
+- **Stops.** Photos taken one after another within `stopRadius` (150 m) of each other are one stop, with their ids.
+- **Legs.** Consecutive stops are joined by a leg: its distance, the time between the last photo of one stop and the
+  first of the next, the speed that implies and a guessed `mode`: `walk` (under 6 km/h), `bike` (under 20), `road`, or
+  `flight` (at least 200 km at 150 km/h or more). The speed is a lower bound, since the person may have stopped on the way.
+- **Lines.** A leg is a great-circle arc (a flight, a leg of `arcKm` (300) or more, or a stop beyond 80° of latitude)
+  or a smooth curve through the stops (a centripetal Catmull-Rom spline in Web Mercator: between only two stops it
+  is straight, and a longer trail bends smoothly through them). A line that crosses the antimeridian comes in two
+  pieces, so a map never draws it across the whole world. The lines of one answer hold about 60 000 points at most;
+  with more legs than that they get coarser. `detail` caps the intervals of one leg.
+- **Time zones.** A capture time is the camera's clock. With a recorded offset (Exif `OffsetTimeOriginal`) it is
+  exact; without one, the zone of the photo's longitude, to the hour, stands in. That orders and paces photos across
+  zones (how long a flight took) well enough for an estimate; `zoneEstimated` counts the photos it was used for.
+- **Left out,** and counted in `skipped`: photos without a position, photos without a capture time (a date alone is
+  too coarse to put a photo between two others) and ids that aren't photos of the library.
+
+The estimate never changes a photo, and is not a track log: `photo.autoTagTracklog` takes positions from a real
+track, and the two shouldn't be mixed up (an estimated route fed back as a track would only repeat the photos).
+The code is `crates/geo/src/route.rs` (the maths, on plain positions and times) and `crates/engine/src/map.rs`
+(photos in, JSON out).
+
 ## Searching by place
 
 The search field (and `library.filter` `text`, smart albums, the CLI and MCP) understands:
@@ -78,6 +107,7 @@ GeoNames dumps (`cities15000.txt`, `countryInfo.txt`, `admin1CodesASCII.txt`) an
 | `view.map {lat?, lon?, zoom?, place?, fit?}` | show the Map; look at a position, a place by name, or fit the photos |
 | `map.points {zoom?, cell?, bbox?, ids?}` | the visible located photos grouped as markers (what the map draws), for agents and scripts |
 | `map.bounds` | the box around the visible located photos |
+| `map.route {ids?, stopRadius?, gapHours?, arcKm?, detail?}` | an [estimated route](#estimated-routes) through the located photos by capture time: routes, stops, legs (distance, speed, mode) and their lines |
 | `map.place {query}` | what a place name means (city, region, country) with the box that shows it |
 | `photo.place {id?}` | a photo's GPS position and the place it is in, in words |
 
@@ -93,6 +123,7 @@ uses the browser's `fetch` (`apps/lightcraft-web/src/tiles.rs`). The gazetteer a
 
 ## Not yet
 
-Dragging photos onto the map to give them a position, saved locations, a track log drawn on the map, a filter
-bar tied to the visible map area, satellite or terrain layers, and checking the Map in a browser and on an
-iPhone (it is tested headlessly on the desktop UI and type-checked for wasm and iOS).
+Dragging photos onto the map to give them a position, saved locations, a track log or an estimated route drawn on
+the map (`map.route` gives the data; no screen draws it yet), a filter bar tied to the visible map area, satellite or
+terrain layers, and checking the Map in a browser and on an iPhone (it is tested headlessly on the desktop UI and
+type-checked for wasm and iOS).
