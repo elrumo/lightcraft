@@ -83,6 +83,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
     ("server", Class::Exempt),
+    // the macOS menu-bar icon for the installed server (package `lightbites-menubar`, no `lightcraft-` prefix)
+    ("lightbites-menubar", Class::Exempt),
     ("ios", Class::Exempt),
     // the iOS apps' native glue (UIKit, PhotosUI, ImageIO through objc2)
     ("ios-host", Class::Exempt),
