@@ -1,7 +1,8 @@
 //! Settings that follow a user to their other devices: export, metadata and filter presets, curve
 //! presets, colour-label and keyword sets, LUT profiles, the order of the develop preset groups, the
 //! presets and groups they hid, the import defaults that don't name a place on one computer, and the recorded tracks with
-//! their privacy trim ([`crate::tracks`], the one document that can be megabytes). Items of `prefs` a newer build wrote
+//! their privacy trim ([`crate::tracks`], the one document that can be megabytes), and the trips with their notes
+//! ([`crate::trips`]). Items of `prefs` a newer build wrote
 //! are kept and sent on as they came. Each is a document on the
 //! server (`GET` / `PUT /api/docs/<name>`, [`proto::Doc`]) — a JSON list — kept like the user presets ([`super::merge_presets`]): a device
 //! sends its list when it changes, and merges the server's against the copy both last agreed on,
@@ -36,7 +37,7 @@ enum Key {
 }
 
 /// The documents, in the order they are synced.
-const SPECS: [(&str, Key); 13] = [
+const SPECS: [(&str, Key); 15] = [
     ("export-presets", Key::Name),
     ("metadata-presets", Key::Name),
     ("filter-presets", Key::Name),
@@ -52,6 +53,9 @@ const SPECS: [(&str, Key); 13] = [
     ("privacy", Key::Id),
     // recorded tracks, one item per chunk (`tracks.json`, not prefs.json)
     (crate::tracks::DOC, Key::Id),
+    // trips and their notes, a document and a file each (`trips.json`, `trip-notes.json`)
+    (crate::trips::TRIPS, Key::Id),
+    (crate::trips::NOTES, Key::Id),
 ];
 
 /// The server's shared presets: read, never sent.
@@ -209,6 +213,8 @@ impl Session {
                 .collect(),
             "privacy" => self.privacy_items(),
             crate::tracks::DOC => self.tracks.items().to_vec(),
+            crate::trips::TRIPS => self.trips.items(crate::trips::Doc::Trips).to_vec(),
+            crate::trips::NOTES => self.trips.items(crate::trips::Doc::Notes).to_vec(),
             _ => Vec::new(),
         }
     }
@@ -240,6 +246,8 @@ impl Session {
             "privacy" => self.set_privacy_items(items),
             // (its own file, not prefs.json)
             crate::tracks::DOC => return self.set_track_items(items),
+            crate::trips::TRIPS => return self.set_trip_doc(crate::trips::Doc::Trips, items),
+            crate::trips::NOTES => return self.set_trip_doc(crate::trips::Doc::Notes, items),
             _ => return Ok(()),
         }
         self.save_prefs()

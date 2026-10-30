@@ -60,7 +60,7 @@ pub(super) fn touches(op: &Op, depth: usize) -> bool {
 }
 
 /// A new uid: random (the hasher's keys come from the OS).
-fn new_uid() -> String {
+pub(crate) fn new_uid() -> String {
     use std::hash::{BuildHasher, Hasher};
     let mut h = std::hash::RandomState::new().build_hasher();
     h.write_i64(super::now_ms());
@@ -72,7 +72,7 @@ fn key_of(s: &Session, id: PhotoId) -> Option<String> {
 }
 
 /// The photos this device has by content key (the first of each: copies are not the picture's).
-fn index(s: &Session) -> HashMap<String, PhotoId> {
+pub(crate) fn index(s: &Session) -> HashMap<String, PhotoId> {
     let mut out = HashMap::new();
     for p in s.catalog.photos().filter(|p| p.copy_of.is_none() && !p.local) {
         if let Some(k) = lightcraft_catalog::sync::content_key(p) {
@@ -96,6 +96,17 @@ impl ICloud {
 
     fn local_of(&self, prefix: char, uid: &str) -> Option<u64> {
         self.saved.uids.iter().find(|(k, u)| k.starts_with(prefix) && *u == uid).and_then(|(k, _)| k.get(1..)?.parse().ok())
+    }
+
+    /// The uid album `id` travels under (made now when it has none: the one its record will carry). A trip's album
+    /// reference ([`crate::trips`]).
+    pub(crate) fn album_uid(&mut self, id: AlbumId) -> String {
+        self.uid(format!("a{}", id.0))
+    }
+
+    /// The album of this library that travels under `uid`, if any.
+    pub(crate) fn album_of_uid(&self, uid: &str) -> Option<AlbumId> {
+        self.local_of('a', uid).map(AlbumId)
     }
 }
 

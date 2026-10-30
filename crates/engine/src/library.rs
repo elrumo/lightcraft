@@ -708,6 +708,19 @@ impl Session {
             settings.set_aside(files.as_mut(), crate::tracks::FILE, &bytes, &why, "the other tracks are kept");
         }
         self.tracks = tracks;
+        // trips and their notes (as the tracks: a damaged item sets its file aside, the others are kept)
+        let mut doc = |name: &'static str, kind: crate::trips::Doc| {
+            let items = settings.read::<Vec<serde_json::Value>>(files.as_mut(), name).unwrap_or_default();
+            let (kept, dropped) = crate::trips::take(kind, &items);
+            if dropped > 0
+                && let Ok(Some(bytes)) = files.read(name)
+            {
+                settings.set_aside(files.as_mut(), name, &bytes, &format!("{dropped} of its items can't be read"), "the others are kept");
+            }
+            kept
+        };
+        let (trips, notes) = (doc(crate::trips::TRIPS_FILE, crate::trips::Doc::Trips), doc(crate::trips::NOTES_FILE, crate::trips::Doc::Notes));
+        self.trips = crate::trips::Trips::load(trips, notes);
         self.prefs_kept = prefs.shared_prefs;
         // which photo-library assets were opened as which photos (this device's own)
         self.photo_library = files
@@ -724,6 +737,8 @@ impl Session {
         self.sync = crate::cloud_sync::SyncState::load(files.as_mut());
         // iCloud sync (on for this library, or not)
         self.icloud = crate::icloud::ICloud::load(files.as_mut());
+        // (the trips' album references are as this library last wrote them)
+        self.trips.mode = Some(self.ref_mode());
         if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
             self.catalog.set_id_space(st.config.space);
         }

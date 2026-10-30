@@ -1295,6 +1295,8 @@ impl Session {
         st.error = None;
         st.retry_at = None;
         st.pull_at = None;
+        // (the server keeps the albums now: the trips name them by id, before the documents go up)
+        self.trips_follow_mode();
         self.persist()
     }
 
