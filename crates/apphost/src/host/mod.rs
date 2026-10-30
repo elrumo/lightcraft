@@ -445,6 +445,13 @@ impl Engine {
                 (session, demo)
             }
         };
+        // (the library is open and holds memory of its own: the caches get a third of what is left, not of what the app could use before)
+        let launch = lightcraft_engine::memory::budget();
+        let now = crate::startup::budget_after_open(config.profile, launch, lightcraft_sysmem::available_memory());
+        if now < launch {
+            session.set_memory_budget(now);
+            log::info!("memory: library open, budget {} MB (was {} MB)", now >> 20, launch >> 20);
+        }
         if desktop {
             crate::startup::configure_desktop(&mut session);
         } else {

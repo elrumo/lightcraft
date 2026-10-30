@@ -137,6 +137,17 @@ pub fn budget_for(profile: Profile, available: Option<usize>) -> usize {
     }
 }
 
+/// The budget once the library is open, `launch` being the one set before it was. The library holds memory of its own (a big
+/// one's catalog is ~2 GB on a phone), which the budget made from the memory left at launch did not count: with a third of the
+/// limit for caches, decodes and renders on top of the catalog, swiping between big raws went past the limit and iOS ended the
+/// app. So a phone takes a third of what is left now, never more than `launch`; a desktop keeps `launch`.
+pub fn budget_after_open(profile: Profile, launch: usize, left: Option<usize>) -> usize {
+    match (profile, left) {
+        (Profile::Mobile, Some(left)) => budget_for(profile, Some(left)).min(launch),
+        _ => launch,
+    }
+}
+
 /// [`set_memory_budget`] for `profile` ([`budget_for`]).
 pub fn set_memory_budget_for(profile: Profile, available: Option<usize>) -> usize {
     let budget = lightcraft_engine::memory::set_budget(budget_for(profile, available));
@@ -203,6 +214,20 @@ mod tests {
         // (the phone's rules are what the egui iOS app and a host without a profile get)
         assert_eq!(Profile::default(), Profile::Mobile);
         assert_eq!(serde_json::from_str::<Profile>("\"desktop\"").ok(), Some(Profile::Desktop));
+    }
+
+    /// A big library open leaves a phone less room: the budget shrinks with it (never grows), and a desktop's stays.
+    #[test]
+    fn an_open_library_shrinks_a_phones_budget() {
+        let launch = budget_for(Profile::Mobile, Some(4 << 30)); // 1 GiB: a third of 4 GiB, capped
+        assert_eq!(launch, 1 << 30);
+        // a 2 GB catalog later, 1.8 GiB are left: 600 MiB
+        assert_eq!(budget_after_open(Profile::Mobile, launch, Some(1800 << 20)), 600 << 20);
+        // more left than at launch (the system's limit moved): not larger than before
+        assert_eq!(budget_after_open(Profile::Mobile, 512 << 20, Some(4 << 30)), 512 << 20);
+        // the system says nothing (simulator, Mac) or it is a desktop: unchanged
+        assert_eq!(budget_after_open(Profile::Mobile, launch, None), launch);
+        assert_eq!(budget_after_open(Profile::Desktop, launch, Some(1 << 30)), launch);
     }
 
     /// A Mac's caches follow its RAM, not the 768 MiB a phone guesses when the system won't say.
