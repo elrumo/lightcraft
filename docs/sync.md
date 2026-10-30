@@ -655,6 +655,7 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 | user presets (created or imported on any device, the web and iOS included; rename, move, delete, favourite) | favourites among the built-in presets, recent profiles |
 | export, metadata and filter presets, curve presets, colour-label and keyword sets, LUT profiles (with their `.cube` files), the order of the develop preset groups, the import defaults that don't name a place | the watched folder for auto import, the folders and the external editor, the cache size, the search-sharing choices |
 | metadata and keywords, analysis results | undo / redo |
+| recorded tracks and the privacy trim for them (the `tracks` document, [below](#recorded-tracks)), saved trips and the notes of a trip | a recording in progress (the frontend keeps it until it hands the track over) |
 | albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
 | | Local records (photos seen while browsing a folder, or opened from the Photos library, until added to the library; which Photos library picture is which photo, `photo-library.json`) |
 
@@ -665,6 +666,35 @@ instead ([below](#icloud-apple-devices-without-a-server)).
 A server from before the Hidden album (catalog format 10 or older) would keep a hidden photo shown on the other
 devices: a device signed in to one refuses Hide and holds back any hidden change ("Update LightCraft Server first"). The
 server says its format with every pull (`format` in the answer to `GET /api/ops`; missing: older).
+
+### Recorded tracks
+
+Recorded tracks ([map.md](map.md#recorded-tracks)) are the shared document `tracks`, kept in the library's
+`tracks.json` rather than `prefs.json` because it can be megabytes. One item is one chunk of a recording (at most
+20 000 points and 24 hours, its points packed as base64), and once stored only its name changes, so:
+
+- **Through a server** the document goes whole (`GET`/`PUT /api/docs/tracks`) and is merged item by item like the other
+  documents: tracks added on two devices are all kept, a deleted track stays deleted (unless the other device renamed
+  it meanwhile), and a rename reaches the other devices.
+- **Through iCloud or a cloud folder** each chunk is one record ([below](#icloud-apple-devices-without-a-server)): a
+  chunk is well under 1 MiB, an item at most 4 MiB, a record's data at most 8 MiB.
+- **Limits.** A device refuses a new track (an error that starts `limit:`) when the document would pass 16 MiB (its
+  items as JSON, the base64 points included) or 1500 items. A server takes a request body of at most 24 MiB and a
+  device keeps at most 2000 items of a document, so the margin is for what two devices add while apart: a device takes
+  from elsewhere up to those 24 MiB and 2000 items, and tracks added on two devices are not lost.
+- **What arrives is checked.** From a server, iCloud, a cloud folder or `tracks.json` itself, an item whose id isn't
+  `<session>-<index>`, whose fields have the wrong types or sizes, or whose packed points don't unpack to the count and
+  the first and last moment it claims, is left out with a log line; the others are kept. An item of a newer format
+  (`fmt` above 1) is kept and sent on as it is, and listed as `unreadable`; fields this build doesn't know are kept.
+- **An older server** answers `404` for `tracks`: the tracks stay on each device, unsynced, and the rest of the sync
+  goes on (it isn't asked again that session). Update the server to share them.
+- **Signing out** removes the tracks from the library with the other shared documents.
+- **The privacy trim** (`tracking.settings`) is one more item of the same document, `{id: "settings", trim,
+  trimRadiusM}`, there only once it was set (a device that never chose doesn't undo another's choice). It counts toward
+  the limits like a chunk and is checked like one: settings from elsewhere that aren't real leave this device's own as
+  they are. It is not in `prefs` on purpose: every build from before it drops a `prefs` item it doesn't know when it
+  next sends that document, which would quietly turn a privacy setting off, while no build that doesn't know `tracks`
+  ever sends it. (Items of `prefs` a newer build wrote are kept and sent on from now on.)
 
 ## When two devices change the same thing
 
@@ -708,7 +738,7 @@ commands); the frontend only moves records between it and CloudKit, and turns it
 
 | Travels through iCloud | Not |
 |---|---|
-| user develop presets, and the settings a server shares too: export, metadata, filter and curve presets, colour-label and keyword sets, LUT profiles, the import defaults that don't name a place, the order of the preset groups, the hidden presets and groups, the Hidden password's hash and Blur Sensitive Photos | photos imported into the library, unless *Keep Photos in iCloud Drive* is on ([below](#photos-through-icloud-drive)): then they travel through iCloud Drive, not CloudKit |
+| user develop presets, and the settings a server shares too: export, metadata, filter and curve presets, colour-label and keyword sets, LUT profiles, the import defaults that don't name a place, the order of the preset groups, the hidden presets and groups, recorded tracks (one record per chunk) and their privacy trim, saved trips and the notes of a trip, the Hidden password's hash and Blur Sensitive Photos (one item must stay under 8 MiB, the iCloud record limit) | photos imported into the library, unless *Keep Photos in iCloud Drive* is on ([below](#photos-through-icloud-drive)): then they travel through iCloud Drive, not CloudKit |
 | the sync server a library is signed in to (its address and user name, which the person's other devices offer when they sign in) | the password and the device's token: every device signs in itself |
 | **albums, folders, smart albums and stacks**, and the **versions** of the photos that travel ([below](#albums-stacks-and-versions)) | the Quick Collection, History |
 | **edits of photos opened from the Photos library** (develop settings, rating, flag, colour label, title, caption, keywords and the other metadata an XMP sidecar carries), by the content hash of the picture's original; the same for photos kept in iCloud Drive, with Recently Deleted and Hidden | edits of photos whose original stays on the device, History, versions |
@@ -877,7 +907,7 @@ Big JSON answers (the library, pulled changes, the presets; 16 KiB and up) come 
 | `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs): `password` and `upload` say what each asks and allows): `{shares: [...]}`; `POST {album, expiresDays?, originals?, password?, upload?}` → the new link (`400` for a folder or smart album or a password under 4 characters, `404` no such album, `409` over 200 links); `DELETE` takes one back |
 | `GET /s/{token}`, `GET /s/{token}/{photo}[?play=1]`, `GET /s/{token}/{photo}/{thumb\|view\|original}`, `GET /s/{token}/download` | **no sign-in**: the album's page, a photo's page (`play`: the slideshow), the pictures, and Download All (a ZIP of the originals) ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` or `download` on a link that doesn't offer them), `401` until a link's password was typed, `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
 | `POST /s/{token}/unlock`, `POST /s/{token}/upload` | **no sign-in**: a link's password (`password=…`, a form; the answer sets the cookie that opens the link), and photos a visitor adds (`multipart/form-data`, field `photos`, optional `name`; `303` back to the album with `?added=N&skipped=M`; `403` on a link that doesn't take photos, `507` over the owner's [storage limit](#storage-limits)) |
-| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups), `hidden-presets` (the presets and groups the user hid, one item each: `{id: "preset:<id>"}`, `{id: "group:<name>"}`): `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
+| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups), `hidden-presets` (the presets and groups the user hid, one item each: `{id: "preset:<id>"}`, `{id: "group:<name>"}`), `privacy` (the Hidden password's hash and the blur choice; this name was missing from the list), `tracks` (the tracks a device recorded, in chunks, one item each, [above](#recorded-tracks)), `trips` (the saved trips, one item each) and `trip-notes` (the notes of a trip, one item each); every item has an `id`: `{version, items}` (a list; the whole request body is at most 24 MiB, above it the server answers 413; the server does not count items, but a device takes at most 2000 items of a document and loses the rest, so a document must stay under that), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. A server from before tracks, trips and trip-notes answers 404 for them; the device then leaves that document alone and the rest of the sync goes on. Their versions come with every pull (`docs`) |
 | `GET /api/docs/server-presets` | the presets an admin shares with every user ([admin page](#the-admin-page) → Presets): `{version, items}`, each preset `{id: "srv.…", name, group, settings}` and one item `{id: "hidden", presets, groups}` (built-in presets and groups hidden for everyone). The presets the admin disabled (`disabled: true` on the admin's copy) are left out, so older devices need nothing to respect it. Read-only (`PUT` → `403`); its version comes with every pull (`docs`) once an admin has written it. Devices take it as it is, never merge or send it |
 | `POST /api/admin/login`, `POST /api/admin/logout` | the admin session ([above](#the-admin-page)): `login {user, password, remember?, cookie?}` → `{token, user}`, or with `cookie: true` (the page) `{user}` and a `Set-Cookie: lc_admin=…`; `remember` keeps it for weeks and across restarts; `logout` ends it (and clears the cookie). Anything else under `/api/admin/` takes the token as a bearer or the cookie (with `X-LightCraft-Admin` on what changes something) |
 | `GET /api/admin/usage` | (admin session) the Overview's numbers ([`usage.rs`](../apps/lightcraft-server/src/usage.rs)): `{since, supported, cores, memory, history: [{at, cpu, machineCpu, rss, memUsed, requests, out}], users: [{name, devices: [{id, name, requests, in, out, busyMs, lastSeen}]}]}`. `history` is a sample of the machine every 30 s for the last 24 h, averaged to at most 240 points (`cpu`: the server's CPU in cores, `machineCpu`: the whole machine's, 0 to 1, `rss` and `memUsed`: the server's memory and what the machine or container uses, `requests` and `out`: the devices' requests and the bytes sent to them since the point before); `null` where the platform doesn't say (`supported` is false off Linux). The counts are in memory and start again with the server |
