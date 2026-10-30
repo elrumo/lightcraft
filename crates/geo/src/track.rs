@@ -172,19 +172,21 @@ fn check(points: &[Point]) -> Result<(), Error> {
     Ok(())
 }
 
+/// `p` as it can be packed: `None` when its time or position isn't real (out of range), else the point with an
+/// elevation or accuracy that isn't real left out.
+pub fn real(p: &Point) -> Option<Point> {
+    ((0..=TIME_MAX_MS).contains(&p.time_ms) && valid(p.lat, p.lon)).then(|| Point {
+        ele_m: p.ele_m.filter(|e| e.is_finite() && (ELE_MIN_M..=ELE_MAX_M).contains(e)),
+        acc_m: p.acc_m.filter(|a| a.is_finite() && (0.0..=ACC_MAX_M).contains(a)),
+        ..*p
+    })
+}
+
 /// Put points in time order (equal times keep their order), leaving out those that aren't real: a time or position
 /// out of range, or an elevation or accuracy that isn't real is dropped from the point, not the point. The count of
 /// points left out comes second. At most [`MAX_POINTS`] are kept (the first ones).
 pub fn clean(points: &[Point]) -> (Vec<Point>, usize) {
-    let mut kept: Vec<Point> = points
-        .iter()
-        .filter(|p| (0..=TIME_MAX_MS).contains(&p.time_ms) && valid(p.lat, p.lon))
-        .map(|p| Point {
-            ele_m: p.ele_m.filter(|e| e.is_finite() && (ELE_MIN_M..=ELE_MAX_M).contains(e)),
-            acc_m: p.acc_m.filter(|a| a.is_finite() && (0.0..=ACC_MAX_M).contains(a)),
-            ..*p
-        })
-        .collect();
+    let mut kept: Vec<Point> = points.iter().filter_map(real).collect();
     kept.sort_by_key(|p| p.time_ms);
     kept.truncate(MAX_POINTS);
     let left_out = points.len() - kept.len();
@@ -438,6 +440,65 @@ pub fn chunks(points: &[Point], max_points: usize, max_span_ms: i64) -> Vec<Vec<
     out
 }
 
+/// At most `max` (at least 2) of `points` (in time order), for drawing: both ends and the points on both sides of every
+/// break between stretches of recording are kept, the rest are picked evenly through the track. A kept point begins a
+/// stretch when one began since the point kept before it, so a break is never drawn over. The second value says
+/// whether any point was left out.
+// ponytail: evenly by index, not by shape (Douglas-Peucker): a long stop keeps as many points as a long walk
+pub fn simplify(points: &[Point], max: usize) -> (Vec<Point>, bool) {
+    let (n, max) = (points.len(), max.max(2));
+    if n <= max {
+        return (points.to_vec(), false);
+    }
+    let mut must: Vec<usize> = vec![0, n - 1];
+    for (i, p) in points.iter().enumerate().skip(1) {
+        if p.new_segment {
+            must.extend([i - 1, i]);
+        }
+    }
+    must.sort_unstable();
+    must.dedup();
+    let mut keep = vec![false; n];
+    // more breaks than room: evenly over everything (the breaks still carry over to the next kept point)
+    let (spread, fixed) = if must.len() < max { (max - must.len(), must.as_slice()) } else { (max, &[][..]) };
+    for &i in fixed {
+        if let Some(k) = keep.get_mut(i) {
+            *k = true;
+        }
+    }
+    for k in 0..spread {
+        let i = if spread < 2 { 0 } else { k * (n - 1) / (spread - 1) };
+        if let Some(k) = keep.get_mut(i) {
+            *k = true;
+        }
+    }
+    let mut out = Vec::with_capacity(max);
+    let mut broke = false;
+    for (p, kept) in points.iter().zip(&keep) {
+        broke |= p.new_segment;
+        if *kept {
+            out.push(Point { new_segment: broke, ..*p });
+            broke = false;
+        }
+    }
+    (out, true)
+}
+
+/// Leave out the start and the end of a track that lie within `radius_m` metres (on the globe) of its first and its
+/// last position, where a recording often begins and ends (a home): the points before the first one farther than that
+/// from the first position, and likewise from the end. Answers what is left and how many points went at each end.
+pub fn trim(points: &[Point], radius_m: f64) -> (Vec<Point>, usize, usize) {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else { return (Vec::new(), 0, 0) };
+    let n = points.len();
+    let far = |a: &Point, p: &Point| distance_km(a.lat, a.lon, p.lat, p.lon) * 1000.0 > radius_m;
+    let start = points.iter().position(|p| far(first, p)).unwrap_or(n);
+    let end = points.iter().rev().position(|p| far(last, p)).unwrap_or(n);
+    match points.get(start..n.saturating_sub(end)) {
+        Some(kept) if !kept.is_empty() => (kept.to_vec(), start, end),
+        _ => (Vec::new(), start.min(n), n - start.min(n)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,6 +696,58 @@ mod tests {
         assert_eq!(chunks(&points, 0, 0).len(), 25, "limits of nothing mean one point each, not a hang");
         let day = chunks(&walk(30_000), CHUNK_POINTS, CHUNK_SPAN_MS);
         assert_eq!(day.iter().map(Vec::len).collect::<Vec<_>>(), vec![17_280, 12_720], "a day is 17 280 points at 5 s");
+    }
+
+    #[test]
+    fn simplify_keeps_the_ends_and_both_sides_of_every_break() {
+        let mut points: Vec<Point> = (0..1000).map(|i| pt(i * 1000, 0.0, i as f64 * 0.001)).collect();
+        points[400].new_segment = true;
+        points[401].new_segment = true;
+        let (few, simplified) = simplify(&points, 50);
+        assert!(simplified && few.len() <= 50 && few.len() >= 45, "{}", few.len());
+        assert_eq!((few[0].time_ms, few.last().unwrap().time_ms), (0, 999_000), "both ends");
+        for t in [399_000, 400_000, 401_000] {
+            assert!(few.iter().any(|p| p.time_ms == t), "{t} kept");
+        }
+        assert_eq!(few.iter().filter(|p| p.new_segment).map(|p| p.time_ms).collect::<Vec<_>>(), vec![400_000, 401_000]);
+        assert!(few.windows(2).all(|w| w[0].time_ms < w[1].time_ms));
+        assert_eq!(simplify(&points[..10], 50), (points[..10].to_vec(), false), "small enough: as it is");
+        // little room: the point before a break is kept for the break's sake, not by chance
+        let mut short: Vec<Point> = (0..100).map(|i| pt(i * 1000, 0.0, 0.0)).collect();
+        short[50].new_segment = true;
+        assert_eq!(simplify(&short, 5).0.iter().map(|p| p.time_ms).collect::<Vec<_>>(), vec![0, 49_000, 50_000, 99_000]);
+        assert_eq!(simplify(&points, 0).0.len(), 2, "at least the two ends");
+        // more breaks than room: a break left out still begins the next kept point's stretch
+        let broken: Vec<Point> = (0..100).map(|i| Point { new_segment: i % 2 == 1, ..pt(i * 1000, 0.0, 0.0) }).collect();
+        let (few, _) = simplify(&broken, 10);
+        assert_eq!(few.len(), 10);
+        assert!(few.iter().skip(1).all(|p| p.new_segment), "{few:?}");
+    }
+
+    #[test]
+    fn trim_cuts_what_lies_near_the_first_and_last_positions() {
+        // out from 0,0 due east 1 km at 100 m a step, then on to 2 km, then back to 1.5 km and ending there
+        let mut points: Vec<Point> = (0..=20).map(|i| pt(i * 1000, 0.0, i as f64 * 0.1 / 111.195)).collect();
+        points.extend((1..=5).map(|i| pt((20 + i) * 1000, 0.0, (2.0 - i as f64 * 0.1) / 111.195)));
+        let (kept, start, end) = trim(&points, 250.0);
+        assert_eq!(start, 3, "0, 100 and 200 m from the start go");
+        assert_eq!(end, 3, "the last point and the two within 250 m of it go");
+        assert_eq!(kept.len(), points.len() - 6);
+        assert_eq!(kept[0].time_ms, 3000);
+        // a radius that takes everything: nothing left, every point counted once
+        let (kept, start, end) = trim(&points, 50_000.0);
+        assert!(kept.is_empty());
+        assert_eq!(start + end, points.len());
+        assert_eq!(trim(&points, 0.0).0, points[1..points.len() - 1].to_vec(), "only the end points themselves");
+        assert_eq!(trim(&[], 100.0), (vec![], 0, 0));
+    }
+
+    #[test]
+    fn real_drops_what_cannot_be_packed() {
+        assert!(real(&pt(-1, 0.0, 0.0)).is_none());
+        assert!(real(&pt(0, 0.0, 200.0)).is_none());
+        let p = real(&Point { ele_m: Some(f64::NAN), acc_m: Some(5.0), ..pt(0, 1.0, 2.0) }).unwrap();
+        assert_eq!((p.ele_m, p.acc_m), (None, Some(5.0)));
     }
 
     proptest::proptest! {

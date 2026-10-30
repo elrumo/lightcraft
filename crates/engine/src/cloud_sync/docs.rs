@@ -1,6 +1,8 @@
 //! Settings that follow a user to their other devices: export, metadata and filter presets, curve
 //! presets, colour-label and keyword sets, LUT profiles, the order of the develop preset groups, the
-//! presets and groups they hid and the import defaults that don't name a place on one computer. Each is a small document on the
+//! presets and groups they hid, the import defaults that don't name a place on one computer, and the recorded tracks with
+//! their privacy trim ([`crate::tracks`], the one document that can be megabytes). Items of `prefs` a newer build wrote
+//! are kept and sent on as they came. Each is a document on the
 //! server (`GET` / `PUT /api/docs/<name>`, [`proto::Doc`]) — a JSON list — kept like the user presets ([`super::merge_presets`]): a device
 //! sends its list when it changes, and merges the server's against the copy both last agreed on,
 //! item by item, so a preset deleted on one device stays deleted and ones added on two devices are
@@ -34,7 +36,7 @@ enum Key {
 }
 
 /// The documents, in the order they are synced.
-const SPECS: [(&str, Key); 12] = [
+const SPECS: [(&str, Key); 13] = [
     ("export-presets", Key::Name),
     ("metadata-presets", Key::Name),
     ("filter-presets", Key::Name),
@@ -48,6 +50,8 @@ const SPECS: [(&str, Key); 12] = [
     (SERVER_PRESETS, Key::Id),
     // the Hidden password (its own document: a device that doesn't know it never drops it from `prefs`)
     ("privacy", Key::Id),
+    // recorded tracks, one item per chunk (`tracks.json`, not prefs.json)
+    (crate::tracks::DOC, Key::Id),
 ];
 
 /// The server's shared presets: read, never sent.
@@ -67,8 +71,11 @@ const CUBE_MAX: usize = 15 << 19;
 const CUBES_TOTAL_MAX: usize = 20 << 20;
 /// A preset's or set's name at most, in characters.
 const NAME_MAX: usize = 200;
-/// The id of the one item of the `prefs` document.
+/// The id of the `prefs` item of the import defaults.
 const IMPORT_ITEM: &str = "import";
+/// Items of `prefs` a newer build wrote that this one keeps at most, and the size of each at most.
+const PREFS_KEPT_MAX: usize = 50;
+const PREFS_KEPT_ITEM_MAX: usize = 64 << 10;
 /// The item of `privacy` that holds the Hidden password's hash.
 const PASSWORD_ITEM: &str = "password";
 /// The item of `privacy` that turns blurring the possibly sensitive photos off (absent: on).
@@ -189,7 +196,9 @@ impl Session {
                     LOCAL_IMPORT.iter().for_each(|k| drop(o.remove(*k)));
                     o.insert("id".into(), json!(IMPORT_ITEM));
                 }
-                vec![v]
+                let mut items = vec![v];
+                items.extend(self.prefs_kept.iter().cloned());
+                items
             }
             // (nothing until the user reorders: a device that never did doesn't send a default)
             "preset-groups" if self.preset_group_order.is_empty() => Vec::new(),
@@ -199,6 +208,7 @@ impl Session {
                 .chain(self.hidden_presets.groups.iter().map(|g| json!({"id": format!("group:{g}")})))
                 .collect(),
             "privacy" => self.privacy_items(),
+            crate::tracks::DOC => self.tracks.items().to_vec(),
             _ => Vec::new(),
         }
     }
@@ -220,11 +230,16 @@ impl Session {
                 self.keyword_sets.iter_mut().for_each(|k| k.keywords.truncate(9));
             }
             "lut-profiles" => self.set_lut_profiles(items),
-            "prefs" => self.set_import_defaults(items),
+            "prefs" => {
+                self.set_import_defaults(items);
+                self.keep_prefs_items(items);
+            }
             "preset-groups" => self.set_preset_group_order(items),
             "hidden-presets" => self.set_hidden_presets(items),
             SERVER_PRESETS => self.take_server_presets(items),
             "privacy" => self.set_privacy_items(items),
+            // (its own file, not prefs.json)
+            crate::tracks::DOC => return self.set_track_items(items),
             _ => return Ok(()),
         }
         self.save_prefs()
@@ -271,6 +286,25 @@ impl Session {
         if let Ok(d) = serde_json::from_value(mine) {
             self.import_defaults = d;
         }
+    }
+
+    /// Items of `prefs` a newer build wrote: kept as they came and sent on, so this device never drops them for the
+    /// others (at most [`PREFS_KEPT_MAX`] small objects with an id).
+    fn keep_prefs_items(&mut self, items: &[Value]) {
+        let mut seen = HashSet::new();
+        self.prefs_kept = items
+            .iter()
+            .filter(|v| {
+                let id = v.get("id").and_then(Value::as_str).unwrap_or_default();
+                !id.is_empty()
+                    && id.chars().count() <= NAME_MAX
+                    && id != IMPORT_ITEM
+                    && serde_json::to_vec(v).is_ok_and(|b| b.len() <= PREFS_KEPT_ITEM_MAX)
+                    && seen.insert(id)
+            })
+            .take(PREFS_KEPT_MAX)
+            .cloned()
+            .collect();
     }
 
     /// The order of the preset groups the other device shares.
@@ -470,6 +504,8 @@ impl Session {
         if let Ok(d) = serde_json::from_value(fresh) {
             self.import_defaults = d;
         }
+        // (the tracks and their privacy trim went with the documents above; what a newer build put in `prefs` goes too)
+        self.prefs_kept.clear();
         self.keyword_set = None;
         self.recent_keywords.clear();
         // (a favourite or recent profile that was one of the removed LUTs)

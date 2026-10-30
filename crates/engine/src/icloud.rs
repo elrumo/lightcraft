@@ -9,7 +9,8 @@
 //! - `presets`: the user's develop presets, by id;
 //! - the settings a sync server keeps too ([`crate::cloud_sync`]'s shared documents: export, metadata,
 //!   filter and curve presets, label and keyword sets, LUT profiles, import defaults, the order of the
-//!   preset groups, the hidden presets, the privacy settings), one record per item of each;
+//!   preset groups, the hidden presets, the privacy settings, the recorded tracks one chunk each), one record per item
+//!   of each;
 //! - `server`: the sync server this library is signed in to (its address and the user, never a
 //!   password or a token), so the other devices can offer it;
 //! - `edit`: a photo opened from the system photo library and changed (its develop settings, rating,

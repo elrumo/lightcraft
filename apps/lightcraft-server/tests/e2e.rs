@@ -933,6 +933,150 @@ fn shared_documents_are_versioned_and_only_known_names_are_kept() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// `GET /api/docs/<name>`: the status and the document.
+fn get_doc(base: &str, name: &str, token: &str) -> (u16, Value) {
+    let (s, b, _) = call("GET", &format!("{base}/api/docs/{name}"), token, None, &[]);
+    (s, json_of(&b))
+}
+
+/// The versions of the documents a pull lists (`/api/ops`, `docs`): `{}` when none was ever written (the pull then leaves
+/// the key out).
+fn pulled_docs(base: &str, token: &str) -> Value {
+    match json_of(&call("GET", &format!("{base}/api/ops?since=0"), token, None, &[]).1)["docs"].clone() {
+        Value::Null => json!({}),
+        docs => docs,
+    }
+}
+
+/// The documents of recorded tracks, saved trips and the notes of a trip: kept like the other shared documents (id-keyed
+/// items, versions, `412`, survive a restart, a pull lists one once it was written), for each user alone; and a name this
+/// server doesn't keep answers `404`, which is what an older server does for these three (the client leaves it alone).
+#[test]
+fn track_and_trip_documents_are_kept_like_the_other_shared_documents() {
+    let root = temp("trip-docs");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let put = |name: &str, v: Value| put_with(&format!("{base}/api/docs/{name}"), &token, v.to_string().as_bytes(), &[]);
+    let items = |name: &str| json!([{"id": format!("{name}-1"), "n": 1}, {"id": format!("{name}-2"), "n": 2}]);
+    let names = ["tracks", "trips", "trip-notes"];
+
+    // never written: version 0 and empty, and the pull doesn't list them
+    for name in names {
+        assert_eq!(get_doc(&base, name, &token), (200, json!({"version": 0, "items": []})), "{name}");
+    }
+    assert_eq!(pulled_docs(&base, &token), json!({}));
+
+    // written one by one: the pull lists a name once it was written, and the document comes back as it was put
+    let mut listed = serde_json::Map::new();
+    for name in names {
+        assert_eq!(put(name, json!({"version": 0, "items": items(name)})), (200, json!({"version": 1})), "{name}");
+        listed.insert(name.to_string(), json!(1));
+        assert_eq!(pulled_docs(&base, &token), Value::Object(listed.clone()), "after {name}");
+        assert_eq!(get_doc(&base, name, &token), (200, json!({"version": 1, "items": items(name)})), "{name}");
+    }
+
+    // a device that hadn't seen version 1 gets the current document back and changes nothing; one that has, writes
+    for name in names {
+        let stale = put(name, json!({"version": 0, "items": [{"id": "other"}]}));
+        assert_eq!(stale, (412, json!({"version": 1, "items": items(name)})), "{name}");
+        assert_eq!(get_doc(&base, name, &token).1["version"], 1, "{name}");
+        let mut next = items(name);
+        next.as_array_mut().unwrap().push(json!({"id": format!("{name}-3")}));
+        assert_eq!(put(name, json!({"version": 1, "items": next})), (200, json!({"version": 2})), "{name}");
+    }
+
+    // a name this server doesn't keep: no document (case, suffix and path tricks included)
+    for name in ["track", "trip", "trip-note", "tracks.json", "Tracks", "trips%2f..%2fprefs"] {
+        assert_eq!(get_doc(&base, name, &token).0, 404, "GET {name}");
+        assert_eq!(put(name, json!({"version": 0, "items": []})).0, 404, "PUT {name}");
+    }
+    assert_eq!(get_doc(&base, "tracks", "").0, 401, "only for signed-in devices");
+
+    // another user has their own (a track is where someone was)
+    accounts::set_user(&root.join("data"), "bob", "battery staple", false).unwrap();
+    let body = json!({"user": "bob", "password": "battery staple", "device": "t"}).to_string();
+    let bob = json_of(&call("POST", &format!("{base}/api/login"), "", Some(body.as_bytes()), &[]).1)["token"].as_str().unwrap().to_string();
+    for name in names {
+        assert_eq!(get_doc(&base, name, &bob), (200, json!({"version": 0, "items": []})), "{name}");
+    }
+    assert_eq!(pulled_docs(&base, &bob), json!({}));
+
+    // they survive a restart
+    drop(server);
+    let mut cfg = Config::new(root.join("data"), "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    let server = Server::start(cfg).unwrap();
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    assert_eq!(pulled_docs(&base, &token), json!({"tracks": 2, "trips": 2, "trip-notes": 2}));
+    for name in names {
+        let got = get_doc(&base, name, &token).1;
+        assert_eq!((got["version"].clone(), got["items"].as_array().map(Vec::len)), (json!(2), Some(3)), "{name}");
+    }
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// What bounds a shared document: its bytes (`docs::MAX`, the whole request body counts), not its number of items. A
+/// document of exactly that size is kept and read back; one byte more is refused with `413` and the document stays.
+/// (A device takes at most 2000 items of a document, `cloud_sync::docs::ITEMS_MAX`; the server keeps more.)
+#[test]
+fn a_shared_document_is_bounded_by_its_bytes_and_not_by_its_items() {
+    let root = temp("doc-limits");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let url = format!("{base}/api/docs/tracks");
+    let put = |body: &[u8]| put_with(&url, &token, body, &[]);
+
+    // more items than a device takes: all are kept
+    let many: Vec<Value> = (0..2500).map(|i| json!({"id": format!("t{i}")})).collect();
+    assert_eq!(put(json!({"version": 0, "items": many}).to_string().as_bytes()), (200, json!({"version": 1})));
+    let (s, b, _) = call("GET", &url, &token, None, &[]);
+    assert_eq!((s, json_of(&b)["items"].as_array().map(Vec::len)), (200, Some(2500)));
+
+    // exactly the limit: kept, and read back whole
+    let max = lightcraft_server::docs::MAX as usize;
+    assert_eq!(max, 24 << 20, "docs/sync.md and the clients' budgets say 24 MiB");
+    let (head, tail) = (r#"{"version":1,"items":[{"id":"big","pad":""#, r#""}]}"#);
+    let pad = max - head.len() - tail.len();
+    let mut body = Vec::with_capacity(max);
+    body.extend_from_slice(head.as_bytes());
+    body.resize(head.len() + pad, b'a');
+    body.extend_from_slice(tail.as_bytes());
+    assert_eq!(body.len(), max);
+    assert_eq!(put(&body), (200, json!({"version": 2})));
+    let mut r = agent().get(&url).header("Authorization", &format!("Bearer {token}")).call().unwrap();
+    let got = r.body_mut().with_config().limit(2 * max as u64).read_to_vec().unwrap();
+    let got = json_of(&got);
+    assert_eq!((got["version"].clone(), got["items"][0]["pad"].as_str().map(str::len)), (json!(2), Some(pad)));
+
+    // one byte more is refused before any of it is read (so nothing of it needs sending), and the document is as it was
+    let over = raw_request(
+        server.addr(),
+        &format!(
+            "PUT /api/docs/tracks HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            max + 1
+        ),
+    );
+    assert!(over.starts_with("HTTP/1.1 413") && over.contains("a document is at most"), "{over}");
+    let mut r = agent().get(&url).header("Authorization", &format!("Bearer {token}")).call().unwrap();
+    let again = json_of(&r.body_mut().with_config().limit(2 * max as u64).read_to_vec().unwrap());
+    assert_eq!(again["version"], 2);
+    // chunked bodies, which could get past a length check, aren't taken at all
+    let chunked = raw_request(
+        server.addr(),
+        &format!(
+            "PUT /api/docs/tracks HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        ),
+    );
+    assert!(chunked.starts_with("HTTP/1.1 411"), "{chunked}");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The presets an admin shares (imported, then edited on the admin page) reach a user's device as presets it can't
 /// change, with the built-ins the admin hid gone; devices can read them but never write them.
 #[test]

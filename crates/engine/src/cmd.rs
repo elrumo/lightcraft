@@ -50,6 +50,7 @@ pub mod reload;
 mod slideshow;
 mod stand_in;
 mod sync;
+mod track;
 mod video;
 mod vision;
 mod xmp;
@@ -178,6 +179,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(merge::specs());
         v.extend(query::specs());
         v.extend(map::specs());
+        v.extend(track::specs());
         v.extend(video::specs());
         v.extend(vision::specs());
         v.extend(xmp::specs());
