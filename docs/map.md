@@ -140,11 +140,15 @@ and `crates/engine/src/cmd/trip.rs` (the commands).
 
 ## Recorded and estimated paths
 
-`map.path` gives one path for a selection (the visible photos, `ids`, an `album`, or a `trip` once trips exist;
+`map.path` gives one path for a selection (the visible photos, `ids`, an `album`, or a `trip`;
 `fromMs`/`toMs` narrow it to a time): **recorded** where a stored track covers the time, **estimated** (the legs of
 [`map.route`](#estimated-routes)) everywhere else. A screen draws the two differently (solid and dashed); the answer
 says which each piece is (`source`).
 
+- **A trip** (`trip`) brings its photos (`trip.photos`), its range as the window, the sessions it lists (or, with
+  `tracks: "range"`, those that overlap its span; a listed session this device doesn't have is skipped) and its
+  `overrides`: the estimated leg that leaves within a minute of an override's `atMs` takes its mode (a mode this
+  version doesn't know is ignored). What the call gives (`tracks`, `fromMs`, `toMs`) wins over the trip.
 - **Which tracks.** `tracks: "auto"` (the default) takes the recorded sessions that overlap the window, or, where it
   is open, the time of the photos; a list of sessions takes those whole. Each is read once, one at a time.
 - **Recorded pieces.** A track is cut into pieces wherever it pauses longer than `gapHours`, so no line crosses the

@@ -247,7 +247,7 @@ fn map_path_refuses_what_it_cannot_draw() {
     let (mut s, dir) = library("refuse");
     let ids = photos(&mut s, 1);
     let e = |s: &mut Session, p: Value| s.execute("map.path", &p).unwrap_err().to_string();
-    assert!(e(&mut s, json!({"trip": "t1"})).contains("no such trip: trips are not available"));
+    assert!(e(&mut s, json!({"trip": "t1"})).contains("no such trip: t1"));
     assert!(e(&mut s, json!({"album": 999_999})).contains("no such album: 999999"));
     assert!(e(&mut s, json!({"tracks": ["s0000000000000000"]})).contains("no such track: s0000000000000000"));
     for bad in [
@@ -269,5 +269,137 @@ fn map_path_refuses_what_it_cannot_draw() {
     let r = s.execute("map.path", &json!({"ids": ids, "tracks": "auto"})).unwrap();
     assert_eq!((r["pieces"].as_array().unwrap().len(), r["range"].clone(), r["estimated"].clone()), (0, Value::Null, json!(false)));
     assert_eq!(r["skipped"]["noGps"], 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Four photos with a walk recorded between the second and the third (as `map_path_is_recorded_where_a_track_covers_the_time`),
+/// the first three in an album. Their ids, the album and the session.
+fn walked(s: &mut Session) -> (Vec<u64>, u64, String) {
+    let ids = photos(s, 4);
+    let r = s.execute("track.create", &json!({"points": walk(T0 + 3_600_000, 120, 40.0, -3.0)})).unwrap();
+    let session = r["session"].as_str().unwrap().to_string();
+    for (id, t, at) in [
+        (ids[0], "2026-05-01T10:00:00+00:00", [40.0, -3.1]),
+        (ids[1], "2026-05-01T11:30:00+00:00", [40.0, -2.97]),
+        (ids[2], "2026-05-01T12:30:00+00:00", [40.0, -2.91]),
+        (ids[3], "2026-05-01T14:00:00+00:00", [40.05, -2.8]),
+    ] {
+        set_time(s, id, t);
+        s.execute("photo.setMeta", &json!({"ids": [id], "gps": at})).unwrap();
+    }
+    let album = s.execute("album.create", &json!({"name": "Walk"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.addPhotos", &json!({"id": album, "ids": &ids[..3]})).unwrap();
+    (ids, album, session)
+}
+
+fn trip(s: &mut Session, p: Value) -> String {
+    s.execute("trip.create", &p).unwrap()["trip"]["id"].as_str().unwrap().to_string()
+}
+
+fn photo_ids(r: &Value) -> Vec<u64> {
+    r["photos"].as_array().unwrap().iter().map(|p| p["id"].as_u64().unwrap()).collect()
+}
+
+fn modes(r: &Value) -> Vec<String> {
+    r["pieces"].as_array().unwrap().iter().filter(|p| p["source"] == "estimated").map(|p| p["mode"].as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn map_path_of_a_trip_is_the_path_of_its_photos_and_tracks() {
+    let (mut s, dir) = library("trip");
+    let (ids, album, session) = walked(&mut s);
+    let t = trip(&mut s, json!({"name": "Walk", "albums": [album]}));
+    let by_trip = s.execute("map.path", &json!({"trip": t})).unwrap();
+    // the album's three photos, the recorded walk between them; the fourth photo isn't in the trip
+    assert_eq!(photo_ids(&by_trip), vec![ids[0], ids[1], ids[2]]);
+    let by_ids = s.execute("map.path", &json!({"ids": &ids[..3]})).unwrap();
+    assert_eq!(by_trip["pieces"], by_ids["pieces"]);
+    assert_eq!(by_trip["pieces"].as_array().unwrap().iter().filter(|p| p["track"] == json!(session)).count(), 1, "{by_trip}");
+    // a trip that lists a track keeps to it: another session has no pieces here
+    let other = s.execute("track.create", &json!({"points": walk(T0 + 30 * 86_400_000, 10, 50.0, 0.0)})).unwrap()["session"].clone();
+    let listed = trip(&mut s, json!({"name": "Other track", "albums": [album], "tracks": [other]}));
+    let r = s.execute("map.path", &json!({"trip": listed})).unwrap();
+    let recorded: Vec<&Value> = r["pieces"].as_array().unwrap().iter().filter(|p| p["source"] == "recorded").map(|p| &p["track"]).collect();
+    assert_eq!(recorded, vec![&other], "only the track it lists: {r}");
+    // ... and `tracks: "range"` takes those that overlap its range (here, its photos' time)
+    let r = s.execute("map.path", &json!({"trip": t})).unwrap();
+    assert!(r["pieces"].as_array().unwrap().iter().all(|p| p["track"] != other), "{r}");
+    // photos in range with no album: its range is the window, the located photos in it are its photos
+    let window = trip(&mut s, json!({"name": "Window", "photosInRange": true, "range": {"fromMs": T0 + 4_500_000, "toMs": T0 + 9_900_000}}));
+    let w = s.execute("map.path", &json!({"trip": window})).unwrap();
+    assert_eq!(photo_ids(&w), vec![ids[1], ids[2]]);
+    assert_eq!(w["pieces"].as_array().unwrap().len(), 1, "{w}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_trips_overrides_set_the_mode_of_the_leg_leaving_then() {
+    let (mut s, dir) = library("override");
+    let (_, album, _) = walked(&mut s);
+    let plain = trip(&mut s, json!({"name": "Walk", "albums": [album]}));
+    let r = s.execute("map.path", &json!({"trip": plain})).unwrap();
+    let was = modes(&r);
+    assert_eq!(was.len(), 1, "{r}");
+    let leaves = (r["pieces"][0]["start"].as_f64().unwrap() * 1000.0) as i64;
+    let mode = if was[0] == "flight" { "bike" } else { "flight" };
+    let set = trip(&mut s, json!({"name": "Set", "albums": [album]}));
+    s.execute("trip.update", &json!({"id": set, "overrides": [{"atMs": leaves + 30_000, "mode": mode}]})).unwrap();
+    assert_eq!(modes(&s.execute("map.path", &json!({"trip": set})).unwrap()), vec![mode.to_string()]);
+    // another time, and a mode we don't know (a newer version's), change nothing
+    s.set_doc_items("trips", &[json!({"id": "tFar", "name": "Far", "createdMs": 1, "albums": [format!("a:{album}")],
+        "overrides": [{"atMs": leaves + 3_600_000, "mode": "flight"}, {"atMs": leaves, "mode": "teleport"}]})])
+        .unwrap();
+    assert_eq!(modes(&s.execute("map.path", &json!({"trip": "tFar"})).unwrap()), was);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn what_the_call_says_wins_over_what_the_trip_says() {
+    let (mut s, dir) = library("wins");
+    let (ids, album, session) = walked(&mut s);
+    let other = s.execute("track.create", &json!({"points": walk(T0 + 30 * 86_400_000, 10, 50.0, 0.0)})).unwrap()["session"].clone();
+    let t = trip(&mut s, json!({"name": "Walk", "albums": [album], "tracks": [other],
+        "range": {"fromMs": T0, "toMs": T0 + 20_000_000}}));
+    let tracks = |r: &Value| -> Vec<Value> { r["pieces"].as_array().unwrap().iter().filter(|p| p["source"] == "recorded").map(|p| p["track"].clone()).collect() };
+    assert!(tracks(&s.execute("map.path", &json!({"trip": t})).unwrap()).is_empty(), "the trip's own track list");
+    assert_eq!(tracks(&s.execute("map.path", &json!({"trip": t, "tracks": [session]})).unwrap()), vec![json!(session)]);
+    assert_eq!(tracks(&s.execute("map.path", &json!({"trip": t, "tracks": "auto"})).unwrap()), vec![json!(session)]);
+    // the trip's range, then the call's
+    assert_eq!(photo_ids(&s.execute("map.path", &json!({"trip": t})).unwrap()), vec![ids[0], ids[1], ids[2]]);
+    let narrow = s.execute("map.path", &json!({"trip": t, "fromMs": T0 + 4_500_000, "toMs": T0 + 9_900_000})).unwrap();
+    assert_eq!(photo_ids(&narrow), vec![ids[1], ids[2]]);
+    let early = s.execute("map.path", &json!({"trip": t, "toMs": T0 + 4_500_000})).unwrap();
+    assert_eq!(photo_ids(&early), vec![ids[0]], "the trip's start stays when the call gives only the end");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn map_path_names_a_missing_trip_and_survives_hostile_trips() {
+    let (mut s, dir) = library("hostile");
+    let (_, album, _) = walked(&mut s);
+    let e = s.execute("map.path", &json!({"trip": "tNone"})).unwrap_err().to_string();
+    assert!(e.starts_with("no such trip: ") && e.contains("tNone"), "{e}");
+    assert!(s.execute("map.path", &json!({"trip": 5})).is_err());
+    assert!(s.execute("map.path", &json!({"trip": "t1", "album": album})).is_err());
+    let items = [
+        // tracks that aren't here, a range backwards, modes and times that aren't, albums that aren't
+        json!({"id": "tGood", "name": "g", "createdMs": 1, "albums": ["a:77777", "u:nowhere", format!("a:{album}")], "photosInRange": true,
+               "range": {"fromMs": T0, "toMs": T0 + 20_000_000}, "tracks": ["s-not-here", "s-not-here"],
+               "overrides": [{"atMs": i64::MIN, "mode": "walk"}, {"atMs": i64::MAX, "mode": "bike"}, {"atMs": 0, "mode": "teleport"}]}),
+        json!({"id": "tBack", "name": "b", "createdMs": 1, "photosInRange": true, "range": {"fromMs": T0 + 20_000_000, "toMs": T0}}),
+        json!({"id": "tExtreme", "name": "e", "createdMs": 1, "photosInRange": true, "range": {"fromMs": i64::MIN, "toMs": i64::MAX}}),
+        json!({"id": "tNewer", "fmt": 3, "whatever": [1]}),
+        json!({"id": "tNum", "name": 5, "createdMs": 1}),
+    ];
+    s.set_doc_items("trips", &items).unwrap();
+    for t in ["tGood", "tBack", "tExtreme", "tNewer", "tNum"] {
+        let r = s.execute("map.path", &json!({"trip": t}));
+        assert!(r.is_ok() || r.unwrap_err().to_string().starts_with("no such trip"), "{t}");
+        for p in [json!({"trip": t, "fromMs": i64::MIN, "toMs": i64::MAX}), json!({"trip": t, "tracks": ["s-not-here"]}), json!({"trip": t, "privacyTrim": true})] {
+            let _ = s.execute("map.path", &p);
+        }
+    }
+    let r = s.execute("map.path", &json!({"trip": "tGood"}));
+    assert!(r.is_ok(), "{r:?}: the unreachable pieces of a document leave the rest");
     let _ = std::fs::remove_dir_all(&dir);
 }

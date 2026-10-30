@@ -192,10 +192,23 @@ impl Selection {
     }
 }
 
-/// A trip's photos, tracks, range and overrides.
-// (The trips store comes with its own change; until then there is no trip to draw.)
-fn resolve_trip(_s: &Session, _id: &str) -> Result<Selection> {
-    Err(EngineError::Other("no such trip: trips are not available".into()))
+/// A trip's photos, tracks, range and overrides. A mode the trip names that isn't one of ours is dropped.
+fn resolve_trip(s: &Session, id: &str) -> Result<Selection> {
+    let mode = |m: &str| match m {
+        "walk" => Some(Mode::Walk),
+        "bike" => Some(Mode::Bike),
+        "road" => Some(Mode::Road),
+        "flight" => Some(Mode::Flight),
+        _ => None,
+    };
+    let range = s.trip_range(id)?;
+    Ok(Selection {
+        photos: s.trip_photos(id)?,
+        tracks: Some(s.trip_tracks(id)?),
+        from_ms: range.map(|r| r.0),
+        to_ms: range.map(|r| r.1),
+        overrides: s.trip_overrides(id)?.into_iter().filter_map(|(at, m)| Some((at as f64 / 1000.0, mode(&m)?))).collect(),
+    })
 }
 
 /// A time in milliseconds since 1970, when given.
