@@ -371,9 +371,6 @@ struct PrefsFile {
     slide_titles: crate::slide_title::TitleSettings,
     /// A view holds the photos it shows until it is refreshed (`library.holdView`).
     hold_view: bool,
-    /// The tracking preferences (`tracking.settings`), once set.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tracking: Option<crate::tracks::TrackingSettings>,
     /// Items of the shared `prefs` document a newer build wrote (kept and sent on as they are).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     shared_prefs: Vec<serde_json::Value>,
@@ -700,11 +697,10 @@ impl Session {
         // when the XMP sidecars were last read or written (a cache: unreadable = empty)
         self.sidecar_times =
             files.read(crate::sidecar::SidecarTimes::FILE).ok().flatten().map(|b| crate::sidecar::SidecarTimes::from_json(&b)).unwrap_or_default();
-        // recorded tracks (a shared document of their own; one damaged item sets the file aside, the others are kept)
-        let (tracks, dropped) = crate::tracks::Tracks::load(
-            &settings.read::<Vec<serde_json::Value>>(files.as_mut(), crate::tracks::FILE).unwrap_or_default(),
-            prefs.tracking,
-        );
+        // recorded tracks and their privacy trim (a shared document of their own; one damaged item sets the file aside, the
+        // others are kept)
+        let (tracks, dropped) =
+            crate::tracks::Tracks::load(&settings.read::<Vec<serde_json::Value>>(files.as_mut(), crate::tracks::FILE).unwrap_or_default());
         if dropped > 0
             && let Ok(Some(bytes)) = files.read(crate::tracks::FILE)
         {
@@ -1181,7 +1177,6 @@ impl Session {
             slide_overlays: self.slide_overlays.clone(),
             slide_titles: self.slide_titles.clone(),
             hold_view: self.hold_view,
-            tracking: self.tracks.settings,
             shared_prefs: self.prefs_kept.clone(),
         })
         .unwrap_or_default();

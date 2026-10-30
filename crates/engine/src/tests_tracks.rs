@@ -324,7 +324,7 @@ fn tracking_settings_are_read_set_kept_and_checked() {
     let root = temp_dir("settings");
     let mut s = open(&root);
     assert_eq!(s.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": false, "trimRadiusM": 300.0}));
-    assert!(s.doc_items("prefs").iter().all(|v| v["id"] != "tracking"), "not sent until set");
+    assert!(s.doc_items("tracks").is_empty(), "not sent until set");
     let gen0 = s.library.as_ref().unwrap().prefs_gen();
     assert_eq!(s.execute("tracking.settings", &json!({"trim": true})).unwrap(), json!({"trim": true, "trimRadiusM": 300.0}));
     assert!(s.library.as_ref().unwrap().prefs_gen() > gen0, "the sync looks at this");
@@ -339,33 +339,60 @@ fn tracking_settings_are_read_set_kept_and_checked() {
         let e = s.execute("tracking.settings", &p).unwrap_err().to_string();
         assert!(e.contains(want), "{p}: {e}");
     }
-    assert_eq!(s.execute("tracking.settings", &json!({})).unwrap()["trimRadiusM"], 750.0, "a refused change changes nothing");
-    assert!(s.doc_items("prefs").contains(&json!({"id": "tracking", "trim": true, "trimRadiusM": 750.0})));
-    // from the other devices: theirs over this one's, this one's when theirs isn't one, the defaults when there is none
-    let import = s.doc_items("prefs")[0].clone();
-    s.set_doc_items("prefs", &[import.clone(), json!({"id": "tracking", "trim": false, "trimRadiusM": 120})]).unwrap();
+    assert_eq!(s.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": true, "trimRadiusM": 750.0}), "a refused change changes nothing");
+    // one item of the tracks document, beside the tracks and not one of them
+    s.execute("track.create", &json!({"points": walk(5, T0)})).unwrap();
+    assert!(s.doc_items("tracks").contains(&json!({"id": "settings", "trim": true, "trimRadiusM": 750.0})));
+    assert!(s.doc_items("prefs").iter().all(|v| v["id"] != "settings" && v["id"] != "tracking"), "nothing in `prefs`");
+    let list = s.execute("track.list", &json!({})).unwrap();
+    assert_eq!((list["sessions"].as_array().unwrap().len(), list["docItems"].clone()), (1, json!(2)), "listed: the track; counted: both");
+    let track = s.doc_items("tracks").into_iter().find(|v| v["id"] != "settings").unwrap();
+    // from the other devices: theirs, fields this build doesn't know kept; this one's when theirs isn't one; none: the defaults
+    s.set_doc_items("tracks", &[track.clone(), json!({"id": "settings", "trim": false, "trimRadiusM": 120, "later": [1]})]).unwrap();
     assert_eq!(s.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": false, "trimRadiusM": 120.0}));
-    s.set_doc_items("prefs", &[import.clone(), json!({"id": "tracking", "trim": true, "trimRadiusM": f64::MAX})]).unwrap();
-    assert_eq!(s.execute("tracking.settings", &json!({})).unwrap()["trimRadiusM"], 120.0);
-    // kept across a reopen, with what a newer build put in `prefs`
-    s.set_doc_items(
-        "prefs",
-        &[
-            import.clone(),
-            json!({"id": "tracking", "trim": true, "trimRadiusM": 200}),
-            json!({"id": "future", "x": [1]}),
-            json!({"no": "id"}),
-            json!({"id": "import", "copy": 1}),
-        ],
-    )
-    .unwrap();
+    s.execute("tracking.settings", &json!({"trim": true})).unwrap();
+    let item = s.doc_items("tracks").into_iter().find(|v| v["id"] == "settings").unwrap();
+    assert_eq!(item, json!({"id": "settings", "trim": true, "trimRadiusM": 120.0, "later": [1]}), "changed in place");
+    for bad in [
+        json!({"id": "settings", "trim": "on", "trimRadiusM": 300}),
+        json!({"id": "settings", "trim": false, "trimRadiusM": f64::MAX}),
+        json!({"id": "settings"}),
+    ] {
+        s.set_doc_items("tracks", &[track.clone(), bad.clone()]).unwrap();
+        assert_eq!(s.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": true, "trimRadiusM": 120.0}), "{bad}");
+    }
+    // kept across a reopen
     s.close_library().unwrap();
     drop(s);
     let mut s = open(&root);
-    assert_eq!(s.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": true, "trimRadiusM": 200.0}));
-    let items = s.doc_items("prefs");
-    assert_eq!(items.iter().map(|v| v["id"].as_str().unwrap_or("?")).collect::<Vec<_>>(), vec!["import", "tracking", "future"], "{items:?}");
-    s.set_doc_items("prefs", &[import]).unwrap();
+    assert_eq!(s.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": true, "trimRadiusM": 120.0}));
+    assert!(s.take_library_warnings().is_empty());
+    s.set_doc_items("tracks", std::slice::from_ref(&track)).unwrap();
     assert_eq!(s.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": false, "trimRadiusM": 300.0}), "none: the defaults");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// What a newer build put in the shared `prefs` document stays, and goes on to the others.
+#[test]
+fn prefs_items_this_build_does_not_know_are_kept() {
+    let root = temp_dir("prefs-kept");
+    let mut s = open(&root);
+    let import = s.doc_items("prefs")[0].clone();
+    assert_eq!(import["id"], "import");
+    let items = [
+        import.clone(),
+        json!({"id": "future", "x": [1]}),
+        json!({"no": "id"}),
+        json!({"id": "import", "copy": 1}),
+        json!({"id": "big", "x": "y".repeat(100_000)}),
+    ];
+    s.set_doc_items("prefs", &items).unwrap();
+    s.close_library().unwrap();
+    drop(s);
+    let mut s = open(&root);
+    let ids: Vec<String> = s.doc_items("prefs").iter().map(|v| v["id"].as_str().unwrap_or("?").to_string()).collect();
+    assert_eq!(ids, ["import", "future"]);
+    s.set_doc_items("prefs", &[import]).unwrap();
+    assert_eq!(s.doc_items("prefs").len(), 1, "gone when the others drop it");
     let _ = std::fs::remove_dir_all(&root);
 }

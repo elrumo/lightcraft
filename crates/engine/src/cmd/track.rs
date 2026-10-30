@@ -292,11 +292,17 @@ fn tracking_settings(s: &mut Session, p: &Value) -> Result<Value> {
         t.trim_radius_m = v.as_f64().filter(|r| store::TRIM_RADIUS_M.contains(r)).ok_or_else(|| bad(C, "`trimRadiusM` is 50..5000 metres"))?;
     }
     if (trim.is_some() || radius.is_some()) && s.tracks.settings != Some(t) {
-        let before = s.tracks.settings.replace(t);
-        if let Err(e) = s.save_prefs() {
-            s.tracks.settings = before;
-            return Err(e);
-        }
+        // (the settings item keeps the fields a newer build gave it)
+        s.change_tracks(|items| {
+            let at = items.iter().position(|v| v.get("id").and_then(Value::as_str) == Some(store::SETTINGS_ITEM));
+            match at.and_then(|i| items.get_mut(i)).and_then(Value::as_object_mut) {
+                Some(o) => {
+                    o.insert("trim".into(), json!(t.trim));
+                    o.insert("trimRadiusM".into(), json!(t.trim_radius_m));
+                }
+                None => items.push(t.item()),
+            }
+        })?;
     }
     Ok(t.json())
 }
@@ -304,7 +310,7 @@ fn tracking_settings(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "track.create", "Add Recorded Track", [], None,
-            "{points?: [[tMs, lat, lon, ele?, acc?, seg?: 1 begins a new stretch]] | data?: base64 of a packed track, name?, source?: phone|import|watch|other (phone), device?, tz?: minutes east of UTC at the start} → {session, created: [chunk], existing, dropped: {invalid, outOfOrder, duplicate}, docBytes, docItems}. A recording as one session of the shared `tracks` document, cut into chunks of at most 20000 points and 24 hours (a chunk is its item without `data`, plus `bytes`, its size in the document). Points that aren't real, go back in time or repeat a moment are left out and counted; the same points again are the same session (`existing`, nothing added). Refused with `limit: …` past 16 MiB or 1500 chunks. Times are milliseconds since 1970 (UTC). Not an undo step",
+            "{points?: [[tMs, lat, lon, ele?, acc?, seg?: 1 begins a new stretch]] | data?: base64 of a packed track, name?, source?: phone|import|watch|other (phone), device?, tz?: minutes east of UTC at the start} → {session, created: [chunk], existing, dropped: {invalid, outOfOrder, duplicate}, docBytes, docItems}. A recording as one session of the shared `tracks` document, cut into chunks of at most 20000 points and 24 hours (a chunk is its item without `data`, plus `bytes`, its size in the document). Points that aren't real, go back in time or repeat a moment are left out and counted; the same points again are the same session (`existing`, nothing added). Refused with `limit: …` past 16 MiB or 1500 items (the chunks and the settings item). Times are milliseconds since 1970 (UTC). Not an undo step",
             always, create),
         cmd!(query "track.import", "Import GPX Track", [], None,
             "{gpx?: GPX text | path?: a .gpx file, name? (the file's name), tz?} → as track.create, plus {tracks: <trk> in the file, untimed: points without a time (left out)}. Every track and segment of the file is one session; a new segment begins a new stretch (`seg: 1`). Importing the same file again adds nothing",
@@ -326,7 +332,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Tracking Settings",
             [],
             None,
-            "{trim?: bool, trimRadiusM?: 50..5000 metres} → {trim, trimRadiusM}. The privacy trim of exported tracks (off and 300 m until set): what lies within the radius of where a track began and where it ended is left out of an export, never out of what is stored. No params: read. Shared by the person's devices (the `tracking` item of the `prefs` document)",
+            "{trim?: bool, trimRadiusM?: 50..5000 metres} → {trim, trimRadiusM}. The privacy trim of exported tracks (off and 300 m until set): what lies within the radius of where a track began and where it ended is left out of an export, never out of what is stored. No params: read. Shared by the person's devices (the item `settings` of the `tracks` document)",
             always,
             tracking_settings
         ),

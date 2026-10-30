@@ -444,7 +444,7 @@ pub fn chunks(points: &[Point], max_points: usize, max_span_ms: i64) -> Vec<Vec<
 /// break between stretches of recording are kept, the rest are picked evenly through the track. A kept point begins a
 /// stretch when one began since the point kept before it, so a break is never drawn over. The second value says
 /// whether any point was left out.
-// ponytail: evenly by index, not by shape (Douglas-Peucker) — a long stop keeps as many points as a long walk
+// ponytail: evenly by index, not by shape (Douglas-Peucker): a long stop keeps as many points as a long walk
 pub fn simplify(points: &[Point], max: usize) -> (Vec<Point>, bool) {
     let (n, max) = (points.len(), max.max(2));
     if n <= max {
@@ -712,6 +712,10 @@ mod tests {
         assert_eq!(few.iter().filter(|p| p.new_segment).map(|p| p.time_ms).collect::<Vec<_>>(), vec![400_000, 401_000]);
         assert!(few.windows(2).all(|w| w[0].time_ms < w[1].time_ms));
         assert_eq!(simplify(&points[..10], 50), (points[..10].to_vec(), false), "small enough: as it is");
+        // little room: the point before a break is kept for the break's sake, not by chance
+        let mut short: Vec<Point> = (0..100).map(|i| pt(i * 1000, 0.0, 0.0)).collect();
+        short[50].new_segment = true;
+        assert_eq!(simplify(&short, 5).0.iter().map(|p| p.time_ms).collect::<Vec<_>>(), vec![0, 49_000, 50_000, 99_000]);
         assert_eq!(simplify(&points, 0).0.len(), 2, "at least the two ends");
         // more breaks than room: a break left out still begins the next kept point's stretch
         let broken: Vec<Point> = (0..100).map(|i| Point { new_segment: i % 2 == 1, ..pt(i * 1000, 0.0, 0.0) }).collect();

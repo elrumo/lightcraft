@@ -146,33 +146,39 @@ fn the_privacy_trim_and_prefs_items_of_a_newer_build_follow_the_user() {
     let mut f = Fake::new();
     let (mut a, mut b, root) = two_devices("tracking", &mut f);
     sync(&mut a, &mut f);
-    let quiet = docs_puts(&f, "prefs");
-    // a device that never chose sends no tracking item
-    assert!(a.doc_items("prefs").iter().all(|v| v["id"] != "tracking"));
+    let quiet = docs_puts(&f, "tracks");
+    // a device that never chose sends nothing
+    assert!(a.doc_items("tracks").is_empty());
     a.execute("tracking.settings", &json!({"trim": true, "trimRadiusM": 500})).unwrap();
     sync(&mut a, &mut f);
-    assert!(docs_puts(&f, "prefs") > quiet, "sent once set");
+    assert!(docs_puts(&f, "tracks") > quiet, "sent once set");
+    assert!(f.docs["tracks"].items.as_array().unwrap().iter().any(|v| v["id"] == "settings"), "in the tracks document");
     sync(&mut b, &mut f);
     assert_eq!(b.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": true, "trimRadiusM": 500.0}));
+    // changed on b, with a track added on a meanwhile: both reach both
+    b.execute("tracking.settings", &json!({"trimRadiusM": 1000})).unwrap();
+    let t = record(&mut a, T0);
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    for s in [&mut a, &mut b] {
+        assert_eq!(s.execute("tracking.settings", &json!({})).unwrap()["trimRadiusM"], 1000.0);
+        assert_eq!(tracks(s), vec![(t.clone(), None)]);
+    }
     // an item a newer build added to `prefs` is kept and sent on by this one
     let mut doc = f.docs["prefs"].clone();
     doc.items.as_array_mut().unwrap().push(json!({"id": "future", "on": true}));
     doc.version += 1;
     f.docs.insert("prefs".into(), doc);
     sync(&mut b, &mut f);
-    b.execute("tracking.settings", &json!({"trimRadiusM": 1000})).unwrap();
+    assert!(b.doc_items("prefs").iter().any(|v| v["id"] == "future"));
+    b.execute("library.preferences", &json!({"import": {"copyright": "Ann"}})).unwrap();
     sync(&mut b, &mut f);
     let items = f.docs["prefs"].items.as_array().unwrap().clone();
     assert!(items.iter().any(|v| v["id"] == "future"), "{items:?}");
-    assert!(items.iter().any(|v| v["id"] == "tracking" && v["trimRadiusM"] == 1000.0), "{items:?}");
+    assert!(items.iter().any(|v| v["id"] == "import" && v["copyright"] == "Ann"), "{items:?}");
     sync(&mut a, &mut f);
-    assert_eq!(a.execute("tracking.settings", &json!({})).unwrap()["trimRadiusM"], 1000.0);
-    // kept across a reopen too
-    b.close_library().unwrap();
-    let dir = b.library.as_ref().unwrap().dir.clone();
-    drop(b);
-    let b = open(&dir);
-    assert!(b.doc_items("prefs").iter().any(|v| v["id"] == "future"));
+    assert!(a.doc_items("prefs").iter().any(|v| v["id"] == "future"));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -184,7 +190,8 @@ fn signing_out_takes_the_tracks_with_the_account() {
     a.execute("tracking.settings", &json!({"trim": true})).unwrap();
     a.execute("sync.signOut", &json!({"confirm": true})).unwrap();
     a.sync_sign_out_wait_with(10_000, &mut |t| f.handle(t));
-    assert_eq!(f.docs["tracks"].items.as_array().unwrap().len(), 1, "sent before signing out");
+    let sent: Vec<&str> = f.docs["tracks"].items.as_array().unwrap().iter().map(|v| v["id"].as_str().unwrap()).collect();
+    assert_eq!((sent.len(), sent.contains(&"settings")), (2, true), "the track and the settings, sent before signing out: {sent:?}");
     assert!(tracks(&mut a).is_empty(), "then gone from the library");
     assert_eq!(a.execute("tracking.settings", &json!({})).unwrap(), json!({"trim": false, "trimRadiusM": 300.0}));
     let _ = std::fs::remove_dir_all(&root);

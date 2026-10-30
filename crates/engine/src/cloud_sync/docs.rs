@@ -1,7 +1,8 @@
 //! Settings that follow a user to their other devices: export, metadata and filter presets, curve
 //! presets, colour-label and keyword sets, LUT profiles, the order of the develop preset groups, the
 //! presets and groups they hid, the import defaults that don't name a place on one computer, and the recorded tracks with
-//! their privacy trim ([`crate::tracks`], the one document that can be megabytes). Each is a document on the
+//! their privacy trim ([`crate::tracks`], the one document that can be megabytes). Items of `prefs` a newer build wrote
+//! are kept and sent on as they came. Each is a document on the
 //! server (`GET` / `PUT /api/docs/<name>`, [`proto::Doc`]) — a JSON list — kept like the user presets ([`super::merge_presets`]): a device
 //! sends its list when it changes, and merges the server's against the copy both last agreed on,
 //! item by item, so a preset deleted on one device stays deleted and ones added on two devices are
@@ -196,7 +197,6 @@ impl Session {
                     o.insert("id".into(), json!(IMPORT_ITEM));
                 }
                 let mut items = vec![v];
-                items.extend(self.tracking_item());
                 items.extend(self.prefs_kept.iter().cloned());
                 items
             }
@@ -232,7 +232,6 @@ impl Session {
             "lut-profiles" => self.set_lut_profiles(items),
             "prefs" => {
                 self.set_import_defaults(items);
-                self.take_tracking_item(items);
                 self.keep_prefs_items(items);
             }
             "preset-groups" => self.set_preset_group_order(items),
@@ -300,7 +299,6 @@ impl Session {
                 !id.is_empty()
                     && id.chars().count() <= NAME_MAX
                     && id != IMPORT_ITEM
-                    && id != crate::tracks::TRACKING_ITEM
                     && serde_json::to_vec(v).is_ok_and(|b| b.len() <= PREFS_KEPT_ITEM_MAX)
                     && seen.insert(id)
             })
@@ -506,8 +504,7 @@ impl Session {
         if let Ok(d) = serde_json::from_value(fresh) {
             self.import_defaults = d;
         }
-        // (the tracks went with the documents above; the privacy trim and what a newer build put in `prefs` go too)
-        self.tracks.settings = None;
+        // (the tracks and their privacy trim went with the documents above; what a newer build put in `prefs` goes too)
         self.prefs_kept.clear();
         self.keyword_set = None;
         self.recent_keywords.clear();

@@ -25,8 +25,13 @@
 //! would pass [`BYTES_LIMIT`] or [`ITEMS_LIMIT`]: a server keeps 24 MiB and 2000 items, and the margin is for what two
 //! devices add while apart.
 //!
-//! The tracking preferences (`tracking.settings`: trim the start and end of an exported track) are the item
-//! `{id: "tracking", trim, trimRadiusM}` of the `prefs` document, kept in `prefs.json`.
+//! The tracking preferences (`tracking.settings`: trim the start and end of an exported track) are one more item of the
+//! same document, `{id: "settings", trim, trimRadiusM}` (a chunk's id is `<session>-<index>`, so the two never meet),
+//! there once they were set. They live with the tracks rather than in `prefs`: every build before them drops a `prefs`
+//! item it doesn't know when it next sends that document, and a privacy setting must not quietly turn itself off; no
+//! build that doesn't know `tracks` ever sends it. The item counts toward the document's bytes and items like a chunk,
+//! is checked like one (a settings item that isn't one leaves this device's own as it is) and keeps the fields this
+//! build doesn't know.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -64,8 +69,8 @@ pub const SOURCES: [&str; 4] = ["phone", "import", "watch", "other"];
 pub const TZ_MAX: i64 = 18 * 60;
 /// A new session's points at most (the document's size refuses far fewer of most tracks; this bounds the work).
 pub const SESSION_POINTS_MAX: usize = 2_000_000;
-/// The `prefs` item that holds [`TrackingSettings`].
-pub const TRACKING_ITEM: &str = "tracking";
+/// The id of the item that holds [`TrackingSettings`].
+pub const SETTINGS_ITEM: &str = "settings";
 /// The privacy trim's radius, in metres.
 pub const TRIM_RADIUS_M: std::ops::RangeInclusive<f64> = 50.0..=5000.0;
 /// Distances (km) and climbs (m) above these aren't real.
@@ -93,12 +98,12 @@ impl TrackingSettings {
         json!({"trim": self.trim, "trimRadiusM": self.trim_radius_m})
     }
 
-    /// The `prefs` item that carries them.
+    /// The document's item that carries them.
     pub fn item(&self) -> Value {
-        json!({"id": TRACKING_ITEM, "trim": self.trim, "trimRadiusM": self.trim_radius_m})
+        json!({"id": SETTINGS_ITEM, "trim": self.trim, "trimRadiusM": self.trim_radius_m})
     }
 
-    /// The settings `prefs` item `v` holds, when it holds real ones.
+    /// The settings item `v` holds, when it holds real ones.
     pub fn from_item(v: &Value) -> Option<TrackingSettings> {
         let trim = v.get("trim")?.as_bool()?;
         let trim_radius_m = v.get("trimRadiusM")?.as_f64().filter(|r| TRIM_RADIUS_M.contains(r))?;
@@ -113,15 +118,22 @@ pub(crate) struct Tracks {
     items: Vec<Value>,
     /// Its size as JSON.
     bytes: usize,
-    /// The tracking preferences, once set (until then a device sends none: it would undo another's choice).
+    /// The tracking preferences, once set (until then a device sends none: it would undo another's choice): what the
+    /// document's settings item says, worked out again whenever the document changes.
     pub(crate) settings: Option<TrackingSettings>,
+}
+
+/// What the settings item of `items` says, if there is one.
+fn settings_of(items: &[Value]) -> Option<TrackingSettings> {
+    items.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(SETTINGS_ITEM)).and_then(TrackingSettings::from_item)
 }
 
 impl Tracks {
     /// The document read from `tracks.json` (already parsed): what can be kept, and how many items were left out.
-    pub(crate) fn load(items: &[Value], settings: Option<TrackingSettings>) -> (Tracks, usize) {
+    pub(crate) fn load(items: &[Value]) -> (Tracks, usize) {
         let (items, dropped) = take(items, &[]);
         let bytes = serde_json::to_vec(&items).map_or(0, |b| b.len());
+        let settings = settings_of(&items);
         (Tracks { items, bytes, settings }, dropped)
     }
 
@@ -156,6 +168,9 @@ fn number(o: &Map<String, Value>, k: &str, range: std::ops::RangeInclusive<f64>)
 /// item of a newer format, kept as it is; `Err`: why not.
 fn check(v: &Value) -> std::result::Result<bool, &'static str> {
     let o = v.as_object().ok_or("not an object")?;
+    if o.get("id").and_then(Value::as_str) == Some(SETTINGS_ITEM) {
+        return TrackingSettings::from_item(v).map(|_| true).ok_or("settings that aren't real");
+    }
     let session = o.get("session").and_then(Value::as_str).filter(|s| session_ok(s)).ok_or("no session")?;
     let index = o.get("index").and_then(Value::as_u64).filter(|i| *i < ITEMS_TAKEN_MAX as u64).ok_or("no index")?;
     if o.get("id").and_then(Value::as_str) != Some(format!("{session}-{index}").as_str()) {
@@ -233,6 +248,13 @@ pub(crate) fn take(items: &[Value], known: &[Value]) -> (Vec<Value>, usize) {
             Err(why) => {
                 dropped += 1;
                 log::warn!("tracks: item {} left out: {why}", id.chars().take(40).collect::<String>());
+                // (settings that aren't real leave this device's own as they are, rather than back to the defaults)
+                if id == SETTINGS_ITEM
+                    && let Some(mine) = known.get(id)
+                    && seen.insert(id)
+                {
+                    out.push((*mine).clone());
+                }
             }
         }
     }
@@ -458,6 +480,7 @@ impl Session {
         match saved {
             Ok(bytes) => {
                 self.tracks.bytes = bytes;
+                self.tracks.settings = settings_of(&self.tracks.items);
                 Ok(r)
             }
             Err(e) => {
@@ -508,23 +531,6 @@ impl Session {
             return Ok(());
         }
         self.change_tracks(|mine| *mine = items)
-    }
-
-    /// The `prefs` item of the tracking preferences, once they were set.
-    pub(crate) fn tracking_item(&self) -> Option<Value> {
-        self.tracks.settings.map(|t| t.item())
-    }
-
-    /// The tracking preferences the other devices share: what `items` (the `prefs` document) says, none when it has
-    /// none (back to the defaults), this device's own when its item isn't one.
-    pub(crate) fn take_tracking_item(&mut self, items: &[Value]) {
-        match items.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(TRACKING_ITEM)) {
-            None => self.tracks.settings = None,
-            Some(v) => match TrackingSettings::from_item(v) {
-                Some(t) => self.tracks.settings = Some(t),
-                None => log::warn!("prefs: a `{TRACKING_ITEM}` item that isn't one is left out"),
-            },
-        }
     }
 }
 
@@ -678,10 +684,12 @@ mod tests {
             x ^= x << 17;
             (x >> 11) as f64 / (1u64 << 53) as f64
         };
-        let scattered: Vec<Point> = (0..20_000i64).map(|i| pt(i * 1000, rand() * 178.0 - 89.0, rand() * 358.0 - 179.0)).collect();
+        // (jittery fixes within a kilometre: real figures, packed badly)
+        let scattered: Vec<Point> = (0..20_000i64).map(|i| pt(i * 1000, 40.0 + rand() * 0.01, -3.0 + rand() * 0.01)).collect();
         let big = chunk_items(&session_of(&scattered).unwrap(), &scattered, &about()).unwrap().remove(0);
+        assert_eq!(check(&big), Ok(true));
         let size = serde_json::to_vec(&big).unwrap().len();
-        assert!(size > 200_000 && size < ITEM_MAX, "{size}");
+        assert!(size > 100_000 && size < ITEM_MAX, "{size}");
         let copies: Vec<Value> = (0..(BYTES_TAKEN_MAX / size + 5) as u64)
             .map(|i| {
                 let s = format!("s{i:016x}");
@@ -691,8 +699,28 @@ mod tests {
             })
             .collect();
         let (kept, dropped) = take(&copies, &[]);
-        assert!(dropped >= 5, "{dropped}");
+        assert!((5..=6).contains(&dropped) && kept.len() + dropped == copies.len(), "{dropped} of {}", copies.len());
         assert!(serde_json::to_vec(&kept).unwrap().len() <= BYTES_TAKEN_MAX);
+    }
+
+    #[test]
+    fn the_settings_item_is_checked_and_a_bad_one_leaves_this_devices_own() {
+        let mine = json!({"id": SETTINGS_ITEM, "trim": true, "trimRadiusM": 400.0});
+        assert_eq!(check(&mine), Ok(true));
+        assert_eq!(check(&json!({"id": SETTINGS_ITEM, "trim": false, "trimRadiusM": 50, "later": {"x": 1}})), Ok(true), "unknown fields kept");
+        for bad in [
+            json!({"id": SETTINGS_ITEM}),
+            json!({"id": SETTINGS_ITEM, "trim": 1, "trimRadiusM": 300}),
+            json!({"id": SETTINGS_ITEM, "trim": true, "trimRadiusM": 49.9}),
+            json!({"id": SETTINGS_ITEM, "trim": true, "trimRadiusM": "300"}),
+        ] {
+            assert!(check(&bad).is_err(), "{bad}");
+            let (kept, dropped) = take(std::slice::from_ref(&bad), std::slice::from_ref(&mine));
+            assert_eq!((kept, dropped), (vec![mine.clone()], 1), "{bad}");
+            assert!(take(&[bad], &[]).0.is_empty(), "none of this device's: none");
+        }
+        assert_eq!(settings_of(&[item(3), mine]), Some(TrackingSettings { trim: true, trim_radius_m: 400.0 }));
+        assert_eq!(settings_of(&[item(3)]), None);
     }
 
     #[test]
