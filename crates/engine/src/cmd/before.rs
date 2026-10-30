@@ -10,7 +10,7 @@ use lightcraft_catalog::Photo;
 use lightcraft_develop::DevelopSettings;
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, cmd, has_active};
+use super::{CommandSpec, always, bad, cmd, has_active};
 use crate::{Result, Session};
 
 impl Session {
@@ -72,6 +72,25 @@ fn before_to_after(s: &mut Session, swap: bool) -> Result<Value> {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        cmd!(
+            query "beforeAfter.settings",
+            "Before Settings",
+            [],
+            None,
+            "{id?} → the develop settings the before side renders with, in the shape `develop.get` answers: the photo's import state, or what `beforeAfter.setBefore` chose, in the photo's current crop and orientation. A frontend that draws the photo itself reads them to draw its Before. Changes nothing",
+            always,
+            |s, p| {
+                let c = "beforeAfter.settings";
+                let id = super::photo_id(p, c)?.or(s.active()).ok_or_else(|| bad(c, "no photo"))?;
+                let photo = s.catalog.photo(id).ok_or_else(|| bad(c, format!("no such photo {}", id.0)))?;
+                let settings = s.before_settings(photo);
+                let mut v = settings.to_json();
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("process".into(), json!(settings.process));
+                }
+                Ok(v)
+            }
+        ),
         cmd!(
             "beforeAfter.setBefore",
             "Set Before",

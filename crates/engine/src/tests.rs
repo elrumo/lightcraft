@@ -754,9 +754,17 @@ fn before_is_the_import_state_and_can_be_set_copied_and_swapped() {
     let b = before(&s);
     assert_eq!(b.light.exposure, import.light.exposure);
     assert_eq!(b.crop, active_dev(&s).crop);
+    // a frontend that draws the Before itself reads the same settings (a read-only command, in `develop.get`'s shape)
+    let read = s.execute("beforeAfter.settings", &json!({})).unwrap();
+    assert_eq!(read["light"]["exposure"].as_f64(), Some(import.light.exposure));
+    assert_eq!(read["crop"], serde_json::to_value(&b.crop).unwrap());
+    assert!(read["process"].is_string() || read["process"].is_number() || read["process"].is_object(), "{read}");
+    assert_eq!(s.execute("beforeAfter.settings", &json!({"id": id.0})).unwrap(), read);
+    assert!(s.execute("beforeAfter.settings", &json!({"id": 987_654_321u64})).is_err());
     // from the current settings, then a history step
     s.execute("beforeAfter.copyAfterToBefore", &json!({})).unwrap();
     assert_eq!(before(&s).light.exposure, 1.5);
+    assert_eq!(s.execute("beforeAfter.settings", &json!({})).unwrap()["light"]["exposure"].as_f64(), Some(1.5));
     s.execute("develop.set", &json!({"values": {"light.exposure": -1.0}})).unwrap();
     let steps = s.catalog.photo(id).unwrap().history.len();
     let r = s.execute("beforeAfter.setBefore", &json!({"source": "history", "index": steps - 1})).unwrap();
