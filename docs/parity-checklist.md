@@ -46,16 +46,16 @@ cited here still exists. Formerly docs/parity.md.
 | R. Video (VID) | 0 | 5 | 1 | 1 | — | 0/3 (0%) |
 | S. Export (EXP) | 15 | 5 | 0 | 0 | 7/7 (100%) | 6/8 (75%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
-| U. Map & location (MAP) | 0 | 9 | 0 | 0 | — | 0/1 (0%) |
+| U. Map & location (MAP) | 0 | 11 | 0 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 7 | 2 | 2 | 1 | 1/1 (100%) | 4/5 (80%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 1 | 1 | 1 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 23 | 7 | 1 | 1 | 8/8 (100%) | 7/11 (64%) |
 | Y. Menus | 90 | 2 | 3 | 5 | 47/47 (100%) | 25/25 (100%) |
 | Z. Keyboard shortcuts (desktop) | 78 | 4 | 2 | 1 | 49/52 (94%) | 24/26 (92%) |
 | Lightroom Classic extras | 40 | 28 | 19 | 8 | — | 22/26 (85%) |
-| **Total** | 428 | 99 | 41 | 27 | 195/203 (96%) | 145/167 (87%) |
+| **Total** | 428 | 101 | 41 | 27 | 195/203 (96%) | 145/167 (87%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **84.1%** of 568 in-scope rows — P0 98.0% of 203 · P1 92.8% of 167 · P2 62.6% of 190.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **83.9%** of 570 in-scope rows — P0 98.0% of 203 · P1 92.8% of 167 · P2 62.6% of 190.
 <!-- /parity:summary -->
 
 ## Top gaps and shortcut notes
