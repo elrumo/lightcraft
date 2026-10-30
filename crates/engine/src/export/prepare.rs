@@ -74,36 +74,74 @@ struct RenderWork {
     size: (usize, usize),
     /// The picture a host drew in place of `job`'s ([`PreparedExport::with_host_pixels`]).
     host: Option<HostPixels>,
+    /// The finished file a host wrote in place of the whole render and encode ([`PreparedExport::with_host_file`]).
+    host_file: Option<HostFile>,
 }
 
 /// The most pixels of a host's picture (it is read whole).
 const HOST_PIXELS_MAX: usize = 1 << 28;
 
-/// A picture a host drew for a photo, kept in a file of `width × height` RGBA8 pixels (opaque, sRGB, upright, cropped:
-/// what a render of the photo at the export's size is). `app.export`'s `hostPixels` hands them over, one per photo, for a
-/// frontend with a renderer of its own; the export encodes and places them exactly as it does its own render (sharpening,
-/// watermark, metadata, the profile, the name), so only the pixels come from the host.
+/// A picture a host drew for a photo, kept in a file of `width × height` pixels: RGBA8 (`depth` 8) or RGBA16 in native byte
+/// order (`depth` 16), opaque, upright, cropped, encoded in `space` (what a render of the photo at the export's size is). `app.export`'s
+/// `hostPixels` hands them over, one per photo, for a frontend with a renderer of its own; the export encodes and places them
+/// exactly as it does its own render (sharpening, watermark, metadata, the profile, the name), so only the pixels come from the host.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostPixels {
     pub file: String,
     pub width: usize,
     pub height: usize,
+    /// 8 or 16 bits a channel.
+    pub depth: u8,
+    pub space: OutputSpace,
 }
 
 impl HostPixels {
-    /// The picture as a render, or `None` when the file is gone, empty, too big or not `width × height × 4` bytes.
+    /// The picture as a render, or `None` when the file is gone, empty, too big or not `width × height × 4` (8 bit) or `× 8` (16 bit) bytes.
     fn read(&self) -> Option<lightcraft_pipeline::Rendered> {
         let n = self.width.checked_mul(self.height).filter(|n| (1..=HOST_PIXELS_MAX).contains(n))?;
-        if std::fs::metadata(&self.file).ok()?.len() != u64::try_from(n.checked_mul(4)?).ok()? {
+        let per_pixel = match self.depth {
+            8 => 4,
+            16 => 8,
+            _ => return None,
+        };
+        if std::fs::metadata(&self.file).ok()?.len() != u64::try_from(n.checked_mul(per_pixel)?).ok()? {
             return None;
         }
         let bytes = std::fs::read(&self.file).ok()?;
-        let mut data = bytes.as_chunks::<4>().0.to_vec();
         // a photo has no transparency: whatever alpha the host wrote, the file is opaque
-        data.iter_mut().for_each(|p| p[3] = 255);
+        let (data, deep) = if self.depth == 8 {
+            let mut data = bytes.as_chunks::<4>().0.to_vec();
+            data.iter_mut().for_each(|p| p[3] = 255);
+            (data, None)
+        } else {
+            let words: Vec<[u16; 4]> =
+                bytes.as_chunks::<8>().0.iter().map(|p| std::array::from_fn(|i| u16::from_ne_bytes([p[2 * i], p[2 * i + 1]]))).collect();
+            let to8 = |v: u16| ((u32::from(v) * 255 + 32_767) / 65_535) as u8;
+            let data = words.iter().map(|p| [to8(p[0]), to8(p[1]), to8(p[2]), 255]).collect();
+            let samples = words.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
+            (
+                data,
+                Some(lightcraft_pipeline::DeepImage {
+                    width: self.width,
+                    height: self.height,
+                    space: self.space,
+                    samples: lightcraft_pipeline::DeepSamples::U16(samples),
+                }),
+            )
+        };
         let image = Rgba8 { width: self.width, height: self.height, data };
-        Some(lightcraft_pipeline::Rendered { histogram: lightcraft_raster::Histogram::of_srgb8(&image), image, deep: None })
+        Some(lightcraft_pipeline::Rendered { histogram: lightcraft_raster::Histogram::of_srgb8(&image), image, deep })
     }
+}
+
+/// A finished file a host wrote for a photo, in the format of the export (`app.export`'s `hostFiles`): for a format this build has no encoder for
+/// (HEIC), or a frontend that encodes with its system's encoder. The export names and places it as it does its own files; sharpening, watermark,
+/// metadata and the profile are the host's to have done, and nothing is done to the bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostFile {
+    pub file: String,
+    pub width: usize,
+    pub height: usize,
 }
 
 /// An export the sync server renders ([`crate::cloud_sync::render_on_server`]).
@@ -242,7 +280,7 @@ fn prepare_guarded(
             return Err(format!("{label}: {why}"));
         }
         let hdr_job = if gain_map { Some(session.export_job(id, w, h, o.effective_space(), OutputDepth::F32Hdr)?) } else { None };
-        (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone(), size: (w, h), host: None })), weight)
+        (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone(), size: (w, h), host: None, host_file: None })), weight)
     } else {
         let lightcraft_catalog::Source::File { path } = &p.source else {
             return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
@@ -399,19 +437,33 @@ impl PreparedExport {
     }
 
     /// Use `host`'s picture for this photo instead of rendering it, when it can stand in for the render: a rendered
-    /// format written 8-bit in sRGB (not HDR), at the size [`output_size`] gives (to a pixel). `false`, and the export
-    /// renders the photo itself, when it cannot; the same when the file turns out unreadable as the export runs.
+    /// format (not HDR, not float) drawn in the colour space and at the bit depth the file is written in
+    /// ([`ExportOptions::effective_space`], [`ExportOptions::effective_depth`]), at the size [`output_size`] gives (to a
+    /// pixel). `false`, and the export renders the photo itself, when it cannot; the same when the file turns out unreadable
+    /// as the export runs.
     pub fn with_host_pixels(&mut self, host: HostPixels) -> bool {
         let Work::Render(w) = &mut self.work else { return false };
         let o = &w.opts;
         let fits = w.hdr_job.is_none()
             && !o.hdr_output()
-            && o.effective_space() == OutputSpace::Srgb
-            && o.effective_depth() == OutputDepth::U8
+            && host.space == o.effective_space()
+            && matches!((o.effective_depth(), host.depth), (OutputDepth::U8, 8) | (OutputDepth::U16, 16))
             && host.width.abs_diff(w.size.0) <= 1
             && host.height.abs_diff(w.size.1) <= 1;
         if fits {
             w.host = Some(host);
+        }
+        fits
+    }
+
+    /// Write `host`'s file for this photo instead of rendering and encoding it, when it can stand in: a rendered format (not an HDR gain map) at the size
+    /// [`output_size`] gives (to a pixel). `false`, and the export does what it would have, when it cannot (for HEIC that is an error: the export has no
+    /// encoder for it).
+    pub fn with_host_file(&mut self, host: HostFile) -> bool {
+        let Work::Render(w) = &mut self.work else { return false };
+        let fits = w.hdr_job.is_none() && host.width.abs_diff(w.size.0) <= 1 && host.height.abs_diff(w.size.1) <= 1;
+        if fits {
+            w.host_file = Some(host);
         }
         fits
     }
@@ -427,7 +479,21 @@ impl PreparedExport {
         let file_name = self.file_name;
         match self.work {
             Work::Render(w) => {
-                let RenderWork { job, hdr_job, meta, opts, host, .. } = *w;
+                let RenderWork { job, hdr_job, meta, opts, host, host_file, .. } = *w;
+                if let Some(f) = &host_file {
+                    match std::fs::read(&f.file) {
+                        Ok(bytes) if !bytes.is_empty() => {
+                            return Ok(Exported { file_name, bytes, width: f.width, height: f.height, sidecars: Vec::new(), gpu_fallback: None });
+                        }
+                        _ if opts.format != ExportFormat::Heic => {}
+                        _ => return Err(format!("{file_name}: the app's file for this photo is gone")),
+                    }
+                }
+                if opts.format == ExportFormat::Heic {
+                    return Err(format!(
+                        "{file_name}: HEIC files are written by the Mac and iPhone apps, and this photo was not drawn by them (see the app's log)"
+                    ));
+                }
                 if let Some(r) = host.as_ref().and_then(HostPixels::read) {
                     return encode_render_export(file_name, r, None, &opts, meta.as_ref());
                 }

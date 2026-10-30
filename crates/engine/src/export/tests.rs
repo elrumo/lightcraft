@@ -1463,3 +1463,47 @@ fn a_big_raw_on_a_phone_is_refused_with_advice_that_can_help() {
     let e = prepare_export(&mut s, id, &at(1024.0), 1).err().unwrap();
     assert!(e.contains("42 MP") && e.contains("at any size") && !e.contains("smaller") && e.contains("sync server"), "{e}");
 }
+
+// `export.plan` tells a frontend with a renderer of its own what the export will write: the colour space and the bit depth the files are written with, and
+// each photo's size, all worked out by the export
+#[test]
+fn export_plan_names_the_space_depth_and_sizes() {
+    let mut s = crate::Session::with_demo();
+    let ids: Vec<u64> = s.visible_cloned().iter().take(2).map(|id| id.0).collect();
+    let mut plan = |extra: serde_json::Value| {
+        let mut p = json!({"ids": ids});
+        for (k, v) in extra.as_object().unwrap() {
+            p[k] = v.clone();
+        }
+        s.execute("export.plan", &p)
+    };
+    let a = plan(json!({"format": "tiff", "colorSpace": "displayP3", "longEdge": 64})).unwrap();
+    assert_eq!((a["format"].as_str(), a["space"].as_str(), a["depth"].as_u64()), (Some("tiff"), Some("displayP3"), Some(16)));
+    assert!(a["rendered"] == true && a["hdr"] == false && a["onServer"] == false);
+    let sizes = a["sizes"].as_object().unwrap().clone();
+    assert_eq!(sizes.len(), 2);
+    for (id, size) in &sizes {
+        assert_eq!(size["width"].as_u64().unwrap().max(size["height"].as_u64().unwrap()), 64, "photo {id} at a long edge of 64");
+    }
+    // the export's own rules: AVIF is written in sRGB, 8 bit unless 10 is asked for; a JPEG is 8 bit; 32 bit is float; Original draws nothing
+    let b = plan(json!({"format": "avif", "colorSpace": "displayP3"})).unwrap();
+    assert_eq!((b["space"].as_str(), b["depth"].as_u64()), (Some("srgb"), Some(8)));
+    assert_eq!(plan(json!({"format": "avif", "bitDepth": 10})).unwrap()["depth"], 16);
+    assert_eq!(plan(json!({"format": "jpeg", "colorSpace": "adobeRgb"})).unwrap()["space"], "adobeRgb");
+    assert_eq!(plan(json!({"format": "tiff", "bitDepth": 32})).unwrap()["depth"], 32);
+    assert_eq!(plan(json!({"format": "original"})).unwrap()["rendered"], false);
+    // any way of sizing, and a preset, are the export's (the width of a megapixel count is not the client's to work out)
+    let c = plan(json!({"format": "jpeg", "megapixels": 0.01, "dontEnlarge": false})).unwrap();
+    for size in c["sizes"].as_object().unwrap().values() {
+        let px = size["width"].as_f64().unwrap() * size["height"].as_f64().unwrap();
+        assert!((px - 10_000.0).abs() < 400.0, "0.01 MP is about 10000 pixels, not {px}");
+    }
+    let d = plan(json!({"preset": "JPEG (Small)"})).unwrap();
+    assert_eq!((d["format"].as_str(), d["space"].as_str(), d["depth"].as_u64()), (Some("jpeg"), Some("srgb"), Some(8)));
+    assert!(d["sizes"].as_object().unwrap().values().all(|z| z["width"].as_u64().unwrap().max(z["height"].as_u64().unwrap()) <= 2048));
+    // a mistake is an error, as in app.export; a photo that is not there has no size
+    assert!(plan(json!({"nope": 1})).is_err());
+    assert!(plan(json!({"colorSpace": "pink"})).is_err());
+    assert!(s.execute("export.plan", &json!({})).is_err(), "no ids");
+    assert!(s.execute("export.plan", &json!({"ids": [999_999_999u64]})).unwrap()["sizes"].as_object().unwrap().is_empty());
+}

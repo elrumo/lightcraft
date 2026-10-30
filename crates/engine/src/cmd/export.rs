@@ -101,6 +101,45 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(list(s))
 }
 
+/// `export.plan {…app.export params, ids}`: what `app.export` with these params would write for each photo, without rendering anything: the format, the colour
+/// space and bit depth the files are written with and each photo's size. For a frontend with a renderer of its own, which draws the pictures (`hostPixels`)
+/// in the space and depth the files need and at the size the export wants; it never works these out itself, so a preset or any way of sizing is the export's.
+fn plan(s: &mut Session, p: &Value) -> Result<Value> {
+    use crate::export::{ExportFormat, ExportOptions, OutputDepth, Resize, output_size};
+    const ID: &str = "export.plan";
+    let mut p = s.export_params_or(p, ExportFormat::Png).map_err(|e| bad(ID, e))?;
+    if let Some(o) = p.as_object_mut() {
+        o.remove("hostPixels");
+        o.remove("hostFiles");
+    }
+    let mut opts = ExportOptions::from_params_or(&p, ExportFormat::Png).map_err(|e| bad(ID, e.to_string()))?;
+    if !ExportOptions::has_size_param(&p) {
+        opts.resize = Some(Resize::long_edge(3000));
+    }
+    let ids = p.get("ids").and_then(Value::as_array).ok_or_else(|| bad(ID, "missing `ids` (an array of photo ids)"))?;
+    let mut sizes = serde_json::Map::new();
+    for id in ids.iter().filter_map(Value::as_u64) {
+        if let Some(photo) = s.catalog.photo(lightcraft_catalog::PhotoId(id)) {
+            let (width, height) = output_size(photo, &opts);
+            sizes.insert(id.to_string(), json!({"width": width, "height": height}));
+        }
+    }
+    let depth = match opts.effective_depth() {
+        OutputDepth::U8 => 8,
+        OutputDepth::U16 => 16,
+        OutputDepth::F32Linear | OutputDepth::F32Hdr => 32,
+    };
+    Ok(json!({
+        "format": opts.format,
+        "rendered": opts.format.is_rendered(),
+        "hdr": opts.hdr_output(),
+        "onServer": opts.on_server,
+        "space": opts.effective_space(),
+        "depth": depth,
+        "sizes": sizes,
+    }))
+}
+
 /// `export.addToPhotos`: there is a runner (the desktop app and lightcraft-cli on macOS).
 #[cfg(not(target_arch = "wasm32"))]
 fn photos_enabled(s: &Session) -> std::result::Result<(), String> {
@@ -201,6 +240,15 @@ pub fn specs() -> Vec<CommandSpec> {
             save
         ),
         cmd!("export.deletePreset", "Delete Export Preset", [], None, "{name} — removes a user preset → presets", always, delete),
+        cmd!(
+            query "export.plan",
+            "Plan an Export",
+            [],
+            None,
+            "{…app.export params, ids} — what app.export would write, without rendering: → {format, rendered (pixels are drawn: not Original or DNG), hdr (HDR output), onServer, space (srgb|displayP3|adobeRgb|proPhoto|rec2020: the colour space the files are written in), depth (8|16|32: bits a channel), sizes: {photo id: {width, height}}}. For a frontend that draws the pictures itself (app.export hostPixels)",
+            always,
+            plan
+        ),
         cmd!(
             query "export.checkTarget",
             "Check Output Path",

@@ -13,6 +13,9 @@ pub enum ExportFormat {
     Avif,
     /// JPEG XL: lossy (VarDCT) or lossless, 8/16-bit, HDR as Rec. 2020 PQ.
     Jxl,
+    /// HEIC (HEVC in a HEIF file), 8 or 10 bit. No encoder is built in (pure Rust): a frontend with a HEIC encoder of its own writes the files
+    /// and hands them over (`app.export`'s `hostFiles`); the export names and places them as any other.
+    Heic,
     /// The original file, unchanged, with an XMP sidecar holding the edits.
     Original,
     /// A DNG of the raw data (raw photos only), the edits embedded as XMP.
@@ -31,6 +34,7 @@ impl ExportFormat {
             "webp" => Self::Webp,
             "avif" => Self::Avif,
             "jxl" | "jpegxl" | "jpeg-xl" | "jpeg_xl" => Self::Jxl,
+            "heic" | "heif" => Self::Heic,
             "original" => Self::Original,
             "dng" => Self::Dng,
             "rendereddng" | "renderdng" | "render-dng" | "lineardng" => Self::RenderedDng,
@@ -46,6 +50,7 @@ impl ExportFormat {
             Self::Webp => "webp",
             Self::Avif => "avif",
             Self::Jxl => "jxl",
+            Self::Heic => "heic",
             // the original keeps its own extension (see `ExportOptions::file_name_for`)
             Self::Original => "",
             Self::Dng | Self::RenderedDng => "dng",

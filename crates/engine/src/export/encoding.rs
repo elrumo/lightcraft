@@ -116,6 +116,7 @@ pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metada
         ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
         ExportFormat::Jxl => lightcraft_codecs::encode_jxl(&e, &o.jxl(space, false), &meta),
         f @ (ExportFormat::Original | ExportFormat::Dng) => return Err(format!("{f:?} export does not encode pixels")),
+        ExportFormat::Heic => return Err("HEIC files are written by the app itself (the Mac and iPhone apps); this app has no HEIC encoder".into()),
         ExportFormat::RenderedDng => return Err("Render to DNG needs a float render".into()),
     };
     r.map_err(|e| e.to_string())

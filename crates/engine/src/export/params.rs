@@ -544,6 +544,8 @@ impl ExportOptions {
             (ExportFormat::Jxl, _) if self.hdr => OutputDepth::F32Hdr,
             (ExportFormat::Jxl, Some(10 | 16 | 32)) => OutputDepth::U16,
             (ExportFormat::Jxl, _) => OutputDepth::U8,
+            (ExportFormat::Heic, Some(10)) => OutputDepth::U16,
+            (ExportFormat::Heic, _) => OutputDepth::U8,
         }
     }
 
@@ -557,6 +559,7 @@ impl ExportOptions {
             ExportFormat::RenderedDng => &[(16, "16-bit float")],
             ExportFormat::Avif => &[(8, "8-bit"), (10, "10-bit")],
             ExportFormat::Jxl => &[(8, "8-bit"), (16, "16-bit")],
+            ExportFormat::Heic => &[(8, "8-bit"), (10, "10-bit")],
         }
     }
 

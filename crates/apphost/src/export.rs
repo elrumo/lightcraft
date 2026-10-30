@@ -10,12 +10,12 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
 use lightcraft_engine::activity::{Cancel, TaskGuard, TaskHandle};
 use lightcraft_engine::export::{
-    AfterExport, Destination, ExportFormat, ExportOptions, HostPixels, PreparedExport, Resize, prepare_batch, run_batch,
+    AfterExport, Destination, ExportFormat, ExportOptions, HostFile, HostPixels, OutputSpace, PreparedExport, Resize, prepare_batch, run_batch,
 };
 use serde_json::{Value, json};
 
 /// The parameters `app.export` takes (as `engine.commands` lists them).
-pub const PARAMS: &str = "{path?: output file (.jpg/.png/.tif/.webp/.avif/.jxl/.psd/.dng) | dir?, ids?, preset?, format?: jpeg|png|tiff|webp|avif|jxl|psd|dng|original, longEdge?|shortEdge?|width?|height?|megapixels?|percent? (default longEdge 3000; longEdge 0 = full size), fit?: dimensions|widthHeight (with width + height: dimensions fits either orientation, widthHeight limits the width to `width` and the height to `height`), dontEnlarge?, ppi?, quality?: 1..100, jxlLossless?, jxlEffort?: fast|normal, jxlProgressive?, limitKb?, colorSpace?: srgb|displayP3|adobeRgb|proPhoto|rec2020, bitDepth?: 8|10|16|32, hdr? (HDR output for HDR edits: gain map JPEG, PQ AVIF / PNG / JPEG XL, float TIFF), sharpen?: none|screen|matte|glossy, sharpenAmount?: low|standard|high, metadata?: all|allExceptCamera|copyright|none, removeLocation?, naming?, startNumber?, destinationMode?: specificFolder|sameAsOriginal (sameAsOriginal = each photo into its original's folder; `dir` unused), subfolder?, conflict?: unique|overwrite|skip, tiffCompression?: none|lzw|zip, dngCompression?: lossless|deflate|uncompressed, addToPhotos?: bool (macOS: then add the files written to Apple Photos; outcome in `applePhotos`), photosAlbum?: top-level album name (made when missing), onServer?: render on the sync server, hostPixels?: {\"<photo id>\": {file: path of width × height × 4 bytes of opaque sRGB RGBA8, width, height}} (pictures a frontend's own renderer drew for some of the photos; the export encodes and places them as it does its own render, and renders any photo whose picture does not fit it: another size, a wide colour space, 16 bit, HDR, an unreadable file), watermark?: text | {text?, vertical? (upright columns, right to left), size? (text height, 0.005..0.5 of the short edge; default 0.035), opacity? (0..1; 0.7), anchor?: topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight, insetX? (margin from the left/right edge, 0..0.4 of the short edge; 0.025), insetY? (from the top/bottom edge; 0.025), inset? (sets both), rotation?: 0|90|180|270 (degrees clockwise; 0), color? [r,g,b] sRGB, shadow?, image? (graphic drawn instead of the text), imageWidth? (0.01..1 of the photo's width; 0.2)}} — an unknown parameter, an out-of-range watermark size or a value of the wrong kind is an error, not a default";
+pub const PARAMS: &str = "{path?: output file (.jpg/.png/.tif/.webp/.avif/.jxl/.psd/.dng) | dir?, ids?, preset?, format?: jpeg|png|tiff|webp|avif|jxl|heic|psd|dng|original (heic is written by the Mac and iPhone apps only), longEdge?|shortEdge?|width?|height?|megapixels?|percent? (default longEdge 3000; longEdge 0 = full size), fit?: dimensions|widthHeight (with width + height: dimensions fits either orientation, widthHeight limits the width to `width` and the height to `height`), dontEnlarge?, ppi?, quality?: 1..100, jxlLossless?, jxlEffort?: fast|normal, jxlProgressive?, limitKb?, colorSpace?: srgb|displayP3|adobeRgb|proPhoto|rec2020, bitDepth?: 8|10|16|32, hdr? (HDR output for HDR edits: gain map JPEG, PQ AVIF / PNG / JPEG XL, float TIFF), sharpen?: none|screen|matte|glossy, sharpenAmount?: low|standard|high, metadata?: all|allExceptCamera|copyright|none, removeLocation?, naming?, startNumber?, destinationMode?: specificFolder|sameAsOriginal (sameAsOriginal = each photo into its original's folder; `dir` unused), subfolder?, conflict?: unique|overwrite|skip, tiffCompression?: none|lzw|zip, dngCompression?: lossless|deflate|uncompressed, addToPhotos?: bool (macOS: then add the files written to Apple Photos; outcome in `applePhotos`), photosAlbum?: top-level album name (made when missing), onServer?: render on the sync server, hostPixels?: {\"<photo id>\": {file: path of width × height pixels of opaque RGBA8 (4 bytes each) or RGBA16 (8 bytes, native byte order), width, height, depth?: 8|16 (8), space?: any colorSpace value (srgb)} (pictures a frontend's own renderer drew for some of the photos; the export encodes and places them as it does its own render, and renders any photo whose picture does not fit it: another size, another colour space or bit depth than the file is written in, HDR, an unreadable file), hostFiles?: {\"<photo id>\": {file: path of the finished file in the export's format, width, height}} (files a frontend with an encoder of its own wrote for some of the photos, the pictures and everything done to them included: the export names and places them, and does nothing to their bytes. A photo with none is the export's own; for heic that is an error), watermark?: text | {text?, vertical? (upright columns, right to left), size? (text height, 0.005..0.5 of the short edge; default 0.035), opacity? (0..1; 0.7), anchor?: topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight, insetX? (margin from the left/right edge, 0..0.4 of the short edge; 0.025), insetY? (from the top/bottom edge; 0.025), inset? (sets both), rotation?: 0|90|180|270 (degrees clockwise; 0), color? [r,g,b] sRGB, shadow?, image? (graphic drawn instead of the text), imageWidth? (0.01..1 of the photo's width; 0.2)}} — an unknown parameter, an out-of-range watermark size or a value of the wrong kind is an error, not a default";
 
 /// `app.export` as an entry of `engine.commands`.
 pub fn command_info(session: &Session) -> Value {
@@ -41,6 +41,7 @@ pub fn remember(session: &mut Session, p: &Value, dir: Option<&str>) {
         o.remove("path");
         o.remove("sendTo");
         o.remove("hostPixels");
+        o.remove("hostFiles");
         match dir {
             Some(d) => {
                 o.insert("dir".into(), serde_json::json!(d));
@@ -61,6 +62,8 @@ pub fn prepare(session: &mut Session, p: &Value) -> Result<Prepared, String> {
     let mut p = session.export_params_or(p, ExportFormat::Png)?;
     // pictures a frontend drew (see [`HostPixels`]): not an export option
     let host = p.as_object_mut().and_then(|o| o.remove("hostPixels"));
+    // files a frontend wrote (see [`HostFile`]): not an export option either
+    let host_files = p.as_object_mut().and_then(|o| o.remove("hostFiles"));
     let p = &p;
     // PNG for a `path` that names no format; `bitDepth` is checked against the format written
     let mut opts = ExportOptions::from_params_or(p, ExportFormat::Png).map_err(|e| e.to_string())?;
@@ -84,8 +87,12 @@ pub fn prepare(session: &mut Session, p: &Value) -> Result<Prepared, String> {
     // Add to Apple Photos: refused before anything is written when it can't be done
     let after = session.after_export(&opts)?;
     let mut items = prepare_batch(session, &ids, &opts)?;
+    // (a file replaces the picture: it is the finished export)
     if let Some(host) = &host {
         apply_host_pixels(&mut items, host)?;
+    }
+    if let Some(files) = &host_files {
+        apply_host_files(&mut items, files)?;
     }
     Ok(Prepared { items, opts, to: Destination { dir: dir.to_string(), exact: exact.map(str::to_string) }, after })
 }
@@ -100,7 +107,34 @@ fn apply_host_pixels(items: &mut [PreparedExport], host: &Value) -> Result<(), S
         let (Some(file), Some(width), Some(height)) = (entry.get("file").and_then(Value::as_str), size("width"), size("height")) else {
             return Err(format!("`hostPixels` for photo {} needs file, width and height", item.photo.0));
         };
-        item.with_host_pixels(HostPixels { file: file.to_string(), width, height });
+        let depth = match entry.get("depth") {
+            None => 8,
+            Some(d) => {
+                d.as_u64().filter(|d| matches!(d, 8 | 16)).ok_or_else(|| format!("`hostPixels` for photo {}: depth is 8 or 16", item.photo.0))? as u8
+            }
+        };
+        let space = match entry.get("space") {
+            None => OutputSpace::Srgb,
+            Some(v) => {
+                v.as_str().and_then(OutputSpace::parse).ok_or_else(|| format!("`hostPixels` for photo {}: unknown colour space", item.photo.0))?
+            }
+        };
+        item.with_host_pixels(HostPixels { file: file.to_string(), width, height, depth, space });
+    }
+    Ok(())
+}
+
+/// Give each photo of `items` the finished file `files` (`hostFiles`) holds for it, when it can stand in ([`PreparedExport::with_host_file`]).
+/// A malformed entry is an error.
+fn apply_host_files(items: &mut [PreparedExport], files: &Value) -> Result<(), String> {
+    let entries = files.as_object().ok_or("`hostFiles` must be an object of photo id to {file, width, height}")?;
+    for item in items {
+        let Some(entry) = entries.get(&item.photo.0.to_string()) else { continue };
+        let size = |key: &str| entry.get(key).and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok());
+        let (Some(file), Some(width), Some(height)) = (entry.get("file").and_then(Value::as_str), size("width"), size("height")) else {
+            return Err(format!("`hostFiles` for photo {} needs file, width and height", item.photo.0));
+        };
+        item.with_host_file(HostFile { file: file.to_string(), width, height });
     }
     Ok(())
 }
@@ -390,6 +424,122 @@ mod tests {
         let e = export_now(&mut s, &with(json!({"hostPixels": {ids[0].to_string(): {"file": "x"}}}), "bad"), &mut |_, _, _| true);
         assert!(e.unwrap_err().contains("hostPixels"));
         assert!(!dir.join("bad").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A host's 16-bit picture in a wide colour space is written as it is (TIFF is 16-bit by default), and a picture whose depth or space is not
+    // the file's is left to the export
+    #[test]
+    fn a_hosts_16_bit_picture_in_a_wide_space_is_exported_as_drawn() {
+        let dir = std::env::temp_dir().join(format!("lc-apphost-host16-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::with_demo();
+        let id = s.visible_cloned()[0].0;
+        let base = json!({"ids": [id], "longEdge": 64, "format": "tiff", "colorSpace": "displayP3"});
+        let with = |extra: Value, sub: &str| {
+            let mut p = base.clone();
+            p["dir"] = json!(dir.join(sub).to_string_lossy());
+            for (k, v) in extra.as_object().unwrap() {
+                p[k] = v.clone();
+            }
+            p
+        };
+        let plain = export_now(&mut s, &with(json!({}), "plain"), &mut |_, _, _| true).unwrap();
+        let (w, h) = (plain["files"][0]["width"].as_u64().unwrap() as usize, plain["files"][0]["height"].as_u64().unwrap() as usize);
+        let sample = [0x1234u16, 0x8001, 0xF0F0];
+        let file = dir.join("solid16.rgba");
+        let bytes: Vec<u8> = std::iter::repeat_n([sample[0], sample[1], sample[2], 7], w * h).flatten().flat_map(u16::to_ne_bytes).collect();
+        std::fs::write(&file, &bytes).unwrap();
+        let entry = |depth: u64, space: &str| json!({"file": file.to_string_lossy(), "width": w, "height": h, "depth": depth, "space": space});
+        let decoded = |out: &Value| {
+            let bytes = std::fs::read(out["files"][0]["path"].as_str().unwrap()).unwrap();
+            lightcraft_codecs::decode(&bytes, Default::default()).unwrap()
+        };
+        let is_solid = |d: &lightcraft_codecs::Decoded| {
+            // (the sRGB curve, which Display P3 shares, decoded)
+            let decode = |e: f32| if e <= 0.04045 { e / 12.92 } else { ((e + 0.055) / 1.055).powf(2.4) };
+            let want = sample.map(|v| decode(f32::from(v) / 65_535.0));
+            d.image.row(0).iter().all(|p| (0..3).all(|i| (p[i] - want[i]).abs() < 2e-4))
+        };
+
+        let out = export_now(&mut s, &with(json!({"hostPixels": {id.to_string(): entry(16, "displayP3")}}), "host"), &mut |_, _, _| true).unwrap();
+        let d = decoded(&out);
+        assert_eq!(d.bit_depth, 16);
+        assert!(d.icc.is_some() && is_solid(&d), "the host's 16-bit samples, with the export's Display P3 profile");
+        assert!(!is_solid(&decoded(&plain)), "the demo photo is not a solid colour");
+
+        for (name, extra) in [
+            ("depth8", json!({"hostPixels": {id.to_string(): entry(8, "displayP3")}})),
+            ("srgb", json!({"hostPixels": {id.to_string(): entry(16, "srgb")}})),
+            ("png8", json!({"format": "png", "hostPixels": {id.to_string(): entry(16, "displayP3")}})),
+            ("float", json!({"bitDepth": 32, "hostPixels": {id.to_string(): entry(16, "displayP3")}})),
+        ] {
+            let out = export_now(&mut s, &with(extra, name), &mut |_, _, _| true).unwrap();
+            assert!(!is_solid(&decoded(&out)), "{name}: rendered by the export");
+        }
+        for bad in [entry(12, "displayP3"), entry(16, "nowhere")] {
+            let e = export_now(&mut s, &with(json!({"hostPixels": {id.to_string(): bad}}), "bad"), &mut |_, _, _| true);
+            assert!(e.unwrap_err().contains("hostPixels"));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A frontend with an encoder of its own writes finished files (`hostFiles`): HEIC, which this build cannot encode, is placed as any other file, under the
+    // export's naming and conflict policy; a photo it wrote none for is an error of that photo, not of the batch
+    #[test]
+    fn a_hosts_finished_file_is_placed_under_the_exports_name() {
+        let dir = std::env::temp_dir().join(format!("lc-apphost-hostfile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::with_demo();
+        let ids: Vec<u64> = s.visible_cloned().iter().take(2).map(|id| id.0).collect();
+        let sized =
+            export_now(&mut s, &json!({"ids": ids, "longEdge": 64, "format": "png", "dir": dir.join("size").to_string_lossy()}), &mut |_, _, _| true)
+                .unwrap();
+        // (each photo has its own size)
+        let dims = |i: usize| (sized["files"][i]["width"].as_u64().unwrap(), sized["files"][i]["height"].as_u64().unwrap());
+        let ((w, h), (w2, h2)) = (dims(0), dims(1));
+        let heic = dir.join("one.heic");
+        let heic2 = dir.join("two.heic");
+        std::fs::write(&heic, b"ftypheic pretend").unwrap();
+        std::fs::write(&heic2, b"ftypheic second").unwrap();
+        let entry = |w: u64, h: u64, file: &std::path::Path| json!({"file": file.to_string_lossy(), "width": w, "height": h});
+        let params = |extra: Value, sub: &str| {
+            let mut p = json!({"ids": ids, "longEdge": 64, "format": "heic", "dir": dir.join(sub).to_string_lossy()});
+            for (k, v) in extra.as_object().unwrap() {
+                p[k] = v.clone();
+            }
+            p
+        };
+        let both = json!({"hostFiles": {ids[0].to_string(): entry(w, h, &heic), ids[1].to_string(): entry(w2, h2, &heic2)}});
+        let out = export_now(&mut s, &params(both, "host"), &mut |_, _, _| true).unwrap();
+        let files = out["files"].as_array().unwrap();
+        let path = files[0]["path"].as_str().unwrap();
+        assert!(path.ends_with(".heic"), "the export's name and extension: {path}");
+        assert_eq!(std::fs::read(path).unwrap(), b"ftypheic pretend", "the host's bytes, untouched");
+        assert_eq!(std::fs::read(files[1]["path"].as_str().unwrap()).unwrap(), b"ftypheic second");
+        assert_eq!((files[0]["width"].as_u64(), files[0]["height"].as_u64(), files[0]["bytes"].as_u64()), (Some(w), Some(h), Some(16)));
+        // a photo the host wrote no file for, another size, a file that is gone: the export has no HEIC encoder, so that photo is an error
+        let one = json!({"hostFiles": {ids[0].to_string(): entry(w, h, &heic)}});
+        let gone = json!({"hostFiles": {ids[0].to_string(): entry(w, h, &dir.join("no.heic")), ids[1].to_string(): entry(w2, h2, &heic2)}});
+        let size = json!({"hostFiles": {ids[0].to_string(): entry(w + 9, h, &heic), ids[1].to_string(): entry(w2, h2, &heic2)}});
+        for (name, extra, want) in [("none", one, "HEIC"), ("size", size, "HEIC"), ("gone", gone, "gone")] {
+            let e = export_now(&mut s, &params(extra, name), &mut |_, _, _| true).unwrap_err();
+            assert!(e.contains(want), "{name}: {e}");
+        }
+        let e = export_now(&mut s, &params(json!({"hostFiles": {ids[0].to_string(): {"file": "x"}}}), "bad"), &mut |_, _, _| true);
+        assert!(e.unwrap_err().contains("hostFiles"));
+        // a file for a format the export does encode is placed too (a frontend that encodes JPEG itself), and a second run of the same name is made unique
+        let jpeg = dir.join("one.jpg");
+        std::fs::write(&jpeg, b"\xff\xd8 pretend").unwrap();
+        let mut twice = params(json!({"format": "jpeg", "hostFiles": {ids[0].to_string(): entry(w, h, &jpeg)}}), "jpeg");
+        twice["ids"] = json!([ids[0]]);
+        let first = export_now(&mut s, &twice, &mut |_, _, _| true).unwrap();
+        let second = export_now(&mut s, &twice, &mut |_, _, _| true).unwrap();
+        assert!(first["files"][0]["path"].as_str().unwrap().ends_with(".jpg") && second["files"][0]["path"].as_str().unwrap().contains("-2.jpg"));
+        assert_eq!(std::fs::read(first["files"][0]["path"].as_str().unwrap()).unwrap(), b"\xff\xd8 pretend");
+        assert!(!s.last_export.as_ref().is_some_and(|l| l.get("hostFiles").is_some()), "hostFiles is not an option to remember");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
