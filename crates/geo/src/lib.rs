@@ -10,6 +10,7 @@
 //!   are available.
 //! - [`route`] — an estimated path through photos that have a position, by the time they were taken.
 //! - [`track`] — recorded tracks: packed for storing and syncing, what they cover, cut into pieces.
+//! - [`path`]: one path for a selection, recorded where a track covers the time and estimated elsewhere.
 //! - [`text::normalize`] — case and accent folding shared by the name table and the search.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -19,6 +20,7 @@ mod codec;
 pub mod gazetteer;
 pub mod geodesy;
 pub mod land;
+pub mod path;
 pub mod route;
 pub mod text;
 pub mod tiles;

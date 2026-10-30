@@ -4,6 +4,28 @@ use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, f64_or};
 
+/// `stopRadius`, `gapHours`, `arcKm` and `detail`, as `map.route` and `map.path` take them.
+pub(super) fn route_params(p: &Value, c: &str) -> crate::Result<lightcraft_geo::route::Params> {
+    let defaults = lightcraft_geo::route::Params::default();
+    let stop_radius = f64_or(p, "stopRadius", defaults.stop_radius_m);
+    let gap_hours = f64_or(p, "gapHours", defaults.gap_s / 3600.0);
+    let arc_km = f64_or(p, "arcKm", defaults.arc_km);
+    let detail = p.get("detail").and_then(Value::as_u64).map_or(defaults.detail, |d| usize::try_from(d).unwrap_or(usize::MAX));
+    if !stop_radius.is_finite() || !(0.0..=100_000.0).contains(&stop_radius) {
+        return Err(bad(c, "stopRadius is 0..100000 metres"));
+    }
+    if !gap_hours.is_finite() || !(0.001..=1_000_000.0).contains(&gap_hours) {
+        return Err(bad(c, "gapHours is more than 0 and at most 1000000"));
+    }
+    if !arc_km.is_finite() || !(0.0..=1_000_000.0).contains(&arc_km) {
+        return Err(bad(c, "arcKm is 0..1000000 kilometres"));
+    }
+    if !(2..=256).contains(&detail) {
+        return Err(bad(c, "detail is 2..256"));
+    }
+    Ok(lightcraft_geo::route::Params { stop_radius_m: stop_radius, gap_s: gap_hours * 3600.0, detail, arc_km })
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "map.points", "Photos on the Map", [], None,
@@ -60,25 +82,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     .collect::<Result<Vec<_>, _>>()?,
                 Some(_) => return Err(bad(C, "ids is a list of photo ids")),
             };
-            let defaults = lightcraft_geo::route::Params::default();
-            let stop_radius = f64_or(p, "stopRadius", defaults.stop_radius_m);
-            let gap_hours = f64_or(p, "gapHours", defaults.gap_s / 3600.0);
-            let arc_km = f64_or(p, "arcKm", defaults.arc_km);
-            let detail = p.get("detail").and_then(Value::as_u64).map_or(defaults.detail, |d| usize::try_from(d).unwrap_or(usize::MAX));
-            if !stop_radius.is_finite() || !(0.0..=100_000.0).contains(&stop_radius) {
-                return Err(bad(C, "stopRadius is 0..100000 metres"));
-            }
-            if !gap_hours.is_finite() || !(0.001..=1_000_000.0).contains(&gap_hours) {
-                return Err(bad(C, "gapHours is more than 0 and at most 1000000"));
-            }
-            if !arc_km.is_finite() || !(0.0..=1_000_000.0).contains(&arc_km) {
-                return Err(bad(C, "arcKm is 0..1000000 kilometres"));
-            }
-            if !(2..=256).contains(&detail) {
-                return Err(bad(C, "detail is 2..256"));
-            }
+            let params = route_params(p, C)?;
             let found = crate::map::route_fixes(&s.catalog, &ids);
-            let params = lightcraft_geo::route::Params { stop_radius_m: stop_radius, gap_s: gap_hours * 3600.0, detail, arc_km };
             let routes = lightcraft_geo::route::estimate(&found.fixes, &params);
             Ok(crate::map::route_json(&found, &routes))
         }),

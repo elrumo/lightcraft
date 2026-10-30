@@ -1,12 +1,16 @@
-//! Paths from the stored tracks: `photo.autoTagTracks` (positions for photos by their capture time). It reads the
-//! shared `tracks` document ([`crate::tracks`]) one session at a time.
+//! Paths from the stored tracks: `photo.autoTagTracks` (positions for photos by their capture time) and `map.path`
+//! (one path for a selection, recorded where a track covers the time and estimated elsewhere,
+//! [`lightcraft_geo::path`]). Both read the shared `tracks` document ([`crate::tracks`]) one session at a time.
 
+use lightcraft_catalog::{AlbumId, PhotoId};
+use lightcraft_geo::path::{self as geo_path, Kind, Path};
+use lightcraft_geo::route::Mode;
 use lightcraft_geo::track::Point;
 use lightcraft_meta::{Match, TrackPoint, Tracklog};
 use serde_json::{Value, json};
 
 use super::manage::{Found, apply_tags, photos_to_tag};
-use super::{CommandSpec, always, bad, cmd};
+use super::{CommandSpec, always, bad, cmd, f64_or};
 use crate::map::iso;
 use crate::tracks as store;
 use crate::{EngineError, Result, Session};
@@ -23,7 +27,9 @@ fn no_such(session: &str) -> EngineError {
 }
 
 fn too_many_points(n: u64) -> EngineError {
-    EngineError::Other(format!("limit: the tracks to read hold {n} points, more than {POINTS_READ_MAX} at once; name fewer (`tracks`)"))
+    EngineError::Other(format!(
+        "limit: the tracks to read hold {n} points, more than {POINTS_READ_MAX} at once; name fewer (`tracks`) or a shorter time (`fromMs`/`toMs`)"
+    ))
 }
 
 /// One session's points from its chunks (in index order). A chunk that is missing, or of a newer version, is a break in
@@ -52,16 +58,17 @@ fn span_of(session: &str, pieces: &[&Value]) -> (i64, i64, u64) {
     (s["startMs"].as_i64().unwrap_or(i64::MAX), s["endMs"].as_i64().unwrap_or(i64::MIN), s["points"].as_u64().unwrap_or(0))
 }
 
-/// `tracks`: `None` for all, else the sessions named.
-fn named_tracks(p: &Value, c: &str) -> Result<Option<Vec<String>>> {
+/// `tracks`: `None` for all (or `"auto"` where the command takes it), else the sessions named.
+fn named_tracks(p: &Value, c: &str, auto: bool) -> Result<Option<Vec<String>>> {
     match p.get("tracks") {
         None | Some(Value::Null) => Ok(None),
+        Some(Value::String(a)) if auto && a == "auto" => Ok(None),
         Some(Value::Array(a)) if !a.is_empty() => a
             .iter()
             .map(|v| v.as_str().map(str::to_string).ok_or_else(|| bad(c, "`tracks` is a list of sessions")))
             .collect::<Result<Vec<_>>>()
             .map(Some),
-        Some(_) => Err(bad(c, "`tracks` is a list of sessions")),
+        Some(_) => Err(bad(c, if auto { "`tracks` is \"auto\" or a list of sessions" } else { "`tracks` is a list of sessions" })),
     }
 }
 
@@ -137,7 +144,7 @@ fn locate_all(
 /// Geotag photos from the stored tracks by capture time: `photo.autoTagTracklog` with the tracks as the log.
 fn auto_tag_tracks(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.autoTagTracks";
-    let named = named_tracks(p, C)?;
+    let named = named_tracks(p, C, false)?;
     let t = photos_to_tag(s, p, C)?;
     let by = store::sessions(s.tracks.items());
     if by.is_empty() {
@@ -169,24 +176,222 @@ fn auto_tag_tracks(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(Value::Object(o))
 }
 
+/// What a path is drawn for: photos, which tracks (`None`: those that overlap), a window (ms) and the modes a trip
+/// gives some of its legs (`(seconds the leg leaves, mode)`).
+struct Selection {
+    photos: Vec<PhotoId>,
+    tracks: Option<Vec<String>>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    overrides: Vec<(f64, Mode)>,
+}
+
+impl Selection {
+    fn of(photos: Vec<PhotoId>) -> Selection {
+        Selection { photos, tracks: None, from_ms: None, to_ms: None, overrides: Vec::new() }
+    }
+}
+
+/// A trip's photos, tracks, range and overrides.
+// (The trips store comes with its own change; until then there is no trip to draw.)
+fn resolve_trip(_s: &Session, _id: &str) -> Result<Selection> {
+    Err(EngineError::Other("no such trip: trips are not available".into()))
+}
+
+/// A time in milliseconds since 1970, when given.
+fn ms_param(p: &Value, key: &str, c: &str) -> Result<Option<i64>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_i64().map(Some).ok_or_else(|| bad(c, format!("`{key}` is milliseconds since 1970 (a whole number)"))),
+    }
+}
+
+/// `privacyTrim`: the radius in metres, `None` when off. Not given: the tracking settings'.
+fn trim_param(s: &Session, p: &Value, c: &str) -> Result<Option<f64>> {
+    let settings = s.tracks.settings.unwrap_or_default();
+    let on = |r: f64| (r > 0.0).then_some(r);
+    match p.get("privacyTrim") {
+        None | Some(Value::Null) => Ok(settings.trim.then_some(settings.trim_radius_m).and_then(on)),
+        Some(Value::Bool(b)) => Ok(b.then_some(settings.trim_radius_m).and_then(on)),
+        Some(v) => v
+            .as_f64()
+            .filter(|r| (0.0..=20_000_000.0).contains(r))
+            .map(on)
+            .ok_or_else(|| bad(c, "`privacyTrim` is true, false or metres (0..20000000; 0 is off)")),
+    }
+}
+
+/// The leg leaving within a minute of an override takes its mode.
+fn apply_overrides(path: &mut Path, overrides: &[(f64, Mode)]) {
+    for piece in &mut path.pieces {
+        if let Kind::Estimated { mode, .. } = &mut piece.kind
+            && let Some((_, m)) = overrides.iter().find(|(at, _)| (piece.start - at).abs() <= 60.0)
+        {
+            *mode = *m;
+        }
+    }
+}
+
+fn line_json(lines: &[Vec<(f64, f64)>]) -> Value {
+    Value::Array(lines.iter().map(|l| Value::Array(l.iter().map(|(la, lo)| json!([la, lo])).collect())).collect())
+}
+
+/// The answer of `map.path`.
+fn path_json(path: &Path, sessions: &[String], found: &crate::map::RouteFixes) -> Value {
+    let pieces: Vec<Value> = path
+        .pieces
+        .iter()
+        .map(|p| match &p.kind {
+            Kind::Recorded { track, ascent_m, descent_m, times } => json!({
+                "source": "recorded", "track": sessions.get(*track), "start": p.start, "end": p.end,
+                "distanceKm": p.distance_km, "durationS": p.duration_s, "ascentM": ascent_m, "descentM": descent_m,
+                "lines": line_json(&p.lines), "times": times,
+            }),
+            Kind::Estimated { from, to, speed_kmh, mode, arc } => json!({
+                "source": "estimated", "from": from, "to": to, "start": p.start, "end": p.end,
+                "distanceKm": p.distance_km, "durationS": p.duration_s, "speedKmh": speed_kmh, "mode": mode.as_str(), "arc": arc,
+                "lines": line_json(&p.lines),
+            }),
+        })
+        .collect();
+    let stops: Vec<Value> = path
+        .stops
+        .iter()
+        .map(|s| json!({"lat": s.lat, "lon": s.lon, "arrive": s.arrive, "leave": s.leave, "count": s.photos.len(), "photos": s.photos}))
+        .collect();
+    let photos: Vec<Value> =
+        path.photos.iter().map(|p| json!({"id": p.id, "t": p.t, "lat": p.lat, "lon": p.lon, "piece": p.piece, "at": p.at})).collect();
+    let st = path.stats();
+    json!({
+        "estimated": path.pieces.iter().any(|p| !p.recorded()),
+        "range": path.range().map(|(a, b)| json!({"start": a, "end": b, "startIso": iso(a), "endIso": iso(b)})),
+        "pieces": pieces,
+        "stops": stops,
+        "photos": photos,
+        "stats": {
+            "distanceKm": st.distance_km, "recordedKm": st.recorded_km, "estimatedKm": st.estimated_km,
+            "durationS": st.duration_s, "movingS": st.moving_s, "ascentM": st.ascent_m, "descentM": st.descent_m,
+            "photos": st.photos, "stops": st.stops,
+        },
+        "trim": path.trim.map(|t| json!({
+            "applied": t.points > 0,
+            "radiusM": t.radius_m,
+            "removed": {"start": t.start, "end": t.end, "routes": t.vanished, "points": t.points},
+        })),
+        "skipped": {"noGps": found.no_gps, "noTime": found.no_time, "unknown": found.unknown, "invalid": path.skipped},
+        "zoneEstimated": found.zone_estimated,
+    })
+}
+
+fn map_path(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "map.path";
+    let given = |k: &str| p.get(k).filter(|v| !v.is_null());
+    let mut sel = match (given("ids"), given("album"), given("trip")) {
+        (ids, None, None) => Selection::of(match ids {
+            None => s.visible_cloned(),
+            Some(Value::Array(a)) => a.iter().map(|v| v.as_u64().map(PhotoId).ok_or_else(|| bad(C, "ids are photo ids"))).collect::<Result<_>>()?,
+            Some(_) => return Err(bad(C, "ids is a list of photo ids")),
+        }),
+        (None, Some(a), None) => {
+            let id = a.as_u64().map(AlbumId).ok_or_else(|| bad(C, "`album` is an album id"))?;
+            s.catalog.album(id).ok_or_else(|| EngineError::Other(format!("no such album: {}", id.0)))?;
+            Selection::of(s.catalog.album_photos(id))
+        }
+        (None, None, Some(t)) => resolve_trip(s, t.as_str().ok_or_else(|| bad(C, "`trip` is a trip id"))?)?,
+        _ => return Err(bad(C, "give one of `ids`, `album` or `trip`")),
+    };
+    // what the call says wins over what a trip says
+    if let Some(t) = named_tracks(p, C, true)? {
+        sel.tracks = Some(t);
+    } else if given("tracks").is_some() {
+        sel.tracks = None;
+    }
+    sel.from_ms = ms_param(p, "fromMs", C)?.or(sel.from_ms);
+    sel.to_ms = ms_param(p, "toMs", C)?.or(sel.to_ms);
+    let max_points = match given("maxPoints") {
+        None => geo_path::MAX_POINTS,
+        Some(v) => v
+            .as_u64()
+            .filter(|m| (2..=geo_path::MAX_POINTS_LIMIT as u64).contains(m))
+            .map(|m| m as usize)
+            .ok_or_else(|| bad(C, "`maxPoints` is 2..20000"))?,
+    };
+    let stop_minutes = f64_or(p, "stopMinutes", geo_path::DWELL_S / 60.0);
+    if !stop_minutes.is_finite() || !(0.0..=10_000.0).contains(&stop_minutes) {
+        return Err(bad(C, "`stopMinutes` is 0..10000"));
+    }
+    let params = geo_path::Params {
+        route: super::map::route_params(p, C)?,
+        dwell_s: stop_minutes * 60.0,
+        max_points,
+        trim_m: trim_param(s, p, C)?,
+        from: sel.from_ms.map(|t| t as f64 / 1000.0),
+        to: sel.to_ms.map(|t| t as f64 / 1000.0),
+    };
+    let found = crate::map::route_fixes(&s.catalog, &sel.photos);
+    // the tracks: those named, else those that overlap the window, its open sides the photos' time
+    let by = store::sessions(s.tracks.items());
+    let in_window = |t: f64| params.from.is_none_or(|a| t >= a) && params.to.is_none_or(|b| t <= b);
+    let times: Vec<f64> = found.fixes.iter().map(|f| f.time).filter(|t| in_window(*t)).collect();
+    let (first, last) = times.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), t| (a.min(*t), b.max(*t)));
+    let span = match (params.from, params.to, times.is_empty()) {
+        (None, None, true) => None,
+        (from, to, empty) => {
+            Some((from.unwrap_or(if empty { f64::NEG_INFINITY } else { first }), to.unwrap_or(if empty { f64::INFINITY } else { last })))
+        }
+    };
+    let mut chosen: Vec<(&str, &Vec<&Value>, (i64, i64, u64))> = match &sel.tracks {
+        Some(list) => list
+            .iter()
+            .map(|id| by.get_key_value(id.as_str()).map(|(k, v)| (*k, v, span_of(k, v))).ok_or_else(|| no_such(id)))
+            .collect::<Result<_>>()?,
+        None => by
+            .iter()
+            .map(|(k, v)| (*k, v, span_of(k, v)))
+            .filter(|(_, _, (a, b, _))| span.is_some_and(|(from, to)| *b as f64 / 1000.0 >= from && *a as f64 / 1000.0 <= to))
+            .collect(),
+    };
+    chosen.sort_by_key(|c| (c.2.0, c.0));
+    let read: u64 = chosen.iter().map(|c| c.2.2).fold(0, u64::saturating_add);
+    if read > POINTS_READ_MAX {
+        return Err(too_many_points(read));
+    }
+    let names: Vec<String> = chosen.iter().map(|(k, _, _)| k.to_string()).collect();
+    let mut path = geo_path::build(&found.fixes, chosen.iter().map(|(_, v, _)| session_points(v)), &params).map_err(|e| {
+        EngineError::Other(format!(
+            "limit: the path would have {} recorded pieces, more than {}; name fewer tracks or a shorter time",
+            e.0,
+            geo_path::PIECES_MAX
+        ))
+    })?;
+    apply_overrides(&mut path, &sel.overrides);
+    Ok(path_json(&path, &names, &found))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
-    vec![CommandSpec {
-        explicit_targets: true,
-        ..cmd!(
-            "photo.autoTagTracks",
-            "Auto-Tag Photos from Recorded Tracks",
-            [],
-            None,
-            "{ids?, tracks?: [session] (default all stored), offset?: camera clock's UTC offset for photos whose capture time has no zone (`+02:00`, or hours; default UTC), maxGap?: seconds (600), replace?: bool (also photos that already have GPS), dryRun?: bool} → {tagged, interpolated, nearest, skipped: {noTime, outside, hasGps}, assumedUtc, tracks, points, start, end, startIso, endIso, photos: [{id, gps: [lat, lon], match: interpolated|nearest, track: session}]}: positions from the stored tracks by capture time, as photo.autoTagTracklog takes them from a GPX file: interpolated between two points of one stretch of recording at most `maxGap` apart, else the nearest point within `maxGap`; never across a break (or a chunk that is missing). Where two tracks cover a photo, an interpolated place wins. `start`/`end` are seconds since 1970 (UTC). One undo step. No stored track: `no such track: none stored`",
-            always,
-            auto_tag_tracks
-        )
-    }]
+    vec![
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "photo.autoTagTracks",
+                "Auto-Tag Photos from Recorded Tracks",
+                [],
+                None,
+                "{ids?, tracks?: [session] (default all stored), offset?: camera clock's UTC offset for photos whose capture time has no zone (`+02:00`, or hours; default UTC), maxGap?: seconds (600), replace?: bool (also photos that already have GPS), dryRun?: bool} → {tagged, interpolated, nearest, skipped: {noTime, outside, hasGps}, assumedUtc, tracks, points, start, end, startIso, endIso, photos: [{id, gps: [lat, lon], match: interpolated|nearest, track: session}]}: positions from the stored tracks by capture time, as photo.autoTagTracklog takes them from a GPX file: interpolated between two points of one stretch of recording at most `maxGap` apart, else the nearest point within `maxGap`; never across a break (or a chunk that is missing). Where two tracks cover a photo, an interpolated place wins. `start`/`end` are seconds since 1970 (UTC). One undo step. No stored track: `no such track: none stored`",
+                always,
+                auto_tag_tracks
+            )
+        },
+        cmd!(query "map.path", "Path of Photos and Tracks", [], None,
+            "{ids? (default the visible photos) | album?: id | trip?: id, fromMs?, toMs?, tracks?: \"auto\" (default: the recorded sessions that overlap the window, or the photos' time) | [session], privacyTrim?: bool | metres (default the tracking settings; 0 is off), stopRadius? (150 m), gapHours? (36), arcKm? (300), detail? (48), stopMinutes?: a recorded stop lasts this long at least (10), maxPoints?: per recorded piece, 2..20000 (4000)} → {estimated, range: {start, end, startIso, endIso} | null, pieces: [{source: \"recorded\", track: session, start, end, distanceKm, durationS, ascentM, descentM, lines: [[[lat, lon], …]], times: [[seconds, …]]} | {source: \"estimated\", from: stop | null, to: stop | null, start, end, distanceKm, durationS, speedKmh, mode: walk|bike|road|flight, arc, lines}], stops: [{lat, lon, arrive, leave, count, photos}], photos: [{id, t, lat, lon, piece: index | null (a route of one stop), at: 0..1}], stats: {distanceKm, recordedKm, estimatedKm, durationS, movingS, ascentM, descentM, photos, stops}, trim: {applied, radiusM, removed: {start, end, routes}} | null, skipped: {noGps, noTime, unknown, invalid}, zoneEstimated}: one path for a selection: recorded where a stored track covers the time, map.route's estimated legs elsewhere (a recording replaces them over its time; an estimated leg's `from`/`to` is null where it meets a recording). Pieces are in time order and never overlap; a long pause (gapHours) ends a piece; a break in a recording is a new line; lines cross the antimeridian as two. The privacy trim cuts what lies within the radius of where each track and each estimated route began and ended (and the photos taken there) from this answer only. Times are seconds since 1970 (UTC)",
+            always, map_path),
+    ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lightcraft_geo::path::Piece;
 
     fn pt(time_ms: i64, lat: f64, lon: f64) -> Point {
         Point { time_ms, lat, lon, ele_m: None, acc_m: None, new_segment: false }
@@ -269,5 +474,22 @@ mod tests {
         assert_eq!(reads, 348, "the days the photos reach");
         let tagged = best.iter().filter(|b| b.is_some()).count();
         assert!(tagged > 30_000 && tagged < 40_000, "about a third of each day: {tagged}");
+    }
+
+    #[test]
+    fn a_trips_mode_override_names_the_leg_leaving_then() {
+        let leg = |start: f64| Piece {
+            start,
+            end: start + 100.0,
+            distance_km: 1.0,
+            duration_s: 100.0,
+            moving_s: 100.0,
+            lines: Vec::new(),
+            kind: Kind::Estimated { from: None, to: None, speed_kmh: 36.0, mode: Mode::Road, arc: false },
+        };
+        let mut path = Path { pieces: vec![leg(0.0), leg(1000.0), leg(2000.0)], ..Path::default() };
+        apply_overrides(&mut path, &[(1030.0, Mode::Bike), (2061.0, Mode::Walk)]);
+        let modes: Vec<Mode> = path.pieces.iter().filter_map(|p| if let Kind::Estimated { mode, .. } = p.kind { Some(mode) } else { None }).collect();
+        assert_eq!(modes, vec![Mode::Road, Mode::Bike, Mode::Road], "within a minute only");
     }
 }

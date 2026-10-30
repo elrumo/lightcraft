@@ -73,7 +73,7 @@ impl Default for Params {
 }
 
 impl Params {
-    fn sane(self) -> Params {
+    pub(crate) fn sane(self) -> Params {
         let fin = |v: f64, lo: f64, hi: f64, d: f64| if v.is_finite() { v.clamp(lo, hi) } else { d };
         Params {
             stop_radius_m: fin(self.stop_radius_m, 0.0, 100_000.0, STOP_RADIUS_M),
@@ -360,19 +360,27 @@ fn curve(prev: Option<&Stop>, a: &Stop, b: &Stop, next: Option<&Stop>, n: usize)
 /// Cut a line (longitudes `-180..=180`) where it jumps across the antimeridian, so no piece spans the
 /// map; the pieces meet at the crossing latitude. Pieces of a single point are dropped.
 fn split_antimeridian(points: Vec<(f64, f64)>) -> Vec<Vec<(f64, f64)>> {
-    let mut out: Vec<Vec<(f64, f64)>> = Vec::new();
-    let mut cur: Vec<(f64, f64)> = Vec::new();
+    split_timed(points.into_iter().map(|(la, lo)| (la, lo, 0.0)).collect())
+        .into_iter()
+        .map(|piece| piece.into_iter().map(|(la, lo, _)| (la, lo)).collect())
+        .collect()
+}
+
+/// [`split_antimeridian`] for `(lat, lon, time)` points: a crossing's time lies between its neighbours' like its latitude.
+pub(crate) fn split_timed(points: Vec<(f64, f64, f64)>) -> Vec<Vec<(f64, f64, f64)>> {
+    let mut out: Vec<Vec<(f64, f64, f64)>> = Vec::new();
+    let mut cur: Vec<(f64, f64, f64)> = Vec::new();
     for p in points {
-        if let Some(&(la, lo)) = cur.last()
+        if let Some(&(la, lo, at)) = cur.last()
             && (p.1 - lo).abs() > 180.0
         {
             // the other copy of this point, on the far side of the crossing
             let (edge_from, edge_to, far) = if lo > 0.0 { (180.0, -180.0, p.1 + 360.0) } else { (-180.0, 180.0, p.1 - 360.0) };
             let t = ((edge_from - lo) / (far - lo)).clamp(0.0, 1.0);
-            let lat = la + t * (p.0 - la);
-            cur.push((lat, edge_from));
+            let (lat, time) = (la + t * (p.0 - la), at + t * (p.2 - at));
+            cur.push((lat, edge_from, time));
             out.push(std::mem::take(&mut cur));
-            cur.push((lat, edge_to));
+            cur.push((lat, edge_to, time));
         }
         cur.push(p);
     }
@@ -384,19 +392,25 @@ fn split_antimeridian(points: Vec<(f64, f64)>) -> Vec<Vec<(f64, f64)>> {
 /// Estimate the routes through `fixes` (any order). Fixes whose time or position isn't real are left
 /// out and counted in [`Routes::skipped`].
 pub fn estimate(fixes: &[Fix], params: &Params) -> Routes {
+    estimate_runs(&[fixes], params)
+}
+
+/// [`estimate`] through each of `runs` apart: a route never joins two runs (each is still cut at long pauses), and
+/// the runs share one budget of points. The routes come run by run.
+pub fn estimate_runs(runs: &[&[Fix]], params: &Params) -> Routes {
     let p = params.sane();
-    let mut v: Vec<Fix> = fixes.iter().copied().filter(|f| f.time.is_finite() && valid(f.lat, f.lon)).collect();
-    let skipped = fixes.len() - v.len();
-    v.sort_by(|a, b| a.time.total_cmp(&b.time).then(a.id.cmp(&b.id)));
     let radius_km = p.stop_radius_m / 1000.0;
-    let mut routes: Vec<Route> = v
-        .chunk_by(|a, b| b.time - a.time <= p.gap_s)
-        .map(|run| {
+    let (mut routes, mut skipped) = (Vec::new(), 0usize);
+    for fixes in runs {
+        let mut v: Vec<Fix> = fixes.iter().copied().filter(|f| f.time.is_finite() && valid(f.lat, f.lon)).collect();
+        skipped += fixes.len() - v.len();
+        v.sort_by(|a, b| a.time.total_cmp(&b.time).then(a.id.cmp(&b.id)));
+        routes.extend(v.chunk_by(|a, b| b.time - a.time <= p.gap_s).map(|run| {
             let stops = stops_of(run, radius_km);
             let legs = legs_of(&stops, &p);
             Route { stops, legs }
-        })
-        .collect();
+        }));
+    }
     // the budget of points: more legs than it allows get coarser lines
     let legs_total: usize = routes.iter().map(|r| r.legs.len()).sum();
     let cap = MAX_POINTS.checked_div(legs_total).map_or(p.detail, |each| each.saturating_sub(1).max(1).min(p.detail));
@@ -601,6 +615,23 @@ mod tests {
         assert!(points <= MAX_POINTS && points > MAX_POINTS * 8 / 10, "the budget is used, not exceeded: {points}");
         let few = estimate(&fixes[..3], &Params::default());
         assert!(all_points(&few).count() > 2 * 12, "a few legs keep their detail");
+    }
+
+    #[test]
+    fn runs_are_never_joined_and_share_one_budget() {
+        let a = [fix(1, 0.0, 40.0, -3.0), fix(2, 1.0, 40.1, -3.0)];
+        let b = [fix(3, 2.0, 40.2, -3.0), fix(4, 3.0, 40.3, -3.0)];
+        let apart = estimate_runs(&[&a, &b], &Params::default());
+        assert_eq!(apart.routes.iter().map(|r| r.legs.len()).collect::<Vec<_>>(), vec![1, 1], "no leg from one run to the next");
+        assert_eq!(estimate(&[a, b].concat(), &Params::default()).routes[0].legs.len(), 3);
+        // two runs of 2000 legs each: the lines of both together stay within the budget
+        let run = |from: u64| -> Vec<Fix> {
+            (from..from + 2001).map(|i| fix(i, i as f64, 40.0 + (i % 50) as f64 * 0.09, -3.0 + (i / 50) as f64 * 0.1)).collect()
+        };
+        let (x, y) = (run(0), run(10_000));
+        let r = estimate_runs(&[&x, &y], &Params::default());
+        let points = all_points(&r).count();
+        assert!(points <= MAX_POINTS && points > MAX_POINTS * 8 / 10, "{points}");
     }
 
     #[test]
