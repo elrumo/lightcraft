@@ -373,6 +373,20 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            query "photo.cameraMatch",
+            "Camera Match",
+            [],
+            None,
+            "{id?} → {match: {start_hue_sat: HsvTable | null, matrix: [[3 × 3]] (row-major), hue_sat: HsvTable | null, tone: {knots, chroma} | null} | null} the camera's own look a raw's source carries, which the Camera Matching profile (`lc.camera`) renders: the pixels this engine develops (a raw that starts from LightCraft's neutral look) have `start_hue_sat` undone, then `matrix` (linear Rec. 2020 to linear Rec. 2020) and `hue_sat` (linear ProPhoto RGB, a DNG `ProfileHueSatMap`: `{hue_divisions, sat_divisions, val_divisions, data: [[hue shift °, saturation scale, value scale]] (value-major, hue-middle, saturation-minor), srgb_value}`) applied, and `tone` takes the place of `photo.cameraTone`'s curve (`null`: the default raw tone map). `null` for a photo whose source has no such look: the profile then renders as Color. Decodes the photo at thumbnail size when no source of it is cached; changes no edit",
+            always,
+            |s, p| {
+                let c = "photo.cameraMatch";
+                let id = photo_arg(s, p, c)?;
+                let m = s.camera_match_of(id).map_err(|e| bad(c, e))?;
+                Ok(json!({"match": m.and_then(|m| serde_json::to_value(&*m).ok())}))
+            }
+        ),
+        cmd!(
             query "photo.mattes",
             "Photo Mattes",
             [],

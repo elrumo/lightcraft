@@ -644,6 +644,15 @@ impl crate::Session {
         Ok(self.source_info(id).camera_tone)
     }
 
+    /// The camera's own look photo `id`'s source carries ([`lightcraft_pipeline::SourceInfo::camera_match`]: a raw whose pixels start from
+    /// another look, as a Canon CR3 of a model with measured matrices does), for a frontend that develops raws itself and draws the Camera
+    /// Matching profile. A source the media cache holds already knows it; otherwise the photo is decoded at thumbnail size, which fits the
+    /// same look as any larger level does. `None` for a photo with no such look (the profile is then Color). Changes no edit.
+    pub fn camera_match_of(&mut self, id: PhotoId) -> Result<Option<Arc<lightcraft_pipeline::CameraMatch>>, String> {
+        self.ensure_decoded(id)?;
+        Ok(self.source_info(id).camera_match)
+    }
+
     /// The mattes and depth photo `id`'s own source carries ([`lightcraft_pipeline::SourceInfo::mattes`]: an iPhone ProRAW's
     /// semantic mattes, a portrait's depth map, a smart preview's stored ones), for a frontend that draws AI masks itself. A
     /// source the media cache holds already knows them; otherwise the photo is decoded at thumbnail size, which finds the same

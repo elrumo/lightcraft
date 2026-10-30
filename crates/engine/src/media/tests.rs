@@ -181,6 +181,40 @@ fn camera_matching_develops_the_cameras_own_look() {
     assert!(Arc::ptr_eq(&image, &other.image) && got.camera_tone == Some(neutral));
 }
 
+/// `photo.cameraMatch`: a frontend that develops a raw itself gets the camera look the source carries, as JSON that reads back to the
+/// same `CameraMatch`; a source without one answers `null`.
+#[test]
+fn photo_camera_match_gives_the_look_a_source_carries() {
+    use lightcraft_pipeline::{CameraMatch, tone::CameraTone};
+    let mut s = crate::Session::with_demo();
+    let id = s.active().unwrap();
+    let mut picture = Rgb32f::new(64, 48);
+    picture.data.fill([0.2, 0.3, 0.4]);
+    let table = lightcraft_raw::profile::HsvTable::from_tags(&[2, 2, 1], &[0.0, 1.0, 1.0, 5.0, 0.9, 1.0, -3.0, 1.1, 1.0, 0.0, 1.0, 1.0], 0).unwrap();
+    let tone = CameraTone::new(std::array::from_fn(|i| {
+        let x = 0.004 * 1.17f32.powi(i as i32);
+        [x, x / (1.0 + x)]
+    }))
+    .unwrap();
+    let m = CameraMatch {
+        start_hue_sat: Some(table.clone()),
+        matrix: lightcraft_color::Mat3::diag(2.0, 1.0, 0.5),
+        hue_sat: Some(table),
+        tone: Some(tone),
+    };
+    let info = SourceInfo { raw: true, camera_match: Some(Arc::new(m.clone())), ..Default::default() };
+    s.media.insert_source(id, SourceLevel::Preview, DecodedSource::new(Arc::new(picture.clone()), Some(info)));
+    let asked = s.execute("photo.cameraMatch", &serde_json::json!({"id": id})).unwrap();
+    let read: CameraMatch = serde_json::from_value(asked["match"].clone()).unwrap();
+    assert_eq!(read, m, "the look reads back as it was");
+    assert_eq!(asked["match"]["matrix"][0][0], 2.0, "a row-major 3 x 3");
+    // a source with no such look: null
+    s.media.insert_source(id, SourceLevel::Preview, DecodedSource::new(Arc::new(picture), Some(SourceInfo { raw: true, ..Default::default() })));
+    assert!(s.execute("photo.cameraMatch", &serde_json::json!({"id": id})).unwrap()["match"].is_null());
+    let e = s.execute("photo.cameraMatch", &serde_json::json!({"id": 9999})).unwrap_err().to_string();
+    assert!(e.contains("no such photo 9999"), "{e}");
+}
+
 /// Generative Expand paints from the picture a render develops (in the camera's look for Camera Matching): the fill
 /// is put in at the resample, so one painted from the plain source would show none of that look.
 #[test]
