@@ -834,6 +834,7 @@ function showOverview([s, users, limits]) {
   $('stFree').textContent = s.disk ? bytes(s.disk.free) : '—';
   $('stDisk').hidden = !s.disk;
   if (s.disk) fill($('stDisk'), s.disk.total ? 1 - s.disk.free / s.disk.total : 0);
+  $('brandVersion').textContent = s.version ? 'v' + s.version : '';
   const facts = $('facts');
   facts.replaceChildren();
   const fact = (k, v, code) => facts.append(el('dt', {}, k), el('dd', { class: code ? 'code' : null }, v));

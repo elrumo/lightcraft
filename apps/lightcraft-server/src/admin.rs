@@ -45,8 +45,8 @@ const STYLE: &str = include_str!("../admin/admin.css");
 const WELCOME: &str = include_str!("../admin/welcome.html");
 const WELCOME_SCRIPT: &str = include_str!("../admin/welcome.js");
 const WELCOME_STYLE: &str = include_str!("../admin/welcome.css");
-/// The app icon (64 px), for the page's header and tab.
-const ICON: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/64x64/apps/ai.storyteller.lightcraft.png");
+/// The LightBites app icon (128 px, shown at 28 to 40 px), for the page's header and tab.
+const ICON: &[u8] = include_bytes!("../admin/lightbites-icon.png");
 
 /// Wrong setup codes before a new one is made.
 const SETUP_TRIES: u32 = 10;

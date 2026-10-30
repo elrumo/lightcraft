@@ -272,6 +272,8 @@ input[readonly]:hover { border-color: transparent; }
 .brand:hover { text-decoration: none; }
 .brand img { border-radius: 8px; }
 .brand b { color: var(--heading); font-weight: 800; }
+.brand-version { font-size: 11px; color: var(--text-3); font-weight: 400; }
+.brand-version:empty { display: none; }
 .account { display: flex; align-items: center; gap: 10px; }
 .account-name { font-weight: 600; color: var(--heading); }
 .sidenav {

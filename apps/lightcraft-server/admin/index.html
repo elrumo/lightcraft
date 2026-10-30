@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>LightCraft Server</title>
+<title>LightBites Server</title>
 <link rel="icon" href="/admin/icon.png">
 <link rel="stylesheet" href="/admin/admin.css">
 <script src="/admin/admin.js" defer></script>
@@ -43,7 +43,7 @@
 <!-- Sign in / first run -->
 <div class="auth" id="auth" hidden>
   <div class="auth-card">
-    <div class="auth-brand"><img src="/admin/icon.png" alt="" width="40" height="40"><span>LightCraft <b>Server</b></span></div>
+    <div class="auth-brand"><img src="/admin/icon.png" alt="" width="40" height="40"><span>LightBites <b>Server</b></span></div>
 
     <section id="setup" hidden>
       <h1>Set up your server</h1>
@@ -52,7 +52,7 @@
         <div class="field">
           <label for="setupCode">Setup code</label>
           <input id="setupCode" name="code" required placeholder="ABCD-1234" autocomplete="one-time-code" spellcheck="false">
-          <p class="help">Printed in the server's log when it starts: run <code>docker compose logs lightcraft</code>, or look in the terminal running <code>lightcraft-server serve</code>.</p>
+          <p class="help">Printed in the server's log when it starts: run <code>docker compose logs lightcraft</code>, or look in the terminal running <code>lightbites-server serve</code>.</p>
         </div>
         <div class="field">
           <label for="setupUser">User name</label>
@@ -94,13 +94,13 @@
       </form>
     </section>
   </div>
-  <p class="auth-foot">LightCraft Server · your photos, on your own hardware</p>
+  <p class="auth-foot">LightBites Server · your photos, on your own hardware</p>
 </div>
 
 <!-- The console -->
 <div class="shell" id="dash" hidden>
   <header class="topbar">
-    <a class="brand" href="#/overview"><img src="/admin/icon.png" alt="" width="28" height="28"><span>LightCraft <b>Server</b></span></a>
+    <a class="brand" href="#/overview"><img src="/admin/icon.png" alt="" width="28" height="28"><span>LightBites <b>Server</b></span><small class="brand-version" id="brandVersion"></small></a>
     <div class="account">
       <span class="avatar" id="meAvatar" aria-hidden="true"></span>
       <span class="account-name" id="whoName"></span>
