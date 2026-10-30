@@ -1,6 +1,7 @@
 //! Small documents a user's devices share beside the library: their export, metadata and filter
 //! presets, curve presets, label and keyword sets, LUT profiles, the order of the develop preset
-//! groups, the presets and groups they hid and a few preferences (`GET` / `PUT /api/docs/<name>`). The server doesn't read them: a document is a versioned JSON
+//! groups, the presets and groups they hid, the tracks they recorded, their trips and the notes of a trip, and a few
+//! preferences (`GET` / `PUT /api/docs/<name>`). The server doesn't read them: a document is a versioned JSON
 //! array the devices merge themselves (like the presets document, `/api/presets`), so a change
 //! made on two devices at once is merged by the second one to write, not lost. A `PUT` names the
 //! version it changed; a stale one gets `412` with the current document.
@@ -14,7 +15,7 @@ use lightcraft_catalog::sync::proto::Doc;
 
 /// The documents a device may keep here. (Preferences that name a place on one computer — folders,
 /// caches, the external editor — are not among them: they stay per device.)
-pub const NAMES: [&str; 11] = [
+pub const NAMES: [&str; 14] = [
     "export-presets",
     "metadata-presets",
     "filter-presets",
@@ -28,9 +29,16 @@ pub const NAMES: [&str; 11] = [
     "hidden-presets",
     // the Hidden password's hash (an argon2id string; the server never reads it)
     "privacy",
+    // the tracks a device recorded, in chunks (one item each, keyed by id)
+    "tracks",
+    // the saved trips (one item each, keyed by id)
+    "trips",
+    // the notes of a trip (one item each, keyed by id)
+    "trip-notes",
 ];
 
-/// The largest document (the LUT profiles carry their `.cube` files).
+/// The largest document, in bytes of the whole `PUT` body (the LUT profiles carry their `.cube` files). Only the size is
+/// bounded here: the server keeps any number of items, though a device takes at most 2000 of a document.
 pub const MAX: u64 = 24 << 20;
 
 /// One user's documents.
