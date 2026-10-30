@@ -17,12 +17,13 @@
 .status.down { background: var(--negative-subtle); color: var(--negative-text); }
 .block { margin-top: 24px; background: var(--surface); border-radius: 20px; padding: 24px; box-shadow: var(--shadow); }
 .block > .lead { font-size: 14px; margin-bottom: 4px; }
-.steps { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 20px; }
-.steps li { display: flex; gap: 14px; align-items: flex-start; }
-.steps p { color: var(--text-2); margin-top: 2px; }
-.steps .copy-field { margin-top: 10px; max-width: 460px; }
+/* not `.steps`: admin.css numbers every `.steps li` with a counter, which doubled the numbers here */
+.wsteps { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 20px; }
+.wsteps li { display: flex; gap: 14px; align-items: flex-start; }
+.wsteps p { color: var(--text-2); margin-top: 2px; }
+.wsteps .copy-field { margin-top: 10px; max-width: 460px; }
 .num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-subtle); color: var(--accent-text); display: grid; place-items: center; font-weight: 800; font-size: 13px; }
-.steps li.done .num { background: var(--positive-subtle); color: var(--positive); }
+.wsteps li.done .num { background: var(--positive-subtle); color: var(--positive); }
 .tag { margin-left: 6px; padding: 1px 8px; border-radius: 10px; background: var(--fill); color: var(--text-3); font-size: 11px; font-weight: 600; vertical-align: middle; }
 .guides { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 16px; }
 .guide { display: block; padding: 16px; border-radius: 14px; background: var(--fill); color: var(--text-2); }
