@@ -43,6 +43,8 @@ struct Fake {
     /// The other shared documents (`/api/docs/<name>`), by name; `no_docs`: a server from before them.
     docs: HashMap<String, proto::Doc>,
     no_docs: bool,
+    /// Documents this server doesn't know (it answers `404`, as a server from before them does).
+    unknown_docs: Vec<&'static str>,
     /// Originals whose upload broke: what the server kept of each, by (kind, hash).
     partials: HashMap<(String, String), Vec<u8>>,
     /// Answer a `HEAD` with this offset whatever is kept (an answer that has gone out of date).
@@ -66,8 +68,15 @@ struct Fake {
 }
 
 mod sign_out;
+mod tracks;
+mod trips;
 
 impl Fake {
+    /// Whether this server keeps the document at `path` (`/api/docs/<name>`).
+    fn keeps_doc(&self, path: &str) -> bool {
+        !self.no_docs && !self.unknown_docs.contains(&path.trim_start_matches("/api/docs/"))
+    }
+
     fn new() -> Fake {
         Fake {
             core: ServerCore::open(Box::new(MemStore::new())).unwrap(),
@@ -79,6 +88,7 @@ impl Fake {
             no_usage: false,
             docs: HashMap::new(),
             no_docs: false,
+            unknown_docs: Vec::new(),
             partials: HashMap::new(),
             stale_offset: None,
             activity: proto::Activity::default(),
@@ -196,11 +206,11 @@ impl Fake {
                 };
                 ok(serde_json::to_value(u).unwrap())
             }
-            ("GET", p) if p.starts_with("/api/docs/") && !self.no_docs => {
+            ("GET", p) if p.starts_with("/api/docs/") && self.keeps_doc(p) => {
                 let doc = self.docs.get(p.trim_start_matches("/api/docs/")).cloned().unwrap_or(proto::Doc { version: 0, items: json!([]) });
                 ok(serde_json::to_value(doc).unwrap())
             }
-            ("PUT", p) if p.starts_with("/api/docs/") && !self.no_docs => {
+            ("PUT", p) if p.starts_with("/api/docs/") && self.keeps_doc(p) => {
                 let name = p.trim_start_matches("/api/docs/").to_string();
                 let sent: proto::Doc = serde_json::from_str(&json_body()).unwrap();
                 let current = self.docs.get(&name).cloned().unwrap_or(proto::Doc { version: 0, items: json!([]) });

@@ -71,6 +71,72 @@ track, and the two shouldn't be mixed up (an estimated route fed back as a track
 The code is `crates/geo/src/route.rs` (the maths, on plain positions and times) and `crates/engine/src/map.rs`
 (photos in, JSON out).
 
+## Recorded tracks
+
+Where someone actually went: recorded by a phone (a native (non-Rust) frontend records the positions while a
+tracking session runs and hands them over when it ends, `track.create`) or imported from a GPX file
+(`track.import`). Unlike an estimated route, a track is a recording, and it is stored in the library and synced to the
+person's other devices ([sync.md](sync.md#recorded-tracks)).
+
+- **Points.** A point is a moment (milliseconds since 1970, UTC), a position, and optionally an elevation and the
+  accuracy of the fix. A point can begin a new stretch of recording (reception was lost, or the recording paused):
+  nothing is drawn or counted across that break. A GPX file's segments and tracks each begin a stretch.
+- **Sessions and chunks.** A recording is a *session*, stored in *chunks* of at most 20 000 points and 24 hours, one
+  item each of the shared document `tracks` (`tracks.json` in the library). The points are packed (columnar
+  differences, deflated, base64): some 6 to 10 bytes a point, so a day of walking at a point every 5 seconds takes
+  about 100 to 170 KB. A session's distance, climb and descent are the sums of its chunks' (the one step between two
+  chunks counts in neither); climbs under 3 m are GPS wobble and don't count.
+- **The same recording is the same session.** A session's id (`s` and 16 hex digits) is worked out from its points
+  (their count, and the first and last moment and position), so importing a file again, or a phone handing the same
+  recording over twice, adds nothing (`existing: true`).
+- **Left out, and counted in `dropped`:** points whose time or position isn't real, that go back in time, or that
+  repeat a moment. An elevation or accuracy that isn't real leaves only itself out. A point left out that began a
+  stretch passes that on to the next one kept.
+- **Only the name changes** once a track is stored. Renaming and deleting are not undo steps (a screen asks before a
+  delete), and no `track.*` call goes into the command journal: a track says where someone was.
+- **Limits.** A new track is refused with an error that starts `limit:` when the document would pass 16 MiB or 1500
+  items, the chunks and the settings item (a sync server keeps 24 MiB and 2000 items a document; the margin is for
+  what two devices add while apart). `docBytes` and `docItems` in the answers say where it stands.
+  A track holds at most 2 000 000 points, and a GPX file read from a path is at most 256 MiB.
+- **Privacy trim** (`tracking.settings`, off until turned on): what is exported can leave out the start and the end of
+  a track that lie within a radius (300 m by default, 50 to 5000) of where it began and ended, often a home. It is
+  applied to what is exported only, never to what is stored, and the setting syncs (the item `settings` of the
+  `tracks` document).
+- **Export.** `track.export` writes one or several sessions as GPX 1.1, as text or to a file (replaced whole, never
+  half written), with the privacy trim when asked or set. `write_gpx(name, points)` in `lightcraft_meta` writes
+  time-ordered track points as GPX 1.1 (one `<trkseg>` per run of equal `segment`, positions to 6 decimals, elevation
+  to 1 decimal, UTC times with milliseconds only when present, points with an invalid position or a time outside
+  years 1 to 9999 skipped), and `parse_gpx` reads the result back: an exported track imports as the same points.
+- **Damaged files.** A `tracks.json` that can't be read whole is kept as `tracks.json.corrupt-<time>`, the library
+  opens with the tracks that could be read and says so, and a new track is saved beside them.
+
+The code is `crates/geo/src/track.rs` (packing, figures, chunks, simplifying for a map, the privacy trim),
+`crates/engine/src/tracks.rs` (the document and its checks) and `crates/engine/src/cmd/track.rs` (the commands).
+
+## Trips
+
+A trip is a saved, named grouping of photos and paths with notes, linked to albums both ways: a native (non-Rust)
+frontend shows trips, the core keeps and syncs them ([sync.md](sync.md#trips), where the documents and the album
+references are described).
+
+- **Its photos** (`trip.photos`) are the members of the albums it links (manual albums only) and, when `photosInRange`
+  is on, the photos with a position captured inside its range (both ends included), each once, by capture time
+  (photos without one last). Photos in Recently Deleted or hidden are left out, and so are Local records and virtual
+  copies from the range. A capture time is read as `map.route` reads it: exact with its recorded zone, else in the zone
+  of the photo's longitude; a photo without a position or a zone is read as UTC (for a trip's span), and one without a
+  time (or with a date alone) is never inside a range, though an album still brings it.
+- **Its tracks** are the recorded sessions it lists, or with `tracks: "range"` every stored session that overlaps its
+  range (or, without one, the span of its photos). Its path is `map.path {trip}`.
+- **From an album** (`trip.fromAlbum`): a trip that links the album, its range the span of the album's photos.
+  **To an album** (`trip.toAlbum`): a new album with the trip's photos, one undo step; the trip doesn't link it.
+- **Notes** (`trip.note.*`) have a moment, an optional place and an optional photo, and are listed by time. Deleting a
+  trip deletes its notes. None of `trip.*` but `trip.toAlbum` is an undo step, and none goes into the command journal.
+- For the native frontend's map, the core offers `Session::trip_photos`, `trip_tracks`, `trip_range` and
+  `trip_overrides` (the modes given to estimated legs).
+
+The code is `crates/engine/src/trips.rs` (the documents, their checks, the album references and a trip's photos)
+and `crates/engine/src/cmd/trip.rs` (the commands).
+
 ## Searching by place
 
 The search field (and `library.filter` `text`, smart albums, the CLI and MCP) understands:
@@ -110,6 +176,19 @@ GeoNames dumps (`cities15000.txt`, `countryInfo.txt`, `admin1CodesASCII.txt`) an
 | `map.route {ids?, stopRadius?, gapHours?, arcKm?, detail?}` | an [estimated route](#estimated-routes) through the located photos by capture time: routes, stops, legs (distance, speed, mode) and their lines |
 | `map.place {query}` | what a place name means (city, region, country) with the box that shows it |
 | `photo.place {id?}` | a photo's GPS position and the place it is in, in words |
+| `track.create {points? \| data?, name?, source?, device?, tz?}` | store a [recording](#recorded-tracks) (`[[tMs, lat, lon, ele?, acc?, seg?]]`, or a packed track) as a session: its chunks, what was left out, the document's size |
+| `track.import {gpx? \| path?, name?, tz?}` | a GPX file as one session (every track and segment of it), as `track.create` plus the file's track and untimed point counts |
+| `track.list {fromMs?, toMs?, chunks?}` | the stored sessions (start, end, points, distance, climb, box, chunks, `unreadable`), the document's size and limits |
+| `track.get {session \| id, points?, maxPoints?, fromMs?, toMs?}` | one session (or one chunk), with its points on request: at most `maxPoints` (4000), both ends and both sides of every break kept |
+| `track.rename {session, name}`, `track.delete {session}` | rename (empty clears) or delete a session, on every device through the sync |
+| `track.export {session \| sessions, privacyTrim?, name?, path?}` | sessions as GPX 1.1 text, or written to `path`; `privacyTrim` (`true`, `false` or metres) defaults to the setting |
+| `tracking.settings {trim?, trimRadiusM?}` | the privacy trim for exports, read (no params) or set; shared by the person's devices |
+| `trip.create {name, albums?, range?, photosInRange?, tracks?, cover?}`, `trip.fromAlbum {album, name?}` | a new [trip](#trips) (`limit:` past 500); answers as `trip.get` |
+| `trip.update {id, …}`, `trip.link`, `trip.unlink {id, album \| ref}`, `trip.delete {id}` | change a trip (`null` clears a field), link or unlink an album, delete it with its notes |
+| `trip.list`, `trip.get {id}`, `trip.photos {id}` | the trips (photos, albums and notes counted, the span), one trip with its linked albums resolved, a trip's photos |
+| `trip.toAlbum {id, name?}` | a new album with the trip's photos (one undo step) |
+| `trip.note.add {trip, text, tMs?, lat?, lon?, photo?}`, `trip.note.update`, `trip.note.delete`, `trip.notes {trip}` | a trip's notes (`limit:` past 1500), by time |
+| `album.ref {id}`, `album.resolve {ref}`, `album.trips {id}` | an album's sync-stable reference, the album a reference names here (or `{id: null}`), the trips that link an album |
 
 `ui.inspect` → `map` reports the camera and what the map drew; widget ids `map`, `marker:<photo id>`,
 `map:zoomIn`, `map:zoomOut`, `map:fit`, `map:search`, `map:attribution`.
@@ -123,7 +202,8 @@ uses the browser's `fetch` (`apps/lightcraft-web/src/tiles.rs`). The gazetteer a
 
 ## Not yet
 
-Dragging photos onto the map to give them a position, saved locations, a track log or an estimated route drawn on
-the map (`map.route` gives the data; no screen draws it yet), a filter bar tied to the visible map area, satellite or
+Dragging photos onto the map to give them a position, saved locations, a recorded track or an estimated route drawn
+on the map (`track.get` and `map.route` give the data; no screen draws them yet), tagging photos from the stored
+tracks (only from a GPX file so far), recording a track in the egui apps, showing trips in the egui apps, a filter bar tied to the visible map area, satellite or
 terrain layers, and checking the Map in a browser and on an iPhone (it is tested headlessly on the desktop UI and
 type-checked for wasm and iOS).

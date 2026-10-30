@@ -256,6 +256,19 @@ impl Library {
     pub(crate) fn prefs_gen(&self) -> u64 {
         self.prefs_gen
     }
+    /// Write `name`, a file that holds a shared document of its own (`tracks.json`): the sync compares the shared
+    /// documents again after it, as after prefs.json. A file that couldn't be read or set aside when the library opened
+    /// is never overwritten.
+    pub(crate) fn write_shared(&mut self, name: &'static str, bytes: &[u8]) -> Result<()> {
+        if self.blocked.contains(&name) {
+            return Err(EngineError::Other(format!(
+                "{name} couldn't be read when the library opened, so it isn't overwritten; reopen the library to save"
+            )));
+        }
+        self.files.write_atomic(name, bytes).map_err(|e| EngineError::Other(format!("{name}: {e}")))?;
+        self.prefs_gen += 1;
+        Ok(())
+    }
     /// presets.json, view.json, prefs.json and the sync files.
     pub(crate) fn files_mut(&mut self) -> &mut dyn Store {
         self.files.as_mut()
@@ -358,6 +371,9 @@ struct PrefsFile {
     slide_titles: crate::slide_title::TitleSettings,
     /// A view holds the photos it shows until it is refreshed (`library.holdView`).
     hold_view: bool,
+    /// Items of the shared `prefs` document a newer build wrote (kept and sent on as they are).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    shared_prefs: Vec<serde_json::Value>,
 }
 
 fn presets_json(s: &Session) -> String {
@@ -439,19 +455,25 @@ impl SettingsLoad {
             Ok(v) => return Some(v),
             Err(e) => e,
         };
+        self.set_aside(store, name, &bytes, &err.to_string(), "the defaults are used");
+        None
+    }
+
+    /// Keep `bytes`, the damaged content of `name` (`why`), as `<name>.corrupt-<unix time>` before what is left of it
+    /// (`instead`) is saved over it; when it can't be kept, `name` is never written this session.
+    fn set_aside(&mut self, store: &mut dyn Store, name: &'static str, bytes: &[u8], why: &str, instead: &str) {
         let secs = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let keep = format!("{name}.corrupt-{secs}");
-        log::error!("library: {name} is damaged: {err}");
-        match store.write_atomic(&keep, &bytes) {
-            Ok(()) => self.warnings.push(format!("{name} is damaged ({err}). It was kept as {keep}, and the defaults are used.")),
+        log::error!("library: {name} is damaged: {why}");
+        match store.write_atomic(&keep, bytes) {
+            Ok(()) => self.warnings.push(format!("{name} is damaged ({why}). It was kept as {keep}, and {instead}.")),
             Err(w) => {
                 self.blocked.push(name);
                 self.warnings.push(format!(
-                    "{name} is damaged ({err}) and couldn't be set aside ({w}). LightCraft uses the defaults and won't overwrite the file."
+                    "{name} is damaged ({why}) and couldn't be set aside ({w}). LightCraft uses what it could read and won't overwrite the file."
                 ));
             }
         }
-        None
     }
 }
 
@@ -675,6 +697,31 @@ impl Session {
         // when the XMP sidecars were last read or written (a cache: unreadable = empty)
         self.sidecar_times =
             files.read(crate::sidecar::SidecarTimes::FILE).ok().flatten().map(|b| crate::sidecar::SidecarTimes::from_json(&b)).unwrap_or_default();
+        // recorded tracks and their privacy trim (a shared document of their own; one damaged item sets the file aside, the
+        // others are kept)
+        let (tracks, dropped) =
+            crate::tracks::Tracks::load(&settings.read::<Vec<serde_json::Value>>(files.as_mut(), crate::tracks::FILE).unwrap_or_default());
+        if dropped > 0
+            && let Ok(Some(bytes)) = files.read(crate::tracks::FILE)
+        {
+            let why = format!("{dropped} of its pieces can't be read");
+            settings.set_aside(files.as_mut(), crate::tracks::FILE, &bytes, &why, "the other tracks are kept");
+        }
+        self.tracks = tracks;
+        // trips and their notes (as the tracks: a damaged item sets its file aside, the others are kept)
+        let mut doc = |name: &'static str, kind: crate::trips::Doc| {
+            let items = settings.read::<Vec<serde_json::Value>>(files.as_mut(), name).unwrap_or_default();
+            let (kept, dropped) = crate::trips::take(kind, &items);
+            if dropped > 0
+                && let Ok(Some(bytes)) = files.read(name)
+            {
+                settings.set_aside(files.as_mut(), name, &bytes, &format!("{dropped} of its items can't be read"), "the others are kept");
+            }
+            kept
+        };
+        let (trips, notes) = (doc(crate::trips::TRIPS_FILE, crate::trips::Doc::Trips), doc(crate::trips::NOTES_FILE, crate::trips::Doc::Notes));
+        self.trips = crate::trips::Trips::load(trips, notes);
+        self.prefs_kept = prefs.shared_prefs;
         // which photo-library assets were opened as which photos (this device's own)
         self.photo_library = files
             .read(crate::photo_library::PhotoLibraryMap::FILE)
@@ -690,6 +737,8 @@ impl Session {
         self.sync = crate::cloud_sync::SyncState::load(files.as_mut());
         // iCloud sync (on for this library, or not)
         self.icloud = crate::icloud::ICloud::load(files.as_mut());
+        // (the trips' album references are as this library last wrote them)
+        self.trips.mode = Some(self.ref_mode());
         if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
             self.catalog.set_id_space(st.config.space);
         }
@@ -1143,6 +1192,7 @@ impl Session {
             slide_overlays: self.slide_overlays.clone(),
             slide_titles: self.slide_titles.clone(),
             hold_view: self.hold_view,
+            shared_prefs: self.prefs_kept.clone(),
         })
         .unwrap_or_default();
         let Some(lib) = self.library.as_mut() else { return Ok(()) };

@@ -6,7 +6,7 @@
 //! - [`embedded`] / [`jpeg_segments`] / [`png_chunks`] / [`webp_chunks`] — locate Exif / XMP / ICC / IPTC blocks.
 //! - [`parse_xmp`] / [`write_xmp`] — XMP packets (interchange fields + the opaque `lc:settings` JSON).
 //! - [`parse_iptc`] — IPTC-IIM record 2 datasets.
-//! - [`parse_gpx`] — GPS track logs (GPX) for geotagging by capture time.
+//! - [`parse_gpx`] / [`write_gpx`]: GPS track logs (GPX) for geotagging by capture time, and writing them.
 //! - [`extract`] — all of the above for a whole file (JPEG, PNG, WebP, TIFF/DNG/raw, PSD/PSB, Canon CR3, HEIF/HEIC/AVIF).
 //! - [`cr3`] — the Canon CR3 container (metadata blocks, XMP, the JPEG and raw tracks).
 #![forbid(unsafe_code)]
@@ -30,7 +30,7 @@ pub use container::{Embedded, embedded, jpeg_segments, png_chunks, webp_chunks};
 pub use datetime::DateTime;
 pub use exif::{from_tiff, read_exif, strip_exif_header, try_read_exif, try_read_exif_with, write_exif};
 pub use focus::FocusPoint;
-pub use gpx::{GpxError, Match, TrackPoint, Tracklog, parse_gpx};
+pub use gpx::{GpxError, Match, TrackPoint, Tracklog, parse_gpx, write_gpx};
 pub use iptc::parse_iptc;
 pub use lightcraft_geom::{Orientation, Rect};
 pub use tags::{TagRow, file_tag_rows, tag_rows};

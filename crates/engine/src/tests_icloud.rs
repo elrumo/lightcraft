@@ -191,6 +191,9 @@ impl Device {
     }
 }
 
+mod tracks;
+mod trips;
+
 fn id_of(v: &Value) -> PhotoId {
     PhotoId(v["id"].as_u64().unwrap())
 }
