@@ -150,7 +150,7 @@ pub fn route_fixes(cat: &Catalog, ids: &[PhotoId]) -> RouteFixes {
 }
 
 /// A moment as the `…Z` text the other commands use.
-fn iso(t: f64) -> String {
+pub(crate) fn iso(t: f64) -> String {
     format!("{}Z", lightcraft_catalog::dates::civil(t.floor() as i64))
 }
 

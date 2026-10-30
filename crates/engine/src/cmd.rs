@@ -39,6 +39,7 @@ pub mod missing;
 mod models;
 mod organize;
 pub mod packs;
+mod path;
 mod prefs;
 mod preset_files;
 pub mod previews;
@@ -182,6 +183,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(map::specs());
         v.extend(track::specs());
         v.extend(trip::specs());
+        v.extend(path::specs());
         v.extend(video::specs());
         v.extend(vision::specs());
         v.extend(xmp::specs());
