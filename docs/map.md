@@ -8,7 +8,8 @@ runs on your computer; only the map's background pictures come from the internet
 
 GPS is read at import, from the file (Exif GPS in JPEG, PNG, WebP, TIFF, DNG and raw files, Canon CR3, HEIC and
 AVIF) and from XMP sidecars; stored in the catalog like any other metadata. Photos without GPS get one from a GPX
-track log (Photo ▸ Auto-Tag from Tracklog…) or by typing it in the Info panel. `photo.setMeta gps` writes it.
+track log (Photo ▸ Auto-Tag from Tracklog…), from the recorded tracks the library keeps (`photo.autoTagTracks`,
+[below](#recorded-and-estimated-paths)) or by typing it in the Info panel. `photo.setMeta gps` writes it.
 An existing library needs no re-import: photos that had a position already have it.
 
 ## The Map view
@@ -100,8 +101,8 @@ person's other devices ([sync.md](sync.md#recorded-tracks)).
   A track holds at most 2 000 000 points, and a GPX file read from a path is at most 256 MiB.
 - **Privacy trim** (`tracking.settings`, off until turned on): what is exported can leave out the start and the end of
   a track that lie within a radius (300 m by default, 50 to 5000) of where it began and ended, often a home. It is
-  applied to what is exported only, never to what is stored, and the setting syncs (the item `settings` of the
-  `tracks` document).
+  applied to what is exported and to the path `map.path` draws ([below](#privacy-trim)) only, never to what is stored,
+  and the setting syncs (the item `settings` of the `tracks` document).
 - **Export.** `track.export` writes one or several sessions as GPX 1.1, as text or to a file (replaced whole, never
   half written), with the privacy trim when asked or set. `write_gpx(name, points)` in `lightcraft_meta` writes
   time-ordered track points as GPX 1.1 (one `<trkseg>` per run of equal `segment`, positions to 6 decimals, elevation
@@ -136,6 +137,65 @@ references are described).
 
 The code is `crates/engine/src/trips.rs` (the documents, their checks, the album references and a trip's photos)
 and `crates/engine/src/cmd/trip.rs` (the commands).
+
+## Recorded and estimated paths
+
+`map.path` gives one path for a selection (the visible photos, `ids`, an `album`, or a `trip` once trips exist;
+`fromMs`/`toMs` narrow it to a time): **recorded** where a stored track covers the time, **estimated** (the legs of
+[`map.route`](#estimated-routes)) everywhere else. A screen draws the two differently (solid and dashed); the answer
+says which each piece is (`source`).
+
+- **Which tracks.** `tracks: "auto"` (the default) takes the recorded sessions that overlap the window, or, where it
+  is open, the time of the photos; a list of sessions takes those whole. Each is read once, one at a time.
+- **Recorded pieces.** A track is cut into pieces wherever it pauses longer than `gapHours`, so no line crosses the
+  days between. A break in the recording (lost reception, a pause, a chunk of the track that is missing or from a
+  newer version) is a new line inside its piece: nothing is drawn across it, and its time counts as neither moving
+  nor stopped. When two tracks cover the same time (a phone and a watch), the one that began first keeps it and the
+  other keeps only what comes after, so nothing is drawn twice. A piece has its distance, duration, climb and
+  descent from every point, its `lines` with a parallel list of `times`, and is simplified by shape to `maxPoints`
+  (4000; a long stay gives up its points before a bend does, both ends and both sides of every break are kept);
+  all the recorded lines of one answer hold 60 000 points at most.
+- **Estimated legs fill the rest.** A recording replaces the estimate over its time: a photo taken while a track was
+  recording sits on the track, and the legs run only through the photos taken between recordings (or before the
+  first, after the last), from where one recording ends to where the next begins. An estimated leg's `from`/`to` name
+  its stops, or are `null` where the leg meets a recording.
+- **Stops.** For estimated parts, the stops of the estimate that hold photos. On a recording, a place where the track
+  stays within `stopRadius` (150 m) of where the stay began for `stopMinutes` (10) or more: a red light or a photo is
+  not a stop, lunch is. Photos taken during a recorded stop are listed with it.
+- **Photos on the path.** Each photo with a position and a time is listed with its time and place (`t`, `lat`, `lon`)
+  and the piece it is on (`piece`, and `at`: how far through that piece's time, 0 to 1). A photo taken while a track
+  was recording is on that recording; a photo at an estimated stop is at the end of the leg that arrives there or the
+  start of the one that leaves (or at the end of the recording the stop joins), whichever is nearer in time. A photo
+  whose stop is on no piece (a route of a single stop) has `piece: null`.
+- **Stats** are the sums of the pieces: distance (recorded and estimated), the time on the path, the moving time
+  (the time not in a stop nor in a break of a recording), climb and descent (recorded only), photos and stops.
+- **Bounded:** at most 5000 recorded pieces and 4 000 000 recorded points read per answer (more is refused with
+  `limit: …`, naming fewer tracks or a shorter time); points and photos that aren't real are left out and counted.
+
+Pieces come in time order and never overlap; lines cross the antimeridian as two, as `map.route`'s do; every time is
+seconds since 1970 (UTC). The maths is `crates/geo/src/path.rs` (positions and times in, pieces out); the command is
+`crates/engine/src/cmd/path.rs`.
+
+### Privacy trim
+
+A track often begins and ends at home. With the trim on (`tracking.settings` `trim` and `trimRadiusM`, shared by a
+person's devices, or `privacyTrim: true | metres` in the call; 0 or `false` is off), `map.path` leaves out what lies
+within the radius (on the globe) of where each **track** began and ended (everything before its first point farther
+than that from the start, and likewise from the end), and the same for each **estimated route** at its ends that
+are photos (an end that meets a recording is not a home). The photos taken in what was cut go too, and the stops,
+pieces and stats follow. A track or route that never leaves the radius vanishes. `trim` in the answer says what was
+removed: `{applied, radiusM, removed: {start, end (photos), routes (gone whole), points (positions cut)}}`. Only the
+answer changes: what is stored, and what syncs, keeps every point.
+
+### Auto-tag from the recorded tracks
+
+`photo.autoTagTracks` gives photos without a position the place a stored track says they were taken at, as
+`photo.autoTagTracklog` does from a GPX file and with the same parameters (`ids`, `offset`, `maxGap` 600 s,
+`replace`, `dryRun`) and answers, plus the `track` (session) each place came from and `tracks`/`points`/`start`/`end`
+for what was searched. Between two points of one stretch at most `maxGap` apart the place is interpolated; else the
+nearest point within `maxGap` counts; never across a break, a missing chunk or from one session to the next. Where two
+tracks cover a photo, an interpolated place beats a nearest one and a nearer point a farther one. One undo step. With
+no stored track the answer is `no such track: none stored`.
 
 ## Searching by place
 
@@ -174,6 +234,8 @@ GeoNames dumps (`cities15000.txt`, `countryInfo.txt`, `admin1CodesASCII.txt`) an
 | `map.points {zoom?, cell?, bbox?, ids?}` | the visible located photos grouped as markers (what the map draws), for agents and scripts |
 | `map.bounds` | the box around the visible located photos |
 | `map.route {ids?, stopRadius?, gapHours?, arcKm?, detail?}` | an [estimated route](#estimated-routes) through the located photos by capture time: routes, stops, legs (distance, speed, mode) and their lines |
+| `map.path {ids? \| album? \| trip?, fromMs?, toMs?, tracks?, privacyTrim?, stopRadius?, gapHours?, arcKm?, detail?, stopMinutes?, maxPoints?}` | [one path](#recorded-and-estimated-paths): recorded where a stored track covers the time, estimated elsewhere, with stops, the photos placed on it, stats and the privacy trim |
+| `photo.autoTagTracks {ids?, tracks?, offset?, maxGap?, replace?, dryRun?}` | positions for photos from the [stored tracks](#auto-tag-from-the-recorded-tracks) by capture time; one undo step |
 | `map.place {query}` | what a place name means (city, region, country) with the box that shows it |
 | `photo.place {id?}` | a photo's GPS position and the place it is in, in words |
 | `track.create {points? \| data?, name?, source?, device?, tz?}` | store a [recording](#recorded-tracks) (`[[tMs, lat, lon, ele?, acc?, seg?]]`, or a packed track) as a session: its chunks, what was left out, the document's size |
@@ -203,7 +265,7 @@ uses the browser's `fetch` (`apps/lightcraft-web/src/tiles.rs`). The gazetteer a
 ## Not yet
 
 Dragging photos onto the map to give them a position, saved locations, a recorded track or an estimated route drawn
-on the map (`track.get` and `map.route` give the data; no screen draws them yet), tagging photos from the stored
-tracks (only from a GPX file so far), recording a track in the egui apps, showing trips in the egui apps, a filter bar tied to the visible map area, satellite or
+on this app's Map (`track.get`, `map.route` and `map.path` give the data, `map.path` made for a native (non-Rust)
+frontend's map; the desktop and web Map don't draw them yet), recording a track in the egui apps, showing trips in the egui apps, a filter bar tied to the visible map area, satellite or
 terrain layers, and checking the Map in a browser and on an iPhone (it is tested headlessly on the desktop UI and
 type-checked for wasm and iOS).
