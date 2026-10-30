@@ -69,6 +69,7 @@ struct Fake {
 
 mod sign_out;
 mod tracks;
+mod trips;
 
 impl Fake {
     /// Whether this server keeps the document at `path` (`/api/docs/<name>`).

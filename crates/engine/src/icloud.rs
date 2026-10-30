@@ -435,6 +435,10 @@ impl Session {
     /// Turn iCloud sync on or off for this library. Off forgets what the cloud has (the cloud keeps it, and this
     /// device's presets, settings and edits stay as they are); on again merges as on a new device.
     pub fn icloud_enable(&mut self, on: bool) -> Result<()> {
+        // (the trips' album references are read with the albums' uids, which go with it: by album id from now on)
+        if !on && self.icloud.is_some() {
+            self.trips_follow(crate::trips::RefMode::Id);
+        }
         let Some(lib) = self.library.as_mut().filter(|l| l.on_disk) else {
             return Err(EngineError::Other("iCloud sync needs a library that is saved (open or create one first)".into()));
         };
@@ -461,6 +465,8 @@ impl Session {
             }
             (false, None) => {}
         }
+        // (on: the trips' album references become the albums' uids)
+        self.trips_follow_mode();
         Ok(())
     }
 
@@ -486,7 +492,7 @@ impl Session {
     }
 
     /// Whether this library syncs through a server (which then keeps its presets, settings and photos).
-    fn server_linked(&self) -> bool {
+    pub(crate) fn server_linked(&self) -> bool {
         self.sync.as_ref().is_some_and(|st| st.signed_in() || !st.config.library.is_empty())
     }
 
@@ -707,6 +713,8 @@ impl Session {
 
     /// What changed here since the cloud last agreed: the records to save and to delete.
     pub fn icloud_changes(&mut self) -> Changes {
+        // (a server signed in or out meanwhile: the trips are sent with references of the way the library syncs now)
+        self.trips_follow_mode();
         self.with_icloud(|s, ic| {
             s.icloud_refresh(ic);
             let mut out = Changes::default();

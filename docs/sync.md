@@ -655,7 +655,7 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 | user presets (created or imported on any device, the web and iOS included; rename, move, delete, favourite) | favourites among the built-in presets, recent profiles |
 | export, metadata and filter presets, curve presets, colour-label and keyword sets, LUT profiles (with their `.cube` files), the order of the develop preset groups, the import defaults that don't name a place | the watched folder for auto import, the folders and the external editor, the cache size, the search-sharing choices |
 | metadata and keywords, analysis results | undo / redo |
-| recorded tracks and the privacy trim for them (the `tracks` document, [below](#recorded-tracks)), saved trips and the notes of a trip | a recording in progress (the frontend keeps it until it hands the track over) |
+| recorded tracks and the privacy trim for them (the `tracks` document, [below](#recorded-tracks)), saved trips and the notes of a trip (the `trips` and `trip-notes` documents, [below](#trips)) | a recording in progress (the frontend keeps it until it hands the track over) |
 | albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
 | | Local records (photos seen while browsing a folder, or opened from the Photos library, until added to the library; which Photos library picture is which photo, `photo-library.json`) |
 
@@ -695,6 +695,52 @@ Recorded tracks ([map.md](map.md#recorded-tracks)) are the shared document `trac
   they are. It is not in `prefs` on purpose: every build from before it drops a `prefs` item it doesn't know when it
   next sends that document, which would quietly turn a privacy setting off, while no build that doesn't know `tracks`
   ever sends it. (Items of `prefs` a newer build wrote are kept and sent on from now on.)
+
+### Trips
+
+A **trip** is a saved, named grouping of photos and paths with notes (`trip.*`, `crates/engine/src/trips.rs`, the
+commands in `crates/engine/src/cmd/trip.rs`). It holds no photo of its own: its photos are the members of the albums it
+links and, when it says so (`photosInRange`), the photos with a position captured inside its range, so a change to an
+album reaches the trip with nothing copied. Its path is `map.path {trip}` ([map.md](map.md)). A native (non-Rust)
+frontend draws the trips; the core keeps them and syncs them.
+
+Two shared documents carry them, each in a file of its own in the library (like `tracks.json`: a damaged file or item
+never costs the other document, and a damaged one is set aside as `<name>.corrupt-<time>` with the rest kept):
+
+| Document | One item (by `id`) | File |
+|---|---|---|
+| `trips` | `{id: "t…", name, createdMs, cover?: {key: content hash}, albums: [album reference], range?: {fromMs, toMs}, photosInRange, tracks: "range" \| [session], overrides: [{atMs, mode}]}` | `trips.json` |
+| `trip-notes` | `{id: "n…", trip, tMs, lat?, lon?, text, photo?: content hash, createdMs}` | `trip-notes.json` |
+
+Times are milliseconds since 1970 (UTC). A cover and a note's photo are named by content, so they mean the same photo
+on every device that has it.
+
+- **Album references.** Album ids are a library's own, so a trip names an album by a reference (`album.ref`):
+  `a:<album id>` in a library that syncs with a server (which shares album ids) or with nothing, `u:<uid>` in one that
+  syncs through iCloud or a cloud folder, where the uid is the one the album's `album` record travels under (the
+  first device to send the album makes it, `icloud.json` keeps it; `album.ref` makes it at once when the album has
+  none yet). `album.resolve` answers the album a reference names on this device, or `{id: null}`: deleted, or not
+  here yet; the trip keeps the reference either way, and it resolves once the album comes. Folders, smart albums and
+  the Quick Collection are not linked. `album.trips` lists the trips that link an album.
+- **When the library changes how it syncs** (iCloud or a cloud folder turned on or off, a server signed in to or out
+  of), the references this device can resolve are rewritten for the new way (`a:` to `u:` and back) before the trips
+  are sent; one it can't resolve is kept as it is.
+- **Merging.** With a server, item by item and field by field (two devices that change different fields of one trip
+  both keep their change; the same field on both: one of them, the same everywhere). A list field (`albums`, `tracks`,
+  `overrides`) is one value: two devices that change the same list at once keep one side whole. Through iCloud or a
+  cloud folder, one record per trip and per note, the newer change wins. Notes are one item each, so notes added on two
+  devices all survive.
+- **Deleting a trip** removes its notes, on this device and, through the sync, everywhere; a device that learns a
+  trip was removed elsewhere removes its own notes of it too, those it added meanwhile included. A trip deleted on one
+  device while another changed it comes back with the change (an edit beats a removal for a whole item), without the
+  notes the removal took. A note whose trip has not arrived yet is kept.
+- **Limits.** A new trip is refused (`limit: …`) past 500 trips and a new note past 1500, or when its document would
+  pass 16 MiB; names are at most 200 characters and a note's text 10 000. What comes from a server, iCloud or a cloud
+  folder is hostile until checked: an item whose id, types or sizes are wrong is left out (logged) and the others kept,
+  up to the 2000 items a device keeps of a document and the 24 MiB a server takes; fields this build doesn't know are kept, and an item with a newer `fmt`
+  is kept as it is and listed as `unreadable` (shown, deletable, not changed here).
+- **An older server** answers `404` for these names: they are left alone for the session and stay on the device.
+  **Signing out** removes them with the account's other shared documents.
 
 ## When two devices change the same thing
 
@@ -907,7 +953,7 @@ Big JSON answers (the library, pulled changes, the presets; 16 KiB and up) come 
 | `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs): `password` and `upload` say what each asks and allows): `{shares: [...]}`; `POST {album, expiresDays?, originals?, password?, upload?}` → the new link (`400` for a folder or smart album or a password under 4 characters, `404` no such album, `409` over 200 links); `DELETE` takes one back |
 | `GET /s/{token}`, `GET /s/{token}/{photo}[?play=1]`, `GET /s/{token}/{photo}/{thumb\|view\|original}`, `GET /s/{token}/download` | **no sign-in**: the album's page, a photo's page (`play`: the slideshow), the pictures, and Download All (a ZIP of the originals) ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` or `download` on a link that doesn't offer them), `401` until a link's password was typed, `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
 | `POST /s/{token}/unlock`, `POST /s/{token}/upload` | **no sign-in**: a link's password (`password=…`, a form; the answer sets the cookie that opens the link), and photos a visitor adds (`multipart/form-data`, field `photos`, optional `name`; `303` back to the album with `?added=N&skipped=M`; `403` on a link that doesn't take photos, `507` over the owner's [storage limit](#storage-limits)) |
-| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups), `hidden-presets` (the presets and groups the user hid, one item each: `{id: "preset:<id>"}`, `{id: "group:<name>"}`), `privacy` (the Hidden password's hash and the blur choice; this name was missing from the list), `tracks` (the tracks a device recorded, in chunks, one item each, [above](#recorded-tracks)), `trips` (the saved trips, one item each) and `trip-notes` (the notes of a trip, one item each); every item has an `id`: `{version, items}` (a list; the whole request body is at most 24 MiB, above it the server answers 413; the server does not count items, but a device takes at most 2000 items of a document and loses the rest, so a document must stay under that), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. A server from before tracks, trips and trip-notes answers 404 for them; the device then leaves that document alone and the rest of the sync goes on. Their versions come with every pull (`docs`) |
+| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups), `hidden-presets` (the presets and groups the user hid, one item each: `{id: "preset:<id>"}`, `{id: "group:<name>"}`), `privacy` (the Hidden password's hash and the blur choice; this name was missing from the list), `tracks` (the tracks a device recorded, in chunks, one item each, [above](#recorded-tracks)), `trips` (the saved trips, one item each) and `trip-notes` (the notes of a trip, one item each; both [above](#trips)); every item has an `id`: `{version, items}` (a list; the whole request body is at most 24 MiB, above it the server answers 413; the server does not count items, but a device takes at most 2000 items of a document and loses the rest, so a document must stay under that), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. A server from before tracks, trips and trip-notes answers 404 for them; the device then leaves that document alone and the rest of the sync goes on. Their versions come with every pull (`docs`) |
 | `GET /api/docs/server-presets` | the presets an admin shares with every user ([admin page](#the-admin-page) → Presets): `{version, items}`, each preset `{id: "srv.…", name, group, settings}` and one item `{id: "hidden", presets, groups}` (built-in presets and groups hidden for everyone). The presets the admin disabled (`disabled: true` on the admin's copy) are left out, so older devices need nothing to respect it. Read-only (`PUT` → `403`); its version comes with every pull (`docs`) once an admin has written it. Devices take it as it is, never merge or send it |
 | `POST /api/admin/login`, `POST /api/admin/logout` | the admin session ([above](#the-admin-page)): `login {user, password, remember?, cookie?}` → `{token, user}`, or with `cookie: true` (the page) `{user}` and a `Set-Cookie: lc_admin=…`; `remember` keeps it for weeks and across restarts; `logout` ends it (and clears the cookie). Anything else under `/api/admin/` takes the token as a bearer or the cookie (with `X-LightCraft-Admin` on what changes something) |
 | `GET /api/admin/usage` | (admin session) the Overview's numbers ([`usage.rs`](../apps/lightcraft-server/src/usage.rs)): `{since, supported, cores, memory, history: [{at, cpu, machineCpu, rss, memUsed, requests, out}], users: [{name, devices: [{id, name, requests, in, out, busyMs, lastSeen}]}]}`. `history` is a sample of the machine every 30 s for the last 24 h, averaged to at most 240 points (`cpu`: the server's CPU in cores, `machineCpu`: the whole machine's, 0 to 1, `rss` and `memUsed`: the server's memory and what the machine or container uses, `requests` and `out`: the devices' requests and the bytes sent to them since the point before); `null` where the platform doesn't say (`supported` is false off Linux). The counts are in memory and start again with the server |

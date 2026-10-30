@@ -113,6 +113,7 @@ pub mod sync;
 pub mod text;
 pub mod tiles;
 pub mod tracks;
+pub mod trips;
 pub mod upright_transfer;
 pub mod usage;
 pub mod video_export;
@@ -337,6 +338,8 @@ pub struct Session {
     pub(crate) live_photos: live_photo::LivePhotos,
     /// Recorded tracks and the tracking preferences (`tracks.json`; see [`tracks`]).
     pub(crate) tracks: tracks::Tracks,
+    /// Trips and their notes (`trips.json`, `trip-notes.json`; see [`trips`]).
+    pub(crate) trips: trips::Trips,
     /// Items of the shared `prefs` document this build doesn't know, kept and sent on as they came.
     pub(crate) prefs_kept: Vec<Value>,
     /// What was selected before a photo-library photo was opened, to come back to when it is left.
@@ -603,6 +606,7 @@ impl Session {
             photo_library_staging: None,
             live_photos: Default::default(),
             tracks: Default::default(),
+            trips: Default::default(),
             prefs_kept: Vec::new(),
             photo_library_return: None,
             reload_tickets: Default::default(),
@@ -1686,6 +1690,8 @@ mod tests_sliders_raw;
 mod tests_sliders_store;
 #[cfg(test)]
 mod tests_tracks;
+#[cfg(test)]
+mod tests_trips;
 #[cfg(test)]
 mod tests_upright;
 #[cfg(test)]
