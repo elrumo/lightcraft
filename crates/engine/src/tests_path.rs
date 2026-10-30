@@ -346,9 +346,12 @@ fn a_trips_overrides_set_the_mode_of_the_leg_leaving_then() {
     s.execute("trip.update", &json!({"id": set, "overrides": [{"atMs": leaves + 30_000, "mode": mode}]})).unwrap();
     assert_eq!(modes(&s.execute("map.path", &json!({"trip": set})).unwrap()), vec![mode.to_string()]);
     // another time, and a mode we don't know (a newer version's), change nothing
-    s.set_doc_items("trips", &[json!({"id": "tFar", "name": "Far", "createdMs": 1, "albums": [format!("a:{album}")],
-        "overrides": [{"atMs": leaves + 3_600_000, "mode": "flight"}, {"atMs": leaves, "mode": "teleport"}]})])
-        .unwrap();
+    s.set_doc_items(
+        "trips",
+        &[json!({"id": "tFar", "name": "Far", "createdMs": 1, "albums": [format!("a:{album}")],
+        "overrides": [{"atMs": leaves + 3_600_000, "mode": "flight"}, {"atMs": leaves, "mode": "teleport"}]})],
+    )
+    .unwrap();
     assert_eq!(modes(&s.execute("map.path", &json!({"trip": "tFar"})).unwrap()), was);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -358,9 +361,14 @@ fn what_the_call_says_wins_over_what_the_trip_says() {
     let (mut s, dir) = library("wins");
     let (ids, album, session) = walked(&mut s);
     let other = s.execute("track.create", &json!({"points": walk(T0 + 30 * 86_400_000, 10, 50.0, 0.0)})).unwrap()["session"].clone();
-    let t = trip(&mut s, json!({"name": "Walk", "albums": [album], "tracks": [other],
-        "range": {"fromMs": T0, "toMs": T0 + 20_000_000}}));
-    let tracks = |r: &Value| -> Vec<Value> { r["pieces"].as_array().unwrap().iter().filter(|p| p["source"] == "recorded").map(|p| p["track"].clone()).collect() };
+    let t = trip(
+        &mut s,
+        json!({"name": "Walk", "albums": [album], "tracks": [other],
+        "range": {"fromMs": T0, "toMs": T0 + 20_000_000}}),
+    );
+    let tracks = |r: &Value| -> Vec<Value> {
+        r["pieces"].as_array().unwrap().iter().filter(|p| p["source"] == "recorded").map(|p| p["track"].clone()).collect()
+    };
     assert!(tracks(&s.execute("map.path", &json!({"trip": t})).unwrap()).is_empty(), "the trip's own track list");
     assert_eq!(tracks(&s.execute("map.path", &json!({"trip": t, "tracks": [session]})).unwrap()), vec![json!(session)]);
     assert_eq!(tracks(&s.execute("map.path", &json!({"trip": t, "tracks": "auto"})).unwrap()), vec![json!(session)]);
@@ -395,7 +403,11 @@ fn map_path_names_a_missing_trip_and_survives_hostile_trips() {
     for t in ["tGood", "tBack", "tExtreme", "tNewer", "tNum"] {
         let r = s.execute("map.path", &json!({"trip": t}));
         assert!(r.is_ok() || r.unwrap_err().to_string().starts_with("no such trip"), "{t}");
-        for p in [json!({"trip": t, "fromMs": i64::MIN, "toMs": i64::MAX}), json!({"trip": t, "tracks": ["s-not-here"]}), json!({"trip": t, "privacyTrim": true})] {
+        for p in [
+            json!({"trip": t, "fromMs": i64::MIN, "toMs": i64::MAX}),
+            json!({"trip": t, "tracks": ["s-not-here"]}),
+            json!({"trip": t, "privacyTrim": true}),
+        ] {
             let _ = s.execute("map.path", &p);
         }
     }
