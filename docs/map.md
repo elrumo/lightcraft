@@ -113,6 +113,30 @@ person's other devices ([sync.md](sync.md#recorded-tracks)).
 The code is `crates/geo/src/track.rs` (packing, figures, chunks, simplifying for a map, the privacy trim),
 `crates/engine/src/tracks.rs` (the document and its checks) and `crates/engine/src/cmd/track.rs` (the commands).
 
+## Trips
+
+A trip is a saved, named grouping of photos and paths with notes, linked to albums both ways: a native (non-Rust)
+frontend shows trips, the core keeps and syncs them ([sync.md](sync.md#trips), where the documents and the album
+references are described).
+
+- **Its photos** (`trip.photos`) are the members of the albums it links (manual albums only) and, when `photosInRange`
+  is on, the photos with a position captured inside its range (both ends included), each once, by capture time
+  (photos without one last). Photos in Recently Deleted or hidden are left out, and so are Local records and virtual
+  copies from the range. A capture time is read as `map.route` reads it: exact with its recorded zone, else in the zone
+  of the photo's longitude; a photo without a position or a zone is read as UTC (for a trip's span), and one without a
+  time (or with a date alone) is never inside a range, though an album still brings it.
+- **Its tracks** are the recorded sessions it lists, or with `tracks: "range"` every stored session that overlaps its
+  range (or, without one, the span of its photos). Its path is `map.path {trip}`.
+- **From an album** (`trip.fromAlbum`): a trip that links the album, its range the span of the album's photos.
+  **To an album** (`trip.toAlbum`): a new album with the trip's photos, one undo step; the trip doesn't link it.
+- **Notes** (`trip.note.*`) have a moment, an optional place and an optional photo, and are listed by time. Deleting a
+  trip deletes its notes. None of `trip.*` but `trip.toAlbum` is an undo step, and none goes into the command journal.
+- For the native frontend's map, the core offers `Session::trip_photos`, `trip_tracks`, `trip_range` and
+  `trip_overrides` (the modes given to estimated legs).
+
+The code is `crates/engine/src/trips.rs` (the documents, their checks, the album references and a trip's photos)
+and `crates/engine/src/cmd/trip.rs` (the commands).
+
 ## Searching by place
 
 The search field (and `library.filter` `text`, smart albums, the CLI and MCP) understands:
@@ -159,6 +183,12 @@ GeoNames dumps (`cities15000.txt`, `countryInfo.txt`, `admin1CodesASCII.txt`) an
 | `track.rename {session, name}`, `track.delete {session}` | rename (empty clears) or delete a session, on every device through the sync |
 | `track.export {session \| sessions, privacyTrim?, name?, path?}` | sessions as GPX 1.1 text, or written to `path`; `privacyTrim` (`true`, `false` or metres) defaults to the setting |
 | `tracking.settings {trim?, trimRadiusM?}` | the privacy trim for exports, read (no params) or set; shared by the person's devices |
+| `trip.create {name, albums?, range?, photosInRange?, tracks?, cover?}`, `trip.fromAlbum {album, name?}` | a new [trip](#trips) (`limit:` past 500); answers as `trip.get` |
+| `trip.update {id, …}`, `trip.link`, `trip.unlink {id, album \| ref}`, `trip.delete {id}` | change a trip (`null` clears a field), link or unlink an album, delete it with its notes |
+| `trip.list`, `trip.get {id}`, `trip.photos {id}` | the trips (photos, albums and notes counted, the span), one trip with its linked albums resolved, a trip's photos |
+| `trip.toAlbum {id, name?}` | a new album with the trip's photos (one undo step) |
+| `trip.note.add {trip, text, tMs?, lat?, lon?, photo?}`, `trip.note.update`, `trip.note.delete`, `trip.notes {trip}` | a trip's notes (`limit:` past 1500), by time |
+| `album.ref {id}`, `album.resolve {ref}`, `album.trips {id}` | an album's sync-stable reference, the album a reference names here (or `{id: null}`), the trips that link an album |
 
 `ui.inspect` → `map` reports the camera and what the map drew; widget ids `map`, `marker:<photo id>`,
 `map:zoomIn`, `map:zoomOut`, `map:fit`, `map:search`, `map:attribution`.
@@ -174,6 +204,6 @@ uses the browser's `fetch` (`apps/lightcraft-web/src/tiles.rs`). The gazetteer a
 
 Dragging photos onto the map to give them a position, saved locations, a recorded track or an estimated route drawn
 on the map (`track.get` and `map.route` give the data; no screen draws them yet), tagging photos from the stored
-tracks (only from a GPX file so far), recording a track in the egui apps, a filter bar tied to the visible map area, satellite or
+tracks (only from a GPX file so far), recording a track in the egui apps, showing trips in the egui apps, a filter bar tied to the visible map area, satellite or
 terrain layers, and checking the Map in a browser and on an iPhone (it is tested headlessly on the desktop UI and
 type-checked for wasm and iOS).
