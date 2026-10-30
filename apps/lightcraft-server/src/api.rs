@@ -686,7 +686,8 @@ pub(crate) fn folder_original_path(st: &State, l: &Mutex<UserLib>, user: &str, h
 }
 
 fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user: &str, kind: &str, hash: &str) -> Resp {
-    let dir = l.lock().unwrap_or_else(PoisonError::into_inner).dir.join("blobs");
+    // (the folder never changes: no waiting for the library's lock, which a push or a snapshot may hold a while)
+    let dir = crate::accounts::user_dir(&st.data, user).join("blobs");
     let Some(path) = blob_path(&dir, kind, hash) else {
         return error(400, "not a photo file this server keeps (/api/blobs/original|smart|mini|video/<32 hex digits>)");
     };
@@ -1116,5 +1117,48 @@ mod tests {
         assert!(blob_path(d, "secret", "0123456789abcdef0123456789abcdef").is_none());
         assert_eq!(blob_path(d, "mini", "0123456789ABCDEF0123456789abcdef"), Some(PathBuf::from("/d/mini/01/0123456789abcdef0123456789abcdef")));
         assert_eq!(query("since=5&limit=9", "limit"), Some("9"));
+    }
+
+    /// A photo file is served while the library is busy. A push or a snapshot holds the library's
+    /// lock for a while, and every blob request that queued behind it kept one of the server's
+    /// places: they ran out, and the sync was answered `503` ("the server is busy"). (Before, each
+    /// blob request took the lock only to find the folder, and the folder never changes.)
+    #[test]
+    fn a_photo_file_is_served_while_the_library_is_busy() {
+        let root = std::env::temp_dir().join(format!("lc-blob-busy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let data = root.join("data");
+        crate::accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+        let mut cfg = crate::Config::new(data.clone(), "127.0.0.1:0");
+        cfg.scan_interval = None;
+        cfg.preview_threads = Some(1);
+        let server = crate::Server::start(cfg).unwrap();
+        let base = format!("http://{}", server.addr());
+        let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let login = serde_json::json!({"user": "ann", "password": "correct horse", "device": "t"}).to_string();
+        let mut reply = agent.post(&format!("{base}/api/login")).send(login.as_bytes()).unwrap();
+        assert_eq!(reply.status().as_u16(), 200);
+        let body = reply.body_mut().read_to_vec().unwrap();
+        let token = serde_json::from_slice::<Value>(&body).unwrap()["token"].as_str().unwrap().to_string();
+        // a preview the server keeps
+        let hash = "0123456789abcdef0123456789abcdef";
+        let file = blob_path(&crate::accounts::user_dir(&data, "ann").join("blobs"), "mini", hash).unwrap();
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"a preview").unwrap();
+        // a push or a snapshot holds the library for a while
+        let library = lib(&server.state, "ann").unwrap();
+        let held = library.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let url = format!("{base}/api/blobs/mini/{hash}");
+        let auth = format!("Bearer {token}");
+        std::thread::spawn(move || {
+            let status = agent.get(&url).header("Authorization", &auth).call().map(|r| r.status().as_u16());
+            let _ = tx.send(status);
+        });
+        let answer = rx.recv_timeout(std::time::Duration::from_secs(5));
+        drop(held);
+        assert_eq!(answer.ok().and_then(Result::ok), Some(200), "the preview waits for the library's lock");
+        drop(server);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
