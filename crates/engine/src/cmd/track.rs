@@ -1,4 +1,4 @@
-//! Recorded tracks (`track.*`): add a recording or a GPX file, list, read, rename and delete them. The tracks are the
+//! Recorded tracks (`track.*`): add a recording or a GPX file, list, read, rename, delete and export them. The tracks are the
 //! shared document `tracks` ([`crate::tracks`]), not the catalog: none of these is an undo step. They stay out of the
 //! command journal too (declared as queries): a track is where someone was, and its points can be megabytes.
 
@@ -281,6 +281,74 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"removed": n}))
 }
 
+/// `track.export`: the sessions as GPX 1.1, with the privacy trim when asked or set.
+fn export(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "track.export";
+    let ids: Vec<&str> = match (p.get("session").filter(|v| !v.is_null()), p.get("sessions").filter(|v| !v.is_null())) {
+        (Some(Value::String(x)), None) => vec![x.as_str()],
+        (None, Some(Value::Array(a))) if !a.is_empty() && a.len() <= store::ITEMS_LIMIT => {
+            a.iter().map(|v| v.as_str().ok_or_else(|| bad(C, "`sessions` is a list of session ids"))).collect::<Result<_>>()?
+        }
+        (Some(_), Some(_)) => return Err(bad(C, "give `session` or `sessions`, not both")),
+        (Some(_), None) => return Err(bad(C, "`session` is a session id")),
+        (None, Some(_)) => return Err(bad(C, format!("`sessions` is a list of 1 to {} session ids", store::ITEMS_LIMIT))),
+        (None, None) => return Err(bad(C, "missing `session` (or `sessions`)")),
+    };
+    let setting = s.tracks.settings.unwrap_or_default();
+    let radius = match p.get("privacyTrim") {
+        None | Some(Value::Null) => setting.trim.then_some(setting.trim_radius_m),
+        Some(Value::Bool(on)) => on.then_some(setting.trim_radius_m),
+        Some(v) => {
+            Some(v.as_f64().filter(|r| store::TRIM_RADIUS_M.contains(r)).ok_or_else(|| bad(C, "`privacyTrim` is true, false or 50..5000 metres"))?)
+        }
+    };
+    let name = text(p, "name", NAME_MAX, C)?;
+    let by = store::sessions(s.tracks.items());
+    let (mut out, mut cut) = (Vec::new(), (0usize, 0usize));
+    let mut first_name = None;
+    let mut segment = 0u32;
+    for id in &ids {
+        let pieces = by.get(id).ok_or_else(|| no_such(id))?;
+        first_name = first_name.or_else(|| pieces.first().and_then(|v| v["name"].as_str()));
+        let points = store::points_of(pieces);
+        let points = match radius {
+            Some(r) => {
+                let (kept, start, end) = track::trim(&points, r);
+                cut = (cut.0 + start, cut.1 + end);
+                kept
+            }
+            None => points,
+        };
+        for (i, q) in points.iter().enumerate() {
+            // (each session, and each stretch of one, is a segment of its own)
+            if i > 0 && q.new_segment {
+                segment = segment.saturating_add(1);
+            }
+            out.push(lightcraft_meta::TrackPoint { time: q.time_ms as f64 / 1000.0, latitude: q.lat, longitude: q.lon, elevation: q.ele_m, segment });
+        }
+        segment = segment.saturating_add(1);
+    }
+    if out.is_empty() {
+        return Err(match radius {
+            Some(r) => {
+                bad(C, format!("nothing is left to export: every point lies within the privacy trim's {r} m of where the track began or ended"))
+            }
+            None => bad(C, "nothing to export: the track can't be read by this version"),
+        });
+    }
+    let gpx = lightcraft_meta::write_gpx(name.as_deref().or(first_name), &out);
+    let mut answer = json!({"points": out.len(), "trimmed": {"start": cut.0, "end": cut.1}, "bytes": gpx.len()});
+    match str_param(p, "path") {
+        Some(path) => {
+            lightcraft_catalog::safe_file::write_atomic(std::path::Path::new(path), gpx.as_bytes())
+                .map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+            answer["path"] = json!(path);
+        }
+        None => answer["gpx"] = json!(gpx),
+    }
+    Ok(answer)
+}
+
 fn tracking_settings(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "tracking.settings";
     let mut t = s.tracks.settings.unwrap_or_default();
@@ -327,6 +395,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "track.delete", "Delete Recorded Track", [], None,
             "{session} → {removed: chunks}. Removes the session from this device and, through the sync, from the others. Not an undo step: ask first",
             always, delete),
+        cmd!(query "track.export", "Export Recorded Track as GPX", [], None,
+            "{session | sessions: [..], privacyTrim?: bool | 50..5000 metres (default: tracking.settings), name? (the first session's), path?} → {points, trimmed: {start, end}, bytes, gpx | path}. GPX 1.1 text, or written to `path` (replaced whole, never half written): one track, each stretch of recording a <trkseg> (and each session one of its own), positions to a millionth of a degree, elevations to 0.1 m. The privacy trim leaves out the points within the radius of where each session began and ended (`true`: the setting's radius); what is stored never changes. Reads back with track.import and photo.autoTagTracklog",
+            always, export),
         cmd!(
             "tracking.settings",
             "Tracking Settings",

@@ -396,3 +396,90 @@ fn prefs_items_this_build_does_not_know_are_kept() {
     assert_eq!(s.doc_items("prefs").len(), 1, "gone when the others drop it");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 41 points due east, 10 s and about 42.6 m apart (2 stretches: the 21st point begins the second), from `t0`.
+fn eastward(t0: i64) -> Value {
+    Value::Array(
+        (0..=40)
+            .map(|i| {
+                let mut p = json!([t0 + i * 10_000, 40.0, -3.0 + i as f64 * 0.0005, 650.0 + i as f64 * 0.5]);
+                if i == 20 {
+                    p.as_array_mut().unwrap().extend([Value::Null, json!(1)]);
+                }
+                p
+            })
+            .collect(),
+    )
+}
+
+#[test]
+fn a_track_exports_as_gpx_that_reads_back() {
+    let root = temp_dir("export");
+    let mut s = open(&root);
+    let a = s.execute("track.create", &json!({"points": eastward(T0), "name": "Walk & <home>"})).unwrap()["session"].clone();
+    let r = s.execute("track.export", &json!({"session": a})).unwrap();
+    assert_eq!((r["points"].clone(), r["trimmed"].clone()), (json!(41), json!({"start": 0, "end": 0})));
+    let gpx = r["gpx"].as_str().unwrap();
+    assert_eq!(r["bytes"].as_u64(), Some(gpx.len() as u64));
+    assert!(gpx.contains("<name>Walk &amp; &lt;home&gt;</name>"), "{gpx}");
+    let log = lightcraft_meta::parse_gpx(gpx).unwrap();
+    let stored = s.execute("track.get", &json!({"session": a, "points": true})).unwrap()["points"].clone();
+    assert_eq!(log.points.len(), 41);
+    for (p, q) in log.points.iter().zip(stored.as_array().unwrap()) {
+        assert_eq!((p.time * 1000.0).round() as i64, q[0].as_i64().unwrap());
+        assert_eq!((p.latitude, p.longitude, p.elevation), (q[1].as_f64().unwrap(), q[2].as_f64().unwrap(), q[3].as_f64()), "point for point");
+    }
+    let segs: Vec<u32> = log.points.iter().map(|p| p.segment).collect();
+    assert_eq!(segs, [vec![0; 20], vec![1; 21]].concat(), "each stretch a <trkseg>");
+    // the privacy trim: what lies within the radius of where it began and ended goes
+    let r = s.execute("track.export", &json!({"session": a, "privacyTrim": 300})).unwrap();
+    assert_eq!((r["points"].clone(), r["trimmed"].clone()), (json!(25), json!({"start": 8, "end": 8})));
+    let kept = lightcraft_meta::parse_gpx(r["gpx"].as_str().unwrap()).unwrap();
+    assert_eq!((kept.points[0].time * 1000.0).round() as i64, T0 + 8 * 10_000);
+    // the setting is the default, `true` takes its radius, `false` turns it off
+    assert_eq!(s.execute("track.export", &json!({"session": a})).unwrap()["points"], 41, "off until set");
+    s.execute("tracking.settings", &json!({"trim": true, "trimRadiusM": 500})).unwrap();
+    for p in [json!({"session": a}), json!({"session": a, "privacyTrim": true})] {
+        let r = s.execute("track.export", &p).unwrap();
+        assert_eq!((r["points"].clone(), r["trimmed"].clone()), (json!(17), json!({"start": 12, "end": 12})), "{p}");
+    }
+    assert_eq!(s.execute("track.export", &json!({"session": a, "privacyTrim": false})).unwrap()["points"], 41);
+    s.execute("tracking.settings", &json!({"trim": false})).unwrap();
+    assert_eq!(
+        s.execute("track.export", &json!({"session": a, "privacyTrim": true})).unwrap()["points"],
+        17,
+        "`true`: the setting's radius even while off"
+    );
+    let e = s.execute("track.export", &json!({"session": a, "privacyTrim": 5000})).unwrap_err().to_string();
+    assert!(e.contains("nothing is left"), "{e}");
+    // two sessions: one file, each a segment of its own; written atomically to a path
+    let b = s.execute("track.create", &json!({"points": walk(10, T0 + 86_400_000)})).unwrap()["session"].clone();
+    let path = root.join("out.gpx");
+    let r = s.execute("track.export", &json!({"sessions": [a, b], "path": path.to_string_lossy(), "name": "Both"})).unwrap();
+    assert!(r.get("gpx").is_none() && r["path"] == path.to_string_lossy().as_ref() && r["points"] == 51, "{r}");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("<name>Both</name>"));
+    let both = lightcraft_meta::parse_gpx(&text).unwrap();
+    assert_eq!((both.tracks, both.points.len(), both.points.last().unwrap().segment), (1, 51, 2));
+    // it reads back as the same track
+    let again = s.execute("track.import", &json!({"path": path.to_string_lossy()})).unwrap();
+    assert_eq!(again["dropped"], json!({"invalid": 0, "outOfOrder": 0, "duplicate": 0}));
+    let created = again["created"].as_array().unwrap();
+    assert_eq!(created.iter().map(|c| c["points"].as_u64().unwrap()).collect::<Vec<_>>(), vec![41, 10], "two chunks: it spans more than a day");
+    for (p, want) in [
+        (json!({}), "missing `session`"),
+        (json!({"session": "s0000000000000000"}), "no such track"),
+        (json!({"sessions": [a, "s0000000000000000"]}), "no such track"),
+        (json!({"sessions": []}), "`sessions`"),
+        (json!({"sessions": [1]}), "`sessions`"),
+        (json!({"session": a, "sessions": [a]}), "not both"),
+        (json!({"session": a, "privacyTrim": 10}), "privacyTrim"),
+        (json!({"session": a, "privacyTrim": "yes"}), "privacyTrim"),
+        (json!({"session": a, "name": 5}), "`name`"),
+        (json!({"session": a, "path": "/nonexistent-dir/x/y.gpx"}), "/nonexistent-dir/x/y.gpx"),
+    ] {
+        let e = s.execute("track.export", &p).unwrap_err().to_string();
+        assert!(e.contains(want), "{p}: {e}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
