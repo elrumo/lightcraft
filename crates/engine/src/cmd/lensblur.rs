@@ -185,6 +185,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     auto_mask: bool_or(p, "autoMask", false),
                     // (Lens Blur's Refine brush records no pen pressure)
                     pressure: Vec::new(),
+                    tilt: Vec::new(),
                 };
                 let label = match mode.as_str() {
                     "focus" => "Focus Brush",

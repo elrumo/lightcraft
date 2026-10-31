@@ -280,7 +280,7 @@ pub fn window_for_reads_checked(
     let mut dab_boxes: Vec<[f64; 4]> = Vec::new();
     for st in autos {
         let dabs = crate::masks::brush_dabs(st, frame, full_w, full_h);
-        let r = dabs.r;
+        let r = dabs.reach();
         if dabs.dabs.len() > MAX_DABS_CONSIDERED {
             continue;
         }

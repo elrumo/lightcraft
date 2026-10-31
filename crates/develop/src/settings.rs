@@ -1014,6 +1014,11 @@ pub struct BrushStroke {
     /// end of a shorter list takes the last value.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pressure: Vec<f32>,
+    /// Pen tilt (0 upright, 1 flat on the screen) at each of `points`, from a Pencil: a tilted pen paints wider and
+    /// softer, like the side of a pencil (`lightcraft_pipeline::masks::tilt_shape`). Empty (the default, a mouse or a pen
+    /// held upright) is no tilt; a point past the end of a shorter list takes the last value.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tilt: Vec<f32>,
 }
 
 impl BrushStroke {
@@ -1022,11 +1027,27 @@ impl BrushStroke {
         let p = self.pressure.get(i).or(self.pressure.last()).copied().unwrap_or(1.0);
         if p.is_nan() { 1.0 } else { p.clamp(0.0, 1.0) }
     }
+
+    /// The tilt at point `i` (0..1; 0 without tilt data, a hostile value clamped, NaN as 0).
+    pub fn tilt_at(&self, i: usize) -> f32 {
+        let t = self.tilt.get(i).or(self.tilt.last()).copied().unwrap_or(0.0);
+        if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) }
+    }
 }
 
 impl Default for BrushStroke {
     fn default() -> Self {
-        Self { points: Vec::new(), size: 0.03, feather: 50.0, flow: 100.0, density: 100.0, erase: false, auto_mask: false, pressure: Vec::new() }
+        Self {
+            points: Vec::new(),
+            size: 0.03,
+            feather: 50.0,
+            flow: 100.0,
+            density: 100.0,
+            erase: false,
+            auto_mask: false,
+            pressure: Vec::new(),
+            tilt: Vec::new(),
+        }
     }
 }
 

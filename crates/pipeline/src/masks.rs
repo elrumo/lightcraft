@@ -716,19 +716,45 @@ pub struct BrushDabs {
     pub auto: bool,
     /// Pen pressure (0..1) of each dab, parallel to `dabs`; empty when the stroke has no pressure data (full pressure).
     pub pressure: Vec<f32>,
+    /// Pen tilt (0..1) of each dab, parallel to `dabs`; empty when the stroke has no tilt data (upright).
+    pub tilt: Vec<f32>,
 }
 
 impl BrushDabs {
-    /// Radius, hard core and flow of dab `i`, pen pressure applied ([`pressure_radius`], [`pressure_flow`]).
+    /// Radius, hard core and flow of dab `i`, pen pressure ([`pressure_radius`], [`pressure_flow`]) and tilt
+    /// ([`tilt_shape`]) applied.
     pub fn dab(&self, i: usize) -> (f64, f64, f32) {
-        match self.pressure.get(i) {
+        let (r, hard, flow) = match self.pressure.get(i) {
             Some(&p) => {
                 let r = pressure_radius(self.r, p);
                 (r, if self.r > 0.0 { self.hard * r / self.r } else { self.hard }, pressure_flow(self.flow, p))
             }
             None => (self.r, self.hard, self.flow),
+        };
+        match self.tilt.get(i) {
+            Some(&t) => tilt_shape(r, hard, flow, t),
+            None => (r, hard, flow),
         }
     }
+
+    /// The most a dab's radius can grow past `r`: a tilted pen's dabs reach up to [`MAX_TILT_WIDEN`] times it.
+    pub fn reach(&self) -> f64 {
+        if self.tilt.is_empty() { self.r } else { self.r * MAX_TILT_WIDEN }
+    }
+}
+
+/// A dab at full tilt is this many times as wide as one held upright.
+pub const MAX_TILT_WIDEN: f64 = 2.0;
+
+/// The radius, hard core and flow of a dab painted at pen tilt `t` (0 upright, 1 flat on the screen) from an upright
+/// dab's `r`, `hard` and `flow`: wider (up to [`MAX_TILT_WIDEN`] times), with a larger share of it feather (softer) and
+/// less flow, as the side of a pencil lays down a broad, light shade.
+#[inline]
+pub fn tilt_shape(r: f64, hard: f64, flow: f32, t: f32) -> (f64, f64, f32) {
+    let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+    let wide = r * (1.0 + (MAX_TILT_WIDEN - 1.0) * f64::from(t));
+    let core = if r > 0.0 { hard / r } else { 1.0 };
+    (wide, wide * core * (1.0 - 0.7 * f64::from(t)), flow * (1.0 - 0.5 * t))
 }
 
 /// The radius of a dab of a brush of radius `r` (pixels) painted at pen pressure `p` (0..1): from a tenth of the
@@ -746,8 +772,8 @@ pub fn pressure_flow(flow: f32, p: f32) -> f32 {
     flow * p
 }
 
-/// Pressures for the `added` dabs [`push_dabs`] just laid from a sample at pressure `from` to one at `to`: evenly
-/// interpolated, the last one at `to`, as the dabs themselves are placed.
+/// Pressures (or tilts) for the `added` dabs [`push_dabs`] just laid from a sample at pressure `from` to one at `to`:
+/// evenly interpolated, the last one at `to`, as the dabs themselves are placed.
 pub fn push_pressures(pressure: &mut Vec<f32>, added: usize, from: f32, to: f32) {
     for k in 1..=added {
         pressure.push(from + (to - from) * k as f32 / added as f32);
@@ -774,9 +800,12 @@ pub fn brush_dabs(s: &BrushStroke, frame: &Frame, w: usize, h: usize) -> BrushDa
     // one per frame) lays no dab, so waiting in place adds nothing (#518).
     let mut dabs: Vec<Point> = Vec::new();
     let mut pressure: Vec<f32> = Vec::new();
+    let mut tilt: Vec<f32> = Vec::new();
     let with_pressure = !s.pressure.is_empty();
+    let with_tilt = !s.tilt.is_empty();
     let mut prev = None;
     let mut prev_p = 1.0;
+    let mut prev_t = 0.0;
     for (i, p) in s.points.iter().enumerate() {
         let q = to_out.apply(*p);
         let before = dabs.len();
@@ -787,8 +816,14 @@ pub fn brush_dabs(s: &BrushStroke, frame: &Frame, w: usize, h: usize) -> BrushDa
                 let from = if prev.is_some() { prev_p } else { pq };
                 push_pressures(&mut pressure, dabs.len() - before, from, pq);
             }
+            let tq = s.tilt_at(i);
+            if with_tilt {
+                let from = if prev.is_some() { prev_t } else { tq };
+                push_pressures(&mut tilt, dabs.len() - before, from, tq);
+            }
             prev = Some(q);
             prev_p = pq;
+            prev_t = tq;
         }
     }
     BrushDabs {
@@ -800,6 +835,7 @@ pub fn brush_dabs(s: &BrushStroke, frame: &Frame, w: usize, h: usize) -> BrushDa
         erase: s.erase,
         auto: s.auto_mask,
         pressure,
+        tilt,
     }
 }
 

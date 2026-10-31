@@ -242,6 +242,37 @@ fn pen_pressure_scales_dab_size_and_flow() {
     assert_eq!(pressure_flow(0.8, 2.0), 0.8);
 }
 
+/// Pen tilt widens each dab and makes it softer and lighter; a stroke without tilt data paints as before, and hostile
+/// tilts (NaN, out of range, a short list) neither panic nor paint outside the range.
+#[test]
+fn pen_tilt_widens_and_softens_the_stroke() {
+    let (w, h) = (400, 100);
+    let f = frame(w, h);
+    let img = Rgb32f::new(w, h);
+    let l = Plane::new(w, h);
+    let line = vec![Point::new(0.1, 0.5), Point::new(0.9, 0.5)];
+    let alpha = |tilt: Vec<f32>| {
+        let s = BrushStroke { points: line.clone(), size: 0.03, feather: 0.0, flow: 100.0, tilt, ..Default::default() };
+        shape_alpha(&MaskShape::Brush { strokes: vec![s] }, &f, w, h, &img, &l, 0.0, None)
+    };
+    let upright = alpha(vec![]);
+    assert_eq!(upright.data, alpha(vec![0.0, 0.0]).data, "upright is no tilt");
+    let flat = alpha(vec![1.0, 1.0]);
+    let width = |a: &Plane, x: usize| (0..h).filter(|y| a.get(x, *y) > 0.01).count();
+    assert!(width(&flat, 200) as f64 > 1.8 * width(&upright, 200) as f64, "{} vs {}", width(&flat, 200), width(&upright, 200));
+    assert!(flat.get(200, 50) < upright.get(200, 50), "lighter: {} vs {}", flat.get(200, 50), upright.get(200, 50));
+    // tilting along the stroke: upright on the left, flat on the right
+    let ramp = alpha(vec![0.0, 1.0]);
+    assert!(width(&ramp, 60) < width(&ramp, 350));
+    for hostile in [vec![f32::NAN, f32::INFINITY], vec![-3.0], vec![9.0; 10_000]] {
+        let a = alpha(hostile);
+        assert!(a.data.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)));
+    }
+    assert_eq!(tilt_shape(10.0, 4.0, 0.8, f32::NAN), (10.0, 4.0, 0.8));
+    let (r, hard, flow) = tilt_shape(10.0, 10.0, 1.0, 1.0);
+    assert!((r - 10.0 * MAX_TILT_WIDEN).abs() < 1e-9 && hard < r && flow < 1.0);
+}
+
 #[test]
 fn brush_and_subtract() {
     let f = frame(200, 100);

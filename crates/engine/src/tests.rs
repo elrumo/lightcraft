@@ -453,6 +453,27 @@ fn brush_strokes_keep_pen_pressure_and_refuse_bad_lists() {
     assert!(!json.contains("pressure"), "and stores none: {json}");
 }
 
+#[test]
+fn brush_strokes_keep_pen_tilt_and_refuse_bad_lists() {
+    let mut s = demo();
+    s.execute("mask.add", &json!({"kind": "brush"})).unwrap();
+    s.execute("mask.brushStroke", &json!({"points": [[0.2, 0.2], [0.3, 0.3]], "tilt": [0.25, 7.0]})).unwrap();
+    let lightcraft_develop::MaskShape::Brush { strokes } = &active_dev(&s).masks[0].components[0].shape else { panic!("a brush") };
+    assert_eq!(strokes[0].tilt, vec![0.25, 1.0], "kept, clamped to 0..1");
+    for bad in [json!([0.5, 0.5, 0.5]), json!("flat"), json!([0.5, "x"])] {
+        assert!(s.execute("mask.brushStroke", &json!({"points": [[0.2, 0.2], [0.3, 0.3]], "tilt": bad})).is_err(), "{bad}");
+    }
+    s.execute("mask.brushStroke", &json!({"points": [[0.4, 0.4]]})).unwrap();
+    let lightcraft_develop::MaskShape::Brush { strokes } = &active_dev(&s).masks[0].components[0].shape else { panic!("a brush") };
+    assert!(strokes[1].tilt.is_empty(), "a mouse stroke has no tilt data");
+    let json = serde_json::to_string(&strokes[1]).unwrap();
+    assert!(!json.contains("tilt"), "and stores none: {json}");
+    // a ⇧-click line carries the click's tilt along all of it
+    s.execute("mask.brushStroke", &json!({"points": [[0.6, 0.6]], "tilt": [0.8], "connect": true})).unwrap();
+    let lightcraft_develop::MaskShape::Brush { strokes } = &active_dev(&s).masks[0].components[0].shape else { panic!("a brush") };
+    assert_eq!(strokes[2].tilt, vec![0.8, 0.8]);
+}
+
 /// A ⇧-click line carries pen pressure: the last dab's at its start and the click's at its end, stepping along a
 /// tapered line; with no pressure on either side there is none.
 #[test]

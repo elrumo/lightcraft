@@ -256,12 +256,16 @@ fn connected_strokes(from: Point, last: &BrushStroke, to: BrushStroke) -> Vec<Br
     // pen pressure along the line: the last dab's at its start, the click's at its end (none when neither has any)
     let pressured = !last.pressure.is_empty() || !to.pressure.is_empty();
     let (p_from, p_to) = (last.pressure_at(0), to.pressure_at(0));
+    // and the click's tilt along all of it
+    let tilted = !to.tilt.is_empty();
+    let t_first = to.tilt_at(0);
     if same(last.size, to.size) && same(last.feather, to.feather) && same(last.flow, to.flow) {
         let mut points = Vec::with_capacity(to.points.len() + 1);
         points.push(from);
         points.extend(to.points.iter().copied());
         let pressure = if pressured { std::iter::once(p_from).chain((0..to.points.len()).map(|i| to.pressure_at(i))).collect() } else { Vec::new() };
-        return vec![BrushStroke { points, pressure, ..to }];
+        let tilt = if tilted { std::iter::once(t_first).chain((0..to.points.len()).map(|i| to.tilt_at(i))).collect() } else { Vec::new() };
+        return vec![BrushStroke { points, pressure, tilt, ..to }];
     }
     // about 5% of size, or 2 points of feather or flow, per piece
     let ratio = if last.size > 0.0 && to.size > 0.0 { (to.size / last.size).ln().abs() / 1.05f64.ln() } else { 0.0 };
@@ -282,6 +286,7 @@ fn connected_strokes(from: Point, last: &BrushStroke, to: BrushStroke) -> Vec<Br
                 feather: lerp(last.feather, to.feather, t1),
                 flow: lerp(last.flow, to.flow, t1),
                 pressure: if pressured { vec![p(t0), p(t1)] } else { Vec::new() },
+                tilt: if tilted { vec![t_first; 2] } else { Vec::new() },
                 ..to.clone()
             }
         })
@@ -408,7 +413,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Brush Stroke",
             [],
             None,
-            "{id?: maskId, component?: index of the brush part to paint into (the last brush part), points: [[x,y],…] normalized, size?: fraction of long edge (0.03), feather?, flow?, density?, erase?: bool (with no paint to erase it does nothing), autoMask?: bool, pressure?: [p,…] pen pressure 0..1 per point (scales each dab's size and flow; omitted: full), connect?: bool — start from the last point of the mask's last stroke (⇧-click), size / feather / flow tapering from that stroke's to these} → {activeMask, connected}",
+            "{id?: maskId, component?: index of the brush part to paint into (the last brush part), points: [[x,y],…] normalized, size?: fraction of long edge (0.03), feather?, flow?, density?, erase?: bool (with no paint to erase it does nothing), autoMask?: bool, pressure?: [p,…] pen pressure 0..1 per point (scales each dab's size and flow; omitted: full), tilt?: [t,…] pen tilt 0..1 per point (0 upright, 1 flat: wider, softer, lighter dabs; omitted: upright), connect?: bool — start from the last point of the mask's last stroke (⇧-click), size / feather / flow tapering from that stroke's to these} → {activeMask, connected}",
             has_active,
             |s, p| {
                 let pts: Vec<Point> = p
@@ -428,7 +433,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     density: f64_or(p, "density", d.density),
                     erase: bool_or(p, "erase", false),
                     auto_mask: bool_or(p, "autoMask", false),
-                    pressure: pressure_list(p.get("pressure"), pts_len)?,
+                    pressure: unit_list("pressure", p.get("pressure"), pts_len)?,
+                    tilt: unit_list("tilt", p.get("tilt"), pts_len)?,
                 };
                 let connect = bool_or(p, "connect", false);
                 let mut connected = false;
@@ -1532,18 +1538,18 @@ pub(crate) fn clamp_local(mut a: LocalAdjustments) -> LocalAdjustments {
     a
 }
 
-/// `mask.brushStroke`'s `pressure`: one number 0..1 per point (clamped), at most one per point; absent or `null`
-/// is no pressure data.
-fn pressure_list(v: Option<&Value>, points: usize) -> Result<Vec<f32>> {
+/// `mask.brushStroke`'s `pressure` and `tilt`: one number 0..1 per point (clamped), at most one per point; absent or
+/// `null` is no data.
+fn unit_list(name: &str, v: Option<&Value>, points: usize) -> Result<Vec<f32>> {
     let Some(v) = v.filter(|v| !v.is_null()) else { return Ok(Vec::new()) };
-    let list = v.as_array().ok_or_else(|| bad("mask.brushStroke", "pressure must be a list of numbers 0..1"))?;
+    let list = v.as_array().ok_or_else(|| bad("mask.brushStroke", format!("{name} must be a list of numbers 0..1")))?;
     if list.len() > points {
-        return Err(bad("mask.brushStroke", "pressure has more values than points"));
+        return Err(bad("mask.brushStroke", format!("{name} has more values than points")));
     }
     list.iter()
         .map(|q| q.as_f64().filter(|f| f.is_finite()).map(|f| f.clamp(0.0, 1.0) as f32))
         .collect::<Option<Vec<f32>>>()
-        .ok_or_else(|| bad("mask.brushStroke", "pressure must be a list of numbers 0..1"))
+        .ok_or_else(|| bad("mask.brushStroke", format!("{name} must be a list of numbers 0..1")))
 }
 
 #[cfg(test)]
