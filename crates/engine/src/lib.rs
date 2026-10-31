@@ -1667,6 +1667,8 @@ mod tests_invalidation;
 #[cfg(test)]
 mod tests_lensblur;
 #[cfg(test)]
+mod tests_live_companion;
+#[cfg(test)]
 mod tests_live_photo;
 #[cfg(test)]
 mod tests_map;

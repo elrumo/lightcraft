@@ -313,6 +313,23 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(s.motion_json(id))
 }
 
+/// A Live Photo whose clip came into the library as a video of its own (`lightcraft_catalog::motion`): the clip, and
+/// whether its file is here to play. `null` when the photo has no such clip.
+fn companion(s: &mut Session, p: &Value) -> Result<Value> {
+    use lightcraft_catalog::Source;
+    let id = photo_param(s, p, "live.companion")?;
+    let Some(clip) = s.catalog.motion_pairs().clip_of(id) else { return Ok(Value::Null) };
+    let Some(photo) = s.catalog.photo(clip) else { return Ok(Value::Null) };
+    let path = match &photo.source {
+        Source::File { path } => Some(path.as_str()),
+        _ => None,
+    };
+    // (a synced photo's path names its place on the server until its original is downloaded)
+    let remote = path.is_some_and(|p| p.starts_with(lightcraft_catalog::sync::PATH_PREFIX));
+    let here = path.filter(|p| !remote && Path::new(p).is_file());
+    Ok(json!({"id": id.0, "clip": clip.0, "path": here, "available": here.is_some(), "remote": remote, "duration": photo.duration}))
+}
+
 fn detach(s: &mut Session, p: &Value) -> Result<Value> {
     let id = photo_param(s, p, "live.detach")?;
     Ok(json!({"removed": s.detach_motion(id)}))
@@ -362,6 +379,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id?} → {id, path, duration, stillTime, contentId} of the photo's Live Photo motion (a clip a system player plays as recorded: develop settings are not applied to it), or null",
             always,
             info
+        ),
+        cmd!(
+            query "live.companion",
+            "Live Photo Clip Video",
+            [],
+            None,
+            "{id?} → {id, clip, path, available, remote, duration} of the video that is this photo's motion when the library holds the two as separate photos (a phone's export: IMG_0001.HEIC and IMG_0001.MOV, paired by name and capture time; views leave the clip out): `path` is the clip's file when it is on this device, `remote` says a synced original has not been downloaded (`sync.downloadOriginals {ids: [clip]}`), or null",
+            always,
+            companion
         ),
         cmd!(query "live.detach", "Remove Live Photo Motion", [], None, "{id?} → {removed}: the photo's motion clip goes; the photo stays, as a still", always, detach),
     ]

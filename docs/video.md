@@ -94,7 +94,15 @@ its clip, the **motion**, is kept with it (`crates/engine/src/live_photo.rs`):
 - **Removed late.** A photo deleted for good keeps its clip until the library next opens (Undo can bring it back until
   then); a photo-library picture left unchanged takes its clip with it when it is forgotten; a sign-out tidies the
   account's clips away; files in `Motion/` that no entry names go when the library opens.
-- **Not yet.** A folder import pairing `IMG_0001.HEIC` with `IMG_0001.MOV` by itself, syncing the motion, developing it.
+- **A clip that came in as a video.** A phone's export, a folder or a synced library holds `IMG_0001.HEIC` and
+  `IMG_0001.MOV` as two photos. The catalog pairs them when the clip is 4.5 s or shorter, has the still's name (any case,
+  any extension), was taken within 5 s of it (a missing time on either side passes) and is the only clip and only still of
+  that name (`crates/catalog/src/motion.rs`: derived, never saved, worked out again after any change that is not a
+  develop edit). Views leave the clip out (`Filter.motionClips: true` lists it) and `live.companion {id}` answers, for
+  the still, the clip's photo id, its `path` when the file is on this device and `remote: true` when a synced original
+  has not been downloaded (`sync.downloadOriginals {ids: [clip]}`). The tallies of the sidebar still count the clip.
+- **Not yet.** Importing a folder's `IMG_0001.MOV` as the still's own motion (the `Motion/` kept copy, `live: true`),
+  syncing the motion, developing it.
 
 ## Lighter copies
 

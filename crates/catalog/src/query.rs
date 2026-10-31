@@ -63,6 +63,9 @@ pub struct Filter {
     pub album: Option<AlbumId>,
     /// Show "Recently Deleted" instead of the library.
     pub deleted: bool,
+    /// Show the videos that are a Live Photo's motion too ([`crate::motion`]): left out by default, as the Live Photo is
+    /// one photo.
+    pub motion_clips: bool,
     /// Hidden photos: left out unless the session unlocked Hidden. Never (de)serialized, so a filter
     /// preset, a smart album, a saved view or a caller's `catalog.query` filter can't show them: only
     /// the session sets it.
@@ -352,6 +355,10 @@ impl Filter {
         match (self.hidden, p.hidden) {
             (HiddenMode::Exclude, true) | (HiddenMode::Only, false) => return false,
             _ => {}
+        }
+        // a Live Photo's clip is part of the photo, not a video to browse
+        if !self.motion_clips && p.kind == crate::MediaKind::Video && cat.is_motion_clip(p.id) {
+            return false;
         }
         match &self.folder {
             // browsed photos only show in folder views, and in Recently Deleted once deleted (#1430)

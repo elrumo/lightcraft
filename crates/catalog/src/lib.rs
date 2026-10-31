@@ -23,6 +23,7 @@ pub mod local;
 pub mod lock;
 pub mod merge;
 pub mod model;
+pub mod motion;
 mod par;
 pub mod query;
 pub mod revision;
@@ -338,6 +339,9 @@ pub struct Catalog {
     /// Lookups derived from the above (never saved), see [`index`].
     #[serde(skip)]
     index: index::Indexes,
+    /// Which videos are Live Photo clips of which stills, see [`motion`] (derived, never saved).
+    #[serde(skip)]
+    motion: motion::MotionCache,
 }
 
 /// What of a photo an op changed: enough to tell which tallies of the library an edit leaves as they were (a
@@ -1248,6 +1252,7 @@ impl Catalog {
         if !changed.is_empty() {
             // stacks and albums changed outside `apply`: the lookups are built again when asked
             self.index = index::Indexes::default();
+            self.motion = motion::MotionCache::default();
         }
         changed
     }
@@ -1311,6 +1316,8 @@ mod tests_local;
 mod tests_lock;
 #[cfg(test)]
 mod tests_merge;
+#[cfg(test)]
+mod tests_motion;
 #[cfg(test)]
 mod tests_repair;
 #[cfg(test)]
