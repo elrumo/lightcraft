@@ -510,6 +510,24 @@ fn exports_of_at_most_half_the_size_read_a_source_of_about_that_size() {
 }
 
 #[test]
+fn a_fujifilm_raf_export_reads_binned_like_a_bayer_raw() {
+    // a 39 MP X-Trans sensor on a device that can take 2 GB: its whole sensor (about 2 GB of samples) does not fit, but a
+    // 2000 px export reads it binned by 3, and a full-size one (whose source binning would not shrink) reads it whole
+    let mut s = crate::Session::with_demo();
+    let demo = s.catalog.photos().next().unwrap().clone();
+    let mut p: Photo = (*demo).clone();
+    p.format = "RAF".to_string();
+    p.width = 7728;
+    p.height = 5152;
+    s.set_export_limit(Some(2 << 30));
+    assert!(export_binned_edge(&s, &p, 2000, 2000 * 1333).is_some());
+    assert_eq!(export_binned_edge(&s, &p, 7728, 7728 * 5152), None);
+    // the block sizes it can take: 2 would promise a read the X-Trans loader does not make, so the half-size need counts the whole
+    let half = export_binned_need(&p, 3864, 3864 * 2576);
+    assert_eq!(half, crate::memory::export_need(7728 * 5152, 3864 * 2576));
+}
+
+#[test]
 fn levels_cover_sizes_and_large_exports_use_the_original() {
     assert_eq!(SourceLevel::for_size(256), SourceLevel::Thumb);
     assert_eq!(SourceLevel::for_size(2560), SourceLevel::Preview);

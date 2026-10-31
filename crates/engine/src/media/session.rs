@@ -745,20 +745,23 @@ pub(crate) fn export_source_pixels(p: &Photo, out_long: usize) -> usize {
     }
 }
 
-/// Raw formats that are Bayer mosaics, which [`lightcraft_raw::RawImage::develop_binned_masked`] bins by even blocks (a DNG
-/// has a rule of its own, above; Fujifilm's RAF can be X-Trans, which only bins by 3).
-fn bayer_mosaic(p: &Photo) -> bool {
-    ["ARW", "NEF", "NRW", "RW2", "RWL", "CR3", "CR2", "PEF", "SRW", "ORF", "ORI", "ERF", "MRW"].iter().any(|f| p.format.eq_ignore_ascii_case(f))
+/// Raw formats that are single-plane mosaics, which [`lightcraft_raw::RawImage::develop_binned_masked`] bins by blocks (a DNG
+/// has a rule of its own, above). Fujifilm's RAF is an X-Trans mosaic (binned by 3 or more, see [`export_binned_need`]) or,
+/// on a GFX, a Bayer one; `can_bin` decides which at load time.
+fn mosaic_raw(p: &Photo) -> bool {
+    ["ARW", "NEF", "NRW", "RW2", "RWL", "CR3", "CR2", "PEF", "SRW", "ORF", "ORI", "ERF", "MRW", "RAF"]
+        .iter()
+        .any(|f| p.format.eq_ignore_ascii_case(f))
 }
 
-/// The long edge the source of an export `out_long` pixels long (of `out_px` pixels) is read at, for a Bayer raw. Up to a
+/// The long edge the source of an export `out_long` pixels long (of `out_px` pixels) is read at, for a mosaic raw. Up to a
 /// preview's size that is the preview's (the loader has always binned the mosaic for it, whatever the device). A bigger
 /// export reads the whole sensor, except on a device whose memory limit ([`crate::Session::export_limit`]) the whole sensor
 /// would not fit, when an export of at most half the photo's size is read binned too (a 42 MP raw's 2.5 GB becomes 1 GB).
-/// `None`: not a Bayer raw, or the whole sensor. `export_job` narrows its read to this and the memory check
+/// `None`: not a mosaic raw, or the whole sensor. `export_job` narrows its read to this and the memory check
 /// ([`export_binned_need`]) is made of it, so what is promised is what is done.
 pub(crate) fn export_binned_edge(session: &crate::Session, p: &Photo, out_long: usize, out_px: usize) -> Option<usize> {
-    if !bayer_mosaic(p) {
+    if !mosaic_raw(p) {
         return None;
     }
     let level = SourceLevel::for_size(out_long);
@@ -770,13 +773,15 @@ pub(crate) fn export_binned_edge(session: &crate::Session, p: &Photo, out_long: 
     (crate::memory::export_need(export_source_pixels(p, out_long), out_px) > limit).then_some(edge)
 }
 
-/// What an export read at [`export_binned_edge`] needs: the mosaic binned by the largest even block that keeps 90 % of
+/// What an export read at [`export_binned_edge`] needs: the mosaic binned by the largest block that keeps 90 % of
 /// `edge` (the loader's rule, `bin_factor`; a sensor too small for any block is demosaiced whole), plus the samples and file
-/// the decode holds before it bins (about 4 bytes a pixel of the sensor).
+/// the decode holds before it bins (about 4 bytes a pixel of the sensor). An X-Trans RAF has no 2 × 2 block with all three
+/// colours, so its blocks start at 3: counted at 2 it would promise a read the loader does not make.
 pub(crate) fn export_binned_need(p: &Photo, edge: usize, out_px: usize) -> usize {
     let (w, h) = (p.width.max(1) as usize, p.height.max(1) as usize);
     let keep = edge.saturating_mul(9) / 10;
-    let Some(k) = [8usize, 6, 4, 2].into_iter().find(|k| w.max(h) / k >= keep) else {
+    let blocks: &[usize] = if p.format.eq_ignore_ascii_case("RAF") { &[8, 6, 4, 3] } else { &[8, 6, 4, 2] };
+    let Some(k) = blocks.iter().copied().find(|k| w.max(h) / k >= keep) else {
         return crate::memory::export_need(w.saturating_mul(h), out_px);
     };
     crate::memory::export_need((w / k).saturating_mul(h / k), out_px).saturating_add(w.saturating_mul(h).saturating_mul(4))

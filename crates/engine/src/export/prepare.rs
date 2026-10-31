@@ -222,14 +222,14 @@ fn prepare_guarded(
             let Some(target) = session.sync_render_target(p) else {
                 return Err(if o.on_server {
                     format!("{}: the sync server has no original of this photo to render (sign in, and let it upload)", p.file_name)
-                } else if session.export_limit().is_some_and(|limit| export_need_of(session, p, w / 2, h / 2) <= limit) {
+                } else if let Some(edge) = session.export_limit().and_then(|limit| largest_fitting_edge(session, p, w, h, limit)) {
                     format!(
-                        "{}: a {w} × {h} export needs about {} MB, more than this device can allow. Export it smaller, or sign in to a sync server that has the original and it renders there",
+                        "{}: a {w} × {h} export needs about {} MB, more than this device can allow. Export up to {edge} px on the long edge, or sign in to a sync server that has the original and it renders there",
                         p.file_name,
                         need >> 20
                     )
                 } else {
-                    // (the photo's own size is what costs: a smaller export would not fit either)
+                    // (even a tiny export would not fit: the photo's own size is what costs)
                     format!(
                         "{}: a {} MP photo needs about {} MB to export, more than this device can allow at any size. Sign in to a sync server that has the original and it renders there",
                         p.file_name,
@@ -316,6 +316,28 @@ fn original_folder(source: &lightcraft_catalog::Source) -> Option<String> {
     }
     let dir = std::path::Path::new(path).parent()?.to_string_lossy().to_string();
     (!dir.is_empty()).then_some(dir)
+}
+
+/// The largest long edge an export of `w × h` of photo `p` can have on this device and still fit `limit` (`None`: not even
+/// a tiny one does). The need grows with the size, so this bisects; it is only asked for an export that does not fit.
+fn largest_fitting_edge(session: &crate::Session, p: &lightcraft_catalog::Photo, w: usize, h: usize, limit: usize) -> Option<usize> {
+    let long = w.max(h).max(1);
+    let fits = |edge: usize| {
+        let s = edge as f64 / long as f64;
+        let (ew, eh) = (((w as f64) * s).round().max(1.0) as usize, ((h as f64) * s).round().max(1.0) as usize);
+        export_need_of(session, p, ew, eh) <= limit
+    };
+    // (`lo`: the largest edge known to fit, 0 before any; `hi`: the requested edge, which does not)
+    let (mut lo, mut hi) = (0usize, long);
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if fits(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo > 0).then_some(lo)
 }
 
 /// Why an export of `out` pixels (`w`, `h`), from a photo of `native_px` pixels at its own size,
