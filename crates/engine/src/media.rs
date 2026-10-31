@@ -36,6 +36,7 @@ mod source;
 pub use cache::DenoiseIndex;
 pub use quick::{QuickJob, QuickSource, clip_cover, content_key, source_info};
 pub use render::{RenderJob, RenderResult, develop, develop_hdr, develop_reporting, develop_reporting_hdr, fit_for_display};
+pub(crate) use render::{band_pixels, bandable_at};
 #[cfg(test)]
 pub(crate) use session::export_source_edge;
 pub(crate) use session::{export_binned_edge, export_binned_need, export_source_pixels};

@@ -58,6 +58,14 @@ pub fn export_need(source_px: usize, output_px: usize) -> usize {
     source_px.saturating_mul(56).saturating_add(output_px.saturating_mul(104))
 }
 
+/// What an export rendered in bands ([`crate::media::RenderJob::run_banded`]) needs at its peak: the decoded source (12
+/// bytes a pixel as floats, a dozen more while it is decoded and developed), the whole output's 8-bit pixels while the
+/// bands are stitched and then encoded (12 bytes a pixel: the image and the encoder), and one band's pipeline planes
+/// (104 bytes a pixel, as in [`export_need`], but of `band_px` pixels, not the whole output).
+pub fn export_need_banded(source_px: usize, output_px: usize, band_px: usize) -> usize {
+    source_px.saturating_mul(24).saturating_add(output_px.saturating_mul(12)).saturating_add(band_px.saturating_mul(104))
+}
+
 /// What an export may take on this device, where going over ends the app: on iOS the system ends an app that
 /// exceeds its limit, so two budgets (the budget is a third of what the app may allocate at launch); elsewhere memory
 /// swaps instead, so there is no limit unless `LIGHTCRAFT_EXPORT_MEMORY_MB` sets one. A render over it is not tried

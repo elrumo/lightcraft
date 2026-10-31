@@ -799,10 +799,15 @@ fn a_bayer_raw_too_big_to_demosaic_whole_is_read_binned_for_a_half_size_export()
     assert_eq!(edge_of(&mut s, id, 5000), usize::MAX);
     s.set_export_limit(Some(8 * gib));
     assert_eq!(edge_of(&mut s, id, 3976), usize::MAX, "it fits: read as before");
-    // a maker that can be X-Trans bins by 3 only: not promised
+    // a maker that can be X-Trans bins by 3 and up: a 2000 px export is read binned and estimated so; at half the size
+    // no block keeps enough of it, so what it needs is the whole sensor's (the loader reads it whole, whatever the edge)
     let (mut raf, rid) = session_with("a.RAF", "RAF", 7952, 5304);
     raf.set_export_limit(Some(2 * gib));
-    assert_eq!(edge_of(&mut raf, rid, 3976), usize::MAX);
+    assert_eq!(edge_of(&mut raf, rid, 2000), preview, "up to a preview's size it is the preview's, as for any raw");
+    assert_eq!(edge_of(&mut raf, rid, 2600), (2600f64 * 1.12).ceil() as usize);
+    let rp = raf.catalog.photo(rid).unwrap().clone();
+    assert!(export_binned_need(&rp, 2912, 2600 * 1733) < gib);
+    assert_eq!(export_binned_need(&rp, 3976, 3976 * 2652), crate::memory::export_need(7952 * 5304, 3976 * 2652));
     // the estimate follows what is read: a 2048 px export is about 1 GB binned (2.7 GB whole, which it was said to need);
     // a sensor too small to bin at a preview's size is estimated whole
     let p = s.catalog.photo(id).unwrap().clone();
@@ -812,4 +817,54 @@ fn a_bayer_raw_too_big_to_demosaic_whole_is_read_binned_for_a_half_size_export()
     assert!(whole > 2 * gib && binned < gib + gib / 8, "whole {whole}, binned {binned}");
     let small = Photo::new(PhotoId(2), Source::File { path: "/nowhere/b.ARW".into() }, "b.ARW", "ARW", 4000, 3000, "");
     assert_eq!(export_binned_need(&small, preview, out_px), crate::memory::export_need(4000 * 3000, out_px));
+}
+
+/// An export rendered in bands (windows of the output with context above and below, cut and stitched) is the whole render
+/// within what a window of the whole render is: the stages that read their neighbours agree across the band seams.
+#[test]
+fn a_banded_export_matches_the_whole_render() {
+    use lightcraft_develop::controls;
+    let mut s = crate::Session::with_demo();
+    let id = s.active().unwrap();
+    let mut job = s.export_job(id, 5000, 5000, lightcraft_pipeline::OutputSpace::default(), lightcraft_pipeline::OutputDepth::default()).unwrap();
+    let mut edits = (*job.settings).clone();
+    for (control, value) in
+        [("effects.clarity", 60.0), ("effects.dehaze", 30.0), ("detail.sharpenAmount", 70.0), ("light.shadows", 50.0), ("effects.texture", 40.0)]
+    {
+        controls::set(&mut edits, control, value);
+    }
+    job.settings = Arc::new(edits);
+    assert!(render::bandable(&job.settings, &job.request));
+    let whole = job.clone().run().rendered.unwrap().image;
+    let banded = job.run_banded().rendered.unwrap().image;
+    assert_eq!((banded.width, banded.height), (whole.width, whole.height));
+    // (a few bands: the output is taller than one band keeps)
+    assert!(banded.height > render::band_shape(banded.width, banded.height).0 * 2);
+    let (mut max, mut sum) = (0u8, 0f64);
+    for (a, b) in whole.data.iter().zip(&banded.data) {
+        for k in 0..3 {
+            let d = a[k].abs_diff(b[k]);
+            max = max.max(d);
+            sum += d as f64;
+        }
+    }
+    let mean = sum / (whole.data.len() * 3) as f64;
+    assert!(max <= 8 && mean <= 0.3, "banded against whole: max {max}, mean {mean:.3}");
+}
+
+/// A 39 MP photo exported at full size on a phone that gives an export two budgets (2 GB): whole it needs 6 GB, in bands
+/// well under 2 GB; a picture a band cannot carry (16 bit, HDR, Lens Blur) has no such way.
+#[test]
+fn a_full_size_export_of_a_big_photo_fits_in_bands() {
+    let gib = 1usize << 30;
+    let (px, w, h) = (7728usize * 5152, 7728usize, 5152usize);
+    let whole = crate::memory::export_need(px, px);
+    let banded = crate::memory::export_need_banded(px, px, render::band_pixels(w, h));
+    assert!(whole > 5 * gib && banded < 2 * gib, "whole {whole}, banded {banded}");
+    let s = lightcraft_develop::DevelopSettings::default();
+    assert!(bandable_at(&s, lightcraft_pipeline::OutputDepth::U8));
+    assert!(!bandable_at(&s, lightcraft_pipeline::OutputDepth::U16));
+    let mut blur = s.clone();
+    blur.lens_blur.enabled = true;
+    assert!(!bandable_at(&blur, lightcraft_pipeline::OutputDepth::U8));
 }

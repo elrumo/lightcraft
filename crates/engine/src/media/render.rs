@@ -210,6 +210,53 @@ impl RenderJob {
         crate::guard::catch("the render", || self.run_unguarded()).unwrap_or_else(|e| RenderResult { rendered: Err(e), ..failed })
     }
 
+    /// [`Self::run`] for an export too big to render whole on this device, in bands of rows: each band is a window of the
+    /// output ([`lightcraft_pipeline::PixelWindow`], the zoom view's own region render) with some context above and below
+    /// it, rendered and cut to its rows, so the pipeline's working memory is a band's, not the whole picture's. The
+    /// source is decoded once and the bands are stitched into the 8-bit result. Only for a job [`bandable`] says can be.
+    pub fn run_banded(self) -> RenderResult {
+        let failed = self.failed(String::new());
+        crate::guard::catch("the render", || self.run_banded_unguarded()).unwrap_or_else(|e| RenderResult { rendered: Err(e), ..failed })
+    }
+
+    fn run_banded_unguarded(self) -> RenderResult {
+        if !bandable(&self.settings, &self.request) {
+            return self.run_photo();
+        }
+        let source = match self.source.load_source() {
+            Ok(s) => s,
+            Err(e) => return self.failed(e),
+        };
+        let (src, info) = source.develop_input(&self.settings, self.info.clone());
+        // The whole output's size, and the settings every band renders with (Upright and the profile resolved once, not
+        // by each of the bands).
+        let (w, h, settings) = {
+            let plan = lightcraft_pipeline::plan(&src, &info, &self.settings, &self.request);
+            (plan.w, plan.h, plan.settings.into_owned())
+        };
+        let (rows, halo) = band_shape(w, h);
+        let mut out = Rgba8::new(w, h);
+        let mut fallback = None;
+        let mut y = 0;
+        while y < h {
+            let keep = rows.min(h - y);
+            let (top, bottom) = (y.saturating_sub(halo), (y + keep + halo).min(h));
+            let request = RenderRequest { window: Some(lightcraft_pipeline::PixelWindow { x: 0, y: top, w, h: bottom - top }), ..self.request };
+            let (band, why) = develop_image(&src, &info, &settings, &request, None, self.cache.is_none());
+            fallback = fallback.or(why);
+            let at = y - top;
+            if band.image.width != w || band.image.height < at + keep {
+                return self.failed(format!("a band of the render came back {}×{} for {w} px wide rows", band.image.width, band.image.height));
+            }
+            for row in 0..keep {
+                out.row_mut(y + row).copy_from_slice(band.image.row(at + row));
+            }
+            y += keep;
+        }
+        let histogram = Histogram::of_srgb8(&out);
+        RenderResult { rendered: Ok(Rendered { image: out, histogram, deep: None }), gpu_fallback: fallback, ..self.failed(String::new()) }
+    }
+
     /// This job's result when it fails with `e`.
     fn failed(&self, e: String) -> RenderResult {
         RenderResult {
@@ -478,6 +525,41 @@ pub fn develop_reporting_hdr(
         rendered.histogram = h;
     }
     (rendered, fallback)
+}
+
+/// Pixels one band of a banded export renders, context included: the working memory of a 4 MP render, whatever the
+/// size of the export.
+const BAND_PIXELS: usize = 4 << 20;
+
+/// The rows a band of an export `w × h` keeps and the rows of context rendered above and below them. The wide stages
+/// (the base, clarity and dehaze planes) are made from the whole frame at reduced size and do not need the context;
+/// the spatial ones (sharpening, noise reduction) need a few hundred pixels at most, a sixtieth of the frame's long edge
+/// up to 256.
+pub(crate) fn band_shape(w: usize, h: usize) -> (usize, usize) {
+    let halo = (w.max(h) / 60).clamp(64, 256);
+    ((BAND_PIXELS / w.max(1)).saturating_sub(2 * halo).max(64), halo)
+}
+
+/// Pixels a band of an export `w × h` renders (its rows and context, all the width).
+pub(crate) fn band_pixels(w: usize, h: usize) -> usize {
+    let (rows, halo) = band_shape(w, h);
+    (rows + 2 * halo).min(h).saturating_mul(w)
+}
+
+/// Whether an export of `s` at `depth` can be rendered in bands ([`RenderJob::run_banded`]): an 8-bit picture that a
+/// region render carries. Not a deep (16 bit, float) or HDR one, which a window does not render, nor one with Lens
+/// Blur, whose reach grows a window past what a band holds.
+pub(crate) fn bandable(s: &DevelopSettings, req: &RenderRequest) -> bool {
+    bandable_at(s, req.depth)
+        && req.window.is_none()
+        && req.proof.is_none()
+        && req.display.is_none()
+        && req.overlay == lightcraft_pipeline::Overlay::None
+}
+
+/// [`bandable`] for the settings and sample format of an export that is not set up yet.
+pub(crate) fn bandable_at(s: &DevelopSettings, depth: lightcraft_pipeline::OutputDepth) -> bool {
+    depth == lightcraft_pipeline::OutputDepth::U8 && !s.hdr.enabled && !s.lens_blur.enabled
 }
 
 fn develop_image(

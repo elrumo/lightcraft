@@ -20,14 +20,19 @@ pub struct Exported {
 }
 
 /// What rendering photo `p` at `w × h` needs in memory on this device: its source (the whole sensor, or fewer pixels when
-/// a DNG or a Bayer raw too big for the device is read smaller, [`crate::media::export_binned_edge`]) and the output.
-fn export_need_of(session: &crate::Session, p: &lightcraft_catalog::Photo, w: usize, h: usize) -> usize {
+/// a DNG or a mosaic raw too big for the device is read smaller, [`crate::media::export_binned_edge`]) and the output;
+/// with `bands`, the least of that and what rendering it in bands needs ([`crate::media::RenderJob::run_banded`]).
+fn export_need_of(session: &crate::Session, p: &lightcraft_catalog::Photo, w: usize, h: usize, bands: bool) -> usize {
     let (long, out_px) = (w.max(h), w.saturating_mul(h));
-    let need = crate::memory::export_need(crate::media::export_source_pixels(p, long), out_px);
-    match crate::media::export_binned_edge(session, p, long, out_px) {
-        Some(edge) => need.min(crate::media::export_binned_need(p, edge, out_px)),
-        None => need,
+    let source_px = crate::media::export_source_pixels(p, long);
+    let mut need = crate::memory::export_need(source_px, out_px);
+    if let Some(edge) = crate::media::export_binned_edge(session, p, long, out_px) {
+        need = need.min(crate::media::export_binned_need(p, edge, out_px));
     }
+    if bands {
+        need = need.min(crate::memory::export_need_banded(source_px, out_px, crate::media::band_pixels(w, h)));
+    }
+    need
 }
 
 /// Output size of photo `p` under `o` (its cropped full size when `o.resize` is `None`).
@@ -76,6 +81,9 @@ struct RenderWork {
     host: Option<HostPixels>,
     /// The finished file a host wrote in place of the whole render and encode ([`PreparedExport::with_host_file`]).
     host_file: Option<HostFile>,
+    /// `job` is rendered in bands of rows ([`crate::media::RenderJob::run_banded`]): the whole picture would not fit this
+    /// device's memory.
+    banded: bool,
 }
 
 /// The most pixels of a host's picture (it is read whole).
@@ -216,13 +224,17 @@ fn prepare_guarded(
     let (work, weight) = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
         // what this render needs against what this device may use: over it, the sync server renders (or says why not)
-        let need = export_need_of(session, p, w, h);
+        let bands_ok = crate::media::bandable_at(&p.develop, o.effective_depth());
+        let whole = export_need_of(session, p, w, h, false);
+        let need = if bands_ok { export_need_of(session, p, w, h, true) } else { whole };
         let too_big = session.export_limit().is_some_and(|limit| need > limit);
+        // (a picture that does not fit whole but does in bands is rendered in bands)
+        let banded = bands_ok && !too_big && session.export_limit().is_some_and(|limit| whole > limit);
         if o.on_server || too_big {
             let Some(target) = session.sync_render_target(p) else {
                 return Err(if o.on_server {
                     format!("{}: the sync server has no original of this photo to render (sign in, and let it upload)", p.file_name)
-                } else if let Some(edge) = session.export_limit().and_then(|limit| largest_fitting_edge(session, p, w, h, limit)) {
+                } else if let Some(edge) = session.export_limit().and_then(|limit| largest_fitting_edge(session, p, w, h, limit, bands_ok)) {
                     format!(
                         "{}: a {w} × {h} export needs about {} MB, more than this device can allow. Export up to {edge} px on the long edge, or sign in to a sync server that has the original and it renders there",
                         p.file_name,
@@ -275,12 +287,12 @@ fn prepare_guarded(
         let meta = export_metadata(p, &session.catalog, o);
         let gain_map = o.hdr_output() && o.format == ExportFormat::Jpeg;
         let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
-        let weight = render_weight(full_px, long, job.level, w.saturating_mul(h));
+        let weight = if banded { need } else { render_weight(full_px, long, job.level, w.saturating_mul(h)) };
         if let Some(why) = too_big_for_memory((w, h), native_px, weight, crate::memory::total_ram()) {
             return Err(format!("{label}: {why}"));
         }
         let hdr_job = if gain_map { Some(session.export_job(id, w, h, o.effective_space(), OutputDepth::F32Hdr)?) } else { None };
-        (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone(), size: (w, h), host: None, host_file: None })), weight)
+        (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone(), size: (w, h), host: None, host_file: None, banded })), weight)
     } else {
         let lightcraft_catalog::Source::File { path } = &p.source else {
             return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
@@ -320,12 +332,12 @@ fn original_folder(source: &lightcraft_catalog::Source) -> Option<String> {
 
 /// The largest long edge an export of `w × h` of photo `p` can have on this device and still fit `limit` (`None`: not even
 /// a tiny one does). The need grows with the size, so this bisects; it is only asked for an export that does not fit.
-fn largest_fitting_edge(session: &crate::Session, p: &lightcraft_catalog::Photo, w: usize, h: usize, limit: usize) -> Option<usize> {
+fn largest_fitting_edge(session: &crate::Session, p: &lightcraft_catalog::Photo, w: usize, h: usize, limit: usize, bands: bool) -> Option<usize> {
     let long = w.max(h).max(1);
     let fits = |edge: usize| {
         let s = edge as f64 / long as f64;
         let (ew, eh) = (((w as f64) * s).round().max(1.0) as usize, ((h as f64) * s).round().max(1.0) as usize);
-        export_need_of(session, p, ew, eh) <= limit
+        export_need_of(session, p, ew, eh, bands) <= limit
     };
     // (`lo`: the largest edge known to fit, 0 before any; `hi`: the requested edge, which does not)
     let (mut lo, mut hi) = (0usize, long);
@@ -501,7 +513,7 @@ impl PreparedExport {
         let file_name = self.file_name;
         match self.work {
             Work::Render(w) => {
-                let RenderWork { job, hdr_job, meta, opts, host, host_file, .. } = *w;
+                let RenderWork { job, hdr_job, meta, opts, host, host_file, banded, .. } = *w;
                 if let Some(f) = &host_file {
                     match std::fs::read(&f.file) {
                         Ok(bytes) if !bytes.is_empty() => {
@@ -519,7 +531,7 @@ impl PreparedExport {
                 if let Some(r) = host.as_ref().and_then(HostPixels::read) {
                     return encode_render_export(file_name, r, None, &opts, meta.as_ref());
                 }
-                let result = job.run();
+                let result = if banded { job.run_banded() } else { job.run() };
                 let r = result.rendered?;
                 let gpu_fallback = result.gpu_fallback;
                 let hdr = match hdr_job {

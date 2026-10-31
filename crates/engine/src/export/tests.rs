@@ -1454,14 +1454,14 @@ fn a_big_raw_on_a_phone_is_refused_with_advice_that_can_help() {
     let at = |edge: f32| ExportOptions { resize: Some(Resize::long_edge(edge as u32)), ..Default::default() };
     s.set_export_limit(Some(2 * gib));
     assert!(prepare_export(&mut s, id, &at(2048.0), 1).is_ok(), "read binned, it fits");
-    // 3000 px: binned it still needs more than 1 GiB, but half that size fits: say to export smaller
+    // 3000 px: binned it still needs more than 1 GiB, but a smaller size fits: say how big
     s.set_export_limit(Some(gib));
     let e = prepare_export(&mut s, id, &at(3000.0), 1).err().unwrap();
-    assert!(e.contains("Export it smaller") && e.contains("sync server"), "{e}");
+    assert!(e.contains("Export up to") && e.contains("px on the long edge") && e.contains("sync server"), "{e}");
     // 100 MB: even the sensor's samples do not fit, whatever the size: no advice that cannot help
     s.set_export_limit(Some(100 << 20));
     let e = prepare_export(&mut s, id, &at(1024.0), 1).err().unwrap();
-    assert!(e.contains("42 MP") && e.contains("at any size") && !e.contains("smaller") && e.contains("sync server"), "{e}");
+    assert!(e.contains("42 MP") && e.contains("at any size") && !e.contains("Export up to") && e.contains("sync server"), "{e}");
 }
 
 // `export.plan` tells a frontend with a renderer of its own what the export will write: the colour space and the bit depth the files are written with, and
