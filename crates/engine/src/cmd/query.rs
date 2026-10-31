@@ -1,6 +1,6 @@
 //! Read-only queries (not journaled): catalog, photos, develop state, controls, presets, albums.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use lightcraft_catalog::{Album, AlbumId, Photo, PhotoId};
 use lightcraft_develop::{CONTROLS, controls};
@@ -253,6 +253,23 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
                 .collect();
             Ok(json!({"total": ids.len(), "photos": items}))
+        }),
+        cmd!(query "catalog.flags", "Photo Status Flags", [], None,
+        "{ids: [photoId] (at most 1000)} → {photos: [{id, live, sensitive}]} in the requested order",
+        always, |s, p| {
+            const C: &str = "catalog.flags";
+            let ids = p.get("ids").and_then(Value::as_array).ok_or_else(|| bad(C, "`ids` must be a list of photo ids"))?;
+            if ids.len() > DESCRIBE_MAX { return Err(bad(C, format!("at most {DESCRIBE_MAX} ids"))); }
+            let mut seen = HashSet::with_capacity(ids.len());
+            let sensitive = s.sensitive_ids();
+            let photos = ids.iter().map(|value| {
+                let id = value.as_u64().ok_or_else(|| bad(C, "each id must be a nonnegative integer"))?;
+                if !seen.insert(id) { return Err(bad(C, "`ids` must not contain duplicates")); }
+                let photo_id = PhotoId(id);
+                let photo = s.catalog.photo(photo_id).ok_or_else(|| bad(C, format!("no such photo {id}")))?;
+                Ok(json!({"id": id, "live": s.live_photos.is_live(photo), "sensitive": sensitive.contains(&photo_id)}))
+            }).collect::<crate::Result<Vec<_>>>()?;
+            Ok(json!({"photos": photos}))
         }),
         cmd!(
             query "catalog.describe",

@@ -88,10 +88,32 @@ fn it_pages_in_id_order_and_says_when_the_library_changed() {
 }
 
 #[test]
+fn status_flags_keep_the_requested_order_and_sensitive_state() {
+    let root = temp_dir("flags");
+    let (mut s, [titled, _, _, plain]) = library(&root);
+    s.execute("photo.markSensitive", &json!({"ids": [titled.0]})).unwrap();
+
+    let flags = s.execute("catalog.flags", &json!({"ids": [plain.0, titled.0]})).unwrap();
+    assert_eq!(
+        flags["photos"],
+        json!([
+            {"id": plain.0, "live": false, "sensitive": false},
+            {"id": titled.0, "live": false, "sensitive": true},
+        ])
+    );
+}
+
+#[test]
 fn bad_arguments_are_errors() {
     let mut s = Session::with_demo();
     for p in [json!({"limit": 0}), json!({"limit": 1001}), json!({"limit": "x"}), json!({"ids": 5}), json!({"ids": vec![1; 1001]})] {
         assert!(s.execute("catalog.describe", &p).is_err(), "{p}");
     }
     assert!(s.execute("catalog.describe", &json!({"limit": null, "ids": null})).is_ok());
+    for p in
+        [json!({}), json!({"ids": 5}), json!({"ids": [1, "x"]}), json!({"ids": [1, 1]}), json!({"ids": [u64::MAX]}), json!({"ids": vec![1; 1001]})]
+    {
+        assert!(s.execute("catalog.flags", &p).is_err(), "{p}");
+    }
+    assert_eq!(s.execute("catalog.flags", &json!({"ids": []})).unwrap(), json!({"photos": []}));
 }
