@@ -4,10 +4,10 @@
 //! The app browses the photo library itself (PhotoKit) and hands the engine one photo's original
 //! only when it is opened (`photoLibrary.open`). The engine files it where an import would
 //! (`Originals/YYYY/YYYY-MM-DD/`) as a **Local record**: out of All Photos, albums, counts and
-//! sync, but shown and edited like any photo. Opening it is no undo step. The first change the
-//! user makes to it (develop settings, rating, flag, label, metadata, capture time, versions)
-//! brings it into the library in that same undo step ([`Session::adopt_changed`]), so it syncs from
-//! then on, and undoing the change takes it back out. Every user change goes through
+//! sync, but shown and edited like any photo. Opening it is no undo step. A non-default develop
+//! edit brings it into the library in that same undo step ([`Session::adopt_changed`]); leaving it
+//! reset to its import look demotes it again, so rating, flags and metadata alone never import it.
+//! Every user change goes through
 //! [`Session::commit`] (LightCraft's own bookkeeping, `apply_system`, never brings a photo in), so
 //! a photo opened from the photo library that is still Local was only looked at: it is forgotten
 //! when it is left (`photoLibrary.close`) or when the library next opens, its record and the
@@ -164,7 +164,7 @@ impl Session {
         user_changed(&fwd, &mut ids, 0);
         ids.sort();
         ids.dedup();
-        ids.retain(|id| self.catalog.photo(*id).is_some_and(|p| p.local) && self.photo_library.has(*id));
+        ids.retain(|id| self.catalog.photo(*id).is_some_and(|p| p.local && p.is_edited()) && self.photo_library.has(*id));
         if ids.is_empty() {
             return (fwd, inv);
         }
@@ -289,16 +289,7 @@ impl Session {
 /// The photos `op` changes the way a person does (not analysis, faces, files or albums).
 fn user_changed(op: &Op, out: &mut Vec<PhotoId>, depth: usize) {
     match op {
-        Op::SetRating { id, .. }
-        | Op::SetFlag { id, .. }
-        | Op::SetLabel { id, .. }
-        | Op::SetDevelop { id, .. }
-        | Op::SetMeta { id, .. }
-        | Op::SetVersions { id, .. }
-        | Op::SetHistory { id, .. }
-        | Op::PushHistory { id, .. }
-        | Op::SetHistoryCursor { id, .. }
-        | Op::SetCaptured { id, .. } => out.push(*id),
+        Op::SetDevelop { id, .. } => out.push(*id),
         Op::Batch { ops } if depth < 32 => ops.iter().for_each(|o| user_changed(o, out, depth + 1)),
         _ => {}
     }
@@ -423,7 +414,14 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
         s.end_interaction()?;
     }
     let entry = s.photo_library.by_photo(id).map(|(a, e)| (a.clone(), e.clone()));
-    let promoted = s.catalog.photo(id).is_some_and(|p| !p.local && !p.deleted);
+    let edited = s.catalog.photo(id).is_some_and(|p| p.is_edited());
+    if !edited && s.catalog.photo(id).is_some_and(|p| !p.local && !p.deleted) && s.photo_library.by_photo(id).is_some_and(|(_, entry)| entry.placed) {
+        let op = Op::SetLocal { id, local: true };
+        let inv = s.apply_catalog(op.clone())?;
+        s.sync_record(&op, &inv);
+        s.pending_log.push(op);
+    }
+    let promoted = s.catalog.photo(id).is_some_and(|p| !p.local && !p.deleted && p.is_edited());
     let mut forgotten = false;
     if let Some((asset, e)) = entry
         && live(s, &e).is_some_and(|p| p.local)

@@ -67,6 +67,7 @@ fn a_staged_clip_becomes_the_photos_motion() {
     assert!(r["duration"].as_f64().is_some_and(|d| (d - 2.0).abs() < 0.05), "{r}");
     assert_eq!((r["contentId"].as_str(), r["stillTime"].as_f64()), (Some("3F2A-11"), Some(1.0)));
     assert_eq!(summary(&mut s, id)["live"], json!(true));
+    assert_eq!(s.execute("catalog.flags", &json!({"ids": [id.0]})).unwrap()["photos"][0]["live"], json!(true));
     // the clip is no photo of its own, and no undo step
     assert_eq!(s.catalog.photos().count(), 1);
     assert_eq!(s.undo.len(), 1, "only the import");

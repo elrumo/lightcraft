@@ -74,28 +74,14 @@ fn an_opened_photo_is_shown_but_stays_out_of_the_library() {
 }
 
 #[test]
-fn a_change_brings_it_into_the_library_in_the_same_step() {
+fn a_rating_does_not_bring_it_into_the_library() {
     let root = temp_dir("adopt");
     let mut s = session(&root);
     let id = id_of(&open(&mut s, "A1", &staged(&root, "IMG_1.png", 1)));
     s.execute("photo.rate", &json!({"rating": 4})).unwrap();
-    assert!(!s.catalog.photo(id).unwrap().local, "rated: in the library");
-    assert_eq!(s.undo.len(), 1, "one step");
-    assert!(s.visible().contains(&id));
-    assert_eq!(s.execute("photoLibrary.added", &json!({})).unwrap(), json!({"A1": id.0}));
-    // one step: undoing it undoes the rating, then takes the photo back out (the promotion went first: a server
-    // learns of the photo before its rating)
-    match s.undo.last().map(|u| &u.op) {
-        Some(Op::Batch { ops }) => {
-            assert!(matches!(ops.last(), Some(Op::Batch { ops: p }) if matches!(p.first(), Some(Op::SetLocal { local: true, .. }))), "{ops:?}")
-        }
-        other => panic!("{other:?}"),
-    }
-    s.execute("edit.undo", &json!({})).unwrap();
-    let p = s.catalog.photo(id).unwrap();
-    assert!(p.local && p.rating == 0, "undo takes it back out with its rating");
-    s.execute("edit.redo", &json!({})).unwrap();
-    assert!(!s.catalog.photo(id).unwrap().local);
+    assert!(s.catalog.photo(id).unwrap().local, "rating alone does not add it");
+    assert!(!s.visible().contains(&id));
+    assert!(s.execute("photoLibrary.added", &json!({})).unwrap().as_object().unwrap().is_empty());
 }
 
 #[test]
@@ -131,14 +117,28 @@ fn leaving_it_unchanged_forgets_the_record_and_the_file() {
 }
 
 #[test]
-fn leaving_it_changed_keeps_it_and_says_so() {
+fn leaving_a_rated_photo_does_not_promote_it() {
     let root = temp_dir("keep");
     let mut s = session(&root);
     let id = id_of(&open(&mut s, "A1", &staged(&root, "IMG_1.png", 1)));
     s.execute("photo.flag", &json!({"flag": "pick"})).unwrap();
     let r = s.execute("photoLibrary.close", &json!({"id": id.0})).unwrap();
-    assert_eq!(r, json!({"promoted": true, "forgotten": false}));
+    assert_eq!(r, json!({"promoted": false, "forgotten": false}));
+    assert!(s.catalog.photo(id).is_some_and(|p| p.local));
     assert!(Path::new(&file_of(&s, id)).exists());
+}
+
+#[test]
+fn resetting_before_leaving_does_not_promote_a_photo() {
+    let root = temp_dir("reset-before-leave");
+    let mut s = session(&root);
+    let id = id_of(&open(&mut s, "A1", &staged(&root, "IMG_1.png", 1)));
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    s.execute("develop.reset", &json!({})).unwrap();
+    let r = s.execute("photoLibrary.close", &json!({"id": id.0})).unwrap();
+    assert_eq!(r, json!({"promoted": false, "forgotten": false}));
+    assert!(s.catalog.photo(id).is_some_and(|p| p.local && !p.is_edited()));
+    assert!(s.execute("photoLibrary.added", &json!({})).unwrap().as_object().unwrap().is_empty());
 }
 
 #[test]
@@ -168,12 +168,12 @@ fn a_photo_the_library_already_has_opens_as_that_photo() {
     assert!(!Path::new(&path).exists());
     assert_eq!(s.execute("photoLibrary.added", &json!({})).unwrap(), json!({"A3": mine.0}));
     // leaving it never removes a library photo
-    assert_eq!(s.execute("photoLibrary.close", &json!({"id": mine.0})).unwrap(), json!({"promoted": true, "forgotten": false}));
+    assert_eq!(s.execute("photoLibrary.close", &json!({"id": mine.0})).unwrap(), json!({"promoted": false, "forgotten": false}));
     assert!(s.catalog.photo(mine).is_some());
 }
 
 #[test]
-fn opening_the_library_again_tidies_what_was_left_open() {
+fn opening_the_library_again_forgets_a_rated_but_unedited_photo() {
     let root = temp_dir("tidy");
     let (left, kept, left_file) = {
         let mut s = session(&root);
@@ -186,7 +186,7 @@ fn opening_the_library_again_tidies_what_was_left_open() {
     };
     let s = session(&root);
     assert!(s.catalog.photo(left).is_none() && !Path::new(&left_file).exists(), "the untouched one is gone");
-    assert!(s.catalog.photo(kept).is_some_and(|p| !p.local), "the rated one stays in the library");
+    assert!(s.catalog.photo(kept).is_none(), "rating did not add the photo to the library");
 }
 
 #[test]
@@ -273,7 +273,7 @@ fn a_known_asset_opens_without_its_file_and_an_unknown_one_asks_for_it() {
     let id = id_of(&open(&mut s, "A1", &staged(&root, "IMG_1.png", 1)));
     s.execute("photo.label", &json!({"label": "red"})).unwrap();
     let r = s.execute("photoLibrary.open", &json!({"asset": "A1"})).unwrap();
-    assert_eq!((id_of(&r), r["local"].as_bool()), (id, Some(false)), "{r}");
+    assert_eq!((id_of(&r), r["local"].as_bool()), (id, Some(true)), "{r}");
 }
 
 #[test]

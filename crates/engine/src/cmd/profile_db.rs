@@ -186,7 +186,6 @@ mod download {
         let cancel = Arc::new(AtomicBool::new(false));
         let task = s.activity.start("download", "Updating camera and lens profiles", Cancel::Flag(cancel.clone()));
         task.set_unit(Unit::Bytes);
-        task.detail(base.split('/').nth(2).unwrap_or_default());
         let handle = task.handle();
         let thread_shared = shared.clone();
         let thread_base = base.clone();
