@@ -65,7 +65,7 @@ tool list, for the current parameters instead of trusting this file. Use the adm
      saying what is left, when it is not finished, blocked, or needs the user's test to decide; Canceled for work that was
      dropped. Say in your reply which cards moved and where.
 - **Name a card as a link.** Whenever you mention a card in a reply, write its number as a Markdown link to the card,
-  `[#97](https://help.eliasruiz.com/projects/tb4A2EAxRx/board?item=<item id>)`, never a bare `#97`. The `<item id>` is the
+  `[#97](https://helpbites.app/projects/tb4A2EAxRx/board?item=<item id>)`, never a bare `#97`. The `<item id>` is the
   card's `id` (like `jEFaBNN0QD`), not its number; you have it from the connector's `list_board_items` or
   `update_board_item`. (The host is the API's, `HELPBITES_API_URL`; the path is the board page's own `?item=` deep link.)
 - **Screenshots of the result go on the card.** When you take screenshots of the end result of a card's work (the running
