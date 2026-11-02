@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod colors;
 pub mod embedder;
 pub mod faces;
 #[cfg(any(test, feature = "testing"))]
@@ -36,6 +37,7 @@ pub mod textindex;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod weights;
 
+pub use colors::ColorIndex;
 pub use embedder::Embedder;
 pub use faces::FaceEngine;
 pub use index::{EmbeddingIndex, Hit, Import};
