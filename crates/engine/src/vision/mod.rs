@@ -33,6 +33,7 @@ use serde_json::{Value, json};
 use crate::media::{RenderJob, SourceLevel, content_key};
 use crate::{Session, guard, memory};
 
+mod colors;
 #[cfg(not(target_arch = "wasm32"))]
 mod helper;
 mod people;
@@ -46,6 +47,7 @@ pub(crate) mod portable_bits {
 mod reprocess;
 mod sensitive;
 mod server;
+use colors::{ColorSpec, ColorWhere, with_colors};
 #[cfg(not(target_arch = "wasm32"))]
 pub use helper::{HelperJob, HelperPart};
 pub use people::{Cluster, FaceRef, clusters_of};
@@ -181,6 +183,10 @@ struct Shared {
     sensitive_len: AtomicUsize,
     sensitive_rev: AtomicU64,
     sensitive_opened: AtomicBool,
+    /// The photos' colours (no model: [`colors`]).
+    colors: Mutex<Option<(Option<PathBuf>, lightcraft_vision::ColorIndex)>>,
+    colors_len: AtomicUsize,
+    colors_opened: AtomicBool,
     finder: Mutex<Option<Arc<dyn FaceEngine>>>,
     face_ix: Mutex<Option<(Option<PathBuf>, FaceIndex)>>,
     /// Faces and photos looked at in the face index, readable without its lock.
@@ -615,6 +621,9 @@ impl Vision {
         s.sensitive_len.store(0, Ordering::Relaxed);
         s.sensitive_rev.fetch_add(1, Ordering::Relaxed);
         s.sensitive_opened.store(false, Ordering::Relaxed);
+        *s.colors.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        s.colors_len.store(0, Ordering::Relaxed);
+        s.colors_opened.store(false, Ordering::Relaxed);
         self.sensitive_list = None;
     }
 
@@ -1181,17 +1190,21 @@ struct Plan {
     read: Vec<(Key, RenderJob)>,
     scan: Vec<(Key, RenderJob)>,
     check: Vec<(Key, RenderJob)>,
+    /// Where the photos' colours are kept, and the photos that only need those (the others get theirs when described).
+    colors: (ColorSpec, Vec<(Key, RenderJob)>),
 }
 
 /// Embeds `plan.embed`'s photos in batches and stores their vectors, then reads the text of
 /// `plan.read`'s and stores that.
 fn run_index(shared: &Arc<Shared>, plan: Plan, job: &IndexJob) {
     let _busy = Busy::new(shared);
-    let Plan { semantic, text, faces, sensitive, embed, read, scan, check } = plan;
+    let Plan { semantic, text, faces, sensitive, embed, read, scan, check, colors } = plan;
     let result = guard::catch("indexing photos", || -> Result<(), String> {
+        let (color_spec, color_work) = colors;
         if let Some((provider, spec)) = &semantic {
-            describe_photos(shared, provider, spec, embed, job)?;
+            describe_photos(shared, provider, spec, &color_spec, embed, job)?;
         }
+        colors::color_photos(shared, &color_spec, color_work, job);
         if let Some((provider, spec)) = &text
             && !job.cancel.load(Ordering::Relaxed)
             && job.error().is_none()
@@ -1230,7 +1243,14 @@ fn run_index(shared: &Arc<Shared>, plan: Plan, job: &IndexJob) {
 }
 
 /// Embeds `work`'s photos in batches and stores their vectors.
-fn describe_photos(shared: &Arc<Shared>, provider: &Provider, spec: &IndexSpec, work: Vec<(Key, RenderJob)>, job: &IndexJob) -> Result<(), String> {
+fn describe_photos(
+    shared: &Arc<Shared>,
+    provider: &Provider,
+    spec: &IndexSpec,
+    color_spec: &ColorSpec,
+    work: Vec<(Key, RenderJob)>,
+    job: &IndexJob,
+) -> Result<(), String> {
     if work.is_empty() {
         return Ok(());
     }
@@ -1246,6 +1266,8 @@ fn describe_photos(shared: &Arc<Shared>, provider: &Provider, spec: &IndexSpec, 
         for (key, render) in batch {
             match memory::in_background(|| render.run().rendered) {
                 Ok(r) => {
+                    // (the colours come from the same rendering)
+                    colors::keep(shared, color_spec, key, &r.image);
                     keys.push(key);
                     images.push(r.image);
                 }
@@ -1357,6 +1379,8 @@ fn find_faces(shared: &Arc<Shared>, provider: &FinderProvider, spec: &FaceSpec, 
 struct Where {
     semantic: Option<(Provider, IndexSpec)>,
     text: Option<TextSpec>,
+    /// Bring the photos with these colours to the front (all of them, when the query names nothing else).
+    colors: Option<ColorWhere>,
 }
 
 /// The photos best matching `query`: those with its words in them first, then those that look
@@ -1364,8 +1388,10 @@ struct Where {
 fn run_search(shared: &Arc<Shared>, at: &Where, query: &str, limit: usize) -> Result<Vec<Hit>, String> {
     let _busy = Busy::new(shared);
     guard::catch("searching", || -> Result<Vec<Hit>, String> {
+        // (with colours named, many are asked for: the photos that have them are brought to the front below)
+        let asked = if at.colors.as_ref().is_some_and(|c| !c.only) { limit.saturating_mul(10).min(MAX_LIMIT * 4) } else { limit };
         let words = match &at.text {
-            Some(spec) => with_text(shared, spec, |ix| ix.search(query, limit))?,
+            Some(spec) => with_text(shared, spec, |ix| ix.search(query, asked))?,
             None => Vec::new(),
         };
         let mut looks = Vec::new();
@@ -1373,9 +1399,13 @@ fn run_search(shared: &Arc<Shared>, at: &Where, query: &str, limit: usize) -> Re
             let model = acquire(shared, provider)?;
             let v = model.encode_text(query).map_err(|e| e.to_string())?;
             shared.touch();
-            looks = with_index(shared, spec, |ix| ix.search(&v, limit).map_err(|e| e.to_string()))??;
+            looks = with_index(shared, spec, |ix| ix.search(&v, asked).map_err(|e| e.to_string()))??;
         }
-        Ok(lightcraft_vision::textindex::merge(&words, looks, limit))
+        let hits = lightcraft_vision::textindex::merge(&words, looks, asked);
+        match &at.colors {
+            Some(c) => colors::promote(shared, c, hits, limit),
+            None => Ok(hits),
+        }
     })?
 }
 
@@ -1514,6 +1544,8 @@ impl Session {
                 "download": v.faces_download_status(),
             },
             "sensitive": self.sensitive_status(),
+            // (no model, no download: the photos' colours, worked out whenever photos are indexed)
+            "colors": {"engine": lightcraft_vision::colors::ENGINE, "analysed": v.shared.colors_opened.load(Ordering::Relaxed).then(|| v.shared.colors_len.load(Ordering::Relaxed))},
             "text": {
                 "available": v.text_available(),
                 "enabled": v.text,
@@ -1555,7 +1587,14 @@ impl Session {
         } else {
             Err(String::new())
         };
-        if semantic.is_err() && text.is_err() && faces.is_err() && sensitive.is_err() {
+        // (the colours need no model: a run is worth it for them alone while some photo lacks its palette)
+        let color_spec = self.vision_colors_spec();
+        if semantic.is_err()
+            && text.is_err()
+            && faces.is_err()
+            && sensitive.is_err()
+            && with_colors(&self.vision.shared, &color_spec, |ix| ix.len())? >= self.vision_photo_count()
+        {
             return Err(semantic.err().unwrap_or_default());
         }
         let (semantic, text, faces, sensitive) = (semantic.ok(), text.ok(), faces.ok(), sensitive.ok());
@@ -1576,6 +1615,7 @@ impl Session {
             Some((_, spec)) => sensitive::with_sensitive(&shared, spec, |ix| ix.keys().collect())?,
             None => HashSet::new(),
         };
+        let mut seen_colors: HashSet<Key> = with_colors(&shared, &color_spec, |ix| ix.keys().collect())?;
         let want: Vec<PhotoId> = match ids {
             Some(ids) => ids,
             None => self.catalog.photos().filter(|p| p.in_library()).map(|p| p.id).collect(),
@@ -1592,6 +1632,7 @@ impl Session {
         let (mut embed, mut read, mut scan, mut check): (Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut failed, edge) = (0, self.vision.text_edge);
+        let mut color: Vec<(Key, RenderJob)> = Vec::new();
         for id in want {
             if self.catalog.photo(id).and_then(|p| self.synced_tier(p)) == Some(0) {
                 continue;
@@ -1602,6 +1643,14 @@ impl Session {
             let reads = text.is_some() && seen_text.insert(key);
             let looks = faces.is_some() && seen_faces.insert(key);
             let checks = sensitive.is_some() && seen_checked.insert(key);
+            // (a photo that is described gets its colours from the same rendering; the others from one of their own)
+            if seen_colors.insert(key)
+                && !describe
+                && let Some(mut job) = self.variant_job(id, &DevelopSettings::default(), THUMB_EDGE)
+            {
+                job.cache = None;
+                color.push((key, job));
+            }
             // a neutral rendering: the photo as its file looks, whatever the user did to it; not
             // cached, so indexing doesn't fill the thumbnail cache with a second set
             for (wanted, list) in [(describe, &mut embed), (checks, &mut check)] {
@@ -1634,7 +1683,7 @@ impl Session {
         job.failed.store(failed, Ordering::Relaxed);
         self.vision.job = Some(job.clone());
         self.vision.job_reported = wait;
-        let plan = Plan { semantic, text, faces, sensitive, embed, read, scan, check };
+        let plan = Plan { semantic, text, faces, sensitive, embed, read, scan, check, colors: (color_spec, color) };
         if wait || !self.vision.background || cfg!(target_arch = "wasm32") {
             run_index(&shared, plan, &job);
             self.vision.job_reported = true;
@@ -1681,7 +1730,10 @@ impl Session {
         }
         let limit = limit.clamp(1, MAX_LIMIT);
         let local = self.vision.local_available() && self.vision.installed();
-        let server = self.vision.remote.ready() && self.vision_signed_in();
+        let server = self.vision_signed_in()
+            && (self.vision.remote.ready()
+                // (a server with no model still answers colour words, from the colours it worked out)
+                || (self.vision.remote.colors_ready() && !lightcraft_vision::colors::parse(&query).buckets.is_empty()));
         let use_server = match source {
             "local" => false,
             "server" => true,
@@ -1692,6 +1744,11 @@ impl Session {
         if use_server {
             return self.vision_server_search(&query, limit, wait);
         }
+        // colour words ("red", "blue sky") are answered from the photos' colours, which need no model: the photos with those
+        // colours come first, then whatever the words and the description model find, as before (with no model, a query
+        // of colour words alone is the photos with the colours)
+        let colors = self.vision_color_where(&lightcraft_vision::colors::parse(&query));
+        let only_colors = colors.as_ref().is_some_and(|c| c.only);
         // the words printed in photos need no description model; the look of them does
         let text = self.vision_text_where();
         let semantic: Result<(Provider, IndexSpec, usize), String> = if !local {
@@ -1716,17 +1773,20 @@ impl Session {
                 Ok((provider, spec, known))
             })
         };
-        if text.is_none() && semantic.is_err() {
+        if text.is_none() && semantic.is_err() && !only_colors {
             // nothing indexed yet: a file name ("IMG_4008") is still found
             if !lightcraft_catalog::search::named(self.catalog.photos().filter(|p| p.in_library() && (!p.hidden || self.hidden.showing())), &query)
                 .is_empty()
             {
-                return Ok(self.apply_ids(&query, &[], "local"));
+                return Ok(self.apply_ids(&query, &[], "local", None));
             }
             return Err(semantic.err().unwrap_or_default());
         }
-        let known = semantic.as_ref().map_or_else(|_| self.vision.text_indexed(), |(_, _, n)| *n);
-        let at = Where { semantic: semantic.ok().map(|(p, spec, _)| (p, spec)), text };
+        let known = match &colors {
+            Some(c) if only_colors && semantic.is_err() && text.is_none() => with_colors(&self.vision.shared, &c.spec, |ix| ix.len())?,
+            _ => semantic.as_ref().map_or_else(|_| self.vision.text_indexed(), |(_, _, n)| *n),
+        };
+        let at = Where { semantic: semantic.ok().map(|(p, spec, _)| (p, spec)), text, colors };
         self.vision.search_seq += 1;
         let seq = self.vision.search_seq;
         let shared = self.vision.shared.clone();
@@ -1754,29 +1814,42 @@ impl Session {
     /// This device's hits as photos (by content, so virtual copies of a hit come with it).
     fn apply_hits(&mut self, query: &str, hits: &[Hit]) -> Value {
         let by_key = self.vision_keys();
+        // (the photos that have the colours the query names come first: how many of the hits, as photos)
+        let color_hits = self.vision_color_where(&lightcraft_vision::colors::parse(query));
+        let mut colored = color_hits.is_some().then_some(0);
         let mut found: Vec<(PhotoId, f32)> = Vec::new();
         for h in hits {
+            let has = color_hits.as_ref().is_some_and(|c| colors::has(&self.vision.shared, c, &h.key));
             for id in by_key.get(&h.key).into_iter().flatten() {
                 found.push((*id, h.score));
+                if has {
+                    colored = colored.map(|n| n + 1);
+                }
             }
         }
-        self.apply_ids(query, &found, "local")
+        self.apply_ids(query, &found, "local", colored)
     }
 
     /// Sets the view to `found` (best first) for `query`, after the photos whose file name holds
     /// it ("IMG_4008"). An empty result is an empty view, not "everything".
-    fn apply_ids(&mut self, query: &str, found: &[(PhotoId, f32)], source: &str) -> Value {
+    /// `colored`: the colours the query names took part (this device's palettes, or the server's) and this many of the
+    /// first `found` photos have them.
+    fn apply_ids(&mut self, query: &str, found: &[(PhotoId, f32)], source: &str, colored: Option<usize>) -> Value {
         let named =
             lightcraft_catalog::search::named(self.catalog.photos().filter(|p| p.in_library() && (!p.hidden || self.hidden.showing())), query);
         let first: HashSet<PhotoId> = named.iter().copied().collect();
         // (they push the least alike out: the search's limit still holds)
         let len = found.len().max(named.len());
+        // (the colours the query names, when they took part: this device's palettes, or the server's)
+        let named_colors: Vec<&'static str> =
+            lightcraft_vision::colors::parse(query).buckets.into_iter().map(lightcraft_vision::colors::name).collect();
+        let colored = colored.filter(|_| !named_colors.is_empty());
         let photos: Vec<Value> = named
             .iter()
-            .map(|id| json!({"id": id.0, "score": NAME_SCORE, "text": false, "name": true}))
-            .chain(found.iter().filter(|(id, _)| !first.contains(id)).map(|(id, score)| {
+            .map(|id| json!({"id": id.0, "score": NAME_SCORE, "text": false, "name": true, "color": false}))
+            .chain(found.iter().enumerate().filter(|(_, (id, _))| !first.contains(id)).map(|(i, (id, score))| {
                 // (a score from TEXT_SCORE_BASE up is a match on words printed in the photo)
-                json!({"id": id.0, "score": (f64::from(*score) * 1e4).round() / 1e4, "text": *score >= TEXT_SCORE_BASE, "name": false})
+                json!({"id": id.0, "score": (f64::from(*score) * 1e4).round() / 1e4, "text": *score >= TEXT_SCORE_BASE, "name": false, "color": colored.is_some_and(|n| i < n)})
             }))
             .take(len)
             .collect();
@@ -1786,6 +1859,8 @@ impl Session {
             "query": query,
             "source": source,
             "photos": photos,
+            // (the colours the search put first, by name; each hit says `color: true` when it has them)
+            "colors": if colored.is_some() { named_colors } else { Vec::new() },
             "indexed": self.vision.indexed(),
             "libraryPhotos": self.vision_photo_count(),
         })
@@ -2012,6 +2087,8 @@ impl Session {
 mod tests;
 #[cfg(test)]
 mod tests_catch_up;
+#[cfg(test)]
+mod tests_colors;
 #[cfg(test)]
 mod tests_people;
 #[cfg(test)]

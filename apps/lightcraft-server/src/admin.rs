@@ -938,7 +938,7 @@ fn search(st: &State) -> Value {
                 })
             };
             let work = json!({"search": work(Part::Search), "text": work(Part::Text), "faces": work(Part::Faces), "sensitive": work(Part::Sensitive)});
-            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done), "checked": checked, "work": work})
+            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done), "checked": checked, "colors": v.colors.analysed(&st.data, &name), "work": work})
         })
         .collect();
     // paused / window / time left for one part; `ready` is the photos left that have their previews
@@ -1008,6 +1008,11 @@ fn search(st: &State) -> Value {
             "licenseUrl": lightcraft_engine::vision::SENSITIVE_LICENSE_URL,
             "download": v.switch.status(Part::Sensitive),
             "schedule": schedule(Part::Sensitive, |u| u["checked"].as_u64()),
+        },
+        // (the colours of the photos: no model, always on; `analysed` adds up the users' photos)
+        "colors": {
+            "engine": lightcraft_vision::colors::ENGINE,
+            "analysed": users.iter().filter_map(|u| u["colors"].as_u64()).sum::<u64>(),
         },
         "users": users,
     })

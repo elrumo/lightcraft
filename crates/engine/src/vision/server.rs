@@ -66,7 +66,8 @@ pub(crate) enum Aux {
 pub(crate) struct ServerHits {
     pub seq: u64,
     pub query: String,
-    pub result: Result<Vec<(PhotoId, f32)>, String>,
+    /// The hits, and how many of the first have the colours the query names (`None`: the server didn't use colours).
+    pub result: Result<(Vec<(PhotoId, f32)>, Option<usize>), String>,
 }
 
 /// Sending the local index to the server.
@@ -128,6 +129,12 @@ impl Remote {
                 .status
                 .as_ref()
                 .is_some_and(|s| on(&s["installed"]) || on(&s["text"]["installed"]) || s["text"]["indexed"].as_u64().unwrap_or(0) > 0)
+    }
+
+    /// The server has worked out the colours of some of this user's photos (it needs no model for that), so it can answer a
+    /// search for colours even when it can't search by description.
+    pub fn colors_ready(&self) -> bool {
+        self.supported() && self.status.as_ref().is_some_and(|s| s["colors"]["analysed"].as_u64().unwrap_or(0) > 0)
     }
 
     /// The server finds the faces in this user's photos (an admin turned it on).
@@ -232,8 +239,8 @@ impl Session {
         let Some(done) = hits.into_iter().find(|h| h.seq == seq) else {
             return Err("the server didn't answer".into());
         };
-        let found = done.result?;
-        Ok(self.apply_ids(&done.query, &found, "server"))
+        let (found, colored) = done.result?;
+        Ok(self.apply_ids(&done.query, &found, "server", colored))
     }
 
     /// Send the server the vectors it doesn't have (`vision.share`). Only what the server's
@@ -378,11 +385,14 @@ impl Session {
     }
 
     /// The server's hits as photos this device has.
-    fn server_hits(&self, body: &str) -> Result<Vec<(PhotoId, f32)>, String> {
+    fn server_hits(&self, body: &str) -> Result<(Vec<(PhotoId, f32)>, Option<usize>), String> {
         let v: Value = serde_json::from_str(body).map_err(|e| format!("the server's answer isn't what was expected: {e}"))?;
         let ids = v["ids"].as_array().ok_or("the server's answer has no photos")?;
         let scores = v["scores"].as_array().map(Vec::as_slice).unwrap_or_default();
-        Ok(ids
+        // (`colors`: the colour names the server put first, `colorHits` how many photos have them; an older server, or one
+        // that hasn't looked at the photos yet, sends none)
+        let colored = v["colors"].as_array().is_some_and(|c| !c.is_empty()).then(|| v["colorHits"].as_u64().unwrap_or(0) as usize);
+        let hits = ids
             .iter()
             .enumerate()
             .filter_map(|(i, id)| {
@@ -391,7 +401,8 @@ impl Session {
                 self.catalog.photo(id)?;
                 Some((id, scores.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32))
             })
-            .collect())
+            .collect();
+        Ok((hits, colored))
     }
 
     fn share_failed(&mut self, e: String) {
@@ -643,8 +654,8 @@ impl Session {
                 continue;
             }
             match done.result {
-                Ok(hits) => {
-                    self.apply_ids(&done.query, &hits, "server");
+                Ok((hits, colored)) => {
+                    self.apply_ids(&done.query, &hits, "server", colored);
                     out.changed = true;
                 }
                 Err(e) => out.messages.push(e),

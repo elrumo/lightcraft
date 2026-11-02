@@ -325,6 +325,14 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Post, ["index", "faces"]) => crate::vision::face_upload(st, req, &l, &who.user),
         (Method::Delete, ["index", "faces"]) => crate::vision::face_delete(st, &who.user),
         (Method::Post, ["index", "sensitive"]) => crate::sensitive::upload(st, req, &l, &who.user),
+        // the colours of the photos are the server's own to make (no model): a user can have them made again
+        (Method::Delete, ["index", "colors"]) => match st.vision.colors.reset(&st.data, &who.user) {
+            Ok(_) => {
+                st.vision.wake();
+                json(200, &serde_json::json!({}))
+            }
+            Err(e) => error(500, e),
+        },
         // Forget what a part found for this user, to have it done again (faces have their own, above)
         (Method::Delete, ["index", kind @ ("embeddings" | "text" | "sensitive")]) => {
             let part = match *kind {

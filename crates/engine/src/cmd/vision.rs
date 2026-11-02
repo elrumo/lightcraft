@@ -490,7 +490,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Process Photos Again",
             [],
             None,
-            "{part: search|text|faces|sensitive, scope?: device|server|both (both)} — forget what one kind of processing found and do it again: `device` deletes this library's results (names written to photos stay) and starts indexing, `server` deletes this user's results on the sync server (which then does every photo again, or has the device that does it for it do so), `both` does both when this library is signed in. The models stay → {part, device, server, indexing}",
+            "{part: search|text|faces|sensitive|colors, scope?: device|server|both (both)} — forget what one kind of processing found and do it again: `device` deletes this library's results (names written to photos stay) and starts indexing, `server` deletes this user's results on the sync server (which then does every photo again, or has the device that does it for it do so), `both` does both when this library is signed in. The models stay → {part, device, server, indexing}",
             always,
             |s, p| {
                 let c = "vision.reprocess";
@@ -505,12 +505,17 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(s.vision.job().map_or(Value::Null, |j| j.json()))
         }),
+        cmd!(query "library.colorNames", "Colour Names for Search", [], None, "{} — the colours library.search understands, for a front end to suggest: {colors: [{name, rgb: [r, g, b]}] (the twelve a photo is counted into), words: [{word, color}] (every word that stands for one: English, and German, Spanish, French, Italian and Portuguese), analysed (photos with their colours worked out on this device)}", always, |s, _| {
+            let mut v = crate::Session::vision_color_names();
+            v["analysed"] = s.vision_colors_len().into();
+            Ok(v)
+        }),
         cmd!(
             "library.search",
             "Search by Description",
             [],
             None,
-            "{q: text, limit?: 1..2000 (200), wait?: bool, source?: auto|local|server (auto)} — the library photos that best match a description (\"a dog on a beach at sunset\", in any language the model reads), best first, as the view's filter (Clear Filters to go back). `local` uses this device's model and index (vision.model.status, vision.index); `server` asks the sync server, which needs no model here; `auto` uses this device's index when it covers the library, else the server's. With text search on (vision.setText), photos with the words printed in them come first (`text: true`, any language the reader knows; a typo in a long word still matches). A one-word query that is part of a file name (`IMG_4008`, `img_4008.dng`) puts those photos first (`name: true`), even before anything is indexed. In the app the search runs in the background and the view updates when it is done → {query, source, photos: [{id, score, text, name}], indexed, libraryPhotos} (with `wait`; else {status: \"searching\"})",
+            "{q: text, limit?: 1..2000 (200), wait?: bool, source?: auto|local|server (auto)} — the library photos that best match a description (\"a dog on a beach at sunset\", in any language the model reads), best first, as the view's filter (Clear Filters to go back). `local` uses this device's model and index (vision.model.status, vision.index); `server` asks the sync server, which needs no model here; `auto` uses this device's index when it covers the library, else the server's. With text search on (vision.setText), photos with the words printed in them come first (`text: true`, any language the reader knows; a typo in a long word still matches). A one-word query that is part of a file name (`IMG_4008`, `img_4008.dng`) puts those photos first (`name: true`), even before anything is indexed. Colour words (`red`, `blue sky`, `black and white`, `rot`; see library.colorNames) find the photos that are mostly that colour, most of it first, from the colours worked out when photos are indexed (no model needed); with other words in the query, those are searched as above and the result is kept to the photos with the colours (`color: true` on a hit, `colors: [names]` in the result). In the app the search runs in the background and the view updates when it is done → {query, source, photos: [{id, score, text, name, color}], colors, indexed, libraryPhotos} (with `wait`; else {status: \"searching\"})",
             always,
             |s, p| {
                 let c = "library.search";

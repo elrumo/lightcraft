@@ -138,7 +138,12 @@ fn search_needs_a_query_an_index_and_a_model() {
         let e = plain.execute("library.search", &json!({"q": "red", "wait": true})).unwrap_err().to_string();
         // (no model here and no server to ask: it says where search could come from)
         assert!(e.contains("server") && e.contains("isn't signed in"), "{e}");
-        assert!(plain.execute("vision.index", &json!({"wait": true})).is_err());
+        // (no model to index with, but the colours of the photos need none: that is all this run does)
+        assert_eq!(plain.execute("vision.index", &json!({"wait": true})).unwrap()["total"], 0);
+        assert!(plain.vision_colors_len() > 0);
+        assert!(plain.execute("library.search", &json!({"q": "red", "wait": true})).is_ok(), "a colour needs no model");
+        let e = plain.execute("library.search", &json!({"q": "red car", "wait": true})).unwrap_err().to_string();
+        assert!(e.contains("server") && e.contains("isn't signed in"), "the car does: {e}");
         assert!(plain.execute("vision.model.download", &json!({"acknowledged": true})).is_err());
     }
 }
@@ -310,7 +315,8 @@ fn a_panic_while_searching_is_an_error() {
     let mut s = demo();
     s.execute("vision.index", &json!({"wait": true})).unwrap();
     s.vision.set_embedder(Arc::new(PanicsOnText));
-    let e = s.execute("library.search", &json!({"q": "red", "wait": true})).unwrap_err().to_string();
+    // (the colour word is answered from the colours, not the model: the rest of the query is what panics)
+    let e = s.execute("library.search", &json!({"q": "a red sunset", "wait": true})).unwrap_err().to_string();
     assert!(e.contains("failed unexpectedly") && e.contains("boom"), "{e}");
     assert!(s.execute("photo.rate", &json!({"rating": 2})).is_ok());
 }

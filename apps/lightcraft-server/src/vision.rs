@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! GET  /api/search/status            {available, installed, enabled, installing, model, dim, indexed, total, text: {installed, engine, indexed}}
-//! GET  /api/search?q=…&limit=…       {query, ids: [photo id], scores: [f32], indexed, total}
+//! GET  /api/search?q=…&limit=…       {query, ids: [photo id], scores: [f32], indexed, total, colors: [colour names the search was kept to]}
 //! GET  /api/index/embeddings/keys    {model, dim, keys: [content hash]} the server already has
 //! POST /api/index/embeddings         records a device computed (see `lightcraft_vision::EmbeddingIndex::export`)
 //! GET  /api/index/text/keys          {engine, keys: [content hash]} whose text the server has read
@@ -38,6 +38,10 @@
 //! installed, the server reads each photo's smart preview in the background, a few at a time so
 //! describing new photos is never kept waiting, and `GET /api/search` puts the photos that have
 //! the query's words in them (scores from `TEXT_SCORE_BASE`) before the ones that look like it.
+//!
+//! Colour words in the query (`red`, `blue sky`) are answered from each photo's colours ([`crate::colors`]: no model, no
+//! download, made from the mini previews): `red` alone lists the photos that are mostly red, most red first, and with other
+//! words those are searched as above and the result is kept to the photos with the colour.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -118,6 +122,8 @@ pub struct Search {
     pub(crate) switch: Switch,
     /// Checking the photos for sensitive content ([`crate::sensitive`]).
     pub(crate) sensitive: crate::sensitive::Sensitive,
+    /// The colours of the photos: no model, always on ([`crate::colors`]).
+    pub(crate) colors: crate::colors::Colors,
     /// Photos handed to devices to process, and the work users moved off this server ([`crate::work`]).
     pub(crate) work: crate::work::Work,
 }
@@ -127,6 +133,7 @@ impl Search {
         let sensitive = crate::sensitive::Sensitive::new(&dir);
         Search {
             sensitive,
+            colors: crate::colors::Colors::default(),
             dir,
             injected,
             injected_reader: None,
@@ -788,6 +795,20 @@ pub(crate) fn run(st: &Arc<State>) {
             v.switch.working(None);
         }
         for user in &users {
+            // (the colours need no model and take milliseconds a photo: first, so a new photo is searchable by colour at once)
+            match crate::colors::run_user(st, user) {
+                Ok(more) => {
+                    if more {
+                        v.wake();
+                    }
+                    lock(&v.problems).remove(&format!("{user}:colors"));
+                }
+                Err(e) => {
+                    if lock(&v.problems).insert(format!("{user}:colors"), e.clone()).as_deref() != Some(e.as_str()) {
+                        log::warn!("colours of {user}: {e}");
+                    }
+                }
+            }
             for part in [Part::Search, Part::Faces, Part::Text, Part::Sensitive] {
                 run_part(st, user, part);
             }
@@ -1144,6 +1165,12 @@ pub(crate) fn status(st: &State, l: &Mutex<UserLib>, user: &str) -> Resp {
                 "indexed": read,
                 "problem": lock(&v.problems).get(&format!("{user}:text")),
             },
+            // (the colours of the photos: always on, no model; `engine` changes when the way they are worked out does)
+            "colors": {
+                "engine": lightcraft_vision::colors::ENGINE,
+                "analysed": v.colors.analysed(&st.data, user),
+                "problem": lock(&v.problems).get(&format!("{user}:colors")),
+            },
             // (checking for sensitive content: whether this server does, and how far it is)
             "sensitive": {
                 "enabled": v.sensitive_installed(),
@@ -1199,10 +1226,21 @@ pub(crate) fn search(st: &State, l: &Mutex<UserLib>, user: &str, q: &str) -> Res
     };
     let indexed = lock(&index).len();
     let total = hashed(&lock(l)).len();
+    // colour words ("red", "blue sky") are answered from the photos' colours, which need no model: the photos that have
+    // them come first, then whatever the words and the description model find (a query of colour words alone needs no model)
+    let wanted = lightcraft_vision::colors::parse(&query);
+    let palettes = match v.colors.index(&st.data, user, false) {
+        Ok(Some(ix)) if !wanted.buckets.is_empty() && !lock(&ix).is_empty() => Some(ix),
+        Ok(_) => None,
+        Err(e) => return error(500, e),
+    };
+    let only_colors = palettes.is_some() && wanted.rest.is_empty();
+    // (with colours named, many are asked for: the photos that have them are brought to the front below)
+    let asked = if palettes.is_some() && !only_colors { limit.saturating_mul(10).min(MAX_LIMIT * 4) } else { limit };
     // the photos with the query's words in them come first, then the ones that look like it
     let words = match v.text_index(&st.data, user, false) {
         // (an admin who turned reading off turned finding by it off too: what was read is kept)
-        Ok(Some(ix)) if v.switch.text_enabled() => lock(&ix).search(&query, limit),
+        Ok(Some(ix)) if v.switch.text_enabled() => lock(&ix).search(&query, asked),
         Ok(_) => Vec::new(),
         Err(e) => return error(500, e),
     };
@@ -1210,16 +1248,32 @@ pub(crate) fn search(st: &State, l: &Mutex<UserLib>, user: &str, q: &str) -> Res
         Ok(model) => match guard::catch("a search", || -> Result<_, String> {
             let vector = model.encode_text(&query).map_err(|e| e.to_string())?;
             v.touch();
-            lock(&index).search(&vector, limit).map_err(|e| e.to_string())
+            lock(&index).search(&vector, asked).map_err(|e| e.to_string())
         }) {
             Ok(Ok(h)) => h,
             Ok(Err(e)) | Err(e) => return error(500, e),
         },
-        // no description model: the words alone still answer
-        Err(_) if !words.is_empty() || v.text_installed() => Vec::new(),
+        // no description model: the words alone still answer, and so do the colours
+        Err(_) if only_colors || !words.is_empty() || v.text_installed() => Vec::new(),
         Err(e) => return unavailable(e),
     };
-    let hits = lightcraft_vision::textindex::merge(&words, looks, limit);
+    let mut hits = lightcraft_vision::textindex::merge(&words, looks, asked);
+    // how many of the first have the colours
+    let mut color_hits = 0;
+    if let Some(ix) = &palettes {
+        let ix = lock(ix);
+        let mut first: Vec<lightcraft_vision::Hit> = if only_colors {
+            ix.search(&wanted.buckets).into_iter().map(|(key, score)| lightcraft_vision::Hit { key, score }).collect()
+        } else {
+            hits.iter().filter(|h| ix.matches(&h.key, &wanted.buckets).is_some()).copied().collect()
+        };
+        first.truncate(limit);
+        let seen: HashSet<Key> = first.iter().map(|h| h.key).collect();
+        color_hits = first.len();
+        first.extend(hits.into_iter().filter(|h| !seen.contains(&h.key)));
+        hits = first;
+    }
+    hits.truncate(limit);
     // photos by content: every photo (virtual copies too) with a hit's hash
     let by_key: HashMap<Key, Vec<u64>> = {
         let mut m: HashMap<Key, Vec<u64>> = HashMap::new();
@@ -1230,14 +1284,21 @@ pub(crate) fn search(st: &State, l: &Mutex<UserLib>, user: &str, q: &str) -> Res
         }
         m
     };
-    let (mut ids, mut scores) = (Vec::new(), Vec::new());
-    for h in &hits {
+    let (mut ids, mut scores, mut colored) = (Vec::new(), Vec::new(), 0);
+    for (i, h) in hits.iter().enumerate() {
         for id in by_key.get(&h.key).into_iter().flatten() {
             ids.push(*id);
             scores.push((f64::from(h.score) * 1e4).round() / 1e4);
+            if i < color_hits {
+                colored += 1;
+            }
         }
     }
-    api::json(200, &json!({"query": query, "ids": ids, "scores": scores, "indexed": indexed, "total": total}))
+    // (`colors`: the colours the search put first, by name, and `colorHits` how many of the first ids have them; none
+    // when the query names none or the photos' colours aren't worked out yet, and then it was a description as ever)
+    let colors: Vec<&str> =
+        palettes.as_ref().map(|_| wanted.buckets.iter().map(|b| lightcraft_vision::colors::name(*b)).collect()).unwrap_or_default();
+    api::json(200, &json!({"query": query, "ids": ids, "scores": scores, "indexed": indexed, "total": total, "colors": colors, "colorHits": colored}))
 }
 
 /// `GET /api/index/embeddings/keys`

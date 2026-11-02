@@ -11,14 +11,14 @@ use crate::Session;
 use crate::cloud_sync::Body;
 
 /// The processing a device or the server does, by the names `vision.setHelper` and the server's admin use.
-const PARTS: [&str; 4] = ["search", "text", "faces", "sensitive"];
+const PARTS: [&str; 5] = ["search", "text", "faces", "sensitive", "colors"];
 
 impl Session {
-    /// Forget what `part` (`search`, `text`, `faces` or `sensitive`) found: `scope` `device` (this library's results),
+    /// Forget what `part` (`search`, `text`, `faces`, `sensitive` or `colors`) found: `scope` `device` (this library's results),
     /// `server` (this user's results on the sync server, which then does every photo again, or has a device that does it
     /// for it do so) or `both`. → what was done; a run of indexing starts for this device when it can.
     pub fn vision_reprocess(&mut self, part: &str, scope: &str) -> Result<Value, String> {
-        let part = PARTS.iter().copied().find(|p| *p == part).ok_or("`part` is search, text, faces or sensitive")?;
+        let part = PARTS.iter().copied().find(|p| *p == part).ok_or("`part` is search, text, faces, sensitive or colors")?;
         let (device, server) = match scope {
             "device" => (true, false),
             "server" => (false, true),
@@ -34,6 +34,7 @@ impl Session {
                 "search" => ("/api/index/embeddings", Aux::Forget),
                 "faces" => ("/api/index/faces", Aux::FacesDelete),
                 "text" => ("/api/index/text", Aux::Forget),
+                "colors" => ("/api/index/colors", Aux::Forget),
                 _ => ("/api/index/sensitive", Aux::Forget),
             };
             self.vision_aux("DELETE", path, Body::Empty, aux)?;
@@ -65,6 +66,7 @@ impl Session {
                 "text" => Some("text-"),
                 "faces" => Some("faces-"),
                 "sensitive" => Some("sensitive-"),
+                "colors" => Some("colors-"),
                 _ => None,
             };
             for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
@@ -96,6 +98,11 @@ impl Session {
                 s.face_photos.store(0, Ordering::Relaxed);
                 s.faces_opened.store(false, Ordering::Relaxed);
                 self.vision.people = Default::default();
+            }
+            "colors" => {
+                *s.colors.lock().unwrap_or_else(PoisonError::into_inner) = None;
+                s.colors_len.store(0, Ordering::Relaxed);
+                s.colors_opened.store(false, Ordering::Relaxed);
             }
             _ => {
                 *s.sensitive_ix.lock().unwrap_or_else(PoisonError::into_inner) = None;

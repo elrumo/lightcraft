@@ -212,7 +212,7 @@ fn search_is_refused_without_a_sign_in_a_query_or_a_model() {
     let none = fixture("nomodel", None);
     let (status, s) = get(&none.ann, "/api/search/status");
     assert_eq!((status, s["installed"].clone(), s["indexed"].clone()), (200, json!(false), json!(0)), "{s}");
-    let (status, r) = get(&none.ann, "/api/search?q=red");
+    let (status, r) = get(&none.ann, "/api/search?q=a%20sunset");
     assert_eq!(status, 503, "{r}");
     assert!(r["error"].as_str().unwrap().contains("model download"), "{r}");
 }
@@ -412,7 +412,7 @@ fn a_thin_client_searches_through_the_server() {
     s2.vision_probe_server();
     sync(&mut s2);
     assert!(s2.vision.available() && !s2.vision.server_ready(), "it can, once its admin installs the model");
-    let e = s2.execute("library.search", &json!({"q": "red", "wait": true, "source": "server"})).unwrap_err().to_string();
+    let e = s2.execute("library.search", &json!({"q": "a sunset", "wait": true, "source": "server"})).unwrap_err().to_string();
     assert!(e.contains("not installed"), "{e}");
 }
 
@@ -1062,8 +1062,8 @@ fn an_admin_turns_search_on_and_off_for_every_device() {
     let s = get(&admin, "/api/admin/search").1;
     assert_eq!((&s["enabled"], &s["installed"], &s["active"]), (&json!(true), &json!(true), &json!(true)), "{s}");
     let (ann, bob) = (
-        json!({"name": "ann", "faces": false, "total": 4, "indexed": 4, "read": null, "found": null, "checked": null}),
-        json!({"name": "bob", "faces": false, "total": 0, "indexed": 0, "read": null, "found": null, "checked": null}),
+        json!({"name": "ann", "faces": false, "total": 4, "indexed": 4, "read": null, "found": null, "checked": null, "colors": 4}),
+        json!({"name": "bob", "faces": false, "total": 0, "indexed": 0, "read": null, "found": null, "checked": null, "colors": 0}),
     );
     let mut users = s["users"].clone();
     users.as_array_mut().unwrap().iter_mut().for_each(|u| drop(u.as_object_mut().unwrap().remove("work")));
@@ -1082,9 +1082,12 @@ fn an_admin_turns_search_on_and_off_for_every_device() {
     assert_eq!((status, &s["active"], &s["installed"]), (200, &json!(false), &json!(true)), "{s}");
     let (_, s) = get(&f.ann, "/api/search/status");
     assert_eq!((&s["installed"], &s["enabled"]), (&json!(false), &json!(false)), "{s}");
-    let (status, r) = get(&f.ann, "/api/search?q=red");
+    let (status, r) = get(&f.ann, "/api/search?q=a%20sunset");
     assert_eq!(status, 503, "{r}");
     assert!(r["error"].as_str().unwrap().contains("turned off"), "{r}");
+    // (the colours of the photos need no model: a colour word is still answered)
+    let (status, r) = get(&f.ann, "/api/search?q=red");
+    assert_eq!(status, 200, "{r}");
 
     // on again: the vectors are still there, nothing is described twice
     put(&admin, "/api/admin/search", json!({"enabled": true}));
@@ -1631,4 +1634,78 @@ fn the_admin_page_sees_which_models_are_in_memory_and_when_they_are_let_go() {
     let (idle, left) = (m["idleSecs"].as_u64().unwrap(), m["unloadInSecs"].as_u64().unwrap());
     assert!(idle < 60 && idle + left == 180, "{m}");
     assert_eq!(get(&f.ann, "/api/admin/search").0, 401);
+}
+
+// ---------------------------------------------------------------- the colours of the photos
+
+/// Wait until `ann` has `want` photos whose colours are worked out.
+fn colored(f: &Fixture, want: u64) -> Value {
+    for _ in 0..1200 {
+        f.server.index_for_search();
+        let (_, s) = get(&f.ann, "/api/search/status");
+        if s["colors"]["analysed"].as_u64() == Some(want) {
+            return s;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("colours not worked out: {:?}", get(&f.ann, "/api/search/status"));
+}
+
+#[test]
+fn a_server_with_no_model_still_finds_photos_by_colour() {
+    let f = fixture("colors", None);
+    let s = colored(&f, 4);
+    assert_eq!(s["colors"]["engine"], json!(lightcraft_vision::colors::ENGINE));
+    let ids = ids_by_name(&f);
+    for (q, want) in [("red", "red"), ("Green", "green"), ("grey", "grey"), ("blue%20and%20blue", "blue")] {
+        let (status, r) = get(&f.ann, &format!("/api/search?q={q}"));
+        assert_eq!(status, 200, "{r}");
+        assert_eq!(ranked(&r), [ids[want]], "{q}: {r}");
+        assert_eq!(r["colors"].as_array().map(Vec::len), Some(1), "{r}");
+    }
+    // no photo is purple: nothing, not everything
+    let (status, r) = get(&f.ann, "/api/search?q=purple");
+    assert_eq!((status, ranked(&r)), (200, vec![]), "{r}");
+    // what a model has to answer, there is none to: it says so as it always did
+    assert_eq!(get(&f.ann, "/api/search?q=red%20car").0, 503);
+    // the colours are on disk, filed by the user and the algorithm
+    assert!(f.data.join("users/ann/search").join(format!("colors-{}.bin", lightcraft_vision::colors::ENGINE)).is_file());
+    // another user has none of ann's photos, and no colours of their own yet
+    let bob = login(&f.server, "bob", "battery staple");
+    assert_ne!(get(&bob, "/api/search?q=red").1["ids"], json!([ids["red"]]));
+    // forgetting them has the server work them out again
+    assert_eq!(delete(&f.ann, "/api/index/colors").0, 200);
+    colored(&f, 4);
+    assert_eq!(ranked(&get(&f.ann, "/api/search?q=red").1), [ids["red"]]);
+    assert_eq!(delete(&f.ann, "/api/index/colors").0, 200);
+}
+
+#[test]
+fn colour_and_description_together_and_a_thin_client_that_searches_by_colour() {
+    let f = fixture("colors-both", Some(Arc::new(FakeEmbedder)));
+    indexed(&f, 4);
+    colored(&f, 4);
+    let ids = ids_by_name(&f);
+    // "the blue sea": the blue photo is brought to the front, the others follow as the model ranks them
+    let (_, r) = get(&f.ann, "/api/search?q=the%20blue%20sea");
+    assert_eq!((ranked(&r).len(), ranked(&r)[0]), (4, ids["blue"]), "{r}");
+    assert_eq!((r["colors"].clone(), r["colorHits"].clone()), (json!(["blue"]), json!(1)), "{r}");
+    // "green" first even where the model likes the red one better ("red green": both are colours: only a photo with both counts)
+    let (_, r) = get(&f.ann, "/api/search?q=red%20green");
+    assert_eq!((r["colorHits"].clone(), ranked(&r).len()), (json!(0), 4), "{r}");
+    // no colour word: all four, none of them for a colour
+    let (_, r) = get(&f.ann, "/api/search?q=the%20sea");
+    assert_eq!((ranked(&r).len(), r["colors"].clone(), r["colorHits"].clone()), (4, json!([]), json!(0)), "{r}");
+
+    let mut s = device(&f, "colors-thin", None);
+    s.vision_probe_server();
+    sync(&mut s);
+    // ("greenish" is a colour word that is not in a file name: a file name is found first, as itself)
+    let r = s.execute("library.search", &json!({"q": "greenish", "wait": true})).unwrap();
+    assert_eq!(r["source"], "server", "{r}");
+    assert_eq!(r["colors"], json!(["green"]), "{r}");
+    let hits = r["photos"].as_array().unwrap();
+    assert_eq!(hits.len(), 4, "the others follow: {r}");
+    assert_eq!((hits[0]["id"].as_u64(), hits[0]["color"].clone()), (Some(photo_named(&s, "green").0), json!(true)), "{r}");
+    assert!(hits[1..].iter().all(|h| h["color"] == false), "{r}");
 }

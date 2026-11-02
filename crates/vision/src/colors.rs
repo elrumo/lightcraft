@@ -434,6 +434,11 @@ pub fn parse(query: &str) -> ColorQuery {
     out
 }
 
+/// Every word [`parse`] takes for a colour, with its bucket.
+pub fn words() -> Vec<(&'static str, usize)> {
+    WORDS.to_vec()
+}
+
 /// The name of bucket `i`.
 pub fn name(i: usize) -> &'static str {
     BUCKETS.get(i).copied().unwrap_or("")

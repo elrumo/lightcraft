@@ -31,7 +31,7 @@ to its licence, and everything else works without it.
   | `vision.model.status` | whether the model is installed and loaded, how many photos are indexed, the server's state, sharing |
   | `vision.model.download {acknowledged: true}` / `vision.model.cancel` | download (resumable, SHA-256-checked) or stop |
   | `vision.index {wait?, ids?}` / `vision.indexProgress` / `vision.indexCancel` | embed the photos that have no vector yet |
-  | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's; always this device's when `vision.setLocalOnly` is on). A one-word query that is part of a file name (`IMG_4008`, `img_4008.dng`) lists those photos first (`name: true`), on every device and source; the plain search field (`library.filter {text}`) matches file names too |
+  | `library.search {q, limit?, wait?, source?}` | Colour words (`red`, `blue sky`) bring the photos with those colours first (`color: true`; see *Search by colour*). `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's; always this device's when `vision.setLocalOnly` is on). A one-word query that is part of a file name (`IMG_4008`, `img_4008.dng`) lists those photos first (`name: true`), on every device and source; the plain search field (`library.filter {text}`) matches file names too |
   | `vision.setLocalOnly {on}` | search on this device only, never through the sync server (saved with the library; no effect on a device that can't run the model) |
   | `vision.share {wait?}` / `vision.setShare {on}` | send this device's vectors (and text) to the server, once or whenever new photos are indexed |
   | `vision.setHelper {parts}` / `vision.helper` | the work this device does for its server instead of the server (`search`, `text`, `faces`, `sensitive`), and how it is going; see *A device as the server's processing unit* |
@@ -166,6 +166,40 @@ background pass, so they can be reviewed and hidden. It hides nothing by itself.
 `library.hideSensitive`, `library.setBlurSensitive`; server `GET /api/sensitive`, admin page ▸ Processing ▸ Sensitive
 content, `model download --sensitive`).
 
+## Search by colour
+
+Colour words in a search find the photos that are mostly that colour: `red`, `blue sky`, `black and white`, `rojo`, `grün`
+(English, German, Spanish, French, Italian, Portuguese; Chinese and Japanese colour words are not understood yet). No model
+and no download: indexing works out each photo's colours ([`crates/vision/src/colors.rs`](../crates/vision/src/colors.rs))
+from the same small neutral rendering the description is made from, in whole-number arithmetic, so one photo gives the same
+colours on every device. Each photo is counted into twelve names (red, orange, yellow, green, teal, blue, purple, pink,
+brown, black, white, grey) with its five dominant colours kept as swatches; the derived record is one per photo in the
+library's `search/colors-<engine>.bin` (never in the catalog; a new algorithm changes `<engine>`, and the old file is started
+over). A photo has a colour when it covers at least about 15 % of it. A query that names colours lists the photos with them
+first, then what the words and the description model find, as ever (there is no cut-off): `red` puts the photos that are mostly
+red first, the most red first, and `green and blue` those with both; with other words (`blue sky`) the photos with the colour
+that match them best come first. With no description model, a query of colour words alone lists just the photos with the
+colours; one with other words still needs the model (or the server's), and says so as before.
+
+- **Command:** `library.search {q}` does it, on this device (`source: local`, from the colours `vision.index` worked out) or
+  on the sync server (`source: server`). A hit says `color: true` when it has the colours the query names, and the result lists those names in
+  `colors: ["red"]` (the photos with `color: true` come first). `library.colorNames` lists what a front end can suggest: the twelve names with a
+  swatch colour (`colors: [{name, rgb}]`) and every word that stands for one (`words: [{word, color}]`).
+- **This device:** the colours are worked out in the pass that indexes photos (`vision.index`, and the background catch-up
+  while a model is ready). A photo that was already described but has no colours gets them without being described again;
+  a run with no model at all (nothing installed) still does them. Until a library has some, a colour word is searched as
+  an ordinary description, as before. `vision.reprocess {part: colors}` forgets and redoes them.
+- **Server:** the worker makes them from the mini previews it keeps, for every user, ahead of the models (no switch, no
+  download); `GET /api/search?q=red` returns `colors: [names]` and `colorHits` (how many of the first ids have
+  them; `colors` is empty when the query names none or none are worked out yet, and then it was searched as a description). A
+  thin client asks a server with no model for colour words too, once the server's status (`colors.analysed`) says it has some. `GET /api/search/status` has `colors: {engine, analysed}`,
+  the admin page's `GET /api/admin/search` has `colors` and per-user `colors`, `DELETE /api/index/colors` forgets a user's
+  and has them made again. Devices never send colours: they cost milliseconds a photo and the server has the previews.
+- Limits: the names are fixed buckets from a photo's pixels, not an understanding of the scene (a sunset photo with a lot of
+  orange sky is `orange`, a portrait is mostly `brown` or `orange`); skin, shadows and tinted greys sit on bucket borders.
+  The thresholds are not calibrated on a large real library. A device that searches locally while the server holds the
+  colours (a phone with no pass of its own) uses `source: server`.
+
 ## On the server
 
 The server indexes each user's photos from the previews it already keeps (a worker wakes when a preview arrives, a folder
@@ -180,7 +214,7 @@ POST /api/index/embeddings         vectors a device computed (checked whole; see
 
 An admin turns search on for everyone from the admin page (**Processing**): the switch shows the model's size and licence,
 downloads it onto the server after the admin agrees (resumable, SHA-256-checked, it keeps going if the page is closed)
-and turns search on. The page's **AI Models** list shows every model (description, words, people, sensitive content) with Download, Cancel and, once installed, Remove: it asks, then deletes only that model's files (`DELETE /api/admin/search/models/<search|text|faces|sensitive>`); what the model found stays, and downloading again resumes. **Reprocess** forgets what a model found for every user (`DELETE /api/admin/search/results/<part>`) and has every photo done again, by the server or by the devices that do it for their users; the model stays. A signed-in user can do the same for their own results (`DELETE /api/index/<embeddings|text|faces|sensitive>`, `vision.reprocess` with `scope` `server`, `device` or `both`; Settings ▸ AI Models ▸ Server Data). Standalone clients remove theirs in Settings ▸ AI Models (`models.delete`). The same from a shell (never without the flag; Docker: `docker compose exec lightbites-server …`):
+and turns search on. The page's **AI Models** list shows every model (description, words, people, sensitive content) with Download, Cancel and, once installed, Remove: it asks, then deletes only that model's files (`DELETE /api/admin/search/models/<search|text|faces|sensitive>`); what the model found stays, and downloading again resumes. **Reprocess** forgets what a model found for every user (`DELETE /api/admin/search/results/<part>`) and has every photo done again, by the server or by the devices that do it for their users; the model stays. A signed-in user can do the same for their own results (`DELETE /api/index/<embeddings|text|faces|sensitive|colors>`, `vision.reprocess` with `scope` `server`, `device` or `both`; Settings ▸ AI Models ▸ Server Data). Standalone clients remove theirs in Settings ▸ AI Models (`models.delete`). The same from a shell (never without the flag; Docker: `docker compose exec lightbites-server …`):
 
 ```sh
 lightbites-server model status
