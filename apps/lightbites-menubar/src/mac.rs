@@ -4,6 +4,9 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use objc2::{AnyThread, MainThreadMarker};
+use objc2_app_kit::{NSApplication, NSImage, NSImageView};
+use objc2_foundation::NSData;
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -43,6 +46,19 @@ fn open(target: &str) {
     let _ = Command::new("open").arg(target).stdin(Stdio::null()).status();
 }
 
+/// The LightBites icon for the Dock (the app is a bare executable, so macOS would show a generic "exec" tile).
+fn set_dock_icon() {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let data = NSData::with_bytes(state::DOCK_ICON_PNG);
+    if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+        // the Dock tile shows a view; `setApplicationIconImage` is an unsafe call in objc2 and this crate has none
+        let view = NSImageView::imageViewWithImage(&image, mtm);
+        let tile = NSApplication::sharedApplication(mtm).dockTile();
+        tile.setContentView(Some(&view));
+        tile.display();
+    }
+}
+
 fn icon(state: State) -> Result<Icon, String> {
     Icon::from_rgba(state::icon_rgba(state), state::ICON_SIZE, state::ICON_SIZE).map_err(|e| e.to_string())
 }
@@ -76,6 +92,7 @@ pub fn run() -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     let event_loop = EventLoopBuilder::<Msg>::with_user_event().build();
+    set_dock_icon();
     let proxy: EventLoopProxy<Msg> = event_loop.create_proxy();
     let menu_proxy = proxy.clone();
     MenuEvent::set_event_handler(Some(move |e: MenuEvent| {

@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! lightbites-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
-//! lightbites-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
+//! lightbites-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTBITES_PASSWORD or $LIGHTCRAFT_PASSWORD)
 //! lightbites-server user passwd NAME
 //! lightbites-server user admin NAME on|off
 //! lightbites-server user quota NAME SIZE|off
@@ -44,7 +44,7 @@ use lightcraft_server::{Config, Server, accounts, folders, gc};
 
 const USAGE: &str = "usage:
   lightbites-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
-  lightbites-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
+  lightbites-server user add NAME [--admin]   (password: typed, stdin or $LIGHTBITES_PASSWORD or $LIGHTCRAFT_PASSWORD)
   lightbites-server user passwd|remove NAME
   lightbites-server user admin NAME on|off    (admins manage the server at /admin)
   lightbites-server user faces NAME on|off    (find the people in NAME's photos; needs `model download --faces`)
@@ -68,7 +68,7 @@ const USAGE: &str = "usage:
   lightbites-server install [--data DIR] [--listen HOST:PORT] [--web DIR]   (macOS: run the server at every login, as a launchd agent)
   lightbites-server uninstall                  (macOS, Linux: stop it and remove the agent; the data stays)
   lightbites-server start|stop|status          (macOS and Linux: the installed server; stop keeps it stopped, also after a login, until start; status --porcelain prints running, stopped or not-installed)
-options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
+options (any command): --data DIR (default $LIGHTBITES_DATA or $LIGHTCRAFT_DATA or ./lightcraft-data)
 ";
 
 /// Log to stderr (`$LIGHTCRAFT_LOG`: error, warn, info (default), debug).
@@ -95,6 +95,17 @@ fn human(b: u64) -> String {
         Some((unit, size)) => format!("{} {unit}", format!("{:.1}", b as f64 / size).trim_end_matches(".0")),
         None => format!("{b} bytes"),
     }
+}
+
+/// A setting from the environment. The server's variables are `LIGHTCRAFT_*`; the same name with `LIGHTBITES_`
+/// works too and wins (so a Docker `ENV LIGHTCRAFT_DATA` default doesn't override what the user set).
+fn env_var(name: &str) -> Option<String> {
+    env_pick(name, |k| std::env::var(k).ok())
+}
+
+fn env_pick(name: &str, get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    let alias = name.strip_prefix("LIGHTCRAFT_").map(|rest| format!("LIGHTBITES_{rest}"));
+    alias.and_then(|a| get(&a)).or_else(|| get(name))
 }
 
 fn option(args: &[String], name: &str) -> Option<String> {
@@ -126,7 +137,7 @@ fn positional(args: &[String]) -> Vec<&str> {
 }
 
 fn password() -> Result<String, String> {
-    if let Ok(p) = std::env::var("LIGHTCRAFT_PASSWORD")
+    if let Some(p) = env_var("LIGHTCRAFT_PASSWORD")
         && !p.is_empty()
     {
         return Ok(p);
@@ -159,16 +170,16 @@ fn mode_note(f: &accounts::LibraryFolder) -> &'static str {
 }
 
 fn run(args: &[String]) -> Result<(), String> {
-    let data = PathBuf::from(option(args, "--data").or_else(|| std::env::var("LIGHTCRAFT_DATA").ok()).unwrap_or_else(|| "lightcraft-data".into()));
+    let data = PathBuf::from(option(args, "--data").or_else(|| env_var("LIGHTCRAFT_DATA")).unwrap_or_else(|| "lightcraft-data".into()));
     let pos = positional(args);
     let pos = if args.iter().any(|a| a == "--version") { vec!["version"] } else { pos };
     match pos.as_slice() {
         ["serve"] => {
             let _telemetry = lightcraft_server::telemetry::start(&data);
-            let listen = option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into());
+            let listen = option(args, "--listen").or_else(|| env_var("LIGHTCRAFT_LISTEN")).unwrap_or_else(|| "127.0.0.1:8080".into());
             // `--web`, `$LIGHTCRAFT_WEB`, else the `web` folder next to the program (a downloaded release ships one)
             let web = option(args, "--web")
-                .or_else(|| std::env::var("LIGHTCRAFT_WEB").ok())
+                .or_else(|| env_var("LIGHTCRAFT_WEB"))
                 .map(PathBuf::from)
                 .or_else(|| std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("web"))))
                 .filter(|w| w.is_dir());
@@ -181,7 +192,7 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             // minutes between scans of the library folders (0: at start and on demand only)
             let minutes = option(args, "--scan-interval")
-                .or_else(|| std::env::var("LIGHTCRAFT_SCAN_INTERVAL").ok())
+                .or_else(|| env_var("LIGHTCRAFT_SCAN_INTERVAL"))
                 .map(|m| m.trim().parse::<u64>().map_err(|_| format!("--scan-interval takes minutes, not `{m}`")))
                 .transpose()?
                 .unwrap_or(15);
@@ -189,7 +200,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let count = |flag: Option<&str>, var: &str| -> Result<Option<usize>, String> {
                 let what = flag.unwrap_or(var);
                 flag.and_then(|f| option(args, f))
-                    .or_else(|| std::env::var(var).ok())
+                    .or_else(|| env_var(var))
                     .map(|m| m.trim().parse::<usize>().ok().filter(|n| *n > 0).ok_or(format!("{what} takes a number from 1 up, not `{m}`")))
                     .transpose()
             };
@@ -208,7 +219,7 @@ fn run(args: &[String]) -> Result<(), String> {
             cfg.render_threads = renders;
             // sites that may call the API from a browser (`--cors-origin` once per site, or `$LIGHTCRAFT_CORS`, comma-separated)
             cfg.cors_origins = options(args, "--cors-origin");
-            cfg.cors_origins.extend(std::env::var("LIGHTCRAFT_CORS").unwrap_or_default().split(',').map(str::to_string));
+            cfg.cors_origins.extend(env_var("LIGHTCRAFT_CORS").unwrap_or_default().split(',').map(str::to_string));
             cfg.cors_origins.retain(|o| !o.trim().is_empty());
             cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
             let s = Server::start(cfg)?;
@@ -434,7 +445,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         ["install"] => install::install(
             option(args, "--data").map(PathBuf::from),
-            &option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "0.0.0.0:8080".into()),
+            &option(args, "--listen").or_else(|| env_var("LIGHTCRAFT_LISTEN")).unwrap_or_else(|| "0.0.0.0:8080".into()),
             option(args, "--web").map(PathBuf::from),
         ),
         ["uninstall"] => install::uninstall(),
@@ -445,9 +456,7 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("lightbites-server {}", env!("LIGHTCRAFT_BUILD_VERSION"));
             Ok(())
         }
-        ["health"] => {
-            health(&option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into()))
-        }
+        ["health"] => health(&option(args, "--listen").or_else(|| env_var("LIGHTCRAFT_LISTEN")).unwrap_or_else(|| "127.0.0.1:8080".into())),
         ["gc"] => {
             let dry = args.iter().any(|a| a == "--dry-run");
             let r = gc::run(&data, dry)?;
@@ -464,7 +473,7 @@ fn run(args: &[String]) -> Result<(), String> {
 /// Where the search model's files are: `--vision-dir`, `$LIGHTCRAFT_VISION_DIR`, else `<data>/models/siglip2`.
 fn vision_dir(args: &[String], data: &Path) -> PathBuf {
     option(args, "--vision-dir")
-        .or_else(|| std::env::var("LIGHTCRAFT_VISION_DIR").ok())
+        .or_else(|| env_var("LIGHTCRAFT_VISION_DIR"))
         .map(PathBuf::from)
         .unwrap_or_else(|| data.join("models").join("siglip2"))
 }
@@ -586,10 +595,10 @@ fn health(listen: &str) -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
-    let level = match std::env::var("LIGHTCRAFT_LOG").as_deref() {
-        Ok("error") => log::LevelFilter::Error,
-        Ok("warn") => log::LevelFilter::Warn,
-        Ok("debug") => log::LevelFilter::Debug,
+    let level = match env_var("LIGHTCRAFT_LOG").as_deref() {
+        Some("error") => log::LevelFilter::Error,
+        Some("warn") => log::LevelFilter::Warn,
+        Some("debug") => log::LevelFilter::Debug,
         _ => log::LevelFilter::Info,
     };
     if log::set_logger(&LOGGER).is_ok() {
@@ -606,5 +615,19 @@ fn main() -> ExitCode {
             eprintln!("{e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::env_pick;
+
+    #[test]
+    fn lightbites_names_work_and_win() {
+        let get = |env: &'static [(&'static str, &'static str)]| move |k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
+        assert_eq!(env_pick("LIGHTCRAFT_DATA", get(&[("LIGHTCRAFT_DATA", "/a")])).as_deref(), Some("/a"));
+        assert_eq!(env_pick("LIGHTCRAFT_DATA", get(&[("LIGHTBITES_DATA", "/b")])).as_deref(), Some("/b"));
+        assert_eq!(env_pick("LIGHTCRAFT_DATA", get(&[("LIGHTCRAFT_DATA", "/a"), ("LIGHTBITES_DATA", "/b")])).as_deref(), Some("/b"));
+        assert_eq!(env_pick("LIGHTCRAFT_DATA", get(&[])), None);
     }
 }

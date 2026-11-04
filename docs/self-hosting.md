@@ -152,7 +152,7 @@ login, until you `start` it.
 
 `status` exits with 1 when the server is stopped, and `status --porcelain` prints one word (`running`, `stopped` or
 `not-installed`) for scripts. For a menu-bar icon with the status and Start / Stop items, run `lightbites-menubar`
-(`lightbites-server install` puts it beside the server, starts it and has it start at every login with a launchd agent, `~/Library/LaunchAgents/ai.lightcraft.server.menubar.plist`; it calls these same commands; `--port N` sets the port its *Open Admin Page* item uses, and `install` passes the port of `--listen`). The icon is green when the
+(`lightbites-server install` puts it beside the server, starts it and has it start at every login with a launchd agent, `~/Library/LaunchAgents/ai.lightcraft.server.menubar.plist`; it calls these same commands; `--port N` sets the port its *Open Admin Page* item uses, and `install` passes the port of `--listen`). The icon is the LightBites icon with a status dot: green when the
 server is running, grey when it is stopped and orange when it is not installed. *Quit* in its menu closes it until the next login; `uninstall` removes the agent.
 
 Remove it with `~/Library/Application\ Support/LightCraft\ Server/program/lightbites-server uninstall`: it stops the
@@ -396,6 +396,7 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 - **Storage limits** (admin page ▸ Users ▸ the user ▸ Storage limit, or `lightbites-server user quota ann 200G`): the
   most the server keeps for one person; uploads over it wait, nothing is deleted. Library folders don't count.
 - **Logs:** `docker compose logs -f lightcraft`; `LIGHTCRAFT_LOG=debug` for more.
+- **Settings:** every `LIGHTCRAFT_*` variable of the server (`LIGHTCRAFT_DATA`, `_LISTEN`, `_LOG`, `_SCAN_INTERVAL`, `_PREVIEW_THREADS`, …) also works as `LIGHTBITES_*`; when both are set, `LIGHTBITES_*` wins.
 - **Scans of library folders:** every 15 minutes (`LIGHTCRAFT_SCAN_INTERVAL`, minutes; `0` = only at start and from
   the admin page's **Scan for changes**; its arrow also offers **Rescan everything**, which reads every file again). A
   disk that isn't mounted is skipped, never read as everything deleted.

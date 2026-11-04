@@ -17,3 +17,7 @@ workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 tao = "0.37.2"
 tray-icon = { version = "0.26.1", default-features = false }
+# the Dock tile: a bare executable shows a generic "exec" icon until the app sets its own (the versions tao already uses)
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSImage", "NSImageView", "NSDockTile", "NSView", "NSControl", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }

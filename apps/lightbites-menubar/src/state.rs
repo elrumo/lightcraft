@@ -53,17 +53,40 @@ impl State {
 /// Side of the menu-bar icon in pixels (drawn at 2x for Retina; macOS scales it down).
 pub const ICON_SIZE: u32 = 36;
 
-/// A filled dot with a soft edge in the state's colour, as RGBA pixels. Drawn here, not taken from anywhere.
+/// The LightBites app icon at 36 x 36, raw RGB (scaled from `apps/lightcraft-server/admin/lightbites-icon.png`).
+const APP_ICON: &[u8] = include_bytes!("../assets/icon-36.rgb");
+
+/// The LightBites icon as a 256 x 256 PNG (a rounded tile with transparent margin) for the Dock.
+pub const DOCK_ICON_PNG: &[u8] = include_bytes!("../assets/dock-256.png");
+
+/// The LightBites icon as a rounded tile, with a status dot (the state's colour, ringed in white) at its bottom right,
+/// as RGBA pixels.
 pub fn icon_rgba(state: State) -> Vec<u8> {
     let [r, g, b] = state.colour();
-    let c = ICON_SIZE as f32 / 2.0;
-    let radius = c - 3.0;
+    let size = ICON_SIZE as f32;
+    let corner = 8.0_f32;
+    let dot = (size - 8.5, size - 8.5); // centre of the dot
     let mut px = Vec::with_capacity((ICON_SIZE * ICON_SIZE * 4) as usize);
     for y in 0..ICON_SIZE {
         for x in 0..ICON_SIZE {
-            let d = ((x as f32 + 0.5 - c).powi(2) + (y as f32 + 0.5 - c).powi(2)).sqrt();
-            let a = (radius + 0.5 - d).clamp(0.0, 1.0);
-            px.extend_from_slice(&[r, g, b, (a * 255.0).round() as u8]);
+            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+            // distance outside the rounded square (negative inside)
+            let (qx, qy) = ((fx - size / 2.0).abs() - (size / 2.0 - corner), (fy - size / 2.0).abs() - (size / 2.0 - corner));
+            let out = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - corner;
+            let mut rgba = match APP_ICON.get((y * ICON_SIZE + x) as usize * 3..(y * ICON_SIZE + x) as usize * 3 + 3) {
+                Some(&[r, g, b]) => [r as f32, g as f32, b as f32, (0.5 - out).clamp(0.0, 1.0)],
+                _ => [0.0; 4],
+            };
+            let d = ((fx - dot.0).powi(2) + (fy - dot.1).powi(2)).sqrt();
+            for (radius, c) in [(7.0, [255.0, 255.0, 255.0]), (5.0, [r as f32, g as f32, b as f32])] {
+                let a = (radius + 0.5 - d).clamp(0.0, 1.0);
+                for i in 0..3 {
+                    rgba[i] = rgba[i] * (1.0 - a) + c[i] * a;
+                }
+                rgba[3] = rgba[3] * (1.0 - a) + a;
+            }
+            px.extend(rgba.map(|v| v.round().clamp(0.0, 255.0) as u8).iter().take(3));
+            px.push((rgba[3] * 255.0).round().clamp(0.0, 255.0) as u8);
         }
     }
     px
@@ -112,13 +135,18 @@ mod tests {
     }
 
     #[test]
-    fn the_icon_is_a_dot_that_changes_colour() {
+    fn the_icon_is_the_app_icon_with_a_dot_that_changes_colour() {
+        assert_eq!(DOCK_ICON_PNG.get(..4), Some(&[0x89, b'P', b'N', b'G'][..]), "a PNG");
+        assert_eq!(APP_ICON.len(), (ICON_SIZE * ICON_SIZE * 3) as usize);
         let (on, off) = (icon_rgba(State::Running), icon_rgba(State::Stopped));
         assert_eq!(on.len(), (ICON_SIZE * ICON_SIZE * 4) as usize);
-        let mid = ((ICON_SIZE / 2 * ICON_SIZE + ICON_SIZE / 2) * 4) as usize;
-        assert_eq!(on.get(mid + 3), Some(&255), "opaque in the middle");
-        assert_eq!(on.get(3), Some(&0), "clear in the corner");
-        assert_ne!(on.get(mid..mid + 3), off.get(mid..mid + 3));
+        let at = |x: u32, y: u32| ((y * ICON_SIZE + x) * 4) as usize;
+        assert_eq!(on.get(at(0, 0) + 3), Some(&0), "the tile's corner is clear");
+        assert_eq!(on.get(at(8, 8) + 3), Some(&255), "opaque inside the tile");
+        assert_eq!(on.get(at(8, 8)..at(8, 8) + 4), off.get(at(8, 8)..at(8, 8) + 4), "the tile does not change");
+        let dot = at(ICON_SIZE - 9, ICON_SIZE - 9);
+        assert_eq!(on.get(dot..dot + 3), Some(&[52, 199, 89][..]), "a green dot when running");
+        assert_ne!(on.get(dot..dot + 3), off.get(dot..dot + 3));
     }
 
     #[test]
