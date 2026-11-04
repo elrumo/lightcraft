@@ -628,10 +628,20 @@ fn fix_pixels(buf: &mut [f32], w: usize, h: usize, cpp: usize, cfa: Option<&Cfa>
     if bad.is_empty() {
         return;
     }
-    let mut is_bad = std::collections::HashSet::with_capacity(bad.len());
-    for &b in bad {
-        is_bad.insert(b);
+    // One bit per pixel. A truncated DNG's missing sensor rows equal `FixBadPixelsConstant`'s constant (0), so its bad
+    // list is the whole cap: a hash set of those took seconds per call, several calls per preview (the corrupt-file
+    // sweep's hangs on truncated Leica and Pixel DNGs).
+    let Some(pixels) = w.checked_mul(h) else { return };
+    let mut is_bad = vec![0u64; pixels.div_ceil(64)];
+    for &(x, y) in bad {
+        if x < w
+            && y < h
+            && let Some(word) = is_bad.get_mut((y * w + x) / 64)
+        {
+            *word |= 1 << ((y * w + x) % 64);
+        }
     }
+    let bad_at = |x: usize, y: usize| is_bad.get((y * w + x) / 64).is_some_and(|word| word >> ((y * w + x) % 64) & 1 == 1);
     let step: isize = match cfa {
         Some(c) if c.width == 2 && c.height == 2 => 2,
         Some(c) => c.width.max(c.height) as isize,
@@ -643,14 +653,18 @@ fn fix_pixels(buf: &mut [f32], w: usize, h: usize, cpp: usize, cfa: Option<&Cfa>
             let mut n = 0;
             for (dx, dy) in [(-step, 0), (step, 0), (0, -step), (0, step), (-step, -step), (step, step), (-step, step), (step, -step)] {
                 let (nx, ny) = (x as isize + dx, y as isize + dy);
-                if nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize || is_bad.contains(&(nx as usize, ny as usize)) {
+                if nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize || bad_at(nx as usize, ny as usize) {
                     continue;
                 }
-                sum += buf[(ny as usize * w + nx as usize) * cpp + p];
-                n += 1;
+                if let Some(v) = buf.get((ny as usize * w + nx as usize) * cpp + p) {
+                    sum += v;
+                    n += 1;
+                }
             }
-            if n > 0 {
-                buf[(y * w + x) * cpp + p] = sum / n as f32;
+            if n > 0
+                && let Some(v) = buf.get_mut((y * w + x) * cpp + p)
+            {
+                *v = sum / n as f32;
             }
         }
     }
