@@ -31,11 +31,22 @@ travel in the clear. Put it behind Caddy (A), keep it on a tailnet (B), or keep 
 
 ### Anonymous telemetry
 
-Official builds send one anonymous install event per data directory, aggregate user and signed-in-device counts when
-the server starts, and sanitized HTTP 5xx error events to Bugsink. Events include the server version and do not
-include account or device names, photos, file paths, or request bodies. Bugsink receives the server's network address
-as part of the connection. Set `LIGHTBITES_TELEMETRY=0` in the server environment to disable reporting; the
-`.lightbites-telemetry-installed` marker in `/data` prevents duplicate install events.
+Official builds send two kinds of anonymous reports. Set `LIGHTBITES_TELEMETRY=0` (or `false`, `off`) in the server's
+environment to turn both off; a build from source sends neither.
+
+- **A heartbeat to lightbites.app** a minute after the server starts and every six hours, so the maker can see how many
+  servers are installed, which versions and systems they run on and how they are used: a random install id the server
+  makes and keeps in `/data/.lightbites-telemetry-id` (delete the file for a new one), the version, OS and processor type,
+  whether it runs in Docker, the number of cores and a range for its memory, how long it has been up, whether search and
+  people-finding are on, how many users, devices and library folders it has, *ranges* for the number of photos and videos
+  and the storage they use (such as `1k-10k`), and how many requests it answered, how many devices were active and how
+  many server errors it had lately. The server's log says when this is on. The site keeps no address with it.
+- **Error events to Bugsink**: an install event (once per data directory, `.lightbites-telemetry-installed`), the user and
+  device counts when the server starts, and the status class of each HTTP 5xx answer. Bugsink sees the server's network
+  address as part of the connection.
+
+Neither includes user or device names, photos, file names or paths, passwords, tokens or request bodies. The full list is
+on [lightbites.app/privacy](https://lightbites.app/privacy).
 
 ## 2. Deploy the server
 

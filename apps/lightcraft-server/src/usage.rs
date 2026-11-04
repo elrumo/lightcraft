@@ -140,9 +140,19 @@ impl Usage {
         all.chunks(all.len().div_ceil(POINTS).max(1)).map(average).collect()
     }
 
+    /// How many devices have asked anything since the server started.
+    pub fn active_devices(&self) -> usize {
+        self.lock().devices.values().filter(|a| a.requests > 0).count()
+    }
+
     /// Stop [`Usage::run`].
     pub fn shut_down(&self) {
         self.stop.store(true, Ordering::SeqCst);
+    }
+
+    /// The server is shutting down (the other workers that sleep between rounds ask).
+    pub fn stopped(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
     }
 
     /// Sample every [`EVERY`] until [`Usage::shut_down`]. (The starter takes the first sample, so the history is never

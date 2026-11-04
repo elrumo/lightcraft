@@ -37,6 +37,9 @@ lightcraft-sysmem = { workspace = true }
 rayon = { workspace = true }
 # Optional Sentry-compatible reporting to Bugsink. Rustls keeps the client pure Rust.
 sentry = { version = "0.49.3", default-features = false, features = ["ureq", "rustls"] }
+# the anonymous heartbeat to lightbites.app (`telemetry`): pure-Rust TLS like the other clients
+ureq = { workspace = true }
+rustls-rustcrypto = { workspace = true }
 # the lighter copies of videos (`video`): reading a clip's header, encoding it again when no Mac helper does
 lightcraft-video = { workspace = true }
 
@@ -49,4 +52,3 @@ lightcraft-vision = { workspace = true, features = ["siglip", "onnx", "testing"]
 lightcraft-raster = { workspace = true }
 # the square around a face (tests/vision.rs)
 lightcraft-geom = { workspace = true }
-ureq = { workspace = true }

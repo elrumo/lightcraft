@@ -5010,6 +5010,7 @@ dependencies = [
  "lightcraft-vision",
  "log",
  "rayon",
+ "rustls-rustcrypto",
  "sentry",
  "serde",
  "serde_json",

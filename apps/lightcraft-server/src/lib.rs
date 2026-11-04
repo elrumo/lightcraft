@@ -116,6 +116,10 @@ pub struct Config {
     /// The server's own video encoding runs at the lowest priority (default). A thread at the lowest priority gets almost
     /// no time on a machine other work has saturated, so tests that need an encode to finish there turn it off.
     pub video_low_priority: bool,
+    /// Where the anonymous heartbeat goes, and how long the first one waits (`None`: [`telemetry::endpoint`], which is
+    /// nowhere in a build that isn't official or when the owner set `LIGHTBITES_TELEMETRY=0`, and a minute). Tests.
+    pub telemetry_url: Option<String>,
+    pub telemetry_first: Option<std::time::Duration>,
 }
 
 impl Config {
@@ -140,6 +144,8 @@ impl Config {
             cors_origins: Vec::new(),
             video_encoder: None,
             video_low_priority: true,
+            telemetry_url: None,
+            telemetry_first: None,
         }
     }
 }
@@ -263,6 +269,13 @@ impl Server {
         state.usage.sample();
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-usage".into()).spawn(move || s.usage.run()).map_err(|e| e.to_string())?);
+        if let Some(url) = cfg.telemetry_url.or_else(telemetry::endpoint) {
+            log::info!("anonymous telemetry is on (LIGHTBITES_TELEMETRY=0 turns it off): see docs/self-hosting.md");
+            let (s, first) = (state.clone(), cfg.telemetry_first);
+            workers.push(
+                std::thread::Builder::new().name("lc-telemetry".into()).spawn(move || telemetry::run(&s, &url, first)).map_err(|e| e.to_string())?,
+            );
+        }
         // (as many as the limit may ever be: the ones over it wait, see `folders::run_previews`)
         for i in 0..state.limits.machine.max().previews.max(now.previews) {
             let s = state.clone();
