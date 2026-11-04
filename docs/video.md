@@ -1,6 +1,6 @@
 # Video clips
 
-> **Last updated:** 2026-11-04 · **Change:** minor (A native frontend may also play an edited clip live, its renderer drawing each picture as it plays; a native frontend may write a clip itself: its own cut of the original stream for a trim alone, or its own renderer and hardware encoder, with `video.export` left for what that renderer does not draw; Lighter copies: a sync server keeps a smaller copy of every video beside the original, set from the admin page, made by a Mac helper later or by the server's own pure-Rust encoder at the lowest priority; the helper and replacing originals remain; poster frames cost 3 to 6 times less CPU: profiled, the decoder was fed pictures past the key frame and every pixel paid three `powf`; Hardware video: VideoToolbox decode and encode measured against the pure-Rust ones on a Mac, with a go / no-go; the FilmCraft pin moves with `cargo xtask filmcraft`; library stats; Live Photos, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision)
+> **Last updated:** 2026-11-04 · **Change:** minor (Keeping a native frontend's editing and export fast: read ahead, draw on two threads, write in order; edits to a playing clip change its settings in place; trim handle pictures from the system's image generator; numbers; A native frontend may also play an edited clip live, its renderer drawing each picture as it plays; a native frontend may write a clip itself: its own cut of the original stream for a trim alone, or its own renderer and hardware encoder, with `video.export` left for what that renderer does not draw; Lighter copies: a sync server keeps a smaller copy of every video beside the original, set from the admin page, made by a Mac helper later or by the server's own pure-Rust encoder at the lowest priority; the helper and replacing originals remain; poster frames cost 3 to 6 times less CPU: profiled, the decoder was fed pictures past the key frame and every pixel paid three `powf`; Hardware video: VideoToolbox decode and encode measured against the pure-Rust ones on a Mac, with a go / no-go; the FilmCraft pin moves with `cargo xtask filmcraft`; library stats; Live Photos, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision)
 
 LightCraft lists video clips next to photos: MP4 / M4V / MOV files import as photos of kind **Video** with their length,
 size, recording date and place, and a **poster frame** stands for them in the grid, the filmstrip, the loupe and in the
@@ -77,6 +77,15 @@ encoder. It may also play the edited clip live, the same renderer drawing each p
 clip with an exposure edit played at its full 30 pictures a second at a 720p preview size, so edits show while playing with no
 render pass). A clip with anything that renderer does not draw (masks, spots, lens blur, Expand, HDR, and for live playback a
 crop) is still `video.export`'s: it renders a preview file.
+
+Keeping that fast (measured on a Mac with the GPU free, a 1080p H.264 clip with an exposure edit): the picture reading, the
+drawing and the encoding must overlap, as the GPU takes the pictures one at a time and the rest is waiting. Read ahead on a
+thread of its own, draw on two threads, write in order of time: a 10 s clip took 1.1 s (60 s took 5.9 s, 10 times real time), the
+GPU draw the limit at 3 ms a picture; reading straight off the video track as YUV instead of through the system's compositor
+gained nothing and drew a little differently (30 dB against 36 dB to `video.export`'s). A change to an edit should reach the
+player that is already playing (the draw reads the settings from a shared holder), not build a new one and seek, and a trim
+handle's picture is better read by the system's image generator and drawn by the same renderer (about 20 to 40 ms against 130
+to 190 for `video.frame` with edits, which opens the file, decodes in Rust and returns a PNG) than asked of the engine.
 
 Not built in the engine: playing an edited clip in real time (a native frontend draws it itself, or renders a small preview file
 with `video.export` and plays that), the hardware encoder in the engine itself (see *Hardware video*), HDR output, joining clips, copying the video
