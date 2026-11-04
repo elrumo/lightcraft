@@ -73,6 +73,12 @@ commands:
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite and CC0 raw samples (raw.pixls.us) into corpus/ and checks their sha256
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
+  corrupt-sweep [--seed N] [--jobs N] [--fields N] [--mem-limit-gb N] [--time-factor F] [--min-secs S] [DIR|FILE…]
+                  damage every sample file (default: $LIGHTCRAFT_CORPUS or corpus/, and apps/lightbites-swift/test-raws)
+                  with fixed-seed truncations, byte flips and zeroed / maxed header fields, run each through the import
+                  probe, metadata, embedded preview, raw decode, codecs and preview render in a child process, and
+                  report panics, hangs, crashes and oversized allocations (crates/engine/examples/corrupt_sweep.rs);
+                  fails when it finds any. Run it before every beta
   raw-frame [--json] FILE…
                   measure where each raw's embedded camera JPEG sits in its sensor data, which edge bands hold no
                   picture and what the decoder's crop keeps beyond the camera frame (any make with a full-size
@@ -99,6 +105,7 @@ fn main() -> ExitCode {
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("raw-frame") => cmd_raw_frame(&rest),
+        Some("corrupt-sweep") => engine_example("corrupt_sweep", &rest),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
             Ok(())
@@ -119,13 +126,18 @@ fn cmd_raw_frame(files: &[&str]) -> Result<(), String> {
     if files.is_empty() {
         return Err("raw-frame needs one or more raw files (several per camera, with detail across the frame)".into());
     }
-    eprintln!("$ cargo run --release -p lightcraft-engine --example raw_frame -- {}", files.join(" "));
+    engine_example("raw_frame", files)
+}
+
+/// `cargo run --release -p lightcraft-engine --example <example> -- <args>`.
+fn engine_example(example: &str, args: &[&str]) -> Result<(), String> {
+    eprintln!("$ cargo run --release -p lightcraft-engine --example {example} -- {}", args.join(" "));
     let status = cargo()
-        .args(["run", "--release", "-q", "-p", "lightcraft-engine", "--example", "raw_frame", "--"])
-        .args(files)
+        .args(["run", "--release", "-q", "-p", "lightcraft-engine", "--example", example, "--"])
+        .args(args)
         .status()
-        .map_err(|e| format!("raw_frame: {e}"))?;
-    if status.success() { Ok(()) } else { Err("raw_frame failed".into()) }
+        .map_err(|e| format!("{example}: {e}"))?;
+    if status.success() { Ok(()) } else { Err(format!("{example} failed")) }
 }
 
 /// Workspace root (parent of the xtask crate).

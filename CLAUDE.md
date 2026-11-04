@@ -100,7 +100,8 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   `os_proc_available_memory` (the iOS app's memory limit), `fsync` (volumes that refuse std's `F_FULLFSYNC`, such as an SMB share), `setpriority` / `pthread_set_qos_class_self_np` (`lower_thread_priority`: the sync server's video encoder runs at the lowest priority), and `mmap` / `munmap` for `ReturningAlloc`, every
   app's global allocator (large blocks get pages of their own that go back when freed, but for a few kept for the next
   block of the same size until `release_free_memory`: macOS / iOS 27's allocator keeps freed large blocks dirty in the
-  footprint). `ios-host`: the iOS app's Objective-C calls through `objc2`
+  footprint), and `CountingAlloc` (`ReturningAlloc` that counts the bytes in use and refuses requests past a limit:
+  the global allocator of the corrupt-file sweep, `cargo xtask corrupt-sweep`, never of an app). `ios-host`: the iOS app's Objective-C calls through `objc2`
   (Photos and Files pickers, share sheet, pasteboard, lifecycle notifications, ImageIO decoding, status-bar taps), compiled for iOS only. (The iOS
   app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]` there.) `capture`: ImageCaptureCore through
   `objc2` (cameras, phones and card readers: listing, thumbnails, copying files off them), compiled for iOS and macOS
@@ -115,6 +116,9 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - **Last-resort guard:** a panic hook plus `catch_unwind` around command dispatch and import/export turns an escaped
   panic into an error dialog and keeps the document. It's a safety net, not a licence; keep `panic = "unwind"` on native.
 - **Prove it:** every crash fix lands with a small synthetic regression test that panicked before the fix.
+- **Before every beta: `cargo xtask corrupt-sweep`** (`crates/engine/examples/corrupt_sweep.rs`): fixed-seed damaged
+  copies of every file in `corpus/` and `apps/lightbites-swift/test-raws` through the import's decoders, reporting
+  panics, hangs, crashes and oversized allocations, each with the command that reruns it alone.
 - Enforced by clippy: root `clippy.toml` allows unwrap/expect/panic/indexing in tests only, and every production crate
   root (`lib.rs`, each binary's `main.rs`) carries `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic,
   clippy::unimplemented, clippy::todo, clippy::unreachable)]`. Not `[workspace.lints]`: those would also hit

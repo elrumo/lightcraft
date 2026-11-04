@@ -95,6 +95,8 @@ lightcraft-video = { workspace = true, features = ["testdata"] }
 lightcraft-raw = { workspace = true, features = ["testdata"] }
 libc = { workspace = true }
 lightcraft-tiff = { workspace = true }
+# the corrupt-file sweep example counts and caps what it allocates
+lightcraft-sysmem = { workspace = true }
 
 [dev-dependencies.lightcraft-vision]
 workspace = true

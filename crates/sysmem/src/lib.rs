@@ -114,6 +114,108 @@ pub fn set_block_reuse(on: bool) {
     }
 }
 
+/// [`ReturningAlloc`] that also counts the bytes in use, for tools that look for code asking more memory than its input
+/// justifies (the corrupt-file sweep, `crates/engine/examples/corrupt_sweep.rs`): [`counted`] gives the bytes in use and
+/// the most in use since [`reset_counted_peak`], and a request that would take the bytes in use past
+/// [`set_counted_limit`] is refused (null: Rust then aborts with "memory allocation of N bytes failed") instead of
+/// taking the machine's memory. Not for the apps: every allocation updates shared counters.
+pub struct CountingAlloc;
+
+mod counters {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    pub static IN_USE: AtomicUsize = AtomicUsize::new(0);
+    pub static PEAK: AtomicUsize = AtomicUsize::new(0);
+    pub static LIMIT: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+    /// Whether `len` more bytes stay within the limit.
+    pub fn admits(len: usize) -> bool {
+        IN_USE.load(Ordering::Relaxed).saturating_add(len) <= LIMIT.load(Ordering::Relaxed)
+    }
+
+    pub fn add(len: usize) {
+        let now = IN_USE.fetch_add(len, Ordering::Relaxed).saturating_add(len);
+        PEAK.fetch_max(now, Ordering::Relaxed);
+    }
+
+    pub fn sub(len: usize) {
+        IN_USE.fetch_sub(len, Ordering::Relaxed);
+    }
+}
+
+/// Bytes [`CountingAlloc`] has handed out and not taken back, and the most at any moment since
+/// [`reset_counted_peak`] (both 0 when it is not the global allocator).
+pub fn counted() -> (usize, usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (counters::IN_USE.load(Relaxed), counters::PEAK.load(Relaxed))
+}
+
+/// Start [`counted`]'s peak again from the bytes in use now.
+pub fn reset_counted_peak() {
+    use std::sync::atomic::Ordering::Relaxed;
+    counters::PEAK.store(counters::IN_USE.load(Relaxed), Relaxed);
+}
+
+/// The most bytes [`CountingAlloc`] hands out at once (`usize::MAX`, the default: no limit).
+pub fn set_counted_limit(bytes: usize) {
+    counters::LIMIT.store(bytes, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[allow(unsafe_code)]
+mod counting {
+    use super::{CountingAlloc, ReturningAlloc, counters};
+    use std::alloc::{GlobalAlloc, Layout};
+
+    // SAFETY: every block is ReturningAlloc's, allocated, freed and resized there with the caller's layouts unchanged
+    // (GlobalAlloc's contract passed on). A refused request returns null, which GlobalAlloc allows for any failure; a
+    // refused `realloc` leaves the caller's block untouched and still theirs, as a failed one must. The counters are
+    // plain atomics and allocate nothing.
+    unsafe impl GlobalAlloc for CountingAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            if !counters::admits(layout.size()) {
+                return std::ptr::null_mut();
+            }
+            // SAFETY: the caller's layout, passed on
+            let p = unsafe { ReturningAlloc.alloc(layout) };
+            if !p.is_null() {
+                counters::add(layout.size());
+            }
+            p
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            if !counters::admits(layout.size()) {
+                return std::ptr::null_mut();
+            }
+            // SAFETY: as in `alloc`
+            let p = unsafe { ReturningAlloc.alloc_zeroed(layout) };
+            if !p.is_null() {
+                counters::add(layout.size());
+            }
+            p
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: `ptr` came from ReturningAlloc with this layout
+            unsafe { ReturningAlloc.dealloc(ptr, layout) };
+            counters::sub(layout.size());
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            if new_size > layout.size() && !counters::admits(new_size - layout.size()) {
+                return std::ptr::null_mut();
+            }
+            // SAFETY: the caller's block, layout and size, passed on
+            let p = unsafe { ReturningAlloc.realloc(ptr, layout, new_size) };
+            if !p.is_null() {
+                counters::add(new_size);
+                counters::sub(layout.size());
+            }
+            p
+        }
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unsafe_code)]
 mod returning {
@@ -619,6 +721,37 @@ mod tests {
         assert_eq!(v[v.len() - 1], 3);
         drop(v);
         super::set_block_reuse(true);
+    }
+
+    // The counting allocator counts what is in use and its peak, refuses what would pass its limit (null, the
+    // caller's block kept on a refused growth), and hands out working memory otherwise
+    #[test]
+    #[allow(unsafe_code)]
+    fn counting_alloc_counts_and_refuses_past_its_limit() {
+        use super::{CountingAlloc, LARGE, counted, reset_counted_peak, set_counted_limit};
+        use std::alloc::{GlobalAlloc, Layout};
+        let (small, big) = (Layout::from_size_align(100, 8).unwrap(), Layout::from_size_align(LARGE * 2, 8).unwrap());
+        let (base, _) = counted();
+        reset_counted_peak();
+        // SAFETY: valid layouts; each block is freed once with the layout it has at that moment
+        unsafe {
+            let p = CountingAlloc.alloc_zeroed(big);
+            assert!(!p.is_null() && *p.add(big.size() - 1) == 0);
+            assert_eq!(counted(), (base + big.size(), base + big.size()));
+            let q = CountingAlloc.alloc(small);
+            assert!(!q.is_null());
+            CountingAlloc.dealloc(p, big);
+            assert_eq!(counted(), (base + 100, base + big.size() + 100));
+            set_counted_limit(base + 1000);
+            assert!(CountingAlloc.alloc(big).is_null(), "past the limit");
+            assert!(CountingAlloc.realloc(q, small, LARGE).is_null(), "a growth past the limit");
+            q.write(7);
+            let r = CountingAlloc.realloc(q, small, 500);
+            assert!(!r.is_null() && r.read() == 7, "within it");
+            set_counted_limit(usize::MAX);
+            CountingAlloc.dealloc(r, Layout::from_size_align(500, 8).unwrap());
+        }
+        assert_eq!(counted().0, base);
     }
 
     #[test]
