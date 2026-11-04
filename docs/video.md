@@ -1,6 +1,6 @@
 # Video clips
 
-> **Last updated:** 2026-11-03 · **Change:** minor (A native frontend may write a clip itself: its own cut of the original stream for a trim alone, or its own renderer and hardware encoder, with `video.export` left for what that renderer does not draw; Lighter copies: a sync server keeps a smaller copy of every video beside the original, set from the admin page, made by a Mac helper later or by the server's own pure-Rust encoder at the lowest priority; the helper and replacing originals remain; poster frames cost 3 to 6 times less CPU: profiled, the decoder was fed pictures past the key frame and every pixel paid three `powf`; Hardware video: VideoToolbox decode and encode measured against the pure-Rust ones on a Mac, with a go / no-go; the FilmCraft pin moves with `cargo xtask filmcraft`; library stats; Live Photos, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision)
+> **Last updated:** 2026-11-04 · **Change:** minor (A native frontend may also play an edited clip live, its renderer drawing each picture as it plays; a native frontend may write a clip itself: its own cut of the original stream for a trim alone, or its own renderer and hardware encoder, with `video.export` left for what that renderer does not draw; Lighter copies: a sync server keeps a smaller copy of every video beside the original, set from the admin page, made by a Mac helper later or by the server's own pure-Rust encoder at the lowest priority; the helper and replacing originals remain; poster frames cost 3 to 6 times less CPU: profiled, the decoder was fed pictures past the key frame and every pixel paid three `powf`; Hardware video: VideoToolbox decode and encode measured against the pure-Rust ones on a Mac, with a go / no-go; the FilmCraft pin moves with `cargo xtask filmcraft`; library stats; Live Photos, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision)
 
 LightCraft lists video clips next to photos: MP4 / M4V / MOV files import as photos of kind **Video** with their length,
 size, recording date and place, and a **poster frame** stands for them in the grid, the filmstrip, the loupe and in the
@@ -73,10 +73,13 @@ A native (non-Rust) frontend does not have to call `video.export` for every clip
 settings) stays the engine's and is read with `photo.inspect`; the frontend may then write the file itself: the original stream
 cut to the trim when nothing else is set and the size is the clip's own (no picture decoded or encoded again, the sound and any
 HDR kept), or each picture decoded by the system, drawn by the frontend's own renderer and written by the system's hardware
-encoder. A clip with anything that renderer does not draw (masks, spots, lens blur, Expand, HDR) is still `video.export`'s.
+encoder. It may also play the edited clip live, the same renderer drawing each picture as it plays (measured on a Mac: a 1080p
+clip with an exposure edit played at its full 30 pictures a second at a 720p preview size, so edits show while playing with no
+render pass). A clip with anything that renderer does not draw (masks, spots, lens blur, Expand, HDR, and for live playback a
+crop) is still `video.export`'s: it renders a preview file.
 
-Not built in the engine: playing an edited clip in real time (a native frontend renders a small preview file with `video.export`
-and plays that), the hardware encoder in the engine itself (see *Hardware video*), HDR output, joining clips, copying the video
+Not built in the engine: playing an edited clip in real time (a native frontend draws it itself, or renders a small preview file
+with `video.export` and plays that), the hardware encoder in the engine itself (see *Hardware video*), HDR output, joining clips, copying the video
 stream of an untouched trim without re-encoding, and following a moving subject with a mask (masks, spots and lens blur apply at
 the same place in every picture).
 
