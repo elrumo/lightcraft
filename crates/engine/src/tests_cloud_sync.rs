@@ -174,7 +174,7 @@ impl Fake {
                             ops,
                             presets: self.presets.version,
                             docs,
-                            format: self.format.unwrap_or(lightcraft_catalog::journal::VERSION),
+                            format: self.format.unwrap_or(lightcraft_catalog::journal::SYNC_VERSION),
                         })
                         .unwrap())
                     }

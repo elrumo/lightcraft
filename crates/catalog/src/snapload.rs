@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lightcraft_develop::DevelopSettings;
 use memchr::memmem;
-use serde::de::{self, Error as _, MapAccess, SeqAccess, Visitor};
+use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use crate::journal::SnapFile;
@@ -44,13 +44,13 @@ const LOOK: usize = 1 << 20;
 
 /// The snapshot read on several threads, straight from the file by byte ranges (so it is never held whole in
 /// memory), or `None` (read it the plain way).
-pub(crate) fn read(size: u64, read_at: &RangeReader) -> Option<SnapFile> {
+pub(crate) fn read(size: u64, read_at: &RangeReader, defaults: Option<Arc<crate::compact::Reader>>) -> Option<SnapFile> {
     // (the web build has no threads)
     if cfg!(target_arch = "wasm32") {
         return None;
     }
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
-    read_with(size, read_at, Settings { min_bytes: MIN_BYTES, piece_bytes: PIECE_BYTES, threads })
+    read_with(size, read_at, Settings { min_bytes: MIN_BYTES, piece_bytes: PIECE_BYTES, threads }, defaults)
 }
 
 #[derive(Clone, Copy)]
@@ -63,12 +63,13 @@ pub(crate) struct Settings {
 /// How far into the file's end the albums and the other small members are looked for.
 const TAIL: usize = 16 << 20;
 
-pub(crate) fn read_with(size: u64, read_at: &RangeReader, s: Settings) -> Option<SnapFile> {
+/// `defaults`: those a v13 snapshot's header names, which its photos' settings are diffs against ([`crate::compact`]).
+pub(crate) fn read_with(size: u64, read_at: &RangeReader, s: Settings, defaults: Option<Arc<crate::compact::Reader>>) -> Option<SnapFile> {
     let size = usize::try_from(size).ok()?;
     if size < s.min_bytes || s.threads < 2 {
         return None;
     }
-    let head = read_at(0, size.min(256)).ok()?;
+    let head = read_at(0, size.min(crate::journal::HEADER_BYTES)).ok()?;
     let first = find(&head, PHOTOS)? + PHOTOS.len();
     // the `}` that closes the photos map (the albums follow it; found from the end, where the albums are)
     let tail_from = size.saturating_sub(TAIL).max(first);
@@ -102,7 +103,7 @@ pub(crate) fn read_with(size: u64, read_at: &RangeReader, s: Settings) -> Option
                         let i = next.fetch_add(1, Ordering::Relaxed);
                         let Some(&(from, to)) = ranges.get(i) else { return Some(mine) };
                         let piece = read_at(from as u64, to.checked_sub(from)?).ok()?;
-                        mine.push((i, entries(&piece)?));
+                        mine.push((i, entries(&piece, defaults.clone())?));
                     }
                 })
             })
@@ -147,8 +148,9 @@ fn next_entry(window: &[u8], from: usize) -> Option<usize> {
 }
 
 /// The entries `"<id>":{…},"<id>":{…}` of one piece, if each photo has the id it is filed under.
-fn entries(piece: &[u8]) -> Option<Vec<(PhotoId, Arc<Photo>)>> {
+fn entries(piece: &[u8], defaults: Option<Arc<crate::compact::Reader>>) -> Option<Vec<(PhotoId, Arc<Photo>)>> {
     let _scope = Scope::enter();
+    let _reading = crate::compact::Reading::enter(defaults);
     let map: BTreeMap<PhotoId, Arc<Photo>> = serde_json::from_slice(&with_references(piece)).ok()?;
     // (every photo carries the id it is filed under, which `Catalog::repair` then need not check: a file where one does not
     // is read the plain way, and repaired there)
@@ -223,7 +225,8 @@ impl Drop for Scope {
     }
 }
 
-/// `#[serde(deserialize_with)]` for [`Photo::develop`]: the settings object, or what [`with_references`] made of it.
+/// `#[serde(deserialize_with)]` for [`Photo::develop`] and the other settings of a photo: the settings object (whole, or a
+/// v13 snapshot's diff, [`crate::compact`]), settings written whole as `[{…}]`, or what [`with_references`] made of it.
 pub(crate) fn develop<'de, D: Deserializer<'de>>(d: D) -> Result<Arc<DevelopSettings>, D::Error> {
     struct Settings;
     impl<'de> Visitor<'de> for Settings {
@@ -232,13 +235,16 @@ pub(crate) fn develop<'de, D: Deserializer<'de>>(d: D) -> Result<Arc<DevelopSett
             f.write_str("develop settings")
         }
         fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
-            DevelopSettings::deserialize(de::value::MapAccessDeserializer::new(map)).map(Arc::new)
+            crate::compact::from_map(map)
         }
         fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-            let n: u64 = seq.next_element()?.ok_or_else(|| A::Error::custom("an empty reference to develop settings"))?;
-            match seq.next_element::<DevelopSettings>()? {
-                Some(settings) => {
-                    let settings = Arc::new(settings);
+            let first: serde_json::Value = seq.next_element()?.ok_or_else(|| A::Error::custom("an empty reference to develop settings"))?;
+            let Some(n) = first.as_u64() else {
+                // `[{…}]`: settings a v13 snapshot wrote whole
+                return crate::compact::from_whole(first).map_err(A::Error::custom);
+            };
+            match seq.next_element::<Inline>()? {
+                Some(Inline(settings)) => {
                     SHARED
                         .with(|t| t.borrow_mut().as_mut().map(|t| t.insert(n, settings.clone())))
                         .ok_or_else(|| A::Error::custom("develop settings written as a list"))?;
@@ -251,6 +257,20 @@ pub(crate) fn develop<'de, D: Deserializer<'de>>(d: D) -> Result<Arc<DevelopSett
         }
     }
     d.deserialize_any(Settings)
+}
+
+/// The settings inside a reference `[n,…]`: anything [`develop`] reads.
+struct Inline(Arc<DevelopSettings>);
+
+impl<'de> Deserialize<'de> for Inline {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        develop(d).map(Inline)
+    }
+}
+
+/// [`develop`] for an optional settings object ([`Photo::import_look`]).
+pub(crate) fn develop_opt<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Arc<DevelopSettings>>, D::Error> {
+    Ok(Option::<Inline>::deserialize(d)?.map(|i| i.0))
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -302,7 +322,7 @@ mod tests {
 
     fn read_bytes(bytes: &[u8], s: Settings) -> Option<SnapFile> {
         let (size, read_at) = memory(bytes);
-        read_with(size, &read_at, s)
+        read_with(size, &read_at, s, None)
     }
 
     fn snapshot(c: &Catalog) -> Vec<u8> {
@@ -386,6 +406,8 @@ mod big_snapshot_test {
                 d.light.exposure = (i % 13) as f64 * 0.1;
                 p.develop = Arc::new(d);
                 p.rating = (i % 6) as u8;
+                // (compact settings are a few bytes: the photos' text keeps the snapshot past the size read in pieces)
+                p.meta.caption = format!("{i} {}", "x".repeat(2000));
                 Op::AddPhoto { photo: Box::new(p) }
             })
             .collect();
@@ -399,7 +421,7 @@ mod big_snapshot_test {
         let store = FsStore::open(&dir).unwrap();
         let (read, version) = Journal::read_in_pieces(&store).expect("read in pieces");
         assert_eq!((read.seq, version), (0, crate::journal::VERSION));
-        let plain: crate::journal::SnapFile = serde_json::from_slice(&std::fs::read(dir.join(SNAPSHOT)).unwrap()).unwrap();
+        let plain = crate::journal::read_whole(&std::fs::read(dir.join(SNAPSHOT)).unwrap()).unwrap().0;
         assert!(read.catalog == plain.catalog, "the pieces read another catalog than the plain read");
         let (_, opened, report) = Journal::open(Box::new(store)).unwrap();
         assert_eq!((opened.len(), report.created, report.replayed), (9000, false, 0));

@@ -326,9 +326,14 @@ fn op_variants_are_versioned() {
             Op::SetHidden { .. } => 11,
         }
     }
-    /// v12 carries `DevelopSettings.video`, a clip's trim and poster frame (no op of its own; v9 was upstream's
+    /// v12 carries `DevelopSettings.video`, a clip's trim and poster frame, and v13 writes the snapshot's settings as
+    /// what differs from its `defaults` (`crate::compact`): neither has an op of its own (v9 was upstream's
     /// `Photo.preview_checked`).
-    const NEWEST_FIELDS: u32 = 12;
+    const NEWEST_FIELDS: u32 = 13;
     let newest = since(&Op::SetHidden { id: PhotoId(1), hidden: true });
     assert_eq!(newest.max(NEWEST_FIELDS), VERSION, "the newest op's or fields' version must be the current format version");
+    /// The newest version whose ops or fields go over the sync protocol (v12's `DevelopSettings.video`; v13 is only
+    /// how `catalog.snap` is written).
+    const NEWEST_SYNCED_FIELDS: u32 = 12;
+    assert_eq!(newest.max(NEWEST_SYNCED_FIELDS), crate::journal::SYNC_VERSION, "a new op or synced field raises SYNC_VERSION");
 }

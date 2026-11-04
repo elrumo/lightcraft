@@ -319,20 +319,24 @@ fn a_volume_without_a_full_flush_still_gets_its_files() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The streamed snapshot is byte-for-byte the format written before streaming (issue #37), so
-/// existing libraries load and older builds can read new snapshots; FsStore and MemStore agree.
+/// The streamed snapshot is byte-for-byte the catalog serialized in one go (issue #37), in v13's compact form
+/// (`crate::compact`), so existing libraries load; FsStore and MemStore agree.
 #[test]
 fn streamed_snapshot_keeps_the_on_disk_format() {
     let (m, _, full) = sample_catalog_with_log();
     let (mut j, c, _) = open(&m);
     assert_eq!(c.to_snapshot(), full.to_snapshot());
     j.snapshot(&c).unwrap();
-    let legacy = format!(
-        "{{\"format\":\"lightcraft-catalog\",\"version\":{},\"seq\":{},\"catalog\":{}}}\n",
-        crate::journal::VERSION,
-        j.seq(),
-        c.to_snapshot()
-    );
+    let legacy = {
+        let compact = crate::compact::Writing::enter();
+        let defaults = serde_json::to_string(compact.defaults().unwrap()).unwrap();
+        format!(
+            "{{\"format\":\"lightcraft-catalog\",\"version\":{},\"seq\":{},\"defaults\":{defaults},\"catalog\":{}}}\n",
+            crate::journal::VERSION,
+            j.seq(),
+            c.to_snapshot()
+        )
+    };
     assert_eq!(String::from_utf8(m.get(SNAPSHOT).unwrap()).unwrap(), legacy);
     assert_eq!(j.stats().last_snapshot.bytes, legacy.len() as u64);
 

@@ -742,7 +742,7 @@ pub(crate) fn diff(base: &Value, v: &Value) -> Value {
     let mut d = serde_json::Map::new();
     for (k, ov) in o {
         match b.get(k) {
-            Some(bv) if bv == ov => {}
+            Some(bv) if same(bv, ov) => {}
             Some(bv @ Value::Object(_)) if ov.is_object() => {
                 d.insert(k.clone(), diff(bv, ov));
             }
@@ -755,6 +755,20 @@ pub(crate) fn diff(base: &Value, v: &Value) -> Value {
         d.insert(k.clone(), Value::Null);
     }
     Value::Object(d)
+}
+
+/// `a` and `b` are the same JSON, numbers compared as written: `Value`'s `==` takes `-0.0` for `0.0`, so a diff by it
+/// would lose the sign of a zero (a slider at `-0.0` read back as `0.0`).
+pub(crate) fn same(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => match (x.as_f64(), y.as_f64()) {
+            (Some(p), Some(q)) if x.is_f64() && y.is_f64() => p.to_bits() == q.to_bits(),
+            _ => x == y,
+        },
+        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| same(p, q)),
+        (Value::Object(x), Value::Object(y)) => x.len() == y.len() && x.iter().all(|(k, p)| y.get(k).is_some_and(|q| same(p, q))),
+        _ => a == b,
+    }
 }
 
 /// `base` with merge patch `p` ([`diff`]) applied.
@@ -859,8 +873,8 @@ pub mod proto {
         /// Versions of the other shared documents ([`Doc`]) that have been written, by name.
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         pub docs: std::collections::BTreeMap<String, u64>,
-        /// The catalog format the server keeps ([`crate::journal::VERSION`]; 0: a server older than this
-        /// field). A device holds back changes a server of an older format would drop (hidden photos).
+        /// The catalog format the server keeps, as far as sync goes ([`crate::journal::SYNC_VERSION`]; 0: a server
+        /// older than this field). A device holds back changes a server of an older format would drop (hidden photos).
         #[serde(default)]
         pub format: u32,
     }

@@ -1,9 +1,10 @@
 //! Crash-safe catalog persistence: an append-only op log plus periodic snapshots.
 //!
 //! Files (in a [`Store`]):
-//! - `catalog.snap` — `{"format":"lightcraft-catalog","version":V,"seq":N,"catalog":{…}}`, the
-//!   state after op `N` in catalog format `V` ([`VERSION`]); replaced atomically (temp + fsync +
-//!   rename).
+//! - `catalog.snap` — `{"format":"lightcraft-catalog","version":V,"seq":N,"defaults":{…},"catalog":{…}}`,
+//!   the state after op `N` in catalog format `V` ([`VERSION`]); replaced atomically (temp + fsync +
+//!   rename). `defaults` (from v13) are the develop defaults the photos' settings are written against
+//!   ([`crate::compact`]); a snapshot without them holds every settings object whole.
 //! - `catalog.log` — JSON lines, one per op applied after the snapshot:
 //!   `{"seq":N,"crc":C,"op":{…}}` where `C` is the CRC-32 of the op's JSON text. Appends are
 //!   fsynced before [`Journal::append`] returns.
@@ -55,12 +56,15 @@
 //! | 10 | library folders on the sync server (this fork) | `Op::SetServerPath`, `Photo.server_path`. This fork wrote `SetServerPath` as format 3, then 8, then 9, before upstream's own format 9 made it 10; those libraries still open and are upgraded, as every op in them is known |
 //! | 11 | the Hidden album (this fork) | `Op::SetHidden`, `Photo.hidden` |
 //! | 12 | video clips: trim and poster frame (this fork) | `DevelopSettings.video` |
+//! | 13 | compact snapshots (this fork) | `catalog.snap`'s `defaults`; a photo's settings as what differs from them, or `[{…}]` whole ([`crate::compact`]) |
 //!
 //! Rules:
 //! - **Bump [`VERSION`]** (and add a row above) in the change that adds an [`Op`] variant or a
 //!   serialized field to the catalog, a photo, an album, a stack or develop settings that an older
 //!   build would misread or silently drop. New fields must deserialize from older data
 //!   (`#[serde(default)]`), so newer builds keep reading every older format.
+//! - **Raise [`SYNC_VERSION`] with it** when the change is an op or a field (what devices and the server send each
+//!   other), not when it is only how a file is written (v13).
 //! - **Opening an older format upgrades it**: right after loading, [`Journal::open`] writes a
 //!   snapshot in this build's format (also for a new library), before anything is appended — so a
 //!   library is never a mix, and older builds refuse it from then on instead of reading part of it.
@@ -79,7 +83,16 @@ pub const LOG: &str = "catalog.log";
 const FORMAT: &str = "lightcraft-catalog";
 /// The catalog format this build writes (and the newest it reads). See the module docs →
 /// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
-pub const VERSION: u32 = 12;
+pub const VERSION: u32 = 13;
+
+/// The newest catalog format a sync peer must understand: what a server says it keeps (`format` of
+/// [`crate::sync::proto::Ops`]), which a device compares with its own before it sends changes. It moves with [`VERSION`]
+/// for a new op or field, which go over the sync protocol, and not for a change to how a file is written: v13 only
+/// changed `catalog.snap`, so it is 12 (a server saying 13 would make every device of v12 stop sending).
+pub const SYNC_VERSION: u32 = 12;
+
+/// How far into `catalog.snap` its header may reach: `"catalog":` comes after the develop defaults (a few KB).
+pub(crate) const HEADER_BYTES: usize = 64 << 10;
 
 /// [`Journal::records_since`] finds its place in the log through an index with one entry per this
 /// many records.
@@ -343,8 +356,9 @@ fn index_log(log: &[u8]) -> (Vec<(u64, u64)>, Option<u64>) {
 
 /// Write `catalog.snap` for the state after op `seq`, streaming the JSON into the store (no
 /// whole-file string). The bytes are exactly
-/// `{"format":"lightcraft-catalog","version":1,"seq":N,"catalog":<serde_json of the catalog>}\n`,
-/// as before streaming. Fills in the serialise / write+sync times and the size.
+/// `{"format":"lightcraft-catalog","version":V,"seq":N,"defaults":<develop defaults>,"catalog":<the catalog>}\n`,
+/// the catalog's photos' settings written as what differs from the defaults ([`crate::compact`]). Fills in the
+/// serialise / write+sync times and the size.
 fn write_snapshot(store: &mut dyn Store, seq: u64, catalog: &Catalog) -> std::io::Result<SnapshotTiming> {
     write_snapshot_as(store, SNAPSHOT, seq, catalog)
 }
@@ -365,8 +379,16 @@ fn write_snapshot_as(store: &mut dyn Store, name: &str, seq: u64, catalog: &Cata
         // serde_json emits many tiny writes: buffer them in a concrete writer (inlined), so only
         // 1 MiB chunks go through the store's `dyn Write`
         let mut b = std::io::BufWriter::with_capacity(1 << 20, w);
-        write!(b, "{{\"format\":\"{FORMAT}\",\"version\":{VERSION},\"seq\":{seq},\"catalog\":")?;
+        let compact = crate::compact::Writing::enter();
+        write!(b, "{{\"format\":\"{FORMAT}\",\"version\":{VERSION},\"seq\":{seq},")?;
+        if let Some(defaults) = compact.defaults() {
+            b.write_all(b"\"defaults\":")?;
+            serde_json::to_writer(&mut b, defaults).map_err(std::io::Error::other)?;
+            b.write_all(b",")?;
+        }
+        b.write_all(b"\"catalog\":")?;
         serde_json::to_writer(&mut b, catalog).map_err(std::io::Error::other)?;
+        drop(compact);
         b.write_all(b"}\n")?;
         b.flush()?;
         serialize_ms = ms_since(t);
@@ -383,15 +405,25 @@ const MAX_SEQ: u64 = u64::MAX / 2;
 struct SnapHeader {
     format: String,
     version: u32,
+    /// The develop defaults a v13 snapshot's settings are diffs against ([`crate::compact`]).
+    #[serde(default)]
+    defaults: Option<serde_json::Value>,
 }
 
-/// Read [`SnapHeader`] without parsing the catalog: both writers put `{"format":…,"version":…,"seq":…,"catalog":`
-/// first, so the bytes before `"catalog":` (closed with a `}`) are the header. A file laid out any other way (or
+impl SnapHeader {
+    /// The reader of the photos' settings this header calls for.
+    fn reader(&self) -> std::result::Result<Option<std::sync::Arc<crate::compact::Reader>>, serde_json::Error> {
+        self.defaults.clone().map(|d| crate::compact::Reader::new(d).map(std::sync::Arc::new)).transpose()
+    }
+}
+
+/// Read [`SnapHeader`] without parsing the catalog: both writers put `{"format":…,"version":…,"seq":…,` (and the
+/// `"defaults":{…},` of v13) before `"catalog":`, so the bytes before it (closed with a `}`) are the header. A file laid out any other way (or
 /// damaged there) is parsed whole, as before, so the answer is the same either way (a full parse of a big
 /// library took a quarter of its open).
 fn snap_header(bytes: &[u8]) -> std::result::Result<SnapHeader, serde_json::Error> {
     const KEY: &[u8] = b"\"catalog\":";
-    let head = bytes.get(..bytes.len().min(256)).unwrap_or(bytes);
+    let head = bytes.get(..bytes.len().min(HEADER_BYTES)).unwrap_or(bytes);
     let prefix = head.windows(KEY.len()).position(|w| w == KEY).and_then(|at| head.get(..at));
     if let Some(prefix) = prefix {
         let mut closed = prefix.trim_ascii_end().to_vec();
@@ -413,6 +445,22 @@ pub(crate) struct SnapFile {
     pub(crate) catalog: Catalog,
 }
 
+/// `catalog.snap` read whole, and its catalog format: the header first (a newer snapshot may not parse as this
+/// version's catalog), then the catalog, its settings patched onto the header's defaults when it names them.
+pub(crate) fn read_whole(bytes: &[u8]) -> Result<(SnapFile, u32)> {
+    let corrupt = |e: serde_json::Error| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}"));
+    let h = snap_header(bytes).map_err(corrupt)?;
+    if h.format != FORMAT {
+        return Err(CatalogError::Corrupt(format!("{SNAPSHOT}: not a LightCraft catalog (format {:?})", h.format)));
+    }
+    if h.version > VERSION {
+        return Err(newer(format!("{SNAPSHOT} is catalog format v{}", h.version)));
+    }
+    let _reading = crate::compact::Reading::enter(h.reader().map_err(corrupt)?);
+    let s: SnapFile = serde_json::from_slice(bytes).map_err(corrupt)?;
+    Ok((s, h.version))
+}
+
 impl Journal {
     /// The snapshot read by several threads in pieces ([`crate::snapload`]) and its catalog format, when the store
     /// can read ranges, the snapshot is a big one of this build's format or older, and the pieces read well.
@@ -420,11 +468,11 @@ impl Journal {
     /// and says what is wrong with them.
     pub(crate) fn read_in_pieces(store: &dyn Store) -> Option<(SnapFile, u32)> {
         let (size, read_at) = store.ranged_reader(SNAPSHOT)?;
-        let h = snap_header(&read_at(0, 256).ok()?).ok()?;
+        let h = snap_header(&read_at(0, usize::try_from(size).ok()?.min(HEADER_BYTES)).ok()?).ok()?;
         if h.format != FORMAT || h.version > VERSION {
             return None;
         }
-        Some((crate::snapload::read(size, &read_at)?, h.version))
+        Some((crate::snapload::read(size, &read_at, h.reader().ok()?)?, h.version))
     }
 
     /// Open (or create) the catalog in `store`: load the snapshot, replay the log, repair a torn
@@ -439,16 +487,8 @@ impl Journal {
         let loaded = match (pieces, snap) {
             (Some((s, version)), _) => Some((s, version, false)),
             (None, Some(bytes)) => {
-                // the header first: a newer snapshot may not parse as this version's catalog
-                let h = snap_header(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
-                if h.format != FORMAT {
-                    return Err(CatalogError::Corrupt(format!("{SNAPSHOT}: not a LightCraft catalog (format {:?})", h.format)));
-                }
-                if h.version > VERSION {
-                    return Err(newer(format!("{SNAPSHOT} is catalog format v{}", h.version)));
-                }
-                let s: SnapFile = serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
-                Some((s, h.version, true))
+                let (s, version) = read_whole(&bytes)?;
+                Some((s, version, true))
             }
             (None, None) => None,
         };
