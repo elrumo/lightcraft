@@ -95,6 +95,27 @@ fn a_radial_gradient_has_a_feather_control() {
 }
 
 #[test]
+fn a_whole_mask_has_refine_shift_edge_and_feather() {
+    let mut s = Session::with_demo();
+    s.execute("mask.add", &json!({"kind": "radial"})).unwrap();
+    let c = s.execute("mask.shapeControls", &json!({})).unwrap();
+    let ids: Vec<_> = c["mask"].as_array().unwrap().iter().map(|v| v["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids, ["refine", "shift", "feather"], "{c}");
+    // (the field older frontends read stays)
+    assert_eq!(c["refine"]["id"], "refine");
+    s.execute("mask.setShapeControl", &json!({"control": "shift", "value": -150})).unwrap();
+    s.execute("mask.setShapeControl", &json!({"control": "feather", "value": 30})).unwrap();
+    let m = masks(&s)[0].clone();
+    assert_eq!((m.shift, m.feather), (-100.0, 30.0), "clamped");
+    let c = s.execute("mask.shapeControls", &json!({})).unwrap();
+    assert_eq!((c["mask"][1]["value"].as_f64(), c["mask"][2]["value"].as_f64()), (Some(-100.0), Some(30.0)));
+    assert!(s.execute("mask.setShapeControl", &json!({"control": "grow", "value": 1})).is_err());
+    // one undo step each
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!((masks(&s)[0].shift, masks(&s)[0].feather), (-100.0, 0.0));
+}
+
+#[test]
 fn new_gradients_go_in_the_picture_the_photo_shows() {
     let mut s = Session::with_demo();
     let id = s.active().unwrap();

@@ -5,7 +5,7 @@
 //! - Resampling ([`resample`]): separable Lanczos-3 / Mitchell / box, rayon-parallel; point sampling for warps
 //!   ([`sample`]: Lanczos-3 held to its neighbours' range).
 //! - Blur ([`blur`]): separable Gaussian via repeated box filters (O(1) per pixel in the radius).
-//! - Morphology ([`morph`]): square min / max filters (van Herk / Gil-Werman, O(1) per pixel in the radius).
+//! - Morphology ([`morph`]): square and rectangular min / max filters (van Herk / Gil-Werman, O(1) per pixel in the radius).
 //! - [`Histogram`] of display-encoded RGB + luminance.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]

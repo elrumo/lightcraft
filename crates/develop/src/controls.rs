@@ -213,6 +213,31 @@ const fn shape(id: &'static str, label: &'static str, min: f64, max: f64, defaul
 
 /// A mask's Refine Edges (`mask.refine`, 0–100): its edges snap to the photo's.
 pub const MASK_REFINE: ControlSpec = shape("refine", "Refine Edges", 0.0, 100.0, 0.0, Track::Plain);
+/// A mask's Shift Edge (−100–100): its edge moves out (grows) or in (shrinks).
+pub const MASK_SHIFT: ControlSpec = shape("shift", "Shift Edge", -100.0, 100.0, 0.0, Track::Centered);
+/// A mask's Feather (0–100): its edges soften.
+pub const MASK_FEATHER: ControlSpec = shape("feather", "Feather", 0.0, 100.0, 0.0, Track::Plain);
+
+/// The controls of a mask as a whole (not of one of its parts), in the order the panels show them: Refine
+/// Edges, Shift Edge, Feather, with their values.
+pub fn mask_controls(m: &crate::Mask) -> [(ControlSpec, f64); 3] {
+    [(MASK_REFINE, m.refine), (MASK_SHIFT, m.shift), (MASK_FEATHER, m.feather)]
+}
+
+/// Sets the mask-wide control `id` ([`mask_controls`]) of `m` to `v`, clamped; `false` when there is no such control
+/// or `v` isn't a number.
+pub fn set_mask_control(m: &mut crate::Mask, id: &str, v: f64) -> bool {
+    if !v.is_finite() {
+        return false;
+    }
+    match id {
+        "refine" => m.refine = v.clamp(0.0, 100.0),
+        "shift" => m.shift = v.clamp(-100.0, 100.0),
+        "feather" => m.feather = v.clamp(0.0, 100.0),
+        _ => return false,
+    }
+    true
+}
 const RANGE_LO: ControlSpec = shape("lo", "Range Low", 0.0, 100.0, 0.0, Track::Gradient { from: "#000000", to: "#ffffff" });
 const RANGE_HI: ControlSpec = shape("hi", "Range High", 0.0, 100.0, 100.0, Track::Gradient { from: "#000000", to: "#ffffff" });
 const SMOOTHNESS: ControlSpec = shape("smoothness", "Smoothness", 0.0, 100.0, 20.0, Track::Plain);

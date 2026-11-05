@@ -476,6 +476,110 @@ fn refine_edges_follows_the_photo() {
     assert!(sharp > plain * 1.5 && sharp > 0.1, "the edge in the mask follows the photo's: {plain} → {sharp}");
 }
 
+/// A disc of radius `r` px around (cx, cy), hard edged.
+fn disc_mask(w: usize, h: usize, cx: f64, cy: f64, r: f64) -> Mask {
+    let long = w.max(h) as f64;
+    let shape =
+        MaskShape::Radial { center: Point::new(cx / w as f64, cy / h as f64), rx: r / long, ry: r / long, angle: 0.0, feather: 0.0, invert: false };
+    Mask { components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: false, shape }], ..Default::default() }
+}
+
+/// The distance (px) from the centre of row `y` at which the alpha first drops under one half, walking right from `x0`.
+fn half_at(a: &Plane, y: usize, x0: usize) -> usize {
+    (x0..a.width).find(|x| a.get(*x, y) < 0.5).unwrap_or(a.width) - x0
+}
+
+#[test]
+fn shift_edge_grows_and_shrinks_a_mask_by_about_a_disc() {
+    let (w, h) = (300usize, 300usize);
+    let f = frame(w, h);
+    let (img, l) = (Rgb32f::new(w, h), Plane::new(w, h));
+    let disc = disc_mask(w, h, 150.0, 150.0, 60.0);
+    let plain = evaluate_one(&disc, &f, w, h, &img, &l, 0.0, None);
+    let r0 = half_at(&plain, 150, 150) as f32;
+    // +50 moves the edge out by 1.5 % of the long edge (4.5 px here), −100 in by 3 % (9 px)
+    for (shift, moved) in [(50.0, shift_px(50.0, 300)), (100.0, shift_px(100.0, 300)), (-100.0, shift_px(-100.0, 300))] {
+        let m = Mask { shift, ..disc.clone() };
+        let a = evaluate_one(&m, &f, w, h, &img, &l, 0.0, None);
+        let r = half_at(&a, 150, 150) as f32;
+        assert!((r - r0 - moved).abs() <= 1.5, "shift {shift}: the edge moved {} px, not {moved}", r - r0);
+        // along the diagonal too (a square filter would reach 41 % further there)
+        let diag = (0..150).find(|k| a.get(150 + k, 150 + k) < 0.5).unwrap_or(150) as f32 * std::f32::consts::SQRT_2;
+        let diag0 = (0..150).find(|k| plain.get(150 + k, 150 + k) < 0.5).unwrap_or(150) as f32 * std::f32::consts::SQRT_2;
+        assert!((diag - diag0 - moved).abs() <= moved.abs() * 0.15 + 1.5, "shift {shift} diagonally: {} px, not {moved}", diag - diag0);
+    }
+    // the edge keeps its softness: a soft disc grown stays as soft
+    let soft = Mask {
+        components: vec![MaskComponent {
+            name: None,
+            op: MaskOp::Add,
+            invert: false,
+            shape: MaskShape::Radial { center: Point::new(0.5, 0.5), rx: 0.2, ry: 0.2, angle: 0.0, feather: 60.0, invert: false },
+        }],
+        ..Default::default()
+    };
+    let ramp = |a: &Plane| (150..300).filter(|x| (0.1..0.9).contains(&a.get(*x, 150))).count() as i64;
+    let (before, after) = (
+        ramp(&evaluate_one(&soft, &f, w, h, &img, &l, 0.0, None)),
+        ramp(&evaluate_one(&Mask { shift: 60.0, ..soft.clone() }, &f, w, h, &img, &l, 0.0, None)),
+    );
+    assert!((before - after).abs() <= 2, "the soft edge is {before} px wide, grown {after} px");
+}
+
+#[test]
+fn shift_edge_is_resolution_independent_and_comes_before_invert() {
+    let (img, l) = (Rgb32f::new(400, 400), Plane::new(400, 400));
+    for (w, h) in [(200usize, 200usize), (400, 400)] {
+        let m = Mask { shift: 100.0, ..disc_mask(w, h, w as f64 / 2.0, h as f64 / 2.0, w as f64 / 5.0) };
+        let a = evaluate_one(&m, &frame(w, h), w, h, &img, &l, 0.0, None);
+        let r = half_at(&a, h / 2, w / 2) as f64 / w as f64;
+        assert!((r - (0.2 + Mask::SHIFT_MAX)).abs() < 0.01, "{w}×{h}: the edge at {r} of the width");
+        // inverted, the grown disc's outside is selected: the hole is the grown disc
+        let inv = evaluate_one(&Mask { invert: true, ..m.clone() }, &frame(w, h), w, h, &img, &l, 0.0, None);
+        assert!(inv.data.iter().zip(&a.data).all(|(i, a)| (i + a - 1.0).abs() < 1e-6));
+    }
+}
+
+#[test]
+fn feather_softens_the_whole_mask() {
+    let (w, h) = (300usize, 300usize);
+    let f = frame(w, h);
+    let (img, l) = (Rgb32f::new(w, h), Plane::new(w, h));
+    let disc = disc_mask(w, h, 150.0, 150.0, 60.0);
+    let ramp = |a: &Plane| (150..300).filter(|x| (0.05..0.95).contains(&a.get(*x, 150))).count();
+    let hard = ramp(&evaluate_one(&disc, &f, w, h, &img, &l, 0.0, None));
+    let mut last = hard;
+    for feather in [25.0, 50.0, 100.0] {
+        let a = evaluate_one(&Mask { feather, ..disc.clone() }, &f, w, h, &img, &l, 0.0, None);
+        let soft = ramp(&a);
+        assert!(soft > last, "feather {feather}: {soft} px of edge, not more than {last}");
+        last = soft;
+        // the centre stays selected and the far corner not
+        assert!(a.get(150, 150) > 0.95 && a.get(2, 2) < 0.05, "feather {feather}");
+    }
+    // 0 changes nothing, and a hostile value is clamped
+    assert_eq!(
+        evaluate_one(&Mask { feather: 0.0, ..disc.clone() }, &f, w, h, &img, &l, 0.0, None).data,
+        evaluate_one(&disc, &f, w, h, &img, &l, 0.0, None).data
+    );
+    assert_eq!((feather_sigma(f64::NAN, 300), shift_px(f64::NAN, 300)), (0.0, 0.0));
+    assert_eq!(feather_sigma(1e9, 300), feather_sigma(100.0, 300));
+    assert_eq!(shift_px(-1e9, 300), shift_px(-100.0, 300));
+    assert_eq!(shift_rects(f32::NAN), [(0, 0); 3]);
+}
+
+#[test]
+fn masks_with_edge_work_say_so() {
+    let m = Mask::default();
+    assert!(!m.edits_edges());
+    for edited in [Mask { refine: 1.0, ..m.clone() }, Mask { shift: -1.0, ..m.clone() }, Mask { feather: 1.0, ..m.clone() }] {
+        assert!(edited.edits_edges());
+    }
+    // an old document (no shift or feather) reads with both at 0 and is written as before
+    let json = serde_json::to_value(&m).unwrap();
+    assert!(json.get("shift").is_none() && json.get("feather").is_none());
+}
+
 /// Issue #157: a colour-range sample of one flat patch must not select a clearly different
 /// patch. The two patches are the ones from the report (sRGB 120,150,155 and 200,198,195),
 /// sampled the way `mask.sampleColor` does (3×3 mean of the selection-space OkLab).
@@ -589,8 +693,10 @@ fn alpha_keys_change_with_every_input_of_the_alpha() {
         one(MaskShape::Object { hint: vec![Point::new(0.5, 0.5)], exclude: vec![], seg, detail: vec![], edge: 0.0 })
     };
     assert_ne!(key(&object(4.0)), key(&object(-4.0)));
-    let edits: [fn(&mut Mask); 7] = [
+    let edits: [fn(&mut Mask); 9] = [
         |m| m.refine = 10.0,
+        |m| m.shift = -20.0,
+        |m| m.feather = 15.0,
         |m| m.invert = true,
         |m| m.adjust.amount = 50.0,
         |m| m.components[0].invert = true,

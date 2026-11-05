@@ -2477,5 +2477,6 @@
   "Choose Cloud Folder…": "Vybrat složku v cloudu…",
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Na tomto počítači nebyla nalezena žádná složka iCloud Drive, Dropbox ani Disku Google.",
   "Syncing through the cloud folder": "Synchronizace přes složku v cloudu",
-  "Synced just now": "Právě synchronizováno"
+  "Synced just now": "Právě synchronizováno",
+  "Shift Edge": "Posunout okraj"
 }

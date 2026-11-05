@@ -479,11 +479,12 @@ pub fn develop_hdr(
     (rendered, fallback, deep.and_then(|d| HdrPicture::from_deep(&d, peak)).map(Arc::new))
 }
 
-/// Whether a render of `s` for `req` can go to the GPU: refined masks have no GPU stage, nor has soft
-/// proofing, nor a LUT profile bigger than the kernel takes ([`lightcraft_pipeline::lut::GPU_MAX_SIZE`]).
+/// Whether a render of `s` for `req` can go to the GPU: masks with Refine Edges, Shift Edge or Feather have no GPU
+/// stage, nor has soft proofing, nor a LUT profile bigger than the kernel takes
+/// ([`lightcraft_pipeline::lut::GPU_MAX_SIZE`]).
 fn gpu_renders(s: &DevelopSettings, req: &RenderRequest) -> bool {
     lightcraft_pipeline::lut::get(&s.profile.id).is_none_or(|l| l.size <= lightcraft_pipeline::lut::GPU_MAX_SIZE)
-        && !s.masks.iter().any(|m| m.visible && m.refine > 0.0)
+        && !s.masks.iter().any(|m| m.visible && m.edits_edges())
         && req.proof.is_none()
 }
 

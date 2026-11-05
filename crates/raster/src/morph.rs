@@ -22,15 +22,32 @@ pub fn max_filter(p: &Plane, r: usize) -> Plane {
     filter(p, r, f32::max)
 }
 
+/// Rectangular min filter: the minimum over the `(2rx+1) × (2ry+1)` window around each pixel, clipped to the image.
+pub fn min_filter_rect(p: &Plane, rx: usize, ry: usize) -> Plane {
+    filter_rect(p, rx, ry, f32::min)
+}
+
+/// Rectangular max filter (see [`min_filter_rect`]).
+pub fn max_filter_rect(p: &Plane, rx: usize, ry: usize) -> Plane {
+    filter_rect(p, rx, ry, f32::max)
+}
+
 fn filter(p: &Plane, r: usize, pick: fn(f32, f32) -> f32) -> Plane {
+    filter_rect(p, r, r, pick)
+}
+
+fn filter_rect(p: &Plane, rx: usize, ry: usize, pick: fn(f32, f32) -> f32) -> Plane {
     let (w, h) = (p.width, p.height);
-    if r == 0 || p.data.is_empty() || p.data.len() != w.saturating_mul(h) {
+    if (rx == 0 && ry == 0) || p.data.is_empty() || p.data.len() != w.saturating_mul(h) {
         return p.clone();
     }
     let mut out = p.clone();
-    rows(&mut out, r, pick);
+    rows(&mut out, rx, pick);
+    if ry == 0 {
+        return out;
+    }
     let mut t = out.transpose();
-    rows(&mut t, r, pick);
+    rows(&mut t, ry, pick);
     t.transpose()
 }
 
@@ -130,6 +147,32 @@ mod tests {
                 let p = noise(w, h, (w * 131 + h * 7 + r) as u64);
                 assert_eq!(min_filter(&p, r), naive(&p, r, false), "min {w}x{h} r={r}");
                 assert_eq!(max_filter(&p, r), naive(&p, r, true), "max {w}x{h} r={r}");
+            }
+        }
+    }
+
+    /// The rectangle's definition: min (or max) over the clipped `(2rx+1) × (2ry+1)` window.
+    fn naive_rect(p: &Plane, rx: usize, ry: usize, max: bool) -> Plane {
+        let (w, h) = (p.width, p.height);
+        let pick = |a: f32, b: f32| if max { a.max(b) } else { a.min(b) };
+        Plane::from_fn(w, h, |x, y| {
+            let mut m = p.get(x, y);
+            for yy in y.saturating_sub(ry)..=(y + ry).min(h - 1) {
+                for xx in x.saturating_sub(rx)..=(x + rx).min(w - 1) {
+                    m = pick(m, p.get(xx, yy));
+                }
+            }
+            m
+        })
+    }
+
+    #[test]
+    fn rectangles_match_the_naive_filter() {
+        for (w, h) in [(1, 1), (9, 1), (7, 5), (31, 17)] {
+            for (rx, ry) in [(0, 0), (0, 3), (3, 0), (1, 4), (6, 2), (40, 1)] {
+                let p = noise(w, h, (w * 31 + h * 3 + rx * 7 + ry) as u64);
+                assert_eq!(min_filter_rect(&p, rx, ry), naive_rect(&p, rx, ry, false), "min {w}x{h} {rx}x{ry}");
+                assert_eq!(max_filter_rect(&p, rx, ry), naive_rect(&p, rx, ry, true), "max {w}x{h} {rx}x{ry}");
             }
         }
     }

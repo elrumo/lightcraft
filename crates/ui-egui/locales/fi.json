@@ -2337,5 +2337,6 @@
   "Choose Cloud Folder…": "Valitse pilvikansio…",
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Tältä tietokoneelta ei löytynyt iCloud Drive-, Dropbox- tai Google Drive -kansiota.",
   "Syncing through the cloud folder": "Synkronoidaan pilvikansion kautta",
-  "Synced just now": "Synkronoitu juuri nyt"
+  "Synced just now": "Synkronoitu juuri nyt",
+  "Shift Edge": "Siirrä reunaa"
 }

@@ -2696,5 +2696,6 @@
   "Choose Cloud Folder…": "クラウドフォルダを選択…",
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "このコンピュータには iCloud Drive、Dropbox、Google Drive のフォルダが見つかりませんでした。",
   "Syncing through the cloud folder": "クラウドフォルダ経由で同期中",
-  "Synced just now": "たった今同期しました"
+  "Synced just now": "たった今同期しました",
+  "Shift Edge": "境界をシフト"
 }

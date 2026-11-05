@@ -2552,5 +2552,6 @@
   "Choose Cloud Folder…": "Вибрати хмарну теку…",
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "На цьому комп'ютері не знайдено жодної теки iCloud Drive, Dropbox або Google Drive.",
   "Syncing through the cloud folder": "Синхронізація через хмарну теку",
-  "Synced just now": "Щойно синхронізовано"
+  "Synced just now": "Щойно синхронізовано",
+  "Shift Edge": "Змістити край"
 }

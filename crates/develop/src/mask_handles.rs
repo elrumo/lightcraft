@@ -222,7 +222,7 @@ mod tests {
             invert: false,
             components: vec![crate::MaskComponent { name: None, op: Default::default(), invert: false, shape }],
             adjust: Default::default(),
-            refine: 0.0,
+            ..Default::default()
         };
         let masks = vec![mask(1, radial()), mask(2, MaskShape::Linear { start: Point::new(0.1, 0.1), end: Point::new(0.1, 0.4) })];
         let g = grab(&masks, Some(1), Point::new(0.701, 0.5), 0.02, long, true).unwrap();

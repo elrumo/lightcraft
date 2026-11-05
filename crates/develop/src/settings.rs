@@ -1156,6 +1156,27 @@ pub struct Mask {
     /// Refine Edges 0..100: the mask's edges snap to the photo's (guided filter).
     #[serde(skip_serializing_if = "is_zero")]
     pub refine: f64,
+    /// Shift Edge −100..100: the whole mask's edge moves out (it grows, above 0) or in (it shrinks, below 0), up to
+    /// [`Mask::SHIFT_MAX`] of the long edge. After Refine Edges.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub shift: f64,
+    /// Feather 0..100: the whole mask's edges soften (a blur of up to [`Mask::FEATHER_MAX`] of the long edge). After
+    /// Shift Edge.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub feather: f64,
+}
+
+impl Mask {
+    /// How far Shift Edge at ±100 moves the edge, as a fraction of the output's long edge.
+    pub const SHIFT_MAX: f64 = 0.03;
+    /// The blur (Gaussian sigma) of Feather at 100, as a fraction of the output's long edge.
+    pub const FEATHER_MAX: f64 = 0.04;
+
+    /// Whether the mask's alpha is worked on as a whole after its parts are combined (Refine Edges, Shift Edge,
+    /// Feather): a pass over the whole plane that only the CPU renderer has.
+    pub fn edits_edges(&self) -> bool {
+        self.refine > 0.0 || self.shift != 0.0 || self.feather > 0.0
+    }
 }
 
 fn is_zero(v: &f64) -> bool {
@@ -1168,7 +1189,17 @@ fn is_true(v: &bool) -> bool {
 
 impl Default for Mask {
     fn default() -> Self {
-        Self { id: 0, name: "Mask 1".into(), visible: true, invert: false, components: Vec::new(), adjust: LocalAdjustments::default(), refine: 0.0 }
+        Self {
+            id: 0,
+            name: "Mask 1".into(),
+            visible: true,
+            invert: false,
+            components: Vec::new(),
+            adjust: LocalAdjustments::default(),
+            refine: 0.0,
+            shift: 0.0,
+            feather: 0.0,
+        }
     }
 }
 

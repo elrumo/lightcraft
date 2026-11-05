@@ -440,11 +440,16 @@ pub(super) fn amount_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &ligh
     apply_slider_out(app, &amt, out, |app, v| app.run("mask.adjust", json!({"values": {"amount": v}})));
 }
 
-/// The selected mask's Refine Edges: its border follows the photo's edges.
+/// The selected mask's Refine Edges (its border follows the photo's edges), Shift Edge and Feather.
 pub(super) fn refine_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &lightcraft_develop::Mask) {
     let refine = lightcraft_develop::controls::MASK_REFINE;
     let out = slider(ui, &refine, m.refine, true, None);
     apply_slider_out(app, &refine, out, |app, v| app.run("mask.refine", json!({"value": v})));
+    // Shift Edge and Feather: the whole mask's edge moves out or in, and softens
+    for (spec, value) in lightcraft_develop::controls::mask_controls(m).into_iter().skip(1) {
+        let out = slider(ui, &spec, value, true, None);
+        apply_slider_out(app, &spec, out, |app, v| app.run("mask.setShapeControl", json!({"control": spec.id, "value": v})));
+    }
 }
 
 /// Translate fixed action labels, but never mutate or translate user-entered mask names.

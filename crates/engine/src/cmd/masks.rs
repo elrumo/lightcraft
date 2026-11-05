@@ -858,7 +858,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Mask Shape Controls",
             [],
             None,
-            "{id?} → {refine: Refine Edges, components: [{component, kind, controls}]} the mask's own controls besides its adjustments (each a control spec with its `value`): Refine Edges, a luminance range's bounds and smoothness, a colour range's refine, an AI selection's edge; `mask.setShapeControl` sets them",
+            "{id?} → {refine: Refine Edges, mask: [Refine Edges, Shift Edge, Feather], components: [{component, kind, controls}]} the mask's own controls besides its adjustments (each a control spec with its `value`): the whole mask's Refine Edges, Shift Edge (−100 shrinks … 100 grows) and Feather, a luminance range's bounds and smoothness, a colour range's refine, an AI selection's edge; `mask.setShapeControl` sets them",
             has_active,
             |s, p| {
                 let c = "mask.shapeControls";
@@ -882,7 +882,8 @@ pub fn specs() -> Vec<CommandSpec> {
                         json!({"component": k, "kind": kind, "controls": controls})
                     })
                     .collect();
-                Ok(json!({"refine": spec(&controls::MASK_REFINE, m.refine), "components": components}))
+                let whole: Vec<Value> = controls::mask_controls(m).iter().map(|(sp, v)| spec(sp, *v)).collect();
+                Ok(json!({"refine": spec(&controls::MASK_REFINE, m.refine), "mask": whole, "components": components}))
             }
         ),
         cmd!(
@@ -890,7 +891,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Mask Shape Control",
             [],
             None,
-            "{id?, component?: index (none: the mask's own `refine`), control, value} sets one of `mask.shapeControls`",
+            "{id?, component?: index (none: the whole mask's `refine`, `shift` or `feather`), control, value} sets one of `mask.shapeControls`",
             has_active,
             |s, p| {
                 let c = "mask.setShapeControl";
@@ -902,8 +903,11 @@ pub fn specs() -> Vec<CommandSpec> {
                     let i = find(masks, mid, c)?;
                     let m = &mut masks[i];
                     match comp {
-                        None if control == "refine" => m.refine = v.clamp(0.0, 100.0),
-                        None => return Err(bad(c, format!("a mask has no control `{control}`"))),
+                        None => {
+                            if !controls::set_mask_control(m, &control, v) {
+                                return Err(bad(c, format!("a mask has no control `{control}`")));
+                            }
+                        }
                         Some(k) => {
                             let part = m.components.get_mut(k).ok_or_else(|| bad(c, "no such component"))?;
                             part.shape = controls::set_shape_control(&part.shape, &control, v)

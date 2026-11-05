@@ -288,7 +288,7 @@ impl<H: std::hash::Hasher> std::fmt::Write for HashWrite<'_, H> {
 }
 
 /// The key of mask `m`'s alpha in a render with `keys` and global exposure `ev`: everything
-/// [`evaluate_one`] reads — its components, Refine Edges, Invert and Amount, the frame, and the
+/// [`evaluate_one`] reads — its components, Refine Edges, Shift Edge, Feather, Invert and Amount, the frame, and the
 /// image and exposure for the masks that read them ([`reads`]). Not its other sliders, name or id.
 pub fn alpha_key(m: &Mask, keys: AlphaKeys, ev: f32) -> u64 {
     use std::fmt::Write;
@@ -298,7 +298,7 @@ pub fn alpha_key(m: &Mask, keys: AlphaKeys, ev: f32) -> u64 {
     keys.geo.hash(&mut h);
     image.then_some(keys.image).hash(&mut h);
     exposure.then_some(ev.to_bits()).hash(&mut h);
-    (m.refine.to_bits(), m.invert, m.adjust.amount.to_bits()).hash(&mut h);
+    (m.refine.to_bits(), m.shift.to_bits(), m.feather.to_bits(), m.invert, m.adjust.amount.to_bits()).hash(&mut h);
     // (`Debug` of an f64 round-trips: distinct definitions write distinct text)
     let _ = write!(HashWrite(&mut h), "{:?}", m.components);
     h.finish()
@@ -355,8 +355,8 @@ fn map_rows(p: &mut Plane, f: impl Fn(&mut f32) + Sync + Send) {
     for_rows(&mut p.data, w, |_, row| row.iter_mut().for_each(&f));
 }
 
-/// The alpha plane of mask `m` (whether visible or not): its components combined, inverted and
-/// scaled by its amount.
+/// The alpha plane of mask `m` (whether visible or not): its components combined, then Refine Edges, Shift Edge
+/// and Feather, inverted and scaled by its amount.
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_one(m: &Mask, frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, ev: f32, mattes: Option<&Mattes>) -> Plane {
     let mut alpha = Plane::new(w, h);
@@ -387,6 +387,13 @@ pub fn evaluate_one(m: &Mask, frame: &Frame, w: usize, h: usize, img: &Rgb32f, l
         let t = k.sqrt();
         zip_rows(&mut alpha, &refined, |a, r| *a += (r - *a) * t);
     }
+    let long = frame.output_long(w, h);
+    if m.shift != 0.0 {
+        alpha = shift_edge(&alpha, shift_px(m.shift, long));
+    }
+    if m.feather > 0.0 {
+        alpha = lightcraft_raster::blur::gaussian(&alpha, feather_sigma(m.feather, long));
+    }
     if m.invert {
         map_rows(&mut alpha, |v| *v = 1.0 - *v);
     }
@@ -395,6 +402,57 @@ pub fn evaluate_one(m: &Mask, frame: &Frame, w: usize, h: usize, img: &Rgb32f, l
         map_rows(&mut alpha, |v| *v *= amt);
     }
     alpha
+}
+
+/// How far Shift Edge `shift` (−100..100) moves a mask's edge on an output whose long edge is `long` px: px, out
+/// (above 0) or in (below 0).
+pub fn shift_px(shift: f64, long: usize) -> f32 {
+    if !shift.is_finite() {
+        return 0.0;
+    }
+    ((shift / 100.0).clamp(-1.0, 1.0) * Mask::SHIFT_MAX * long as f64) as f32
+}
+
+/// Feather `feather`'s (0..100) blur on an output whose long edge is `long` px (Gaussian sigma, px): quadratic, so the
+/// low end, where small masks are softened, is finely graded.
+pub fn feather_sigma(feather: f64, long: usize) -> f32 {
+    if !feather.is_finite() {
+        return 0.0;
+    }
+    let k = (feather / 100.0).clamp(0.0, 1.0);
+    (k * k * Mask::FEATHER_MAX * long as f64) as f32
+}
+
+/// The half-widths and half-heights (px) of the three rectangles whose union stands in for a disc of radius `d` px in
+/// [`shift_edge`]: inscribed in the circle at 22.5°, 45° and 67.5°, scaled so the shape reaches `d` along the axes
+/// (within about 8 % of the disc everywhere; a square alone would reach 41 % further along the diagonals).
+pub fn shift_rects(d: f32) -> [(usize, usize); 3] {
+    let r = d.abs() / 0.923_88;
+    let px = |v: f32| if v.is_finite() { v.round().clamp(0.0, 1e6) as usize } else { 0 };
+    let (c1, s1, c2) = (0.923_88 * r, 0.382_68 * r, std::f32::consts::FRAC_1_SQRT_2 * r);
+    [(px(c1), px(s1)), (px(c2), px(c2)), (px(s1), px(c1))]
+}
+
+/// Shift Edge: `alpha` dilated (grown, `d > 0`) or eroded (shrunk, `d < 0`) by about a disc of radius `|d|` px. A
+/// grey-scale dilation moves every edge out by the radius and keeps its softness (a soft brush edge, a gradient's
+/// ramp, a selection's hair stay as soft, only further out).
+pub fn shift_edge(alpha: &Plane, d: f32) -> Plane {
+    use lightcraft_raster::morph::{max_filter_rect, min_filter_rect};
+    let grow = d > 0.0;
+    let filter = if grow { max_filter_rect } else { min_filter_rect };
+    let mut out: Option<Plane> = None;
+    for (rx, ry) in shift_rects(d) {
+        let p = filter(alpha, rx, ry);
+        out = Some(match out {
+            None => p,
+            Some(mut o) => {
+                // dilation by a union of shapes is the max of the dilations (erosion: the min)
+                zip_rows(&mut o, &p, |a, b| *a = if grow { a.max(b) } else { a.min(b) });
+                o
+            }
+        });
+    }
+    out.unwrap_or_else(|| alpha.clone())
 }
 
 /// Per-pixel positions in long-edge units for output pixel centres.

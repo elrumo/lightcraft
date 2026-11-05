@@ -3638,5 +3638,6 @@
   "Choose Cloud Folder…": "Cloud-Ordner wählen…",
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Auf diesem Computer wurde kein iCloud-Drive-, Dropbox- oder Google-Drive-Ordner gefunden.",
   "Syncing through the cloud folder": "Synchronisierung über den Cloud-Ordner",
-  "Synced just now": "Gerade synchronisiert"
+  "Synced just now": "Gerade synchronisiert",
+  "Shift Edge": "Kante verschieben"
 }
