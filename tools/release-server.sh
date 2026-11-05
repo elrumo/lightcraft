@@ -59,17 +59,35 @@ mkdir -p "$web"
 find "$target_dir/web-site" -maxdepth 1 -type f -exec cp {} "$web/" \;
 test -f "$web/index.html"
 
+# Developer ID signing + notarisation (as macos-dmg.sh): the identity from SERVER_SIGN_IDENTITY, else the first
+# "Developer ID Application" in the keychain; notarising needs APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID.
+# Without an identity the zips are unsigned and --publish is refused.
+signed=1
+identity="${SERVER_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/ {print $2; exit}')}"
+if [ -z "$identity" ]; then signed=0; echo "!! no Developer ID Application identity: the zips will be unsigned"; fi
+sign() { [ "$signed" = 0 ] || { codesign --force --timestamp --options runtime --sign "$identity" "$1" && codesign --verify --strict "$1"; }; }
+notarise() {
+  [ "$signed" = 1 ] || return 0
+  if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+    signed=0; echo "!! APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID missing: $1 is signed but not notarised"; return 0
+  fi
+  xcrun notarytool submit "$1" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --timeout 30m --output-format json | tee "$src/_pkg/notary.json"
+  grep -q '"status" *: *"Accepted"' "$src/_pkg/notary.json" || { echo "release-server.sh: notarisation of $1 was not accepted" >&2; exit 1; }
+}
+
 package() { # package <system> <binary> [menu-bar binary]
   name="lightbites-server-$version-$1"
   d="$src/_pkg/$name"
   rm -rf "$d" && mkdir -p "$d"
   cp "$2" "$d/lightbites-server" && chmod 755 "$d/lightbites-server"
+  sign "$d/lightbites-server"
   # the Mac zips carry the menu-bar app (status, Start, Stop) beside the server
-  if [ -n "${3:-}" ]; then cp "$3" "$d/lightbites-menubar" && chmod 755 "$d/lightbites-menubar"; fi
+  if [ -n "${3:-}" ]; then cp "$3" "$d/lightbites-menubar" && chmod 755 "$d/lightbites-menubar" && sign "$d/lightbites-menubar"; fi
   cp -R "$web" "$d/web"
   cp LICENSE-MIT LICENSE-APACHE NOTICE "$d/"
   cp docs/self-hosting.md "$d/README-self-hosting.md"
   (cd "$src/_pkg" && ditto -c -k --keepParent "$name" "$out/$name.zip")
+  notarise "$out/$name.zip"
   echo "   $out/$name.zip"
 }
 
@@ -147,6 +165,7 @@ if [ "$upload" = 1 ]; then
     gh release create "$tag" "$out"/* $flags --title "LightBites Server v$version" --notes "$notes" --repo "$GH_REPO"
   fi
   rm -f "$mergedsums"
+  if [ "$publish" = 1 ] && [ "$signed" = 0 ]; then echo "release-server.sh: the Mac zips are not signed and notarised: not publishing" >&2; exit 1; fi
   if [ "$publish" = 1 ]; then
     gh release edit "$tag" --draft=false
     echo "   published: https://github.com/$GH_REPO/releases/tag/$tag"

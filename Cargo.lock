@@ -4841,8 +4841,14 @@ name = "lightcraft-ios-swift"
 version = "0.14.3"
 dependencies = [
  "lightcraft-apphost",
+ "lightcraft-denoise",
+ "lightcraft-denoise-core",
+ "lightcraft-diffuse",
  "lightcraft-engine",
+ "lightcraft-erase",
  "lightcraft-ios-host",
+ "lightcraft-raw",
+ "lightcraft-segment",
  "lightcraft-sysmem",
  "log",
  "serde_json",

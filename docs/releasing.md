@@ -56,8 +56,12 @@ Options: `--version`, `--image`, `--skip-linux`, `--skip-intel`.
 Set repository secret `DOCKERHUB_TOKEN` (write access to `elrumo/lightbites-server`) and
 `LIGHTBITES_SERVER_RELEASE_TOKEN` (contents write access to `elrumo/lightbites-server`). The workflow embeds the
 public Bugsink ingest DSN, overridable with the `LIGHTBITES_BUGSINK_DSN` repository variable. A manual run without
-"publish" only builds (the dry run). The binaries are unsigned: on a Mac the
-download needs `xattr -dr com.apple.quarantine` once (documented in [self-hosting.md](self-hosting.md)). Keep the
+"publish" only builds (the dry run). The Mac programs are signed with the Developer ID
+certificate (hardened runtime) and the zip is notarised, using the same `APPLE_*` and `KEYCHAIN_PASSWORD` secrets as
+`release.yml`; `tools/release-server.sh` does the same from a Mac (identity from `SERVER_SIGN_IDENTITY` or the keychain,
+`APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID` to notarise) and refuses `--publish` for unsigned zips. A zip can't be
+stapled, so Gatekeeper checks the ticket online. Without the secrets the workflow warns and the Mac zips are unsigned
+(the `xattr` step in [self-hosting.md](self-hosting.md) is then needed). Keep the
 version at or above the app's in `Cargo.toml`: the apps and the server are updated together.
 
 ## Builds and artifacts

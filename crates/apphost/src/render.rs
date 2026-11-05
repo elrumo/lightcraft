@@ -425,6 +425,10 @@ const VARIANT_PRIORITY: u32 = 6;
 pub const BACKGROUND_THUMB_PRIORITY: u32 = 3;
 /// A thumbnail in the grid's reach above and below the screen (everything above this is on screen or wanted now).
 pub const PREFETCH_THUMB_PRIORITY: u32 = 5;
+/// A neighbour's prefetch is skipped when the device lets the app allocate less than this (iOS ends an app past its
+/// limit): its decode and render (~400 MB for a 24 MP raw) and the next swipe's, side by side, with room to spare.
+/// ponytail: one fixed reserve; scale it with the photo's pixels if prefetch is skipped where it would fit.
+const PREFETCH_MIN_LEFT: usize = 1 << 30;
 
 /// Whether a photo's grid thumbnail is already the picture it should show, so the render of the raw
 /// behind it is skipped. `embedded_is_final` is the engine's answer
@@ -501,6 +505,8 @@ pub struct Scheduler<V> {
     pub catalog_rev: u64,
     /// Prefetch slot → key of the last job submitted (each runs once).
     prefetched: HashMap<Slot, u64>,
+    /// Prefetches asked for while the loupe's own render was under way: they start when it ends ([`Self::prefetch`]).
+    deferred_prefetch: Vec<(Slot, RenderJob, u32)>,
     /// Variant key → frame it was last asked for (LRU of [`Slot::Variant`] textures).
     variant_used: HashMap<u64, u64>,
     /// How many variants the last frame's views showed at once (see [`Self::want_variants`]).
@@ -634,6 +640,7 @@ impl<V> Scheduler<V> {
             failed: HashMap::new(),
             catalog_rev: 0,
             prefetched: HashMap::new(),
+            deferred_prefetch: Vec::new(),
             variant_used: HashMap::new(),
             variant_want: 0,
             frame: 0,
@@ -946,6 +953,7 @@ impl<V> Scheduler<V> {
         self.shown_ids.remove(&slot);
         self.quick_tried.remove(&slot);
         self.prefetched.remove(&slot);
+        self.deferred_prefetch.retain(|(s, _, _)| *s != slot);
         self.release(slot);
     }
 
@@ -1124,8 +1132,17 @@ impl<V> Scheduler<V> {
 
     /// Prepare a photo in the background (a [`Slot::Prefetch`] job runs once per key; a newer one
     /// replaces it while queued). Memory stays bounded by the engine's source caches.
+    ///
+    /// Not while the loupe's own render is under way: the two side by side (a 24 MP raw takes ~400 MB to decode and
+    /// render) on top of the full caches were what ended the phone app for memory while swiping. It starts when that
+    /// render ends, and is skipped when the device has too little memory left ([`PREFETCH_MIN_LEFT`]).
     pub fn prefetch(&mut self, slot: Slot, mut job: RenderJob, priority: u32) {
         if self.prefetched.get(&slot) == Some(&job.key) {
+            return;
+        }
+        if self.pending.contains_key(&Slot::Main) {
+            self.deferred_prefetch.retain(|(s, _, _)| *s != slot);
+            self.deferred_prefetch.push((slot, job, priority));
             return;
         }
         self.prefetched.insert(slot, job.key);
@@ -1136,7 +1153,28 @@ impl<V> Scheduler<V> {
         self.requests.insert(slot, Requested { look: Some(look), id: job.request_id, source: Some(job.origin.clone()) });
         let key = job.key;
         let failed = Failed::of(&job);
-        self.pool.submit(slot, key, priority, Box::new(move || run_for(failed, || lightcraft_engine::memory::in_background(|| job.run()), &None)));
+        self.pool.submit(
+            slot,
+            key,
+            priority,
+            Box::new(move || {
+                // (asked again when the job starts: memory goes while it waits in the queue)
+                if lightcraft_sysmem::available_memory().is_some_and(|left| left < PREFETCH_MIN_LEFT) {
+                    return failed.result("skipped: little memory left".into());
+                }
+                run_for(failed, || lightcraft_engine::memory::in_background(|| job.run()), &None)
+            }),
+        );
+    }
+
+    /// The prefetches put off while the loupe's render was under way, once it has ended.
+    fn start_deferred_prefetch(&mut self) {
+        if self.deferred_prefetch.is_empty() || self.pending.contains_key(&Slot::Main) {
+            return;
+        }
+        for (slot, job, priority) in std::mem::take(&mut self.deferred_prefetch) {
+            self.prefetch(slot, job, priority);
+        }
     }
 
     /// Is a request for `slot` queued or running?
@@ -1163,6 +1201,7 @@ impl<V> Scheduler<V> {
         self.quick_tried.clear();
         self.failed.clear();
         self.prefetched.clear();
+        self.deferred_prefetch.clear();
         self.pending.clear();
         self.queue.clear();
     }
@@ -1555,6 +1594,7 @@ impl<V> Scheduler<V> {
             }
             polled.shown.push(slot);
         }
+        self.start_deferred_prefetch();
         polled
     }
 
@@ -2350,6 +2390,27 @@ mod scheduler_tests {
         assert!(r.wait_for_worker(Duration::ZERO));
         r.poll(&mut s, &mut Keep);
         assert_eq!((r.in_flight(), r.in_flight_without_prefetch()), (0, 0));
+    }
+
+    // A neighbour's prefetch waits for the loupe's own render: the two decodes side by side ended the phone app
+    #[test]
+    fn prefetch_waits_for_the_loupes_render() {
+        let mut s = flat_session();
+        let mut r = Scheduler::<Arc<Rgba8>> { pool: JobPool::new(0), ..Default::default() };
+        r.request(Slot::Main, s.loupe_job(PhotoId(1), 8, 8, true).unwrap(), 100);
+        r.prefetch(Slot::Prefetch(0), s.thumb_job(PhotoId(1), 384).unwrap(), 1);
+        assert_eq!(r.pool.queued(), 1, "only the loupe's render is queued");
+        assert!(!r.is_pending(Slot::Prefetch(0)));
+        assert_eq!(r.pool.run_inline(1), 1);
+        r.poll(&mut s, &mut Keep);
+        assert!(!r.is_pending(Slot::Main));
+        assert!(r.is_pending(Slot::Prefetch(0)), "the prefetch starts once the loupe's render has ended");
+        assert_eq!(r.pool.queued(), 1);
+        // (cancelled while it waited: it never starts)
+        r.request(Slot::Main, s.loupe_job(PhotoId(1), 9, 9, true).unwrap(), 100);
+        r.prefetch(Slot::Prefetch(1), s.thumb_job(PhotoId(1), 256).unwrap(), 1);
+        r.cancel(Slot::Prefetch(1));
+        assert!(r.deferred_prefetch.is_empty());
     }
 
     // A finished render becomes the slot's picture, with its facts, through the frontend's presenter

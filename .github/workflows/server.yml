@@ -114,6 +114,13 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       LIGHTBITES_BUGSINK_DSN: ${{ vars.LIGHTBITES_BUGSINK_DSN || 'https://864779c6953e435696525549a16dae9c@bugs.eliasruiz.com/11' }}
+      # the same Developer ID secrets as release.yml; without them the Mac zips stay unsigned (a tag release then warns)
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
@@ -142,6 +149,25 @@ jobs:
           "$exe" health --listen 127.0.0.1:18080
           curl -fsS http://127.0.0.1:18080/ | grep -qi '<html'
           kill $pid || true
+      - name: Sign the Mac programs (Developer ID, hardened runtime)
+        if: runner.os == 'macOS'
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then echo "::warning::no Apple signing secrets: the Mac zip is unsigned"; exit 0; fi
+          kc="$RUNNER_TEMP/sign.keychain-db"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$kc"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" login.keychain-db
+          id=$(security find-identity -v -p codesigning "$kc" | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          [ -n "$id" ] || { echo "no Developer ID Application identity in the certificate"; exit 1; }
+          for exe in lightbites-server lightbites-menubar; do
+            codesign --force --timestamp --options runtime --sign "$id" "target/${{ matrix.target }}/release/$exe"
+            codesign --verify --strict --verbose=2 "target/${{ matrix.target }}/release/$exe"
+          done
+          echo "SIGNED=1" >> "$GITHUB_ENV"
       - name: Package
         run: |
           name="lightbites-server-$VERSION-${{ matrix.name }}"
@@ -158,6 +184,13 @@ jobs:
             7z a -tzip "$name.zip" "$name" > /dev/null
           elif [ "${{ runner.os }}" = macOS ]; then
             ditto -c -k --keepParent "$name" "$name.zip"
+            # Apple scans the zip; a bare program can't be stapled, Gatekeeper then looks the ticket up online
+            if [ "${SIGNED:-}" = 1 ]; then
+              xcrun notarytool submit "$name.zip" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --timeout 30m --output-format json | tee "$RUNNER_TEMP/notary.json"
+              grep -q '"status" *: *"Accepted"' "$RUNNER_TEMP/notary.json" || { echo "notarisation was not accepted"; exit 1; }
+              rm -rf "$RUNNER_TEMP/check" && mkdir "$RUNNER_TEMP/check" && ditto -x -k "$name.zip" "$RUNNER_TEMP/check"
+              spctl -a -t exec -vv "$RUNNER_TEMP/check/$name/lightbites-server"
+            fi
           else
             zip -qr "$name.zip" "$name"
           fi
