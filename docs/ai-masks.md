@@ -50,7 +50,8 @@ renders them. Editing the photo's look later does not recompute a mask (click ag
 
 A native (non-Rust) frontend can select with a model its platform provides instead of SAM 3
 ([engine-host.md](engine-host.md)). The result is stored exactly like a SAM 3 selection: an Object mask whose `seg`
-holds the answer (512 × 512 logits, a few kilobytes) and whose `hint` / `exclude` hold the taps, so renders, exports,
+holds the answer (1024 × 1024 logits, about a cell per pixel the model saw, a few kilobytes deflated) and whose
+`hint` / `exclude` hold the taps, so renders, exports,
 Undo and sync never run a model. How it gets there: the engine renders the photo as a model sees it
 (`mask.inputImage`: uncropped, oriented, no masks, at most 1008 px, a PNG), the frontend hands that to its model and
 sends the coverage picture back (`mask.add` / `mask.addComponent` / `mask.setObject` with a

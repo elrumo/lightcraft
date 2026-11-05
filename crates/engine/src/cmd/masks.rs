@@ -11,9 +11,11 @@ use super::{CommandSpec, bad, bool_or, cmd, f64_or, has_active, ok, point, str_p
 use crate::segment::{Click, INPUT_EDGE, MAX_CLICKS};
 use crate::{Result, Session};
 
-/// Side of the grid a bitmap from a system segmenter is stored on (SAM 3's own is 288; Vision's
-/// edges are crisper, and a binary mask this size deflates to a few kilobytes).
-const BITMAP_SIDE: usize = 512;
+/// Side of the grid a bitmap from a system segmenter is stored on (SAM 3's own is 288): the largest a
+/// stored selection takes, about one cell per pixel of the picture the segmenter saw
+/// (`mask.inputImage`, at most [`INPUT_EDGE`] across), so a thin part of it (a strand of hair, a
+/// railing) is kept rather than averaged away. Mostly fully in or out, it deflates to a few kilobytes.
+const BITMAP_SIDE: usize = lightcraft_develop::segmask::MAX_SIDE;
 
 /// A colour-range mask compares every pixel against every sample, so render and export cost is
 /// pixels x samples. The interactive sampler stops at 5; automation (`mask.add`/`mask.update`)

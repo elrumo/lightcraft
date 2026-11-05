@@ -61,9 +61,26 @@ fn a_bitmap_becomes_an_object_mask_without_any_model() {
     let (taps_in, taps_out, seg) = &o[0];
     assert_eq!((*taps_in, *taps_out), (1, 1), "the taps are kept for their dots");
     let seg = seg.as_ref().unwrap();
-    // 40 of 64 columns in: 62.5 % of the 512 cells across
-    assert!(logit_at(seg, 10) > 5.0 && logit_at(seg, 300) > 5.0, "{} {}", logit_at(seg, 10), logit_at(seg, 300));
-    assert!(logit_at(seg, 330) < -5.0 && logit_at(seg, 511) < -5.0, "{} {}", logit_at(seg, 330), logit_at(seg, 511));
+    // 40 of 64 columns in: 62.5 % of the cells across
+    let at = |f: f64| logit_at(seg, (f * seg.side as f64) as usize);
+    assert!(at(0.02) > 5.0 && at(0.58) > 5.0, "{} {}", at(0.02), at(0.58));
+    assert!(at(0.645) < -5.0 && at(0.999) < -5.0, "{} {}", at(0.645), at(0.999));
+}
+
+/// A selection from a system segmenter keeps its own detail: a line two pixels wide in a picture
+/// as wide as the segmenter sees stays selected (on a grid of half that, the cells were two to
+/// three pixels across, held only part of the line, and it came out half selected).
+#[test]
+fn a_thin_part_of_a_selection_is_kept() {
+    let mut s = Session::with_demo();
+    let (w, h) = (1000, 300);
+    let cov: Vec<u8> = (0..w * h).map(|i| if (501..503).contains(&(i % w)) { 255 } else { 0 }).collect();
+    let bitmap = json!({"width": w, "height": h, "data": STANDARD.encode(cov)});
+    s.execute("mask.add", &json!({"kind": "object", "bitmap": bitmap, "points": [[0.501, 0.5]]})).unwrap();
+    let seg = objects(&s)[0].2.clone().unwrap();
+    let side = seg.side as usize;
+    let best = (0..side).map(|x| logit_at(&seg, x)).fold(f32::MIN, f32::max);
+    assert!(best > 3.0, "the line's strongest cell: logit {best} on a grid of {side}");
 }
 
 #[test]
@@ -75,7 +92,8 @@ fn set_object_replaces_the_selection_in_one_undo_step() {
     assert_eq!(o.len(), 1, "replaced, not added");
     assert_eq!((o[0].0, o[0].1), (2, 1));
     let seg = o[0].2.clone().unwrap();
-    assert!(logit_at(&seg, 300) > 5.0 && logit_at(&seg, 450) < -5.0, "the wider selection replaced the narrow one");
+    let at = |f: f64| logit_at(&seg, (f * seg.side as f64) as usize);
+    assert!(at(0.58) > 5.0 && at(0.88) < -5.0, "the wider selection replaced the narrow one");
     s.execute("edit.undo", &json!({})).unwrap();
     let o = objects(&s);
     assert_eq!((o[0].0, o[0].1), (1, 0), "one undo step goes back to the first selection");
