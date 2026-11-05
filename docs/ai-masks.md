@@ -58,6 +58,14 @@ sends the coverage picture back (`mask.add` / `mask.addComponent` / `mask.setObj
 `bitmap {width, height, data}`); the engine resamples it onto the stored grid. The frontend does no
 coordinate or image math.
 
+A zoomed-in second pass gives such a selection finer edges on a large photo, as SAM 3's detail pass does:
+`mask.detailRegion` says where to look (the selection's box with a margin, `null` when a closer look gains under one and
+a half times the detail: a selection over most of the photo, or a photo the whole-photo pass already saw near full
+size) with the selection's taps placed in that part and a `key`; `mask.inputImage {rect}` renders that part from a
+source sharp enough for it; the frontend's model selects in it again; `mask.setDetail {rect, bitmap, key}` keeps the
+answer as the selection's detail. The engine refuses a pass that selected something else there (their insides overlap
+by less than half their union) or one for a selection that changed since `key`, so the coarse selection stays.
+
 ## Remote Metal inference
 
 Native builds with `sam` can keep the editor, RAW files, library, and exports local while

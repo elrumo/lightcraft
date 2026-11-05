@@ -144,6 +144,67 @@ fn bitmap_param(p: &Value, c: &str) -> Result<Option<(usize, usize, Vec<u8>)>> {
     Ok(Some((w, h, cov)))
 }
 
+/// A rectangle `[x0, y0, x1, y1]` of the photo (normalized, uncropped and oriented) under `k`, held to the photo; an
+/// error when it isn't four numbers or is under 1 % across.
+fn rect_param(p: &Value, k: &str, c: &str) -> Result<Option<[f64; 4]>> {
+    let Some(v) = p.get(k).filter(|v| !v.is_null()) else { return Ok(None) };
+    let a: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+    let [x0, y0, x1, y1] = a.as_slice() else { return Err(bad(c, format!("`{k}` is [x0, y0, x1, y1]"))) };
+    let r = [x0, y0, x1, y1].map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { f64::NAN });
+    if r.iter().any(|v| v.is_nan()) || r[2] - r[0] < 0.01 || r[3] - r[1] < 0.01 {
+        return Err(bad(c, format!("`{k}` is no part of the photo")));
+    }
+    Ok(Some(r))
+}
+
+/// The component an Object selection's command is about: `component`, else the mask's last Object component.
+fn object_component(m: &Mask, p: &Value, c: &str) -> Result<usize> {
+    match p.get("component").and_then(Value::as_u64).and_then(|k| usize::try_from(k).ok()) {
+        Some(k) => Ok(k),
+        None => {
+            m.components.iter().rposition(|x| matches!(x.shape, MaskShape::Object { .. })).ok_or_else(|| bad(c, "the mask has no Object selection"))
+        }
+    }
+}
+
+/// What a stored selection is, in a few characters: a detail pass computed for it is refused once it changed.
+fn seg_key(seg: &lightcraft_develop::SegMask) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    (seg.side, &*seg.data, seg.rect.map(|r| r.map(f64::to_bits))).hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// Whether `patch` (a zoomed-in pass over `rect`) selects the same thing as `seg` there: their insides overlap by at
+/// least half their union, on a 48 × 48 grid over `rect`. A pass that found another object (or nothing) does not.
+fn detail_agrees(seg: &lightcraft_develop::SegMask, patch: &lightcraft_develop::SegMask, rect: [f64; 4]) -> bool {
+    let inside = |m: &lightcraft_develop::SegMask| {
+        let (Some(l), Some(b)) = (m.logits(), m.bounds()) else { return None };
+        let side = m.side as usize;
+        Some(move |x: f64, y: f64| {
+            let (u, v) = ((x - b[0]) / (b[2] - b[0]), (y - b[1]) / (b[3] - b[1]));
+            if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
+                return false;
+            }
+            let (cx, cy) = ((u * side as f64) as usize, (v * side as f64) as usize);
+            l.get(cy * side + cx).is_some_and(|l| *l > 0.0)
+        })
+    };
+    let (Some(a), Some(b)) = (inside(seg), inside(patch)) else { return false };
+    let (mut both, mut either) = (0u32, 0u32);
+    const N: usize = 48;
+    for j in 0..N {
+        for i in 0..N {
+            let x = rect[0] + (rect[2] - rect[0]) * (i as f64 + 0.5) / N as f64;
+            let y = rect[1] + (rect[3] - rect[1]) * (j as f64 + 0.5) / N as f64;
+            let (p, q) = (a(x, y), b(x, y));
+            both += u32::from(p && q);
+            either += u32::from(p || q);
+        }
+    }
+    either > 0 && both * 2 >= either
+}
+
 /// A `bitmap` as a stored segmentation of the whole photo (an Object mask's `seg`).
 fn bitmap_seg(p: &Value, c: &str) -> Result<Option<lightcraft_develop::SegMask>> {
     let Some((w, h, cov)) = bitmap_param(p, c)? else { return Ok(None) };
@@ -710,19 +771,94 @@ pub fn specs() -> Vec<CommandSpec> {
             "Selection Input Image",
             [],
             None,
-            "{maxEdge?: 1008} → {photo, width, height, png: base64}. The active photo as a selection model sees it (uncropped, oriented, without masks), for a system segmenter (Apple Vision in a native frontend); its answer goes back as `bitmap` to `mask.add` / `mask.setObject`",
+            "{maxEdge?: 1008, rect?: [x0, y0, x1, y1]} → {photo, width, height, png: base64, rect}. The active photo as a selection model sees it (uncropped, oriented, without masks), for a system segmenter (Apple Vision in a native frontend); its answer goes back as `bitmap` to `mask.add` / `mask.setObject`. With `rect` (normalized, from `mask.detailRegion`), only that part, rendered from a source sharp enough for it: a zoomed-in pass, whose answer goes to `mask.setDetail`",
             has_active,
             |s, p| {
                 let c = "mask.inputImage";
                 let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
                 let edge = (f64_or(p, "maxEdge", INPUT_EDGE as f64) as usize).clamp(64, INPUT_EDGE);
+                let rect = rect_param(p, "rect", c)?;
                 let mut d = (*s.develop_of(id).unwrap_or_default()).clone();
                 d.masks.clear();
-                let job = s.preview_job(id, edge, edge, false, &d).ok_or_else(|| bad(c, "no such photo"))?;
+                let job = match rect {
+                    None => s.preview_job(id, edge, edge, false, &d),
+                    Some(r) => s.selection_region_job(id, d, r, edge),
+                }
+                .ok_or_else(|| bad(c, "no such photo"))?;
                 let img = job.run().rendered.map_err(|e| ai_err(format!("couldn't render the photo: {e}")))?.image;
                 let png = lightcraft_codecs::encode_png(&EncodeImage::rgba8(&img), &EncodeMeta::default())
                     .map_err(|e| ai_err(format!("couldn't encode the photo: {e}")))?;
-                Ok(json!({"photo": id.0, "width": img.width, "height": img.height, "png": STANDARD.encode(png)}))
+                Ok(json!({"photo": id.0, "width": img.width, "height": img.height, "png": STANDARD.encode(png), "rect": rect}))
+            }
+        ),
+        cmd!(
+            query "mask.detailRegion",
+            "AI Mask Detail Region",
+            [],
+            None,
+            "{id?, component?} → {rect: [x0, y0, x1, y1], points, exclude, key} | null. Where a zoomed-in pass over an Object selection would look (its box with a margin, normalized), with its taps placed in that part (0..1 of it; the ones outside left out) and the selection's `key`, for a native frontend's segmenter: `mask.inputImage {rect}`, then `mask.setDetail`. Null when it would gain nothing: no stored selection, one over most of the photo, or a photo small enough that the whole-photo pass already saw that part at full size",
+            has_active,
+            |s, p| {
+                let c = "mask.detailRegion";
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let mid = mask_id(p, s.active_mask, c)?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let m = d.masks.iter().find(|m| m.id == mid).ok_or_else(|| bad(c, format!("no mask {mid}")))?;
+                let k = object_component(m, p, c)?;
+                let Some(MaskShape::Object { hint, exclude, seg: Some(seg), .. }) = m.components.get(k).map(|x| &x.shape) else {
+                    return Ok(Value::Null);
+                };
+                let photo = s.catalog.photo(id).ok_or_else(|| bad(c, "no such photo"))?;
+                let (pw, ph) = (f64::from(photo.width.max(1)), f64::from(photo.height.max(1)));
+                let (w, h) = if d.orientation.swaps_axes() { (ph, pw) } else { (pw, ph) };
+                let Some(r) = crate::segment::detail_region(seg, w / h) else { return Ok(Value::Null) };
+                // the whole-photo pass saw this part at INPUT_EDGE over the long edge; the zoomed one sees it at most at
+                // INPUT_EDGE, or at the photo's own pixels: under one and a half times the detail is not worth a pass
+                let part = ((r[2] - r[0]) * w).max((r[3] - r[1]) * h);
+                let seen = part * INPUT_EDGE as f64 / w.max(h);
+                if part.min(INPUT_EDGE as f64) < 1.5 * seen {
+                    return Ok(Value::Null);
+                }
+                let place = |pts: &[Point]| -> Vec<[f64; 2]> {
+                    pts.iter()
+                        .map(|q| [(q.x - r[0]) / (r[2] - r[0]), (q.y - r[1]) / (r[3] - r[1])])
+                        .filter(|q| q.iter().all(|v| (0.0..=1.0).contains(v)))
+                        .collect()
+                };
+                Ok(json!({"rect": r, "points": place(hint), "exclude": place(exclude), "key": seg_key(seg)}))
+            }
+        ),
+        cmd!(
+            "mask.setDetail",
+            "Set AI Mask Detail",
+            [],
+            None,
+            "{id?, component?, rect: [x0, y0, x1, y1], bitmap: {width, height, data}, key?} — a zoomed-in pass over an Object selection, computed outside the engine over `rect` (`mask.detailRegion`, `mask.inputImage {rect}`), kept as the selection's detail inside `rect` (finer edges). Refused when it selects something else than the selection there, or when the selection changed since `key` → {activeMask}",
+            has_active,
+            |s, p| {
+                let c = "mask.setDetail";
+                let rect = rect_param(p, "rect", c)?.ok_or_else(|| bad(c, "missing `rect`"))?;
+                let (w, h, cov) = bitmap_param(p, c)?.ok_or_else(|| bad(c, "missing `bitmap`"))?;
+                let mut patch = lightcraft_develop::SegMask::from_coverage(BITMAP_SIDE, w, h, &cov)
+                    .ok_or_else(|| bad(c, "bitmap `data` doesn't match its width × height"))?;
+                patch.rect = Some(rect);
+                let key = p.get("key").and_then(Value::as_str).map(str::to_owned);
+                let mid = mask_id(p, s.active_mask, c)?;
+                masks_edit(s, c, "AI Mask Detail", |masks, _| {
+                    let i = find(masks, mid, c)?;
+                    let k = object_component(&masks[i], p, c)?;
+                    let Some(MaskShape::Object { seg: Some(seg), detail, .. }) = masks[i].components.get_mut(k).map(|x| &mut x.shape) else {
+                        return Err(bad(c, format!("component {k} is not an Object selection")));
+                    };
+                    if key.as_ref().is_some_and(|key| *key != seg_key(seg)) {
+                        return Err(bad(c, "the selection changed since its detail was asked for"));
+                    }
+                    if !detail_agrees(seg, &patch, rect) {
+                        return Err(bad(c, "the zoomed-in pass selected something else than the selection"));
+                    }
+                    *detail = vec![patch.clone()];
+                    Ok(())
+                })
             }
         ),
         cmd!(

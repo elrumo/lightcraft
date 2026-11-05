@@ -168,3 +168,73 @@ fn a_tap_that_selected_nothing_adds_no_spot() {
     assert!(spots(&s).is_empty());
     assert!(s.execute("spot.add", &json!({})).unwrap_err().to_string().contains("missing points"));
 }
+
+/// A `w × h` coverage picture with the pixels whose centres fall in `[x0, y0, x1, y1]` (normalized) in.
+fn block(w: usize, h: usize, b: [f64; 4]) -> Value {
+    let cov: Vec<u8> = (0..w * h)
+        .map(|i| {
+            let (x, y) = (((i % w) as f64 + 0.5) / w as f64, ((i / w) as f64 + 0.5) / h as f64);
+            if (b[0]..b[2]).contains(&x) && (b[1]..b[3]).contains(&y) { 255 } else { 0 }
+        })
+        .collect();
+    json!({"width": w, "height": h, "data": STANDARD.encode(cov)})
+}
+
+/// `b` (normalized to the photo) in the coordinates of `r`, a part of it.
+fn within(b: [f64; 4], r: [f64; 4]) -> [f64; 4] {
+    let (rw, rh) = (r[2] - r[0], r[3] - r[1]);
+    [(b[0] - r[0]) / rw, (b[1] - r[1]) / rh, (b[2] - r[0]) / rw, (b[3] - r[1]) / rh]
+}
+
+/// A native segmenter's selection of a small object gets a zoomed-in second pass: the engine says where to look (with
+/// the taps placed there), renders that part, and keeps the answer as the selection's detail only when it is the same
+/// object (and the selection hasn't changed since).
+#[test]
+fn a_small_selection_gets_a_zoomed_in_pass_that_must_agree_with_it() {
+    let mut s = Session::with_demo();
+    let object = [0.5, 0.4, 0.6, 0.55];
+    s.execute("mask.add", &json!({"kind": "object", "bitmap": block(400, 300, object), "points": [[0.55, 0.47]], "exclude": [[0.05, 0.05]]}))
+        .unwrap();
+    let r = s.execute("mask.detailRegion", &json!({})).unwrap();
+    let rect: [f64; 4] = serde_json::from_value(r["rect"].clone()).unwrap();
+    assert!(rect[0] < 0.5 && rect[2] > 0.6 && rect[1] < 0.4 && rect[3] > 0.55, "{rect:?} frames the object");
+    assert!((rect[2] - rect[0]) * (rect[3] - rect[1]) < 0.3, "{rect:?} is a small part of the photo");
+    // the tap is placed in the part; the excluded one far outside it is left out
+    let tap = r["points"][0].as_array().unwrap();
+    let want = within([0.55, 0.47, 0.55, 0.47], rect);
+    assert!((tap[0].as_f64().unwrap() - want[0]).abs() < 1e-9 && (tap[1].as_f64().unwrap() - want[1]).abs() < 1e-9, "{r}");
+    assert_eq!(r["exclude"].as_array().map(Vec::len), Some(0));
+    let key = r["key"].as_str().unwrap().to_owned();
+
+    // the picture of that part
+    let img = s.execute("mask.inputImage", &json!({"rect": rect, "maxEdge": 256})).unwrap();
+    assert!(img["width"].as_u64().unwrap() <= 256 && img["height"].as_u64().unwrap() <= 256, "{}", img["width"]);
+    assert_eq!(img["rect"], r["rect"]);
+    assert!(s.execute("mask.inputImage", &json!({"rect": [0.5, 0.5, 0.5, 0.9]})).is_err(), "a sliver is no part");
+
+    // another object there is refused, a stale key too; the same object at finer detail is kept
+    let elsewhere = within([rect[0], rect[1], rect[0] + 0.02, rect[1] + 0.02], rect);
+    assert!(s.execute("mask.setDetail", &json!({"rect": rect, "bitmap": block(200, 200, elsewhere), "key": key})).is_err());
+    let same = block(200, 200, within(object, rect));
+    assert!(s.execute("mask.setDetail", &json!({"rect": rect, "bitmap": same, "key": "0000000000000000"})).is_err());
+    s.execute("mask.setDetail", &json!({"rect": rect, "bitmap": same, "key": key})).unwrap();
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    let MaskShape::Object { detail, .. } = &d.masks[0].components[0].shape else { panic!("object") };
+    assert_eq!(detail.len(), 1);
+    assert_eq!(detail[0].rect, Some(rect));
+    // one undo step takes it away
+    s.execute("edit.undo", &json!({})).unwrap();
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    assert!(matches!(&d.masks[0].components[0].shape, MaskShape::Object { detail, .. } if detail.is_empty()));
+}
+
+#[test]
+fn a_selection_over_most_of_the_photo_or_none_gets_no_zoomed_in_pass() {
+    let mut s = Session::with_demo();
+    s.execute("mask.add", &json!({"kind": "object", "bitmap": block(400, 300, [0.05, 0.05, 0.95, 0.95])})).unwrap();
+    assert_eq!(s.execute("mask.detailRegion", &json!({})).unwrap(), Value::Null);
+    // a mask with no Object selection is an error, a damaged rect too
+    s.execute("mask.add", &json!({"kind": "radial"})).unwrap();
+    assert!(s.execute("mask.detailRegion", &json!({})).is_err());
+    assert!(s.execute("mask.setDetail", &json!({"rect": "x", "bitmap": block(4, 4, [0.0, 0.0, 1.0, 1.0])})).is_err());
+}

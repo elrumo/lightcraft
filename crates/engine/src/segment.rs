@@ -419,7 +419,7 @@ impl Session {
         region: Option<[f64; 4]>,
     ) -> Result<worker::Job, String> {
         let dir = self.segmenter.model_dir()?;
-        let (key, mut d) = self.segment_key(id).ok_or("no such photo")?;
+        let (key, d) = self.segment_key(id).ok_or("no such photo")?;
         let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
         let missing = match &p.source {
             lightcraft_catalog::Source::File { path } if !std::path::Path::new(path).exists() => Some(path.clone()),
@@ -427,20 +427,31 @@ impl Session {
         };
         let render = match region {
             None => self.preview_job(id, INPUT_EDGE, INPUT_EDGE, false, &d).ok_or("no such photo")?,
-            Some(region) => {
-                d.crop.geometry =
-                    lightcraft_geom::CropGeometry { rect: lightcraft_geom::Rect::new(region[0], region[1], region[2], region[3]), angle: 0.0 };
-                d.crop.flip_h = false;
-                d.crop.flip_v = false;
-                d.geometry.constrain_crop = false;
-                let mut job = self.preview_job(id, INPUT_EDGE, INPUT_EDGE, true, &d).ok_or("no such photo")?;
-                let frac = (region[2] - region[0]).max(region[3] - region[1]).max(0.01);
-                job.level = crate::media::SourceLevel::for_size((INPUT_EDGE as f64 / frac) as usize);
-                job.source = self.media.source_ref(&p, job.level);
-                job
-            }
+            Some(region) => self.selection_region_job(id, d, region, INPUT_EDGE).ok_or("no such photo")?,
         };
         Ok(worker::Job { dir, key: if region.is_some() { 0 } else { key }, source_key: key, render: Some(render), missing, kind, tag, reply })
+    }
+
+    /// A render of `region` (normalized, of the uncropped oriented photo) of photo `id` with settings `d`, at most `edge`
+    /// px across, from a source sharp enough for it: the picture a zoomed-in selection pass looks at (SAM 3's detail
+    /// pass, a native frontend's model through `mask.inputImage {rect}`).
+    pub(crate) fn selection_region_job(
+        &mut self,
+        id: PhotoId,
+        mut d: lightcraft_develop::DevelopSettings,
+        region: [f64; 4],
+        edge: usize,
+    ) -> Option<crate::media::RenderJob> {
+        let p = self.catalog.photo(id)?.clone();
+        d.crop.geometry = lightcraft_geom::CropGeometry { rect: lightcraft_geom::Rect::new(region[0], region[1], region[2], region[3]), angle: 0.0 };
+        d.crop.flip_h = false;
+        d.crop.flip_v = false;
+        d.geometry.constrain_crop = false;
+        let mut job = self.preview_job(id, edge, edge, true, &d)?;
+        let frac = (region[2] - region[0]).max(region[3] - region[1]).max(0.01);
+        job.level = crate::media::SourceLevel::for_size((edge as f64 / frac) as usize);
+        job.source = self.media.source_ref(&p, job.level);
+        Some(job)
     }
 
     /// Send a request and wait for its result (CLI, MCP, tests; or when not in background mode).
