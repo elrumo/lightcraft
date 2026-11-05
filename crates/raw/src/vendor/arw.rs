@@ -777,7 +777,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     };
     // decrypted for the copies' agreement check too, not only when a plain field is missing: a few dozen kB, found by
     // reading only three `SR2Private` entries (see `sr2::SubIfd::read`)
-    let (mut sony_lens, warp) = super::arw_lens::corrections(bytes, tiff.order, (raw, tiff.bigtiff), sr2(), &model, geometry);
+    let (mut sony_lens, lens) = super::arw_lens::corrections(bytes, tiff.order, (raw, tiff.bigtiff), sr2(), &model, geometry);
     // The ILCE-7RM6's tables follow other conventions, measured against its camera JPEGs ([`super::arw_lens_rm6`]);
     // its allowlist and `arw_lens`'s are disjoint, so at most one of them produces an opcode. Both the image framing
     // and the table geometry must stay within the validated 3:2 scope.
@@ -813,7 +813,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         linearized: false,
         pixel_aspect: 1.0,
         // only validated components become opcodes (see `arw_lens`, and `arw_lens_rm6` for the ILCE-7RM6)
-        opcodes: OpcodeLists { list3: warp.into_iter().chain(rm6).collect(), ..Default::default() },
+        opcodes: OpcodeLists { list3: lens.into_iter().chain(rm6).collect(), ..Default::default() },
         metadata,
         lens_metadata: LensMetadata { sony: sony_lens },
     };

@@ -11,7 +11,7 @@ convention; that page's *Two conventions* section has the comparison and what wo
 Sony ARWs record three lens corrections per shot in the raw image IFD: shading (vignetting), lateral chromatic
 aberration (CA) and distortion, each as a camera setting and a radial table, with copies in the encrypted
 `SR2SubIFD`. LightCraft **decodes all three** wherever a file carries them and applies distortion here on two validated
-bodies: **ILCE-7RM4A (A7R IVA)** and **ILCE-7CR (A7CR)**. The A7R IVA keeps its existing Bayer 3:2 conversion,
+bodies: **ILCE-7RM4A (A7R IVA)** and **ILCE-7CR (A7CR)** (and the ILCE-6000's 11-sample tables, distortion and shading, below). The A7R IVA keeps its existing Bayer 3:2 conversion,
 validated with the FE 24-105mm F4 G OSS and FE 200-600mm F5.6-6.3 G OSS. The A7CR uses a separate conversion,
 limited to full-frame Bayer 3:2 files with distortion Auto or forced Auto. Apart from the separate ILCE-7RM6 converter, other models and shading and CA on every model are
 decoded only: no warp, vignetting or CA correction is added for them. The decoded record stays with the image
@@ -339,8 +339,19 @@ is 0.62 uncorrected and 0.81 to 0.83 with the table at units of 13000 to 16384 (
 units). The raw's lens vignette is a hard black ring beyond 0.88 of the half diagonal; the correction draws the frame
 from inside it. Not validated: other lenses and focal lengths of this body (the table comes with each shot), the camera
 JPEG's own geometry (its preview is 1616 x 1080 of the 6048 x 4024 sensor, so a registration needs a crop first), and
-shading (the camera JPEG and our render agree to 1 % out to 0.85 of the radius with no correction, so the 11-sample
-shading table's gain function stays undecided).
+shading (the camera JPEG and our render agree to 1 % out to 0.85 of the radius with no correction: the camera does not
+brighten its own JPEG's corners).
+
+**ILCE-6000 shading (2026-11-05, maintainer decision to match Lightroom's look).** The 11-sample shading table (`0x7032`,
+padded like the distortion table) is applied as a `FixVignetteRadial`: gain `1 + 0.775 * v / 16384` at the sample's radius,
+samples evenly spaced from the centre to the cropped corner (the distortion table's convention), fitted by the opcode's
+`r²` polynomial (within 0.01 of the table's gain) and re-expressed for the active area's farthest corner. The strength was
+fitted to Lightroom's lens-corrected export of the same raw (E PZ 16-50mm at 16 mm f/4.5; output only, no Adobe file
+read): the luminance ratio Lightroom / our render by radius, the light matched in the centre, went from +0.55 EV at 0.85
+of the radius to within 0.06 EV everywhere. Strength 0.775 at the table's own radius and strength 1.0 at a radius 7.5 %
+larger fit equally well; one photo cannot tell them apart. Since the camera's JPEG is not corrected, this follows
+Lightroom, not the camera. Other focal lengths and apertures use their own tables (each shot carries one) through the same
+function, unmeasured. Other bodies' shading tables, and CA everywhere, stay decoded only.
 
 ## Camera coverage and regression boundary
 

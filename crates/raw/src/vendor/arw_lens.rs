@@ -1,6 +1,7 @@
 //! Sony's in-file lens-correction records (shading, lateral chromatic aberration, distortion): bounded decoding of
 //! the raw image IFD's fields and their encrypted `SR2SubIFD` copies into [`SonyLensCorrections`], and validated
-//! ILCE-7RM4A, ILCE-7M3 and ILCE-7CR distortion tables into DNG warps for the shared optics pipeline.
+//! ILCE-7RM4A, ILCE-7M3 and ILCE-7CR distortion tables into DNG warps for the shared optics pipeline, and the ILCE-6000's
+//! shading table into a `FixVignetteRadial`.
 //!
 //! Tag identity/layout: https://exiftool.org/TagNames/EXIF.html (`0x7031` to `0x7037`, signed shorts) and
 //! https://exiftool.org/TagNames/Sony.html#SR2SubIFD (`0x797d`, `0x7980`, `0x7982`). The `SR2SubIFD` setting tags
@@ -43,6 +44,18 @@ const DISTORTION_MODELS: &[&str] = &["ILCE-7RM4A", "ILCE-7M3"];
 /// F3.5-5.6 OSS at 16 mm, validated against Lightroom's lens-corrected export of the same raw (gradient correlation of
 /// the frame below the horizon 0.62 uncorrected, 0.83 corrected; the unit 16384 is within the optimum's plateau).
 const DISTORTION_MODELS_11: &[&str] = &["ILCE-6000"];
+/// APS-C bodies whose 11-sample shading table (an SSHORT\[12\] headed by 11, padded like the distortion table) becomes a
+/// vignette: a gain of `1 + SHADING_STRENGTH * v / 16384` at the radius of sample `v`, evenly spaced from the centre to the
+/// cropped corner as the distortion table's samples are. Fitted on the ILCE-6000 with the E PZ 16-50mm F3.5-5.6 OSS at
+/// 16 mm f/4.5 against Lightroom's lens-corrected export of the same raw (luminance ratio by radius, the light matched in the
+/// centre: 0.55 EV darker at 0.85 of the radius uncorrected, within 0.06 EV everywhere corrected; the strength's optimum is
+/// 0.775 with the table's own radius, and 1.0 with the radius 7.5 % larger fits as well). The camera's own JPEG is no brighter
+/// in the corners than an uncorrected render (docs/sony-lens-corrections.md), so this is a developer's correction of the
+/// lens's falloff, not the camera's.
+const SHADING_MODELS_11: &[&str] = &["ILCE-6000"];
+const SHADING_STRENGTH: f64 = 0.775;
+/// Largest gap allowed between the vignette's polynomial and the table's gain at any radius.
+const MAX_GAIN_ERROR: f64 = 0.01;
 /// Most directory entries scanned: a classic TIFF directory's largest count, also bounding a BigTIFF one.
 const MAX_ENTRIES: usize = 1 << 16;
 const SAMPLES: usize = 1024;
@@ -311,7 +324,7 @@ pub(super) fn corrections(
     sr2: Option<&SubIfd>,
     model: &str,
     geometry: SonyLensGeometry,
-) -> (Option<SonyLensCorrections>, Option<Opcode>) {
+) -> (Option<SonyLensCorrections>, Vec<Opcode>) {
     let plain = usize::try_from(raw.offset).ok().and_then(|at| Some(Directory { entries: bytes.get(at..)?, data: bytes, base: 0, order, big }));
     let encrypted = sr2.map(|s| {
         let (block, start) = s.block();
@@ -328,13 +341,18 @@ pub(super) fn corrections(
     } else {
         combine(Found { read: Read::Absent, repeated: false }, Found { read: Read::Absent, repeated: false })
     };
+    let shading_table_11 = if SHADING_MODELS_11.contains(&model) {
+        combine(raw_copy(raw, p, SHADING.table.0, parsed_table_padded::<11>), Found { read: Read::Absent, repeated: false })
+    } else {
+        combine(Found { read: Read::Absent, repeated: false }, Found { read: Read::Absent, repeated: false })
+    };
     let ca_table = combine(raw_copy(raw, p, CA.table.0, parsed_table::<32>).map(split), sr2_copy(s, CA.table.1, |d, e| d.table::<32>(e)).map(split));
     let setting = |tags: Tags, kind: Kind| {
         combine(raw_copy(raw, p, tags.setting.0, |v| parsed_setting(v, kind)), sr2_copy(s, tags.setting.1, |d, e| d.setting(e, kind)))
     };
     let settings = [setting(SHADING, Kind::Shading), setting(CA, Kind::Ca), setting(DISTORTION, Kind::Distortion)];
     if !shading_table.is_present() && !ca_table.is_present() && !distortion_table.is_present() && !settings.iter().any(SonyField::is_present) {
-        return (None, None);
+        return (None, Vec::new());
     }
     let [shading_setting, ca_setting, distortion_setting] = settings;
     // Only the validated scope reaches the conversion: the raw IFD's table, as the TIFF reader parsed it, of a Bayer
@@ -359,6 +377,11 @@ pub(super) fn corrections(
         _ => None,
     };
     let warp = warp.or(warp_11);
+    // the 11-sample shading table of a validated APS-C body, in the same mode as its distortion table
+    let vignette = match &shading_table_11.value {
+        Some(table) if in_mode_11(&shading_table_11, &geometry) => shading(model, &table[..], Rect::new(0, 0, w, h), geometry.reference),
+        _ => None,
+    };
     let distortion_status = match &distortion_table.value {
         None if warp.is_some() => SonyLensStatus::Applied,
         None => SonyLensStatus::NoTable,
@@ -369,22 +392,87 @@ pub(super) fn corrections(
         Some(table) if table.iter().all(|v| *v == 0) => SonyLensStatus::Neutral,
         Some(_) => SonyLensStatus::Rejected,
     };
-    // No independent validation of shading or CA semantics exists on any body: decoded, never applied.
+    // CA is validated on no body, shading only on the ILCE-6000's 11-sample table (`SHADING_MODELS_11`): the rest is decoded, never applied.
     let unvalidated = |present: bool| if present { SonyLensStatus::NotValidatedComponent } else { SonyLensStatus::NoTable };
     let record = SonyLensCorrections {
-        shading: SonyComponent { status: unvalidated(shading_table.value.is_some()), setting: shading_setting, table: shading_table },
+        shading: SonyComponent {
+            status: if vignette.is_some() {
+                SonyLensStatus::Applied
+            } else {
+                unvalidated(shading_table.value.is_some() || shading_table_11.value.is_some())
+            },
+            setting: shading_setting,
+            table: shading_table,
+        },
         chromatic_aberration: SonyComponent { status: unvalidated(ca_table.value.is_some()), setting: ca_setting, table: ca_table },
         distortion: SonyComponent { setting: distortion_setting, table: distortion_table, status: distortion_status },
         sr2_read: sr2.is_some(),
         geometry,
     };
-    (Some(record), warp)
+    (Some(record), warp.into_iter().chain(vignette).collect())
 }
 
 /// Whether an 11-sample table is read in the mode the conversion was validated in: the raw IFD's copy, a Bayer image
 /// whose crop is native 3:2.
 fn in_mode_11(table: &SonyField<[i16; 11]>, geometry: &SonyLensGeometry) -> bool {
     !geometry.linear_ycbcr && geometry.native_3_2 && table.source == Some(SonySource::RawIfd)
+}
+
+/// The validated conversion of an 11-sample raw-IFD shading table into a `FixVignetteRadial` (see `SHADING_MODELS_11`):
+/// the gain `1 + SHADING_STRENGTH * v / 16384`, interpolated between samples evenly spaced from the centre of `crop` to its
+/// corner, fitted by the opcode's polynomial in `r²` and re-expressed for the farthest corner of the active area, as DNG
+/// normalises it. `None` for other models and layouts, a table that is all zero, negative or past one stop per sample unit,
+/// a crop that is not 3:2, and a polynomial that strays from the table.
+fn shading(model: &str, table: &[i16], active: Rect, crop: Rect) -> Option<Opcode> {
+    if !SHADING_MODELS_11.contains(&model) || table.len() != 11 || table.iter().all(|v| *v == 0) || table.iter().any(|v| !(0..=16384).contains(v)) {
+        return None;
+    }
+    let last = table.len() - 1;
+    let crop = crop.clipped(active.width, active.height);
+    if active.width < 2 || active.height < 2 || crop.width < 2 || crop.height < 2 || !is_3_2(crop) {
+        return None;
+    }
+    let gain = |r: f64| {
+        let at = r.clamp(0.0, 1.0) * last as f64;
+        let i = (at.floor() as usize).min(last - 1);
+        let a = f64::from(table.get(i).copied().unwrap_or(0));
+        let b = f64::from(table.get(i + 1).copied().unwrap_or(0));
+        1.0 + SHADING_STRENGTH * (a + (b - a) * (at - i as f64)) / 16384.0
+    };
+    let basis = |r: f64| {
+        let r2 = r * r;
+        [r2, r2 * r2, r2 * r2 * r2, r2 * r2 * r2 * r2, r2 * r2 * r2 * r2 * r2]
+    };
+    let mut matrix = [[0.0; 5]; 5];
+    let mut rhs = [0.0; 5];
+    for j in 0..=SAMPLES {
+        let r = j as f64 / SAMPLES as f64;
+        let terms = basis(r);
+        for (i, &a) in terms.iter().enumerate() {
+            rhs[i] += a * (gain(r) - 1.0);
+            for (k, &b) in terms.iter().enumerate() {
+                matrix[i][k] += a * b;
+            }
+        }
+    }
+    let mut k = solve(matrix, rhs)?;
+    for j in 0..=SAMPLES {
+        let r = j as f64 / SAMPLES as f64;
+        let fit = 1.0 + basis(r).iter().zip(k).map(|(a, b)| a * b).sum::<f64>();
+        if !fit.is_finite() || (fit - gain(r)).abs() > MAX_GAIN_ERROR {
+            return None;
+        }
+    }
+    // DNG's radius is the farthest active-area corner's; the table's is the cropped corner's
+    let (ax, ay) = (active.width as f64 - 1.0, active.height as f64 - 1.0);
+    let (cw, ch) = (crop.width as f64 - 1.0, crop.height as f64 - 1.0);
+    let (cx, cy) = (crop.x as f64 + cw / 2.0, crop.y as f64 + ch / 2.0);
+    let farthest = cx.max(ax - cx).hypot(cy.max(ay - cy));
+    let ratio2 = (2.0 * farthest / cw.hypot(ch)).powi(2);
+    for (i, coefficient) in k.iter_mut().enumerate() {
+        *coefficient *= ratio2.powi(i as i32 + 1);
+    }
+    Some(Opcode::FixVignetteRadial { k, center: [cx / ax, cy / ay] })
 }
 
 /// A7CR camera-JPEG convention, measured independently of the ILCE-7RM4A conversion below.
@@ -453,7 +541,7 @@ fn a7cr_distortion(table: &[i16; 16], active: Rect, crop: Rect) -> Option<Opcode
             }
         }
     }
-    let mut k = solve4(matrix, rhs)?;
+    let mut k = solve(matrix, rhs)?;
     // Check every displayed radius, separately from the empirical camera-JPEG validation.
     for j in 0..=32768 {
         let r = j as f64 / 32768.0;
@@ -535,7 +623,7 @@ fn distortion(model: &str, table: &[i16], active: Rect, crop: Rect) -> Option<Op
             }
         }
     }
-    let mut k = solve4(matrix, rhs)?;
+    let mut k = solve(matrix, rhs)?;
     // Keep the polynomial within a fraction of a preview pixel of the file's table, and forbid folds.
     for j in 0..=SAMPLES {
         let r = j as f64 / SAMPLES as f64;
@@ -559,25 +647,25 @@ fn distortion(model: &str, table: &[i16], active: Rect, crop: Rect) -> Option<Op
 }
 
 /// Small fixed-size least-squares system; partial pivoting, no input-sized allocations.
-fn solve4(mut a: [[f64; 4]; 4], mut b: [f64; 4]) -> Option<[f64; 4]> {
-    for col in 0..4 {
-        let pivot = (col..4).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
+fn solve<const N: usize>(mut a: [[f64; N]; N], mut b: [f64; N]) -> Option<[f64; N]> {
+    for col in 0..N {
+        let pivot = (col..N).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
         if !a[pivot][col].is_finite() || a[pivot][col].abs() < 1e-12 {
             return None;
         }
         a.swap(col, pivot);
         b.swap(col, pivot);
-        for row in col + 1..4 {
+        for row in col + 1..N {
             let factor = a[row][col] / a[col][col];
-            for j in col..4 {
+            for j in col..N {
                 a[row][j] -= factor * a[col][j];
             }
             b[row] -= factor * b[col];
         }
     }
-    let mut x = [0.0; 4];
-    for i in (0..4).rev() {
-        x[i] = (b[i] - (i + 1..4).map(|j| a[i][j] * x[j]).sum::<f64>()) / a[i][i];
+    let mut x = [0.0; N];
+    for i in (0..N).rev() {
+        x[i] = (b[i] - (i + 1..N).map(|j| a[i][j] * x[j]).sum::<f64>()) / a[i][i];
     }
     x.iter().all(|v| v.is_finite()).then_some(x)
 }
@@ -1247,7 +1335,7 @@ mod tests {
                 let tiff = Tiff::parse(&bytes).unwrap();
                 let run = |model: &str, geometry: SonyLensGeometry| {
                     let (record, warp) = corrections(&bytes, order, (&tiff.ifds[0], false), None, model, geometry);
-                    (record.unwrap().distortion.status, warp.is_some())
+                    (record.unwrap().distortion.status, !warp.is_empty())
                 };
                 let geometry = a7cr_geometry((9728, 6656));
                 assert_eq!(run("ILCE-7CR", geometry.clone()), (status, status == Applied));
@@ -1277,7 +1365,7 @@ mod tests {
                     let tiff = Tiff::parse(&bytes).unwrap();
                     let (record, warp) = corrections(&bytes, order, (&tiff.ifds[0], false), None, "ILCE-7CR", geometry.clone());
                     assert_eq!(record.unwrap().distortion.status, CameraCorrectionDisabled);
-                    assert!(warp.is_none());
+                    assert!(warp.is_empty());
                 }
             }
         }
@@ -1461,6 +1549,85 @@ mod tests {
         assert!(distortion("ILCE-6100", &A6000, frame, frame).is_none());
         assert!(distortion("ILCE-7M3", &A6000, frame, frame).is_none());
         assert!(distortion("ILCE-6000", &WIDE, frame, frame).is_none());
+    }
+
+    /// The ILCE-6000's raw-IFD shading table with the E PZ 16-50mm F3.5-5.6 OSS at 16 mm f/4.5 (11 samples), the shot whose
+    /// Lightroom export fixes `SHADING_STRENGTH`.
+    const A6000_SHADING: [i16; 11] = [0, 0, 192, 512, 1024, 1536, 2496, 4288, 6784, 9984, 13952];
+
+    /// The gain of a `FixVignetteRadial` at `(x, y)` of an active area `w` x `h`, as DNG and the develop pipeline evaluate it.
+    fn vignette_gain(op: &Opcode, x: f64, y: f64, w: f64, h: f64) -> f64 {
+        let Opcode::FixVignetteRadial { k, center } = op else { panic!("vignette") };
+        let (cx, cy) = (center[0] * (w - 1.0), center[1] * (h - 1.0));
+        let m = cx.max(w - 1.0 - cx).hypot(cy.max(h - 1.0 - cy));
+        let r2 = ((x - cx).powi(2) + (y - cy).powi(2)) / (m * m);
+        1.0 + k.iter().enumerate().map(|(i, c)| c * r2.powi(i as i32 + 1)).sum::<f64>()
+    }
+
+    #[test]
+    fn ilce_6000_converts_its_eleven_sample_shading_table_and_other_bodies_do_not() {
+        let want = |v: f64| 1.0 + SHADING_STRENGTH * v / 16384.0;
+        // the table's radius runs to the crop's corner, also when the active area is larger and the crop off centre
+        for (active, crop) in
+            [(Rect::new(0, 0, 6000, 4000), Rect::new(0, 0, 6000, 4000)), (Rect::new(0, 0, 6048, 4024), Rect::new(10, 4, 6000, 4000))]
+        {
+            let op = shading("ILCE-6000", &A6000_SHADING, active, crop).expect("vignette");
+            let (w, h) = (active.width as f64, active.height as f64);
+            let (cx, cy) = (crop.x as f64 + 2999.5, crop.y as f64 + 1999.5);
+            let half = 2999.5f64.hypot(1999.5);
+            let at = |r: f64| vignette_gain(&op, cx + r * half * 0.8320502943, cy + r * half * 0.5547001962, w, h);
+            assert!((at(0.0) - 1.0).abs() < 1e-9);
+            for (i, v) in A6000_SHADING.iter().enumerate() {
+                let r = i as f64 / 10.0;
+                assert!((at(r) - want(f64::from(*v))).abs() < MAX_GAIN_ERROR, "sample {i}: {} against {}", at(r), want(f64::from(*v)));
+            }
+            // the corner is brightened by about 0.73 stop, never darkened anywhere
+            assert!((0.70..0.76).contains(&at(1.0).log2()), "{}", at(1.0).log2());
+            assert!((0..=100).all(|j| at(j as f64 / 100.0) >= 1.0 - 1e-6));
+        }
+        let frame = Rect::new(0, 0, 6000, 4000);
+        assert!(shading("ILCE-6100", &A6000_SHADING, frame, frame).is_none());
+        assert!(shading("ILCE-6000", &[0; 11], frame, frame).is_none());
+        assert!(shading("ILCE-6000", &[0, 0, 192, 512, -1024, 1536, 2496, 4288, 6784, 9984, 13952], frame, frame).is_none());
+        assert!(shading("ILCE-6000", &A6000_SHADING, frame, Rect::new(0, 0, 6000, 3376)).is_none());
+        assert!(shading("ILCE-6000", &A6000_SHADING[..10], frame, frame).is_none());
+    }
+
+    /// Read from a file: the ILCE-6000's 11-sample shading table becomes a vignette next to its distortion warp and the record
+    /// says Applied; another body with the same fields gets neither.
+    #[test]
+    fn ilce_6000_file_gets_a_vignette_with_its_warp() {
+        let padded = |v: &[i16; 11]| sshort(11, &v.iter().copied().chain([0; 5]).collect::<Vec<_>>());
+        for model in ["ILCE-6000", "ILCE-6100"] {
+            let mut arw = Arw::new(model, Little);
+            arw.sr2 = None;
+            set(&mut arw.plain, SHADING.table.0, padded(&A6000_SHADING));
+            set(&mut arw.plain, DISTORTION.table.0, padded(&A6000));
+            let bytes = arw.build();
+            let tiff = Tiff::parse(&bytes).unwrap();
+            let crop = Rect::new(2, 2, 30, 20);
+            let geometry = SonyLensGeometry {
+                storage_width: 32,
+                storage_height: 24,
+                sony_crop: Some(crop),
+                default_crop: Some(crop),
+                image_crop: crop,
+                reference: crop,
+                compression: 1,
+                linear_ycbcr: false,
+                native_3_2: true,
+            };
+            let (record, ops) = corrections(&bytes, Little, (&tiff.ifds[0], false), None, model, geometry);
+            let vignettes = ops.iter().filter(|o| matches!(o, Opcode::FixVignetteRadial { .. })).count();
+            let warps = ops.iter().filter(|o| matches!(o, Opcode::WarpRectilinear { .. })).count();
+            let shading_status = record.unwrap().shading.status;
+            if model == "ILCE-6000" {
+                assert_eq!((vignettes, warps, shading_status), (1, 1, SonyLensStatus::Applied));
+            } else {
+                assert_eq!((vignettes, warps), (0, 0), "{model}");
+                assert_ne!(shading_status, SonyLensStatus::Applied);
+            }
+        }
     }
 
     // ILCE-7M3 raw-IFD tables (FE 16-35mm F4 ZA OSS at 16 and 35 mm, FE 28-70mm F3.5-5.6 OSS at 70 mm) and the
