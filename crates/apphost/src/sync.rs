@@ -105,13 +105,17 @@ impl Driver {
             session.sync_soon();
         }
         self.focused = focused;
+        // (presence says nothing from the background)
+        session.sync_set_foreground(focused);
         for t in session.sync_tasks() {
             self.in_flight += 1;
             exec(t, self.tx.clone());
         }
         // (signing out waits for the sending to end: it is as busy as syncing)
         let busy = self.in_flight > 0 || session.sync_state().is_some_and(|st| matches!(st.state(), "syncing" | "signingOut"));
-        out.again = Some(if busy { Duration::from_millis(500) } else { POLL });
+        let wait = if busy { Duration::from_millis(500) } else { POLL };
+        // (a photo shown on two devices is said every few seconds: come back by then)
+        out.again = Some(session.sync_presence_due_in().map_or(wait, |d| wait.min(d.max(Duration::from_millis(250)))));
         out
     }
 }
@@ -221,6 +225,10 @@ pub fn summary(session: &Session) -> Option<serde_json::Value> {
         "downloads": s["downloads"],
         "reading": s["reading"],
         "error": s["error"],
+        // the other devices of this account that show the photo shown here, and a count that moves when an edit of it
+        // arrives from one of them (`presence`)
+        "alsoOpenOn": session.sync_also_open_on(),
+        "remoteEdits": session.sync_remote_edits(),
         // the open photo's original (the photo screen's pill): `{state: original|loading|preview, progress?}`
         "original": session.active().and_then(|id| session.original_status(id)),
     }))

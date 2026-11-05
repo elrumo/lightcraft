@@ -350,6 +350,8 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Post, ["work", "release"]) => crate::work::release(st, req, &who.user),
         (Method::Get, ["work", "settings"]) => crate::work::settings(st, &who.user),
         (Method::Put, ["work", "settings"]) => crate::work::set_settings(st, req, &who.user),
+        // which photo this device shows, and who else shows it (see `presence`)
+        (Method::Post, ["presence"]) => crate::presence::heartbeat(st, req, &l, &who),
         (Method::Post, ["render"]) => render(st, req, &l, &who.user),
         _ => error(404, format!("no route {method} {path}")),
     };

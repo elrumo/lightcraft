@@ -65,8 +65,14 @@ struct Fake {
     revoked: bool,
     /// The catalog format the server says it keeps (`None`: this build's).
     format: Option<u32>,
+    /// Which photo each signed-in device (by token) says it shows (`POST /api/presence`); a server from before
+    /// presence answers `404`; `presence_status`: answer that instead (the server asking for calm).
+    presence: HashMap<String, Option<String>>,
+    no_presence: bool,
+    presence_status: Option<u16>,
 }
 
+mod presence;
 mod sign_out;
 mod tracks;
 mod trips;
@@ -100,6 +106,9 @@ impl Fake {
             requests: vec![],
             revoked: false,
             format: None,
+            presence: HashMap::new(),
+            no_presence: false,
+            presence_status: None,
         }
     }
 
@@ -275,6 +284,26 @@ impl Fake {
                     },
                     _ => status(405, Value::Null),
                 }
+            }
+            ("GET", "/api/me") if !self.no_presence => {
+                let devices: Vec<Value> = (1..=self.spaces).map(|d| json!({"id": d, "name": format!("Device {d}"), "space": d})).collect();
+                ok(json!({"user": "ann", "device": 0, "library": self.library, "devices": devices}))
+            }
+            ("POST", "/api/presence") if !self.no_presence => {
+                if let Some(s) = self.presence_status {
+                    return status(s, json!({"error": "calm down"}));
+                }
+                let said: Value = serde_json::from_str(&json_body()).unwrap();
+                let photo = said["photo"].as_str().map(str::to_string);
+                self.presence.insert(token.clone(), photo.clone());
+                let others: Vec<Value> = self
+                    .presence
+                    .iter()
+                    .filter(|(t, p)| *t != token && photo.is_some() && **p == photo)
+                    .map(|(t, _)| json!({"device": 0, "name": format!("Device {}", t.trim_start_matches('t'))}))
+                    .collect();
+                let next = if others.is_empty() { 8 } else { 2 };
+                ok(json!({"others": others, "head": self.core.head(), "next": next}))
             }
             ("GET", "/api/shares") => ok(json!({"shares": []})),
             ("POST", "/api/logout") => ok(json!({})),

@@ -512,6 +512,14 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         (Method::Post, ["users", name, "check"]) => known_user(st, name).and_then(|()| start_check(st, &me, name)),
         (Method::Get, ["limits"]) => Ok(st.limits.status()),
         (Method::Get, ["usage"]) => Ok(usage(st)),
+        // which device shows which photo (the "also open on" badge): the switch, and how much it holds
+        (Method::Get, ["presence"]) => Ok(presence_status(st)),
+        (Method::Put, ["presence"]) => read_json::<Value>(req).map_err(Err).and_then(|v| {
+            let on = v["enabled"].as_bool().ok_or_else(|| Ok((400, "`enabled` is true or false".to_string())))?;
+            st.presence.set_enabled(on).map_err(|e| Ok((500, e)))?;
+            log::info!("admin {me}: presence {}", if on { "on" } else { "off" });
+            Ok(presence_status(st))
+        }),
         (Method::Put, ["limits"]) => read_json::<crate::limits::Values>(req).map_err(Err).and_then(|v| {
             let e = st.limits.set(v).map_err(|e| Ok((400, e)))?;
             st.render.set_max(e.renders);
@@ -805,6 +813,12 @@ fn web_build(web: &Path) -> Option<Value> {
 /// `GET /api/admin/usage`: what the server takes of the machine (a point every 30 s, averaged to a few hundred) and what
 /// each user's devices asked of it since it started ([`crate::usage`]). `supported`: the machine numbers are read here
 /// (Linux and Docker); elsewhere they are `null`.
+/// The presence switch and what it holds now.
+fn presence_status(st: &State) -> Value {
+    let (showing, entries) = st.presence.counts(Instant::now());
+    json!({"enabled": st.presence.enabled(), "showing": showing, "entries": entries, "perUser": crate::presence::PER_USER, "total": crate::presence::TOTAL})
+}
+
 fn usage(st: &State) -> Value {
     let u = &st.usage;
     let history: Vec<Value> = u

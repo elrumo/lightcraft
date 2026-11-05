@@ -42,6 +42,7 @@ use crate::{EngineError, Result, Session};
 mod docs;
 mod evict;
 mod leave;
+mod presence;
 mod shares;
 
 pub(crate) use docs::{shared_doc_key, shared_doc_names};
@@ -515,6 +516,8 @@ pub struct SyncState {
     signout_peak: usize,
     /// Syncing was paused when the wait began (it is paused again if the wait is cancelled).
     signout_paused: bool,
+    /// Which of the account's other devices show the same photo ([`presence`]).
+    presence: presence::Client,
 }
 
 /// The catalog format that added the Hidden album (`Op::SetHidden`, `Photo.hidden`).
@@ -606,6 +609,7 @@ impl SyncState {
             unsent: None,
             signout_peak: 0,
             signout_paused: false,
+            presence: presence::Client::default(),
         }
     }
 
@@ -729,6 +733,7 @@ impl SyncState {
         self.planned = None;
         self.usage_task = None;
         self.activity_task = None;
+        self.presence.reset();
         self.conflict = None;
         self.reading = None;
         self.transfer_error = None;
@@ -1657,6 +1662,10 @@ impl Session {
             st.activity_task = Some(t.id());
             tasks.push(t);
         }
+        // (a side request, best-effort: it never takes the place of the library's own sync, and says nothing while that waits)
+        if !st.config.token.is_empty() && !st.config.library.is_empty() && !waiting && st.conflict.is_none() && !st.config.leaving {
+            tasks.extend(self.presence_task(&mut st, now));
+        }
         if !st.config.token.is_empty() && !st.config.library.is_empty() && !waiting {
             self.blob_tasks(&mut st, now, &mut tasks);
         }
@@ -2079,6 +2088,8 @@ impl Session {
         } else if st.activity_task == Some(done.id) {
             st.activity_task = None;
             st.activity_done(&done);
+        } else if st.is_presence(done.id) {
+            st.presence_done(&done);
         } else if let Some(job) = st.jobs.remove(&done.id) {
             self.job_done(&mut st, job, &done);
         }
@@ -2366,6 +2377,7 @@ impl Session {
     fn apply_pulled(&mut self, st: &mut SyncState, ops: Vec<(u64, Op)>) {
         let mut removed = false;
         let mut applied = false;
+        let shown = self.active();
         for (seq, op) in ops {
             if seq <= st.config.cursor {
                 continue;
@@ -2374,6 +2386,10 @@ impl Session {
             st.outbox_changed();
             if let Some(op) = merged {
                 removed |= is_removal(&op);
+                // (an edit of the photo shown here, made on a device that shows it too: the frontend may say so)
+                if matches!(&op, Op::SetDevelop { id, .. } if Some(*id) == shown) {
+                    st.presence.remote_edit();
+                }
                 match self.catalog.apply(op.clone()) {
                     Ok(_) => {
                         self.pending_log.push(op);

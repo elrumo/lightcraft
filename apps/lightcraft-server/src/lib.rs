@@ -51,6 +51,7 @@ pub mod http;
 pub mod integrity;
 pub mod limits;
 pub mod multipart;
+pub mod presence;
 pub mod render;
 pub mod sensitive;
 pub mod server_presets;
@@ -189,6 +190,8 @@ pub struct State {
     pub(crate) checker: integrity::Checker,
     /// The lighter copies of videos: settings, queue, the server's own encoding ([`video`]).
     pub(crate) video: video::Videos,
+    /// Which of a user's devices shows which photo ([`presence`]).
+    pub(crate) presence: presence::Presence,
 }
 
 /// A running server.
@@ -252,6 +255,7 @@ impl Server {
             usage: usage::Usage::new(),
             checker: integrity::Checker::default(),
             video: video::Videos::new(&data_dir, cfg.video_encoder, cfg.video_low_priority),
+            presence: presence::Presence::new(&data_dir),
         });
         // (counted now, so the admin page has the numbers by the time anyone opens it)
         state.sizes.refresh(&state.data);

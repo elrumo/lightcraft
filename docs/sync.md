@@ -742,6 +742,36 @@ on every device that has it.
 - **An older server** answers `404` for these names: they are left alone for the session and stay on the device.
   **Signing out** removes them with the account's other shared documents.
 
+## The same photo open on two devices
+
+When one account has two or more devices and both show the same photo, each shows **Also open on <device>** (a pill in
+the corner of the photo; the cloud icon's tooltip in the egui app), and an edit made on one reaches the other within
+about a second or two of letting go of the slider, not at the next five-second poll. Several edits of different settings
+still merge field by field, as above.
+
+How it works: a device tells the server which photo it shows (`POST /api/presence`), the server answers with the user's
+*other* devices that show the same one, and the log's head. While a photo is shared, devices say it every ~2 s and pull
+at once when the head has moved past their own; otherwise they say it every ~8 s. Nothing is stored on disk, and an
+entry expires after 20 s without a message.
+
+Kept cheap, so a crowd of devices can't overwhelm the server (all of it is also tested, `apps/lightcraft-server/tests/presence.rs`
+and `crates/engine/src/tests_cloud_sync/presence.rs`):
+
+- A device sends nothing while the account has only one device (it asks `GET /api/me` every 5 minutes), while the app is
+  in the background (one last "none" when it leaves), while no photo is shown, or during a slider drag.
+- The server answers a device at most once a second per device (`429` + `Retry-After`), keeps at most 16 devices per
+  user and 4096 overall (more are sent away with `503` for a minute), serves at most about an eighth of its request slots
+  with presence (`503` + `Retry-After` beyond that, so ordinary sync keeps its places), and never waits for the library:
+  `head` is `null` when a push or pull holds it.
+- A device that is refused or fails backs off, doubling from 2 s to 60 s, and after three failures in a row stays quiet
+  for 5 minutes. A server that doesn't have the route (older), or has presence switched off, is left alone for 5 minutes.
+  Sync itself never depends on it.
+- After a minute with no news from the other device the fast rhythm returns to the slow one, until that device edits again.
+- An admin can switch presence off (`PUT /api/admin/presence {enabled}`; it is kept in `presence.json`); devices then show
+  no badge and fall back to the ordinary poll. `GET /api/admin/presence` shows the switch and how many entries it holds.
+
+Over iCloud there is no server to ask: see *iCloud* below for what is (and isn't) there.
+
 ## When two devices change the same thing
 
 The server keeps **one order** of every change. A device sends its changes on top of the newest one it has seen; if
@@ -810,6 +840,15 @@ same. A record taken from the cloud that this version stores a little differentl
 **Turning it off** forgets what the cloud has (the cloud keeps it for the other devices, and this device keeps its
 presets, settings and edits); turning it on again merges as a new device does: nothing is deleted. Signing out of
 iCloud or switching accounts does the same.
+
+### The same photo on two devices (not there yet)
+
+iCloud has no "also open on" badge and no fast pickup yet. A change travels by CloudKit's own push, so it reaches the
+other device in seconds when the push is delivered (not measured on real devices yet: the CloudKit code has not been
+run against a live container), and an edit record is the photo's whole edit, so two devices changing different settings
+of one photo within moments of each other keep the later edit, not both. The plan: a small per-device presence record
+(written when a photo opens or closes and about every minute, never faster, backing off on CloudKit's own limits), and a
+field-by-field merge of same-photo edit records like the server's.
 
 ### Photos through iCloud Drive
 
@@ -943,6 +982,7 @@ Big JSON answers (the library, pulled changes, the presets; 16 KiB and up) come 
 | `POST /api/login` | `{user, password, device}` → `{token, device, space, library}` · `401` |
 | `POST /api/logout` | signs this device out |
 | `GET /api/me` | `{user, device, library, devices}` |
+| `POST /api/presence` | `{photo: "p<id>" \| null}` → `{others: [{device, name}], head, next, off?}`: which of the user's other devices show the same photo, the log's head and the seconds to wait before saying again · `429` (too soon) / `503` (full or busy), both with `Retry-After` · `404` on an older server |
 | `GET /api/snapshot?limit=N[&compact=1][&cursor=C]` | `{defaults, library, seq, catalog, next, total}`: the library after change `seq`, in pages of at most `N` photos (and about 8 MiB), like a cloud photo service's asset listing. With `compact=1` each photo's develop settings (edit, import look, versions) are a JSON merge patch (RFC 7396) against the page's `defaults` (the server's default settings, written first), so an unedited photo takes a few hundred bytes, not ~4 KB, and a default changed in a later version changes no photo. The first page (no `cursor`) also has the albums, stacks and the rest; each page's `next` is the next page's `cursor`, absent on the last; `total` is the library's photo count. Every page comes from the copy taken at the first page, however the library changes meanwhile; the device adopts it after the last page, then pulls the changes since `seq`. `410`: that copy is gone (the server keeps four, and a restart keeps none unless nothing changed): start again. Without `limit` (devices from before paging): the whole library in one answer |
 | `GET /api/usage` | what this user takes on the server ([`proto::Usage`](../crates/catalog/src/sync.rs)): `{photos, videos, albums, devices, original, smart, mini, folders: {files, bytes}, foldersOnDisk, disk: {total, free}, quota, video: {originals, encoded, saved}}`; a few seconds old at most. `photos` and `videos` count the library's photos and its videos apart, leaving out Recently Deleted and virtual copies (worked out once per library revision, not per request; a server from before videos counted every record as a photo and says no `videos`, which reads as 0). `video` is what the videos take: `originals` their own files by the sizes the library knows (wherever they are kept), `encoded` the lighter copies the server keeps of them (`blobs/video/<xx>/<content hash>`, none until the server makes them), `saved` the bytes those copies are smaller than the originals they stand for. `original`, `smart` and `mini` are the files the server keeps; `folders` the photos it reads in place from the user's library folders, and `foldersOnDisk` how many of their bytes are on the same disk as its data. What the library takes in all is `original + smart + mini + folders`; `foldersOnDisk` is for the disk's bar (a server that doesn't say it has none on its disk). `quota` is their [storage limit](#storage-limits) in bytes (`null`: none); it counts `original + smart + mini` and the lighter video copies (`video.encoded`) only. A server older than the route answers `404` |
 | `GET /api/activity` | what the server is doing for this user now ([`proto::Activity`](../crates/catalog/src/sync.rs)): `{scan: {scanning, phase, done, todo, files, etaSecs, lastScan, problems} \| null, previews: {done, total, etaSecs}, search, text, faces, video: {done, total, etaSecs} \| null}`; `scan` is null for a user without library folders, the others null when not installed / not turned on. `video` is making lighter copies of the user's videos: `done` counts the videos that have a copy or need none, `total` those plus the ones still to do (a failed video is left out), `null` when an admin has it off or there are no videos; a server from before it sends none, which reads as `null`. A server older than the route answers `404` |

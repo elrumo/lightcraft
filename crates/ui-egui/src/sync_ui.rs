@@ -189,6 +189,16 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
 /// The top bar cloud icon's tooltip, and whether it shows a problem / activity. (English only for
 /// now: `tr_format!` messages need every catalog's translation.)
 pub fn cloud_status(app: &LightcraftApp) -> (String, bool, bool) {
+    let (mut tip, problem, busy) = cloud_state(app);
+    // (another device of the account shows the photo on screen: edits made there arrive here within seconds)
+    let also = app.session.sync_also_open_on();
+    if !also.is_empty() {
+        tip.push_str(&format!("\nThe photo on screen is also open on {}", also.join(", ")));
+    }
+    (tip, problem, busy)
+}
+
+fn cloud_state(app: &LightcraftApp) -> (String, bool, bool) {
     let Some(st) = app.session.sync_state() else {
         return (crate::i18n::tr("Local library — no cloud account needed").to_string(), false, false);
     };
