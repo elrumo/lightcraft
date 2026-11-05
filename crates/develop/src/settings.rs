@@ -1012,13 +1012,20 @@ pub struct BrushStroke {
     /// Pen pressure (0..1) at each of `points`, recorded when the brush's pressure switch is on: it scales each dab's
     /// radius and flow. Empty (the default, a mouse or the switch off) is full pressure everywhere; a point past the
     /// end of a shorter list takes the last value.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", serialize_with = "shortest_f32s")]
     pub pressure: Vec<f32>,
     /// Pen tilt (0 upright, 1 flat on the screen) at each of `points`, from a Pencil: a tilted pen paints wider and
     /// softer, like the side of a pencil (`lightcraft_pipeline::masks::tilt_shape`). Empty (the default, a mouse or a pen
     /// held upright) is no tilt; a point past the end of a shorter list takes the last value.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", serialize_with = "shortest_f32s")]
     pub tilt: Vec<f32>,
+}
+
+/// `f32`s written as the shortest decimals that read back as themselves, also when the settings go through a
+/// `serde_json::Value` first, as the catalog's compact snapshot does (a `Value` widens an `f32` to its `f64` digits: a
+/// pressure of 0.2 was stored as 0.20000000298023224, longer, and unlike what a native frontend writes).
+fn shortest_f32s<S: serde::Serializer>(v: &[f32], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(v.iter().map(|x| x.to_string().parse::<f64>().unwrap_or(f64::from(*x))))
 }
 
 impl BrushStroke {

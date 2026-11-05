@@ -188,6 +188,26 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Pen pressure and tilt are written as their shortest decimals however the settings are serialized: straight to
+    /// text, or through a `serde_json::Value` (the catalog's compact snapshot), which widened an `f32` to its `f64`
+    /// digits before (0.2 became 0.20000000298023224). Either way they read back as the same `f32`s.
+    #[test]
+    fn pen_pressure_and_tilt_are_written_as_their_shortest_decimals() {
+        let stroke = BrushStroke {
+            points: vec![lightcraft_geom::Point::new(0.1, 0.2)],
+            pressure: vec![0.2, 0.871_428_55, 1.0],
+            tilt: vec![0.3],
+            ..Default::default()
+        };
+        let text = serde_json::to_string(&stroke).unwrap();
+        let through = serde_json::to_string(&serde_json::to_value(&stroke).unwrap()).unwrap();
+        for t in [&text, &through] {
+            assert!(t.contains("\"pressure\":[0.2,0.87142855,1.0]") && t.contains("\"tilt\":[0.3]"), "{t}");
+            let back: BrushStroke = serde_json::from_str(t).unwrap();
+            assert_eq!((back.pressure.clone(), back.tilt.clone()), (stroke.pressure.clone(), stroke.tilt.clone()));
+        }
+    }
+
     #[test]
     fn serde_roundtrip_default_and_edited() {
         let mut s = DevelopSettings::default();
