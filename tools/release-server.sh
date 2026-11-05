@@ -101,9 +101,11 @@ fi
 if [ "$linux" = 1 ]; then
   echo "== linux (in Docker)"
   lin=$(mktemp -d)
-  # the lite stage holds just the program: export its files and take it out
+  # the lite stage holds just the program: export its files and take it out (with the DSN, as the Docker Hub image:
+  # without it the program sends no heartbeat and no Bugsink reports)
   docker buildx build --platform linux/amd64,linux/arm64 -f apps/lightcraft-server/Dockerfile --target lite \
-    --build-arg "LIGHTCRAFT_VERSION=$version" --build-arg "LIGHTCRAFT_COMMIT=$commit" -o "type=local,dest=$lin" "$src"
+    --build-arg "LIGHTCRAFT_VERSION=$version" --build-arg "LIGHTCRAFT_COMMIT=$commit" \
+    --build-arg "LIGHTBITES_BUGSINK_DSN=$LIGHTBITES_BUGSINK_DSN" -o "type=local,dest=$lin" "$src"
   package linux-x86_64 "$lin/linux_amd64/usr/local/bin/lightbites-server"
   package linux-aarch64 "$lin/linux_arm64/usr/local/bin/lightbites-server"
   rm -rf "$lin"
