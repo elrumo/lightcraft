@@ -204,7 +204,7 @@ fn quadratic(a: &[[f64; 3]; 3], b: &[f64; 3], d: &[f64; 3]) -> f64 {
 
 /// The solution of a small linear system given as rows `[a…, rhs]`, by elimination with partial pivoting; `None` when
 /// singular.
-fn solve_small(m: &mut [Vec<f64>]) -> Option<Vec<f64>> {
+pub(super) fn solve_small(m: &mut [Vec<f64>]) -> Option<Vec<f64>> {
     let n = m.len();
     for col in 0..n {
         let pivot = (col..n).max_by(|&p, &q| m[p][col].abs().total_cmp(&m[q][col].abs()))?;
@@ -476,6 +476,8 @@ pub(crate) fn decode_fits(
             let had_matrix = lightcraft_raw::color::has_matrix(&raw.color);
             let fits = sharing_proxies(|| {
                 let (xy, t, look, matched) = starting_colour(raw, bytes, lens_geometry, lens.as_ref());
+                // (a ProRAW's Camera Matching: the colour of its own processed preview)
+                let matched = matched.or_else(|| super::look_fit::preview_colour_match(raw, bytes, &t));
                 let lens = lens.or_else(|| jpeg_vignetting(raw, bytes, &t));
                 let filled = !had_matrix && lightcraft_raw::color::has_matrix(&raw.color);
                 Fits { xy, t, look, matched, lens, color: filled.then(|| raw.color.clone()) }

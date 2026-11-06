@@ -99,7 +99,9 @@ use tone::{HighlightCheck, ToneFit, fit_tone, fit_tone_conditional, highlights};
 /// exposure ([`typical_look`]), not from camera RGB as sRGB with the default tone.
 /// 21: a raw whose look is fitted to its camera JPEG starts from that look coloured as Lightroom's camera-matching
 /// profiles show it (`hue_sat::lightroom_chroma`), and keeps the fit itself for the Camera Matching profile.
-pub const LOOK_VERSION: u32 = 21;
+/// 22: an Apple ProRAW (a DNG with a gain table map) gets the Camera Matching profile from its own preview's colour
+/// (`look_fit::preview_colour_match`).
+pub const LOOK_VERSION: u32 = 22;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {

@@ -524,3 +524,261 @@ pub(super) fn correct_vignetting(sensor: &mut Rgb32f, lens: Option<&lightcraft_d
         *p = p.map(|v| v * gain);
     }
 }
+
+/// How much closer to the camera's picture, in held-out colour error, the preview colour match must bring a render
+/// before it is used ([`preview_colour_match`]). Measured against each preview (mean CIELAB ΔE, Display P3): an iPhone
+/// 17 Pro shot of a blue TV screen 9.1 → 3.0 (held-out error × 0.37) and a 17 Pro night street 2.2 → 1.8 (× 0.64)
+/// take it; the corpus iPhone 12 Pro (iOS 14) does not (× 0.83): its preview differs in ways a matrix can't follow,
+/// and the best one brought its blues closer but its warm colours further (3.4 → 5.7), 4.9 → 4.8 overall.
+const PREVIEW_MATCH_GAIN: f64 = 0.75;
+
+/// Rec. 2020 luminance weights, as [`luma`].
+const LUMA: [f64; 3] = [0.2627, 0.6780, 0.0593];
+
+/// The Camera Matching profile of a DNG whose tone is a gain table map (Apple ProRAW): the colour of the file's own
+/// processed picture, its embedded preview, as a matrix on the developed picture (issue #246). The camera's pipeline
+/// (an iPhone's Photographic Style) gives that picture more colour than the DNG's matrices: on an iPhone 17 Pro shot
+/// of a blue TV screen the render had 0.79 of the preview's chroma, 11.5° off in hue. Only colour is fitted: the
+/// render's tone (the file's tone curve with its gain table map, which is local) already matches the preview within
+/// 1 L*, and a curve fitted to a locally tone-mapped picture would apply that map twice. The matrix keeps luminance
+/// and white ([`fit_preview_matrix`]), so the tone map, which works on luminance and keeps chromaticity, renders
+/// each pixel as light as before. Used when it brings the held-out pixels clearly closer ([`PREVIEW_MATCH_GAIN`]).
+/// `None` for any other file, a thumbnail-size preview or one that shows another picture.
+pub(super) fn preview_colour_match(raw: &RawImage, bytes: &[u8], transform: &CameraTransform) -> Option<CameraMatch> {
+    let profile = &raw.color.profile;
+    if raw.format != lightcraft_raw::RawFormat::Dng || profile.gain_table_map.is_none() {
+        return None;
+    }
+    let (mut sensor, reference, clipped) = proxies(raw, bytes, transform, PROXY, MIN_PREVIEW_FRACTION, None)?;
+    // as the loader develops it: the profile's tables around the baseline exposure
+    let xy = lightcraft_raw::color::as_shot_white_xy(raw);
+    if let Some(tables) = lightcraft_raw::profile::ProfileTables::new(profile, lightcraft_raw::color::illuminant_weight(&raw.color, xy)) {
+        let gain = 2f32.powf(transform.baseline_exposure as f32);
+        sensor.map_in_place(|p| tables.apply(p.map(|v| v / gain), gain));
+    }
+    if (sensor.width, sensor.height) != (reference.width, reference.height) || !structure_agrees(&sensor, &reference) {
+        return None;
+    }
+    let tone = profile.tone_curve.as_ref().and_then(crate::files::dng_tone_curve);
+    let tone_map = tone.as_ref().map(|t| ToneMap::camera(t, 0.0, 0.0, 0.0));
+    let pairs = preview_pairs(&sensor, &reference, &clipped, tone_map.as_ref());
+    let (matrix, before, after) = fit_preview_matrix(&pairs)?;
+    if lightcraft_pipeline::profiling() {
+        eprintln!("[profile] DNG preview colour match: held-out Oklab error {before:.4} -> {after:.4}, matrix {:?}", matrix.0);
+    }
+    if after >= before * PREVIEW_MATCH_GAIN {
+        return None;
+    }
+    CameraMatch { start_hue_sat: None, matrix, hue_sat: None, tone }.checked()
+}
+
+/// The proxy pixels to fit [`preview_colour_match`] on, each sensor pixel scaled to its preview pixel's luminance
+/// (the tone maps differ; chromaticity is what is compared): neither clipped, the preview neither near white nor near
+/// black. The render scales chroma by the tone curve's own chroma curve after the match (a DNG tone curve renders with
+/// the colour of a per-channel curve, `CameraTone::with_channel_chroma`), so each preview colour is taken back by
+/// that scale at its luminance: the matched picture is then the preview once rendered, not that much more colourful.
+pub(super) fn preview_pairs(sensor: &Rgb32f, reference: &Rgb32f, clipped: &[bool], tone: Option<&ToneMap>) -> Vec<([f64; 3], [f64; 3])> {
+    sensor
+        .data
+        .iter()
+        .zip(&reference.data)
+        .enumerate()
+        .filter_map(|(i, (s, r))| {
+            let (s, r) = (s.map(f64::from), r.map(f64::from));
+            let fine = !clipped.get(i).copied().unwrap_or(false)
+                && s.iter().chain(r.iter()).all(|v| v.is_finite() && *v >= 0.0)
+                && r.iter().all(|v| *v < 0.98);
+            let (ls, lr) = (luma(s), luma(r));
+            let k = tone.map_or(1.0, |t| f64::from(t.chroma_scale(lr as f32))).max(0.05);
+            (fine && lr > 0.004 && ls > 1e-6).then(|| (s.map(|v| v * lr / ls), r.map(|v| lr + (v - lr) / k)))
+        })
+        .collect()
+}
+
+/// The 3 × 3 matrix taking `pairs`' sensor colours to their preview colours that keeps luminance (`LUMA · M = LUMA`)
+/// and white (`M · [1, 1, 1] = [1, 1, 1]`), by least squares with each pair weighted by 1 / (R + G + B)² (chromaticity
+/// error, so a dark saturated colour counts as much as a light one), on two pairs in three; and the mean Oklab
+/// difference of the third before and after it. `None` with too few pairs or no usable solution.
+pub(super) fn fit_preview_matrix(pairs: &[([f64; 3], [f64; 3])]) -> Option<(Mat3, f64, f64)> {
+    if pairs.len() < 300 {
+        return None;
+    }
+    // normal equations of the 9 entries (row-major), the same 3 × 3 block per row of M, then the 5 constraints
+    let mut gram = [[0.0; 3]; 3];
+    let mut cross = [[0.0; 3]; 3];
+    for (x, y) in pairs.iter().enumerate().filter(|(i, _)| i % 3 != 0).map(|(_, p)| p) {
+        let sum: f64 = y.iter().sum();
+        if sum <= 0.0 {
+            continue;
+        }
+        let wt = 1.0 / (sum * sum);
+        for a in 0..3 {
+            for b in 0..3 {
+                gram[a][b] += wt * x[a] * x[b];
+                cross[a][b] += wt * y[a] * x[b];
+            }
+        }
+    }
+    const N: usize = 14;
+    let mut system = vec![vec![0.0; N + 1]; N];
+    for r in 0..3 {
+        for a in 0..3 {
+            for b in 0..3 {
+                system[3 * r + a][3 * r + b] = gram[a][b];
+            }
+            system[3 * r + a][N] = cross[r][a];
+        }
+    }
+    // constraint rows (and their transposes): luminance kept per column c, white kept by rows 0 and 1
+    let mut constraints: Vec<([f64; 9], f64)> = (0..3)
+        .map(|c| {
+            let mut row = [0.0; 9];
+            for r in 0..3 {
+                row[3 * r + c] = LUMA[r];
+            }
+            (row, LUMA[c])
+        })
+        .collect();
+    for r in 0..2 {
+        let mut row = [0.0; 9];
+        row[3 * r..3 * r + 3].copy_from_slice(&[1.0; 3]);
+        constraints.push((row, 1.0));
+    }
+    for (k, (row, rhs)) in constraints.iter().enumerate() {
+        for (j, v) in row.iter().enumerate() {
+            system[9 + k][j] = *v;
+            system[j][9 + k] = *v;
+        }
+        system[9 + k][N] = *rhs;
+    }
+    let solution = super::proxy::solve_small(&mut system)?;
+    let matrix = Mat3(std::array::from_fn(|r| std::array::from_fn(|c| solution.get(3 * r + c).copied().unwrap_or(f64::NAN))));
+    if !matrix.0.iter().flatten().all(|v| v.is_finite() && v.abs() < 8.0) {
+        return None;
+    }
+    let held_out = |m: &Mat3| -> f64 {
+        let lab = |p: [f64; 3]| lightcraft_color::perceptual::oklab_from_2020(p.map(|v| v.max(0.0) as f32));
+        let (sum, n) = pairs.iter().step_by(3).fold((0.0, 0usize), |(sum, n), (x, y)| {
+            let (a, b) = (lab(m.apply(*x)), lab(*y));
+            (sum + f64::from(((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()), n + 1)
+        });
+        sum / n.max(1) as f64
+    };
+    Some((matrix, held_out(&Mat3::IDENTITY), held_out(&matrix)))
+}
+
+#[cfg(test)]
+mod preview_match_tests {
+    use super::*;
+
+    /// A pseudo-random colour in 0.01 .. 1 per channel.
+    fn colour(i: usize) -> [f64; 3] {
+        // (a multiplier of its own per channel: channels that share one lie on a line, and no matrix is found)
+        let h = |k: usize| ((i * [2_654_435_761, 40_503, 1_299_709][k - 1] + 7 * k) % 10_007) as f64 / 10_007.0;
+        [0.01 + 0.99 * h(1), 0.01 + 0.99 * h(2), 0.01 + 0.99 * h(3)]
+    }
+
+    /// The fit finds a colour change that keeps luminance and white, whatever the two pictures' tone maps (each
+    /// preview pixel is at another brightness), and keeps both properties itself.
+    #[test]
+    fn preview_matrix_recovers_a_colour_change_and_keeps_luminance_and_white() {
+        // more colourful blues and reds, luminance and white kept: rows sum to 1, LUMA · M = LUMA
+        let a = 0.25;
+        let truth = Mat3([[1.0 + a, -a, 0.0], [-a * LUMA[0] / LUMA[1], 1.0 + a * LUMA[0] / LUMA[1], 0.0], [0.0, 0.0, 1.0]]);
+        let truth = {
+            // blue boost on top, also luminance and white keeping
+            let b = 0.3;
+            let blue = Mat3([[1.0, 0.0, 0.0], [0.0, 1.0 + b * LUMA[2] / LUMA[1], -b * LUMA[2] / LUMA[1]], [0.0, -b, 1.0 + b]]);
+            blue.mul(&truth)
+        };
+        let pairs: Vec<_> = (0..3000)
+            .map(|i| {
+                let x = colour(i);
+                let y = truth.apply(x);
+                // another tone map: the preview pixel is brighter or darker by a factor of its own
+                let k = 0.3 + 0.004 * (i % 300) as f64;
+                (x.map(|v| v * 2.0), y.map(|v| v * k))
+            })
+            .filter(|(_, y)| y.iter().all(|v| *v > 0.0))
+            .map(|(x, y)| {
+                let (lx, ly) = (luma(x), luma(y));
+                (x.map(|v| v * ly / lx), y)
+            })
+            .collect();
+        let (m, before, after) = fit_preview_matrix(&pairs).unwrap();
+        for r in 0..3 {
+            for c in 0..3 {
+                assert!((m.0[r][c] - truth.0[r][c]).abs() < 1e-3, "{:?} vs {:?}", m.0, truth.0);
+            }
+        }
+        assert!(after < before * PREVIEW_MATCH_GAIN && after < 1e-4, "{before} -> {after}");
+        let white = m.apply([1.0; 3]);
+        assert!(white.iter().all(|v| (v - 1.0).abs() < 1e-9), "white kept: {white:?}");
+        for c in 0..3 {
+            let l: f64 = (0..3).map(|r| LUMA[r] * m.0[r][c]).sum();
+            assert!((l - LUMA[c]).abs() < 1e-9, "luminance kept");
+        }
+    }
+
+    /// A preview whose colour is the render's gains nothing from a match, so none is used; too few pixels give none.
+    #[test]
+    fn preview_matrix_of_the_same_colour_is_no_gain() {
+        let pairs: Vec<_> = (0..900).map(|i| (colour(i), colour(i).map(|v| v * 0.5))).map(|(x, y)| (x.map(|v| v * luma(y) / luma(x)), y)).collect();
+        let (m, before, after) = fit_preview_matrix(&pairs).unwrap();
+        assert!(before < 1e-6 && after < 1e-6, "{before} {after}");
+        assert!(after >= before * PREVIEW_MATCH_GAIN, "no gain, no match");
+        assert!(m.0.iter().flatten().zip(Mat3::IDENTITY.0.iter().flatten()).all(|(a, b)| (a - b).abs() < 1e-6));
+        assert!(fit_preview_matrix(&pairs[..100]).is_none());
+    }
+
+    /// An iPhone 17 Pro ProRAW gets a Camera Matching profile from its own preview (issue #246), which keeps the
+    /// file's tone curve, and Camera Matching renders it closer to that preview than Color does.
+    #[test]
+    fn proraw_gets_camera_matching_from_its_preview() {
+        let path = std::env::var_os("LIGHTCRAFT_CORPUS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+            .join("raw/dng-apple-iphone17pro-proraw-jxl.dng");
+        let Ok(bytes) = std::fs::read(&path) else {
+            lightcraft_testkit::skip!(Corpus, "{} absent", path.display());
+            return;
+        };
+        let (img, info) = crate::files::load_bytes(&bytes, 256).unwrap();
+        let m = info.camera_match.clone().expect("a ProRAW's Camera Matching");
+        assert!(m.hue_sat.is_none() && m.start_hue_sat.is_none());
+        assert_eq!(m.tone, info.camera_tone, "the file's own tone curve (with the gain map) stays");
+        let white = m.matrix.apply([1.0; 3]);
+        assert!(white.iter().all(|v| (v - 1.0).abs() < 1e-6), "neutrals stay neutral: {white:?}");
+        // Camera Matching against Color, both against the camera's preview, in Oklab
+        let preview =
+            crate::files::decode_raw_preview(&bytes, lightcraft_codecs::DecodeOptions { max_size: Some((256, 256)), max_pixels: 1 << 27 }, None)
+                .unwrap()
+                .to_working()
+                .into_oriented(lightcraft_raw::decode(&bytes).unwrap().orientation);
+        let req = lightcraft_pipeline::RenderRequest::fit(preview.width, preview.height);
+        let to_2020 = lightcraft_color::REC2020.from_xyz().mul(&lightcraft_color::SRGB.to_xyz());
+        let mut s = lightcraft_develop::DevelopSettings::default();
+        let colour = crate::media::DecodedSource::new(std::sync::Arc::new(img), Some(info.clone()));
+        let distance = |s: &lightcraft_develop::DevelopSettings| {
+            let (input, info) = colour.develop_input(s, info.clone());
+            let out = lightcraft_pipeline::render(&input, &info, s, &req).image;
+            assert_eq!((out.width, out.height), (preview.width, preview.height));
+            let lab = |p: [f32; 3]| lightcraft_color::perceptual::oklab_from_2020(p.map(|v| v.max(0.0)));
+            let sum: f32 = out
+                .data
+                .iter()
+                .zip(&preview.data)
+                .map(|(a, b)| {
+                    let a = to_2020.apply_f32([0, 1, 2].map(|c| lightcraft_color::transfer::srgb_to_linear(f32::from(a[c]) / 255.0)));
+                    let (a, b) = (lab(a), lab(*b));
+                    ((a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+                })
+                .sum();
+            sum / out.data.len() as f32
+        };
+        let plain = distance(&s);
+        s.profile.id = lightcraft_pipeline::profiles::CAMERA.into();
+        let matched = distance(&s);
+        assert!(matched < plain, "Camera Matching is closer to the camera's colour: {matched} vs Color {plain}");
+    }
+}
