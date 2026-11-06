@@ -2283,6 +2283,12 @@ impl Session {
                 return self.fill(st, page);
             }
         }
+        let mut page = page;
+        // this library read again: its photos that didn't change are the open library's, not a second copy of them
+        // (both copies of a big library held at once filled the memory, HB-236)
+        if !st.config.library.is_empty() && page.library == st.config.library {
+            lightcraft_catalog::sync::share_unchanged(&self.catalog, &mut page.catalog);
+        }
         let first = st.reading.is_none();
         let snap = match st.reading.take() {
             None => page,

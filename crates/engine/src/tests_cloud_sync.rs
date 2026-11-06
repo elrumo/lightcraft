@@ -1132,6 +1132,35 @@ fn a_device_further_behind_than_the_server_keeps_reloads_and_keeps_its_changes()
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A library read again holds the open library's own copy of each photo that didn't change, from the page it came in
+/// on: not a second copy of every photo beside the open ones (HB-236: a big library's reload doubled the memory).
+#[test]
+fn a_library_read_again_keeps_the_photos_that_did_not_change() {
+    let mut f = Fake::new();
+    f.page = 1;
+    f.core.set_compact_bytes(3000);
+    let (mut a, root, ids) = first_device("share", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    let behind = b.sync_state().unwrap().config.cursor;
+    a.selection = crate::Selection::single(ids[1]);
+    for i in 0..80 {
+        a.execute("photo.rate", &json!({"rating": i % 5 + 1})).unwrap();
+        sync(&mut a, &mut f);
+    }
+    assert_eq!(f.core.since(behind, 10).unwrap(), lightcraft_catalog::sync::Pull::Gone);
+    let (same, changed) = (b.catalog.photo(ids[0]).unwrap().clone(), b.catalog.photo(ids[1]).unwrap().clone());
+    sync_until(&mut b, &mut f, &|s| s.sync_state().unwrap().reading().is_some());
+    assert!(b.sync_state().unwrap().reading().is_some(), "half read");
+    assert_eq!(std::sync::Arc::strong_count(&same), 3, "the first page holds the open library's photo");
+    assert_eq!(sync(&mut b, &mut f)["state"], "idle");
+    assert!(std::sync::Arc::ptr_eq(b.catalog.photo(ids[0]).unwrap(), &same), "kept");
+    assert!(!std::sync::Arc::ptr_eq(b.catalog.photo(ids[1]).unwrap(), &changed));
+    assert_eq!(b.catalog.photo(ids[1]).unwrap().rating, 5, "the change came");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The server's library is read again (the log was compacted past this device): the photos the grid or the loupe
 /// show download their previews meanwhile, they don't wait for the last page.
 #[test]

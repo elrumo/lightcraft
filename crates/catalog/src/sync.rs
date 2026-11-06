@@ -493,14 +493,39 @@ pub fn carry_local(from: &Catalog, to: &mut Catalog) {
             continue;
         }
         if let Some(p) = to.photos.get_mut(id) {
-            let p = Arc::make_mut(p);
-            p.source = old.source.clone();
-            p.file_name = old.file_name.clone();
-            p.history = old.history.clone();
-            p.local_baseline = old.local_baseline;
+            carry_photo(old, p);
         }
     }
     to.browsed = from.browsed.clone();
+}
+
+/// A page of the server's library read again over `from`, the same library (a reload): what
+/// [`carry_local`] carries is carried now, and each photo that is then equal to `from`'s becomes
+/// `from`'s copy. A reload of a big library then costs the map of its photos, not a second copy of
+/// every one of them beside the open library's.
+pub fn share_unchanged(from: &Catalog, page: &mut Catalog) {
+    for (id, p) in &mut page.photos {
+        if let Some(old) = from.photos.get(id).filter(|old| !old.local) {
+            carry_photo(old, p);
+        }
+    }
+}
+
+/// `p` with `old`'s local state (where its file is on this disk, its file name, History), and `old`
+/// itself when it is then the same photo.
+fn carry_photo(old: &Arc<Photo>, p: &mut Arc<Photo>) {
+    if Arc::ptr_eq(old, p) {
+        return;
+    }
+    let q = Arc::make_mut(p);
+    q.source = old.source.clone();
+    q.file_name = old.file_name.clone();
+    q.history = old.history.clone();
+    q.local_baseline = old.local_baseline;
+    // (`==` takes `0.0` for `-0.0`: such a photo keeps this device's zero, which renders the same)
+    if **p == **old {
+        *p = old.clone();
+    }
 }
 
 /// Make a catalog from another device or the server safe to use here (it is untrusted input):
