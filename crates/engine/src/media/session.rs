@@ -674,6 +674,15 @@ impl crate::Session {
             .and_then(|s| crate::scene_level::luminance_quantiles(&s.image))
     }
 
+    /// The mean scene-linear colour of a coarse grid of the same picture as [`Self::scene_level_of`] ([`crate::scene_level::colour_grid`]),
+    /// for a frontend that brings its own decode's colour to this one's. Same conditions; changes nothing.
+    pub fn scene_colour_of(&self, id: PhotoId) -> Option<Vec<Option<[f32; 3]>>> {
+        self.media
+            .cached_source(id)
+            .filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy)
+            .and_then(|s| crate::scene_level::colour_grid(&s.image))
+    }
+
     /// Borrow source mattes for selection notices without constructing render facts each frame.
     pub fn source_mattes(&self, id: PhotoId) -> Option<&lightcraft_pipeline::masks::Mattes> {
         self.media.cached_source(id).and_then(|s| s.info.as_ref()).and_then(|info| info.mattes.as_deref())

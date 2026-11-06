@@ -2066,6 +2066,11 @@ fn photo_camera_tone_gives_the_base_curve_a_file_gives_it() {
     // the scene-linear light of that decode, as nine luminances that do not decrease (a frontend with another decoder scales its light to them)
     let level: Vec<f64> = serde_json::from_value(asked["level"].clone()).expect("the decode's light is handed over");
     assert!(level.len() == 9 && level.iter().all(|v| v.is_finite() && *v > 0.0) && level.windows(2).all(|w| w[0] <= w[1]), "{level:?}");
+    // and its colour, as a grid of cell means laid along the long edge
+    let colour = &asked["colour"];
+    assert_eq!((colour["long"].as_u64(), colour["short"].as_u64()), (Some(12), Some(8)), "{colour}");
+    let cells: Vec<Option<[f64; 3]>> = serde_json::from_value(colour["cells"].clone()).expect("cells");
+    assert!(cells.len() == 96 && cells.iter().all(|c| c.is_some_and(|c| c.iter().all(|v| v.is_finite()))), "{cells:?}");
     // a raw nothing was fitted to has none
     assert!(s.execute("photo.cameraTone", &serde_json::json!({"id": flat})).unwrap()["tone"].is_null());
     // a photo that is not there

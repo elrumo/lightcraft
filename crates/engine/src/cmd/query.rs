@@ -380,13 +380,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "Camera Tone",
             [],
             None,
-            "{id?} → {tone: {knots: [[scene, display] × 32] (increasing linear luminance pairs), chroma: [×8] (colour scale at display luminance 0, 1/7 … 1)} | null, level: [×9] | null (the luminance of this engine's scene-linear picture of a raw at the deciles 0.1 … 0.9: the same scene developed with another decoder differs by one factor at every decile, which a frontend that develops raws itself uses to bring its light to the scale the curve is fitted in; null when no decode of the file is known)} the base tone curve the photo's file gives it: what a raw is shown through before any edit (fitted to the camera's own picture, else a DNG's own curve). A frontend that develops a raw itself needs it to match this engine's render; `null` for a photo with none (a rendered file, a raw nothing was fitted to). Decodes the photo at thumbnail size when no source of it is cached; changes no edit",
+            "{id?} → {tone: {knots: [[scene, display] × 32] (increasing linear luminance pairs), chroma: [×8] (colour scale at display luminance 0, 1/7 … 1)} | null, level: [×9] | null (the luminance of this engine's scene-linear picture of a raw at the deciles 0.1 … 0.9: the same scene developed with another decoder differs by one factor at every decile, which a frontend that develops raws itself uses to bring its light to the scale the curve is fitted in; null when no decode of the file is known), colour: {long: 12, short: 8, cells: [[r, g, b] | null × 96]} | null (the mean linear Rec. 2020 colour of a grid of cells of the same picture, 12 along its long edge and 8 along its short one, short index major: in scene-linear light another decoder's grid of the same picture differs by one 3 × 3 matrix, which such a frontend fits to bring its colour to this engine's; a picture turned another way differs only by a reversal of either axis)} the base tone curve the photo's file gives it: what a raw is shown through before any edit (fitted to the camera's own picture, else a DNG's own curve). A frontend that develops a raw itself needs it to match this engine's render; `null` for a photo with none (a rendered file, a raw nothing was fitted to). Decodes the photo at thumbnail size when no source of it is cached; changes no edit",
             always,
             |s, p| {
                 let c = "photo.cameraTone";
                 let id = photo_arg(s, p, c)?;
                 let tone = s.camera_tone_of(id).map_err(|e| bad(c, e))?;
-                Ok(json!({"tone": tone.and_then(|t| serde_json::to_value(t).ok()), "level": s.scene_level_of(id)}))
+                let colour = s.scene_colour_of(id).map(|cells| {
+                    json!({"long": crate::scene_level::GRID_LONG, "short": crate::scene_level::GRID_SHORT, "cells": cells})
+                });
+                Ok(json!({"tone": tone.and_then(|t| serde_json::to_value(t).ok()), "level": s.scene_level_of(id), "colour": colour}))
             }
         ),
         cmd!(
