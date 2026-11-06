@@ -1022,9 +1022,8 @@ mod tests {
 
     #[test]
     fn auto_takes_little_while_the_device_is_used_and_all_once_it_is_left_alone() {
-        let at = |idle: Option<u64>, thermal: u8, low_power: bool| {
-            HelperUsage::Auto.effective(&HelperConditions { idle_secs: idle, thermal, low_power })
-        };
+        let at =
+            |idle: Option<u64>, thermal: u8, low_power: bool| HelperUsage::Auto.effective(&HelperConditions { idle_secs: idle, thermal, low_power });
         assert_eq!(at(Some(2), 0, false), HelperUsage::Low, "in use");
         assert_eq!(at(Some(60), 0, false), HelperUsage::Medium, "a minute away");
         assert_eq!(at(Some(600), 0, false), HelperUsage::High, "left alone");
@@ -1032,7 +1031,11 @@ mod tests {
         assert_eq!(at(Some(600), 2, false), HelperUsage::Low, "hot");
         assert_eq!(at(Some(600), 0, true), HelperUsage::Low, "saving power");
         assert_eq!(at(None, 0, false), HelperUsage::Medium, "a front end that says nothing");
-        assert_eq!(HelperUsage::High.effective(&HelperConditions { idle_secs: Some(0), thermal: 3, low_power: true }), HelperUsage::High, "a choice is kept");
+        assert_eq!(
+            HelperUsage::High.effective(&HelperConditions { idle_secs: Some(0), thermal: 3, low_power: true }),
+            HelperUsage::High,
+            "a choice is kept"
+        );
         for cores in [1, 4, 8, 10, 24] {
             let [l, m, h] = [HelperUsage::Low, HelperUsage::Medium, HelperUsage::High].map(|u| u.workers(cores));
             assert!(l >= 1 && m >= l && h >= m, "{cores} cores: {l} {m} {h}");
