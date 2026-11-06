@@ -942,7 +942,15 @@ impl Engine {
                 } else {
                     return Err(bad("give `preset`, `profile`, `version`, `history`, `original: true` or `edited: true`"));
                 };
-                let job = self.session.variant_job(id, &settings, edge).ok_or_else(|| bad("no such photo"))?;
+                // `level: "preview"` draws from the preview-level source (up to 2560 px) when `edge` is past a thumbnail's 512
+                // (a video of the edit); the default is the thumbnail level, as the browsers' pictures are
+                let level = match p.get("level").and_then(Value::as_str) {
+                    None | Some("thumb") => lightcraft_engine::SourceLevel::Thumb,
+                    Some("preview") if edge > lightcraft_engine::SourceLevel::Thumb.max_edge() => lightcraft_engine::SourceLevel::Preview,
+                    Some("preview") => lightcraft_engine::SourceLevel::Thumb,
+                    Some(other) => return Err(bad(&format!("`level` is thumb or preview, not `{other}`"))),
+                };
+                let job = self.session.variant_job_at(id, &settings, edge, level).ok_or_else(|| bad("no such photo"))?;
                 let key = job.key;
                 if self.sched.variant(job.clone()).is_none() {
                     self.variants.insert(key, (job, Instant::now()));

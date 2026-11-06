@@ -724,6 +724,16 @@ fn a_face_renders_on_its_own() {
     assert!(r["result"]["slot"].as_str().unwrap().starts_with("variant:"), "{r}");
     let none = h.call(&req(6, "render.variant", json!({"photo": photo, "history": 999, "edge": 200})), Duration::from_secs(30));
     assert_eq!(none["error"]["code"], "badParams", "{none}");
+    // past a thumbnail's 512 px, from the preview-level source when asked for (the edit video's frames)
+    let info = h.call(&req(7, "engine.execute", json!({"command": "photo.inspect", "params": {"id": photo}})), Duration::from_secs(30));
+    let native = info["result"]["width"].as_u64().unwrap().max(info["result"]["height"].as_u64().unwrap());
+    let r = h.call(&req(8, "render.variant", json!({"photo": photo, "edited": true, "level": "preview", "edge": 1200})), Duration::from_secs(30));
+    let slot = r["result"]["slot"].as_str().unwrap().to_string();
+    let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
+    let long = image["width"].as_u64().unwrap().max(image["height"].as_u64().unwrap());
+    assert!(long <= 1200 && (native <= 600 || long > 512), "native {native}, drawn {long}: {image}");
+    let bad_level = h.call(&req(9, "render.variant", json!({"photo": photo, "edited": true, "level": "huge", "edge": 1200})), Duration::from_secs(30));
+    assert_eq!(bad_level["error"]["code"], "badParams", "{bad_level}");
 }
 
 // Photo Merge as the phone does it: previews that a newer one replaces, then the full merge in the
