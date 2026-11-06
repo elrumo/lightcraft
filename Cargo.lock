@@ -4403,7 +4403,7 @@ dependencies = [
 
 [[package]]
 name = "lightbites-menubar"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -4414,7 +4414,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "bytemuck",
  "chrono",
@@ -4442,7 +4442,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-apphost"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-catalog",
  "lightcraft-codecs",
@@ -4462,7 +4462,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-capture"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "block2 0.6.2",
  "dispatch2",
@@ -4475,7 +4475,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-catalog"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -4496,7 +4496,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-cli"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "dhat",
  "lightcraft-codecs",
@@ -4514,7 +4514,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-codecs"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "avif-serialize",
  "bytemuck",
@@ -4545,7 +4545,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-color"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-geom",
  "proptest",
@@ -4554,7 +4554,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-denoise"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "faer-core",
  "lightcraft-denoise-core",
@@ -4571,7 +4571,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-denoise-core"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "dhat",
  "lightcraft-raster",
@@ -4587,7 +4587,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-depth"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -4602,7 +4602,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-develop"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-color",
  "lightcraft-geom",
@@ -4614,7 +4614,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-diffuse"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -4630,7 +4630,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-engine"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "ab_glyph",
  "argon2",
@@ -4689,7 +4689,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-enhance"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -4705,7 +4705,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-erase"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-raster",
  "lightcraft-vision",
@@ -4717,7 +4717,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-faces"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-testkit",
  "matrixmultiply",
@@ -4732,7 +4732,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-fetch"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "log",
  "rustls",
@@ -4743,7 +4743,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-geo"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "miniz_oxide 0.9.1",
  "proptest",
@@ -4751,7 +4751,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-geocode"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "miniz_oxide 0.9.1",
  "serde",
@@ -4759,7 +4759,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-geom"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "proptest",
  "serde",
@@ -4767,7 +4767,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-gpu"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "bytemuck",
  "half",
@@ -4788,7 +4788,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-heif"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "heic-rs",
  "rayon",
@@ -4796,14 +4796,14 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-inpaint"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "rayon",
 ]
 
 [[package]]
 name = "lightcraft-ios"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "eframe",
  "egui",
@@ -4820,7 +4820,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-ios-host"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "block2 0.6.2",
  "lightcraft-codecs",
@@ -4838,7 +4838,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-ios-swift"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-apphost",
  "lightcraft-denoise",
@@ -4856,7 +4856,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-lensdb"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-develop",
  "lightcraft-geom",
@@ -4865,7 +4865,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-mcp"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-apphost",
  "lightcraft-codecs",
@@ -4878,7 +4878,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-merge"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-codecs",
  "lightcraft-color",
@@ -4895,7 +4895,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-meta"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "chrono",
  "lightcraft-geom",
@@ -4908,7 +4908,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-pipeline"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "dhat",
  "image",
@@ -4929,7 +4929,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-preview"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "jpeg-encoder",
  "lightcraft-raster",
@@ -4941,7 +4941,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-raster"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "libc",
  "lightcraft-color",
@@ -4953,7 +4953,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-raw"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "dhat",
  "jpeg-encoder",
@@ -4977,7 +4977,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-scenes"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "image",
  "lightcraft-color",
@@ -4988,7 +4988,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-segment"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -5002,7 +5002,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-server"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "argon2",
  "flate2",
@@ -5029,7 +5029,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-slideshow"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "lightcraft-raster",
  "serde",
@@ -5038,15 +5038,15 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-sysmem"
-version = "0.14.3"
+version = "0.14.4"
 
 [[package]]
 name = "lightcraft-testkit"
-version = "0.14.3"
+version = "0.14.4"
 
 [[package]]
 name = "lightcraft-tiff"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "proptest",
  "serde",
@@ -5055,7 +5055,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-ui-egui"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "craft-ui",
  "craft-update",
@@ -5091,7 +5091,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-video"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "filmcraft-h264",
  "filmcraft-h264enc",
@@ -5105,7 +5105,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-vision"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "ab_glyph",
  "candle-core",
@@ -5128,7 +5128,7 @@ dependencies = [
 
 [[package]]
 name = "lightcraft-web"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "crc32fast",
  "eframe",
@@ -10015,7 +10015,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "brotli",
  "earcutr",
