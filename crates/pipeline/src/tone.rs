@@ -225,10 +225,67 @@ fn knots(k: &[f32; SHIFT_N], p: f32) -> f32 {
     0.5 * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t * t * t)
 }
 
+/// Spread (EV each side) of the log-log slope that scales colour with an edited curve ([`edit_chroma`]).
+const SLOPE_SPREAD_EV: f32 = 0.5;
+/// How strongly colour follows that slope, and the most it may scale it either way (fitted to Lightroom's
+/// single-slider exports: `docs/lightroom-light-sliders.md`).
+const SLOPE_CHROMA_POWER: f32 = 0.85;
+const SLOPE_CHROMA_MAX: f32 = 2.0;
+
+/// Chroma scales at the tone LUT's entries (scene EV): `base` at the unedited curve's display luminance, times how much
+/// steeper in log-log terms the edited curve `lut` is than the unedited `neutral` over ±0.5 EV there, to the power 0.85,
+/// within 0.5..2. A curve applied to each RGB channel spreads them by its slope, and Lightroom's sliders colour a
+/// picture that way (Contrast +100 about 1.5 times the chroma in the mid tones, Blacks −100 about twice), where a
+/// luminance curve keeps the channels' ratios. An unedited curve gives `base` alone.
+fn edit_chroma(lut: &[f32], neutral: &[f32], base: impl Fn(f32) -> f32) -> Vec<f32> {
+    let h = (SLOPE_SPREAD_EV * (LUT_N - 1) as f32 / (LUT_MAX_EV - LUT_MIN_EV)).round() as usize;
+    let ln = |v: &[f32], i: usize| v.get(i).copied().unwrap_or(0.0).max(1e-7).ln();
+    let edited = lut != neutral;
+    (0..LUT_N)
+        .map(|i| {
+            let k = base(neutral.get(i).copied().unwrap_or(0.0));
+            if !edited {
+                return k;
+            }
+            let (a, b) = (i.saturating_sub(h), (i + h).min(LUT_N - 1));
+            let (se, sn) = (ln(lut, b) - ln(lut, a), ln(neutral, b) - ln(neutral, a));
+            let f = if sn > 1e-6 && se.is_finite() {
+                (se.max(0.0) / sn).powf(SLOPE_CHROMA_POWER).clamp(1.0 / SLOPE_CHROMA_MAX, SLOPE_CHROMA_MAX)
+            } else {
+                1.0
+            };
+            k * f
+        })
+        .collect()
+}
+
+/// The part of an edit whose slope colours the picture ([`edit_chroma`]): Contrast, Whites that lift and Blacks that
+/// crush. Lightroom keeps the colour where Blacks lift or Whites lower the curve (its exports change chroma by under
+/// 5 % there), so those leave it alone; `None` when nothing is left.
+fn colour_edit(contrast: f64, whites: f64, blacks: f64) -> Option<(f64, f64, f64)> {
+    let e = (contrast, whites.max(0.0), blacks.min(0.0));
+    (e != (0.0, 0.0, 0.0)).then_some(e)
+}
+
+/// A camera chroma curve's scale at display luminance `o` (linear between its `CHROMA_N` nodes).
+fn chroma_node(chroma: &[f32; CHROMA_N], o: f32) -> f32 {
+    if !o.is_finite() {
+        return 1.0;
+    }
+    let f = o.clamp(0.0, 1.0) * (CHROMA_N - 1) as f32;
+    let i = (f as usize).min(CHROMA_N - 2);
+    let t = f - i as f32;
+    let (a, b) = (chroma.get(i).copied().unwrap_or(1.0), chroma.get(i + 1).copied().unwrap_or(1.0));
+    if a == b { a } else { a + (b - a) * t }
+}
+
 #[derive(Clone, Debug)]
 pub struct ToneMap {
     lut: Vec<f32>,
+    /// The camera look's chroma curve by display luminance ([`ToneMap::chroma_scale`], for fitting looks).
     chroma: [f32; CHROMA_N],
+    /// What a render scales chroma by at each of `lut`'s entries ([`ToneMap::chroma_at`], [`edit_chroma`]).
+    chroma_ev: Vec<f32>,
 }
 
 impl ToneMap {
@@ -245,15 +302,26 @@ impl ToneMap {
         let adjustment = Self::display(contrast, whites, blacks);
         let neutral = contrast == 0.0 && whites == 0.0 && blacks == 0.0;
         let top = (2.9 - 1.6 * (whites as f32 / 100.0) + peak.log2() + 1.0).max(HDR_FROM_EV + 0.5);
-        let lut = (0..LUT_N)
-            .map(|i| {
-                let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
-                let y = curve.apply(GREY * 2f32.powf(ev));
-                let o = if neutral { y } else { adjustment.apply(y) };
-                if peak > 1.0 { (o + (peak - 1.0) * smooth(HDR_FROM_EV, top, ev)).clamp(0.0, peak) } else { o }
-            })
-            .collect();
-        ToneMap { lut, chroma: curve.chroma }
+        let table = |adjust: Option<&ToneMap>| -> Vec<f32> {
+            (0..LUT_N)
+                .map(|i| {
+                    let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
+                    let y = curve.apply(GREY * 2f32.powf(ev));
+                    let o = adjust.map_or(y, |a| a.apply(y));
+                    if peak > 1.0 { (o + (peak - 1.0) * smooth(HDR_FROM_EV, top, ev)).clamp(0.0, peak) } else { o }
+                })
+                .collect()
+        };
+        let lut = table((!neutral).then_some(&adjustment));
+        // (the unedited curve and the colour edit's as tone maps of their own: the HDR lift's top moves with Whites)
+        let flat = if neutral { lut.clone() } else { Self::camera_hdr(curve, 0.0, 0.0, 0.0, peak).lut };
+        let colour = match colour_edit(contrast, whites, blacks) {
+            Some(e) if e == (contrast, whites, blacks) => lut.clone(),
+            Some((c, w, b)) => Self::camera_hdr(curve, c, w, b, peak).lut,
+            None => flat.clone(),
+        };
+        let chroma_ev = edit_chroma(&colour, &flat, |o| chroma_node(&curve.chroma, o));
+        ToneMap { lut, chroma: curve.chroma, chroma_ev }
     }
     /// `contrast`, `whites`, `blacks` in −100..100 (Lightroom slider units).
     pub fn new(contrast: f64, whites: f64, blacks: f64) -> ToneMap {
@@ -274,7 +342,7 @@ impl ToneMap {
         let wl = GREY * 2f32.powf(white_ev);
         let pre = 1.0 + GREY / wl; // keep grey near grey
         let b = (blacks / 100.0) as f32;
-        let lut = (0..LUT_N)
+        let lut: Vec<f32> = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
                 let y = GREY * 2f32.powf(ev * slope) * pre;
@@ -299,7 +367,12 @@ impl ToneMap {
                 o.clamp(0.0, peak)
             })
             .collect();
-        ToneMap { lut, chroma: NO_CHROMA }
+        let chroma_ev = match colour_edit(contrast, whites, blacks) {
+            Some(e) if e == (contrast, whites, blacks) => edit_chroma(&lut, &ToneMap::hdr(0.0, 0.0, 0.0, peak).lut, |_| 1.0),
+            Some((c, w, b)) => ToneMap::hdr(c, w, b, peak).chroma_ev,
+            None => vec![1.0; LUT_N],
+        };
+        ToneMap { lut, chroma: NO_CHROMA, chroma_ev }
     }
 
     /// Tone map for display-referred sources: identity at neutral settings.
@@ -319,7 +392,7 @@ impl ToneMap {
         let neutral = c == 0.0 && w == 0.0 && b == 0.0;
         // (a running maximum: the summed shifts may dip by a hair where two tables slope against each other)
         let mut floor = 0.0f32;
-        let lut = (0..LUT_N)
+        let lut: Vec<f32> = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
                 let y = GREY * 2f32.powf(ev);
@@ -343,7 +416,12 @@ impl ToneMap {
                 floor
             })
             .collect();
-        ToneMap { lut, chroma: NO_CHROMA }
+        let chroma_ev = match colour_edit(contrast, whites, blacks) {
+            Some(e) if e == (contrast, whites, blacks) => edit_chroma(&lut, &ToneMap::display_hdr(0.0, 0.0, 0.0, peak).lut, |_| 1.0),
+            Some((c, w, b)) => ToneMap::display_hdr(c, w, b, peak).chroma_ev,
+            None => vec![1.0; LUT_N],
+        };
+        ToneMap { lut, chroma: NO_CHROMA, chroma_ev }
     }
 
     /// The table (`LUT_N` entries, see [`ToneMap::apply`]).
@@ -351,21 +429,28 @@ impl ToneMap {
         &self.lut
     }
 
-    /// The chroma curve (`CHROMA_N` entries, see [`ToneMap::chroma_scale`]).
+    /// The chroma scales a render applies, at the tone table's entries (`LUT_N` of them, see [`ToneMap::chroma_at`]).
     pub fn chroma_lut(&self) -> &[f32] {
-        &self.chroma
+        &self.chroma_ev
     }
 
-    /// Chroma scale at display luminance `o` (exactly 1 everywhere unless a camera look sets it).
+    /// The camera look's chroma scale at display luminance `o` (exactly 1 everywhere unless a camera look sets it); a
+    /// render uses [`ToneMap::chroma_at`], which adds the edit's.
     #[inline]
     pub fn chroma_scale(&self, o: f32) -> f32 {
-        if !o.is_finite() {
-            return 1.0;
-        }
-        let f = o.clamp(0.0, 1.0) * (CHROMA_N - 1) as f32;
-        let i = (f as usize).min(CHROMA_N - 2);
+        chroma_node(&self.chroma, o)
+    }
+
+    /// The chroma scale a render applies to a pixel of scene luminance `y` (the tone map's input): the camera look's at
+    /// the unedited curve's output, times the edit's slope ([`edit_chroma`]). 1 everywhere for an unedited picture
+    /// without a camera look.
+    #[inline]
+    pub fn chroma_at(&self, y: f32) -> f32 {
+        let ev = if y > 0.0 { (y / GREY).log2() } else { LUT_MIN_EV };
+        let f = ((ev - LUT_MIN_EV) / (LUT_MAX_EV - LUT_MIN_EV)).clamp(0.0, 1.0) * (LUT_N - 1) as f32;
+        let i = (f as usize).min(LUT_N - 2);
         let t = f - i as f32;
-        let (a, b) = (self.chroma.get(i).copied().unwrap_or(1.0), self.chroma.get(i + 1).copied().unwrap_or(1.0));
+        let (a, b) = (self.chroma_ev.get(i).copied().unwrap_or(1.0), self.chroma_ev.get(i + 1).copied().unwrap_or(1.0));
         if a == b { a } else { a + (b - a) * t }
     }
 
@@ -517,7 +602,15 @@ mod tests {
             assert_eq!(ToneMap::camera_hdr(&curve, c, w, b, f32::NAN).lut(), sdr.lut());
             for peak in [2.0f32, 8.0] {
                 let t = ToneMap::camera_hdr(&curve, c, w, b, peak);
-                assert_eq!(t.chroma_lut(), sdr.chroma_lut());
+                // the camera look's chroma curve, and what a render applies below the HDR lift (1.5 EV over grey, less
+                // the slope's half-stop spread)
+                for o in 0..=10 {
+                    assert_eq!(t.chroma_scale(o as f32 / 10.0), sdr.chroma_scale(o as f32 / 10.0));
+                }
+                for i in 0..1000 {
+                    let y = GREY * 2f32.powf(-12.0 + 12.9 * i as f32 / 1000.0);
+                    assert!((t.chroma_at(y) - sdr.chroma_at(y)).abs() < 1e-5, "{peak} at {y}");
+                }
                 let mut prev = -1.0;
                 for i in 0..2400 {
                     let y = 1e-5 * 1.01f32.powi(i);
@@ -599,6 +692,35 @@ mod tests {
             let got = p(&ToneMap::display(c, w, b), before);
             assert!((got - after).abs() < 0.02, "{c} {w} {b}: p {before} -> {got}, Lightroom {after}");
         }
+    }
+
+    #[test]
+    fn edits_colour_by_their_curves_slope() {
+        // (Lightroom's exports of the fitted raw: Contrast +100 about 1.5 times the mid tones' chroma, −100 about 0.6,
+        // Blacks −100 about twice; an unedited picture keeps its own)
+        let mid = 0.2f32;
+        assert!(ToneMap::display(0.0, 0.0, 0.0).chroma_lut().iter().all(|&k| k == 1.0));
+        assert!(ToneMap::new(0.0, 0.0, 0.0).chroma_lut().iter().all(|&k| k == 1.0));
+        let k = |t: ToneMap| t.chroma_at(t_input(&t, mid));
+        let (up, down, crush) = (k(ToneMap::display(100.0, 0.0, 0.0)), k(ToneMap::display(-100.0, 0.0, 0.0)), k(ToneMap::display(0.0, 0.0, -100.0)));
+        assert!((1.3..1.8).contains(&up) && (0.5..0.8).contains(&down) && (1.6..=2.0).contains(&crush), "{up} {down} {crush}");
+        // a camera look's own scale stays under an unedited curve, and the edit multiplies it
+        let curve = CameraTone::new(knots()).unwrap().with_chroma([1.2, 1.1, 1.0, 1.0, 0.9, 0.8, 0.7, 0.6]).unwrap();
+        let plain = ToneMap::camera(&curve, 0.0, 0.0, 0.0);
+        for y in [0.01f32, 0.18, 1.0] {
+            assert!((plain.chroma_at(y) - plain.chroma_scale(curve.apply(y))).abs() < 1e-3, "{y}");
+        }
+        assert!(ToneMap::camera(&curve, 100.0, 0.0, 0.0).chroma_at(0.05) > 1.2 * plain.chroma_at(0.05));
+    }
+
+    /// The scene luminance `t` takes to display luminance `o` (by bisection).
+    fn t_input(t: &ToneMap, o: f32) -> f32 {
+        let (mut a, mut b) = (1e-6f32.ln(), 100f32.ln());
+        for _ in 0..60 {
+            let m = 0.5 * (a + b);
+            if t.apply(m.exp()) < o { a = m } else { b = m }
+        }
+        (0.5 * (a + b)).exp()
     }
 
     #[test]

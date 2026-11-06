@@ -1,6 +1,6 @@
 # Light sliders fitted to Lightroom's single-slider exports
 
-> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** new (Contrast, Highlights, Shadows, Whites and Blacks refitted)
+> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** colour follows the edited curve's slope
 
 How Contrast, Highlights, Shadows, Whites and Blacks move a photo was tuned by eye. Here they are fitted to Lightroom's own
 response on one raw: a Sony ILCE-6000 with the E PZ 16-50mm at 16 mm (sunset over the sea, grass, white camper vans; the
@@ -51,6 +51,31 @@ so only the slider's response is compared: mean |ΔL\*| against Lightroom.
 Over all 22 exports (with Exposure ±1, unchanged) the mean goes from 3.78 to 2.01. What is left is mostly the unedited
 render's own spread after the mapping.
 
+## Colour
+
+Lightroom changes colourfulness with these sliders as if it applied the curve to each RGB channel: a channel spread grows
+with the curve's slope in log-log terms. Ours applied the curve to luminance and kept the channels' ratios, so Blacks −100
+left its mid tones at 0.66 of their chroma where Lightroom's reach 1.48, and Contrast went the other way from Lightroom.
+
+The tone map now carries a chroma scale for every tone-table entry ([`ToneMap::chroma_at`], `edit_chroma`): the camera
+look's at the unedited curve's output, times (edited slope / unedited slope)^0.85 over ±0.5 EV, within 0.5..2. Only
+Contrast, Whites that lift and Blacks that crush take part (`colour_edit`): where Blacks lift or Whites lower the curve,
+Lightroom's chroma moves by under 5 %. The constants come from a fit to the median chroma change per lightness band of
+the Contrast, Whites and Blacks exports (error 0.090 with no slope term, 0.009 with it).
+
+Median C\* after / before by base L\*, Lightroom / ours:
+
+| Slider | L\* 30–45 | 45–60 | 60–75 |
+|---|---|---|---|
+| Contrast +100 | 1.12 / 0.76 → 1.20 | 1.47 / 0.86 → 1.35 | 1.49 / 0.99 → 1.40 |
+| Contrast −100 | 0.88 / 1.21 → 0.81 | 0.64 / 1.11 → 0.69 | 0.60 / 1.00 → 0.68 |
+| Blacks −100 | 0.74 / 0.46 → 0.74 | 1.48 / 0.66 → 1.35 | 1.41 / 0.91 → 1.35 |
+| Whites +100 | 1.38 / 1.26 → 1.42 | 1.35 / 1.25 → 1.33 | 1.00 / 0.84 → 0.93 |
+
+Exposure, Highlights and Shadows move a pixel along the curve rather than change it, so this leaves them alone. Exposure
+−1.09 still gives the brightest band 0.95 of its chroma where Lightroom gives 1.36, and Shadows +100 the darkest band
+1.41 where Lightroom gives 1.74.
+
 ## Limits
 
 - **One photo.** Lightroom adapts its sliders to the photo's range (gap 3 in [gaps.md](gaps.md)). These are fixed curves
@@ -68,6 +93,8 @@ port share the same constants; the port's goldens come from the core.
 | Date | Change |
 |---|---|
 | 2026-11-06 | New: Contrast, Whites and Blacks as fitted shift tables, Highlights and Shadows windows and gains refitted. |
+| 2026-11-06 | Colour: Contrast, lifting Whites and crushing Blacks scale chroma by their curve's slope, as Lightroom's do. |
 
 [`ToneMap::display`]: ../crates/pipeline/src/tone.rs
 [`ToneMap::hdr`]: ../crates/pipeline/src/tone.rs
+[`ToneMap::chroma_at`]: ../crates/pipeline/src/tone.rs

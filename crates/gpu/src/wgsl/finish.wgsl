@@ -1,7 +1,7 @@
 // The per-pixel stage: a straight port of `lightcraft_pipeline::finish` (keep in step with it).
 // Bindings: img (rgb, pre-exposure), log_l, base, clar, tex, dark, masks (NMASK planes, then the
 // blurred chromaticity when HAS_CHROMA), aux
-// (tone LUT | chroma curve | sRGB LUT | curve LUTs | mask terms | a LUT profile's table), out (packed RGBA8; with HDR_OUT, the
+// (tone LUT | chroma scales | sRGB LUT | curve LUTs | mask terms | a LUT profile's table), out (packed RGBA8; with HDR_OUT, the
 // HDR picture follows: RGBA half floats, two words a pixel). PEAK above 1 is an HDR render
 // (`OutputDepth::F32Hdr`): values up to PEAK survive instead of clipping at SDR white.
 
@@ -20,10 +20,14 @@ fn tone_apply(y: f32) -> f32 {
     return v;
 }
 
-// The camera chroma curve follows the tone LUT in `aux` (`ToneMap::chroma_scale`).
-fn chroma_scale(o: f32) -> f32 {
-    let f = clamp(o, 0.0, 1.0) * f32(CHROMA_N - 1u);
-    let i = min(u32(f), CHROMA_N - 2u);
+// The chroma scales follow the tone LUT in `aux`, one per tone entry (`ToneMap::chroma_at`).
+fn chroma_at(y: f32) -> f32 {
+    var ev = TONE_MIN_EV;
+    if (y > 0.0) {
+        ev = log2(y / GREY);
+    }
+    let f = clamp((ev - TONE_MIN_EV) / (TONE_MAX_EV - TONE_MIN_EV), 0.0, 1.0) * f32(TONE_N - 1u);
+    let i = min(u32(f), TONE_N - 2u);
     let t = f - f32(i);
     let a = aux[TONE_N + i];
     let b = aux[TONE_N + i + 1u];
@@ -666,7 +670,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (yl > 1e-9) {
         d = c * o / yl;
     }
-    let k = chroma_scale(o);
+    let k = chroma_at(yl);
     if (k != 1.0) {
         d = vec3<f32>(o) + (d - vec3<f32>(o)) * k;
     }
