@@ -45,11 +45,12 @@ struct Error {
 
 impl Error {
     fn acceptable(&self) -> bool {
-        // Observed maxima on these fixtures: mean 6.057, pixel-max p99 37. Leave
+        // Observed maxima on these fixtures: mean 7.66, pixel-max p99 40 (6.06 and 37 before the Light sliders were
+        // fitted to Lightroom, 2026-11-06: their steeper curves turn the same base-layer drift into more 8-bit levels). Leave
         // headroom for numerical variation, while bounding both widespread
         // drift and localized tails. These are fixture bounds, not a promise
         // for arbitrary photographs, settings, resamplers, or output depths.
-        self.mean < 8.0 && self.p99 <= 40
+        self.mean < 9.0 && self.p99 <= 44
     }
 }
 

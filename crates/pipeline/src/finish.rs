@@ -256,9 +256,20 @@ pub fn add_haze(c: [f32; 3], target: f32, k: f32) -> [f32; 3] {
 pub const NEG_DEHAZE_GAMMA: f32 = 1.4;
 /// Strength of negative dehaze: the share of the airlight blended in at Dehaze -100 over a fully hazy pixel.
 pub const NEG_DEHAZE_STRENGTH: f32 = 0.8;
-/// Positive Highlights gain (log2 luminance per unit of the slider) over the Shadows' 1.7: Lightroom's +49 lifts bright
-/// areas about 1.5 times as much (fitted to its export of the Phoenix 200 preset, docs/lightroom-preset-fit.md).
-pub const HIGHLIGHTS_UP: f32 = 2.5;
+/// Positive Highlights gain (log2 luminance per unit of the slider; a negative one pulls by 0.6, Shadows lift by 1.07).
+/// Highlights weigh base luminance from −3.3 to +4.5 EV over grey and Shadows from +1.05 down to −2.15 EV: fitted to
+/// Lightroom's exports of one raw at ±54 and ±100 (its display luminance per tone band before and after each slider).
+/// The top of the Highlights window is held at +4.5 EV, past that raw's brightest sky (+1.6 EV), and above +1.6 EV a
+/// negative Highlights' gain grows back towards 1.7 ([`highlights_down`]), so blown areas still recover.
+pub const HIGHLIGHTS_UP: f32 = 0.55;
+
+/// Negative Highlights' gain at log luminance `l` (EV over grey, exposed): Lightroom's 0.6 over the tones its exports
+/// measured, rising to 1.7 by +3 EV, where they had nothing (a clipped light must still come down below white). The
+/// pixel loop passes the larger of the base and the pixel: a bright pixel beside a dark edge keeps its gain (no halo),
+/// a dark twig in a bright sky takes its surroundings' (its contrast stays).
+pub fn highlights_down(l: f32) -> f32 {
+    0.6 + 1.1 * smooth(1.6, 3.0, l)
+}
 
 /// A mask's local adjustments as the per-pixel stage uses them (alpha-weighted sums), in order:
 /// exposure, temp, tint, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze,
@@ -656,9 +667,10 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             let mut delta = 0.0f32;
             let (hh, ss) = (hl + l_hl, sh + l_sh);
             if hh != 0.0 || ss != 0.0 {
-                let ws = 1.0 - smooth(-4.8, 0.3, base);
-                let wh = smooth(-1.0, 2.8, base);
-                delta += ss * 1.7 * ws * ws.sqrt() + hh * if hh > 0.0 && fork_refinements { HIGHLIGHTS_UP } else { 1.7 } * wh;
+                let ws = 1.0 - smooth(-2.15, 1.05, base);
+                let wh = smooth(-3.3, 4.5, base);
+                delta +=
+                    ss * 1.07 * ws * ws.sqrt() + hh * if hh > 0.0 && fork_refinements { HIGHLIGHTS_UP } else { highlights_down(base.max(l1)) } * wh;
             }
             if l_wh != 0.0 {
                 delta += l_wh * 0.8 * smooth(0.5, 3.0, l1);

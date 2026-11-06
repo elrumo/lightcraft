@@ -592,9 +592,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let hh = pf(F_HL) + lt[4];
     let ss = pf(F_SH) + lt[5];
     if (hh != 0.0 || ss != 0.0) {
-        let ws = 1.0 - sstep(-4.8, 0.3, base);
-        let wh = sstep(-1.0, 2.8, base);
-        delta += ss * 1.7 * ws * sqrt(ws) + hh * select(1.7, HIGHLIGHTS_UP, hh > 0.0 && pu(F_FORK_REFINEMENTS) != 0u) * wh;
+        let ws = 1.0 - sstep(-2.15, 1.05, base);
+        let wh = sstep(-3.3, 4.5, base);
+        delta += ss * 1.07 * ws * sqrt(ws) + hh * select(0.6 + 1.1 * sstep(1.6, 3.0, max(base, l1)), HIGHLIGHTS_UP, hh > 0.0 && pu(F_FORK_REFINEMENTS) != 0u) * wh;
     }
     if (lt[6] != 0.0) {
         delta += lt[6] * 0.8 * sstep(0.5, 3.0, l1);

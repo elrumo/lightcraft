@@ -242,8 +242,8 @@ fn only_v2_keeps_the_twigs_under_highlights() {
     let (h1, h2, e) =
         (shot(&with_on(Process::V1, "light.highlights", -100.0)), shot(&with("light.highlights", -100.0)), shot(&with("light.exposure", -1.0)));
     let (k1, k2, ke) = (line_contrast(&h1, bright.0, bright.1), line_contrast(&h2, bright.0, bright.1), line_contrast(&e, bright.0, bright.1));
-    // V1 is the base from before (≈ 0.73 of Exposure's twig contrast), V2 keeps them
-    assert!(k1 < 0.85 * ke && k2 > 0.9 * ke, "twig contrast V1 {k1} EV, V2 {k2} EV, exposure −1 {ke} EV");
+    // V1 is the base from before and flattens them (about four times V2's loss of Exposure's twig contrast), V2 keeps them
+    assert!(ke - k1 > 3.0 * (ke - k2).max(0.0) && k2 > 0.95 * ke, "twig contrast V1 {k1} EV, V2 {k2} EV, exposure −1 {ke} EV");
 }
 
 #[test]

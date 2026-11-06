@@ -6,7 +6,7 @@
 //!
 //! Rendered (display-referred) sources such as JPEGs use [`ToneMap::display`] instead: identity at
 //! neutral settings (an unedited JPEG renders exactly as the file), with contrast/whites/blacks as
-//! S-curve adjustments in a gamma-2.2 perceptual domain and a short shoulder above 0.95.
+//! shifts in a gamma-2.2 perceptual domain fitted to Lightroom's response and a short shoulder above 0.95.
 
 pub const GREY: f32 = 0.18;
 /// The tone LUT spans `LUT_MIN_EV..LUT_MAX_EV` around grey in `LUT_N` steps.
@@ -128,6 +128,103 @@ pub fn channel_chroma(f: impl Fn(f32) -> f32) -> [f32; CHROMA_N] {
 /// Scene EV over grey where [`ToneMap::hdr`] starts lifting highlights above the SDR curve.
 const HDR_FROM_EV: f32 = 1.5;
 
+/// Knots of a display-tone shift table, at p = 0, 0.05, …, 1 (`p` = display luminance^(1/2.2)).
+const SHIFT_N: usize = 21;
+/// How one of Contrast, Whites and Blacks moves `p` in [`ToneMap::display`]: for an amount
+/// `a` = |slider| / 100 the shift is `A(p)·a + B(p)·a²`, `[[A, B]; 2]` for a positive then a
+/// negative slider. Fitted to Lightroom's exports of one raw at ±54 and ±100 (its display
+/// luminance before and after each slider alone, by median per tone band), so it is exact at
+/// those amounts and smooth between them; `A` keeps `B`'s direction, so a small amount never
+/// moves the wrong way.
+type Shift = [[[f32; SHIFT_N]; 2]; 2];
+
+const CONTRAST: Shift = [
+    [
+        [
+            0.0000, -0.0198, -0.0418, -0.0659, -0.0807, -0.0911, -0.0971, -0.0997, -0.0967, -0.0849, -0.0659, -0.0407, -0.0102, 0.0206, 0.0441,
+            0.0616, 0.0684, 0.0654, 0.0554, 0.0315, 0.0000,
+        ],
+        [
+            0.0000, -0.0033, -0.0069, -0.0108, -0.0125, -0.0116, -0.0091, -0.0052, -0.0024, -0.0015, -0.0005, 0.0003, 0.0003, -0.0002, -0.0008,
+            -0.0011, -0.0002, -0.0003, -0.0022, -0.0020, 0.0000,
+        ],
+    ],
+    [
+        [
+            0.0000, 0.0186, 0.0392, 0.0622, 0.0764, 0.0854, 0.0897, 0.0893, 0.0841, 0.0730, 0.0552, 0.0325, 0.0070, -0.0209, -0.0420, -0.0566,
+            -0.0632, -0.0596, -0.0491, -0.0291, 0.0000,
+        ],
+        [
+            0.0000, 0.0039, 0.0078, 0.0087, 0.0065, 0.0036, -0.0001, -0.0040, -0.0074, -0.0093, -0.0083, -0.0052, -0.0011, 0.0050, 0.0078, 0.0069,
+            0.0034, -0.0026, -0.0060, -0.0044, 0.0000,
+        ],
+    ],
+];
+const WHITES: Shift = [
+    [
+        [
+            0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0155, 0.0487, 0.0854,
+            0.1063, 0.1092, 0.0915, 0.0000,
+        ],
+        [
+            0.0000, 0.0017, 0.0046, 0.0145, 0.0297, 0.0525, 0.0797, 0.1049, 0.1277, 0.1523, 0.1793, 0.2013, 0.2146, 0.2180, 0.1971, 0.1464, 0.0856,
+            0.0332, -0.0097, -0.0434, 0.0000,
+        ],
+    ],
+    [
+        [
+            0.0000, -0.0004, -0.0011, -0.0036, -0.0074, -0.0132, -0.0210, -0.0304, -0.0396, -0.0484, -0.0578, -0.0692, -0.0832, -0.0973, -0.1078,
+            -0.1137, -0.1157, -0.1172, -0.1063, -0.0637, -0.0071,
+        ],
+        [
+            0.0000, 0.0003, 0.0007, 0.0023, 0.0047, 0.0082, 0.0129, 0.0184, 0.0236, 0.0283, 0.0330, 0.0379, 0.0439, 0.0472, 0.0472, 0.0447, 0.0395,
+            0.0306, 0.0117, -0.0234, -0.0590,
+        ],
+    ],
+];
+const BLACKS: Shift = [
+    [
+        [
+            0.0000, 0.0128, 0.0274, 0.0481, 0.0640, 0.0771, 0.0912, 0.1002, 0.1001, 0.0908, 0.0816, 0.0765, 0.0721, 0.0612, 0.0487, 0.0360, 0.0244,
+            0.0170, 0.0113, 0.0040, 0.0000,
+        ],
+        [
+            0.0000, 0.0031, 0.0067, 0.0100, 0.0110, 0.0117, 0.0066, -0.0012, -0.0068, -0.0065, -0.0051, -0.0064, -0.0098, -0.0109, -0.0106, -0.0078,
+            -0.0040, -0.0035, -0.0038, -0.0018, 0.0000,
+        ],
+    ],
+    [
+        [
+            0.0000, -0.0864, -0.1527, -0.0831, -0.0102, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+            0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+        ],
+        [
+            0.0000, 0.0444, 0.0634, -0.0673, -0.1833, -0.2117, -0.2159, -0.2155, -0.2100, -0.1983, -0.1784, -0.1535, -0.1311, -0.1117, -0.0919,
+            -0.0700, -0.0511, -0.0346, -0.0203, -0.0066, 0.0000,
+        ],
+    ],
+];
+
+/// The shift of `p` that `slider` (−100..100) of `table` makes.
+fn shift(table: &Shift, slider: f32, p: f32) -> f32 {
+    let a = (slider.abs() / 100.0).min(1.0);
+    if a == 0.0 || !a.is_finite() {
+        return 0.0;
+    }
+    let [ka, kb] = if slider > 0.0 { &table[0] } else { &table[1] };
+    knots(ka, p) * a + knots(kb, p) * a * a
+}
+
+/// A shift table at `p` (a Catmull-Rom spline through the knots, so the tone curve has no kinks).
+fn knots(k: &[f32; SHIFT_N], p: f32) -> f32 {
+    let x = p.clamp(0.0, 1.0) * (SHIFT_N - 1) as f32;
+    let i = (x as usize).min(SHIFT_N - 2);
+    let t = x - i as f32;
+    let at = |j: usize| k.get(j.min(SHIFT_N - 1)).copied().unwrap_or(0.0);
+    let (p0, p1, p2, p3) = (at(i.saturating_sub(1)), at(i), at(i + 1), at(i + 2));
+    0.5 * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t * t * t)
+}
+
 #[derive(Clone, Debug)]
 pub struct ToneMap {
     lut: Vec<f32>,
@@ -216,28 +313,21 @@ impl ToneMap {
     /// `peak`); SDR sources (≤ 1) render as with [`ToneMap::display`].
     pub fn display_hdr(contrast: f64, whites: f64, blacks: f64, peak: f32) -> ToneMap {
         let peak = if peak.is_finite() { peak.max(1.0) } else { 1.0 };
-        let c = (contrast / 100.0) as f32;
-        let w = (whites / 100.0) as f32;
-        let b = (blacks / 100.0) as f32;
-        let m = GREY.powf(1.0 / 2.2);
+        let (c, w, b) = (contrast as f32, whites as f32, blacks as f32);
         // Neutral sliders are the identity up to white (issue #1945): the SDR shoulder below would
         // pull 1.0 down to 0.9875 (8-bit 255 to 254), so it only shapes an edited curve.
         let neutral = c == 0.0 && w == 0.0 && b == 0.0;
+        // (a running maximum: the summed shifts may dip by a hair where two tables slope against each other)
+        let mut floor = 0.0f32;
         let lut = (0..LUT_N)
             .map(|i| {
                 let ev = LUT_MIN_EV + (LUT_MAX_EV - LUT_MIN_EV) * i as f32 / (LUT_N - 1) as f32;
                 let y = GREY * 2f32.powf(ev);
                 let mut p = y.powf(1.0 / 2.2);
                 if p <= 1.0 {
-                    // S-curve anchored at 0, grey and 1
-                    p += c * 0.35 * (p - m) * (1.0 - (2.0 * p - 1.0).powi(2));
-                    // whites: lift/lower the upper tones; blacks: the lower tones
-                    let up = smooth(0.45, 1.0, p);
-                    p += w * 0.12 * up * (1.0 - p * 0.5);
-                    let lo = 1.0 - smooth(0.0, 0.45, p);
-                    p += b * 0.07 * lo * (p * 2.0).min(1.0);
+                    p += shift(&CONTRAST, c, p) + shift(&WHITES, w, p) + shift(&BLACKS, b, p);
                 } else {
-                    p += w * 0.12 * 0.5;
+                    p += w / 100.0 * 0.06;
                 }
                 let mut o = p.max(0.0).powf(2.2);
                 // short shoulder (SDR, edited curves): slope 1 at 0.95, reaching 1.0 at 1.05
@@ -249,7 +339,8 @@ impl ToneMap {
                     let d = (o - 0.95).min(0.1);
                     o = 0.95 + d - d * d / 0.2;
                 }
-                o.clamp(0.0, peak)
+                floor = o.clamp(floor, peak);
+                floor
             })
             .collect();
         ToneMap { lut, chroma: NO_CHROMA }
@@ -489,6 +580,25 @@ mod tests {
         }
         let c = ToneMap::display(60.0, 0.0, 0.0);
         assert!(c.apply(0.05) < 0.05 && c.apply(0.7) > 0.7);
+    }
+
+    #[test]
+    fn display_sliders_follow_lightrooms_response() {
+        // (p = luminance^(1/2.2) before and after each slider alone in Lightroom's exports of the fitted raw)
+        let p = |t: &ToneMap, p: f32| t.apply(p.powf(2.2)).powf(1.0 / 2.2);
+        for (c, w, b, before, after) in [
+            (100.0, 0.0, 0.0, 0.32, 0.21),
+            (-100.0, 0.0, 0.0, 0.32, 0.41),
+            (0.0, 100.0, 0.0, 0.60, 0.82),
+            (0.0, 54.0, 0.0, 0.76, 0.83),
+            (0.0, -100.0, 0.0, 0.84, 0.76),
+            (0.0, 0.0, 100.0, 0.36, 0.46),
+            (0.0, 0.0, -100.0, 0.40, 0.19),
+            (0.0, 0.0, -54.0, 0.40, 0.35),
+        ] {
+            let got = p(&ToneMap::display(c, w, b), before);
+            assert!((got - after).abs() < 0.02, "{c} {w} {b}: p {before} -> {got}, Lightroom {after}");
+        }
     }
 
     #[test]

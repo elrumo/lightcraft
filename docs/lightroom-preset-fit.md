@@ -1,6 +1,6 @@
 # Matching a Lightroom preset: the Phoenix 200 "Orange You Glad" test
 
-> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-10-25 · **Change:** new (first preset-level measurement against Lightroom)
+> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-06 · **Change:** Highlights above 0 superseded by the single-slider fit
 
 One preset, one raw, one Lightroom export. It measures where LightCraft's render of a whole look departs from
 Lightroom's, and what was changed because of it. It is **one scene** (a Sony ILCE-6000, E PZ 16-50mm at 16 mm, sunset
@@ -67,7 +67,9 @@ needs a Lightroom export of this raw with nothing applied to separate it from th
   and lifts the mids. It now blends in `c^(1/1.4)`, with strength 0.8 (was 0.7).
 - **Highlights above 0** (`finish::HIGHLIGHTS_UP`, 2.5 against the 1.7 of Shadows and negative Highlights). Lightroom's
   +49 brightens bright areas about 1.5 times as much as ours did; the fit kept raising it (2.6 to 3.3), 2.5 is the
-  conservative end. Negative values are unchanged: nothing here measures them.
+  conservative end. Negative values are unchanged: nothing here measures them. **Superseded 2026-11-06:** Lightroom's
+  single-slider exports of this raw put it at 0.55 ([lightroom-light-sliders.md](lightroom-light-sliders.md)); the
+  preset's other gaps had leaked into this fit.
 - **Colour grading** (`colorops::GRADING_*`). The split between shadows and highlights at Balance 0 moves from OkLab
   0.50 to 0.62 (sRGB mid-grey 0.5 is 0.60), the transition's width per unit of Blending from 0.50 to 0.42, the wheel's
   chroma from 0.09 to 0.08. In the export the shadow wheel's yellow reaches well into the mids (the grass).
