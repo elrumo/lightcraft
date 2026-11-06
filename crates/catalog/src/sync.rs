@@ -817,6 +817,8 @@ pub(crate) fn patch(base: &Value, p: &Value) -> Value {
 pub mod proto {
     use serde::{Deserialize, Serialize};
 
+    use std::sync::Arc;
+
     use crate::{Catalog, Op};
 
     /// `POST /api/login`.
@@ -866,13 +868,12 @@ pub mod proto {
             if !text.starts_with("{\"defaults\":") {
                 return serde_json::from_str(text);
             }
-            let Snapshot { defaults, library, seq, mut catalog, next, total } = serde_json::from_str::<Snapshot<serde_json::Value>>(text)?;
-            if let (Some(defaults), Some(serde_json::Value::Object(photos))) = (&defaults, catalog.get_mut("photos")) {
-                for p in photos.values_mut() {
-                    super::each_settings(p, &mut |s| *s = super::patch(defaults, s));
-                }
-            }
-            Ok(Snapshot { defaults: None, library, seq, catalog: serde_json::from_value(catalog)?, next, total })
+            // the settings are read as diffs against the defaults as they come (as `catalog.snap` is, [`crate::compact`]):
+            // no JSON tree of the page, and the untouched photos share one copy of their settings
+            let head = serde_json::from_str::<Snapshot<serde::de::IgnoredAny>>(text)?;
+            let reader = head.defaults.map(|d| crate::compact::Reader::new(d).map(Arc::new)).transpose()?;
+            let _reading = crate::compact::Reading::enter(reader);
+            Ok(Snapshot { defaults: None, ..serde_json::from_str(text)? })
         }
 
         /// The next page read from the same copy of the library: its photos join these. `false`

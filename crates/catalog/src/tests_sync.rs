@@ -386,6 +386,8 @@ fn compact_pages_hold_the_same_photos() {
     assert!(compact.starts_with("{\"defaults\":"), "{}", &compact[..40]);
     let back = proto::Snapshot::from_json(&compact).unwrap();
     assert_eq!(back.catalog, page.catalog);
+    let untouched: Vec<_> = back.catalog.photos().skip(1).map(|p| p.develop.clone()).collect();
+    assert!(untouched.windows(2).all(|w| Arc::ptr_eq(&w[0], &w[1])), "the untouched photos share one copy of their settings");
     assert_eq!((back.seq, back.next, back.total, back.defaults), (page.seq, None, Some(20), None));
     assert!(compact.len() * 3 < full.len(), "{} → {} bytes", full.len(), compact.len());
     assert_eq!(proto::Snapshot::from_json(&full).unwrap().catalog, page.catalog);

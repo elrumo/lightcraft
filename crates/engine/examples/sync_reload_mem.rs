@@ -100,12 +100,31 @@ fn main() {
     let st = s.sync_now_with(100_000, &mut |t| server.handle(t));
     println!("filled in: {} photos, state {}", s.catalog.len(), st["state"]);
     let open = in_use();
-    lightcraft_sysmem::reset_counted_peak();
     server.gone = true;
     let t = std::time::Instant::now();
-    let st = s.sync_now_with(100_000, &mut |t| server.handle(t));
-    let peak = lightcraft_sysmem::counted().1 as f64 / MB;
-    println!("reloaded in {:.2} s: {} photos, state {}", t.elapsed().as_secs_f64(), s.catalog.len(), st["state"]);
+    // (the peak counted while the device handles each answer: what the in-process server spends making them is not the
+    // device's)
+    let mut peak = 0;
+    s.sync_soon();
+    for _ in 0..100_000 {
+        let tasks = s.sync_tasks();
+        if tasks.is_empty() {
+            break;
+        }
+        for t in tasks {
+            let d = server.handle(&t);
+            lightcraft_sysmem::reset_counted_peak();
+            s.sync_done(d);
+            peak = peak.max(lightcraft_sysmem::counted().1);
+        }
+    }
+    let peak = peak as f64 / MB;
+    println!(
+        "reloaded in {:.2} s: {} photos, state {}",
+        t.elapsed().as_secs_f64(),
+        s.catalog.len(),
+        s.sync_state().map_or("signed out", |st| st.state())
+    );
     println!("in use before {open:.0} MB, peak during the reload {peak:.0} MB (+{:.0} MB), after {:.0} MB", peak - open, in_use());
     let _ = std::fs::remove_dir_all(&dir);
 }
