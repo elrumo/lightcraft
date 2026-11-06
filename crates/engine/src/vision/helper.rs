@@ -39,6 +39,77 @@ const IDLE: Duration = Duration::from_secs(30);
 /// How long it waits after the server couldn't be reached.
 const RETRY: Duration = Duration::from_secs(30);
 
+/// The person has not used the device for this long: `Auto` takes a middle share of it.
+const IDLE_MEDIUM: u64 = 30;
+/// Nor for this long: `Auto` takes all it can.
+const IDLE_HIGH: u64 = 120;
+
+/// How much of this device the work for its server may take (`vision.setHelperUsage`, kept with the library). Below
+/// `High` the helper's threads run at background priority, so the system gives everything else (the person's other
+/// apps, LightCraft's own editing) the processor first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HelperUsage {
+    /// Follows the device ([`HelperConditions`]): a little while the person uses it, more as it is left alone, all it
+    /// can once it has been idle a while, and little again when it is hot or saving power.
+    #[default]
+    Auto,
+    Low,
+    Medium,
+    High,
+}
+
+impl HelperUsage {
+    pub fn key(self) -> &'static str {
+        match self {
+            HelperUsage::Auto => "auto",
+            HelperUsage::Low => "low",
+            HelperUsage::Medium => "medium",
+            HelperUsage::High => "high",
+        }
+    }
+
+    pub fn from_key(k: &str) -> Option<HelperUsage> {
+        [HelperUsage::Auto, HelperUsage::Low, HelperUsage::Medium, HelperUsage::High].into_iter().find(|u| u.key() == k)
+    }
+
+    /// The level this choice stands for now (`Auto` decides from `c`; a front end that says nothing gets `Medium`).
+    pub fn effective(self, c: &HelperConditions) -> HelperUsage {
+        if self != HelperUsage::Auto {
+            return self;
+        }
+        if c.low_power || c.thermal >= 2 {
+            return HelperUsage::Low;
+        }
+        match c.idle_secs {
+            Some(s) if s >= IDLE_HIGH && c.thermal == 0 => HelperUsage::High,
+            Some(s) if s < IDLE_MEDIUM => HelperUsage::Low,
+            _ => HelperUsage::Medium,
+        }
+    }
+
+    /// Photos worked on at once for each part at this level, on a machine with `cores`. Fetching, decoding and building
+    /// previews wait on the network and the disk and use one core each, and a small model can't keep a machine's cores
+    /// busy by itself.
+    fn workers(self, cores: usize) -> usize {
+        match self {
+            HelperUsage::Low => (cores / 4).clamp(1, 2),
+            HelperUsage::Auto | HelperUsage::Medium => (cores / 2).clamp(2, 6),
+            HelperUsage::High => (cores * 3 / 4).clamp(4, 12),
+        }
+    }
+}
+
+/// What the front end knows of the device, for [`HelperUsage::Auto`] (`vision.setHelperConditions`; not kept).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HelperConditions {
+    /// Seconds since the person last used the device (a Mac: any app; a phone: this one), `None` when not known.
+    pub idle_secs: Option<u64>,
+    /// The system's thermal state: 0 nominal, 1 fair, 2 serious, 3 critical.
+    pub thermal: u8,
+    /// Low Power Mode is on.
+    pub low_power: bool,
+}
+
 /// The work a helper can take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelperPart {
@@ -157,6 +228,13 @@ pub struct HelperJob {
     pub(super) parts: Vec<HelperPart>,
     /// The private folder the previews being worked on are in (it is deleted when the helper ends).
     pub(super) scratch: PathBuf,
+    /// The machine's cores (read once, when the helper starts).
+    pub(super) cores: usize,
+    /// How much of the device it takes now ([`HelperJob::set_level`]): photos at once for each part, and whether its
+    /// threads run at background priority.
+    level: Mutex<Option<HelperUsage>>,
+    workers: AtomicUsize,
+    lower: AtomicBool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -164,6 +242,24 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl HelperJob {
+    /// How much of the device the helper takes, from its next photos on (threads start for each batch).
+    pub(super) fn set_level(&self, level: HelperUsage) {
+        let mut now = lock(&self.level);
+        if *now == Some(level) {
+            return;
+        }
+        *now = Some(level);
+        self.workers.store(level.workers(self.cores.max(1)), Ordering::Relaxed);
+        self.lower.store(level != HelperUsage::High, Ordering::Relaxed);
+    }
+
+    /// Lowers the calling thread's priority when the level says so (a thread of this helper, as it starts).
+    fn pace_thread(&self) {
+        if self.lower.load(Ordering::Relaxed) {
+            let _ = lightcraft_sysmem::lower_thread_priority();
+        }
+    }
+
     pub(super) fn error(&self) -> Option<String> {
         lock(&self.error).clone()
     }
@@ -225,6 +321,8 @@ impl HelperJob {
             "error": self.error(),
             "unavailable": pairs(&self.unavailable),
             "refused": pairs(&lock(&self.refused)),
+            "level": lock(&self.level).map(HelperUsage::key),
+            "workers": self.workers.load(Ordering::Relaxed),
         })
     }
 }
@@ -338,6 +436,7 @@ pub(super) fn run(shared: Arc<Shared>, cfg: Config, job: Arc<HelperJob>, guards:
                 }
                 let (shared, cfg, job, scratch, guards) = (&shared, &cfg, &job, &scratch, &guards);
                 let task = move || {
+                    job.pace_thread();
                     let began = web_time::Instant::now();
                     lock(&job.batch_began)[runner.part().slot()] = Some(began);
                     let worked = match runner {
@@ -386,15 +485,11 @@ fn publish(job: &HelperJob, guards: &[(HelperPart, TaskGuard)]) {
     }
 }
 
-/// How many photos are worked on at once, for each task. Fetching, decoding and building previews wait on the network and the disk
-/// and use one core each, and a small model can't keep a machine's cores busy by itself.
-fn workers() -> usize {
-    std::thread::available_parallelism().map_or(4, |n| n.get() / 2).clamp(4, 10)
-}
-
-/// Runs `f` on each of `items`, [`workers`] at a time, and gives the results in the items' order. An item not started
-/// because the helper was cancelled is `None`; one whose `f` panicked is an error (a panic must not end the helper).
-fn par<T: Send>(items: &[&Item], cancelled: &(dyn Fn() -> bool + Sync), f: &(dyn Fn(&Item) -> T + Sync)) -> Vec<Option<Result<T, String>>> {
+/// Runs `f` on each of `items`, as many at a time as the job's level allows ([`HelperJob::set_level`]), and gives the
+/// results in the items' order. An item not started because the helper was cancelled is `None`; one whose `f` panicked
+/// is an error (a panic must not end the helper).
+fn par<T: Send>(job: &HelperJob, items: &[&Item], f: &(dyn Fn(&Item) -> T + Sync)) -> Vec<Option<Result<T, String>>> {
+    let cancelled = || job.cancel.load(Ordering::Relaxed);
     let out: Mutex<Vec<Option<Result<T, String>>>> = Mutex::new(items.iter().map(|_| None).collect());
     let next = AtomicUsize::new(0);
     let work = || {
@@ -409,9 +504,13 @@ fn par<T: Send>(items: &[&Item], cancelled: &(dyn Fn() -> bool + Sync), f: &(dyn
     };
     std::thread::scope(|scope| {
         let mut started = 0;
-        for n in 1..workers().min(items.len()) {
+        for n in 1..job.workers.load(Ordering::Relaxed).max(1).min(items.len()) {
             // (a thread that can't start: fewer work at once; this one works too)
-            if std::thread::Builder::new().name(format!("lc-vision-helper-{n}")).spawn_scoped(scope, work).is_ok() {
+            let paced = move || {
+                job.pace_thread();
+                work();
+            };
+            if std::thread::Builder::new().name(format!("lc-vision-helper-{n}")).spawn_scoped(scope, paced).is_ok() {
                 started += 1;
             }
         }
@@ -447,7 +546,7 @@ fn work_part(shared: &Arc<Shared>, cfg: &Config, job: &HelperJob, scratch: &Path
                 }
                 let (mut keys, mut images) = (Vec::new(), Vec::new());
                 // (fetched and decoded a few at a time; the model takes them together)
-                let rendered = par(chunk, &cancelled, &|it| fetch_and_render(cfg, scratch, it, THUMB_EDGE));
+                let rendered = par(job, chunk, &|it| fetch_and_render(cfg, scratch, it, THUMB_EDGE));
                 for (it, r) in chunk.iter().zip(rendered) {
                     match r.map(|r| r.and_then(|r| r)) {
                         Some(Ok(img)) => {
@@ -484,7 +583,7 @@ fn work_part(shared: &Arc<Shared>, cfg: &Config, job: &HelperJob, scratch: &Path
         Runner::Text(provider, engine) => {
             let reader = acquire_reader(shared, provider)?;
             let mut ix = TextIndex::in_memory(engine).map_err(|e| e.to_string())?;
-            let read = each(cfg, scratch, items, cfg.text_edge, &cancelled, &|img| {
+            let read = each(cfg, job, scratch, items, cfg.text_edge, &|img| {
                 crate::guard::catch("reading text", || reader.text(img)).and_then(|t| t.map_err(|e| e.to_string()))
             });
             keep(read, HelperPart::Text, &mut stored, &mut failed, |key, text| ix.insert(key, &text).map(|_| ()).map_err(|e| e.to_string()));
@@ -493,7 +592,7 @@ fn work_part(shared: &Arc<Shared>, cfg: &Config, job: &HelperJob, scratch: &Path
         Runner::Faces(provider, _) => {
             let finder = acquire_finder(shared, provider)?;
             let mut ix = FaceIndex::in_memory();
-            let found = each(cfg, scratch, items, cfg.text_edge, &cancelled, &|img| {
+            let found = each(cfg, job, scratch, items, cfg.text_edge, &|img| {
                 crate::guard::catch("finding faces", || finder.faces(img)).and_then(|t| t.map_err(|e| e.to_string()))
             });
             keep(found, HelperPart::Faces, &mut stored, &mut failed, |key, faces| {
@@ -504,7 +603,7 @@ fn work_part(shared: &Arc<Shared>, cfg: &Config, job: &HelperJob, scratch: &Path
         Runner::Sensitive(provider, engine) => {
             let classifier = acquire_classifier(shared, provider)?;
             let mut ix = SensitiveIndex::in_memory(engine);
-            let scored = each(cfg, scratch, items, SENSITIVE_EDGE, &cancelled, &|img| {
+            let scored = each(cfg, job, scratch, items, SENSITIVE_EDGE, &|img| {
                 crate::guard::catch("checking a photo", || classifier.score(img)).and_then(|t| t.map_err(|e| e.to_string()))
             });
             keep(scored, HelperPart::Sensitive, &mut stored, &mut failed, |key, score| ix.insert(key, score).map_err(|e| e.to_string()));
@@ -552,7 +651,7 @@ fn work_previews(
     let (mut stored, mut failed): (Vec<Key>, Vec<Key>) = (Vec::new(), Vec::new());
     let mut problem = None;
     // (a few at a time: each waits on the network for its original, then decodes it)
-    let built = par(items, &|| job.cancel.load(Ordering::Relaxed), &|it| {
+    let built = par(job, items, &|it| {
         let r = build_and_put(cfg, scratch, it);
         if r.is_ok() {
             job.done[HelperPart::Previews.slot()].fetch_add(1, Ordering::Relaxed);
@@ -643,17 +742,22 @@ fn keep<T>(
 /// of it (photos left because the helper was cancelled are not in the answer).
 fn each<T: Send>(
     cfg: &Config,
+    job: &HelperJob,
     scratch: &Path,
     items: &[&Item],
     edge: usize,
-    cancelled: &(dyn Fn() -> bool + Sync),
     f: &(dyn Fn(&Rgba8) -> Result<T, String> + Sync),
 ) -> Vec<(Key, Result<T, String>)> {
-    let done = par(items, cancelled, &|it| fetch_and_render(cfg, scratch, it, edge).and_then(|img| f(&img)));
+    let done = par(job, items, &|it| fetch_and_render(cfg, scratch, it, edge).and_then(|img| f(&img)));
     items.iter().zip(done).filter_map(|(it, r)| Some((it.key, r?.and_then(|r| r)))).collect()
 }
 
 impl super::Vision {
+    /// The level the helper works at now: the chosen usage, `auto` decided from the device's conditions.
+    pub(super) fn helper_level(&self) -> HelperUsage {
+        self.helper_usage.effective(&self.helper_conditions)
+    }
+
     /// For each part, `true` when this device can run its model now, else why it can't.
     fn helper_availability(&self) -> serde_json::Map<String, Value> {
         let mut out = serde_json::Map::new();
@@ -768,8 +872,34 @@ impl crate::Session {
         !self.vision.helper_parts.is_empty() && self.vision.helper_parts.iter().all(|p| self.vision.helper_paused.contains(p))
     }
 
+    /// How much of this device its work for the server may take (`vision.setHelperUsage`): `auto`, `low`, `medium` or
+    /// `high`; it applies to the photos the helper starts next.
+    pub fn vision_helper_set_usage(&mut self, usage: &str) -> Result<Value, String> {
+        self.vision.helper_usage =
+            HelperUsage::from_key(usage).ok_or_else(|| format!("`{usage}` is not a usage of this device (auto, low, medium, high)"))?;
+        self.save_prefs().map_err(|e| e.to_string())?;
+        self.vision_helper_pace();
+        Ok(self.vision_helper_status())
+    }
+
+    /// What the front end knows of the device, for the `auto` usage (`vision.setHelperConditions`; not kept).
+    pub fn vision_helper_set_conditions(&mut self, conditions: HelperConditions) -> Value {
+        self.vision.helper_conditions = conditions;
+        self.vision_helper_pace();
+        self.vision_helper_status()
+    }
+
+    /// Gives the running helper the level the usage and the device's conditions call for now.
+    fn vision_helper_pace(&self) {
+        if let Some(job) = &self.vision.helper {
+            job.set_level(self.vision.helper_level());
+        }
+    }
+
     pub fn vision_helper_status(&self) -> Value {
         let mut v = self.vision.helper.as_ref().map_or_else(|| json!({"running": false, "state": "stopped"}), |j| j.json());
+        v["usage"] = json!(self.vision.helper_usage.key());
+        v["level"] = json!(self.vision.helper_level().key());
         v["paused"] = json!(self.vision.helper_paused);
         v["once"] = json!(self.vision.helper_once);
         if self.vision_helper_all_paused() {
@@ -789,6 +919,7 @@ impl crate::Session {
     /// starts one when parts are chosen and this library is signed in to a server.
     pub(super) fn vision_helper_upkeep(&mut self) {
         self.vision_helper_finish_once();
+        self.vision_helper_pace();
         // (the server took parts back from this user's devices: this device's choice follows, and stays off them)
         let taken = self.vision.helper.as_ref().map(|j| lock(&j.taken_back).clone()).unwrap_or_default();
         if self.vision.helper_parts.iter().any(|p| taken.contains(p)) {
@@ -867,8 +998,10 @@ impl crate::Session {
             unavailable,
             parts: parts.clone(),
             scratch,
+            cores: std::thread::available_parallelism().map_or(4, std::num::NonZero::get),
             ..HelperJob::default()
         });
+        job.set_level(self.vision.helper_level());
         let cfg = Config { server, token, runners, text_edge: self.vision.text_edge };
         let (shared, thread_job) = (self.vision.shared.clone(), job.clone());
         std::thread::Builder::new()
@@ -886,6 +1019,30 @@ impl crate::Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_takes_little_while_the_device_is_used_and_all_once_it_is_left_alone() {
+        let at = |idle: Option<u64>, thermal: u8, low_power: bool| {
+            HelperUsage::Auto.effective(&HelperConditions { idle_secs: idle, thermal, low_power })
+        };
+        assert_eq!(at(Some(2), 0, false), HelperUsage::Low, "in use");
+        assert_eq!(at(Some(60), 0, false), HelperUsage::Medium, "a minute away");
+        assert_eq!(at(Some(600), 0, false), HelperUsage::High, "left alone");
+        assert_eq!(at(Some(600), 1, false), HelperUsage::Medium, "left alone but warm");
+        assert_eq!(at(Some(600), 2, false), HelperUsage::Low, "hot");
+        assert_eq!(at(Some(600), 0, true), HelperUsage::Low, "saving power");
+        assert_eq!(at(None, 0, false), HelperUsage::Medium, "a front end that says nothing");
+        assert_eq!(HelperUsage::High.effective(&HelperConditions { idle_secs: Some(0), thermal: 3, low_power: true }), HelperUsage::High, "a choice is kept");
+        for cores in [1, 4, 8, 10, 24] {
+            let [l, m, h] = [HelperUsage::Low, HelperUsage::Medium, HelperUsage::High].map(|u| u.workers(cores));
+            assert!(l >= 1 && m >= l && h >= m, "{cores} cores: {l} {m} {h}");
+        }
+        let job = HelperJob { cores: 10, ..HelperJob::default() };
+        job.set_level(HelperUsage::Low);
+        assert!(job.lower.load(Ordering::Relaxed) && job.workers.load(Ordering::Relaxed) == 2);
+        job.set_level(HelperUsage::High);
+        assert!(!job.lower.load(Ordering::Relaxed) && job.workers.load(Ordering::Relaxed) == 7);
+    }
 
     #[test]
     fn the_rate_counts_the_batch_being_worked_on() {

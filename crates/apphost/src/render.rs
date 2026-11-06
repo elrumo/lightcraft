@@ -1396,6 +1396,15 @@ impl<V> Scheduler<V> {
                 self.thumb_inputs.clear();
             }
         }
+        // previews built again on this device (Rebuild Previews): a thumbnail that was drawn is drawn again at the
+        // size and priority it was asked at, and the new picture reaches the cell without it asking (its key
+        // changed: `MediaCache::preview_gen`). The old picture stays until then.
+        for id in session.media.take_rebuilt() {
+            self.failed.remove(&Slot::Thumb(id));
+            if let Some((_, bucket, _, _, priority)) = self.thumb_inputs.get(&id).cloned() {
+                self.request_thumb(session, id, bucket, priority);
+            }
+        }
     }
 
     /// Collect finished jobs into what the slots show (through `present`). The answer says what

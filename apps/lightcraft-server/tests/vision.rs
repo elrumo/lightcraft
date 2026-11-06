@@ -1585,6 +1585,123 @@ fn a_device_builds_the_previews_once_and_gives_the_work_back() {
 }
 
 #[test]
+fn rebuild_all_goes_to_the_device_that_builds_the_previews() {
+    // the server built them, then its user left building previews to a device
+    let (f, _) = helper_fixture("rebuild-all-device", &[]);
+    let blobs = accounts::user_dir(&f.data, "ann").join("blobs");
+    assert_eq!((files_in(&blobs.join("smart")).len(), files_in(&blobs.join("mini")).len()), (4, 4));
+    let mini_time = |b: &Path| files_in(&b.join("mini")).iter().map(|p| std::fs::metadata(p).unwrap().modified().unwrap()).max().unwrap();
+    let before = mini_time(&blobs);
+    assert_eq!(put(&f.ann, "/api/work/settings", json!({"moved": ["previews"]})).0, 200);
+    assert!(keys_of(&claim(&f.ann, json!({"previews": "previews"}), 10).1).is_empty(), "all are there: nothing to build");
+
+    // "Rebuild All" on the admin page: the server leaves them to the device, which is offered all four again
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+    assert_eq!(post(&admin, "/api/admin/users/ann/previews/rebuild", b"").0, 200);
+    let mut offered = Value::Null;
+    for _ in 0..200 {
+        offered = claim(&f.ann, json!({"previews": "previews"}), 10).1;
+        // (the count of previews there runs in the background: it comes a moment later)
+        if keys_of(&offered).len() == 4 && !offered["progress"]["previews"].is_null() {
+            break;
+        }
+        let back: Vec<Value> = keys_of(&offered).iter().map(|k| json!({"part": "previews", "key": k})).collect();
+        post(&f.ann, "/api/work/release", json!({"items": back}).to_string().as_bytes());
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(keys_of(&offered).len(), 4, "{offered}");
+    assert_eq!(offered["progress"]["previews"], json!({"done": 0, "total": 4}), "waiting to be built again: not done");
+    let back: Vec<Value> = keys_of(&offered).iter().map(|k| json!({"part": "previews", "key": k})).collect();
+    post(&f.ann, "/api/work/release", json!({"items": back}).to_string().as_bytes());
+    assert_eq!(mini_time(&blobs), before, "the server built none of them itself");
+
+    // the device builds them; then nothing is left and all are done
+    std::thread::sleep(Duration::from_millis(1100));
+    let mut s = device(&f, "rebuild-all-device-device", Some(Arc::new(Padded)));
+    s.execute("vision.setHelper", &json!({"parts": ["previews"]})).unwrap();
+    let mut last = Value::Null;
+    for _ in 0..600 {
+        s.vision_poll();
+        sync(&mut s);
+        last = claim(&f.ann, json!({"previews": "previews"}), 10).1;
+        if last["progress"]["previews"]["done"] == 4 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(last["progress"]["previews"], json!({"done": 4, "total": 4}), "{last}");
+    assert!(keys_of(&last).is_empty(), "{last}");
+    assert!(files_in(&blobs.join("mini")).iter().all(|p| std::fs::metadata(p).unwrap().modified().unwrap() > before), "all new");
+}
+
+/// The files under `dir`, at any depth.
+fn files_in(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .map(|d| d.flatten().flat_map(|e| if e.path().is_dir() { files_in(&e.path()) } else { vec![e.path()] }).collect())
+        .unwrap_or_default()
+}
+
+/// Run sync rounds until `sync.status` lists nothing being rebuilt; its last `rebuilding`.
+fn rebuilt(s: &mut Session) -> Value {
+    let mut last = Value::Null;
+    for _ in 0..600 {
+        sync(s);
+        last = s.execute("sync.status", &json!({})).unwrap()["rebuilding"].clone();
+        if last["count"] == 0 && s.activity.list().iter().all(|t| t.label != "Rebuilding previews") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    last
+}
+
+#[test]
+fn a_device_rebuilds_the_previews_of_chosen_photos_on_the_server() {
+    let (f, _) = helper_fixture("rebuild-previews", &["previews"]);
+    let blobs = accounts::user_dir(&f.data, "ann").join("blobs");
+    let mut s = device(&f, "rebuild-previews-device", Some(Arc::new(Padded)));
+    assert!(s.execute("sync.rebuildPreviews", &json!({"album": 999_999})).is_err(), "no such album");
+
+    // two photos: each original is fetched, both previews are built here and put on the server
+    let ids: Vec<u64> = s.catalog.photos().take(2).map(|p| p.id.0).collect();
+    let r = s.execute("sync.rebuildPreviews", &json!({"ids": ids})).unwrap();
+    assert_eq!(r["queued"], 2, "{r}");
+    let st = s.execute("sync.status", &json!({})).unwrap();
+    assert!(st["rebuilding"]["count"].as_u64().is_some_and(|n| n <= 2), "listed while they are built: {st}");
+    let last = rebuilt(&mut s);
+    assert_eq!((last["done"].as_u64(), last["error"].clone()), (Some(0), Value::Null), "a finished run counts from 0 again: {last}");
+    assert_eq!((files_in(&blobs.join("smart")).len(), files_in(&blobs.join("mini")).len()), (2, 2));
+    // …and this device has them too, and draws those photos again from them
+    for id in &ids {
+        let p = s.catalog.photo(lightcraft_engine::catalog::PhotoId(*id)).unwrap();
+        let mini = s.media.smart_dir.as_ref().unwrap().join(lightcraft_engine::cloud_sync::mini_file_name(p));
+        assert!(mini.is_file(), "{}", mini.display());
+    }
+    let mut again = s.media.take_rebuilt();
+    again.sort_unstable();
+    assert_eq!(again.iter().map(|id| id.0).collect::<Vec<_>>(), {
+        let mut i = ids.clone();
+        i.sort_unstable();
+        i
+    });
+
+    // a folder: the photos of every album inside it
+    s.execute("library.select", &json!({"ids": [ids[0]]})).unwrap();
+    let folder = s.execute("album.create", &json!({"name": "Trips", "folder": true})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.create", &json!({"name": "Best", "parent": folder, "addSelected": true})).unwrap();
+    assert_eq!(s.execute("sync.rebuildPreviews", &json!({"album": folder})).unwrap()["queued"], 1);
+    rebuilt(&mut s);
+
+    // a preview the server has is replaced
+    let stale = files_in(&blobs.join("smart")).into_iter().next().unwrap();
+    std::fs::write(&stale, b"stale").unwrap();
+    s.execute("sync.rebuildPreviews", &json!({"ids": ids})).unwrap();
+    rebuilt(&mut s);
+    assert_ne!(std::fs::read(&stale).unwrap(), b"stale", "the server's preview was built again");
+}
+
+#[test]
 fn the_choice_is_kept_with_the_library_and_a_missing_model_is_said() {
     let (f, _) = helper_fixture("work-prefs", &[]);
     let dir = temp("work-prefs-device").join("device");

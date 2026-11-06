@@ -100,6 +100,12 @@ pub struct MediaCache {
     /// is asked for again, though no photo or library changed.
     arrived: Vec<PhotoId>,
     arrived_all: bool,
+    /// Photos whose previews were built again here (Rebuild Previews) since a host last looked
+    /// ([`MediaCache::take_rebuilt`]): their thumbnails are drawn again though nothing else about them changed.
+    rebuilt: Vec<PhotoId>,
+    /// How many times each photo's previews were built again this session: part of its render key, so a
+    /// picture drawn from the old previews is not taken for the new one.
+    preview_gen: std::collections::HashMap<PhotoId, u64>,
     /// Which photos have a cached denoised picture, and how to read it.
     pub denoise: DenoiseIndex,
 }

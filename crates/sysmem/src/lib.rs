@@ -63,15 +63,15 @@ pub fn fsync(file: &std::fs::File) -> std::io::Result<()> {
 }
 
 /// Give the calling thread the lowest scheduling priority, for work that should only use what everything else leaves
-/// (a server encoding videos for its library in the background): nice 19 on Linux, the background quality of service
-/// on macOS. Only this thread: a thread it starts later is not lowered. Returns whether the system took it (`false`
+/// (a server encoding videos for its library in the background, a device processing photos for its server): nice 19
+/// on Linux, the background quality of service on macOS and iOS. Only this thread: a thread it starts later is not lowered. Returns whether the system took it (`false`
 /// elsewhere, or when it refused).
 pub fn lower_thread_priority() -> bool {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
     {
         priority::lower()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios")))]
     {
         false
     }
@@ -525,7 +525,7 @@ mod apple {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
 #[allow(unsafe_code)]
 mod priority {
     use std::ffi::c_int;
@@ -536,7 +536,7 @@ mod priority {
         fn setpriority(which: c_int, who: u32, prio: c_int) -> c_int;
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     unsafe extern "C" {
         /// libSystem (`pthread/qos.h`): the quality of service of the calling thread.
         fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: c_int) -> c_int;
@@ -549,7 +549,7 @@ mod priority {
             // `who` 0 means the calling thread on Linux.
             unsafe { setpriority(0, 0, 19) == 0 }
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
             // `QOS_CLASS_BACKGROUND`
             const BACKGROUND: u32 = 0x09;

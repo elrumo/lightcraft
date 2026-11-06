@@ -14,7 +14,9 @@
 //! `previews` is not a model: the device is given photos (`kind: original`) whose smart and mini previews are
 //! missing, fetches each original (`GET /api/blobs/original/<hash>`), builds the previews itself and puts them
 //! (`PUT /api/blobs/smart|mini/<hash>`); this server's own preview builders then leave a moved user's scanned
-//! photos to it (a photo a device is showing is still built here, at once).
+//! photos to it (a photo a device is showing is still built here, at once). A rebuild of previews that are there
+//! (the admin's "Rebuild All") goes to the device too: those photos are offered like missing ones until a device
+//! puts a new mini preview, and the claim's `progress` counts them as not done.
 //!
 //! A claimed photo is the device's for [`TTL`] (so another device, or this server, doesn't repeat it);
 //! the results go through the routes devices already use for them (`POST /api/index/embeddings`,
@@ -22,7 +24,7 @@
 //! or other-model upload whole. A part the user moved is skipped by this server's own worker for that
 //! user: it waits for a device, and [`Work::helper_seen`] says when one last came.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -60,6 +62,8 @@ pub struct Work {
     leases: Mutex<HashMap<(String, Part, Key), Instant>>,
     /// The same for previews (a photo's key is its content hash).
     preview_leases: Mutex<HashMap<(String, Key), Instant>>,
+    /// Photos whose previews are there and are to be built again by a device ([`Work::want_rebuild`]).
+    rebuilds: Mutex<HashSet<(String, Key)>>,
     seen: Mutex<HashMap<String, Instant>>,
 }
 
@@ -153,6 +157,26 @@ impl Work {
 
     fn release_previews(&self, user: &str, key: Key) {
         lock(&self.preview_leases).remove(&(user.to_string(), key));
+    }
+
+    /// Have a device build `user`'s photo `key`'s previews again, though they are there (this server left them to it).
+    pub fn want_rebuild(&self, user: &str, key: Key) {
+        lock(&self.rebuilds).insert((user.to_string(), key));
+    }
+
+    /// Whether `user`'s photo `key` waits for a device to build its previews again.
+    pub fn rebuild_wanted(&self, user: &str, key: &Key) -> bool {
+        lock(&self.rebuilds).contains(&(user.to_string(), *key))
+    }
+
+    /// A device put a new preview of `user`'s photo `key`: it is rebuilt.
+    pub fn rebuilt(&self, user: &str, key: &Key) {
+        lock(&self.rebuilds).remove(&(user.to_string(), *key));
+    }
+
+    /// How many of `user`'s photos wait for a device to build their previews again.
+    pub fn rebuilds_waiting(&self, user: &str) -> usize {
+        lock(&self.rebuilds).iter().filter(|(u, _)| u == user).count()
     }
 
     #[cfg(test)]
@@ -250,6 +274,8 @@ pub(crate) fn claim(st: &State, req: &mut Request, user: &str) -> Resp {
         match crate::vision::pending_previews(st, user, per) {
             Ok((list, covered)) => {
                 if let Some((done, total)) = covered {
+                    // (a photo waiting to be built again is not done, though it has previews)
+                    let done = done.saturating_sub(st.vision.work.rebuilds_waiting(user));
                     progress.insert(PREVIEWS.into(), json!({"done": done, "total": total}));
                 }
                 for p in list {
@@ -305,6 +331,8 @@ pub(crate) fn release(st: &State, req: &mut Request, user: &str) -> Resp {
             st.vision.work.release_previews(user, key);
             if it["failed"].as_bool() == Some(true) {
                 st.folders.mark_failed(user, &key.to_hex(), "a device couldn't build its previews");
+                // (it keeps the previews it has)
+                st.vision.work.rebuilt(user, &key);
             }
             released += 1;
             continue;

@@ -1062,7 +1062,10 @@ fn previews(st: &State) -> Value {
         let cov = st.folders.coverage(st, name);
         counted &= cov.is_some();
         let (h, p) = cov.unwrap_or((0, 0));
-        (left, done, have, photos) = (left + s.previews, done + s.previews_done, have + h, photos + p);
+        // (previews a device builds again count as waiting)
+        let device = st.vision.work.rebuilds_waiting(name);
+        (left, done, have, photos) = (left + s.previews + device, done + s.previews_done, have + h, photos + p);
+        rebuilding |= device > 0;
         per_min += s.previews_per_min.unwrap_or(0);
         eta = eta.max(s.previews_eta_secs);
         rebuilding |= s.previews_rebuilding;
@@ -1072,7 +1075,7 @@ fn previews(st: &State) -> Value {
             last = Some((n, at));
         }
         building.extend(s.previews_building.iter().cloned());
-        users.push(json!({"name": name, "left": s.previews, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len()}));
+        users.push(json!({"name": name, "left": s.previews + device, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len()}));
     }
     building.sort();
     json!({

@@ -225,6 +225,8 @@ pub fn summary(session: &Session) -> Option<serde_json::Value> {
         "downloads": s["downloads"],
         "reading": s["reading"],
         "error": s["error"],
+        // the photos whose previews this device is building again (`sync.rebuildPreviews`): {ids, count, done, failed}
+        "rebuilding": s["rebuilding"],
         // the other devices of this account that show the photo shown here, and a count that moves when an edit of it
         // arrives from one of them (`presence`)
         "alsoOpenOn": session.sync_also_open_on(),

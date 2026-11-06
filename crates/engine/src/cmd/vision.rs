@@ -164,6 +164,34 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "vision.setHelperUsage",
+            "Device Usage for the Server",
+            [],
+            None,
+            "{usage: auto|low|medium|high} — how much of this device its work for the server (vision.setHelper) may take: photos worked on at once and, below high, threads at background priority so the person's other apps and editing come first. auto follows the device (vision.setHelperConditions): little while it is used, all it can once it has been left alone two minutes, little when it is hot or in Low Power Mode. Saved with the library; it applies to the photos the helper starts next → vision.helper (`usage`, and `level` it works at now)",
+            always,
+            |s, p| {
+                let usage = p.get("usage").and_then(Value::as_str).ok_or_else(|| bad("vision.setHelperUsage", "missing `usage`"))?;
+                s.vision_helper_set_usage(usage).map_err(|e| bad("vision.setHelperUsage", e))
+            }
+        ),
+        cmd!(
+            "vision.setHelperConditions",
+            "Device Conditions for the Server Work",
+            [],
+            None,
+            "{idleSecs?: seconds since the person last used the device (a Mac: any app; a phone: this one), thermal?: 0 nominal | 1 fair | 2 serious | 3 critical, lowPower?: bool} — what the front end knows of the device, for the auto usage (vision.setHelperUsage); sent again as it changes, not kept → vision.helper",
+            always,
+            |s, p| {
+                let conditions = crate::vision::HelperConditions {
+                    idle_secs: p.get("idleSecs").and_then(Value::as_u64),
+                    thermal: p.get("thermal").and_then(Value::as_u64).map_or(0, |t| u8::try_from(t.min(3)).unwrap_or(3)),
+                    low_power: p.get("lowPower").and_then(Value::as_bool).unwrap_or(false),
+                };
+                Ok(s.vision_helper_set_conditions(conditions))
+            }
+        ),
+        cmd!(
             "vision.setLocalOnly",
             "Search on This Device Only",
             [],

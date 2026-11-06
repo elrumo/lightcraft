@@ -745,7 +745,8 @@ pub(crate) fn pending_previews(st: &State, user: &str, max: usize) -> Result<(Ve
         if photo.kind == lightcraft_engine::catalog::MediaKind::Video {
             continue;
         }
-        if !crate::folders::previews_missing(&blobs, hash) || st.folders.is_failed(user, hash) || st.vision.work.previews_leased(user, &key) {
+        let wanted = st.vision.work.rebuild_wanted(user, &key) || crate::folders::previews_missing(&blobs, hash);
+        if !wanted || st.folders.is_failed(user, hash) || st.vision.work.previews_leased(user, &key) {
             continue;
         }
         let kept = api::blob_path(&blobs, "original", hash).is_some_and(|p| p.is_file()) || api::folder_original_path(st, &lib, user, hash).is_some();

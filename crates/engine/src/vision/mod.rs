@@ -49,7 +49,7 @@ mod sensitive;
 mod server;
 use colors::{ColorSpec, ColorWhere, with_colors};
 #[cfg(not(target_arch = "wasm32"))]
-pub use helper::{HelperJob, HelperPart};
+pub use helper::{HelperConditions, HelperJob, HelperPart, HelperUsage};
 pub use people::{Cluster, FaceRef, clusters_of};
 use sensitive::{ClassSpec, ClassifierProvider};
 pub use sensitive::{SENSITIVE_BYTES, SENSITIVE_DIR, SENSITIVE_LICENSE_NAME, SENSITIVE_LICENSE_URL, SENSITIVE_MIN, SENSITIVE_NOT_INSTALLED};
@@ -348,6 +348,10 @@ pub struct Vision {
     /// Of the parts in `helper_parts`, those given back to the server by themselves when the helper finds nothing
     /// left to claim for them (`vision.helperOnce`; persisted likewise).
     pub helper_once: Vec<String>,
+    /// How much of this device that work may take (`vision.setHelperUsage`; persisted likewise).
+    pub helper_usage: HelperUsage,
+    /// What the front end last said of the device, for the `auto` usage (`vision.setHelperConditions`; not kept).
+    pub helper_conditions: HelperConditions,
     /// This device runs none of the models even if this build could (a thin client; tests of one):
     /// it searches and lists people through the sync server.
     #[doc(hidden)]
@@ -430,6 +434,8 @@ impl Default for Vision {
             helper_parts: Vec::new(),
             helper_paused: Vec::new(),
             helper_once: Vec::new(),
+            helper_usage: HelperUsage::Auto,
+            helper_conditions: HelperConditions::default(),
             thin: false,
             unfit: None,
             text_edge: TEXT_EDGE,

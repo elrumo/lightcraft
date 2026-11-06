@@ -279,6 +279,27 @@ fn download_originals(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"queued": n}))
 }
 
+/// Build the previews of photos (or of an album's or folder's) again on this device and put them on the server.
+#[cfg(not(target_arch = "wasm32"))]
+fn rebuild_previews(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "sync.rebuildPreviews";
+    let ids = match p.get("album").and_then(Value::as_u64) {
+        Some(a) if s.catalog.album(AlbumId(a)).is_none() => return Err(bad(C, format!("no album {a}"))),
+        Some(a) => s.album_photos_deep(AlbumId(a)),
+        None => s.targets(p)?,
+    };
+    if ids.is_empty() {
+        return Err(bad(C, "no photos"));
+    }
+    let queued = s.sync_rebuild_previews(&ids)?;
+    Ok(json!({"queued": queued}))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn rebuild_previews(_: &mut Session, _: &Value) -> Result<Value> {
+    Err(bad("sync.rebuildPreviews", "previews are built again by the apps, not in a browser"))
+}
+
 fn album_offline(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "album.makeAvailableOffline";
     let id = match p.get("id").and_then(Value::as_u64) {
@@ -428,6 +449,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids?}: download these photos' originals to this device (default: the selection)",
             synced_selection,
             download_originals
+        ),
+        cmd!(
+            "sync.rebuildPreviews",
+            "Rebuild Previews",
+            ["Photo"],
+            None,
+            "{ids?, album?} → {queued}: build the smart and mini previews of these photos (default: the selection), or of every photo in `album` (a folder: in every album inside it), again on this device from their originals, and put them on the server in place of the ones it has. The original is this device's copy when it has one, else it is fetched and deleted after. Runs in the background (an activity row); `sync.status` → `rebuilding` lists the photos queued or being built",
+            signed_in,
+            rebuild_previews
         ),
         cmd!(
             "album.makeAvailableOffline",

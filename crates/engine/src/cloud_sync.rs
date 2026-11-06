@@ -43,6 +43,8 @@ mod docs;
 mod evict;
 mod leave;
 mod presence;
+#[cfg(not(target_arch = "wasm32"))]
+mod rebuild;
 mod shares;
 
 pub(crate) use docs::{shared_doc_key, shared_doc_names};
@@ -487,6 +489,9 @@ pub struct SyncState {
     merged: Option<lightcraft_catalog::merge::MergeReport>,
     /// Album links ([`shares`]).
     shares: shares::ShareState,
+    /// Photos whose previews this device is building again (Rebuild Previews).
+    #[cfg(not(target_arch = "wasm32"))]
+    rebuild: Option<rebuild::Handle>,
     /// What the server says this library takes there, when it said so, and the request in flight.
     usage: Option<proto::Usage>,
     usage_at: Option<Instant>,
@@ -591,6 +596,8 @@ impl SyncState {
             merge: false,
             merged: None,
             shares: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            rebuild: None,
             usage: None,
             usage_at: None,
             usage_task: None,
@@ -841,6 +848,16 @@ impl SyncState {
     /// What `sync.status` reports.
     pub fn status(&self) -> Value {
         let (uploads, downloads) = self.transfers();
+        let mut v = self.status_fields(uploads, downloads);
+        // the photos whose previews this device is building again: {ids (next in line), count, done, failed, error}
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(h) = &self.rebuild {
+            v["rebuilding"] = h.0.status();
+        }
+        v
+    }
+
+    fn status_fields(&self, uploads: usize, downloads: usize) -> Value {
         json!({
             "state": self.state_with((uploads, downloads)),
             "signedIn": self.signed_in(),
@@ -1555,6 +1572,9 @@ impl Session {
     /// reload, pull or push) plus photo file transfers. Cheap when there's nothing to do; call
     /// it once per frame (or after [`Session::sync_done`]).
     pub fn sync_tasks(&mut self) -> Vec<Task> {
+        // (drawn again from previews built here even while syncing is paused: they are this device's own files)
+        #[cfg(not(target_arch = "wasm32"))]
+        self.sync_rebuild_upkeep();
         if self.sync.as_ref().is_none_or(|st| st.config.paused) {
             return Vec::new();
         }

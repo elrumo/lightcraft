@@ -74,6 +74,8 @@ impl Default for MediaCache {
             thumb_tick: 0,
             arrived: Vec::new(),
             arrived_all: false,
+            rebuilt: Vec::new(),
+            preview_gen: std::collections::HashMap::new(),
             thumb_seq: 0,
             denoise: DenoiseIndex::default(),
         }
@@ -275,6 +277,26 @@ impl MediaCache {
         } else {
             self.arrived_all = true;
         }
+    }
+
+    /// `id`'s previews were built again on this device: renders of the old ones are stale, and a host draws its
+    /// thumbnail again ([`MediaCache::take_rebuilt`]).
+    pub fn note_rebuilt(&mut self, id: PhotoId) {
+        self.forget(id);
+        *self.preview_gen.entry(id).or_default() += 1;
+        if self.rebuilt.len() < ARRIVED_MAX {
+            self.rebuilt.push(id);
+        }
+    }
+
+    /// The photos whose previews were built again since the last call.
+    pub fn take_rebuilt(&mut self) -> Vec<PhotoId> {
+        std::mem::take(&mut self.rebuilt)
+    }
+
+    /// How many times `id`'s previews were built again this session (0: never), for its render key.
+    pub fn preview_gen(&self, id: PhotoId) -> u64 {
+        self.preview_gen.get(&id).copied().unwrap_or(0)
     }
 
     /// The photos whose preview came down since the last call; `None`: more than are kept, so all of them may have.

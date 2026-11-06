@@ -87,7 +87,10 @@ impl crate::Session {
         let source_key = Hasher128::new().str(&content_key).finish();
         // …and, for a synced photo whose original isn't here, which of its previews it has
         let tier = self.synced_tier(&p).unwrap_or(0);
-        let content = (source_key.0 as u64) ^ u64::from(tier).wrapping_mul(0xd6e8_feb8_6659_fd93);
+        // …and how many times its previews were built again here (Rebuild Previews)
+        let content = (source_key.0 as u64)
+            ^ u64::from(tier).wrapping_mul(0xd6e8_feb8_6659_fd93)
+            ^ self.media.preview_gen(id).wrapping_mul(0xa076_1d64_78bd_642f);
         // Temporary "before" settings must not replace the photo's cached develop hash.
         let settings_hash = if before { settings.hash64() } else { self.media.settings_hashes.get(id, &settings) };
         let salt = self.media.denoise_salt(id, &settings);
