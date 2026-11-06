@@ -732,7 +732,8 @@ fn a_face_renders_on_its_own() {
     let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
     let long = image["width"].as_u64().unwrap().max(image["height"].as_u64().unwrap());
     assert!(long <= 1200 && (native <= 600 || long > 512), "native {native}, drawn {long}: {image}");
-    let bad_level = h.call(&req(9, "render.variant", json!({"photo": photo, "edited": true, "level": "huge", "edge": 1200})), Duration::from_secs(30));
+    let bad_level =
+        h.call(&req(9, "render.variant", json!({"photo": photo, "edited": true, "level": "huge", "edge": 1200})), Duration::from_secs(30));
     assert_eq!(bad_level["error"]["code"], "badParams", "{bad_level}");
 }
 
@@ -936,6 +937,39 @@ fn an_hdr_edit_on_an_hdr_display_comes_with_its_hdr_picture() {
     let back = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false && e["key"] == sdr["key"]);
     assert!(back.get("hdr").is_none(), "{back}");
     assert_eq!(h.call(&req(10, "render.hdrDisplay", json!({})), t)["error"]["code"], "badParams");
+}
+
+// A Display P3 screen (`render.displaySpace`): the pictures are made for it and say so (`space`); the histogram
+// is of the picture as shown; `srgb` goes back
+#[test]
+fn a_display_p3_screen_gets_display_p3_pictures_and_their_histogram() {
+    let h = demo();
+    let t = Duration::from_secs(30);
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), t);
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    h.call(&req(2, "engine.execute", json!({"command": "library.select", "params": {"ids": [photo]}})), t);
+    let main = |e: &Value| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false;
+    h.submit(&req(3, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let srgb = h.wait_for(main);
+    assert!(srgb.get("space").is_none(), "{srgb}");
+    // (taken now: a newer picture of the slot replaces a lease nobody took)
+    let pixels = |e: &Value| h.leases().image(e["token"].as_u64().unwrap()).expect("the picture").data.clone();
+    let srgb_pixels = pixels(&srgb);
+    assert_eq!(h.call(&req(4, "render.displaySpace", json!({"space": "displayP3"})), t)["result"], json!({}));
+    h.submit(&req(5, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let p3 = h.wait_for(|e| main(e) && e["space"] == "displayP3");
+    assert_ne!(p3["key"], srgb["key"], "the Display P3 picture is its own render");
+    assert_ne!(srgb_pixels, pixels(&p3), "the same colours in another space are other values");
+    // the histogram (and its clipping warnings) counts the picture as shown, not its sRGB version, which would clip
+    // every colour outside sRGB
+    let shown = h.leases().image(p3["token"].as_u64().unwrap()).expect("the P3 picture");
+    let own = serde_json::to_value(lightcraft_raster::Histogram::of_srgb8(&shown)).unwrap();
+    assert_eq!(p3["histogram"]["luma"], own["luma"], "the histogram is the picture's own");
+    assert_eq!(h.call(&req(6, "render.displaySpace", json!({"space": "srgb"})), t)["result"], json!({}));
+    h.submit(&req(7, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let back = h.wait_for(|e| main(e) && e["key"] == srgb["key"]);
+    assert!(back.get("space").is_none(), "{back}");
+    assert_eq!(h.call(&req(8, "render.displaySpace", json!({"space": "adobeRgb"})), t)["error"]["code"], "badParams");
 }
 
 /// A one-thread HTTP server for the admin API: logs each request (head and body) and answers by

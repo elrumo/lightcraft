@@ -800,6 +800,19 @@ impl Engine {
                 self.busy = true;
                 Ok(json!({}))
             }
+            // the screen is Display P3 (an Apple device's): previews render into its primaries from now on, so colours
+            // outside sRGB show; the histogram and the clipping view count the picture as shown, the cached previews stay
+            // sRGB (`display::Display::screen_histogram`). `srgb`: as before
+            "render.displaySpace" => {
+                let display = match p.get("space").and_then(Value::as_str) {
+                    Some("displayP3") => Some(Arc::new(lightcraft_engine::display::Display::display_p3().map_err(|e| ErrorBody::new("other", e))?)),
+                    Some("srgb") => None,
+                    _ => return Err(bad("`space` is `displayP3` or `srgb`")),
+                };
+                self.sched.set_display(display);
+                self.busy = true;
+                Ok(json!({}))
+            }
             "host.lifecycle" => {
                 let event = p.get("event").and_then(Value::as_str).ok_or_else(|| bad("missing `event`"))?;
                 self.lifecycle(event).map_err(|e| bad(&e))?;
@@ -1042,6 +1055,9 @@ impl Engine {
             let token = self.leases.put_image(&name, Arc::new(image));
             // (the HDR rendition of the same render, a lease of its own)
             let hdr = hdr.map(|h| json!({"token": self.leases.put_hdr(&name, h.clone()), "width": h.width, "height": h.height, "peak": h.peak}));
+            // (with a display space every picture is made for it: the loupe's slots render into its primaries, the rest are
+            // converted, `display::present`; an HDR picture's 8-bit reduction is Display P3 either way)
+            let space = (self.sched.display().is_some() || hdr.is_some()).then_some("displayP3");
             // (with the share of pixels clipped to black and to white: the clipping warnings). A draft's at most every
             // DRAFT_HISTOGRAM_EVERY: a drag sends ~120 pictures a second, each histogram 1,024 numbers to write here and
             // for the frontend to read (~0.5 ms of its event thread a picture), and the frontend keeps the last one
@@ -1080,6 +1096,7 @@ impl Engine {
                 histogram,
                 window,
                 hdr,
+                space,
             };
             if trace::on() {
                 trace::line(&format!(
@@ -1544,6 +1561,8 @@ impl Engine {
                                         histogram: None,
                                         window: None,
                                         hdr: None,
+                                        // (the merge preview is sRGB: it does not go through the scheduler's display)
+                                        space: None,
                                     }
                                     .to_value(),
                                 );

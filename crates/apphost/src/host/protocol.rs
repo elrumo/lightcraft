@@ -193,6 +193,10 @@ pub enum Event {
         /// linear light); the 8-bit picture is then in Display P3 too.
         #[serde(skip_serializing_if = "Option::is_none")]
         hdr: Option<Value>,
+        /// `"displayP3"` when the 8-bit pixels are Display P3 (sRGB curve) rather than sRGB: every
+        /// picture after `render.displaySpace {space: "displayP3"}`, and an HDR edit's (`hdr`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        space: Option<&'static str>,
     },
     /// A render failed (an unreadable file, a missing original…).
     RenderFailed { slot: String, photo: PhotoId, key: u64, error: String },

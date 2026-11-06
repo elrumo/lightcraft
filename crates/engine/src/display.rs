@@ -23,6 +23,10 @@ pub struct Display {
     pub path: String,
     pub profile: DisplayProfile,
     pub space: DisplaySpace,
+    /// The histogram (and the clipping view) count the picture as it is shown, in the display's values, instead of
+    /// its sRGB version: the Display P3 screen of a native frontend ([`Display::display_p3`]), where the sRGB
+    /// version would clip every colour outside sRGB and light the clipping warnings on colours the screen shows.
+    pub screen_histogram: bool,
 }
 
 impl Display {
@@ -40,7 +44,14 @@ impl Display {
     pub fn from_bytes(path: &str, bytes: &[u8]) -> Result<Display, String> {
         let profile = DisplayProfile::from_icc(bytes).map_err(|e| format!("{path}: {e}"))?;
         let space = DisplaySpace::new(profile.to_rec2020, profile.id).ok_or_else(|| format!("{path}: the profile's primaries are degenerate"))?;
-        Ok(Display { path: path.to_string(), profile, space })
+        Ok(Display { path: path.to_string(), profile, space, screen_histogram: false })
+    }
+
+    /// Display P3 (sRGB curve), the screen of every recent Apple device: what a native frontend asks for
+    /// (`render.displaySpace`).
+    pub fn display_p3() -> Result<Display, String> {
+        let d = Display::from_bytes("Display P3", &lightcraft_codecs::icc::write_named(lightcraft_codecs::NamedSpace::DisplayP3))?;
+        Ok(Display { screen_histogram: true, ..d })
     }
 
     pub fn id(&self) -> u64 {
@@ -91,15 +102,18 @@ pub fn present(r: &mut RenderResult, display: &Display) {
 }
 
 /// A render into `display`'s primaries (sRGB curve) → in place, the display's device values; and
-/// its sRGB histogram, plus (`full_srgb`: for the cached view preview) its whole sRGB version.
+/// its sRGB histogram (none for a [`Display::screen_histogram`] display: the render's own stays), plus
+/// (`full_srgb`: for the cached view preview) its whole sRGB version.
 /// The histogram samples the same pixels [`Histogram::of_srgb8`] would, so only those are
 /// converted when the sRGB image itself isn't needed (slider drags).
 pub(crate) fn finish_render(image: &mut Rgba8, display: &Display, full_srgb: bool) -> (Option<Rgba8>, Option<Histogram>) {
     let warn = |e: String| log::warn!("display profile: {e}");
     let (srgb, histogram) = if full_srgb {
         let srgb = display.profile.to_srgb(image).map_err(warn).ok();
-        let h = srgb.as_ref().map(Histogram::of_srgb8);
+        let h = srgb.as_ref().filter(|_| !display.screen_histogram).map(Histogram::of_srgb8);
         (srgb, h)
+    } else if display.screen_histogram {
+        (None, None)
     } else {
         let sample = histogram_sample(image);
         (None, display.profile.to_srgb(&sample).map_err(warn).ok().map(|s| Histogram::of_srgb8(&s)))
@@ -152,6 +166,19 @@ mod tests {
             assert_eq!(full.unwrap(), sampled.unwrap(), "{w}x{h}");
             assert_eq!(a, b);
         }
+    }
+
+    /// The built-in Display P3 screen (`render.displaySpace`): the histogram is the render's own (the picture as shown,
+    /// colours outside sRGB not clipped), the cached view preview still gets its sRGB version.
+    #[test]
+    fn the_display_p3_screen_keeps_the_renders_own_histogram() {
+        let d = Display::display_p3().unwrap();
+        assert!(d.screen_histogram && !p3().screen_histogram && d.id() == p3().id());
+        let mut img = picture(64, 48);
+        let (srgb, h) = finish_render(&mut img, &d, true);
+        assert!(srgb.is_some() && h.is_none());
+        assert_eq!(finish_render(&mut img, &d, false), (None, None));
+        assert_eq!(img, picture(64, 48), "Display P3 needs no correction");
     }
 
     /// Alt-drag previews on a profiled display (issue #937): the histogram stays the photo's (not

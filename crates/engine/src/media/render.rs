@@ -371,8 +371,9 @@ impl RenderJob {
                 // the GPU when there is one.
                 let gpu = self.cache.is_none();
                 // a clipping preview tests sRGB values, like the histogram: rendered in sRGB, then
-                // converted for the display below (an HDR view is never a diagnostic overlay, see `with_hdr_display`)
-                let clip_view = self.request.overlay.is_clipping();
+                // converted for the display below (an HDR view is never a diagnostic overlay, see `with_hdr_display`);
+                // for a display whose histogram is of the picture shown, the display's values, as the histogram does
+                let clip_view = self.request.overlay.is_clipping() && !self.display.as_ref().is_some_and(|d| d.screen_histogram);
                 let request = if clip_view { RenderRequest { display: None, ..self.request } } else { self.request };
                 let (mut rendered, gpu_fallback, hdr) = if self.hdr_view {
                     let request = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..request };
