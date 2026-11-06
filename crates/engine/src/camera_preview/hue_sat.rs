@@ -232,11 +232,63 @@ pub(super) fn fit_hue_sat(pairs: &[([f64; 3], [f64; 3])], matrix: &Mat3) -> Opti
     })
 }
 
-/// Kernel width of the chroma curve's nodes (display luminance) and the weight at which a node
-/// keeps half of its estimate.
-const CHROMA_KERNEL: f64 = 0.08;
-
+/// How strongly the chroma curve's nodes are pulled towards 1 (log scale 0) and towards their neighbours, against the
+/// summed sample weight (each sample weighs its predicted chroma).
 const CHROMA_SHRINK: f64 = 2.0;
+const CHROMA_SMOOTH: f64 = 2.0;
+
+/// The chroma curve's log scales at its `CHROMA_N` nodes that best fit `samples` (display luminance, weight, log ratio)
+/// through the straight lines between nodes the render applies ([`ToneMap::chroma_scale`]): weighted least squares, with
+/// [`CHROMA_SHRINK`] towards 0 and [`CHROMA_SMOOTH`] on neighbouring differences. A node is fitted to the samples its
+/// segments reach, so the darkest node follows the dark tones even where brighter, more colourful samples outnumber
+/// them (a kernel average at each node let those decide it).
+fn chroma_nodes(samples: &[(f64, f64, f64)]) -> Option<[f64; lightcraft_pipeline::tone::CHROMA_N]> {
+    const N: usize = lightcraft_pipeline::tone::CHROMA_N;
+    let mut a = [[0.0f64; N + 1]; N];
+    for &(o, w, r) in samples {
+        let f = o.clamp(0.0, 1.0) * (N - 1) as f64;
+        let i = (f as usize).min(N - 2);
+        let t = f - i as f64;
+        let basis = [(i, 1.0 - t), (i + 1, t)];
+        for &(p, bp) in &basis {
+            for &(q, bq) in &basis {
+                a[p][q] += w * bp * bq;
+            }
+            a[p][N] += w * bp * r;
+        }
+    }
+    for j in 0..N {
+        a[j][j] += CHROMA_SHRINK;
+        if j + 1 < N {
+            a[j][j] += CHROMA_SMOOTH;
+            a[j + 1][j + 1] += CHROMA_SMOOTH;
+            a[j][j + 1] -= CHROMA_SMOOTH;
+            a[j + 1][j] -= CHROMA_SMOOTH;
+        }
+    }
+    // Gauss-Jordan with partial pivoting (the system is symmetric positive definite with the shrink, so it solves)
+    for c in 0..N {
+        let pivot = (c..N).max_by(|&x, &y| a[x][c].abs().total_cmp(&a[y][c].abs()))?;
+        a.swap(c, pivot);
+        let d = a[c][c];
+        if d.abs() < 1e-12 {
+            return None;
+        }
+        for k in c..=N {
+            a[c][k] /= d;
+        }
+        for r in 0..N {
+            if r != c {
+                let m = a[r][c];
+                for k in c..=N {
+                    a[r][k] -= m * a[c][k];
+                }
+            }
+        }
+    }
+    let z: [f64; N] = std::array::from_fn(|j| a[j][N]);
+    z.iter().all(|v| v.is_finite()).then_some(z)
+}
 
 /// How much more colourful Lightroom's camera-matching profiles (Camera Standard, Provia/Standard) are than the camera
 /// JPEG they match, at the chroma curve's nodes (display luminance 0, 1/7 … 1): about 15 % more in the dark tones, the
@@ -276,23 +328,16 @@ pub(super) fn fit_chroma(pairs: &[([f64; 3], [f64; 3])], look: &CameraLook) -> O
         .filter_map(|(_, (x, y))| {
             let p = predict(x);
             let (cp, cy) = (chroma(p)?, chroma(*y)?);
-            (cp > 0.05).then(|| (luma(p), cp, (cy.max(1e-3) / cp).ln().clamp(0.05f64.ln(), 2.5f64.ln())))
+            // (chosen and weighed by the predicted and the JPEG's chroma both: by the prediction alone, the pixels it
+            // renders greyest, the ones that need colour most, dropped out or barely counted)
+            (cp.max(cy) > 0.05).then(|| (luma(p), 0.5 * (cp + cy), (cy.max(1e-3) / cp.max(1e-3)).ln().clamp(0.05f64.ln(), 2.5f64.ln())))
         })
         .collect();
     if samples.len() < 64 {
         return None;
     }
-    let mut curve = [1.0f32; lightcraft_pipeline::tone::CHROMA_N];
-    for (j, node) in curve.iter_mut().enumerate() {
-        let at = j as f64 / (lightcraft_pipeline::tone::CHROMA_N - 1) as f64;
-        let (mut weight, mut sum) = (0.0, 0.0);
-        for &(o, cp, log_ratio) in &samples {
-            let k = (-0.5 * ((o - at) / CHROMA_KERNEL).powi(2)).exp() * cp;
-            weight += k;
-            sum += k * log_ratio;
-        }
-        *node = (sum / (weight + CHROMA_SHRINK)).exp() as f32;
-    }
+    let z = chroma_nodes(&samples)?;
+    let curve: [f32; lightcraft_pipeline::tone::CHROMA_N] = std::array::from_fn(|j| (z[j].exp() as f32).clamp(0.0, 4.0));
     let fitted = look.tone.with_chroma(curve)?;
     let with = ToneMap::camera(&fitted, 0.0, 0.0, 0.0);
     let error = |map: &ToneMap| -> f64 {

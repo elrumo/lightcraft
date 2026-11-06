@@ -105,10 +105,21 @@ Ours / Lightroom chroma per L\* band, Apple renderer, before → after:
 | D70 | 0.65 → 0.73 | 0.67 → 0.73 | 0.87 → 0.91 | 0.99 → 1.00 |
 | X-A5 | 0.56 → 0.61 | 0.66 → 0.70 | 0.70 → 0.72 | 0.84 → 0.81 |
 
-What is left is not Lightroom's: our fit falls short of the camera JPEG itself on some bodies (the X-A5's darks reach
+What was left was not Lightroom's: our fit fell short of the camera JPEG itself on some bodies (the X-A5's darks reach
 0.5 to 0.6 of its JPEG's chroma, in the core's render too), and the Apple renderer keeps about 0.85 of the core's
 chroma in the ILCE-6000's mid tones. Bodies on Adobe Color in Lightroom (no camera-matching profile: E-1, KP, GR here)
 are Adobe's measured profile per model, which this does not try to match.
+
+**The fit's own chroma curve (look version 23).** On the fit's aligned proxies (sensor against camera JPEG; the
+ignored test `look_fit_report` prints it per tone band), the X-A5's Camera Matching look had 0.37 to 0.85 of its JPEG's
+chroma in the dark and mid tones. The curve's estimator had two faults: it chose and weighed pixels by the chroma the
+look *predicts*, so the pixels it rendered greyest, which need colour most, dropped out or barely counted; and each
+node was a kernel average of nearby pixels, so the darkest node followed the brighter, more numerous ones. It now fits
+the eight nodes by least squares through the same straight lines the render applies, on pixels chosen and weighed by
+the JPEG's chroma as well as the prediction's, down to display luminance 0.004. Camera Matching against its own JPEG,
+chroma in the dark and mid bands: X-A5 0.37–0.85 → 0.49–0.97, ILCE-6000 0.87–1.02 → 0.93–1.05, ILCE-6700 0.95–1.09 →
+0.96–1.07, D70 0.94–1.03 → 0.97–1.06 (its brightest band 1.31 → 1.18). The X-A5's darkest tones stay too light (1.2 to
+1.8 times the JPEG's luminance below display 0.03): its tone curve's toe, from 181 dark pairs, is not fixed here.
 
 ## Limits
 
@@ -129,6 +140,7 @@ port share the same constants; the port's goldens come from the core.
 | 2026-11-06 | New: Contrast, Whites and Blacks as fitted shift tables, Highlights and Shadows windows and gains refitted. |
 | 2026-11-06 | Colour: Contrast, lifting Whites and crushing Blacks scale chroma by their curve's slope, as Lightroom's do. |
 | 2026-11-06 | Colour by tone: camera-JPEG fitted looks start with Lightroom's camera-profile chroma; Camera Matching keeps the fit. |
+| 2026-11-06 | The fit's chroma curve by least squares on pixels chosen by both chromas (look version 23). |
 
 [`ToneMap::display`]: ../crates/pipeline/src/tone.rs
 [`ToneMap::hdr`]: ../crates/pipeline/src/tone.rs

@@ -73,7 +73,8 @@ pub(super) fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f, min_chroma: f32
         return None;
     }
     let mut pairs = Vec::new();
-    // Highlights too (camera JPEGs bleach colours toward white there), for the chroma curve only.
+    // Highlights and dark tones too (camera JPEGs bleach colours toward white, and colour dark tones), for the chroma
+    // curve only.
     let mut bright = Vec::new();
     let mut colour = 0;
     for (i, (input, output)) in sensor.data.iter().zip(&reference.data).enumerate() {
@@ -84,7 +85,7 @@ pub(super) fn collect_pairs(sensor: &Rgb32f, reference: &Rgb32f, min_chroma: f32
         if !input.iter().all(|v| v.is_finite() && *v > 0.001 && *v < 1.5) || !output.iter().all(|v| v.is_finite() && *v >= 0.0) {
             continue;
         }
-        if (0.015..=1.0).contains(&y) {
+        if (0.004..=1.0).contains(&y) {
             bright.push((input.map(f64::from), output.map(f64::from)));
         }
         let floors = if dark { DARK_FLOOR } else { (0.015, 0.004) };

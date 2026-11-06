@@ -2960,3 +2960,96 @@ fn a_narrow_black_and_white_curve_that_darkens_the_bright_areas_is_refused() {
         assert!(sky > 0.8, "an accepted curve must not darken what the camera renders at 0.93: {sky}");
     }
 }
+
+/// Diagnostic, not a check: for each raw named in `LC_LOOK_REPORT` (`;`-separated paths), the look it starts from and
+/// its Camera Matching look against its own camera JPEG on the fit's aligned proxies, per JPEG luminance band: the
+/// median luminance ratio and chroma ratio (luminance-normalised RGB distance from neutral) of render over JPEG. Run
+/// `LC_LOOK_REPORT=a.ARW;b.NEF cargo test -p lightcraft-engine --lib look_fit_report -- --ignored --nocapture`.
+#[test]
+#[ignore = "diagnostic: needs LC_LOOK_REPORT"]
+fn look_fit_report() {
+    use super::hue_sat::HueSat;
+    let Some(list) = std::env::var_os("LC_LOOK_REPORT") else { return };
+    let edges = [0.002f64, 0.005, 0.01, 0.02, 0.035, 0.06, 0.1, 0.15, 0.25, 0.4, 0.6, 0.85];
+    let chroma = |p: [f64; 3]| {
+        let y = luma(p);
+        (y > 0.0).then(|| p.iter().map(|v| (v / y - 1.0).powi(2)).sum::<f64>().sqrt())
+    };
+    let median = |mut v: Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v.get(v.len() / 2).copied()
+    };
+    eprintln!("bands (JPEG luminance): {}", edges.windows(2).map(|w| format!("{:6.3}", (w[0] * w[1]).sqrt())).collect::<Vec<_>>().join(" "));
+    for path in list.to_string_lossy().split(';').filter(|p| !p.is_empty()) {
+        let (Ok(bytes), name) = (std::fs::read(path), path.rsplit('/').next().unwrap_or(path)) else { continue };
+        let Ok(mut raw) = lightcraft_raw::decode(&bytes) else { continue };
+        // (as the loader does: the camera JPEG pairs with the sensor through the warp the camera applied to it)
+        let geometry = super::proxy::lens_geometry(&raw.opcodes.list3);
+        raw.opcodes.list3.clear();
+        let (_, t, look, matched) = starting_colour(&mut raw, &bytes, geometry.as_ref(), None);
+        let (Some(look), Some((sensor, reference, _))) =
+            (look, super::proxy::proxies(&raw, &bytes, &t, super::colour::PROXY, 0.0, geometry.as_ref()))
+        else {
+            eprintln!("{name}: no look or no proxies");
+            continue;
+        };
+        let own = matched.and_then(|m| m.tone);
+        for (label, tone) in [("start", Some(look.tone)), ("camera", own)] {
+            let Some(tone) = tone else { continue };
+            let map = ToneMap::camera(&tone, 0.0, 0.0, 0.0);
+            let hs = look.hue_sat.as_ref().and_then(HueSat::new);
+            let mut rows = vec![(Vec::new(), Vec::new()); edges.len() - 1];
+            for (x, y) in sensor.data.iter().zip(&reference.data) {
+                let y = y.map(f64::from);
+                let scene = look.matrix.apply(x.map(f64::from));
+                let scene = hs.as_ref().map_or(scene, |c| c.apply(scene.map(|v| v as f32)).map(f64::from));
+                let p = super::pairs::displayed(scene, &map);
+                let (ly, lp) = (luma(y), luma(p));
+                let Some(band) = edges.windows(2).position(|w| (w[0]..w[1]).contains(&ly)) else { continue };
+                let Some(row) = rows.get_mut(band) else { continue };
+                row.0.push(lp / ly);
+                if let (Some(cy), Some(cp)) = (chroma(y), chroma(p))
+                    && cy > 0.05
+                {
+                    row.1.push(cp / cy);
+                }
+            }
+            let cell =
+                |v: &Vec<f64>| if v.len() < 30 { "     -".to_string() } else { median(v.clone()).map_or("     -".into(), |m| format!("{m:6.2}")) };
+            eprintln!("{name:28} {label:6} lum  {}", rows.iter().map(|r| cell(&r.0)).collect::<Vec<_>>().join(" "));
+            eprintln!("{name:28} {label:6} chr  {}", rows.iter().map(|r| cell(&r.1)).collect::<Vec<_>>().join(" "));
+        }
+    }
+}
+
+/// The chroma curve follows the dark tones where the look renders them greyer than the camera JPEG shows them, even
+/// below the old cut on predicted chroma (0.05): those pixels need colour most. Before, they were left out and the
+/// darkest node stayed near 1.
+#[test]
+fn chroma_curve_reaches_darks_rendered_too_grey() {
+    use super::pairs::displayed;
+    let look = CameraLook {
+        matrix: Mat3::IDENTITY,
+        tone: CameraTone::new(std::array::from_fn(|i| {
+            let x = 0.004 * 1.18f32.powi(i as i32);
+            [x, x.powf(0.6)]
+        }))
+        .unwrap(),
+        hue_sat: None,
+    };
+    let tone = ToneMap::camera(&look.tone, 0.0, 0.0, 0.0);
+    let pairs: Vec<([f64; 3], [f64; 3])> = (0..4000)
+        .map(|i| {
+            let y = 0.002 * 1.0016f64.powi(i);
+            // dark tones a little coloured, bright tones clearly; the JPEG shows the darks twice as colourful, the rest 1.3 times
+            let c = if y < 0.02 { 0.02 } else { 0.25 };
+            let x = [y * (1.0 + c), y * (1.0 - 0.3 * c), y * (1.0 - c)];
+            let p = displayed(x, &tone);
+            let o = luma(p);
+            let k = if y < 0.02 { 2.0 } else { 1.3 };
+            (x, p.map(|v| o + (v - o) * k))
+        })
+        .collect();
+    let fitted = super::hue_sat::fit_chroma(&pairs, &look).expect("a chroma curve that helps");
+    assert!(fitted.chroma()[0] > 1.6, "darkest node {:?}", fitted.chroma());
+}
