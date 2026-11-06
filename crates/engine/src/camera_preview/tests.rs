@@ -777,6 +777,26 @@ fn an_accepted_jpeg_fit_comes_before_the_spectral_matrices() {
 
 /// A CR3 of a model with measured matrices never starts from a fit to its camera JPEG (its picture style and Auto
 /// Lighting Optimizer): it starts from the matrices and the neutral look. The fit is still made, as the Camera
+/// A raw whose camera JPEG gives a look starts from it coloured as Lightroom's camera-matching profiles are (more chroma
+/// in the darks, less in the highlights: the default profile), and keeps the fit itself for the Camera Matching profile.
+#[test]
+fn a_fitted_look_starts_as_lightroom_shows_it_and_camera_matching_keeps_the_cameras() {
+    let mut raw = raw_of(RawFormat::Arw, "SONY", "ILCE-6000", Default::default());
+    let fitted = dro_test_look(&std::array::from_fn(|i| 0.006 * 1.13f32.powi(i as i32)), &|x| x.sqrt());
+    let (_, _, look, matched) = starting_colour_with(
+        &mut raw,
+        |_, _| (Some(fitted.clone()), false),
+        |_, _| panic!("no black-and-white step"),
+        |_, _| panic!("no dark tone fit for a fitted look"),
+    );
+    let look = look.expect("the fitted look");
+    let (start, own) = (look.tone.chroma(), fitted.tone.chroma());
+    assert_eq!(look.tone.knots(), fitted.tone.knots(), "the same tone curve");
+    assert!(start[0] > own[0] * 1.1 && start[7] < own[7] * 0.95, "Lightroom's colour by tone: {start:?} from {own:?}");
+    let m = matched.expect("Camera Matching on offer");
+    assert_eq!(m.tone, Some(fitted.tone), "Camera Matching renders the camera's own curve");
+}
+
 /// Matching profile. A CR3 outside the table still starts from the fit.
 #[test]
 fn a_cr3_of_a_measured_model_starts_from_the_neutral_look() {
@@ -1450,7 +1470,7 @@ fn corpus_nef_gets_a_camera_look() {
 
 /// The public EOS R6 CR3 (skipped without the corpus) starts neutral and carries the look fitted to its JPEG for
 /// Camera Matching, and its smart preview carries it too; the EOS 90D (no measured matrices) starts from that
-/// look, so it has none on the side.
+/// look coloured as Lightroom shows it and keeps the look itself for Camera Matching: the same curve, other colour.
 #[test]
 fn corpus_cr3_keeps_its_camera_look_for_camera_matching() {
     let corpus = std::env::var_os("LIGHTCRAFT_CORPUS")
@@ -1470,7 +1490,8 @@ fn corpus_cr3_keeps_its_camera_look_for_camera_matching() {
         assert_eq!(crate::smart::decode(&proxy).unwrap().2.as_deref(), Some(&*m));
     }
     let (_, info) = crate::files::load_bytes(&d90, 400).unwrap();
-    assert!(info.camera_match.is_none() && info.camera_tone.is_some());
+    let (start, own) = (info.camera_tone.expect("the 90D's look"), info.camera_match.and_then(|m| m.tone).expect("its fit for Camera Matching"));
+    assert!(start.knots() == own.knots() && start.chroma() != own.chroma());
 }
 
 /// The public ILCE-7CR samples (61 MP; skipped without the corpus): lossless compressed L and M and compressed

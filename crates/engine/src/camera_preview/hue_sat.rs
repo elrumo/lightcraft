@@ -238,6 +238,22 @@ const CHROMA_KERNEL: f64 = 0.08;
 
 const CHROMA_SHRINK: f64 = 2.0;
 
+/// How much more colourful Lightroom's camera-matching profiles (Camera Standard, Provia/Standard) are than the camera
+/// JPEG they match, at the chroma curve's nodes (display luminance 0, 1/7 … 1): about 15 % more in the dark tones, the
+/// same around mid grey, 7 % less in the highlights. The median of Lightroom's unedited exports of an ILCE-6000,
+/// ILCE-6700, D70 and X-A5 against each file's own camera JPEG (`docs/lightroom-light-sliders.md`, Colour by tone).
+const LIGHTROOM_CHROMA: [f32; lightcraft_pipeline::tone::CHROMA_N] = [1.12, 1.04, 0.99, 0.95, 0.93, 0.93, 0.93, 0.93];
+
+/// A look fitted to the camera JPEG, coloured as Lightroom's camera-matching profile of it is ([`LIGHTROOM_CHROMA`]): the
+/// default profile's start. The fit itself stays the camera's own look, which the Camera Matching profile renders.
+pub(super) fn lightroom_chroma(tone: CameraTone) -> CameraTone {
+    let mut k = *tone.chroma();
+    for (v, f) in k.iter_mut().zip(LIGHTROOM_CHROMA) {
+        *v = (*v * f).clamp(0.0, 4.0);
+    }
+    tone.with_chroma(k).unwrap_or(tone)
+}
+
 /// The look's tone curve with a chroma-by-display-luminance curve fitted to `pairs` (two thirds
 /// train, one third held out), when that lowers the held-out error. Colourfulness is compared as
 /// the distance from neutral of luminance-normalised RGB.

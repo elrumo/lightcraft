@@ -1,3 +1,4 @@
+use super::hue_sat::lightroom_chroma;
 use super::look_fit::{fit_dng_tone, fit_preview, neutral_look_for, typical_look};
 use super::mono::{fit_dark_tone, monochrome_look};
 use super::proxy::{LensGeometry, jpeg_vignetting, proxies, sharing_proxies, with_jpeg_vignetting};
@@ -142,7 +143,10 @@ pub(super) fn starting_colour_with(
     }
     let (look, black_and_white) = fit(raw, &t);
     if let Some(look) = look {
-        return (xy, t, Some(look), None);
+        // the default profile starts from the fit coloured as Lightroom shows it; Camera Matching keeps the camera's own
+        let start = CameraLook { tone: lightroom_chroma(look.tone), ..look.clone() };
+        let matched = camera_match((&t, Some(&start)), &t, Some(look));
+        return (xy, t, Some(start), matched);
     }
     let (xy, t) = match spectral(raw) {
         Some(camera) => {

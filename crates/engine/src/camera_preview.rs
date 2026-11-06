@@ -97,7 +97,9 @@ use tone::{HighlightCheck, ToneFit, fit_tone, fit_tone_conditional, highlights};
 /// the lens data stored with each smart preview.
 /// 20: a raw whose camera JPEG gives no look starts from its camera's typical colour and a neutral tone at its maker's
 /// exposure ([`typical_look`]), not from camera RGB as sRGB with the default tone.
-pub const LOOK_VERSION: u32 = 20;
+/// 21: a raw whose look is fitted to its camera JPEG starts from that look coloured as Lightroom's camera-matching
+/// profiles show it (`hue_sat::lightroom_chroma`), and keeps the fit itself for the Camera Matching profile.
+pub const LOOK_VERSION: u32 = 21;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {

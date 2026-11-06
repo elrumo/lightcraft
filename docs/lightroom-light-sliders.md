@@ -1,6 +1,6 @@
 # Light sliders fitted to Lightroom's single-slider exports
 
-> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** colour follows the edited curve's slope
+> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** colour by tone of fitted looks; Camera Matching keeps the camera's own
 
 How Contrast, Highlights, Shadows, Whites and Blacks move a photo was tuned by eye. Here they are fitted to Lightroom's own
 response on one raw: a Sony ILCE-6000 with the E PZ 16-50mm at 16 mm (sunset over the sea, grass, white camper vans; the
@@ -76,6 +76,40 @@ Exposure, Highlights and Shadows move a pixel along the curve rather than change
 −1.09 still gives the brightest band 0.95 of its chroma where Lightroom gives 1.36, and Shadows +100 the darkest band
 1.41 where Lightroom gives 1.74.
 
+## Colour by tone
+
+Exposure, Highlights and Shadows move a pixel to another tone, so its colour there is the base look's. Against
+Lightroom's unedited exports, ours was too grey below mid grey and too colourful in the brightest tones (the ILCE-6000:
+0.63 to 0.80 of Lightroom's chroma from L\* 0 to 75, 1.43 above 90). Lightroom's camera-matching profiles were then
+measured against each file's own camera JPEG, which our looks are fitted to, on four bodies (ILCE-6000 and ILCE-6700
+Camera Standard, D70 Camera Standard, X-A5 Provia/Standard). On all four, Lightroom is more colourful than the camera
+JPEG in the dark tones and less in the highlights, with the same median shape:
+
+| Display luminance | 0.005 | 0.016 | 0.035 | 0.067 | 0.116 | 0.194 | 0.316 | 0.49 | 0.71 | 0.92 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Lightroom / camera JPEG | 1.10 | 1.15 | 1.13 | 1.10 | 1.06 | 1.03 | 0.99 | 0.94 | 0.93 | 0.94 |
+
+So a raw whose look is fitted to its camera JPEG now starts from that look with these scales on its chroma curve
+(`hue_sat::LIGHTROOM_CHROMA`: 1.12, 1.04, 0.99, 0.95, 0.93, 0.93, 0.93, 0.93 at display luminance 0, 1/7 … 1): the
+default profile looks as Lightroom shows the photo. The fit itself is kept for the **Camera Matching** profile, which
+looks as the camera does (`photo.cameraMatch`; until now such raws had none, and Camera Matching fell back to the
+default). Neutral looks, the Canon CR3 tone fitted to Lightroom, and DNG profile tones are unchanged. Camera-look fit
+version 21: smart previews rebuild.
+
+Ours / Lightroom chroma per L\* band, Apple renderer, before → after:
+
+| Body | 15–30 | 30–45 | 45–60 | 60–75 |
+|---|---|---|---|---|
+| ILCE-6000 | 0.73 → 0.81 | 0.80 → 0.87 | 0.69 → 0.70 | 0.78 → 0.76 |
+| ILCE-6700 | 0.83 → 0.93 | 0.80 → 0.87 | 0.85 → 0.88 | 0.99 → 0.94 |
+| D70 | 0.65 → 0.73 | 0.67 → 0.73 | 0.87 → 0.91 | 0.99 → 1.00 |
+| X-A5 | 0.56 → 0.61 | 0.66 → 0.70 | 0.70 → 0.72 | 0.84 → 0.81 |
+
+What is left is not Lightroom's: our fit falls short of the camera JPEG itself on some bodies (the X-A5's darks reach
+0.5 to 0.6 of its JPEG's chroma, in the core's render too), and the Apple renderer keeps about 0.85 of the core's
+chroma in the ILCE-6000's mid tones. Bodies on Adobe Color in Lightroom (no camera-matching profile: E-1, KP, GR here)
+are Adobe's measured profile per model, which this does not try to match.
+
 ## Limits
 
 - **One photo.** Lightroom adapts its sliders to the photo's range (gap 3 in [gaps.md](gaps.md)). These are fixed curves
@@ -94,6 +128,7 @@ port share the same constants; the port's goldens come from the core.
 |---|---|
 | 2026-11-06 | New: Contrast, Whites and Blacks as fitted shift tables, Highlights and Shadows windows and gains refitted. |
 | 2026-11-06 | Colour: Contrast, lifting Whites and crushing Blacks scale chroma by their curve's slope, as Lightroom's do. |
+| 2026-11-06 | Colour by tone: camera-JPEG fitted looks start with Lightroom's camera-profile chroma; Camera Matching keeps the fit. |
 
 [`ToneMap::display`]: ../crates/pipeline/src/tone.rs
 [`ToneMap::hdr`]: ../crates/pipeline/src/tone.rs
