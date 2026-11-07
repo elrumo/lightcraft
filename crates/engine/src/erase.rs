@@ -135,6 +135,14 @@ pub struct EraseJob {
     brush: Brush,
 }
 
+#[cfg(test)]
+impl EraseJob {
+    /// What the network is given (tests).
+    pub(crate) fn input(&self) -> &EraseInput {
+        &self.input
+    }
+}
+
 impl EraseJob {
     /// Paint the fill. `cancelled` is asked before the network starts (and between a diffusion model's steps);
     /// `progress` hears the fraction done (a diffusion model's).
@@ -299,13 +307,13 @@ impl Session {
 
     /// [`Session::erase_job`] for a given brush.
     pub(crate) fn erase_job_with(&mut self, id: PhotoId, d: &DevelopSettings, index: usize, brush: Brush) -> Result<EraseJob, String> {
-        let info = self.source_info(id);
-        let mut src = self.source_now(id, SourceLevel::Preview)?;
+        // (the photo in its plain light: the look, the local tone map and the user's edits go on the stored fill at render)
+        let (mut src, mut info) = self.plain_source_now(id, d, SourceLevel::Preview)?;
         let mut input = lightcraft_pipeline::spots::erase_input(&src, &info, d, index).ok_or("the stroke is outside the photo")?;
         // a small stroke on a big photo: the preview has too few pixels around it, read the original
         let full = self.catalog.photo(id).map_or(0, |p| p.width.max(p.height) as usize);
         if input.native < lightcraft_erase::SIDE as f64 && full > src.width.max(src.height) {
-            src = self.source_now(id, SourceLevel::Full)?;
+            (src, info) = self.plain_source_now(id, d, SourceLevel::Full)?;
             input = lightcraft_pipeline::spots::erase_input(&src, &info, d, index).ok_or("the stroke is outside the photo")?;
         }
         let key = SpotKey::of(d.spots.get(index).ok_or("no such spot")?);

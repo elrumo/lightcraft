@@ -211,5 +211,5 @@ fn fit_tone_only_pairs(
 
 /// Linear Rec.2020 D65 → linear ProPhoto RGB D50, the space DNG hue/saturation tables work in.
 pub(super) fn to_prophoto() -> Mat3 {
-    PROPHOTO.from_xyz().mul(&bradford(D65, D50)).mul(&REC2020.to_xyz())
+    lightcraft_pipeline::camera_look::to_prophoto()
 }

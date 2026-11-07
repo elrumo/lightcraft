@@ -6,6 +6,11 @@
 //!   source's own light, before white balance: every edit after that (white balance, tone,
 //!   colour, masks, Remove spots, grain…) applies to the new area exactly as to the photo, and a
 //!   later change carries over. The photo's own pixels never change.
+//! - **The Camera Matching look.** The engine puts it on the source before the resample, so a fill
+//!   stored in the plain light ([`SpotFill::plain`]: the model was given the photo without it) gets
+//!   it where it is put in ([`Expansion::with_look`], from [`crate::frame_for`]); switching the
+//!   profile after Generate moves the new area with the photo. An older fill holds the light of the
+//!   source it was painted from and is put in as it is.
 //! - **What reads a source position.** The camera's local tone map ([`crate::local_tone`]) and the planes laid
 //!   over the source (mattes, depth: [`crate::masks::source_to_out`]) are looked up by where a pixel sits in the
 //!   photo. Past it they take the photo's nearest edge, in a frame with a lens or perspective warp too
@@ -57,6 +62,8 @@ impl PartialEq for Expansion {
 
 struct Inner {
     fill: Option<ExpandFill>,
+    /// The Camera Matching look, put on a fill stored in the plain light ([`Expansion::with_look`]).
+    look: Option<Arc<crate::CameraMatch>>,
     /// Identifies the fill in the stage cache's key (see `Frame`'s `Debug`).
     key: u64,
     decoded: OnceLock<Option<Decoded>>,
@@ -88,7 +95,18 @@ impl Expansion {
                 f.fill.scale.to_bits(),
             ))
         });
-        Expansion { inner: Arc::new(Inner { fill: fill.cloned(), key, decoded: OnceLock::new() }) }
+        Expansion { inner: Arc::new(Inner { fill: fill.cloned(), look: None, key, decoded: OnceLock::new() }) }
+    }
+
+    /// This expansion with the Camera Matching look `look` on its fill, when the fill is stored in the plain light
+    /// ([`SpotFill::plain`]: as the photo's source before the engine puts the look on it); unchanged otherwise.
+    pub fn with_look(&self, look: Arc<crate::CameraMatch>) -> Expansion {
+        if !self.inner.fill.as_ref().is_some_and(|f| f.fill.plain) {
+            return self.clone();
+        }
+        // (the look is in the stage cache's key: a profile switch is a new resample)
+        let key = self.inner.key ^ (Arc::as_ptr(&look) as usize as u64).rotate_left(17) ^ 0x9e37_79b9_7f4a_7c15;
+        Expansion { inner: Arc::new(Inner { fill: self.inner.fill.clone(), look: Some(look), key, decoded: OnceLock::new() }) }
     }
 
     /// Whether there is a stored fill.
@@ -107,7 +125,11 @@ impl Expansion {
             .get_or_init(|| {
                 let f = &self.inner.fill.as_ref()?.fill;
                 let rect = f.bounds()?;
-                let px = f.pixels()?;
+                let mut px = f.pixels()?;
+                if let Some(look) = &self.inner.look {
+                    let look = look.look();
+                    px.iter_mut().for_each(|p| *p = look.apply(*p));
+                }
                 Some(Decoded { w: f.w as usize, h: f.h as usize, rect, px })
             })
             .as_ref()
@@ -350,7 +372,7 @@ impl ExpandInput {
                 }
             })
             .collect();
-        SpotFill::from_linear(w, h, self.rect, &px).map(|fill| ExpandFill { fill, model: model.to_string() })
+        SpotFill::from_linear(w, h, self.rect, &px).map(|fill| ExpandFill { fill: SpotFill { plain: true, ..fill }, model: model.to_string() })
     }
 
     /// A model's answer `ai` (the canvas, display-encoded, with the network's 512 pixels of
@@ -846,6 +868,64 @@ mod tests {
             (expand_input(&src, &SourceInfo::default(), &plain, 256).unwrap(), expand_input(&src, &SourceInfo::default(), &edited, 256).unwrap());
         assert_eq!(a.image.data, b.image.data);
         assert_eq!(a.lin.data, b.lin.data);
+    }
+
+    /// Generative Expand's fill is stored in the plain light (the model is given the photo without the Camera Matching
+    /// look) and gets the look where it goes in, as the photo's source got it from the engine: switching the profile after
+    /// Generate moves the new area with the photo. A fill from before (unmarked) is put in as it was.
+    #[test]
+    fn a_plain_fill_takes_the_camera_matching_look_like_the_photo() {
+        let src = photo(120, 80);
+        let table = lightcraft_raw::profile::HsvTable {
+            hue_divisions: 6,
+            sat_divisions: 2,
+            val_divisions: 1,
+            data: (0..12).map(|i| [6.0 * (i % 3) as f32, 1.1, 1.0]).collect(),
+            srgb_value: false,
+        };
+        let look = crate::CameraMatch {
+            start_hue_sat: None,
+            matrix: lightcraft_color::Mat3([[1.2, -0.15, -0.05], [-0.1, 1.15, -0.05], [0.05, -0.25, 1.2]]),
+            hue_sat: Some(table),
+            tone: None,
+        };
+        let info = SourceInfo { raw: true, camera_match: Some(Arc::new(look.clone())), ..SourceInfo::default() };
+        let mut colour = expanded(Rect::new(-0.25, -0.1, 1.0, 1.0));
+        colour.expand_fill = Some(coloured_fill(&src, &colour, [0.8, 0.5, 0.3]));
+        assert!(colour.expand_fill.as_ref().is_some_and(|f| f.fill.plain));
+        let mut camera = colour.clone();
+        camera.profile.id = crate::profiles::CAMERA.into();
+        // the engine puts the look on the source of a render with the profile
+        let mut looked = src.clone();
+        look.look().apply_image(&mut looked);
+        let sample = |src: &Rgb32f, s: &DevelopSettings, n: Point| {
+            let frame = crate::frame_for(src, &info, s, true);
+            let (w, h) = frame.fit(300, 300);
+            let out = frame.sample(src, w, h);
+            let p = frame.norm_to_out(w, h).apply(n);
+            out.get(p.x as usize, p.y as usize)
+        };
+        let (past, inside) = (Point::new(-0.2, 0.5), Point::new(0.5, 0.5));
+        let (plain, matched) = (sample(&src, &colour, past), sample(&looked, &camera, past));
+        let want = look.look().apply(plain);
+        assert!((0..3).all(|c| (matched[c] - want[c]).abs() < 2e-3 * want[c].max(0.05)), "the new area: {matched:?} vs {want:?}");
+        let want = look.look().apply(sample(&src, &colour, inside));
+        let got = sample(&looked, &camera, inside);
+        assert!((0..3).all(|c| (got[c] - want[c]).abs() < 2e-3 * want[c].max(0.05)), "the photo: {got:?} vs {want:?}");
+        // an older fill (not stored plain) is put in as it is, with the profile or without
+        let mut old = camera.clone();
+        if let Some(f) = old.expand_fill.as_mut() {
+            f.fill.plain = false;
+        }
+        let mut old_colour = old.clone();
+        old_colour.profile.id = "lc.color".into();
+        let whole = |s: &DevelopSettings| {
+            let frame = crate::frame_for(&looked, &info, s, true);
+            let (w, h) = frame.fit(300, 300);
+            frame.sample(&looked, w, h).data
+        };
+        assert_eq!(whole(&old), whole(&old_colour));
+        assert!((0..3).all(|c| (sample(&looked, &old, past)[c] - plain[c]).abs() < 1e-6), "the fill as painted");
     }
 
     /// An Apple ProRAW's local tone map (a gain per pixel) reaches the new area, in a frame with a lens or perspective

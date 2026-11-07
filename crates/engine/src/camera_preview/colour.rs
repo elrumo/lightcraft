@@ -257,13 +257,9 @@ pub(super) fn camera_match(start: (&CameraTransform, Option<&CameraLook>), from:
 /// starting look's table undone, then the camera look's matrix and table, as the decode applies a fitted look
 /// ([`crate::files::CameraColourModel::apply`]).
 pub(crate) fn camera_matched(img: &Rgb32f, m: &CameraMatch) -> Rgb32f {
+    // (the maths is the pipeline's, which also puts the look on a generated fill stored in the plain light)
     let mut out = img.clone();
-    if let Some(start) = m.start_hue_sat.as_ref().and_then(HueSat::new) {
-        lightcraft_raster::par_rows(&mut out.data, out.width, |_, row| row.iter_mut().for_each(|p| *p = start.undo(*p)));
-    }
-    let hue_sat = m.hue_sat.as_ref().and_then(HueSat::new);
-    let colour = crate::files::CameraColourModel { wb: [1.0; 3], matrix: m.matrix, gain: 1.0, tables: None, hue_sat: hue_sat.as_ref() };
-    colour.apply(&mut out);
+    m.look().apply_image(&mut out);
     out
 }
 

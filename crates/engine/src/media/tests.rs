@@ -868,3 +868,50 @@ fn a_full_size_export_of_a_big_photo_fits_in_bands() {
     blur.lens_blur.enabled = true;
     assert!(!bandable_at(&blur, lightcraft_pipeline::OutputDepth::U8));
 }
+
+/// AI Remove and Generative Expand give their models the photo in its plain light: the decode without the Camera
+/// Matching look, which a render puts on the stored fill as on the photo (`SpotFill::plain`). Before, Remove read the
+/// plain decode and stored the fill as if it were in the look's light, and Expand read the source with the look baked in.
+#[test]
+fn the_models_see_the_photo_without_the_camera_matching_look() {
+    use lightcraft_pipeline::{CameraMatch, SourceInfo, profiles::CAMERA};
+    let mut s = crate::Session::with_demo();
+    let id = s.active().unwrap();
+    let picture = lightcraft_raster::Rgb32f::from_fn(160, 120, |x, y| [0.1 + x as f32 / 300.0, 0.25, 0.1 + y as f32 / 200.0]);
+    let look = CameraMatch { start_hue_sat: None, matrix: lightcraft_color::Mat3::diag(2.0, 1.0, 0.5), hue_sat: None, tone: None };
+    let info = SourceInfo { raw: true, camera_match: Some(std::sync::Arc::new(look)), ..Default::default() };
+    for level in [SourceLevel::Preview, SourceLevel::Full] {
+        s.media.insert_source(id, level, DecodedSource::new(std::sync::Arc::new(picture.clone()), Some(info.clone())));
+    }
+    s.execute("spot.add", &serde_json::json!({"points": [[0.4, 0.5]], "size": 0.05})).unwrap();
+    let mut d = (*s.develop_of(id).unwrap()).clone();
+    d.crop.expand = true;
+    d.crop.geometry.rect = lightcraft_geom::Rect::new(-0.2, 0.0, 1.0, 1.0);
+    d.crop.geometry.angle = 0.001;
+    let mut seen = Vec::new();
+    for camera in [false, true] {
+        d.profile.id = if camera { CAMERA } else { "lc.color" }.into();
+        s.set_develop(id, d.clone(), "profile").unwrap();
+        let job = s.erase_job_with(id, &d, 0, crate::erase::Brush::Net(std::sync::Arc::new(Unused))).unwrap();
+        let canvas = s.expand_canvas(id, 256).unwrap();
+        seen.push((job.input().image.data.clone(), canvas.png));
+    }
+    assert!(seen[0].0 == seen[1].0, "AI Remove's model sees the same picture with Camera Matching and without");
+    assert!(seen[0].1 == seen[1].1, "Generative Expand's model sees the same picture with Camera Matching and without");
+    // (the render does develop the look: the profile changes the photo)
+    let (plain, _) = s.develop_source_now(id, SourceLevel::Preview).unwrap();
+    assert_ne!(plain.data[0], picture.data[0]);
+}
+
+/// A network that is never asked to paint (the jobs above are only planned).
+struct Unused;
+
+impl lightcraft_erase::Painter for Unused {
+    fn paint(&self, img: &Rgb32f, _hole: &[bool]) -> lightcraft_erase::Result<Rgb32f> {
+        Ok(img.clone())
+    }
+
+    fn label(&self) -> &'static str {
+        "unused"
+    }
+}

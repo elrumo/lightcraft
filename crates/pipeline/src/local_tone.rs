@@ -35,33 +35,65 @@ pub fn enabled(info: &SourceInfo, s: &DevelopSettings) -> bool {
 /// with Generative Expand, whose new area is rendered like the photo: it takes the gain of the photo's
 /// nearest edge (the table repeats its edge tables), as it does when no warp is in the way.
 pub fn apply(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
-    let Some(lt) = info.local_tone.as_deref().filter(|_| enabled(info, &p.settings)) else { return };
-    let Some(eval) = lt.map.evaluator() else { return };
     let (w, h) = (img.width, img.height);
-    let frame = &p.frame;
-    let (ow, oh) = (frame.ow.max(1e-9), frame.oh.max(1e-9));
-    let o2t = frame.out_to_oriented(w, h);
-    let user = frame.orient.inverse();
-    let expands = frame.expands();
-    let to_prophoto = PROPHOTO.from_xyz().mul(&bradford(D65, D50)).mul(&REC2020.to_xyz()).to_f32();
+    let Some(gains) = Gains::new(info, p, w, h) else { return };
     crate::for_rows(&mut img.data, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {
-            // output pixel → user-oriented source px → EXIF-oriented source (0..1) → active area
-            let flat = || o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
-            let s = match &frame.warp {
-                Some(wp) => match wp.frame(&o2t, x, y) {
-                    Some((_, s)) => s,
-                    None if expands => Some(wp.source_pos(&o2t, x, y)).filter(|s| s.x.is_finite() && s.y.is_finite()).unwrap_or_else(flat),
-                    None => continue,
-                },
-                None => flat(),
-            };
-            let (u, v) = user.map(s.x / ow, s.y / oh, 1.0, 1.0);
-            let (ax, ay) = lt.placement.active(u, v);
-            let m = &to_prophoto;
-            let q: [f32; 3] = std::array::from_fn(|i| m[i][0] * px[0] + m[i][1] * px[1] + m[i][2] * px[2]);
-            let g = eval.gain(q, ax, ay);
-            *px = px.map(|c| c * g);
+            if let Some(g) = gains.at(x, y, *px) {
+                *px = px.map(|c| c * g);
+            }
         }
     });
+}
+
+/// The local tone gain of the pixels of a `w × h` render of a plan: what [`apply`] multiplies each pixel by, for a
+/// generated fill stored in the light before it too ([`crate::spots`]).
+pub struct Gains<'a> {
+    lt: &'a LocalTone,
+    eval: lightcraft_raw::gaintable::GainEval<'a>,
+    frame: &'a crate::geometry::Frame,
+    o2t: lightcraft_geom::Affine,
+    user: lightcraft_geom::Orientation,
+    expands: bool,
+    to_prophoto: [[f32; 3]; 3],
+}
+
+impl<'a> Gains<'a> {
+    /// `None` when the render applies no local tone mapping.
+    pub fn new(info: &'a SourceInfo, p: &'a Plan<'_>, w: usize, h: usize) -> Option<Gains<'a>> {
+        let lt = info.local_tone.as_deref().filter(|_| enabled(info, &p.settings))?;
+        let eval = lt.map.evaluator()?;
+        let frame = &p.frame;
+        Some(Gains {
+            lt,
+            eval,
+            frame,
+            o2t: frame.out_to_oriented(w, h),
+            user: frame.orient.inverse(),
+            expands: frame.expands(),
+            to_prophoto: PROPHOTO.from_xyz().mul(&bradford(D65, D50)).mul(&REC2020.to_xyz()).to_f32(),
+        })
+    }
+
+    /// The gain at output pixel `(x, y)` for its colour `px` (linear Rec.2020); `None` for blank canvas.
+    #[inline]
+    pub fn at(&self, x: usize, y: usize, px: [f32; 3]) -> Option<f32> {
+        let frame = self.frame;
+        let (ow, oh) = (frame.ow.max(1e-9), frame.oh.max(1e-9));
+        // output pixel → user-oriented source px → EXIF-oriented source (0..1) → active area
+        let flat = || self.o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
+        let s = match &frame.warp {
+            Some(wp) => match wp.frame(&self.o2t, x, y) {
+                Some((_, s)) => s,
+                None if self.expands => Some(wp.source_pos(&self.o2t, x, y)).filter(|s| s.x.is_finite() && s.y.is_finite()).unwrap_or_else(flat),
+                None => return None,
+            },
+            None => flat(),
+        };
+        let (u, v) = self.user.map(s.x / ow, s.y / oh, 1.0, 1.0);
+        let (ax, ay) = self.lt.placement.active(u, v);
+        let m = &self.to_prophoto;
+        let q: [f32; 3] = std::array::from_fn(|i| m[i][0] * px[0] + m[i][1] * px[1] + m[i][2] * px[2]);
+        Some(self.eval.gain(q, ax, ay))
+    }
 }

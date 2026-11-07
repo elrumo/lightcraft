@@ -922,6 +922,42 @@ fn camera_matched_pixels_are_the_fitted_looks() {
     }
 }
 
+/// [`camera_matched`] moved into the pipeline ([`lightcraft_pipeline::camera_look::MatchLook`], so a render can put the look
+/// on a generated fill) gives the bits it gave as the decode's colour model, and one pixel at a time gives the same.
+#[test]
+fn camera_matched_is_the_decode_paths_look_bit_for_bit() {
+    let table = |shift: f32, scale: f32| HsvTable {
+        hue_divisions: 6,
+        sat_divisions: 2,
+        val_divisions: 1,
+        data: (0..12).map(|i| [shift * (i % 3) as f32, scale + 0.03 * (i % 4) as f32, 1.0]).collect(),
+        srgb_value: false,
+    };
+    let matrix = Mat3([[1.08, -0.05, -0.03], [-0.02, 1.04, -0.02], [0.01, -0.06, 1.05]]);
+    let img = Rgb32f::from_fn(37, 9, |x, y| {
+        let i = (y * 37 + x) as f32;
+        [0.004 * i % 1.3 - 0.02, (0.37 * i).sin().abs() * 0.8, 0.0005 * i * i % 0.9]
+    });
+    for (start, hue_sat) in
+        [(Some(table(3.0, 1.05)), Some(table(-5.0, 1.1))), (None, Some(table(4.0, 0.95))), (Some(table(2.0, 1.02)), None), (None, None)]
+    {
+        let m = CameraMatch { start_hue_sat: start.clone(), matrix, hue_sat: hue_sat.clone(), tone: None };
+        // what `camera_matched` was: the starting table undone, then the decode's colour model with no white balance or gain
+        let mut old = img.clone();
+        if let Some(s) = start.as_ref().and_then(HueSat::new) {
+            old.map_in_place(|p| s.undo(p));
+        }
+        let hs = hue_sat.as_ref().and_then(HueSat::new);
+        crate::files::CameraColourModel { wb: [1.0; 3], matrix, gain: 1.0, tables: None, hue_sat: hs.as_ref() }.apply(&mut old);
+        let new = camera_matched(&img, &m);
+        let look = m.look();
+        for ((o, n), p) in old.data.iter().zip(&new.data).zip(&img.data) {
+            assert_eq!(o.map(f32::to_bits), n.map(f32::to_bits), "{p:?}");
+            assert_eq!(look.apply(*p).map(f32::to_bits), n.map(f32::to_bits), "one pixel at a time: {p:?}");
+        }
+    }
+}
+
 /// Taking the chroma curve out of a displayed colour gives the colour the curve was applied to (luminance-ratio
 /// scaled, same hue), so a table fitted to it adds only what the curve leaves.
 #[test]

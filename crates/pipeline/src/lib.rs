@@ -25,6 +25,7 @@
 
 pub mod auto;
 pub mod blemish;
+pub mod camera_look;
 pub mod colorops;
 pub mod cull;
 pub mod curve;
@@ -285,7 +286,17 @@ pub fn frame_for(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, apply_cro
     if s.optics.remove_ca && s.section_enabled("optics") {
         frame.add_lateral_ca(optics::estimate_lateral_ca(src));
     }
+    // (a Generative Expand fill stored in the plain light gets the Camera Matching look the source got)
+    if let (Some(ex), Some(m)) = (frame.expand.as_mut(), camera_look_of(info, s)) {
+        *ex = ex.with_look(m.clone());
+    }
     frame
+}
+
+/// The Camera Matching look a render of `s` puts on `info`'s source (the engine does, before the pipeline runs):
+/// the source's look when the profile is Camera Matching.
+pub fn camera_look_of<'a>(info: &'a SourceInfo, s: &DevelopSettings) -> Option<&'a Arc<CameraMatch>> {
+    info.camera_match.as_ref().filter(|_| s.profile.id == profiles::CAMERA)
 }
 
 /// Intermediate results of recent renders of one view, reused by [`render_cached`].
@@ -554,9 +565,17 @@ pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     local_tone::apply(img, info, p);
     local::white_balance(img, info, s);
     optics::defringe(img, s, p.px_per_long / optics::DEFRINGE_REF_LONG);
-    // (an AI fill stored as shot is given the white balance the picture just got)
-    let wb = s.spots.iter().any(|sp| sp.fill.as_ref().is_some_and(|f| f.as_shot)).then(|| local::wb_matrix_for(info, s)).flatten();
-    spots::apply_white(img, &s.spots, &p.frame, p.px_per_long, wb.as_ref());
+    // (an AI fill stored in the plain light is given the per-pixel steps the picture just got, in their order)
+    let light = if s.spots.iter().any(|sp| sp.fill.as_ref().is_some_and(|f| f.plain)) {
+        spots::FillLight {
+            look: camera_look_of(info, s).map(|m| m.look()),
+            tone: local_tone::Gains::new(info, p, img.width, img.height),
+            wb: local::wb_matrix_for(info, s),
+        }
+    } else {
+        spots::FillLight::default()
+    };
+    spots::apply_lit(img, &s.spots, &p.frame, p.px_per_long, &light);
     redeye::apply(img, &p.eyes);
 }
 

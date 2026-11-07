@@ -53,16 +53,19 @@ downloaded…" (or "…(LaMa)…") and add nothing; `quality: "high"` on a devic
 ## How it works
 
 - The model sees 512 × 512 pixels. LightCraft gives it the stroke's area and about four times as much around it, at
-  the retouching stage **without the user's edits**: as shot (the camera's white balance, no Defringe, no red eye), with
-  the camera's local tone mapping (a ProRAW's) and the earlier spots, so the same stroke gets the same picture whatever
+  the retouching stage **in the photo's plain light**: the decode with the AI Denoise the photo has (the clean photo
+  you are looking at), without the Camera Matching look, the camera's local tone mapping (a ProRAW's), the white
+  balance, Defringe or red eye, with the earlier spots. The same stroke gets the same picture whatever the profile and
   the sliders say. It keeps what the model paints **with the spot**, in that light (an 8-bit
   picture of at most 512 pixels a side over the spot, compressed: 30–70 KB for strokes the size of a person in a 2 MP
-  photo, up to about 400 KB for the largest, in the photo's settings, marked `as_shot`). Renders
+  photo, up to about 400 KB for the largest, in the photo's settings, marked `plain`). Renders
   and exports never run the model, and look the same at every size.
-- When the spot renders, the fill gets the photo's white balance of the moment (the same matrix as the photo around it),
-  and every edit after the retouching stage (exposure, tone, colour, masks, grain…) applies to it as to the photo, so an
-  edit made after painting carries over exactly. Fills painted before 2026-11-07 hold the white-balanced light of the
-  day they were painted and keep it (the match along the edge, below, carries a later change over).
+- When the spot renders, the fill gets the per-pixel steps the photo around it got before the retouching stage, in the
+  same order: the Camera Matching look (with that profile), the local tone gain at its place (with the option on), the
+  white balance of the moment. Every edit after the retouching stage (exposure, tone, colour, masks, grain…) applies to
+  it as to the photo. So a profile, local tone or white balance change made after painting carries over exactly. Fills
+  painted before 2026-11-07 hold the light of the stage and source they were painted from and keep it (the match along
+  the edge, below, carries a later change over).
 - When the spot renders, the painted picture gives the broad structure, and the fine grain and texture come from the
   patch synthesis that classic Remove uses, so the fill doesn't look smoother than the photo around it.
 - The fill is matched to the photo along the stroke's edge, as Heal's patch is: the fill just inside the edge is
@@ -81,9 +84,9 @@ downloaded…" (or "…(LaMa)…") and add nothing; `quality: "high"` on a devic
   shapes.
 - In busy scenes (a crowd, a market) it can paint a person-like shape into the hole. Paint a little wider, or use
   classic Remove, Heal or Clone there.
-- Defringe, Denoise and the Camera Matching look are not applied to a fill (the model's picture has no lens fringes or
-  sensor noise; the look's average change reaches it through the match along the edge), and switching the Profile's
-  camera local tone mapping after painting leaves the fill in the light it was painted in (the match carries it over).
+- Defringe (a filter over a pixel's neighbourhood) is not applied to a fill: the model's picture has no lens fringes.
+- The fill has the Denoise the photo had when it was painted. Changing Denoise later leaves the fill as painted (its
+  pixels are a model's, and Denoise can't be put on pixels the photo never had): paint the spot again.
 - Changing Upright, lens corrections or Transform after painting moves the photo under a fill made for the old geometry;
   paint the spot again (`spot.erase`, or move its pin) after such changes.
 - In the browser the model runs on the page's thread, so the page pauses for a few seconds per stroke (the notice is

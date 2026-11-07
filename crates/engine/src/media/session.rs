@@ -726,6 +726,21 @@ impl crate::Session {
         self.media.insert_source(id, level, r);
         Ok(input)
     }
+
+    /// What a generative model is given of photo `id` for settings `s` (AI Remove, Generative Expand): the photo in its
+    /// plain light, the decode with the Denoise `s` asks for (its pixels are the photo the user sees, and can't be put on
+    /// pixels the photo never had) but without the Camera Matching look, which a render puts on the stored fill as on
+    /// the photo ([`lightcraft_develop::SpotFill::plain`]); and the facts to render it against, as a render has them.
+    pub fn plain_source_now(&mut self, id: PhotoId, s: &DevelopSettings, level: SourceLevel) -> Result<(Arc<Rgb32f>, SourceInfo), String> {
+        let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
+        let r = self.media.source_ref(&p, level).load_source()?;
+        if let Some(info) = &r.info {
+            self.learn_as_shot_wb(id, info);
+        }
+        let input = (r.image_for(s.denoise_amount()), r.info_or(source_info(&p)));
+        self.media.insert_source(id, level, r);
+        Ok(input)
+    }
 }
 
 /// The long edge to read photo `p`'s source at for an export `out_long` pixels long, when that is less than half the

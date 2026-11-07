@@ -115,9 +115,10 @@ The web and desktop apps do not have this painter.
   already is) is resampled from the photo at up to 1024 pixels a side (512 in the browser), at the
   stage the fill goes back in: the resampled photo's light, before white balance. None of the user's
   edits of light and colour are in it (the same crop gives the same canvas whatever the sliders say),
-  and every edit, also one made after Generate, applies to the new area as to the photo. The two edits
-  a render puts on the source before the resample, Denoise and the Camera Matching look, are in it, as
-  they are in the photo beside it; changing either after Generate leaves the new area as painted. It is
+  and every edit, also one made after Generate, applies to the new area as to the photo. It is the
+  photo's plain decode with the AI Denoise the photo has, without the Camera Matching look: the fill
+  is stored in that light (marked `plain`) and gets the look where it goes in, as the photo's source
+  does, so switching the profile after Generate moves the new area with the photo. It is
   display-encoded as AI Remove does (its bright end near white) and given to the network whole:
   what goes on past one edge agrees with the others (a horizon continues at the same height on both
   sides). MI-GAN and LaMa paint one 512 × 512 square: a canvas longer than 5 × 4 is squeezed at most
@@ -161,10 +162,12 @@ The web and desktop apps do not have this painter.
   lifted as the photo is), and the planes laid over the source (a segmentation matte, Lens Blur's
   depth). Before, a warped frame left the new area out of the local tone map, which left it dark
   beside the lifted photo.
-- **The picture the model paints from** is the one a render develops, not the plain source
-  (`Session::develop_source_now`): in the camera's look with the Camera Matching profile, and with
-  the AI Denoise the photo has, so the new area is in the same light as the photo when the fill goes
-  back in. Changing the profile or the Denoise later moves the photo and not the fill: Generate again.
+- **The picture the model paints from** is the photo's plain decode with its AI Denoise
+  (`Session::plain_source_now`): Denoise replaces the photo's pixels with a model's and can't be put on
+  pixels the photo never had, so the fill matches the clean photo. Changing the Denoise later moves
+  the photo and not the fill: Generate again. Fills made before 2026-11-07 were painted from the
+  picture a render develops (with the Camera Matching look when the profile had it) and are put in as
+  they are.
 - **Before** (the long press, Before / After) keeps the painted area: it is part of the crop, not an edit.
 - **Upright, lens corrections, Transform** move the photo under a fill made for the old geometry:
   Generate again after changing them.
