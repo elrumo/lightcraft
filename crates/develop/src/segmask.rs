@@ -182,6 +182,13 @@ pub struct SpotFill {
     pub scale: f32,
     /// (shared, as [`SegMask::data`]: a photo with many AI strokes keeps one copy of each, not one per undo step)
     pub data: std::sync::Arc<str>,
+    /// An AI Remove fill in the photo's light before its white balance (the camera's as-shot white): a render puts
+    /// the photo's white balance of the moment on it, as on the photo around it, so a white balance set after the
+    /// fill was made applies to it exactly. `false` (not written): the light of the retouching stage, white balanced
+    /// as the photo was when the fill was made (fills made before 2026-11-07, and Generative Expand's, which a render
+    /// puts in before the white balance anyway).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub as_shot: bool,
 }
 
 impl SpotFill {
@@ -203,7 +210,7 @@ impl SpotFill {
             }
         }
         let data = base64_encode(&miniz_oxide::deflate::compress_to_vec(&q, 8));
-        Some(SpotFill { w: w as u32, h: h as u32, rect, scale, data: data.into() })
+        Some(SpotFill { w: w as u32, h: h as u32, rect, scale, data: data.into(), as_shot: false })
     }
 
     /// The covered part, normalized; `None` when damaged.
@@ -426,6 +433,13 @@ mod tests {
         assert!(SpotFill { scale: f32::NAN, ..f.clone() }.pixels().is_none());
         assert!(SpotFill { data: "!!".into(), ..f.clone() }.pixels().is_none());
         assert!(SpotFill { rect: [0.5, 0.0, 0.2, 1.0], ..f.clone() }.bounds().is_none());
+        // a fill stored as shot says so; one from before the flag reads as not
+        let json = serde_json::to_string(&f).unwrap();
+        assert!(!json.contains("as_shot"), "{json}");
+        let shot = SpotFill { as_shot: true, ..f.clone() };
+        let back: SpotFill = serde_json::from_str(&serde_json::to_string(&shot).unwrap()).unwrap();
+        assert!(back.as_shot);
+        assert!(!serde_json::from_str::<SpotFill>(&json).unwrap().as_shot);
         assert!(SpotFill::from_linear(0, 4, [0.0; 4], &[]).is_none());
         assert!(SpotFill::from_linear(2, 2, [0.0; 4], &[[0.0; 3]; 3]).is_none());
     }

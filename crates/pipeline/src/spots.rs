@@ -7,7 +7,9 @@
 //!   by and searching the spot's source too; it heals from the source (matched like Heal's patch) when nothing around fits.
 //!   With **AI Remove** the spot carries what a model painted under it ([`SpotFill`], made by
 //!   [`erase_input`] and [`EraseInput::finish`] around the model), matched to the photo along the stroke's edge as Heal
-//!   does, so a later white balance change follows.
+//!   does. The model is given the photo without the user's edits (as shot, no Defringe, no red eye) and the fill is
+//!   stored in that light: a render puts the photo's white balance of the moment on it ([`SpotFill::as_shot`]), and
+//!   every edit after the retouching stage applies to it as to the photo, so an edit made after the fill follows.
 //!   Automatic sources: candidate offsets on rings around the spot are scored by how well the
 //!   source's surrounding annulus matches the target's.
 //! - **Fill** (content-aware) rebuilds the spot from patches of its surroundings instead of one
@@ -431,6 +433,12 @@ fn boundary_match(src: &mut [[f32; 3]], tgt: &[[f32; 3]], alpha: &[f32], (bw, bh
 
 /// Apply all spots to `img` (output resolution). `ppl` = output pixels per long-edge unit.
 pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
+    apply_white(img, spots, frame, ppl, None);
+}
+
+/// [`apply`] on a picture white balanced by `wb` (linear Rec. 2020, [`crate::local::wb_matrix_for`]; `None`: as
+/// shot), which an AI fill stored in the light before it ([`SpotFill::as_shot`]) is given as well.
+pub fn apply_white(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64, wb: Option<&[[f32; 3]; 3]>) {
     if spots.is_empty() {
         return;
     }
@@ -522,7 +530,7 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
             fill_box(&mut src, &tgt, &alpha, bw, bh);
         }
         // AI Remove: the stored fill, matched to the photo along its edge below like a heal
-        let baked = if remove { spot.fill.as_ref().and_then(|f| sample_fill(f, &frame.out_to_norm(w, h), (bx0, by0, bw), &tgt)) } else { None };
+        let baked = if remove { spot.fill.as_ref().and_then(|f| sample_fill(f, &frame.out_to_norm(w, h), (bx0, by0, bw), &tgt, wb)) } else { None };
         let model_fill = baked.is_some();
         // Remove: synthesize; the seed follows the spot, so a fill doesn't change when others do
         let seed = spot.points.first().map_or(0, |p| p.x.to_bits() ^ p.y.to_bits().rotate_left(32));
@@ -577,8 +585,15 @@ fn with_detail(ai: Vec<[f32; 3]>, pm: Vec<[f32; 3]>, bw: usize, bh: usize, sigma
 }
 
 /// A stored AI fill over a box of output pixels (`bx0`, `by0`, `bw` wide, `tgt.len() / bw` high):
-/// `tgt` where the fill doesn't reach; `None` when the fill is damaged.
-fn sample_fill(f: &SpotFill, to_norm: &Affine, (bx0, by0, bw): (usize, usize, usize), tgt: &[[f32; 3]]) -> Option<Vec<[f32; 3]>> {
+/// `tgt` where the fill doesn't reach; `None` when the fill is damaged. A fill in the light before the
+/// white balance gets `wb` as the photo did ([`crate::local::white_balance`]: the matrix, then a floor at 0).
+fn sample_fill(
+    f: &SpotFill,
+    to_norm: &Affine,
+    (bx0, by0, bw): (usize, usize, usize),
+    tgt: &[[f32; 3]],
+    wb: Option<&[[f32; 3]; 3]>,
+) -> Option<Vec<[f32; 3]>> {
     let r = f.bounds()?;
     let img = Rgb32f { width: f.w as usize, height: f.h as usize, data: f.pixels()? };
     let (fw, fh) = (img.width as f64, img.height as f64);
@@ -590,7 +605,14 @@ fn sample_fill(f: &SpotFill, to_norm: &Affine, (bx0, by0, bw): (usize, usize, us
         .map(|(i, t)| {
             let n = to_norm.apply(Point::new((bx0 + i % bw) as f64 + 0.5, (by0 + i / bw) as f64 + 0.5));
             let (x, y) = ((n.x - r[0]) * sx, (n.y - r[1]) * sy);
-            if (0.0..=fw).contains(&x) && (0.0..=fh).contains(&y) { img.sample_bilinear(x as f32, y as f32) } else { *t }
+            if !((0.0..=fw).contains(&x) && (0.0..=fh).contains(&y)) {
+                return *t;
+            }
+            let c = img.sample_bilinear(x as f32, y as f32);
+            match wb.filter(|_| f.as_shot) {
+                Some(m) => std::array::from_fn(|i| (m[i][0] * c[0] + m[i][1] * c[1] + m[i][2] * c[2]).max(0.0)),
+                None => c,
+            }
         })
         .collect();
     Some(out)
@@ -608,7 +630,7 @@ pub struct EraseInput {
     pub image: Rgb32f,
     /// The pixels to fill (the stroke), one per pixel of `image`.
     pub hole: Vec<bool>,
-    /// That area at the retouching stage, linear: white balanced, earlier spots applied.
+    /// That area at the retouching stage, linear: as shot (no white balance, Defringe or red eye), earlier spots applied.
     lin: Rgb32f,
     scale: f32,
     /// The area, normalized `[x0, y0, x1, y1]`.
@@ -622,7 +644,12 @@ pub struct EraseInput {
 /// The input AI Remove needs for spot `index` of `s` on `src`: the stroke and the photo around
 /// it (the stroke's box and [`CONTEXT`] times its long side on every side, at most 2:1), rendered to
 /// the retouching stage with the spots before this one, at the source's resolution up to 1024
-/// pixels. `None` for a spot without points or outside the image.
+/// pixels. The model sees the photo without the user's edits: the stages before the retouching
+/// run as shot (the camera's white, no Defringe; red eye, which follows the spots, is left out
+/// too), so the same stroke gets the same input whatever the sliders say, and the fill is stored
+/// in that light ([`SpotFill::as_shot`]). The camera's local tone mapping (part of how the raw is
+/// developed, not an edit) and the earlier spots (part of the retouch) stay. `None` for a spot
+/// without points or outside the image.
 pub fn erase_input(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, index: usize) -> Option<EraseInput> {
     let spot = s.spots.get(index)?;
     let frame = crate::frame_for(src, info, s, false);
@@ -653,11 +680,14 @@ pub fn erase_input(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, 
     let x0 = (cx - cw / 2.0).clamp(0.0, ow - cw);
     let y0 = (cy - ch / 2.0).clamp(0.0, oh - ch);
     let rect = [x0 / ow, y0 / oh, (x0 + cw) / ow, (y0 + ch) / oh];
-    // render the area alone: a crop of exactly it, no flips, the spots before this one
+    // render the area alone: a crop of exactly it, no flips, the spots before this one, none of the user's light
     let mut area = s.clone();
     area.crop.geometry = CropGeometry { rect: Rect { x0: rect[0], y0: rect[1], x1: rect[2], y1: rect[3] }, angle: 0.0 };
     (area.crop.flip_h, area.crop.flip_v) = (false, false);
     area.spots.truncate(index);
+    area.wb = lightcraft_develop::WhiteBalance::default();
+    (area.optics.defringe_purple_amount, area.optics.defringe_green_amount) = (0.0, 0.0);
+    area.red_eye.clear();
     let native = cw.max(ch);
     let side = native.min(ERASE_RENDER).round().max(1.0) as usize;
     let p = crate::plan(src, info, &area, &crate::RenderRequest::fit(side, side));
@@ -718,7 +748,7 @@ impl EraseInput {
         let (nx, ny) = ((r2 - r0) / w as f64, (r3 - r1) / h as f64);
         let rect = [r0 + x0 as f64 * nx, r1 + y0 as f64 * ny, r0 + x1 as f64 * nx, r1 + y1 as f64 * ny];
         let px: Vec<[f32; 3]> = small.data.iter().map(|p| p.map(|v| v.max(0.0))).collect();
-        SpotFill::from_linear(small.width, small.height, rect, &px)
+        SpotFill::from_linear(small.width, small.height, rect, &px).map(|f| SpotFill { as_shot: true, ..f })
     }
 }
 
@@ -1022,6 +1052,104 @@ mod tests {
         crate::local::white_balance(&mut small, &crate::SourceInfo::default(), &s);
         apply(&mut small, &s.spots, &frame, frame.px_per_long(100));
         assert!((small.get(50, 50)[1] - around).abs() < 0.03 * around.max(0.01), "{:?}", small.get(50, 50));
+    }
+
+    /// The user's edits before the retouching stage (white balance, Defringe, red eye): AI Remove's model sees none of them.
+    fn with_light_edits(mut s: DevelopSettings) -> DevelopSettings {
+        s.wb = lightcraft_develop::WhiteBalance { mode: lightcraft_develop::WbMode::Custom, temp: 3400.0, tint: 25.0, ..Default::default() };
+        (s.optics.defringe_purple_amount, s.optics.defringe_green_amount) = (12.0, 8.0);
+        s.red_eye.push(lightcraft_develop::RedEye {
+            center: Point::new(0.45, 0.5),
+            rx: 0.05,
+            ry: 0.04,
+            pupil_size: 50.0,
+            darken: 80.0,
+            pet: false,
+            catchlight: None,
+        });
+        s
+    }
+
+    #[test]
+    fn ai_remove_gives_the_model_the_photo_without_the_users_edits() {
+        // a colourful photo with a red dot (a red eye) and a hard edge (a fringe) inside the area the model sees
+        let img = Rgb32f::from_fn(160, 120, |x, y| {
+            if (x as f32 - 72.0).hypot(y as f32 - 60.0) < 4.0 {
+                [0.8, 0.05, 0.05]
+            } else if x > 100 {
+                [0.9, 0.85, 0.8]
+            } else {
+                [0.1 + x as f32 / 400.0, 0.2, 0.15 + y as f32 / 300.0]
+            }
+        });
+        let info = crate::SourceInfo::default();
+        let mut s = DevelopSettings::default();
+        s.spots.push(Spot { points: vec![Point::new(0.5, 0.5)], size: 0.05, ..Default::default() });
+        let plain = erase_input(&img, &info, &s, 0).unwrap();
+        let edited = erase_input(&img, &info, &with_light_edits(s), 0).unwrap();
+        assert_eq!(plain.image.data, edited.image.data, "the model's picture");
+        assert_eq!(plain.lin.data, edited.lin.data, "the light the fill is stored in");
+        assert!(plain.finish(&flat_fill(&plain)).is_some_and(|f| f.as_shot));
+    }
+
+    /// A white balance set after the fill was made applies to the fill exactly as to the photo (its matrix, not a gain per
+    /// channel matched along the edge), and so does one set before it.
+    #[test]
+    fn an_ai_fill_takes_the_photos_white_balance_like_the_photo() {
+        let n = 160;
+        let photo = [0.30f32, 0.24, 0.18];
+        let img = Rgb32f::filled(n, n, photo);
+        let info = crate::SourceInfo::default();
+        let mut s = DevelopSettings::default();
+        s.spots.push(Spot { points: vec![Point::new(0.5, 0.5)], size: 0.12, feather: 0.0, ..Default::default() });
+        // a stand-in for the model that paints a blue the photo doesn't have in the middle of the stroke (its edge
+        // continues the photo, which the match along the edge keeps as it is)
+        let paint = [0.25f32, 0.45, 0.85];
+        for before in [false, true] {
+            let mut made = if before { with_light_edits(s.clone()) } else { s.clone() };
+            let input = erase_input(&img, &info, &made, 0).unwrap();
+            let w = input.image.width;
+            let holes: Vec<usize> = (0..input.hole.len()).filter(|i| input.hole[*i]).collect();
+            let centre = holes.iter().fold((0.0, 0.0), |(x, y), i| (x + (i % w) as f32, y + (i / w) as f32));
+            let centre = (centre.0 / holes.len() as f32, centre.1 / holes.len() as f32);
+            let reach = 0.4 * (holes.len() as f32 / std::f32::consts::PI).sqrt();
+            let mut answer = input.image.clone();
+            for (i, p) in answer.data.iter_mut().enumerate() {
+                if ((i % w) as f32 - centre.0).hypot((i / w) as f32 - centre.1) < reach {
+                    *p = paint;
+                }
+            }
+            let linear = paint.map(|v| input.scale * v.powf(2.2));
+            made.spots[0].fill = input.finish(&answer);
+            let edited = with_light_edits(made);
+            let m = crate::local::wb_matrix_for(&info, &edited).unwrap();
+            let expected: [f32; 3] = std::array::from_fn(|i| (0..3).map(|j| m[i][j] * linear[j]).sum::<f32>().max(0.0));
+            let p = crate::plan(&img, &info, &edited, &crate::RenderRequest::fit(n, n));
+            let mut out = p.frame.sample(&img, p.w, p.h);
+            crate::lin_cpu(&mut out, &info, &p);
+            let c = out.get(p.w / 2, p.h / 2);
+            for k in 0..3 {
+                assert!(
+                    (c[k] - expected[k]).abs() < 0.015 * expected[k].max(0.05),
+                    "made after the edit: {before}; channel {k}: {c:?} vs {expected:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_fill_made_before_it_was_stored_as_shot_keeps_its_light() {
+        // (a fill from before 2026-11-07 is in the white-balanced light of its day: no second white balance)
+        let (img, mut s) = baked(120);
+        if let Some(f) = s.spots[0].fill.as_mut() {
+            f.as_shot = false;
+        }
+        let m = [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.5]];
+        let frame = Frame::new(120, 120, &s, true);
+        let (mut a, mut b) = (img.clone(), img.clone());
+        apply(&mut a, &s.spots, &frame, frame.px_per_long(120));
+        apply_white(&mut b, &s.spots, &frame, frame.px_per_long(120), Some(&m));
+        assert_eq!(a.data, b.data);
     }
 
     #[test]

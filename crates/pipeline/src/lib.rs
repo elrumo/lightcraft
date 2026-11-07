@@ -554,7 +554,9 @@ pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     local_tone::apply(img, info, p);
     local::white_balance(img, info, s);
     optics::defringe(img, s, p.px_per_long / optics::DEFRINGE_REF_LONG);
-    spots::apply(img, &s.spots, &p.frame, p.px_per_long);
+    // (an AI fill stored as shot is given the white balance the picture just got)
+    let wb = s.spots.iter().any(|sp| sp.fill.as_ref().is_some_and(|f| f.as_shot)).then(|| local::wb_matrix_for(info, s)).flatten();
+    spots::apply_white(img, &s.spots, &p.frame, p.px_per_long, wb.as_ref());
     redeye::apply(img, &p.eyes);
 }
 

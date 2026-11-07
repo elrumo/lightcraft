@@ -828,6 +828,26 @@ mod tests {
         }
     }
 
+    /// The model is given the photo as the render resamples it, before any of the user's edits of light and colour: the
+    /// same crop gives the same canvas whatever the sliders say, and the fill is stored in that light.
+    #[test]
+    fn the_model_sees_the_photo_without_the_users_edits() {
+        let src = photo(120, 80);
+        let plain = expanded(Rect::new(-0.25, -0.1, 1.0, 1.0));
+        let mut edited = plain.clone();
+        edited.light.exposure = 1.5;
+        edited.wb = lightcraft_develop::WhiteBalance { mode: lightcraft_develop::WbMode::Custom, temp: 3200.0, tint: 30.0, ..Default::default() };
+        edited.color.saturation = -60.0;
+        edited.curve.highlights = -50.0;
+        edited.effects.dehaze = 40.0;
+        edited.optics.defringe_purple_amount = 10.0;
+        edited.spots.push(lightcraft_develop::Spot { points: vec![Point::new(0.5, 0.5)], size: 0.05, ..Default::default() });
+        let (a, b) =
+            (expand_input(&src, &SourceInfo::default(), &plain, 256).unwrap(), expand_input(&src, &SourceInfo::default(), &edited, 256).unwrap());
+        assert_eq!(a.image.data, b.image.data);
+        assert_eq!(a.lin.data, b.lin.data);
+    }
+
     /// An Apple ProRAW's local tone map (a gain per pixel) reaches the new area, in a frame with a lens or perspective
     /// warp too (its pixels past the photo have no source position there: they take the photo's nearest edge's gain).
     /// Without it the new area stayed as the model painted it while the photo was lifted by the map.

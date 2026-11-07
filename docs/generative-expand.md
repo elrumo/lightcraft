@@ -113,7 +113,11 @@ The web and desktop apps do not have this painter.
 
 - **What the model sees.** The crop's bounding box (and a little more past the photo where the crop
   already is) is resampled from the photo at up to 1024 pixels a side (512 in the browser), at the
-  stage the fill goes back in: the resampled photo's light, before white balance. It is
+  stage the fill goes back in: the resampled photo's light, before white balance. None of the user's
+  edits of light and colour are in it (the same crop gives the same canvas whatever the sliders say),
+  and every edit, also one made after Generate, applies to the new area as to the photo. The two edits
+  a render puts on the source before the resample, Denoise and the Camera Matching look, are in it, as
+  they are in the photo beside it; changing either after Generate leaves the new area as painted. It is
   display-encoded as AI Remove does (its bright end near white) and given to the network whole:
   what goes on past one edge agrees with the others (a horizon continues at the same height on both
   sides). MI-GAN and LaMa paint one 512 × 512 square: a canvas longer than 5 × 4 is squeezed at most

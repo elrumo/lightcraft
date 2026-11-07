@@ -53,16 +53,22 @@ downloaded…" (or "…(LaMa)…") and add nothing; `quality: "high"` on a devic
 ## How it works
 
 - The model sees 512 × 512 pixels. LightCraft gives it the stroke's area and about four times as much around it, at
-  the retouching stage (white balanced, earlier spots applied), and keeps what it paints **with the spot** (an 8-bit
+  the retouching stage **without the user's edits**: as shot (the camera's white balance, no Defringe, no red eye), with
+  the camera's local tone mapping (a ProRAW's) and the earlier spots, so the same stroke gets the same picture whatever
+  the sliders say. It keeps what the model paints **with the spot**, in that light (an 8-bit
   picture of at most 512 pixels a side over the spot, compressed: 30–70 KB for strokes the size of a person in a 2 MP
-  photo, up to about 400 KB for the largest, in the photo's settings). Renders
+  photo, up to about 400 KB for the largest, in the photo's settings, marked `as_shot`). Renders
   and exports never run the model, and look the same at every size.
+- When the spot renders, the fill gets the photo's white balance of the moment (the same matrix as the photo around it),
+  and every edit after the retouching stage (exposure, tone, colour, masks, grain…) applies to it as to the photo, so an
+  edit made after painting carries over exactly. Fills painted before 2026-11-07 hold the white-balanced light of the
+  day they were painted and keep it (the match along the edge, below, carries a later change over).
 - When the spot renders, the painted picture gives the broad structure, and the fine grain and texture come from the
   patch synthesis that classic Remove uses, so the fill doesn't look smoother than the photo around it.
 - The fill is matched to the photo along the stroke's edge, as Heal's patch is: the fill just inside the edge is
   compared with the photo just outside it (a gain per channel, averaged over 3 % of the stroke's radius so grain doesn't
   decide) and that is spread over the stroke as a membrane, so no seam is left however the photo's tones change along
-  the edge. Because it is a gain, a later white-balance or exposure change carries over in the shadows and the
+  the edge. Because it is a gain, a change of the light around the stroke carries over in the shadows and the
   highlights alike. The gain is applied to the fill's tones, not its grain. Where one place on the edge differs from
   the edge's usual mismatch by more than about half (a neighbour's coat, what is left of the object), that place is
   only followed part of the way: forcing it coloured the whole fill. Classic Remove, whose fill is made from the photo
@@ -75,6 +81,9 @@ downloaded…" (or "…(LaMa)…") and add nothing; `quality: "high"` on a devic
   shapes.
 - In busy scenes (a crowd, a market) it can paint a person-like shape into the hole. Paint a little wider, or use
   classic Remove, Heal or Clone there.
+- Defringe, Denoise and the Camera Matching look are not applied to a fill (the model's picture has no lens fringes or
+  sensor noise; the look's average change reaches it through the match along the edge), and switching the Profile's
+  camera local tone mapping after painting leaves the fill in the light it was painted in (the match carries it over).
 - Changing Upright, lens corrections or Transform after painting moves the photo under a fill made for the old geometry;
   paint the spot again (`spot.erase`, or move its pin) after such changes.
 - In the browser the model runs on the page's thread, so the page pauses for a few seconds per stroke (the notice is
