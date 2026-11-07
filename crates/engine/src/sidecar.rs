@@ -1086,9 +1086,13 @@ impl Session {
     }
 
     /// Whether a change to `id` writes its sidecar: every photo with *Automatically write changes into XMP*, a browsed
-    /// (Local) folder photo always, a photo-library photo still only looked at never.
+    /// (Local) folder photo and one kept where it is in a folder always (its edits go with the file: another device or
+    /// app reading that folder finds them), a photo-library photo still only looked at never.
     fn writes_sidecar(&self, id: PhotoId) -> bool {
-        self.catalog.photo(id).is_some_and(|p| (self.xmp.auto_write || p.local) && !(p.local && self.photo_library.has(id)))
+        self.catalog.photo(id).is_some_and(|p| {
+            let in_folder = p.origin.as_ref().is_some_and(|o| o.kind == lightcraft_catalog::OriginKind::Folder);
+            (self.xmp.auto_write || p.local || in_folder) && !(p.local && self.photo_library.has(id))
+        })
     }
 
     /// How many photos have an automatic sidecar write waiting (it failed: the folder offline, read-only or full).

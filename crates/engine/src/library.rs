@@ -332,6 +332,9 @@ struct PrefsFile {
     /// Days after which untouched Local records of unbrowsed folders are forgotten (missing =
     /// the default, 0 = never).
     forget_local_days: Option<u32>,
+    /// Keep Originals Where They Are (`library.preferences {keepInPlace}`).
+    #[serde(default)]
+    keep_in_place: bool,
     /// Send the search vectors to the sync server (`vision.setShare`).
     search_share: bool,
     /// Search on this device only, never through the sync server (`vision.setLocalOnly`).
@@ -351,10 +354,10 @@ struct PrefsFile {
     search_sensitive_model: Option<String>,
     /// Which weights estimate depth for Lens Blur: `auto`, `cpu` or `gpu` (`depth.setBackend`; missing = auto).
     depth_backend: Option<String>,
+    depth_size: Option<String>,
     /// The work this device does for its sync server (`vision.setHelper`).
     search_helper: Vec<String>,
     /// Of those, the parts held back for now (`vision.setHelperPaused`).
-    depth_size: Option<String>,
     search_helper_paused: Vec<String>,
     /// Of those, the parts that end by themselves once nothing is left to claim (`vision.helperOnce`).
     search_helper_once: Vec<String>,
@@ -674,6 +677,7 @@ impl Session {
         self.slide_overlays = prefs.slide_overlays.sanitized();
         self.slide_titles = prefs.slide_titles.sanitized();
         self.forget_local_days = prefs.forget_local_days.unwrap_or(lightcraft_catalog::DEFAULT_FORGET_DAYS);
+        self.keep_in_place = prefs.keep_in_place;
         self.vision.share_with_server = prefs.search_share;
         self.vision.local_only = prefs.search_local_only;
         self.vision.text = prefs.search_text;
@@ -688,11 +692,11 @@ impl Session {
         self.vision.sensitive_model =
             prefs.search_sensitive_model.filter(|m| matches!(m.as_str(), "auto" | "compact" | "large")).unwrap_or_else(|| "auto".into());
         let _ = self.set_depth_backend(prefs.depth_backend.as_deref().unwrap_or("auto"));
+        let _ = self.set_depth_size(prefs.depth_size.as_deref().unwrap_or("small"));
         self.blur_sensitive = prefs.blur_sensitive.unwrap_or(true);
         self.vision.set_sensitive_marks(prefs.sensitive_marks);
         // (locked, whatever the last library was)
         self.hidden = crate::hidden::HiddenLock::for_library(prefs.hidden_password.filter(|h| h.starts_with("$argon2")));
-        let _ = self.set_depth_size(prefs.depth_size.as_deref().unwrap_or("small"));
         self.hold_view = prefs.hold_view;
         self.refresh_view();
         self.smart_previews_dir = prefs.smart_previews_dir.filter(|_| on_disk).map(PathBuf::from);
@@ -1178,6 +1182,7 @@ impl Session {
             smart_previews_dir: self.smart_previews_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
             thumbs_dir: self.thumbs_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
             forget_local_days: Some(self.forget_local_days),
+            keep_in_place: self.keep_in_place,
             search_share: self.vision.share_with_server,
             search_local_only: self.vision.local_only,
             search_text: self.vision.text,
@@ -1187,12 +1192,12 @@ impl Session {
             search_sensitive_backend: Some(self.vision.sensitive_backend.clone()),
             search_sensitive_model: Some(self.vision.sensitive_model.clone()),
             depth_backend: Some(self.depth_backend()),
+            depth_size: Some(self.depth_size().name().to_string()),
             search_helper: self.vision.helper_parts.clone(),
             search_helper_paused: self.vision.helper_paused.clone(),
             search_helper_once: self.vision.helper_once.clone(),
             search_helper_usage: Some(self.vision.helper_usage.key().to_string()),
             blur_sensitive: Some(self.blur_sensitive),
-            depth_size: Some(self.depth_size().name().to_string()),
             sensitive_marks: self.vision.sensitive_marks.clone(),
             slideshow: self.slideshow.clone(),
             slide_layout: self.slide_layout.clone(),

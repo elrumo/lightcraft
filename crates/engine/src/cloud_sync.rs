@@ -528,6 +528,26 @@ pub struct SyncState {
 /// The catalog format that added the Hidden album (`Op::SetHidden`, `Photo.hidden`).
 const HIDDEN_FORMAT: u32 = 11;
 
+/// The catalog format that added [`lightcraft_catalog::Photo::origin`] (Keep Originals Where They Are).
+const ORIGIN_FORMAT: u32 = 14;
+
+impl Session {
+    /// Photos added now keep their original where it is: Keep Originals Where They Are is on, and the sync server
+    /// (when signed in) keeps origins. An older server would drop a photo's origin, and this device would upload the
+    /// original after its next reload from that server, so such a server gets originals as before.
+    pub fn keeps_in_place(&self) -> bool {
+        let old_server = self.sync.as_ref().is_some_and(|st| st.signed_in() && st.server_format.is_some_and(|f| f < ORIGIN_FORMAT));
+        self.keep_in_place && !old_server
+    }
+
+    /// The origin a photo of `kind` added now gets ([`Session::keeps_in_place`]; `None` = the library takes care of
+    /// its original as before).
+    pub(crate) fn new_origin(&self, kind: lightcraft_catalog::OriginKind, cloud: Option<String>) -> Option<lightcraft_catalog::Origin> {
+        let device = self.sync.as_ref().filter(|st| st.signed_in()).map_or(0, |st| st.config.device);
+        self.keeps_in_place().then(|| lightcraft_catalog::Origin { kind, cloud, device })
+    }
+}
+
 /// Why hiding photos waits for the sync server.
 const SERVER_TOO_OLD_FOR_HIDDEN: &str =
     "Update LightCraft Server before hiding photos: this server can't keep them hidden, so they would show on your other devices";
@@ -1350,7 +1370,8 @@ impl Session {
     pub fn sync_want_originals(&mut self, ids: &[PhotoId]) -> usize {
         let Some(st) = self.sync.as_mut() else { return 0 };
         let mut n = 0;
-        for p in ids.iter().filter_map(|id| self.catalog.photo(*id)).filter(|p| is_remote(p)) {
+        // (not those kept where another device keeps them: the server never has their originals)
+        for p in ids.iter().filter_map(|id| self.catalog.photo(*id)).filter(|p| is_remote(p) && p.origin.is_none()) {
             if let Some(key) = blob_key(p) {
                 st.blob_retry.remove(&key);
                 n += usize::from(st.want_originals.insert(key));
@@ -1970,6 +1991,10 @@ impl Session {
             let downloaded = is_remote(p) || self.originals_dir().is_some_and(|d| Path::new(path).starts_with(d));
             return downloaded.then(|| json!({"state": "original"}));
         };
+        // kept where its device keeps it: never on the server, edited from its previews here
+        if let Some(o) = &p.origin {
+            return Some(json!({"state": "preview", "kept": o}));
+        }
         let running = st.jobs.values().find_map(|j| match j {
             Job::Get { key: k, blob: Blob::Original, dest, .. } if *k == key => Some(dest),
             _ => None,
@@ -1994,6 +2019,9 @@ impl Session {
     /// arrives (it then stays like any downloaded original, under [`SyncConfig::originals_budget_mb`]).
     /// Only into an originals folder on a disk, never the browser's storage.
     fn open_original_get(&self, st: &SyncState, p: &Photo, now: Instant) -> Option<Job> {
+        if p.origin.is_some() {
+            return None;
+        }
         let key = self.remote_key(p)?;
         // (waiting for the smart preview also keeps a failed original from holding its download back: they share a key)
         if st.blob_retry.get(&key).is_some_and(|t| now < *t) || !self.proxy_names(p, &key, st.have.as_ref()?).has_smart {
@@ -2036,14 +2064,20 @@ impl Session {
             };
             if let Some(file) = here {
                 if !st.uploaded.contains(&key) && !st.refused.contains(&key) && retry_ok(&key) {
-                    ups.push(Job::Head { key, path: file, id: p.id });
+                    match &p.origin {
+                        None => ups.push(Job::Head { key, path: file, id: p.id }),
+                        // kept where it is: the server gets its previews, never the original (built from the copy
+                        // here, so not while that is gone: the photo library's copy comes back when it is opened)
+                        Some(_) if remote || Path::new(&file).is_file() => ups.push(Job::Proxies { key, path: file, id: p.id }),
+                        Some(_) => {}
+                    }
                 }
                 continue;
             }
             if pinned && let Some(job) = self.preview_get(st, p, Blob::Smart, now) {
                 smart.push(job);
             }
-            if (st.config.store_originals || st.want_originals.contains(&key)) && retry_ok(&key) {
+            if (st.config.store_originals || st.want_originals.contains(&key)) && p.origin.is_none() && retry_ok(&key) {
                 let dest = match (&originals_dir, store) {
                     (Some(odir), _) => Some(odir.join(&key).join(file_name_of(path, &p.file_name)).to_string_lossy().to_string()),
                     (None, Some(_)) => Some(BrowserStore::original_key(&key)),

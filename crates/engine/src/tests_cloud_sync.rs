@@ -72,6 +72,7 @@ struct Fake {
     presence_status: Option<u16>,
 }
 
+mod keep_in_place;
 mod presence;
 mod sign_out;
 mod tracks;

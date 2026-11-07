@@ -15,6 +15,7 @@ fn current(s: &Session) -> Value {
         "import": s.import_defaults,
         "cacheMb": if s.cache_mb == 0 { s.cache_bytes() >> 20 } else { u64::from(s.cache_mb) },
         "forgetLocalDays": s.forget_local_days,
+        "keepInPlace": s.keep_in_place,
         "persistent": s.library.is_some(),
     })
 }
@@ -120,6 +121,10 @@ fn prefs(s: &mut Session, p: &Value) -> Result<Value> {
         s.forget_local_days = days.min(36_500) as u32;
         changed = true;
     }
+    if let Some(v) = p.get("keepInPlace") {
+        s.keep_in_place = v.as_bool().ok_or_else(|| bad(ID, "keepInPlace must be true or false"))?;
+        changed = true;
+    }
     if let Some(mb) = p.get("cacheMb") {
         let mb = mb.as_u64().ok_or_else(|| bad(ID, "cacheMb must be a number of megabytes"))?;
         s.set_cache_mb(mb.clamp(0, 1 << 20) as u32)?;
@@ -135,7 +140,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Library Preferences",
         [],
         None,
-        "{import?: {rawPreset?: presetId|\"default\", otherPreset?: presetId|\"default\", perCamera?: bool, cameras?: [{camera: \"Make Model\", preset: presetId|null}], copyright?: text, creator?: text (given to imported photos without one), ignore?: [name pattern] (or text, one per line: files and folders scanning and importing skip, wherever they are below the folder chosen — `*` any run of characters, `?` one, any letter case, e.g. `*.fcpbundle`), showOnCard?: bool (open the import review when a camera or card is connected), colorNoiseReduction?: 0..100 | null (the colour noise reduction a raw developed from its sensor data is imported with, as part of its import look; null or unset = 100; photos already in the library keep theirs)}, camera?: {camera, preset?, remove?: bool}, cacheMb?: n (0 = default), forgetLocalDays?: n (forget untouched Local photos of folders not browsed for n days; 0 = never)} — develop defaults applied on import (raws / other images / per camera) and the thumbnail cache size, saved with the library → {xmp, import, cacheMb, forgetLocalDays, persistent}",
+        "{import?: {rawPreset?: presetId|\"default\", otherPreset?: presetId|\"default\", perCamera?: bool, cameras?: [{camera: \"Make Model\", preset: presetId|null}], copyright?: text, creator?: text (given to imported photos without one), ignore?: [name pattern] (or text, one per line: files and folders scanning and importing skip, wherever they are below the folder chosen — `*` any run of characters, `?` one, any letter case, e.g. `*.fcpbundle`), showOnCard?: bool (open the import review when a camera or card is connected), colorNoiseReduction?: 0..100 | null (the colour noise reduction a raw developed from its sensor data is imported with, as part of its import look; null or unset = 100; photos already in the library keep theirs)}, camera?: {camera, preset?, remove?: bool}, cacheMb?: n (0 = default), forgetLocalDays?: n (forget untouched Local photos of folders not browsed for n days; 0 = never), keepInPlace?: bool (Keep Originals Where They Are: photos added from Apple Photos or in place from a folder from now on are never copied into the library nor uploaded to the sync server; only their record, edits and previews sync)} — develop defaults applied on import (raws / other images / per camera) and the thumbnail cache size, saved with the library → {xmp, import, cacheMb, forgetLocalDays, keepInPlace, persistent}",
         always,
         prefs
     )]

@@ -111,10 +111,11 @@ impl Session {
     }
 
     /// The photos whose files this device still has to send: what the upload plan would ask the server about, with the
-    /// waits after a failure over (a failed upload is still to be sent). Originals the server refused aren't counted.
+    /// waits after a failure over (a failed upload is still to be sent), and the previews of photos kept where they
+    /// are. Originals the server refused aren't counted.
     pub(super) fn unsent_originals(&self, st: &SyncState, now: Instant) -> usize {
         let later = now + Duration::from_secs(3600);
-        self.plan_blobs(st, later).iter().filter(|j| matches!(j, Job::Head { .. })).count()
+        self.plan_blobs(st, later).iter().filter(|j| matches!(j, Job::Head { .. } | Job::Proxies { .. })).count()
     }
 
     /// Is there nothing left to send? Called at the end of [`Session::sync_tasks`] while signing out; it also keeps

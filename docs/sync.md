@@ -561,6 +561,31 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 - Photos whose original is on the server are not *Missing Photos*; Info says “Original on the sync server”.
 - Photos you import on any desktop device are uploaded with their previews in the background.
 
+### Originals kept where they are
+
+With **Keep Originals Where They Are** on (`library.preferences {keepInPlace: true}`, saved with the library), photos
+added from then on keep their original where the person already keeps it, and the library never holds or uploads a
+copy of its own:
+
+- **From the system photo library** (Apple Photos, opened by a native frontend with `photoLibrary.open`): the engine's
+  copy goes to `<library>/Photos Cache/` instead of `Originals/`. Copies of photos that are left go once the cache is
+  over 2 GB, least recently fetched first, and only once the photo's smart preview (built when an edited photo is
+  left) can stand in for it. Opening such a photo again answers `needsFile`, and the file the frontend fetches again is
+  checked against the photo's content hash and relinked (no undo step). These photos are never *Missing Photos*.
+- **From a folder, added in place** (an import with Copy off, *Add to My Photos* from a browsed folder, Auto Import
+  without copying): the photo stays where it is, and its changes are always written to its XMP sidecar beside it, as a
+  browsed folder's are.
+- **Sync:** such a photo carries an `origin` (`photos` with the asset's iCloud Photos cloud identifier, or `folder`,
+  and the id of the device that added it; catalog format 14). Its record, edits and smart and mini previews go to the
+  server; its original is never asked about nor sent, and signing out waits for its previews only. Other devices show
+  and edit it from its previews, never try to download its original, and say where it is (`sync.original` →
+  `{state: "preview", kept: {kind, cloud?, device?}}`). A device whose own photo library has the same picture (the same
+  iCloud Photos) fetches it from there: `photoLibrary.wanted {id}` says which asset (`asset` this device opened it as,
+  or `cloud`), and `photoLibrary.attach {id, asset, path}` hands the original over without changing what is shown.
+- **An older server** (catalog format below 14) would drop the origin: while signed in to one, photos are added as
+  before (copied, uploaded).
+- Photos added before it was turned on, and photos copied into the library, are the library's as before.
+
 ### How much space it takes
 
 **Settings ▸ Sync ▸ Storage** shows what this library takes, refreshed while the page is open (**Refresh** asks

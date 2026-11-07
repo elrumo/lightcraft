@@ -57,6 +57,7 @@
 //! | 11 | the Hidden album (this fork) | `Op::SetHidden`, `Photo.hidden` |
 //! | 12 | video clips: trim and poster frame (this fork) | `DevelopSettings.video` |
 //! | 13 | compact snapshots (this fork) | `catalog.snap`'s `defaults`; a photo's settings as what differs from them, or `[{…}]` whole ([`crate::compact`]) |
+//! | 14 | Keep Originals Where They Are (this fork) | `Photo.origin` |
 //!
 //! Rules:
 //! - **Bump [`VERSION`]** (and add a row above) in the change that adds an [`Op`] variant or a
@@ -83,13 +84,14 @@ pub const LOG: &str = "catalog.log";
 const FORMAT: &str = "lightcraft-catalog";
 /// The catalog format this build writes (and the newest it reads). See the module docs →
 /// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
-pub const VERSION: u32 = 13;
+pub const VERSION: u32 = 14;
 
 /// The newest catalog format a sync peer must understand: what a server says it keeps (`format` of
 /// [`crate::sync::proto::Ops`]), which a device compares with its own before it sends changes. It moves with [`VERSION`]
 /// for a new op or field, which go over the sync protocol, and not for a change to how a file is written: v13 only
-/// changed `catalog.snap`, so it is 12 (a server saying 13 would make every device of v12 stop sending).
-pub const SYNC_VERSION: u32 = 12;
+/// changed `catalog.snap`, so it stayed 12 (a server saying 13 would have made every device of v12 stop sending);
+/// v14's `Photo.origin` goes over the protocol, so it is 14.
+pub const SYNC_VERSION: u32 = 14;
 
 /// How far into `catalog.snap` its header may reach: `"catalog":` comes after the develop defaults (a few KB).
 pub(crate) const HEADER_BYTES: usize = 64 << 10;

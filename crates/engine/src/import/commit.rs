@@ -205,6 +205,9 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
     }
     let mut purge: Vec<PhotoId> = Vec::new();
     let mut purged: std::collections::HashSet<PhotoId> = Default::default();
+    // Keep Originals Where They Are: a file added where it is, outside the library, stays there
+    let folder_origin = s.new_origin(lightcraft_catalog::OriginKind::Folder, None);
+    let library_dir = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
     // Live Photos: each still's photo and its clip, kept once the photos are in
     let mut motions: Vec<(PhotoId, String)> = Vec::new();
     for it in prepared.items {
@@ -273,7 +276,12 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 let sidecar = sidecar.map(|sc| sc.resolve_label(&s.catalog)).filter(|sc| *sc != crate::sidecar::SidecarData::default());
                 // a copy is catalogued under its new name
                 let name = Path::new(&stored).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
+                let origin = opts.origin.clone().or_else(|| {
+                    let outside = |d: &PathBuf| !crate::import_move::inside(Path::new(&stored), d);
+                    folder_origin.clone().filter(|_| stored == path && library_dir.as_ref().is_none_or(outside))
+                });
                 let mut p = Photo::new(id, Source::File { path: stored }, &name, &info.format, info.width, info.height, &now);
+                p.origin = origin;
                 p.kind = info.kind;
                 p.duration = info.duration;
                 p.file_size = info.file_size;

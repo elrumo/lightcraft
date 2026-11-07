@@ -701,3 +701,81 @@ fn a_destination_without_write_permission_reports_an_error_and_keeps_everything(
     }
     std::fs::set_permissions(dir.0.join("ro"), std::fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+/// The path of photo `n` (in the order added) as the catalog has it.
+fn path_of(s: &Session, n: usize) -> String {
+    let mut ids: Vec<_> = s.catalog.photos().map(|p| p.id).collect();
+    ids.sort();
+    match &s.catalog.photo(ids[n]).unwrap().source {
+        Source::File { path } => path.clone(),
+        Source::Demo { .. } => String::new(),
+    }
+}
+
+/// A Local record (browsed, not added) of `path`; `changed`: something of the person's is on it.
+fn add_local(s: &mut Session, path: &str, changed: bool) {
+    let id = s.catalog.alloc_photo_id();
+    let mut p = Photo::new(id, Source::File { path: path.into() }, "x.jpg", "JPEG", 60, 40, "2026-01-01T10:00:00");
+    p.local = true;
+    p.set_local_baseline();
+    if changed {
+        p.rating = 3;
+    }
+    s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+}
+
+#[test]
+fn locating_a_folder_points_its_photos_and_label_at_the_new_place_without_an_undo_step() {
+    let dir = Scratch::new("locate");
+    std::fs::create_dir_all(dir.0.join("now")).unwrap();
+    let now = dir.path("now");
+    let mut s = Session::new();
+    add(&mut s, "/gone/trip/a.jpg");
+    add(&mut s, "/gone/trip/day1/b.jpg");
+    add(&mut s, "/gone/home/c.jpg");
+    let label = s.catalog.folder_label_op("/gone/trip/day1", Some(lightcraft_catalog::ColorLabel::Red));
+    s.catalog.apply(label).unwrap();
+    s.execute("library.filter", &json!({"libraryFolder": "/gone/trip"})).unwrap();
+    let undo = s.undo.len();
+    let r = s.execute("folder.updateLocation", &json!({"from": "/gone/trip/", "to": now})).unwrap();
+    assert_eq!((r["relinked"].as_u64(), r["forgotten"].as_u64()), (Some(2), Some(0)), "{r}");
+    same_folder(Some(&path_of(&s, 0)), &dir.path("now/a.jpg"), "a photo in the folder");
+    same_folder(Some(&path_of(&s, 1)), &dir.path("now/day1/b.jpg"), "a photo in a folder inside it");
+    assert_eq!(path_of(&s, 2), "/gone/home/c.jpg", "another folder's photo stays");
+    assert_eq!(s.catalog.folder_color_label(&dir.path("now/day1")), Some(lightcraft_catalog::ColorLabel::Red), "the label follows");
+    assert_eq!(s.catalog.folder_color_label("/gone/trip/day1"), None);
+    same_folder(s.filter.library_folder.as_deref(), &now, "the chosen folder follows");
+    assert_eq!(s.visible().len(), 2);
+    assert_eq!(s.undo.len(), undo, "where the files are is no edit to undo");
+}
+
+#[test]
+fn locating_a_folder_lets_an_unchanged_local_record_give_way_and_a_changed_one_keep_its_file() {
+    let dir = Scratch::new("locate-local");
+    std::fs::create_dir_all(dir.0.join("now")).unwrap();
+    let mut s = Session::new();
+    add(&mut s, "/gone/trip/a.jpg");
+    add(&mut s, "/gone/trip/b.jpg");
+    // the folder was browsed where it is now before the library learned it moved
+    add_local(&mut s, &dir.path("now/a.jpg"), false);
+    add_local(&mut s, &dir.path("now/b.jpg"), true);
+    let r = s.execute("folder.updateLocation", &json!({"from": "/gone/trip", "to": dir.path("now")})).unwrap();
+    assert_eq!((r["relinked"].as_u64(), r["forgotten"].as_u64()), (Some(1), Some(1)), "{r}");
+    assert_eq!(r["kept"], json!([dir.path("now/b.jpg")]));
+    assert_eq!(s.catalog.photos().count(), 3, "the record of having looked went");
+    same_folder(Some(&path_of(&s, 0)), &dir.path("now/a.jpg"), "the library photo has the file now");
+    assert_eq!(path_of(&s, 1), "/gone/trip/b.jpg", "the file a changed record holds is not taken from it");
+}
+
+#[test]
+fn locating_a_folder_needs_a_folder_there_and_the_same_folder_is_nothing_to_do() {
+    let dir = Scratch::new("locate-bad");
+    let mut s = Session::new();
+    add(&mut s, "/gone/trip/a.jpg");
+    assert!(s.execute("folder.updateLocation", &json!({"from": "/gone/trip", "to": dir.path("missing")})).is_err());
+    assert!(s.execute("folder.updateLocation", &json!({"from": "/", "to": dir.path("")})).is_err(), "a disk's root is no folder to locate");
+    assert!(s.execute("folder.updateLocation", &json!({"to": dir.path("")})).is_err());
+    let r = s.execute("folder.updateLocation", &json!({"from": dir.path(""), "to": format!("{}/", dir.path(""))})).unwrap();
+    assert_eq!(r["relinked"], 0);
+    assert_eq!(path_of(&s, 0), "/gone/trip/a.jpg");
+}

@@ -531,6 +531,10 @@ pub struct Session {
     /// Untouched Local records of folders not browsed for this many days are forgotten when the
     /// library opens (0 = never; persisted in prefs.json). See `cmd/browse.rs`.
     pub forget_local_days: u32,
+    /// Keep Originals Where They Are: photos added from Apple Photos or in place from a folder keep their original
+    /// where it is (never copied into the library nor uploaded; [`lightcraft_catalog::Photo::origin`]). Persisted in
+    /// prefs.json; see [`Session::keeps_in_place`].
+    pub keep_in_place: bool,
     /// Sharing this library with other devices through a server (see [`cloud_sync`]).
     sync: Option<cloud_sync::SyncState>,
     /// Sharing this library's presets, settings and photo-library edits through the host's iCloud (see [`icloud`]):
@@ -694,6 +698,7 @@ impl Session {
             export_limit: None,
             thumbs_dir: None,
             forget_local_days: lightcraft_catalog::DEFAULT_FORGET_DAYS,
+            keep_in_place: false,
             sync: None,
             icloud: None,
             sync_store: None,

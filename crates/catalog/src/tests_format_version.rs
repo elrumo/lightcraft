@@ -107,6 +107,34 @@ fn v10_library_loads_with_nothing_hidden_and_is_upgraded() {
     assert_eq!(snapshot_version(&m), u64::from(VERSION));
 }
 
+/// A format 13 library (before Keep Originals Where They Are) opens with every original in the library's care, and is
+/// upgraded.
+#[test]
+fn v13_library_loads_with_no_origins_and_is_upgraded() {
+    let (base, _, _) = legacy_parts();
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":13,\"seq\":2,\"catalog\":{}}}\n", base.to_snapshot()).into_bytes());
+    let (_, c, r) = Journal::open(Box::new(m.clone())).unwrap();
+    assert_eq!(r.upgraded_from, Some(13));
+    assert!(c.photos().all(|p| p.origin.is_none()));
+    assert_eq!(snapshot_version(&m), u64::from(VERSION));
+}
+
+/// A photo's origin is kept through the snapshot and the log, and travels in `AddPhoto`.
+#[test]
+fn origin_round_trips() {
+    let mut c = Catalog::new();
+    let Op::AddPhoto { mut photo } = photo(&mut c) else { panic!("photo() adds a photo") };
+    photo.origin = Some(Origin { kind: OriginKind::Photos, cloud: Some("ABC:001:XYZ".into()), device: 7 });
+    let op = Op::AddPhoto { photo: photo.clone() };
+    let back: Op = serde_json::from_str(&serde_json::to_string(&op).unwrap()).unwrap();
+    assert_eq!(back, op);
+    let mut d = Catalog::new();
+    d.apply(op).unwrap();
+    let snap = Catalog::from_snapshot(&d.to_snapshot()).unwrap();
+    assert_eq!(snap.photo(photo.id).and_then(|p| p.origin.clone()), photo.origin);
+}
+
 /// Before upstream's own format 9 (the preview-only stamp), this fork wrote `SetServerPath` as format 9:
 /// such a library opens with its server paths and is rewritten as format 10.
 #[test]
@@ -326,14 +354,14 @@ fn op_variants_are_versioned() {
             Op::SetHidden { .. } => 11,
         }
     }
-    /// v12 carries `DevelopSettings.video`, a clip's trim and poster frame, and v13 writes the snapshot's settings as
-    /// what differs from its `defaults` (`crate::compact`): neither has an op of its own (v9 was upstream's
-    /// `Photo.preview_checked`).
-    const NEWEST_FIELDS: u32 = 13;
+    /// v12 carries `DevelopSettings.video`, a clip's trim and poster frame, v13 writes the snapshot's settings as
+    /// what differs from its `defaults` (`crate::compact`) and v14 carries `Photo.origin`: none has an op of its own
+    /// (v9 was upstream's `Photo.preview_checked`).
+    const NEWEST_FIELDS: u32 = 14;
     let newest = since(&Op::SetHidden { id: PhotoId(1), hidden: true });
     assert_eq!(newest.max(NEWEST_FIELDS), VERSION, "the newest op's or fields' version must be the current format version");
-    /// The newest version whose ops or fields go over the sync protocol (v12's `DevelopSettings.video`; v13 is only
-    /// how `catalog.snap` is written).
-    const NEWEST_SYNCED_FIELDS: u32 = 12;
+    /// The newest version whose ops or fields go over the sync protocol (v14's `Photo.origin`; v13 is only how
+    /// `catalog.snap` is written).
+    const NEWEST_SYNCED_FIELDS: u32 = 14;
     assert_eq!(newest.max(NEWEST_SYNCED_FIELDS), crate::journal::SYNC_VERSION, "a new op or synced field raises SYNC_VERSION");
 }

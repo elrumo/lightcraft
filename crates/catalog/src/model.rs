@@ -334,6 +334,36 @@ pub struct Photo {
     /// photo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_path: Option<String>,
+    /// The original stays where the user keeps it (their Apple Photos library, or a folder on one device), added with
+    /// Keep Originals Where They Are: it is never copied into the library nor uploaded to the sync server, and only the
+    /// record, its edits and small previews travel. `None` for every other photo. Set when the photo is added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
+}
+
+/// Where the original of a photo kept where it is lives ([`Photo::origin`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Origin {
+    pub kind: OriginKind,
+    /// Apple Photos: the asset's cloud identifier, the same on every device signed in to one iCloud Photos library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<String>,
+    /// The sync device that added the photo (its id on the server; 0 when it wasn't signed in).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub device: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OriginKind {
+    /// An asset of the device's Apple Photos library.
+    Photos,
+    /// A file in a folder on the device's disk.
+    Folder,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// What assisted culling measured on a photo.
@@ -425,6 +455,7 @@ impl Photo {
             preview_checked: String::new(),
             local_baseline: None,
             server_path: None,
+            origin: None,
         }
     }
     /// The folder of [`Photo::server_path`] (`Photos/2024/Trip`).

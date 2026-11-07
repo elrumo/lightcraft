@@ -310,6 +310,73 @@ fn forget_local(s: &mut Session, p: &Value) -> Result<Value> {
     }))
 }
 
+/// `folder.updateLocation {from, to}`: the folder the library knew at `from` is at `to` now (a
+/// drive mounted under another name, a folder a frontend reaches through a bookmark that leads
+/// elsewhere). Nothing on disk moves: the photos at or below `from` point at the same place below
+/// `to`, what the library knows about the folders follows ([`Catalog::folder_records_located`]),
+/// and a browsed or chosen folder follows. A file has one record: a Local record already at a
+/// destination file gives way when it is only a record of having looked; one that holds something
+/// of the person's (or any other photo there) keeps the file, and the photo that would have taken
+/// it stays where it was (`kept`). Journaled but not an undo step: it says where the files are, it
+/// changes nothing of the person's.
+///
+/// [`Catalog::folder_records_located`]: lightcraft_catalog::Catalog::folder_records_located
+fn update_location(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "folder.updateLocation";
+    let folder = |k: &str| str_param(p, k).map(|f| f.trim_end_matches(['/', '\\'])).filter(|f| !f.is_empty()).map(str::to_string);
+    let from = folder("from").ok_or_else(|| bad(C, "missing `from` (a folder)"))?;
+    let to = folder("to").ok_or_else(|| bad(C, "missing `to` (a folder)"))?;
+    if !Path::new(&to).is_dir() {
+        return Err(bad(C, format!("{to}: not a folder")));
+    }
+    if lightcraft_catalog::query::folder_key(&from) == lightcraft_catalog::query::folder_key(&to) {
+        return Ok(json!({"from": from, "to": to, "relinked": 0, "forgotten": 0, "kept": []}));
+    }
+    // a folder located inside itself: what is already at or below `to` is the folder there, not this one
+    let nested = lightcraft_catalog::query::folder_within(&to, &from);
+    let moves: Vec<(PhotoId, String)> = s
+        .catalog
+        .photos()
+        .filter_map(|ph| match &ph.source {
+            Source::File { path } if !(nested && lightcraft_catalog::query::folder_within(path, &to)) => {
+                let rest = lightcraft_catalog::query::folder_rest(path, &from)?;
+                Some((ph.id, rest.iter().fold(std::path::PathBuf::from(&to), |d, n| d.join(n)).to_string_lossy().to_string()))
+            }
+            _ => None,
+        })
+        .collect();
+    let moving: HashSet<PhotoId> = moves.iter().map(|(id, _)| *id).collect();
+    let dest: HashSet<String> = moves.iter().map(|(_, path)| path.clone()).collect();
+    let untouched: HashSet<PhotoId> = s.catalog.local_records_of(&dest).untouched.into_iter().filter(|id| !moving.contains(id)).collect();
+    // the destination files some other photo keeps
+    let held: HashSet<&str> = s
+        .catalog
+        .photos()
+        .filter(|ph| !moving.contains(&ph.id) && !untouched.contains(&ph.id))
+        .filter_map(|ph| match &ph.source {
+            Source::File { path } if dest.contains(path) => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    let (kept, relinked): (Vec<_>, Vec<_>) = moves.iter().partition(|(_, path)| held.contains(path.as_str()));
+    let kept: Vec<&str> = kept.iter().map(|(_, path)| path.as_str()).collect();
+    let mut ops: Vec<Op> = untouched.iter().map(|id| Op::RemovePhoto { id: *id }).collect();
+    ops.extend(relinked.iter().map(|(id, path)| super::missing::relink_op(*id, path)));
+    ops.extend(s.catalog.folder_records_located(&from, &to));
+    let n = relinked.len();
+    let out = json!({"from": from, "to": to, "relinked": n, "forgotten": untouched.len(), "kept": kept});
+    if !ops.is_empty() {
+        let op = Op::Batch { ops };
+        s.catalog.apply(op.clone()).map_err(|e| bad(C, e.to_string()))?;
+        s.pending_log.push(op);
+        for (id, _) in &relinked {
+            s.media.forget(*id);
+        }
+    }
+    follow_folder(s, &from, &to);
+    Ok(out)
+}
+
 /// The browsed photos among `ids` (default: the selection) become library photos.
 fn add_to_library(s: &mut Session, p: &Value) -> Result<Value> {
     let ids: Vec<PhotoId> = s.targets(p)?.into_iter().filter(|id| s.catalog.photo(*id).is_some_and(|ph| ph.local)).collect();
@@ -357,6 +424,15 @@ pub fn specs() -> Vec<CommandSpec> {
                 let n = move_folder(s, &from, &to).map_err(|e| bad("folder.move", e))?;
                 Ok(json!({"path": to, "relinked": n}))
             }
+        ),
+        cmd!(
+            "folder.updateLocation",
+            "Update Folder Location",
+            [],
+            None,
+            "{from, to} — the folder the library knew at `from` is at `to` now (nothing on disk moves): its photos point at the same place below `to` and the folder's records follow; an unchanged Local record already at a destination file gives way, any other keeps the file and that photo stays (`kept`); not an undo step → {from, to, relinked, forgotten, kept}",
+            always,
+            update_location
         ),
         cmd!(
             "folder.create",

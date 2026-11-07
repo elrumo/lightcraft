@@ -21,10 +21,13 @@ use crate::{Result, Session};
 /// `library.missing` and Find Missing Photos all use this one rule.
 ///
 /// Photos kept by content (`web/<hash>/…`: in the browser's storage, or synced photos whose
-/// original is on the sync server) aren't files on this disk: never missing.
+/// original is on the sync server) aren't files on this disk: never missing. Neither are photos whose original stays in
+/// the photo library ([`lightcraft_catalog::OriginKind::Photos`]): the file here is a copy, fetched again when the photo
+/// is opened ([`crate::photo_library`]).
 pub fn checked_path(p: &Photo) -> Option<&str> {
+    let in_photos = p.origin.as_ref().is_some_and(|o| o.kind == lightcraft_catalog::OriginKind::Photos);
     match &p.source {
-        Source::File { path } if p.in_library() && !path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) => Some(path),
+        Source::File { path } if p.in_library() && !in_photos && !path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) => Some(path),
         _ => None,
     }
 }

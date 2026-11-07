@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use lightcraft_catalog::{Op, PhotoId, Source};
+use lightcraft_catalog::{Op, OriginKind, PhotoId, Source};
 use serde_json::{Value, json};
 
 use crate::{Selection, Session};
@@ -360,4 +360,108 @@ fn file_of_path(p: &lightcraft_catalog::Photo) -> String {
         Source::File { path } => path.clone(),
         _ => String::new(),
     }
+}
+
+/// Keep Originals Where They Are: the engine's copy goes to the cache, not `Originals/`, and the photo carries where its
+/// original is.
+#[test]
+fn a_kept_photo_is_copied_to_the_cache_not_the_originals() {
+    let root = temp_dir("kept-cache");
+    let mut s = session(&root);
+    s.execute("library.preferences", &json!({"keepInPlace": true})).unwrap();
+    let r = s.execute("photoLibrary.open", &json!({"asset": "A1", "path": staged(&root, "IMG_1.png", 1), "cloud": "C1"})).unwrap();
+    let id = id_of(&r);
+    let file = file_of(&s, id);
+    assert!(file.starts_with(&root.join("lib").join(crate::photo_library::CACHE_DIR).to_string_lossy().to_string()), "{file}");
+    assert!(!root.join("lib/Originals").exists(), "nothing in the library's originals");
+    let o = s.catalog.photo(id).unwrap().origin.clone().unwrap();
+    assert_eq!((o.kind, o.cloud.as_deref()), (OriginKind::Photos, Some("C1")));
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+    let p = s.catalog.photo(id).unwrap();
+    assert!(!p.local && p.origin.is_some(), "brought in by the edit, with its origin");
+}
+
+/// The copy of a kept photo can go (trimmed, or the device's storage cleared): opening it again asks for the file,
+/// and the file the app fetches again is checked and taken, edits and all.
+#[test]
+fn a_kept_photo_whose_copy_is_gone_is_fetched_again() {
+    let root = temp_dir("kept-again");
+    let mut s = session(&root);
+    s.execute("library.preferences", &json!({"keepInPlace": true})).unwrap();
+    let id = id_of(&open(&mut s, "A1", &staged(&root, "IMG_1.png", 1)));
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+    s.execute("photoLibrary.close", &json!({"id": id.0})).unwrap();
+    // (the leave may have trimmed it already)
+    let _ = std::fs::remove_file(file_of(&s, id));
+    assert!(crate::cmd::missing::missing(&s).is_empty(), "not a missing photo: its original is in the photo library");
+    let undo = s.undo.len();
+    assert_eq!(s.execute("photoLibrary.open", &json!({"asset": "A1"})).unwrap(), json!({"needsFile": true}));
+    // another picture under that asset is refused, and changes nothing
+    assert!(s.execute("photoLibrary.open", &json!({"asset": "A1", "path": staged(&root, "IMG_1.png", 2)})).is_err());
+    assert!(!Path::new(&file_of(&s, id)).exists());
+    let r = open(&mut s, "A1", &staged(&root, "IMG_1.png", 1));
+    assert_eq!((id_of(&r), r["known"].as_bool()), (id, Some(true)));
+    assert!(Path::new(&file_of(&s, id)).is_file());
+    assert_eq!(s.catalog.photo(id).unwrap().develop.light.exposure, 0.5);
+    assert_eq!(s.undo.len(), undo, "no step to undo");
+}
+
+/// Over the cache's budget, the copies of photos left go once their smart preview can stand in for them.
+#[test]
+fn leaving_a_kept_photo_trims_its_copy_once_its_smart_preview_is_there() {
+    let root = temp_dir("kept-trim");
+    let mut s = session(&root);
+    s.execute("library.preferences", &json!({"keepInPlace": true})).unwrap();
+    let id = id_of(&open(&mut s, "A1", &staged(&root, "IMG_1.png", 1)));
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+    s.execute("library.smartPreviews", &json!({"ids": [id.0]})).unwrap();
+    let file = file_of(&s, id);
+    s.execute("photoLibrary.close", &json!({"id": id.0})).unwrap();
+    assert!(!Path::new(&file).exists(), "trimmed (the test budget is a byte)");
+    assert!(s.render_now(id, 64, 64).is_ok(), "drawn from its smart preview");
+}
+
+/// Added in place from a folder with Keep Originals Where They Are on: the photo says so; a copy doesn't.
+#[test]
+fn files_added_in_place_are_kept_where_they_are() {
+    let root = temp_dir("kept-folder");
+    let mut s = session(&root);
+    s.execute("library.preferences", &json!({"keepInPlace": true})).unwrap();
+    png(&root.join("Pictures/a.png"), 1);
+    png(&root.join("Pictures/b.png"), 2);
+    s.execute("library.import", &json!({"paths": [root.join("Pictures/a.png").to_string_lossy()]})).unwrap();
+    s.execute("library.import", &json!({"paths": [root.join("Pictures/b.png").to_string_lossy()], "mode": "copy"})).unwrap();
+    let origin = |name: &str| s.catalog.photos().find(|p| p.file_name == name).unwrap().origin.clone();
+    assert_eq!(origin("a.png").map(|o| (o.kind, o.device)), Some((OriginKind::Folder, 0)));
+    assert_eq!(origin("b.png"), None);
+    // its edits are written beside it, with *Automatically write changes into XMP* off
+    assert!(!s.xmp.auto_write);
+    let a = s.catalog.photos().find(|p| p.file_name == "a.png").unwrap().id;
+    s.execute("photo.rate", &json!({"rating": 3, "ids": [a.0]})).unwrap();
+    assert!(root.join("Pictures/a.xmp").exists());
+    // the setting is saved with the library
+    s.close_library().unwrap();
+    let s = session(&root);
+    assert!(s.keep_in_place);
+}
+
+/// A kept photo shown in the library (not opened from the photo library) whose copy is gone: the app asks which asset
+/// to fetch and hands its original over without changing what is shown.
+#[test]
+fn the_library_asks_for_a_kept_photos_original_and_takes_it() {
+    let root = temp_dir("kept-attach");
+    let mut s = session(&root);
+    s.execute("library.preferences", &json!({"keepInPlace": true})).unwrap();
+    let id = id_of(&s.execute("photoLibrary.open", &json!({"asset": "A1", "path": staged(&root, "IMG_1.png", 1), "cloud": "C1"})).unwrap());
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+    s.execute("photoLibrary.close", &json!({"id": id.0})).unwrap();
+    let _ = std::fs::remove_file(file_of(&s, id));
+    assert_eq!(s.execute("photoLibrary.wanted", &json!({"id": id.0})).unwrap(), json!({"asset": "A1", "cloud": "C1"}));
+    s.selection = Selection::single(id);
+    let r = s.execute("photoLibrary.attach", &json!({"id": id.0, "asset": "A1", "path": staged(&root, "IMG_1.png", 1)})).unwrap();
+    assert_eq!(r, json!({"attached": true}));
+    assert!(Path::new(&file_of(&s, id)).is_file());
+    assert_eq!(s.execute("photoLibrary.wanted", &json!({"id": id.0})).unwrap(), json!({}), "nothing wanted now");
+    assert_eq!(s.selection, Selection::single(id), "what is shown is as it was");
+    assert!(s.photo_library_return.is_none(), "not a visit to the photo library");
 }

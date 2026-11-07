@@ -71,6 +71,10 @@ pub struct ImportOptions {
     /// becomes, or with the library photo it turns out to be ([`crate::live_photo`]). The clips themselves are not
     /// imported as videos.
     pub motions: std::collections::BTreeMap<String, String>,
+    /// Where the originals stay ([`lightcraft_catalog::Photo::origin`]), given by the caller (a photo opened from
+    /// Apple Photos). Without it, a file added in place outside the library gets a folder origin when
+    /// [`crate::Session::keeps_in_place`].
+    pub origin: Option<lightcraft_catalog::Origin>,
 }
 
 /// How copies are filed in the destination. The date is the capture time, else the time of the

@@ -17,11 +17,18 @@
 //! alone (asset ids mean nothing elsewhere), never synced, by photo id and content hash (an id can
 //! name another photo after a sign-out). No paths: the app's folder moves with every iOS update,
 //! and the photo's own record follows it.
+//!
+//! With Keep Originals Where They Are ([`Session::keeps_in_place`]) the original stays in the photo library: the
+//! engine's copy goes to [`CACHE_DIR`] instead of `Originals/`, the photo carries a Photos
+//! [`lightcraft_catalog::Origin`] (never uploaded, [`crate::cloud_sync`]), and copies of photos left are removed once
+//! the cache is over [`CACHE_BUDGET`] and the photo's smart preview stands in for it. Opening one whose copy is gone
+//! answers `needsFile`, and the file the app fetches again is relinked (the same goes for a photo another device kept
+//! in its photo library, found here by its content).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+use lightcraft_catalog::{Op, OriginKind, Photo, PhotoId, Source};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -32,6 +39,14 @@ use crate::{Result, Selection, Session};
 
 /// Longest asset id taken (PhotoKit's are ~40 characters).
 const MAX_ASSET: usize = 512;
+
+/// Where the engine keeps its copies of originals kept in the photo library (Keep Originals Where They Are), in the
+/// library folder: a cache, emptied down to [`CACHE_BUDGET`] as photos are left.
+pub const CACHE_DIR: &str = "Photos Cache";
+
+/// How much the copies in [`CACHE_DIR`] may take before the least recently opened go.
+// ponytail: one fixed budget; a setting if people want more (or less) kept on the device
+const CACHE_BUDGET: u64 = if cfg!(test) { 1 } else { 2 << 30 };
 
 /// One asset the engine knows.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -130,7 +145,27 @@ fn inside(path: &Path, dir: &Path) -> bool {
     }
 }
 
+/// A photo whose original stays in the photo library ([`OriginKind::Photos`]).
+fn kept_in_photos(p: &Photo) -> bool {
+    p.origin.as_ref().is_some_and(|o| o.kind == OriginKind::Photos)
+}
+
+/// A photo kept in the photo library with no copy of its original on this device (removed from [`CACHE_DIR`], or
+/// one another device kept in its photo library).
+fn needs_copy(p: &Photo) -> bool {
+    kept_in_photos(p)
+        && match &p.source {
+            Source::File { path } => path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) || !Path::new(path).is_file(),
+            Source::Demo { .. } => false,
+        }
+}
+
 impl Session {
+    /// [`CACHE_DIR`] of a library on disk.
+    fn photos_cache_dir(&self) -> Option<PathBuf> {
+        self.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join(CACHE_DIR))
+    }
+
     /// Where the app stages the originals it fetches from the photo library: a file opened from
     /// there is moved into the library; from anywhere else it is copied (never removed).
     pub fn set_photo_library_staging(&mut self, dir: Option<PathBuf>) {
@@ -232,11 +267,9 @@ impl Session {
         self.photo_library.remove(asset);
         // (its Live Photo motion, if the app handed one over)
         self.detach_motion(id);
-        let originals = self.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir());
-        let (Some(path), Some(originals)) = (path.filter(|_| e.placed), originals) else { return };
-        if !inside(&path, &originals) {
-            return;
-        }
+        let roots = [self.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir()), self.photos_cache_dir()];
+        let Some(path) = path.filter(|_| e.placed) else { return };
+        let Some(originals) = roots.into_iter().flatten().find(|r| inside(&path, r)) else { return };
         let shared = |sc: &Path| {
             let stem = sc.with_extension("");
             self.catalog.photos().any(|p| matches!(&p.source, Source::File { path } if Path::new(path).with_extension("") == stem))
@@ -262,6 +295,61 @@ impl Session {
                 break;
             }
             dir = d.parent().map(Path::to_path_buf);
+        }
+    }
+
+    /// Build the smart preview of photo `id` kept in the photo library when it has none, so that it can stand in for
+    /// the copy of its original once [`Session::trim_photos_cache`] removes that (in the background).
+    // ponytail: skipped while another preview build runs; the copy then just stays (over the budget) until a later leave
+    fn keep_smart_preview(&mut self, id: PhotoId) {
+        let Some(dir) = self.media.smart_dir.clone() else { return };
+        if self.catalog.photo(id).is_some_and(|p| crate::smart::is_valid(&crate::smart::file_path(&dir, p))) {
+            return;
+        }
+        if let Err(e) = self.execute("library.smartPreviews", &json!({"ids": [id.0], "background": true})) {
+            log::info!("photo library: smart preview of photo {}: {e}", id.0);
+        }
+    }
+
+    /// Keep the copies in [`CACHE_DIR`] under [`CACHE_BUDGET`]: those of library photos not shown whose smart preview
+    /// can stand in for them go, least recently fetched first. Opening one fetches it again ([`needs_copy`]).
+    // ponytail: a stat per cached copy on every leave; a running total if big caches make leaving slow
+    pub(crate) fn trim_photos_cache(&mut self) {
+        let (Some(dir), Some(smart)) = (self.photos_cache_dir(), self.media.smart_dir.clone()) else { return };
+        let shown = self.selection.active;
+        let mut total = 0u64;
+        let mut copies = Vec::new();
+        for p in self.catalog.photos().filter(|p| kept_in_photos(p)) {
+            let Source::File { path } = &p.source else { continue };
+            let path = Path::new(path);
+            if !path.starts_with(&dir) {
+                continue;
+            }
+            let Ok(m) = std::fs::metadata(path) else { continue };
+            total = total.saturating_add(m.len());
+            if !p.local && !p.deleted && Some(p.id) != shown {
+                let fetched = m.modified().unwrap_or(std::time::UNIX_EPOCH);
+                copies.push((fetched, m.len(), p.id, path.to_path_buf(), crate::smart::file_path(&smart, p)));
+            }
+        }
+        if total <= CACHE_BUDGET {
+            return;
+        }
+        copies.sort_by_key(|c| c.0);
+        for (_, len, id, file, stand_in) in copies {
+            if total <= CACHE_BUDGET {
+                break;
+            }
+            if !crate::smart::is_valid(&stand_in) {
+                continue;
+            }
+            match std::fs::remove_file(&file) {
+                Ok(()) => {
+                    total = total.saturating_sub(len);
+                    self.media.forget(id);
+                }
+                Err(e) => log::warn!("photo library: remove {}: {e}", file.display()),
+            }
         }
     }
 
@@ -303,7 +391,11 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(e) = s.photo_library.assets.get(asset).cloned() {
         match live(s, &e).map(|p| p.local) {
             Some(local) => {
-                if let Some(path) = str_param(p, "path") {
+                // kept in the photo library, and its copy here is gone: the app fetches the original again
+                if s.catalog.photo(PhotoId(e.id)).is_some_and(|p| needs_copy(p)) {
+                    let Some(path) = str_param(p, "path") else { return Ok(json!({"needsFile": true})) };
+                    copy_again(s, PhotoId(e.id), Path::new(path))?;
+                } else if let Some(path) = str_param(p, "path") {
                     drop_staged(s, Path::new(path));
                 }
                 if cloud.is_some() && e.cloud != cloud {
@@ -334,15 +426,29 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(id) = existing {
         s.photo_library.insert(asset, Entry { id: id.0, hash, placed: false, cloud });
         s.save_photo_library();
-        drop_staged(s, &src);
+        // (a photo kept in a photo library, here or by another device: this copy is the one it is edited from)
+        if s.catalog.photo(id).is_some_and(|p| needs_copy(p)) {
+            // (the photo still opens without it, from its previews)
+            if let Err(e) = copy_again(s, id, &src) {
+                log::warn!("photo library: {e}");
+            }
+        } else {
+            drop_staged(s, &src);
+        }
         // (an edit another device made to this picture, held until it was opened here, is taken)
         let synced = s.icloud_take_held(id);
         s.show_opened(id)?;
         let live = crate::live_photo::open_with_motion(s, id, p);
         return Ok(json!({"id": id.0, "local": false, "known": true, "synced": synced, "live": live}));
     }
-    // filed where an import would put it, then catalogued there in place
-    let root = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir()).ok_or_else(|| bad(C, "needs a library saved on disk"))?;
+    // filed where an import would put it (or in the cache, when the original stays in the photo library), then
+    // catalogued there in place
+    let origin = s.new_origin(OriginKind::Photos, cloud.clone());
+    let root = match origin {
+        Some(_) => s.photos_cache_dir(),
+        None => s.library.as_ref().filter(|l| l.on_disk).map(|l| l.originals_dir()),
+    }
+    .ok_or_else(|| bad(C, "needs a library saved on disk"))?;
     let name = src.file_name().map(|n| n.to_string_lossy().to_string()).ok_or_else(|| bad(C, format!("{path}: no file name")))?;
     let date = info.captured.clone().or_else(|| info.file_modified.clone()).unwrap_or_else(|| (s.clock)());
     let mut dated = Photo::new(PhotoId(0), Source::File { path: path.into() }, &name, &info.format, info.width, info.height, &date);
@@ -354,7 +460,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     // opening isn't a step to undo (Undo would take away the photo being looked at), and leaves redo as it was
     let (undo0, redo) = (s.undo.len(), std::mem::take(&mut s.redo));
     // ponytail: an import job snapshots the catalog (~ms per 10k photos); a staged-file fast path if big libraries feel it
-    let opts = ImportOptions { mode: ImportMode::Add, local: true, on_deleted: OnDeleted::Skip, ..Default::default() };
+    let opts = ImportOptions { mode: ImportMode::Add, local: true, on_deleted: OnDeleted::Skip, origin, ..Default::default() };
     let report = import_with(s, std::slice::from_ref(&dst), &opts).map(|r| r.imported.first().copied());
     s.undo.truncate(undo0);
     s.redo = redo;
@@ -386,6 +492,38 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": id.0, "local": local, "known": false, "synced": synced, "live": live}))
 }
 
+/// The original of photo `id` kept in the photo library ([`needs_copy`]), fetched again by the app at `src`: checked to
+/// be the same picture, filed in [`CACHE_DIR`], and the photo pointed at it (on this device only; no undo step).
+fn copy_again(s: &mut Session, id: PhotoId, src: &Path) -> Result<()> {
+    const C: &str = "photoLibrary.open";
+    let p = s.catalog.photo(id).cloned().ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
+    let probe = s.media.file_probe.clone().ok_or_else(|| bad(C, "this build can't read files"))?;
+    let read = probe(&src.to_string_lossy()).map_err(|e| bad(C, format!("{}: {e}", src.display())));
+    if read.as_ref().map_or(true, |info| info.content_hash.is_none() || info.content_hash != p.content_hash) {
+        drop_staged(s, src);
+        read?;
+        return Err(bad(C, "the photo library's original is no longer this photo's"));
+    }
+    let root = s.photos_cache_dir().ok_or_else(|| bad(C, "needs a library saved on disk"))?;
+    let dir = Organize::ByDay.folders(&p).into_iter().fold(root, |d, f| d.join(f));
+    let placed = crate::import_move::place(src, &dir, &p.file_name).map_err(|e| bad(C, e))?;
+    let path = placed.dst.to_string_lossy().to_string();
+    let op = Op::Relink { id, file_name: p.file_name.clone(), source: Source::File { path }, format: None };
+    if let Err(e) = s.catalog.apply(op.clone()) {
+        crate::import_move::rollback(&placed);
+        return Err(e.into());
+    }
+    s.pending_log.push(op);
+    s.media.forget(id);
+    if inside_staging(s, src) {
+        for sc in &placed.sidecars {
+            let _ = std::fs::remove_file(&sc.src);
+        }
+    }
+    drop_staged(s, src);
+    Ok(())
+}
+
 pub(crate) fn inside_staging(s: &Session, path: &Path) -> bool {
     s.photo_library_staging.as_deref().is_some_and(|d| inside(path, d))
 }
@@ -406,6 +544,35 @@ fn added(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(Value::Object(out))
 }
 
+/// What the app fetches for photo `id` kept in the photo library with no copy here ([`needs_copy`]): the asset this
+/// device opened it as, and its cloud identifier (another device's photo: the same picture in this device's photo
+/// library, when it syncs with the same iCloud Photos). `{}` for any other photo.
+fn wanted(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = id_param(p, "photoLibrary.wanted")?;
+    let Some(photo) = s.catalog.photo(id).filter(|p| needs_copy(p)) else { return Ok(json!({})) };
+    let asset = s.photo_library.by_photo(id).map(|(a, _)| a.clone());
+    let cloud = photo.origin.as_ref().and_then(|o| o.cloud.clone());
+    Ok(json!({"asset": asset, "cloud": cloud}))
+}
+
+/// The original of photo `id` kept in the photo library, fetched by the app from asset `asset` at `path`: taken as
+/// [`copy_again`] does, and the asset remembered as this photo's. Nothing else changes (not the photo shown).
+fn attach(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "photoLibrary.attach";
+    let id = id_param(p, C)?;
+    let asset = asset_param(p, C)?.to_string();
+    let path = str_param(p, "path").ok_or_else(|| bad(C, "missing `path`"))?;
+    if !s.catalog.photo(id).is_some_and(|p| needs_copy(p)) {
+        drop_staged(s, Path::new(path));
+        return Ok(json!({"attached": false}));
+    }
+    copy_again(s, id, Path::new(path))?;
+    let hash = s.catalog.photo(id).and_then(|p| p.content_hash.clone());
+    s.photo_library.insert(&asset, Entry { id: id.0, hash, placed: false, cloud: cloud_param(p) });
+    s.save_photo_library();
+    Ok(json!({"attached": true}))
+}
+
 fn close(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photoLibrary.close";
     let id = id_param(p, C)?;
@@ -422,6 +589,9 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
         s.pending_log.push(op);
     }
     let promoted = s.catalog.photo(id).is_some_and(|p| !p.local && !p.deleted && p.is_edited());
+    if promoted && s.catalog.photo(id).is_some_and(|p| kept_in_photos(p)) {
+        s.keep_smart_preview(id);
+    }
     let mut forgotten = false;
     if let Some((asset, e)) = entry
         && live(s, &e).is_some_and(|p| p.local)
@@ -437,6 +607,7 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
         let selection = Selection { ids: back.ids.into_iter().filter(exists).collect(), active: back.active.filter(exists) };
         s.selection = selection;
     }
+    s.trim_photos_cache();
     Ok(json!({"promoted": promoted, "forgotten": forgotten}))
 }
 
@@ -453,6 +624,24 @@ pub fn specs() -> Vec<CommandSpec> {
             open
         ),
         cmd!(query "photoLibrary.added", "Photo Library Photos in the Library", [], None, "{}: {asset: id} of the assets whose photo is in the library", always, added),
+        cmd!(
+            query "photoLibrary.wanted",
+            "Photo Library Original Wanted",
+            [],
+            None,
+            "{id}: for a photo whose original stays in the photo library (Keep Originals Where They Are) and has no copy on this device: {asset?: the asset this device opened it as, cloud?: its cloud identifier, for the same picture in this device's photo library}; {} for any other photo",
+            always,
+            wanted
+        ),
+        cmd!(
+            query "photoLibrary.attach",
+            "Attach Photo Library Original",
+            [],
+            None,
+            "{id, asset, path, cloud?}: the original the app fetched from asset `asset` for photo `id` (see photoLibrary.wanted), checked to be the same picture and kept as the photo's copy on this device; the photo shown doesn't change; {attached}",
+            always,
+            attach
+        ),
         cmd!(
             query "photoLibrary.close",
             "Leave Photo Library Photo",
