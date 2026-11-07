@@ -1425,7 +1425,10 @@ pub(crate) fn run_previews(st: &Arc<State>) {
             && (st.vision.work.previews_moved(&user)
                 || lightcraft_vision::Key::from_hex(&hash).is_some_and(|k| st.vision.work.previews_leased(&user, &k)));
         // (a rebuild the device does: its photo is offered to it though its previews are there)
-        if device && replace && let Some(key) = lightcraft_vision::Key::from_hex(&hash) {
+        if device
+            && replace
+            && let Some(key) = lightcraft_vision::Key::from_hex(&hash)
+        {
             st.vision.work.want_rebuild(&user, key);
         }
         let r = if device { Ok(false) } else { build_previews_as(&blobs, &hash, &file, replace) };

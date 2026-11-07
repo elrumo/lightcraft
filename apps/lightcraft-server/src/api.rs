@@ -773,7 +773,10 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
                 st.writer.file_uploads(user);
             }
             // (the mini preview goes last: the photo's previews are new now)
-            if kind == "mini" && resp.status_code().0 == 200 && let Some(key) = lightcraft_vision::Key::from_hex(&hash) {
+            if kind == "mini"
+                && resp.status_code().0 == 200
+                && let Some(key) = lightcraft_vision::Key::from_hex(&hash)
+            {
                 st.vision.work.rebuilt(user, &key);
             }
             if previews && resp.status_code().0 == 200 {
