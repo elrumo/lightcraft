@@ -931,10 +931,8 @@ impl Engine {
                 let settings = if let Some(pid) = p.get("preset").and_then(Value::as_str) {
                     // over the original photo (framed as it is), not its edit: the presets panel's pictures stay put
                     // while presets are applied, and a B&W one applied doesn't turn every other picture grey
-                    let preset = self.session.presets.iter().find(|x| x.id == pid).ok_or_else(|| bad(&format!("no preset `{pid}`")))?;
-                    let original = self.session.catalog.photo(id).ok_or_else(|| bad("no such photo"))?.import_defaults();
-                    let base = lightcraft_engine::develop::DevelopSettings { crop: d.crop, orientation: d.orientation, ..original };
-                    preset.apply(&base, p.get("amount").and_then(Value::as_f64).unwrap_or(100.0).clamp(0.0, 200.0) / 100.0)
+                    let amount = p.get("amount").and_then(Value::as_f64).unwrap_or(100.0) / 100.0;
+                    self.session.preset_variant(id, pid, amount).map_err(|e| bad(&e))?
                 } else if let Some(profile) = p.get("profile").and_then(Value::as_str) {
                     d.with_profile(profile)
                 } else if let Some(v) = p.get("version").and_then(Value::as_u64) {

@@ -1242,6 +1242,16 @@ impl Session {
         Some(crate::upright_transfer::apply_preset(p, &p.develop, preset, amount))
     }
 
+    /// A preset's picture of photo `id`, as the presets panel shows it: preset `pid` at `amount` (0..2) over the photo's
+    /// original framed as the photo is (its crop and orientation), not over its edit, so the panel's pictures stay put
+    /// while presets are applied. `render.variant` draws it; `preset.settings` gives it to a renderer of the frontend's.
+    pub fn preset_variant(&self, id: PhotoId, pid: &str, amount: f64) -> std::result::Result<DevelopSettings, String> {
+        let preset = self.presets.iter().find(|x| x.id == pid).ok_or_else(|| format!("no preset `{pid}`"))?;
+        let photo = self.catalog.photo(id).ok_or("no such photo")?;
+        let base = DevelopSettings { crop: photo.develop.crop, orientation: photo.develop.orientation, ..photo.import_defaults() };
+        Ok(preset.apply(&base, amount.clamp(0.0, 2.0)))
+    }
+
     /// The op that sets a photo's develop settings and appends a History entry (for batches).
     pub fn develop_op(&self, id: PhotoId, settings: DevelopSettings, label: &str) -> Option<Op> {
         self.catalog.photo(id)?;

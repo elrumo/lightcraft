@@ -124,3 +124,29 @@ fn presets_scale_bench() {
     eprintln!("preset.favorite (saves presets.json): {:?}", t.elapsed());
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+#[test]
+fn preset_settings_is_the_variant_over_the_original_and_changes_nothing() {
+    let lib = temp_dir("preset-settings");
+    let mut s = Session::new();
+    s.open_library(&lib, true).unwrap();
+    let pid = s.add_presets(many(1)).remove(0);
+    let id = s.active().expect("a photo");
+    s.execute("develop.set", &json!({"control": "light.contrast", "value": 40.0})).unwrap();
+    let edited = s.develop_of(id).unwrap();
+    let got = s.execute("preset.settings", &json!({"id": pid, "photo": id.0})).unwrap();
+    // what render.variant draws: the preset over the original, not over the edit
+    let want = s.preset_variant(id, &pid, 1.0).unwrap();
+    assert_eq!(got, want.to_json());
+    assert_eq!(got["light"]["exposure"], json!(-2.0), "the preset's own value");
+    assert_ne!(got["light"]["contrast"], json!(40.0), "not the photo's edit");
+    assert_eq!(s.develop_of(id).unwrap(), edited, "nothing changed");
+    // the active photo when none is named; a half amount; hostile input
+    assert_eq!(s.execute("preset.settings", &json!({"id": pid, "amount": 100})).unwrap(), got);
+    assert_ne!(s.execute("preset.settings", &json!({"id": pid, "amount": 50})).unwrap(), got);
+    assert!(s.execute("preset.settings", &json!({"id": pid, "amount": 1e308})).is_ok());
+    assert!(s.execute("preset.settings", &json!({"id": "no.such"})).is_err());
+    assert!(s.execute("preset.settings", &json!({"id": pid, "photo": u64::MAX})).is_err());
+    assert!(s.execute("preset.settings", &json!({})).is_err());
+    let _ = std::fs::remove_dir_all(&lib);
+}
