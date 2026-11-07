@@ -236,7 +236,11 @@ GET    /api/admin/search            {enabled, installed, active, loaded, model, 
                                      faces: {installed, sizeBytes, licenses, download, schedule},
                                      users: [{name, faces, total, indexed, read, found, work}]}   (null: not done for this server)
                                      schedule: {paused, from, to, runsNow, left, ready, perMinute, lastSecs, now: {user, secs}}
-                                     work: {search|text|faces: {perMinute, waiting, failed, problem}}
+                                     work: {search|text|faces|sensitive: {perMinute, waiting, failed, problem, device}}
+                                     previews: {paused, left, done, perMinute, etaSecs, rebuilding, have, photos, building,
+                                                users: [{name, left, done, total, have, photos, errors, device}]}
+                                     device: null while this server does it for the user, else {seenSecs} (their devices
+                                     do it, `PUT /api/work/settings`; how long since one last claimed photos)
 PUT    /api/admin/search            {enabled}: the switch; the model stays on disk when off
 PUT    /api/admin/search/text       {enabled}: the same for reading the text in photos (what was read is kept)
 POST   /api/admin/search[/text|/faces]/download   {acknowledged: true}: download those models if they aren't there (400 without the

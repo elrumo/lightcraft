@@ -1075,7 +1075,9 @@ fn previews(st: &State) -> Value {
             last = Some((n, at));
         }
         building.extend(s.previews_building.iter().cloned());
-        users.push(json!({"name": name, "left": s.previews + device, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len()}));
+        // (`device`: their devices build them, as the model parts' `work.<part>.device`)
+        let by_device = st.vision.work.previews_moved(name).then(|| json!({"seenSecs": st.vision.work.helper_seen(name).map(|d| d.as_secs())}));
+        users.push(json!({"name": name, "left": s.previews + device, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len(), "device": by_device}));
     }
     building.sort();
     json!({

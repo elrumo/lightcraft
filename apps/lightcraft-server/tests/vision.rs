@@ -1557,6 +1557,11 @@ fn a_device_builds_the_previews_the_server_left_to_it() {
     }
     assert_eq!(files_under(&scratch), 0, "no original or preview stays in the scratch folder");
     assert_eq!(get(&f.ann, "/api/work/settings").1["moved"], json!(["previews"]));
+    // (and the admin's Previews page says a device builds them, and when it last asked)
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+    let s = get(&admin, "/api/admin/search").1;
+    assert!(s["previews"]["users"][0]["device"]["seenSecs"].is_u64(), "{s}");
 }
 
 #[test]
