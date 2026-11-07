@@ -75,6 +75,23 @@ fn photo_arg(s: &Session, p: &Value, c: &str) -> crate::Result<PhotoId> {
     }
 }
 
+/// `photo.localTone`'s answer for a source's local tone mapping: the gain table map's fields, and the placement as the affine map from
+/// the oriented picture's relative position (u right, v down, 0..1) to the active area's (orientations only swap and flip axes, so three
+/// points give it exactly).
+fn local_tone_json(t: &lightcraft_pipeline::local_tone::LocalTone) -> Value {
+    let m = &t.map;
+    let (o, x, y) = (t.placement.active(0.0, 0.0), t.placement.active(1.0, 0.0), t.placement.active(0.0, 1.0));
+    json!({
+        "points": [m.points_v, m.points_h, m.points_n],
+        "spacing": [m.spacing_v, m.spacing_h],
+        "origin": [m.origin_v, m.origin_h],
+        "weights": m.weights,
+        "gamma": m.gamma,
+        "gains": m.gains,
+        "toActive": [x.0 - o.0, y.0 - o.0, o.0, x.1 - o.1, y.1 - o.1, o.1],
+    })
+}
+
 /// `photo.mattes`' answer for a source's `mattes`: its depth as a [`lightcraft_develop::DepthMap`] and each matte as deflated,
 /// base64 alpha bytes (the encoding of `SegMask::from_logits`).
 fn mattes_json(m: &lightcraft_pipeline::masks::Mattes) -> Value {
@@ -390,6 +407,20 @@ pub fn specs() -> Vec<CommandSpec> {
                     json!({"long": crate::scene_level::GRID_LONG, "short": crate::scene_level::GRID_SHORT, "cells": cells})
                 });
                 Ok(json!({"tone": tone.and_then(|t| serde_json::to_value(t).ok()), "level": s.scene_level_of(id), "colour": colour}))
+            }
+        ),
+        cmd!(
+            query "photo.localTone",
+            "Camera Local Tone",
+            [],
+            None,
+            "{id?} → {localTone: {points: [v, h, n], spacing: [v, h], origin: [v, h], weights: [×5], gamma, gains: [v × h × n] (row-major, the table points innermost), toActive: [a, b, c, d, e, f]} | null} the camera's own local tone mapping a raw's source carries (a DNG `ProfileGainTableMap`, an Apple ProRAW's), which a render applies when the photo's Profile option `profile.camera_local_tone` is on (the default): each pixel of the scene-linear source is multiplied by the gain the map gives its position and colour, before the white balance and before the camera tone curve (`photo.cameraTone`), which is meant for the light after it. The gain at relative active-area position (x, y): the four tables around it interpolated bilinearly (grid origin and spacing relative to the active area, edge tables repeated outside), each looked up linearly at `input × n` (clamped to the last point), `input = clamp((R, G, B, min, max) · weights, 0, 1) ^ gamma` of the pixel in linear ProPhoto (D50) after the baseline exposure. `toActive` maps the oriented picture's relative position (u to the right, v down, 0..1) to it: x = a·u + b·v + c, y = d·u + e·v + f. `null` for a photo whose source has none. Decodes the photo at thumbnail size when no source of it is cached; changes no edit",
+            always,
+            |s, p| {
+                let c = "photo.localTone";
+                let id = photo_arg(s, p, c)?;
+                let t = s.local_tone_of(id).map_err(|e| bad(c, e))?;
+                Ok(json!({"localTone": t.as_deref().map(local_tone_json)}))
             }
         ),
         cmd!(

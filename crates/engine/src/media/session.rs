@@ -666,6 +666,15 @@ impl crate::Session {
         Ok(self.source_info(id).mattes)
     }
 
+    /// The camera's local tone mapping photo `id`'s source carries ([`lightcraft_pipeline::SourceInfo::local_tone`]: an Apple ProRAW's
+    /// `ProfileGainTableMap` and where the developed picture sits in the raw's active area; a smart preview keeps it too), for a frontend
+    /// that develops raws itself: the camera tone curve of such a raw is meant for its light after the map. A source the media cache holds
+    /// already knows it; otherwise the photo is decoded at thumbnail size. `None` for a photo with none. Changes no edit.
+    pub fn local_tone_of(&mut self, id: PhotoId) -> Result<Option<Arc<lightcraft_pipeline::local_tone::LocalTone>>, String> {
+        self.ensure_decoded(id)?;
+        Ok(self.source_info(id).local_tone)
+    }
+
     /// The luminance quantiles ([`crate::scene_level`]) of the scene-linear picture photo `id`'s file develops to, for a frontend that
     /// develops raws with another decoder and has to bring its light to this one's scale before the camera tone curve acts on it. Read
     /// from a cached source decoded from the file (call [`Self::camera_tone_of`] first so one is cached); `None` for a source that is

@@ -2036,6 +2036,53 @@ fn existing_photo_settings_are_not_rewritten() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `photo.localTone`: a frontend that develops a raw itself gets the gain table map this engine renders (Apple ProRAW's local tone
+/// mapping) with where its picture sits in the active area; a raw with none gives `null`.
+#[test]
+fn photo_local_tone_gives_the_gain_table_map() {
+    use lightcraft_raw::gaintable::GainTableMap;
+    let plain = crate::tests_xmp::synthetic_dng_with(None, Default::default());
+    let mut raw = lightcraft_raw::decode(&plain).unwrap();
+    raw.color.profile.gain_table_map = Some(GainTableMap {
+        points_v: 1,
+        points_h: 2,
+        points_n: 3,
+        spacing_v: 1.0,
+        spacing_h: 0.5,
+        origin_v: 0.0,
+        origin_h: 0.25,
+        weights: [0.25, 0.5, 0.25, 0.0, 0.0],
+        gamma: 0.5,
+        gains: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+    });
+    let with_map = lightcraft_raw::write_dng(&raw, &Default::default()).unwrap();
+    let dir = crate::tests_xmp::temp_dir("local-tone");
+    let mut s = crate::Session::new().with_fs();
+    let mut import = |name: &str, bytes: &[u8]| {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let r = s.execute("library.import", &serde_json::json!({"paths": [path.to_string_lossy()]})).unwrap();
+        r["imported"][0].as_u64().unwrap()
+    };
+    let (mapped, flat) = (import("map.dng", &with_map), import("flat.dng", &plain));
+    let t = s.execute("photo.localTone", &serde_json::json!({"id": mapped})).unwrap()["localTone"].clone();
+    assert_eq!(t["points"], serde_json::json!([1, 2, 3]), "{t}");
+    assert_eq!((t["spacing"].clone(), t["origin"].clone()), (serde_json::json!([1.0, 0.5]), serde_json::json!([0.0, 0.25])), "{t}");
+    assert_eq!((t["gamma"].as_f64(), t["gains"].as_array().map(Vec::len)), (Some(0.5), Some(6)), "{t}");
+    // the placement, as the engine's own `SourcePlacement::active` gives it, at three corners of the picture
+    let placement = load_bytes(&with_map, 64).unwrap().1.local_tone.expect("the map is the source's").placement;
+    let m: Vec<f64> = serde_json::from_value(t["toActive"].clone()).expect("six numbers");
+    assert_eq!(m.len(), 6);
+    for (u, v) in [(0.0, 0.0), (1.0, 0.0), (0.3, 0.8)] {
+        let (x, y) = placement.active(u, v);
+        assert!((m[0] * u + m[1] * v + m[2] - x).abs() < 1e-9 && (m[3] * u + m[4] * v + m[5] - y).abs() < 1e-9, "{m:?} at {u},{v}");
+    }
+    assert!(s.execute("photo.localTone", &serde_json::json!({"id": flat})).unwrap()["localTone"].is_null());
+    let e = s.execute("photo.localTone", &serde_json::json!({"id": 9999})).unwrap_err().to_string();
+    assert!(e.contains("no such photo 9999"), "{e}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `photo.cameraTone`: a frontend that develops a raw itself gets the base curve this engine shows the raw through. A DNG's
 /// own tone curve is that curve (what a decode of the file finds, handed over as JSON); a raw with none gives `null`; the
 /// second ask is answered from the cached source and says the same.
