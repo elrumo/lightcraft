@@ -203,9 +203,10 @@ pub struct Meta {
     pub regions: Vec<lightcraft_meta::Region>,
     /// Where the camera focused (read from the file's maker notes at import or Reload from Disk; Sony
     /// bodies whose files have been checked), on the upright (EXIF-oriented) photo. Read-only: never
-    /// written to XMP. Left out of the catalog JSON when unknown, so older catalogs read unchanged.
+    /// written to XMP. Left out of the catalog JSON when unknown, so older catalogs read unchanged. Boxed: 104 B
+    /// inline in every photo of a library otherwise, for the few bodies that record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub focus: Option<lightcraft_meta::FocusPoint>,
+    pub focus: Option<Box<lightcraft_meta::FocusPoint>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -287,9 +288,10 @@ pub struct Photo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
     /// Lens corrections embedded in the file (DNG `WarpRectilinear` / `FixVignetteRadial`), applied when
-    /// "Enable Profile Corrections" is on.
+    /// "Enable Profile Corrections" is on. Boxed: the corrections are 1.7 KB and few photos have them, and every photo of
+    /// a library is in memory (the record was 2.8 KB a photo with them inline). Written as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub embedded_lens: Option<lightcraft_develop::EmbeddedLens>,
+    pub embedded_lens: Option<Box<lightcraft_develop::EmbeddedLens>>,
     /// A virtual copy: the photo it was copied from (it shares that photo's file but has its own
     /// settings, metadata and history).
     #[serde(default, skip_serializing_if = "Option::is_none")]

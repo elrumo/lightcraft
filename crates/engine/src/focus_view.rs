@@ -62,7 +62,7 @@ mod tests {
 
     fn photo(w: u32, h: u32, focus: Option<Rect>) -> Photo {
         let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 1 }, "a.jpg", "JPEG", w, h, "2026-10-13T00:00:00");
-        p.meta.focus = focus.map(|rect| FocusPoint { rect, mode: Some("AF-C".into()), area: None, tracking: None });
+        p.meta.focus = focus.map(|rect| Box::new(FocusPoint { rect, mode: Some("AF-C".into()), area: None, tracking: None }));
         p
     }
 
@@ -101,7 +101,7 @@ mod tests {
         let mut s = crate::Session::with_demo();
         let id = *s.visible_cloned().first().expect("a demo photo");
         let mut meta = s.catalog.photo(id).expect("photo").meta.clone();
-        meta.focus = Some(FocusPoint { rect: focus, mode: Some("AF-C".into()), area: Some("Wide".into()), tracking: None });
+        meta.focus = Some(Box::new(FocusPoint { rect: focus, mode: Some("AF-C".into()), area: Some("Wide".into()), tracking: None }));
         s.catalog.apply(lightcraft_catalog::Op::SetMeta { id, meta: Box::new(meta) }).expect("set meta");
         s.execute("library.select", &serde_json::json!({"ids": [id.0]})).expect("select");
         (s, id)

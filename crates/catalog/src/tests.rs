@@ -477,12 +477,12 @@ fn focus_point_is_not_serialized_when_unknown_and_round_trips() {
     let back: Meta = serde_json::from_value(v).unwrap();
     assert!(back.focus.is_none());
     let mut with = m.clone();
-    with.focus = Some(lightcraft_meta::FocusPoint {
+    with.focus = Some(Box::new(lightcraft_meta::FocusPoint {
         rect: lightcraft_meta::Rect { x0: 0.36, y0: 0.33, x1: 0.38, y1: 0.36 },
         mode: Some("AF-C".into()),
         area: Some("Wide".into()),
         tracking: None,
-    });
+    }));
     let json = serde_json::to_string(&with).unwrap();
     assert!(json.contains("\"focus\"") && !json.contains("tracking"), "{json}");
     let back: Meta = serde_json::from_str(&json).unwrap();
@@ -555,6 +555,35 @@ fn random_sort_has_no_date_headers() {
     assert!(c.date_runs(&ids, &Default::default(), SortKey::Random, GroupBy::Day).is_empty());
 }
 
+#[test]
+fn a_photo_record_stays_in_the_small_allocation() {
+    // Every photo of a library is in memory as one `Arc<Photo>`: with its two counts a record up to 1,008 B takes a
+    // 1,024 B block, one byte more a 1,280 B one (60 MB more over 230,000 photos), and the record was 2,808 B with the
+    // lens corrections and the focus point inline. A field that is big and rare goes in a `Box`.
+    let size = std::mem::size_of::<Photo>();
+    assert!(size <= 1008, "Photo is {size} B: box what is big and rare");
+}
+
+#[test]
+fn boxed_lens_and_focus_are_written_as_the_values_themselves() {
+    // the catalog's and the sync's JSON are the same as when these fields were inline: older readers and the snapshot are unchanged
+    let mut p = Photo::new(PhotoId(1), Source::File { path: "/x.dng".into() }, "x.dng", "DNG", 4000, 3000, "2026-11-07T00:00:00");
+    let lens = lightcraft_develop::EmbeddedLens { warp: Some(Default::default()), vignette: Some(Default::default()), ..Default::default() };
+    let focus = lightcraft_meta::FocusPoint {
+        rect: lightcraft_meta::Rect { x0: 0.1, y0: 0.2, x1: 0.3, y1: 0.4 },
+        mode: Some("AF-C".into()),
+        area: None,
+        tracking: None,
+    };
+    p.embedded_lens = Some(Box::new(lens));
+    p.meta.focus = Some(Box::new(focus.clone()));
+    let v = serde_json::to_value(&p).unwrap();
+    assert_eq!(v["embedded_lens"], serde_json::to_value(lens).unwrap());
+    assert_eq!(v["meta"]["focus"], serde_json::to_value(&focus).unwrap());
+    let back: Photo = serde_json::from_value(v).unwrap();
+    assert_eq!((back.embedded_lens.as_deref(), back.meta.focus.as_deref()), (Some(&lens), Some(&focus)));
+}
+
 /// Reload stores the lens data a file carries; the inverse (through the journal's JSON) takes it back.
 #[test]
 fn set_embedded_lens_is_undoable_and_journaled() {
@@ -568,7 +597,7 @@ fn set_embedded_lens_is_undoable_and_journaled() {
     let op = Op::SetEmbeddedLens { id: a, lens: Some(Box::new(lens)) };
     let op: Op = serde_json::from_str(&serde_json::to_string(&op).unwrap()).unwrap();
     let inv = c.apply(op).unwrap();
-    assert_eq!(c.photo(a).unwrap().embedded_lens, Some(lens));
+    assert_eq!(c.photo(a).unwrap().embedded_lens.as_deref(), Some(&lens));
     let inv: Op = serde_json::from_str(&serde_json::to_string(&inv).unwrap()).unwrap();
     c.apply(inv).unwrap();
     assert_eq!(c.photo(a).unwrap().embedded_lens, None);

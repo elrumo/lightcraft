@@ -32,7 +32,7 @@ fn detail_with_focus(f: Option<FocusPoint>) -> (Headless, PhotoId) {
     let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
     let id = *h.app.session.visible_cloned().first().expect("a demo photo");
     let mut meta = h.app.session.catalog.photo(id).expect("photo").meta.clone();
-    meta.focus = f;
+    meta.focus = f.map(Box::new);
     h.app.session.catalog.apply(Op::SetMeta { id, meta: Box::new(meta) }).expect("set meta");
     let r = h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [id.0]}}), T);
     assert_eq!(r["ok"], true, "{r}");
@@ -123,7 +123,7 @@ fn without_a_focus_point_zoom_and_info_are_unchanged() {
 #[test]
 fn focus_box_follows_the_crop_and_drops_a_point_cropped_away() {
     let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 1 }, "a.jpg", "JPEG", 6000, 4000, "2026-10-13T00:00:00");
-    p.meta.focus = Some(focus(0.70, 0.45, 0.80, 0.55));
+    p.meta.focus = Some(Box::new(focus(0.70, 0.45, 0.80, 0.55)));
     let b = crate::panels::detail::focus_box(&p).expect("box");
     assert!((b.x0 - 0.70).abs() < 1e-9 && (b.y1 - 0.55).abs() < 1e-9, "{b:?}");
     // keep the right half: x 0.5..1 becomes 0..1
@@ -138,9 +138,9 @@ fn focus_box_follows_the_crop_and_drops_a_point_cropped_away() {
     assert!(crate::panels::detail::focus_box(&p).is_none());
     // a zero-size photo or a garbage box never panics
     let mut z = Photo::new(PhotoId(2), Source::Demo { scene: 1 }, "z.jpg", "JPEG", 0, 0, "2026-10-13T00:00:00");
-    z.meta.focus = Some(focus(f64::NAN, 0.0, f64::INFINITY, 1.0));
+    z.meta.focus = Some(Box::new(focus(f64::NAN, 0.0, f64::INFINITY, 1.0)));
     assert!(crate::panels::detail::focus_box(&z).is_none());
-    z.meta.focus = Some(focus(0.4, 0.4, 0.6, 0.6));
+    z.meta.focus = Some(Box::new(focus(0.4, 0.4, 0.6, 0.6)));
     assert!(crate::panels::detail::focus_box(&z).is_some());
 }
 

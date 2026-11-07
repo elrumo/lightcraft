@@ -494,7 +494,7 @@ pub(crate) fn heal_preview_only(s: &mut Session, id: lightcraft_catalog::PhotoId
         ops.extend(content_op(p.id, p, info.clone()));
         if p.develop_is(p.import_defaults()) {
             let mut fresh = (**p).clone();
-            (fresh.preview_only, fresh.as_shot_wb, fresh.embedded_lens) = (None, info.as_shot_wb, info.embedded_lens);
+            (fresh.preview_only, fresh.as_shot_wb, fresh.embedded_lens) = (None, info.as_shot_wb, info.embedded_lens.map(Box::new));
             crate::import::apply_import_defaults(s, &mut fresh);
             crate::import::apply_default_crop(&mut fresh, info.default_crop);
             // ponytail: the catalog keeps no as-shot white balance / lens facts for a healed raw (no op sets them
@@ -593,7 +593,7 @@ pub(crate) fn lens_ops(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog:
             matches!(new.origin, LensOrigin::Database { .. }) && matches!(have.origin, LensOrigin::Database { .. }) && !have.superseded_by(new)
         }
     };
-    if lens == ph.embedded_lens || ph.embedded_lens.as_ref().is_some_and(kept) {
+    if lens.as_ref() == ph.embedded_lens.as_deref() || ph.embedded_lens.as_deref().is_some_and(kept) {
         return Vec::new();
     }
     let mut ops = vec![Op::SetEmbeddedLens { id, lens: lens.map(Box::new) }];
@@ -868,11 +868,11 @@ mod tests {
         let mut ph = Photo::new(PhotoId(1), Source::File { path: "/x.arw".into() }, "x.arw", "ARW", 8640, 5760, "2026-10-06T00:00:00");
         ph.captured = Some("2026-10-04T08:16:11".into());
         let mut info = crate::media::ProbeInfo { captured: ph.captured.clone(), ..Default::default() };
-        info.meta.focus = Some(fp(0.3));
+        info.meta.focus = Some(Box::new(fp(0.3)));
         let ops = fill_missing_meta(PhotoId(1), &ph, &info);
         let Some(Op::SetMeta { meta, .. }) = ops.first() else { panic!("{ops:?}") };
-        assert_eq!(meta.focus, Some(fp(0.3)));
-        ph.meta.focus = Some(fp(0.1));
+        assert_eq!(meta.focus.as_deref(), Some(&fp(0.3)));
+        ph.meta.focus = Some(Box::new(fp(0.1)));
         assert!(fill_missing_meta(PhotoId(1), &ph, &info).is_empty(), "a known focus point is kept");
     }
 
@@ -911,7 +911,7 @@ mod tests {
             c.apply(op).unwrap();
         }
         let after = c.photo(lightcraft_catalog::PhotoId(1)).unwrap();
-        assert_eq!(after.embedded_lens, Some(lens()));
+        assert_eq!(after.embedded_lens.as_deref().copied(), Some(lens()));
         assert!(!after.is_edited());
         assert_eq!(*after.develop, after.camera_defaults());
         assert!(lens_ops(after.id, after, info.embedded_lens).is_empty(), "nothing more to do the second time");
@@ -935,11 +935,11 @@ mod tests {
     fn reload_keeps_a_vignette_measured_at_decode() {
         let mut ph = old_rw2();
         let measured = lightcraft_develop::EmbeddedLens { vignette: Some(Default::default()), ..Default::default() };
-        ph.embedded_lens = Some(measured);
+        ph.embedded_lens = Some(Box::new(measured));
         assert!(lens_ops(ph.id, &ph, None).is_empty());
         assert!(matches!(lens_ops(ph.id, &ph, Some(lens())).as_slice(), [Op::SetEmbeddedLens { lens: Some(_), .. }]));
         // a file's own warp that a probe no longer finds is dropped as before
-        ph.embedded_lens = Some(lens());
+        ph.embedded_lens = Some(Box::new(lens()));
         assert!(matches!(lens_ops(ph.id, &ph, None).as_slice(), [Op::SetEmbeddedLens { lens: None, .. }]));
     }
 
@@ -954,9 +954,9 @@ mod tests {
             _ => None,
         };
         let mut ph = old_rw2();
-        ph.embedded_lens = Some(EmbeddedLens { vignette: Some(Default::default()), origin: LensOrigin::Measured, ..Default::default() });
+        ph.embedded_lens = Some(Box::new(EmbeddedLens { vignette: Some(Default::default()), origin: LensOrigin::Measured, ..Default::default() }));
         assert_eq!(set(lens_ops(ph.id, &ph, Some(from_db(3)))), Some(Some(from_db(3))), "a profile replaces a measured vignette");
-        ph.embedded_lens = Some(from_db(3));
+        ph.embedded_lens = Some(Box::new(from_db(3)));
         assert_eq!(set(lens_ops(ph.id, &ph, None)), None, "a device without the database keeps it");
         assert_eq!(set(lens_ops(ph.id, &ph, Some(from_db(2)))), None, "and one with an older database");
         assert_eq!(set(lens_ops(ph.id, &ph, Some(from_db(3)))), None);
@@ -979,7 +979,7 @@ mod tests {
     #[test]
     fn reload_leaves_a_photo_whose_user_switched_the_correction_off_alone() {
         let mut ph = old_rw2();
-        ph.embedded_lens = Some(lens());
+        ph.embedded_lens = Some(Box::new(lens()));
         let mut d = ph.camera_defaults();
         d.optics.lens_profile = false;
         ph.develop = std::sync::Arc::new(d);
@@ -1105,11 +1105,11 @@ mod tests {
         assert!(ph.embedded_lens.is_none() && ph.develop.optics.lens_profile && !ph.is_edited(), "import: on, nothing measured yet");
         let (w, h) = (192, 128);
         let on = s.render_now(id, w, h).unwrap().image;
-        let learnt = s.catalog.photo(id).unwrap().embedded_lens;
+        let learnt = s.catalog.photo(id).unwrap().embedded_lens.as_deref().copied();
         let v = learnt.and_then(|l| l.vignette).expect("measured when decoded");
         assert!(learnt.is_some_and(|l| l.warp.is_none() && !l.has_stages()));
         s.execute("photo.reload", &json!({"ids": [id.0]})).unwrap();
-        assert_eq!(s.catalog.photo(id).unwrap().embedded_lens, learnt, "Reload keeps it");
+        assert_eq!(s.catalog.photo(id).unwrap().embedded_lens.as_deref().copied(), learnt, "Reload keeps it");
         let mut off = (*ph.develop).clone();
         off.optics.lens_profile = false;
         s.catalog.apply(Op::SetDevelop { id, settings: std::sync::Arc::new(off), label: "x".into(), edited: None }).unwrap();

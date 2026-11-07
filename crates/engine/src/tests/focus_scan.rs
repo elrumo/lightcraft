@@ -40,7 +40,7 @@ fn add(s: &mut Session, photos: Vec<Photo>) {
 }
 
 fn focus(s: &Session, id: u64) -> Option<lightcraft_meta::FocusPoint> {
-    s.catalog.photo(PhotoId(id)).unwrap().meta.focus.clone()
+    s.catalog.photo(PhotoId(id)).unwrap().meta.focus.as_deref().cloned()
 }
 
 fn pump_until_idle(s: &mut Session) -> Value {
@@ -88,7 +88,7 @@ fn fills_missing_points_and_remembers_photos_without_one() {
         tracking: None,
     };
     let mut with_point = photo(4, &af, "SONY ILCE-1");
-    with_point.meta.focus = Some(known.clone());
+    with_point.meta.focus = Some(Box::new(known.clone()));
     let mut s = Session::new();
     add(
         &mut s,
@@ -249,7 +249,7 @@ fn changes_under_a_running_job_are_respected() {
             format: None,
         })?;
         let mut meta = s.catalog.photo(PhotoId(3)).unwrap().meta.clone();
-        meta.focus = Some(mine.clone());
+        meta.focus = Some(Box::new(mine.clone()));
         s.apply_system(Op::SetMeta { id: PhotoId(3), meta: Box::new(meta) })?;
         Ok(Value::Null)
     })

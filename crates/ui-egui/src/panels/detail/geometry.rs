@@ -212,7 +212,7 @@ pub(crate) fn output_px(frame: &Frame) -> [usize; 2] {
 /// normalized box over the drawn image: `None` when the photo has none or it is cropped away. (The mapping is the
 /// engine's, shared with a native frontend's `view.focus`.)
 pub(crate) fn focus_box(photo: &lightcraft_catalog::Photo) -> Option<lightcraft_geom::Rect> {
-    lightcraft_engine::focus_view::focus_box(photo, photo.embedded_lens.as_ref())
+    lightcraft_engine::focus_view::focus_box(photo, photo.embedded_lens.as_deref())
 }
 
 /// Where Toggle Zoom centres the view on the photo's focus point (`app.ui.pan`), if it has one in frame.

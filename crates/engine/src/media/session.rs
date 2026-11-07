@@ -73,7 +73,7 @@ impl crate::Session {
                 p.height.max(1) as usize,
                 &settings,
                 apply_crop,
-                p.embedded_lens.as_ref(),
+                p.embedded_lens.as_deref(),
             );
             let (fw, fh) = frame.fit(max_w, max_h);
             source_edge_needed(&p, &settings, apply_crop, fw.max(fh))
@@ -378,7 +378,7 @@ impl crate::Session {
             p.height.max(1) as usize,
             &job.settings,
             apply_crop,
-            p.embedded_lens.as_ref(),
+            p.embedded_lens.as_deref(),
         );
         let ppl = frame.px_per_long(full_w);
         lightcraft_pipeline::spots::window_for_reads_checked(&job.settings, &frame, full_w, full_h, ppl, window.clamped(full_w, full_h))?;
@@ -526,7 +526,7 @@ impl crate::Session {
     fn learn_lens(&mut self, id: PhotoId, info: &SourceInfo) {
         let Some(p) = self.catalog.photo(id) else { return };
         let Some(lens) = info.lens.as_ref() else { return };
-        if !info.raw || !p.develops_raw() || p.embedded_lens.as_ref().is_some_and(|have| !have.superseded_by(lens)) {
+        if !info.raw || !p.develops_raw() || p.embedded_lens.as_deref().is_some_and(|have| !have.superseded_by(lens)) {
             return;
         }
         for op in crate::cmd::convert::lens_ops(id, p, info.lens) {
@@ -620,7 +620,7 @@ impl crate::Session {
     /// The lens correction photo `id`'s file embeds: the catalog's, else what its decoder found (a raw
     /// imported as preview-only and decodable since has none in the catalog).
     pub fn embedded_lens(&self, id: PhotoId) -> Option<lightcraft_develop::EmbeddedLens> {
-        self.catalog.photo(id).and_then(|p| p.embedded_lens).or_else(|| self.source_info(id).lens)
+        self.catalog.photo(id).and_then(|p| p.embedded_lens.as_deref().copied()).or_else(|| self.source_info(id).lens)
     }
 
     /// Makes sure a decode of photo `id` is cached, so [`Self::embedded_lens`] sees the lens data the decoder finds (the vignetting

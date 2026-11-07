@@ -383,7 +383,7 @@ fn describe_info(file: &Found, hash: &str, info: lightcraft_engine::media::Probe
     p.meta = info.meta;
     p.as_shot_wb = info.as_shot_wb;
     p.content_hash = Some(hash.to_string());
-    p.embedded_lens = info.embedded_lens;
+    p.embedded_lens = info.embedded_lens.map(Box::new);
     p.preview_only = info.preview_only;
     p.server_path = Some(file.key.clone());
     // the look a desktop import with the default settings gives (a raw's colour noise reduction), then the crop the file asks for by

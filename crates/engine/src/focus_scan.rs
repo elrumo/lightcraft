@@ -278,7 +278,7 @@ fn commit(s: &mut Session) {
         match focus {
             Some(f) => {
                 let mut meta = ph.meta.clone();
-                meta.focus = Some(f);
+                meta.focus = Some(Box::new(f));
                 ops.push(Op::SetMeta { id, meta: Box::new(meta) });
             }
             None => none.push(id.0),

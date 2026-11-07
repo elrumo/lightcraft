@@ -284,13 +284,13 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 p.meta = info.meta;
                 p.as_shot_wb = info.as_shot_wb;
                 p.content_hash = info.content_hash;
-                p.embedded_lens = info.embedded_lens;
+                p.embedded_lens = info.embedded_lens.map(Box::new);
                 p.set_preview_only(info.preview_only.clone());
                 // a raw its camera crops (a Panasonic's in-camera aspect ratio) keeps its whole sensor: the photo is catalogued
                 // with the whole area's size, and the camera's frame is its import crop
                 let camera_crop = info.camera_crop.as_ref().filter(|_| keeps_whole_sensor(&sidecar));
                 if let Some(c) = camera_crop {
-                    ((p.width, p.height), p.embedded_lens) = (c.whole, c.lens);
+                    ((p.width, p.height), p.embedded_lens) = (c.whole, c.lens.map(Box::new));
                 }
                 apply_import_defaults(s, &mut p);
                 apply_default_crop(&mut p, info.default_crop);

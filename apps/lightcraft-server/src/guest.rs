@@ -305,7 +305,7 @@ fn describe(f: &Received, bytes: &[u8], now: &str, who: &str) -> Result<Photo, S
     p.meta = info.meta;
     p.as_shot_wb = info.as_shot_wb;
     p.content_hash = Some(f.hash.clone());
-    p.embedded_lens = info.embedded_lens;
+    p.embedded_lens = info.embedded_lens.map(Box::new);
     p.preview_only = info.preview_only;
     // the look a desktop import with the default settings gives (a raw's colour noise reduction), then the crop the file asks for by
     // itself (an Olympus body's aspect-ratio setting): both part of the import look, as on a desktop

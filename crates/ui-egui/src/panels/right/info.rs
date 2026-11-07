@@ -294,7 +294,7 @@ fn camera_card(ui: &mut egui::Ui, p: &lightcraft_catalog::Photo) {
         }
         // where the camera focused, and how (View ▸ Focus Point draws it): only when known; the
         // whole card's width, so "AF-C · Expanded Flexible Spot · Face tracking" fits
-        if let Some(text) = focus_text(m.focus.as_ref()) {
+        if let Some(text) = focus_text(m.focus.as_deref()) {
             ui.add_space(3.0);
             let r = ui.horizontal_wrapped(|ui| {
                 ui.label(dim(crate::i18n::tr("Focus")));
