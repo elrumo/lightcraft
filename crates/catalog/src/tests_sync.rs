@@ -54,7 +54,7 @@ impl Replica {
         }
     }
     fn push(&mut self, s: &mut ServerCore, lose_ack: bool) {
-        let (ops, pushed) = self.out.take_push(usize::MAX);
+        let (ops, pushed) = self.out.take_push(usize::MAX, &self.cat);
         if ops.is_empty() {
             return;
         }
@@ -75,12 +75,14 @@ impl Replica {
         let mut c = Catalog::from_snapshot(&snap).unwrap();
         carry_local(&self.cat, &mut c);
         c.set_id_space(self.space);
-        self.out.rebase(&mut c);
+        self.out.rebase(&self.cat, &mut c);
         self.cat = c;
         self.cursor = seq;
         self.dirty = false;
     }
     fn sync(&mut self, s: &mut ServerCore) {
+        // (through its file, as when the app opens again)
+        self.out = serde_json::from_slice(&serde_json::to_vec(&self.out).unwrap()).unwrap();
         self.pull(s);
         if self.dirty {
             self.repair(s);
@@ -167,7 +169,7 @@ fn outbox_records_shared_changes_only() {
     };
     let inv = c.apply(batch.clone()).unwrap();
     out.record(&batch, &inv, &c);
-    let (ops, _) = out.take_push(10);
+    let (ops, _) = out.take_push(10, &c);
     assert_eq!(ops.len(), 2);
     assert!(matches!(ops[1], Op::SetRating { rating: 3, .. }));
     // a second change to the same value replaces the pending one (and moves it last)
@@ -191,7 +193,7 @@ fn outbox_records_shared_changes_only() {
     let promote = Op::SetLocal { id: lid, local: false };
     let inv = c.apply(promote.clone()).unwrap();
     out.record(&promote, &inv, &c);
-    let (ops, _) = out.take_push(10);
+    let (ops, _) = out.take_push(10, &c);
     let Some(Op::AddPhoto { photo }) = ops.last() else { panic!("{ops:?}") };
     assert_eq!((photo.rating, photo.local), (2, false));
     assert_eq!(photo.source, Source::File { path: "web/00ff/b.jpg".into() }, "points at its content");
@@ -231,7 +233,7 @@ fn outbox_acks_only_what_did_not_change() {
     let op = Op::SetRating { id, rating: 1 };
     let inv = c.apply(op.clone()).unwrap();
     out.record(&op, &inv, &c);
-    let (_, pushed) = out.take_push(10);
+    let (_, pushed) = out.take_push(10, &c);
     // changed again while the push was on its way
     let op = Op::SetRating { id, rating: 2 };
     let inv = c.apply(op.clone()).unwrap();
@@ -821,7 +823,7 @@ fn seeding_uploads_a_whole_library() {
     let mut out = Outbox::default();
     out.seed(&c);
     let mut s = server();
-    let (ops, _) = out.take_push(usize::MAX);
+    let (ops, _) = out.take_push(usize::MAX, &c);
     assert_eq!(s.push(0, &ops), Ok(ops.len() as u64));
     assert_eq!(shared(s.catalog()), shared(&c));
 }
@@ -866,4 +868,109 @@ fn rebase_merges_with_the_server_value() {
     b.sync(&mut s);
     assert_eq!(shared(&a.cat), shared(&b.cat));
     assert_eq!(shared(&a.cat), shared(s.catalog()));
+}
+
+/// A photo waiting to go is its id (a whole library queued at once is not a copy of it): it goes as
+/// the library has it when the push is taken, and its own echo settles it.
+#[test]
+fn a_queued_photo_goes_as_it_is_when_pushed() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let add = add_photo(&mut a.cat);
+    let Op::AddPhoto { photo } = &add else { panic!() };
+    let id = photo.id;
+    a.local(add);
+    a.local(Op::SetRating { id, rating: 3 });
+    let file = serde_json::to_value(&a.out).unwrap();
+    assert_eq!(file["entries"][0], json!([id.0, 1]), "{file}");
+    let (ops, pushed) = a.out.take_push(usize::MAX, &a.cat);
+    let Some(Op::AddPhoto { photo }) = ops.first() else { panic!("{ops:?}") };
+    assert_eq!(photo.rating, 3, "the photo as it is now");
+    // sent: it says so in the file too
+    let file = serde_json::to_value(&a.out).unwrap();
+    assert_eq!(file["entries"][0], json!([id.0, 1, false, true]), "{file}");
+    assert_eq!(serde_json::from_value::<Outbox>(file).unwrap(), a.out);
+    // the acknowledgement is lost: the photo and the rating coming back settle both
+    assert!(s.push(a.cursor, &ops).is_ok());
+    a.pull(&mut s);
+    assert!(a.out.is_empty(), "{:?}", a.out);
+    a.out.acked(&pushed);
+    assert_eq!(shared(s.catalog()), shared(&a.cat));
+}
+
+/// A photo removed before its addition went: both go, the addition with the photo as it was.
+#[test]
+fn a_queued_photo_removed_before_it_went_goes_and_goes_away() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let add = add_photo(&mut a.cat);
+    let Op::AddPhoto { photo } = &add else { panic!() };
+    let id = photo.id;
+    a.local(add.clone());
+    a.local(Op::RemovePhoto { id });
+    let (ops, _) = a.out.take_push(usize::MAX, &a.cat);
+    assert!(matches!(ops.as_slice(), [Op::AddPhoto { .. }, Op::RemovePhoto { .. }]), "{ops:?}");
+    a.sync(&mut s);
+    assert!(a.out.is_empty() && !a.dirty, "{:?}", a.out);
+    assert!(s.catalog().photo(id).is_none());
+}
+
+/// What every build until photos went by id wrote (each entry whole, an addition with its photo) still
+/// reads, and is sent as it was.
+#[test]
+fn an_outbox_written_with_whole_photos_still_reads() {
+    let mut c = Catalog::new();
+    let add = add_photo(&mut c);
+    c.apply(add.clone()).unwrap();
+    let id = PhotoId(1);
+    let rate = Op::SetRating { id, rating: 4 };
+    let v = |op: &Op| serde_json::to_value(op).unwrap();
+    let old = json!({"entries": [
+        {"key": "p1.add", "base": v(&Op::RemovePhoto { id }), "latest": v(&add), "rev": 1, "sent": v(&add)},
+        {"key": "p1.rating", "base": v(&Op::SetRating { id, rating: 0 }), "latest": v(&rate), "rev": 2},
+    ], "rev": 2});
+    let mut out: Outbox = serde_json::from_value(old).unwrap();
+    assert_eq!(out.len(), 2);
+    assert_eq!(out.changes().collect::<Vec<_>>(), vec![(Subject::Photo(id), "add"), (Subject::Photo(id), "rating")]);
+    // written again (in the new form), it reads back the same
+    let again: Outbox = serde_json::from_slice(&serde_json::to_vec(&out).unwrap()).unwrap();
+    assert_eq!(again, out);
+    let (ops, _) = out.clone().take_push(10, &c);
+    assert_eq!(ops, vec![add.clone(), rate.clone()]);
+    // the photo whose push was sent comes back: settled
+    assert_eq!(out.merge_remote(&add), None);
+    assert_eq!(out.take_push(10, &c).0, vec![rate]);
+}
+
+/// Many changes taken out and moved last (the outbox squeezes its gaps out as it goes) keep their order.
+#[test]
+fn the_outbox_keeps_its_order_through_many_acknowledgements() {
+    let mut c = Catalog::new();
+    let ids: Vec<PhotoId> = (0..300)
+        .map(|_| {
+            let op = add_photo(&mut c);
+            c.apply(op).unwrap();
+            c.photos().last().unwrap().id
+        })
+        .collect();
+    let mut out = Outbox::default();
+    out.seed(&c);
+    // a third rated while their additions wait: each rating after every addition
+    for id in ids.iter().step_by(3) {
+        let op = Op::SetRating { id: *id, rating: 2 };
+        let inv = c.apply(op.clone()).unwrap();
+        out.record(&op, &inv, &c);
+    }
+    let mut sent = Vec::new();
+    while !out.is_empty() {
+        let (ops, pushed) = out.take_push(37, &c);
+        assert!(!ops.is_empty());
+        out.acked(&pushed);
+        sent.extend(ops);
+        assert_eq!(out.changes().count(), out.len());
+    }
+    let adds: Vec<PhotoId> = sent.iter().filter_map(|op| if let Op::AddPhoto { photo } = op { Some(photo.id) } else { None }).collect();
+    assert_eq!(adds, ids);
+    assert_eq!(sent.len(), 400);
+    assert!(sent[..300].iter().all(|op| matches!(op, Op::AddPhoto { .. })));
 }

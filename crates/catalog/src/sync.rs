@@ -7,7 +7,9 @@
 //!   photo's rating, an album's photos…), each with the value it replaced ([`Outbox`]). An op from
 //!   another device that sets a value with a pending change is merged with it ([`merge3`]):
 //!   Exposure edited here and Contrast there both survive, so do photos added to one album on two
-//!   devices. Everything else is applied as it arrives. A removal beats a pending change.
+//!   devices. Everything else is applied as it arrives. A removal beats a pending change. A photo
+//!   added is queued by its id and goes as the catalog has it when it is pushed (a library's first
+//!   sync queues all of them).
 //! - **Device-local state stays local**: browsing Local folders, renames and relinks of files on
 //!   disk, and edit History never leave the device ([`key_of`] is `None`). Pushed photos point at
 //!   their content (`web/<hash>/<name>`, see [`original_path`]), not at a path on this disk.
@@ -16,10 +18,10 @@
 //!   reloads the server's state ([`ServerCore::snapshot`]), keeps its device-local state
 //!   ([`carry_local`]) and replays its pending changes on top ([`Outbox::rebase`]).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 
 use crate::journal::Journal;
@@ -260,9 +262,98 @@ struct Entry {
     sent: Option<Op>,
 }
 
+/// A photo added to the library and waiting to go, by its id: what goes is the photo as the
+/// catalog has it when the push is taken ([`Outbox::take_push`]), so a whole library queued at once
+/// costs a few bytes a photo instead of a copy of each (its later changes are queued too, and go
+/// after it). `sync.outbox` holds it as `[id, rev]`, or `[id, rev, hidden, sent]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Added {
+    id: PhotoId,
+    rev: u64,
+    /// It was hidden when it was queued ([`Outbox::carries_hidden`]).
+    hidden: bool,
+    /// The last push sent it: coming back from the server, it is this device's photo (only this
+    /// device makes photos with its ids), and done.
+    sent: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Slot {
+    Added(Added),
+    Change(Box<Entry>),
+}
+
+/// What the outbox finds a change by: its [`key_of`] key, a photo's addition by the photo.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Key {
+    Added(PhotoId),
+    Other(Box<str>),
+}
+
+impl Key {
+    fn of(key: &str) -> Key {
+        match parse_key(key) {
+            (Subject::Photo(id), "add") => Key::Added(id),
+            _ => Key::Other(key.into()),
+        }
+    }
+}
+
+impl Slot {
+    fn key(&self) -> Key {
+        match self {
+            Slot::Added(a) => Key::Added(a.id),
+            Slot::Change(e) => Key::of(&e.key),
+        }
+    }
+
+    fn rev(&self) -> u64 {
+        match self {
+            Slot::Added(a) => a.rev,
+            Slot::Change(e) => e.rev,
+        }
+    }
+}
+
+impl Serialize for Slot {
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Slot::Added(a) if !a.hidden && !a.sent => (a.id, a.rev).serialize(s),
+            Slot::Added(a) => (a.id, a.rev, a.hidden, a.sent).serialize(s),
+            Slot::Change(e) => e.serialize(s),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Slot {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Slot, D::Error> {
+        struct Form;
+        impl<'de> de::Visitor<'de> for Form {
+            type Value = Slot;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a pending change, or a photo to add as [id, rev]")
+            }
+            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<Slot, A::Error> {
+                let (Some(id), Some(rev)) = (seq.next_element::<PhotoId>()?, seq.next_element::<u64>()?) else {
+                    return Err(de::Error::custom("a photo to add without its id and revision"));
+                };
+                let hidden = seq.next_element()?.unwrap_or(false);
+                let sent = seq.next_element()?.unwrap_or(false);
+                // (what a later version adds is skipped)
+                while seq.next_element::<de::IgnoredAny>()?.is_some() {}
+                Ok(Slot::Added(Added { id, rev, hidden, sent }))
+            }
+            fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> std::result::Result<Slot, A::Error> {
+                Entry::deserialize(de::value::MapAccessDeserializer::new(map)).map(|e| Slot::Change(Box::new(e)))
+            }
+        }
+        d.deserialize_any(Form)
+    }
+}
+
 /// What a push sent ([`Outbox::take_push`]): entries by key and revision, in order.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Pushed(Vec<(String, u64)>);
+pub struct Pushed(Vec<(Key, u64)>);
 
 impl Pushed {
     pub fn len(&self) -> usize {
@@ -275,35 +366,143 @@ impl Pushed {
 
 /// A device's changes the server hasn't acknowledged, one per value, in the order they must be
 /// applied (a changed entry moves to the end: after whatever it depends on, like an album's new
-/// photos after the photos).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// photos after the photos). Found by key, so queueing a whole library takes as long as its
+/// photos, not their square.
+#[derive(Clone, Debug, Default)]
 pub struct Outbox {
-    entries: Vec<Entry>,
+    /// The changes in order; `None` where one was taken out (squeezed out once they are most of it).
+    slots: Vec<Option<Slot>>,
+    /// Where each change is in `slots`.
+    at: HashMap<Key, usize>,
     rev: u64,
+}
+
+impl PartialEq for Outbox {
+    fn eq(&self, other: &Outbox) -> bool {
+        self.rev == other.rev && self.iter().eq(other.iter())
+    }
+}
+
+impl Serialize for Outbox {
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        struct Entries<'a>(&'a Outbox);
+        impl Serialize for Entries<'_> {
+            fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+                s.collect_seq(self.0.iter())
+            }
+        }
+        let mut st = s.serialize_struct("Outbox", 2)?;
+        st.serialize_field("entries", &Entries(self))?;
+        st.serialize_field("rev", &self.rev)?;
+        st.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Outbox {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Outbox, D::Error> {
+        #[derive(Deserialize)]
+        struct Form {
+            entries: Vec<Slot>,
+            rev: u64,
+        }
+        let f = Form::deserialize(d)?;
+        let mut out = Outbox { rev: f.rev, ..Outbox::default() };
+        for s in f.entries {
+            // (a key twice, which a sound file never has: the later one)
+            out.take(&s.key());
+            out.put(s);
+        }
+        out.tidy();
+        Ok(out)
+    }
 }
 
 impl Outbox {
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.at.is_empty()
     }
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.at.len()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &Slot> {
+        self.slots.iter().flatten()
+    }
+
+    fn slot(&self, key: &Key) -> Option<&Slot> {
+        self.at.get(key).and_then(|&i| self.slots.get(i)?.as_ref())
+    }
+
+    /// Take the change of `key` out.
+    fn take(&mut self, key: &Key) -> Option<Slot> {
+        let i = self.at.remove(key)?;
+        self.slots.get_mut(i)?.take()
+    }
+
+    /// Queue `slot` last (its key has no change queued).
+    fn put(&mut self, slot: Slot) {
+        self.at.insert(slot.key(), self.slots.len());
+        self.slots.push(Some(slot));
+    }
+
+    /// Keep the changes `keep` says yes to.
+    fn retain(&mut self, mut keep: impl FnMut(&mut Slot) -> bool) {
+        for cell in &mut self.slots {
+            if let Some(s) = cell
+                && !keep(s)
+            {
+                self.at.remove(&s.key());
+                *cell = None;
+            }
+        }
+        self.tidy();
+    }
+
+    /// Squeeze the gaps out once they are most of `slots` (each gap is then moved once), and give the
+    /// memory back once nothing waits.
+    fn tidy(&mut self) {
+        if self.at.is_empty() {
+            *self = Outbox { rev: self.rev, ..Outbox::default() };
+            return;
+        }
+        if self.slots.len() < 64 || self.at.len() * 2 > self.slots.len() {
+            return;
+        }
+        let mut moved = Vec::with_capacity(self.slots.len());
+        let mut n = 0;
+        for s in &self.slots {
+            moved.push(n);
+            n += usize::from(s.is_some());
+        }
+        for i in self.at.values_mut() {
+            *i = moved.get(*i).copied().unwrap_or(*i);
+        }
+        self.slots.retain(Option::is_some);
+        self.slots.shrink_to_fit();
+        self.at.shrink_to_fit();
     }
 
     /// A change waiting to go that hides a photo (or adds one hidden): what a server older than the Hidden
     /// album would drop, showing the photo on every other device.
     pub fn carries_hidden(&self) -> bool {
-        self.entries.iter().any(|e| match &e.latest {
-            Op::SetHidden { hidden, .. } => *hidden,
-            Op::AddPhoto { photo } => photo.hidden,
-            _ => false,
+        self.iter().any(|s| match s {
+            Slot::Added(a) => a.hidden,
+            Slot::Change(e) => match &e.latest {
+                Op::SetHidden { hidden, .. } => *hidden,
+                Op::AddPhoto { photo } => photo.hidden,
+                _ => false,
+            },
         })
     }
 
     /// The pending changes in the order they will be sent, each as the record it is about and the
     /// value of it that changes ([`parse_key`]).
     pub fn changes(&self) -> impl Iterator<Item = (Subject, &str)> {
-        self.entries.iter().map(|e| parse_key(&e.key))
+        self.iter().map(|s| match s {
+            Slot::Added(a) => (Subject::Photo(a.id), "add"),
+            Slot::Change(e) => parse_key(&e.key),
+        })
     }
 
     /// Note an op this device applied (`inverse` is what [`Catalog::apply`] returned, `after` the
@@ -311,6 +510,7 @@ impl Outbox {
     /// to Local records are left out; a Local photo added to the library is pushed whole.
     pub fn record(&mut self, op: &Op, inverse: &Op, after: &Catalog) {
         self.record_at(op, inverse, after, 0);
+        self.tidy();
     }
 
     fn record_at(&mut self, op: &Op, inverse: &Op, after: &Catalog, depth: usize) {
@@ -323,14 +523,22 @@ impl Outbox {
             }
             return;
         }
+        if let (Op::RemovePhoto { .. }, Op::AddPhoto { photo }) = (op, inverse) {
+            self.keep_whole(photo);
+        }
         let (latest, base) = match op {
-            Op::SetLocal { id, local: false } => match after.photo(*id) {
-                Some(p) => (Op::AddPhoto { photo: Box::new(portable(p)) }, Op::RemovePhoto { id: *id }),
-                None => return,
-            },
+            Op::SetLocal { id, local: false } => {
+                if let Some(p) = after.photo(*id) {
+                    self.add_photo(p);
+                }
+                return;
+            }
             // back out of the library: gone for other devices
             Op::SetLocal { id, local: true } => (Op::RemovePhoto { id: *id }, Op::RemovePhoto { id: *id }),
-            Op::AddPhoto { photo } if !photo.local => (Op::AddPhoto { photo: Box::new(portable(photo)) }, Op::RemovePhoto { id: photo.id }),
+            Op::AddPhoto { photo } if !photo.local => {
+                self.add_photo(photo);
+                return;
+            }
             Op::RemovePhoto { .. } if matches!(inverse, Op::AddPhoto { photo } if !photo.local) => (op.clone(), inverse.clone()),
             Op::AddPhoto { .. } | Op::RemovePhoto { .. } => return,
             _ => {
@@ -345,21 +553,41 @@ impl Outbox {
         self.upsert(latest, base);
     }
 
+    /// Queue the addition of photo `p` (again: last, and not sent).
+    fn add_photo(&mut self, p: &Photo) {
+        self.rev += 1;
+        let key = Key::Added(p.id);
+        self.take(&key);
+        self.put(Slot::Added(Added { id: p.id, rev: self.rev, hidden: p.hidden, sent: false }));
+    }
+
+    /// `photo` is leaving the catalog: if its addition still waits, it keeps the photo as it was, to
+    /// go before the removal.
+    fn keep_whole(&mut self, photo: &Photo) {
+        let Some(&i) = self.at.get(&Key::Added(photo.id)) else { return };
+        let Some(slot) = self.slots.get_mut(i).and_then(Option::as_mut) else { return };
+        let Slot::Added(a) = *slot else { return };
+        let latest = Op::AddPhoto { photo: Box::new(portable(photo)) };
+        let key = key_of(&latest).unwrap_or_default();
+        let sent = a.sent.then(|| latest.clone());
+        *slot = Slot::Change(Box::new(Entry { key, base: Op::RemovePhoto { id: a.id }, latest, rev: a.rev, sent }));
+    }
+
     /// Queue `latest` (which replaced `base`): a new entry, or the pending one for the same value
     /// updated and moved to the end.
     fn upsert(&mut self, latest: Op, base: Op) {
         let Some(key) = key_of(&latest) else { return };
         self.rev += 1;
         let rev = self.rev;
-        match self.entries.iter().position(|e| e.key == key) {
-            Some(i) => {
-                let mut e = self.entries.remove(i);
+        let entry = match self.take(&Key::of(&key)) {
+            Some(Slot::Change(mut e)) => {
                 e.latest = latest;
                 e.rev = rev;
-                self.entries.push(e);
+                e
             }
-            None => self.entries.push(Entry { key, base, latest, rev, sent: None }),
-        }
+            Some(Slot::Added(_)) | None => Box::new(Entry { key, base, latest, rev, sent: None }),
+        };
+        self.put(Slot::Change(entry));
     }
 
     /// Queue a whole library, for a server that has none yet (the first device uploading its
@@ -369,7 +597,7 @@ impl Outbox {
     pub fn seed(&mut self, c: &Catalog) {
         let shared = |id: &PhotoId| c.photo(*id).is_some_and(|p| !p.local);
         for p in c.photos().filter(|p| !p.local) {
-            self.upsert(Op::AddPhoto { photo: Box::new(portable(p)) }, Op::RemovePhoto { id: p.id });
+            self.add_photo(p);
         }
         let depth = |a: &crate::Album| {
             let mut d = 0;
@@ -397,6 +625,7 @@ impl Outbox {
         for k in c.listed_keywords() {
             self.upsert(Op::SetKeyword { path: k.path.clone(), info: Some(k.info.clone()) }, Op::SetKeyword { path: k.path.clone(), info: None });
         }
+        self.tidy();
     }
 
     /// An op from the server (another device's, or one of ours whose acknowledgement was lost):
@@ -406,24 +635,43 @@ impl Outbox {
     pub fn merge_remote(&mut self, remote: &Op) -> Option<Op> {
         let key = key_of(remote)?;
         if let Some(prefix) = removed_prefix(remote) {
-            self.entries.retain(|e| e.key == key || !e.key.starts_with(&prefix));
+            // ponytail: one look at every pending change per removal pulled; an index by record if
+            // other devices' removals ever meet a big queue here
+            self.retain(|s| match s {
+                Slot::Added(a) => !matches!(remote, Op::RemovePhoto { id } if *id == a.id),
+                Slot::Change(e) => e.key == key || !e.key.starts_with(&prefix),
+            });
         }
-        let Some(i) = self.entries.iter().position(|e| e.key == key) else { return Some(remote.clone()) };
-        if self.entries[i].latest == *remote {
-            self.entries.remove(i);
+        let k = Key::of(&key);
+        let Some(slot) = self.at.get(&k).and_then(|&i| self.slots.get_mut(i)).and_then(Option::as_mut) else {
+            return Some(remote.clone());
+        };
+        let e = match slot {
+            // our photo coming back: done once it was sent; ours goes as it is otherwise (a merge of
+            // two additions of a photo is ours)
+            Slot::Added(a) => {
+                if a.sent {
+                    self.take(&k);
+                    self.tidy();
+                }
+                return None;
+            }
+            Slot::Change(e) => e,
+        };
+        if e.latest == *remote {
+            self.take(&k);
+            self.tidy();
             return None;
         }
-        if self.entries[i].sent.as_ref() == Some(remote) {
+        if e.sent.as_ref() == Some(remote) {
             // our earlier push (since changed again here): the server now has it
-            self.entries[i].base = remote.clone();
+            e.base = remote.clone();
             return None;
         }
         self.rev += 1;
-        let rev = self.rev;
-        let e = &mut self.entries[i];
         let merged = merge_ops(&e.base, &e.latest, remote);
         e.base = remote.clone();
-        e.rev = rev;
+        e.rev = self.rev;
         if merged == e.latest {
             return None;
         }
@@ -431,55 +679,96 @@ impl Outbox {
         Some(merged)
     }
 
-    /// The ops to push, in order, and what they were (for [`Outbox::acked`]).
-    pub fn take_push(&mut self, limit: usize) -> (Vec<Op>, Pushed) {
-        let (mut ops, mut pushed) = (Vec::new(), Vec::new());
-        for e in self.entries.iter_mut().take(limit) {
-            e.sent = Some(e.latest.clone());
-            ops.push(e.latest.clone());
-            pushed.push((e.key.clone(), e.rev));
+    /// The ops to push, in order, and what they were (for [`Outbox::acked`]). A photo waiting to
+    /// be added goes as `catalog` has it.
+    pub fn take_push(&mut self, limit: usize, catalog: &Catalog) -> (Vec<Op>, Pushed) {
+        let (mut ops, mut pushed, mut gone) = (Vec::new(), Vec::new(), Vec::new());
+        for s in self.slots.iter_mut().flatten() {
+            if ops.len() >= limit {
+                break;
+            }
+            match s {
+                Slot::Added(a) => match catalog.photo(a.id) {
+                    Some(p) => {
+                        a.sent = true;
+                        ops.push(Op::AddPhoto { photo: Box::new(portable(p)) });
+                        pushed.push((Key::Added(a.id), a.rev));
+                    }
+                    // (gone without its removal being noted here: nothing to send)
+                    None => gone.push(Key::Added(a.id)),
+                },
+                Slot::Change(e) => {
+                    e.sent = Some(e.latest.clone());
+                    ops.push(e.latest.clone());
+                    pushed.push((Key::of(&e.key), e.rev));
+                }
+            }
+        }
+        if !gone.is_empty() {
+            log::warn!("sync: {} photo(s) waiting to be added are no longer in the library", gone.len());
+            for k in &gone {
+                self.take(k);
+            }
+            self.tidy();
         }
         (ops, Pushed(pushed))
     }
 
+    /// The change of `key` is done, unless it changed since revision `rev`.
+    fn done(&mut self, key: &Key, rev: u64) {
+        if self.slot(key).is_some_and(|s| s.rev() == rev) {
+            self.take(key);
+        }
+    }
+
     /// The server applied a push: its entries are done, unless they changed since.
     pub fn acked(&mut self, pushed: &Pushed) {
-        let done: HashSet<&(String, u64)> = pushed.0.iter().collect();
-        self.entries.retain(|e| !done.contains(&(e.key.clone(), e.rev)));
+        for (key, rev) in &pushed.0 {
+            self.done(key, *rev);
+        }
+        self.tidy();
     }
 
     /// The server refused op `index` of a push (it can't be applied to the server's state): drop
     /// it, so the rest can go.
     pub fn rejected(&mut self, pushed: &Pushed, index: usize) {
         if let Some((key, rev)) = pushed.0.get(index) {
-            self.entries.retain(|e| !(e.key == *key && e.rev == *rev));
+            self.done(key, *rev);
+            self.tidy();
         }
     }
 
     /// Replay the pending changes on `catalog` (the server's state, after [`carry_local`]), each
     /// merged with the server's value like [`Outbox::merge_remote`] does; changes that no longer
-    /// apply are dropped. Returns how many were dropped.
-    pub fn rebase(&mut self, catalog: &mut Catalog) -> usize {
-        let before = self.entries.len();
-        self.entries.retain_mut(|e| {
-            // applying ours hands back the server's value (its inverse)
-            let Ok(theirs) = catalog.apply(e.latest.clone()) else { return false };
-            let merged = merge_ops(&e.base, &e.latest, &theirs);
-            if merged != e.latest {
-                let back = catalog.apply(theirs.clone()).and_then(|_| catalog.apply(merged.clone()));
-                match back {
-                    Ok(_) => e.latest = merged,
-                    // (can't happen: the same value set three times) keep ours, as before the merge
-                    Err(_) => {
-                        let _ = catalog.apply(e.latest.clone());
+    /// apply are dropped. A photo waiting to be added is the one `from` (the catalog the changes
+    /// were made in) has. Returns how many were dropped.
+    pub fn rebase(&mut self, from: &Catalog, catalog: &mut Catalog) -> usize {
+        let before = self.len();
+        self.retain(|s| match s {
+            Slot::Added(a) => {
+                a.sent = false;
+                from.photo(a.id).is_some_and(|p| catalog.apply(Op::AddPhoto { photo: Box::new(portable(p)) }).is_ok())
+            }
+            Slot::Change(e) => {
+                // applying ours hands back the server's value (its inverse)
+                let Ok(theirs) = catalog.apply(e.latest.clone()) else { return false };
+                let merged = merge_ops(&e.base, &e.latest, &theirs);
+                if merged != e.latest {
+                    let back = catalog.apply(theirs.clone()).and_then(|_| catalog.apply(merged.clone()));
+                    match back {
+                        Ok(_) => e.latest = merged,
+                        // (can't happen: the same value set three times) keep ours, as before the merge
+                        Err(_) => {
+                            let _ = catalog.apply(e.latest.clone());
+                        }
                     }
                 }
+                e.base = theirs;
+                e.sent = None;
+                true
             }
-            e.base = theirs;
-            e.sent = None;
-            true
         });
-        before - self.entries.len()
+        before.saturating_sub(self.len())
     }
 }
 

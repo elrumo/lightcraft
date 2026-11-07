@@ -1656,7 +1656,7 @@ impl Session {
                     // (it would show the photos on every other device: nothing is sent until the server is updated)
                     st.fail(SERVER_TOO_OLD_FOR_HIDDEN.into());
                 } else if !st.outbox.is_empty() {
-                    let (ops, pushed) = st.outbox.take_push(PUSH_LIMIT);
+                    let (ops, pushed) = st.outbox.take_push(PUSH_LIMIT, &self.catalog);
                     let body = serde_json::to_string(&proto::Push { base: st.config.cursor, ops }).unwrap_or_default();
                     let t = st.http("POST", "/api/ops", Body::Json(body), None);
                     st.control = Some((t.id(), Control::Push(pushed)));
@@ -2405,7 +2405,7 @@ impl Session {
         if f.restarted {
             // what was changed here while it was read, made again on what was read the second time
             let mut c = self.catalog.clone();
-            let dropped = st.outbox.rebase(&mut c);
+            let dropped = st.outbox.rebase(&self.catalog, &mut c);
             st.outbox_changed();
             if dropped > 0 {
                 log::info!("sync: {dropped} change(s) made here no longer apply to the server's library");
@@ -2524,7 +2524,7 @@ impl Session {
             carry_local(&self.catalog, &mut c);
         }
         c.set_id_space(st.config.space);
-        let dropped = st.outbox.rebase(&mut c);
+        let dropped = st.outbox.rebase(&self.catalog, &mut c);
         st.outbox_changed();
         if dropped > 0 {
             log::info!("sync: {dropped} change(s) made here no longer apply to the server's library");

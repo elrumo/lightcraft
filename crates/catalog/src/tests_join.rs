@@ -100,7 +100,7 @@ fn what_was_joined_goes_to_the_server_as_ordinary_changes() {
     join_libraries(&local, &mut mine, 7, &mut outbox);
     assert!(!outbox.is_empty());
 
-    let (ops, pushed) = outbox.take_push(usize::MAX);
+    let (ops, pushed) = outbox.take_push(usize::MAX, &mine);
     let head = core.push(seq, &ops).expect("the server takes what the join queued, in that order");
     outbox.acked(&pushed);
     assert!(outbox.is_empty());
@@ -162,7 +162,7 @@ fn a_photo_both_libraries_have_is_kept_once_and_filled_in() {
     assert_eq!(one.file_name, "IMG_1-copy.jpg");
     assert_eq!(one.source, Source::File { path: "/pics/IMG_1-copy.jpg".into() });
     // …and only the changes were queued: no photo was added
-    let (ops, _) = outbox.take_push(usize::MAX);
+    let (ops, _) = outbox.take_push(usize::MAX, &server);
     assert!(ops.iter().all(|op| !matches!(op, Op::AddPhoto { .. })), "{ops:?}");
     assert!(ops.iter().any(|op| matches!(op, Op::SetRating { id: PhotoId(2), rating: 4 })), "{ops:?}");
 }
@@ -276,7 +276,7 @@ fn demo_photos_and_local_records_are_not_shared() {
     let joined = join_libraries(&local, &mut server, 2, &mut outbox);
     assert_eq!(joined.photos_added, 1);
     // pushed: the one photo; kept here: the record of the folder browsed, under an id of this space
-    let (ops, _) = outbox.take_push(usize::MAX);
+    let (ops, _) = outbox.take_push(usize::MAX, &server);
     assert_eq!(ops.len(), 1, "{ops:?}");
     assert!(server.photos().any(|p| p.local && p.file_name == "browsed.jpg" && p.id.0 >> ID_SPACE_SHIFT == 2));
     assert!(server.photos().all(|p| p.file_name != "demo.jpg"));

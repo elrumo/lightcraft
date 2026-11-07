@@ -53,10 +53,10 @@ fn two_libraries() -> (Catalog, Catalog, [PhotoId; 2], [PhotoId; 2]) {
 }
 
 /// What replaying the merge's changes on the server's state gives is the merged library.
-fn replay(server: &Catalog, out: &mut Outbox) -> Catalog {
+fn replay(server: &Catalog, merged: &Catalog, out: &mut Outbox) -> Catalog {
     let mut c = server.clone();
     c.set_id_space(3);
-    let (ops, _) = out.take_push(usize::MAX);
+    let (ops, _) = out.take_push(usize::MAX, merged);
     for op in ops {
         c.apply(op).unwrap();
     }
@@ -89,7 +89,7 @@ fn photos_are_matched_by_content_and_the_rest_comes_across_under_new_ids() {
     let mine = m.albums().find(|a| a.name == "Mine").unwrap();
     assert_eq!((mine.photos.clone(), mine.id.0 >> ID_SPACE_SHIFT), (vec![c], 3));
     // pushing the changes on the server's state ends where the merge did
-    let replayed = replay(&server, &mut merged.outbox);
+    let replayed = replay(&server, &merged.catalog, &mut merged.outbox);
     assert_eq!(exposure(&replayed, sa), 1.0);
     assert_eq!(replayed.len(), m.len());
     assert_eq!(replayed.albums().count(), m.albums().count());
@@ -119,7 +119,7 @@ fn merging_again_changes_nothing() {
     assert_eq!((r.added, r.albums_added, r.stacks_added), (0, 0, 0), "{r:?}");
     assert_eq!(r.matched, 2);
     let mut out = again.outbox;
-    assert!(out.is_empty(), "{} change(s)", out.take_push(usize::MAX).0.len());
+    assert!(out.is_empty(), "{} change(s)", out.take_push(usize::MAX, &again.catalog).0.len());
     assert_eq!(again.catalog.len(), first.catalog.len());
 }
 
@@ -210,7 +210,7 @@ fn a_photo_hidden_on_either_side_stays_hidden() {
     local.apply(Op::SetHidden { id: la, hidden: true }).unwrap();
     let mut merged = merge(&local, server.clone(), 3);
     assert!(merged.catalog.photo(sa).unwrap().hidden);
-    assert!(replay(&server, &mut merged.outbox).photo(sa).unwrap().hidden);
+    assert!(replay(&server, &merged.catalog, &mut merged.outbox).photo(sa).unwrap().hidden);
     // and the other way round: shown here, hidden on the server
     let (mut server, local, [sa, _], _) = two_libraries();
     server.apply(Op::SetHidden { id: sa, hidden: true }).unwrap();
