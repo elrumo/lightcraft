@@ -315,9 +315,19 @@ fn build(s: &mut Session, p: &Value) -> Result<Value> {
 /// One photo's smart preview to build or discard: (photo, its file in the smart previews folder,
 /// how to load the original at preview size, whether the photo is a raw ([`lightcraft_catalog::Photo::develops_raw`]):
 /// only those proxies go stale when the camera look changes, `camera_preview::LOOK_VERSION`; a DNG's tone curve
-/// is stored in its proxy header like a fitted look's; an older encoding makes any proxy stale).
+/// is stored in its proxy header like a fitted look's; an older encoding makes any proxy stale), and its original's path on this
+/// device (a frontend's own development of a raw is the picture then: [`crate::smart::set_host_developer`]).
 #[cfg(not(target_arch = "wasm32"))]
-type SmartJob = (lightcraft_catalog::PhotoId, std::path::PathBuf, Option<crate::media::SourceRef>, bool);
+type SmartJob = (lightcraft_catalog::PhotoId, std::path::PathBuf, Option<crate::media::SourceRef>, bool, Option<String>);
+
+/// The path of `p`'s original when it is a file on this device (a synced photo's original is on the server).
+#[cfg(not(target_arch = "wasm32"))]
+fn original_path(p: &lightcraft_catalog::Photo) -> Option<String> {
+    match &p.source {
+        lightcraft_catalog::Source::File { path } if !path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) => Some(path.clone()),
+        _ => None,
+    }
+}
 
 /// Whether the photo's proxy goes stale when the camera look changes: every raw developed from its sensor data (the
 /// fork's looks reach DNGs and the other raws too, not only the formats whose look is fitted to their own JPEG).
@@ -385,7 +395,7 @@ fn smart_run(
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
     }
-    for (id, path, source, look) in jobs {
+    for (id, path, source, look, original) in jobs {
         if state.is_some_and(|(st, _)| st.cancel.load(Ordering::Relaxed)) {
             break;
         }
@@ -413,21 +423,25 @@ fn smart_run(
                 // atomic: a failed write leaves no partial proxy that would pass for a built one;
                 // and synced (issue #134): built so the photo can be edited while its original
                 // is offline, when it is the only copy — the sync is small next to the decode
-                let r = source
-                    .ok_or_else(|| "nothing to build from".to_string())
-                    .and_then(|s| s.load_source())
-                    .and_then(|src| {
+                // (a clip whose file is here: its poster frame as the sync's previews have it, the frontend's decode of it when it has one)
+                let clip = original.as_deref().filter(|o| crate::files::is_video_file(std::path::Path::new(o)) && std::path::Path::new(o).is_file());
+                let r = match clip {
+                    Some(o) => crate::smart::encode_pair_video(o, crate::cloud_sync::MINI_EDGE).map(|(smart, _)| smart),
+                    None => source.ok_or_else(|| "nothing to build from".to_string()).and_then(|s| s.load_source()).and_then(|src| {
                         let info = src.info_or(Default::default());
-                        crate::smart::encode(&src.image, Some(&info))
-                    })
-                    .and_then(|b| {
-                        let parent = path.parent().ok_or_else(|| format!("{}: no parent folder", path.display()))?;
-                        // Only create the leaf shard: do not recreate a missing external drive.
-                        if !parent.is_dir() {
-                            std::fs::create_dir(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-                        }
-                        lightcraft_catalog::safe_file::write_atomic(&path, &b).map_err(|e| format!("{}: {e}", path.display()))
-                    });
+                        // (a raw decoded from its original: the frontend's development of it, when it has one; never a picture made from a proxy)
+                        let host = original.as_deref().filter(|_| !src.from_proxy).and_then(|o| crate::smart::host_picture(o, &src.image, &info));
+                        crate::smart::encode(host.as_ref().unwrap_or(&src.image), Some(&info))
+                    }),
+                }
+                .and_then(|b| {
+                    let parent = path.parent().ok_or_else(|| format!("{}: no parent folder", path.display()))?;
+                    // Only create the leaf shard: do not recreate a missing external drive.
+                    if !parent.is_dir() {
+                        std::fs::create_dir(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+                    }
+                    lightcraft_catalog::safe_file::write_atomic(&path, &b).map_err(|e| format!("{}: {e}", path.display()))
+                });
                 match r {
                     Ok(()) => {
                         n.built += 1;
@@ -484,7 +498,7 @@ fn smart(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let path = crate::smart::sharded_file_path(&dir, &ph);
         let source = (!discard).then(|| s.media.source_ref(&ph, crate::media::SourceLevel::Preview));
-        jobs.push((id, path, source, preview_fitted_look(&ph)));
+        jobs.push((id, path, source, preview_fitted_look(&ph), original_path(&ph)));
     }
     let custom = s.smart_previews_dir.is_some();
     if background {
@@ -535,6 +549,7 @@ pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::threa
                 crate::smart::sharded_file_path(&dir, p),
                 Some(s.media.origin_ref(&p.source, max_edge, Some((p.width, p.height)))),
                 preview_fitted_look(p),
+                original_path(p),
             )
         })
         .collect();
@@ -550,8 +565,8 @@ pub(crate) fn refresh_stale_smart_previews(s: &mut Session) -> Option<std::threa
 fn refresh_stale(dir: &std::path::Path, jobs: Vec<SmartJob>) {
     let stale: Vec<SmartJob> = jobs
         .into_iter()
-        .map(|(id, path, source, look)| (id, crate::smart::existing_file_path(dir, path), source, look))
-        .filter(|(_, path, _, look)| crate::smart::is_stale_for(path, *look))
+        .map(|(id, path, source, look, original)| (id, crate::smart::existing_file_path(dir, path), source, look, original))
+        .filter(|(_, path, _, look, _)| crate::smart::is_stale_for(path, *look))
         .collect();
     if !stale.is_empty() {
         // `custom`: the folder is there already, and must not be recreated if it went away since
@@ -744,6 +759,16 @@ fn thumbs_location(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Whether photo `id` has a smart preview.
+/// The whole smart preview this device has of photo `id`, in whichever layout it is (a synced photo's from the server, sharded,
+/// or an older release's flat file); `None` when there is none or it is cut short. A frontend that draws a raw itself draws an
+/// offline photo from it.
+pub fn smart_preview_file(s: &Session, id: lightcraft_catalog::PhotoId) -> Option<std::path::PathBuf> {
+    let (dir, p) = (s.media.smart_dir.as_ref()?, s.catalog.photo(id)?);
+    let synced = matches!(&p.source, lightcraft_catalog::Source::File { path } if path.starts_with(lightcraft_catalog::sync::PATH_PREFIX));
+    let file = if synced { dir.join(crate::smart::file_name(p)) } else { crate::smart::file_path(dir, p) };
+    crate::smart::is_valid(&file).then_some(file)
+}
+
 pub fn has_smart_preview(s: &Session, id: lightcraft_catalog::PhotoId) -> bool {
     match (&s.media.smart_dir, s.catalog.photo(id)) {
         (Some(dir), Some(p)) => crate::smart::is_valid(&crate::smart::file_path(dir, p)),
@@ -783,13 +808,14 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             thumbs_location
         ),
-        cmd!(query "photo.smartPreview", "Smart Preview Status", [], None, "{id?} → {smartPreview: bool, originalOnline: bool}", always, |s, p| {
+        cmd!(query "photo.smartPreview", "Smart Preview Status", [], None, "{id?} → {smartPreview: bool, originalOnline: bool, path: the whole smart preview this device has of the photo (a synced photo's too) | null}", always, |s, p| {
             let id = s.targets(p)?.first().copied().ok_or_else(|| bad("photo.smartPreview", "no photo"))?;
             let online = match s.catalog.photo(id).map(|p| p.source.clone()) {
                 Some(lightcraft_catalog::Source::File { path }) => std::path::Path::new(&path).exists(),
                 _ => true,
             };
-            Ok(json!({"smartPreview": has_smart_preview(s, id), "originalOnline": online}))
+            let path = smart_preview_file(s, id).map(|f| f.to_string_lossy().into_owned());
+            Ok(json!({"smartPreview": has_smart_preview(s, id), "originalOnline": online, "path": path}))
         }),
         cmd!(
             "library.buildPreviews",

@@ -301,17 +301,116 @@ pub fn encode(img: &Rgb32f, info: Option<&SourceInfo>) -> Result<Vec<u8>, String
 /// bytes of its original. `catalogued`: the size the photo is catalogued with, which says the frame a raw its camera crops
 /// is developed in (`None` when there is no photo to ask: the camera's frame).
 pub fn encode_pair(original: &[u8], mini_edge: usize, catalogued: crate::media::Catalogued) -> Result<(Vec<u8>, Vec<u8>), String> {
+    encode_pair_of(None, original, mini_edge, catalogued)
+}
+
+/// What a frontend's own raw developer is asked for ([`set_host_developer`]).
+pub struct HostDevelop<'a> {
+    /// The original's path.
+    pub original: &'a str,
+    /// The long edge to develop it to: this engine's picture's.
+    pub edge: usize,
+    /// `photo.cameraTone`'s answer for this engine's picture (`{tone, level, colour}`): what the frontend brings its light and
+    /// colour to, as it does for a raw it draws itself. `null` for a clip.
+    pub reference: serde_json::Value,
+    /// For a video clip: the poster frame's time in the clip, in seconds of presentation time. The frontend gives that picture
+    /// (linear Rec. 2020, upright), or none for a clip whose frames it would show otherwise than this engine (an HDR one).
+    pub poster: Option<f64>,
+}
+
+/// A frontend's development of a raw as a preview's picture: scene-linear Rec. 2020, oriented, about `edge` on its long side.
+pub type HostDeveloper = dyn Fn(&HostDevelop<'_>) -> Result<Rgb32f, String> + Send + Sync;
+
+fn host_developer() -> &'static std::sync::RwLock<Option<Arc<HostDeveloper>>> {
+    static SLOT: std::sync::OnceLock<std::sync::RwLock<Option<Arc<HostDeveloper>>>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(Default::default)
+}
+
+/// Have a frontend that develops raws itself (a native one, through Core Image) make the pixels of the raws' previews this
+/// process builds from a file ([`encode_pair_of`]), so a photo shows the same development whether its original is on the
+/// device or not. This engine still decodes the file for its facts (the camera look, local tone mapping, the colour model,
+/// mattes, white balance), which go in the preview as before, and its own picture is used when the frontend gives none or
+/// one of another frame. `None`: this engine's pixels.
+pub fn set_host_developer(developer: Option<Arc<HostDeveloper>>) {
+    *host_developer().write().unwrap_or_else(std::sync::PoisonError::into_inner) = developer;
+}
+
+/// The frontend's picture of the raw at `path` in place of `core`, when a developer is set ([`set_host_developer`]) and it gives
+/// one of the same frame. `None`: keep `core`.
+pub(crate) fn host_picture(path: &str, core: &Rgb32f, info: &SourceInfo) -> Option<Rgb32f> {
+    // (only a raw this engine developed: an embedded JPEG stand-in carries no raw facts to render a development against)
+    if !info.raw {
+        return None;
+    }
+    let colour = crate::scene_level::colour_grid(core)
+        .map(|cells| serde_json::json!({"long": crate::scene_level::GRID_LONG, "short": crate::scene_level::GRID_SHORT, "cells": cells}));
+    let reference = serde_json::json!({
+        "tone": info.camera_tone.as_ref().and_then(|t| serde_json::to_value(t).ok()),
+        "level": crate::scene_level::luminance_quantiles(core),
+        "colour": colour,
+    });
+    ask_host(&HostDevelop { original: path, edge: core.width.max(core.height), reference, poster: None }, core)
+}
+
+/// The frontend's picture of the clip at `path` `seconds` in, in place of this engine's poster frame `core` ([`host_picture`]).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn host_poster(path: &str, core: &Rgb32f, seconds: f64) -> Option<Rgb32f> {
+    let ask = HostDevelop { original: path, edge: core.width.max(core.height), reference: serde_json::Value::Null, poster: Some(seconds) };
+    ask_host(&ask, core)
+}
+
+/// The developer's answer to `ask`, when one is set and it gives a picture of `core`'s frame (within 1 % of its aspect), fitted
+/// to `ask.edge` and with every value a number.
+fn ask_host(ask: &HostDevelop<'_>, core: &Rgb32f) -> Option<Rgb32f> {
+    use lightcraft_raster::resample::{Filter, fit};
+    let developer = host_developer().read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()?;
+    let path = ask.original;
+    let mut img = match crate::guard::catch("a frontend's development of a preview", || developer(ask)) {
+        Ok(Ok(img)) => img,
+        Ok(Err(e)) | Err(e) => {
+            log::info!("smart preview: the frontend did not develop {path} ({e}); this engine's picture is used");
+            return None;
+        }
+    };
+    let (cw, ch, w, h) = (core.width as f64, core.height as f64, img.width as f64, img.height as f64);
+    // (another frame, such as a crop the two decoders read differently, would put the mattes and the lens data off)
+    if img.width == 0 || img.height == 0 || img.data.len() != img.width.saturating_mul(img.height) || ((w / h) / (cw / ch) - 1.0).abs() > 0.01 {
+        log::info!(
+            "smart preview: the frontend's picture of {path} is {}×{}, not the frame of {}×{}; this engine's is used",
+            img.width,
+            img.height,
+            core.width,
+            core.height
+        );
+        return None;
+    }
+    img.data.iter_mut().for_each(|c| *c = c.map(|v| if v.is_finite() { v } else { 0.0 }));
+    Some(if img.width.max(img.height) > ask.edge { fit(&img, ask.edge, ask.edge, Filter::Mitchell) } else { img })
+}
+
+/// [`encode_pair`] of the file at `path` (its bytes `original`): a raw's picture is the frontend's development when one is set
+/// ([`set_host_developer`]).
+pub fn encode_pair_of(
+    path: Option<&str>,
+    original: &[u8],
+    mini_edge: usize,
+    catalogued: crate::media::Catalogued,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
     use lightcraft_raster::resample::{Filter, fit};
     let (img, info) = crate::files::load_bytes_for(original, crate::media::SourceLevel::Preview.max_edge(), catalogued)?;
+    let img = path.and_then(|p| host_picture(p, &img, &info)).unwrap_or(img);
     let smart = encode(&img, Some(&info))?;
     let small = if img.width.max(img.height) > mini_edge { fit(&img, mini_edge, mini_edge, Filter::Mitchell) } else { img };
     Ok((smart, encode(&small, Some(&info))?))
 }
 
-/// [`encode_pair`] for a video clip: both previews show its poster frame, decoded from the file in place.
+/// [`encode_pair`] for a video clip: both previews show its poster frame, decoded from the file in place (the frontend's decode of
+/// the same frame when a developer is set: [`set_host_developer`]).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn encode_pair_video(path: &str, mini_edge: usize) -> Result<(Vec<u8>, Vec<u8>), String> {
     use lightcraft_raster::resample::{Filter, fit};
-    let (img, _) = crate::files::load_video(path, crate::media::SourceLevel::Preview.max_edge(), None)?;
+    let (img, seconds) = crate::files::load_video_poster(path, crate::media::SourceLevel::Preview.max_edge())?;
+    let img = host_poster(path, &img, seconds).unwrap_or(img);
     let smart = encode(&img, None)?;
     let small = if img.width.max(img.height) > mini_edge { fit(&img, mini_edge, mini_edge, Filter::Mitchell) } else { img };
     Ok((smart, encode(&small, None)?))

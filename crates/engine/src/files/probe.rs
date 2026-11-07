@@ -385,6 +385,16 @@ pub(crate) fn load_video(path: &str, max_edge: usize, time: Option<f64>) -> Resu
     Ok((img, SourceInfo::default()))
 }
 
+/// A video clip's poster frame as [`load_video`] gives it, and its time in the clip in seconds (where a frontend that decodes
+/// clips itself takes the same picture).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn load_video_poster(path: &str, max_edge: usize) -> Result<(Rgb32f, f64), String> {
+    let clip = lightcraft_video::Clip::open_path(std::path::Path::new(path)).map_err(|e| e.to_string())?;
+    let (img, seconds) = clip.poster_timed(max_edge).map_err(|e| e.to_string())?;
+    let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
+    Ok((img, seconds))
+}
+
 /// Why a raw that failed to decode should show its embedded preview instead (`Ok`), or the error
 /// to report (`Err`). Variants we can't decode yet always fall back. So does any CR3 error: the CRX
 /// decoder is verified on few bodies, and every CR3 opened from its embedded JPEG before it existed.

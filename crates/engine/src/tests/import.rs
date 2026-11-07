@@ -669,7 +669,11 @@ fn smart_previews_stand_in_for_offline_originals() {
     let id = s.active().unwrap();
     let r = s.execute("library.smartPreviews", &json!({})).unwrap();
     assert_eq!(r["built"], 1, "{r}");
-    assert_eq!(s.execute("photo.smartPreview", &json!({})).unwrap(), json!({"smartPreview": true, "originalOnline": true}));
+    let status = s.execute("photo.smartPreview", &json!({})).unwrap();
+    assert_eq!((&status["smartPreview"], &status["originalOnline"]), (&json!(true), &json!(true)), "{status}");
+    // (the file a frontend that draws raws itself draws the photo from while its original is offline)
+    let file = status["path"].as_str().expect("the preview's path");
+    assert!(crate::smart::is_valid(std::path::Path::new(file)) && file.starts_with(&*lib.to_string_lossy()), "{file}");
     let online = s.render_now(id, 48, 32).unwrap().image;
     // the drive goes away
     std::fs::rename(&src, src.with_extension("offline")).unwrap();
@@ -843,6 +847,7 @@ fn damaged_smart_previews_are_rebuilt_and_failed_writes_leave_none() {
     std::fs::write(&file, &full[..full.len() / 2]).unwrap();
     assert!(!crate::smart::is_valid(&file));
     assert_eq!(s.execute("photo.smartPreview", &json!({})).unwrap()["smartPreview"], false, "not counted as there");
+    assert_eq!(s.execute("photo.smartPreview", &json!({})).unwrap()["path"], json!(null), "a cut file is no file to draw from");
     let r = s.execute("library.smartPreviews", &json!({})).unwrap();
     assert_eq!((r["built"].as_u64(), r["repaired"].as_u64()), (Some(1), Some(1)), "{r}");
     assert_eq!(std::fs::read(&file).unwrap(), full, "rebuilt whole");
@@ -2850,4 +2855,44 @@ fn a_file_arriving_beside_its_raws_stem_reads_its_own_sidecar() {
     assert_eq!(r["sidecars"], 0, "{r}");
     assert_eq!(read(&s, "IMG_3.TIF"), 0, "the catalogued raw owns IMG_3.xmp");
     let _ = std::fs::remove_dir_all(&src);
+}
+
+/// Build Smart Previews of a raw takes a frontend's development of it as the proxy's picture (`smart::set_host_developer`),
+/// with this engine's facts; the proxy reads back with the frontend's pixels.
+#[test]
+fn smart_previews_of_a_raw_take_a_frontends_development() {
+    use std::sync::Arc;
+    let src = temp_dir("smart-host-src");
+    let lib = temp_dir("smart-host-lib");
+    let raw = src.join("a.dng");
+    std::fs::write(&raw, crate::tests::xmp::synthetic_dng_with(None, lightcraft_meta::Metadata::default())).unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    s.execute("library.import", &json!({"paths": [raw.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    assert_eq!(s.execute("library.smartPreviews", &json!({})).unwrap()["built"], 1);
+    let file = std::path::PathBuf::from(s.execute("photo.smartPreview", &json!({})).unwrap()["path"].as_str().unwrap());
+    let (core, ..) = crate::smart::decode(&std::fs::read(&file).unwrap()).unwrap();
+    let (w, h) = (core.width, core.height);
+    std::fs::remove_file(&file).unwrap();
+    let original = s.catalog.photo(id).map(|p| match &p.source {
+        lightcraft_catalog::Source::File { path } => path.clone(),
+        _ => String::new(),
+    });
+    let mine = original.clone().unwrap();
+    crate::smart::set_host_developer(Some(Arc::new(move |ask: &crate::smart::HostDevelop<'_>| {
+        if ask.original != mine {
+            return Err("not this test's".into());
+        }
+        Ok(lightcraft_raster::Rgb32f { width: w, height: h, data: vec![[0.3; 3]; w * h] })
+    })));
+    let r = s.execute("library.smartPreviews", &json!({}));
+    crate::smart::set_host_developer(None);
+    assert_eq!(r.unwrap()["built"], 1);
+    let bytes = std::fs::read(&file).unwrap();
+    let (img, ..) = crate::smart::decode(&bytes).unwrap();
+    assert!(img.data.iter().all(|c| (c[1] - 0.3).abs() < 0.01), "the frontend's pixels");
+    assert!(crate::smart::stored_info(&bytes).is_some_and(|i| i.raw), "this engine's facts");
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
 }

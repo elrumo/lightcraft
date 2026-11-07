@@ -452,3 +452,85 @@ fn a_proxy_from_an_older_encode_is_stale() {
     assert!(!look_checked(&dir), "a look-only marker is not enough to skip the rebuild");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A frontend's raw development (`set_host_developer`) is a raw preview's picture, with this engine's facts kept; its error,
+/// another frame or a file that is not a raw leave this engine's picture.
+#[test]
+fn a_frontends_development_is_a_raw_previews_picture_with_the_engines_facts() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dng = crate::tests::xmp::synthetic_dng_with(None, lightcraft_meta::Metadata::default());
+    let png = lightcraft_codecs::encode_png(
+        &lightcraft_codecs::EncodeImage::rgba8(&Rgba8::from_fn(16, 12, |x, _| [x as u8 * 10, 90, 40, 255])),
+        &lightcraft_codecs::EncodeMeta::default(),
+    )
+    .unwrap();
+    let path = |what: &str| format!("/nowhere/host-develop-{what}-{}.dng", std::process::id());
+    let (core_smart, core_mini) = encode_pair(&dng, 16, None).unwrap();
+    let (core_img, ..) = decode(&core_smart).unwrap();
+    let (w, h) = (core_img.width, core_img.height);
+    let asked = Arc::new(AtomicUsize::new(0));
+    let seen = asked.clone();
+    let (good, square, failing, picture) = (path("good"), path("square"), path("failing"), path("png"));
+    let (g, sq, pic) = (good.clone(), square.clone(), picture.clone());
+    // (other tests build previews while this one runs: anything but this test's own paths gets this engine's picture)
+    set_host_developer(Some(Arc::new(move |ask: &HostDevelop<'_>| {
+        if ask.original == g {
+            seen.fetch_add(1, Ordering::Relaxed);
+            assert_eq!(ask.edge, w.max(h));
+            assert!(ask.reference.get("level").is_some() && ask.reference.get("colour").is_some(), "{}", ask.reference);
+            Ok(Rgb32f { width: w, height: h, data: vec![[0.25, 0.25, 0.25]; w * h] })
+        } else if ask.original == sq {
+            Ok(Rgb32f { width: w, height: w, data: vec![[0.25; 3]; w * w] })
+        } else if ask.original == pic {
+            seen.fetch_add(100, Ordering::Relaxed);
+            Err("not a raw".into())
+        } else {
+            Err("not this test's".into())
+        }
+    })));
+    let (smart, mini) = encode_pair_of(Some(&good), &dng, 16, None).unwrap();
+    let kept_square = encode_pair_of(Some(&square), &dng, 16, None).unwrap();
+    let kept_failing = encode_pair_of(Some(&failing), &dng, 16, None).unwrap();
+    let _ = encode_pair_of(Some(&picture), &png, 16, None).unwrap();
+    set_host_developer(None);
+    assert_eq!(asked.load(Ordering::Relaxed), 1, "asked once, for the raw only");
+    let (img, ..) = decode(&smart).unwrap();
+    assert_eq!((img.width, img.height), (w, h));
+    assert!(img.data.iter().all(|c| c.iter().all(|v| (v - 0.25).abs() < 0.01)), "the frontend's pixels");
+    assert!(decode(&mini).unwrap().0.data.iter().all(|c| (c[1] - 0.25).abs() < 0.01));
+    let facts = |b: &[u8]| serde_json::to_string(&stored_info(b).map(|i| (i.raw, i.as_shot_temp, i.as_shot_tint, i.camera_color.is_some()))).unwrap();
+    assert_eq!(facts(&smart), facts(&core_smart), "this engine's facts");
+    assert_eq!(kept_square, (core_smart.clone(), core_mini.clone()), "another frame: this engine's preview");
+    assert_eq!(kept_failing, (core_smart, core_mini), "an error: this engine's preview");
+}
+
+/// A clip's previews are the frontend's picture of this engine's poster frame, asked for by its time; without one, this engine's.
+#[test]
+fn a_frontends_poster_frame_is_a_clips_previews_picture() {
+    let dir = temp("host-poster");
+    let clip = dir.join("clip.mp4");
+    std::fs::write(&clip, lightcraft_video::testdata::clip(20, 10, 2)).unwrap();
+    let path = clip.to_string_lossy().into_owned();
+    let (core_smart, _) = encode_pair_video(&path, 16).unwrap();
+    let (core_img, ..) = decode(&core_smart).unwrap();
+    let (w, h) = (core_img.width, core_img.height);
+    let asked = Arc::new(std::sync::Mutex::new(None));
+    let seen = asked.clone();
+    let p = path.clone();
+    set_host_developer(Some(Arc::new(move |ask: &HostDevelop<'_>| {
+        if ask.original != p {
+            return Err("not this test's".into());
+        }
+        *seen.lock().unwrap() = Some((ask.poster, ask.reference.is_null(), ask.edge));
+        Ok(Rgb32f { width: w, height: h, data: vec![[0.4; 3]; w * h] })
+    })));
+    let (smart, mini) = encode_pair_video(&path, 16).unwrap();
+    set_host_developer(None);
+    let (poster, no_reference, edge) = asked.lock().unwrap().take().expect("asked");
+    assert!(poster.is_some_and(|t| (0.0..=2.0).contains(&t)), "{poster:?}");
+    assert!(no_reference && edge == w.max(h));
+    assert!(decode(&smart).unwrap().0.data.iter().all(|c| (c[0] - 0.4).abs() < 0.01), "the frontend's poster");
+    assert!(decode(&mini).unwrap().0.data.iter().all(|c| (c[2] - 0.4).abs() < 0.01));
+    assert_eq!(encode_pair_video(&path, 16).unwrap().0, core_smart, "no developer: this engine's poster");
+    let _ = std::fs::remove_dir_all(&dir);
+}

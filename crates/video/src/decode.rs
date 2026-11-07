@@ -60,6 +60,12 @@ impl<S: ByteSource> Clip<S> {
     /// A good picture to stand for the clip: a key frame about a tenth of the way in (skipping black ones), decoded on
     /// its own, so a poster costs one picture however long the clip is. At most about twice `max_edge` on the long side.
     pub fn poster(&self, max_edge: usize) -> Result<Rgb32f> {
+        self.poster_timed(max_edge).map(|(img, _)| img)
+    }
+
+    /// [`Self::poster`] and where in the clip it is, in seconds of presentation time (what [`Self::frame_at`] takes): a frontend
+    /// that decodes clips itself takes the same picture.
+    pub fn poster_timed(&self, max_edge: usize) -> Result<(Rgb32f, f64)> {
         self.supported()?;
         guarded("making a poster", || {
             let t = self.t()?;
@@ -86,7 +92,8 @@ impl<S: ByteSource> Clip<S> {
                 }
             }
             let (_, frame) = best.ok_or_else(|| Error::Malformed("the clip has no pictures".into()))?;
-            timed("poster: to_working", || yuv::to_working_within(&frame, max_edge, self.info.rotation))
+            let seconds = if t.timescale > 0 { (frame.pts as f64 / f64::from(t.timescale)).max(0.0) } else { 0.0 };
+            Ok((timed("poster: to_working", || yuv::to_working_within(&frame, max_edge, self.info.rotation))?, seconds))
         })
     }
 

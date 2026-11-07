@@ -3151,7 +3151,7 @@ pub fn build_proxies(original: &str, smart: &str, mini: &str, catalogued: crate:
     } else {
         // (a TIFF of several GB, mostly layers, is read in part)
         let bytes = crate::files::read_file(Path::new(original))?;
-        crate::smart::encode_pair(&bytes, MINI_EDGE, catalogued)?
+        crate::smart::encode_pair_of(Some(original), &bytes, MINI_EDGE, catalogued)?
     };
     let write = |path: &str, b: Vec<u8>| lightcraft_catalog::safe_file::write_atomic(Path::new(path), &b).map_err(|e| format!("{path}: {e}"));
     if let Some(dir) = Path::new(smart).parent() {

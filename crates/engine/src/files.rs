@@ -33,10 +33,10 @@ use preview::PLAN_PREFIX;
 pub(crate) use preview::decode_raw_preview;
 pub use preview::{PreviewRead, embedded_preview_srgb, fs_preview_loader, load_embedded_preview, preview_window};
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use probe::load_video;
-#[cfg(not(target_arch = "wasm32"))]
 pub use probe::probe_video_at;
 pub use probe::{at_time, embedded_lens, is_video_file, probe_bytes, probe_video, split_time};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use probe::{load_video, load_video_poster};
 #[cfg(test)]
 use probe::{meta_of, preview_reason};
 

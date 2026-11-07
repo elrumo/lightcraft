@@ -4847,6 +4847,7 @@ dependencies = [
  "lightcraft-engine",
  "lightcraft-erase",
  "lightcraft-ios-host",
+ "lightcraft-raster",
  "lightcraft-raw",
  "lightcraft-segment",
  "lightcraft-sysmem",
