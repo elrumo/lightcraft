@@ -19,7 +19,7 @@ use crate::widgets::register;
 /// or downloaded when the user asks.
 #[derive(Default)]
 pub struct DepthFetch {
-    rx: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
+    rx: Option<std::sync::mpsc::Receiver<Result<(Vec<u8>, Vec<u8>), String>>>,
     /// The site's storage was looked in and the model isn't there.
     not_stored: bool,
     error: Option<String>,
@@ -34,7 +34,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(tr("The download stopped.").to_string()),
     };
     app.depth_fetch.rx = None;
-    match got.and_then(|bytes| app.session.install_depth_model(&bytes)) {
+    match got.and_then(|(graph, data)| app.session.install_depth_model(&graph, data)) {
         Ok(()) => (app.depth_fetch.not_stored, app.depth_fetch.error) = (false, None),
         Err(e) if e == crate::erase::NOT_STORED => app.depth_fetch.not_stored = true,
         Err(e) => app.depth_fetch.error = Some(e),
@@ -51,7 +51,7 @@ fn fetch(app: &mut LightcraftApp, ctx: &egui::Context, download: bool) {
     let (tx, rx) = std::sync::mpsc::channel();
     app.depth_fetch.rx = Some(rx);
     app.depth_fetch.error = None;
-    f(download, tx, ctx.clone());
+    f(app.session.depth_size(), download, tx, ctx.clone());
 }
 
 /// The loupe tool that focuses on the point clicked.
@@ -101,13 +101,24 @@ fn note(ui: &mut egui::Ui, text: impl Into<String>) {
 fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     use lightcraft_engine::depth;
     let ctx = ui.ctx().clone();
-    if app.session.enhancer.disabled.contains(depth::ID) {
+    // the size: Small (the default) or Base
+    let sizes = [("Small", "small"), ("Base", "base")];
+    let chosen = app.session.depth_size();
+    if let Some(i) = crate::widgets::segmented(ui, "lensBlurSize", &sizes, depth::Size::ALL.iter().position(|s| *s == chosen), 2)
+        && let Some(size) = depth::Size::ALL.get(i)
+        && let Err(e) = app.run("depth.setSize", json!({"size": size.name()}))
+    {
+        app.toast_error(&ctx, e);
+    }
+    let size = app.session.depth_size();
+    let id = size.id();
+    if app.session.enhancer.disabled.contains(id) {
         note(ui, tr("Depth estimation is turned off in Settings → AI Models."));
         return;
     }
     let offer = tr_format!(
-        "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
-        depth::FILE_SIZE as f64 / 1e6,
+        "This photo has no depth of its own: Lens Blur estimates it with Depth Anything 3, a {:.0} MB download ({} licence). {}.",
+        (size.graph().size + size.data().size) as f64 / 1e6,
         depth::LICENCE,
         depth::CREDIT
     );
@@ -134,12 +145,12 @@ fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         note(ui, tr("This photo has no depth of its own, and depth estimation isn't available in this build."));
         return;
     }
-    let st = app.session.enhancer.model_download_status(depth::ID);
+    let st = app.session.enhancer.model_download_status(id);
     if st.running {
         let pct = if st.total > 0 { st.done as f64 / st.total as f64 * 100.0 } else { 0.0 };
         note(ui, tr_format!("Downloading the depth model… {:.0} %", pct));
         if crate::widgets::text_button(ui, "lensBlurCancel", tr("Cancel Download"), false).clicked() {
-            let _ = app.run("models.cancel", json!({"id": depth::ID}));
+            let _ = app.run("models.cancel", json!({"id": id}));
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
         return;
@@ -149,7 +160,7 @@ fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         note(ui, e.clone());
     }
     if crate::widgets::text_button(ui, "lensBlurDownload", tr("Download"), false).clicked()
-        && let Err(e) = app.run("models.download", json!({"id": depth::ID, "acknowledged": true}))
+        && let Err(e) = app.run("models.download", json!({"id": id, "acknowledged": true}))
     {
         app.toast_error(&ctx, e);
     }
@@ -186,7 +197,7 @@ pub fn panel(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings, id
             let _ = app.run("lensBlur.apply", json!({"on": false}));
         }
         let source = if lb.depth.is_some() {
-            tr("Depth estimated by AI (Depth Anything V2 Small).")
+            tr("Depth estimated by AI (Depth Anything 3).")
         } else if has_depth(app, id, d) {
             tr("Depth from the photo.")
         } else {

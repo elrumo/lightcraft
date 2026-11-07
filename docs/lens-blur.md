@@ -11,7 +11,7 @@ from the camera. The same depth drives the **Depth Range** mask (Masking ▸ Ran
    - iPhone **Portrait** photos: HEIC (a depth auxiliary image) and JPEG (a second, greyscale JPEG after
      the photo). Apple's metadata says whether the map holds disparity or distance, and over what range.
    - **DNG** files with a DNG 1.5 depth map (`DepthFormat`, `DepthNear`, `DepthFar`).
-2. Otherwise an **estimate** by an AI model, **Depth Anything V2 Small**, made once when Lens Blur is
+2. Otherwise an **estimate** by an AI model, **Depth Anything 3** (Small by default, Base as a choice), made once when Lens Blur is
    first applied and stored with the photo's settings (about 30–60 KB). Renders and exports never run the
    model, and look the same at every size.
 
@@ -44,26 +44,32 @@ another photo, Lens Blur uses that photo's own depth (or needs Apply there to es
 
 ## The model
 
-The model is optional and not part of LightCraft. **Depth Anything V2 Small** (Lihe Yang, Bingyi
-Kang, Zilong Huang, Zhen Zhao, Xiaogang Xu, Jiashi Feng and Hengshuang Zhao, NeurIPS 2024; code and
-Small weights **Apache-2.0**: <https://github.com/DepthAnything/Depth-Anything-V2>,
-<https://huggingface.co/depth-anything/Depth-Anything-V2-Small>). LightCraft downloads the int8
-ONNX export `onnx/model_int8.onnx` (27 MB) from onnx-community's repository
-(<https://huggingface.co/onnx-community/depth-anything-v2-small>, Apache-2.0) at a fixed revision,
-checked against its pinned size and SHA-256 (`crates/depth/src/lib.rs`), only after you agree. The
-larger Base / Large / Giant models are non-commercial and not used. The `model_quantized.onnx` export
-(uint8 weights) doesn't run on rten; the int8 one gives the fp32 model's depth to about 2 % of its range
-(median) on the photos it was checked on.
+The model is optional and not part of LightCraft. **Depth Anything 3** (Haotong Lin, Sili Chen,
+Jun Hao Liew, Donny Y. Chen, Zhenyu Li, Guang Shi, Jiashi Feng and Bingyi Kang, ByteDance Seed; code
+and the Small and Base weights **Apache-2.0**: <https://github.com/ByteDance-Seed/depth-anything-3>) in
+two sizes you choose between: **Small** (the default, 105 MB, the quickest) and **Base** (412 MB, finer
+edges). LightCraft downloads onnx-community's fp32 ONNX exports, `onnx/model.onnx` (the graph) and
+`onnx/model.onnx_data` (the weights), from their repositories
+(<https://huggingface.co/onnx-community/depth-anything-v3-small>, `…-base`, Apache-2.0) at a fixed
+revision, checked against the pinned sizes and SHA-256 (`crates/depth/src/lib.rs`), only after you
+agree. The Large and Giant models are non-commercial (or, for the 1.1 Large, 1.4 GB, past what the
+loader takes) and are not offered. The network answers with depth (larger is farther), which LightCraft
+inverts to the nearness the rest of Lens Blur uses.
 
 It runs on [rten](https://github.com/robertknight/rten) (pure Rust) on every platform, at about
-690 × 518 pixels. Settings → AI Models lists it (on / off, its folder, Delete); in the browser it is
-kept in the site's storage (`models/depth-anything-v2-small/model_int8.onnx`) like AI Remove's model.
+672 × 504 pixels; on the CPU it takes about three times as long as the Depth Anything V2 Small it
+replaces. The V2 Small GPU weights (Apple platforms) stay as a fallback: `auto` uses them only while no
+Depth Anything 3 size is downloaded, and `depth.setBackend gpu` still picks them. Settings → AI Models
+lists each size (on / off, its folder, Delete); in the browser the two files are kept in the site's
+storage (`models/depth-anything-3-small/model.onnx` and `model.onnx_data`) like AI Remove's model.
 
 ## Agents and scripts
 
 - `lensBlur.apply {on?}`: turn on (estimating when needed) or off. Without depth and without the
-  model it fails with "The depth model (Depth Anything V2 Small) is not downloaded…"; download it with
-  `models.download {"id": "depth-anything-v2-small", "acknowledged": true}` after the user agreed.
+  model it fails with "The depth model (Depth Anything 3) is not downloaded…"; download it with
+  `models.download {"id": "depth-anything-3-small", "acknowledged": true}` after the user agreed.
+- `depth.setSize {size: small|base}`: which size estimates (saved with the library; `depth.backend`
+  says the choice and which sizes are downloaded).
 - `lensBlur.estimate`: estimate again (also for a photo with depth of its own: the estimate then wins).
 - `lensBlur.focus {x, y}` or `{subject: true}`; `lensBlur.bokeh {shape}`;
   `lensBlur.brushStroke {mode: focus|blur|erase, points, size?, feather?, flow?, autoMask?}`,

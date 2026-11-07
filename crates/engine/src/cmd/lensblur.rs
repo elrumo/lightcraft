@@ -29,7 +29,7 @@ fn lens_blur_info(s: &mut Session, c: &str) -> Result<Value> {
         "enabled": lb.enabled,
         "depth": s.depth_source(id).map(crate::depth::DepthSource::name),
         "modelReady": s.depth_model_ready(),
-        "model": crate::depth::ID,
+        "model": s.depth_size().id(),
         "amount": lb.amount,
         "focalDistance": lb.focal_distance,
         "focalRange": lb.focal_range,
@@ -92,7 +92,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Choose What Estimates Depth",
             [],
             None,
-            "{backend: auto|cpu|gpu} — which weights of the depth model estimate depth for Lens Blur: auto (the GPU's when this device has a GPU and the GPU weights are downloaded, else the CPU model), cpu (the compact model, on the processor) or gpu (the original weights on the graphics processor; an error when they aren't downloaded). Saved with the library → depth.backend",
+            "{backend: auto|cpu|gpu} — which weights estimate depth for Lens Blur: auto (Depth Anything 3 in the chosen size when it is downloaded, else the V2 Small GPU weights where this device has a GPU and they are downloaded), cpu (Depth Anything 3 on the processor) or gpu (the V2 Small weights on the graphics processor; an error when they aren't downloaded). Saved with the library → depth.backend",
             always,
             |s, p| {
                 const C: &str = "depth.setBackend";
@@ -102,7 +102,22 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(s.depth_backend_status())
             }
         ),
-        cmd!(query "depth.backend", "What Estimates Depth", [], None, "{} → {choice: auto|cpu|gpu, using: cpu|gpu|null (what runs now; null until the model loads), cpuInstalled, gpuInstalled, gpuAvailable}", always, |s, _| Ok(s.depth_backend_status())),
+        cmd!(
+            "depth.setSize",
+            "Choose the Depth Model's Size",
+            [],
+            None,
+            "{size: small|base} — which size of Depth Anything 3 estimates depth for Lens Blur: small (the default, 105 MB, the quickest) or base (412 MB, finer edges). Each is downloaded on its own (models.download `depth-anything-3-small` / `depth-anything-3-base`). Saved with the library → depth.backend",
+            always,
+            |s, p| {
+                const C: &str = "depth.setSize";
+                let n = p.get("size").and_then(Value::as_str).ok_or_else(|| bad(C, "missing `size`"))?;
+                s.set_depth_size(n).map_err(|e| bad(C, e))?;
+                s.save_prefs()?;
+                Ok(s.depth_backend_status())
+            }
+        ),
+        cmd!(query "depth.backend", "What Estimates Depth", [], None, "{} → {choice: auto|cpu|gpu, using: cpu|gpu|null (what runs now; null until the model loads), size: small|base, sizesInstalled: [small|base], cpuInstalled (the chosen size is downloaded), gpuInstalled, gpuAvailable}", always, |s, _| Ok(s.depth_backend_status())),
         cmd!(
             "lensBlur.estimate",
             "Estimate Depth",

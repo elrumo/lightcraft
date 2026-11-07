@@ -93,7 +93,7 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
   `_proxy.dng` and `th_` / `pv_` blobs (`lightcraft-cli inspect` says what they are), a streaming decode for a
   single-strip 300 MP TIFF (still decoded whole).
 - 2026-10-14: Lens Blur and Depth Range masks (LR-EDIT-LENSBLUR 🟡, LR-MASK-DEPTHRANGE ✅;
-  [lens-blur.md](lens-blur.md)): Portrait / DNG depth or a Depth Anything V2 Small estimate, refine brushes.
+  [lens-blur.md](lens-blur.md)): Portrait / DNG depth or a Depth Anything 3 (Small / Base) estimate, refine brushes.
 - 2026-10-10: Nikon lossy-after-split NEF (#633), ORF 12.8 bpp (#651), HDR gain map / PQ AVIF / float
   TIFF export (#646), activity stack (#345), JPEG XL export (#247).
 - 2026-10-09: EOS R7 C-RAW with an odd-height QP map (a45c2b66; part of gap 2), HEIC in release builds (#609), Samsung uncompressed SRW (#459), contact-sheet PDF (#563),

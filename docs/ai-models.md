@@ -21,8 +21,8 @@ Resolution, [super-resolution.md](super-resolution.md)), **MI-GAN** (AI Remove, 
 Generative Expand: the one model that also runs in the browser, on rten, from `crates/erase`), **LaMa** (Generative
 Expand on computers and capable phones, [generative-expand.md](generative-expand.md), also on rten), and Generative
 Expand's diffusion models on candle (`crates/diffuse`): **Stable Diffusion 1.5 Inpainting**, **Kandinsky 2.2 Inpaint**
-and **SDXL Inpainting**, and **Depth Anything V2 Small** (Lens Blur and Depth Range masks,
-[lens-blur.md](lens-blur.md): the int8 ONNX export on rten, from `crates/depth`, on every device and in the browser).
+and **SDXL Inpainting**, and **Depth Anything 3** Small or Base (Lens Blur and Depth Range masks,
+[lens-blur.md](lens-blur.md): the fp32 ONNX exports on rten, from `crates/depth`, on every device and in the browser).
 The rest of this page is the research behind what to add next
 (2026-10-08; read from each repo's LICENSE and each Hugging Face model card — **re-check the licence of a model when
 you add it**, and write the verdict and the URL you read in its `ModelSpec`).
@@ -109,7 +109,7 @@ settled before LightCraft hosts a mirror.
 |---|---|---|---|---|
 | Super resolution | Nomos Uni SPAN 2x/4x (compact 2x on CPU) | Apache-2.0 / CC-BY-4.0 | 4.5 MB (1.2 MB) | plain convs; CC-BY needs attribution; training-image provenance undocumented |
 | Denoise (sRGB) | SCUNet `real_psnr` | Apache-2.0 / *not stated* | 72 MB | synthetic training data; window attention, tile; works on sRGB, not raw |
-| Depth | Depth Anything V2 **Small** (DA3-BASE as upgrade) | Apache-2.0 / Apache-2.0 | 27 MB int8 (99 MB fp32; DA3 541 MB) | **in use** (Lens Blur, `crates/depth`): onnx-community's `model_int8.onnx` on rten, pinned by revision, size and SHA-256; its `model_quantized.onnx` (uint8 weights) doesn't run on rten; int8 vs fp32 differ by 2 % of the depth range at the median; ~0.5–1 s per photo on a busy Apple-silicon CPU; Base/Large of V2 are CC-BY-NC |
+| Depth | Depth Anything **3** Small (default) or Base, user's choice | Apache-2.0 / Apache-2.0 | Small 105 MB, Base 412 MB (fp32 graph + `.onnx_data` weights) | **in use** (Lens Blur, `crates/depth`): onnx-community's exports on rten with external data, pinned by revision, size and SHA-256; outputs depth (inverted to nearness); about 3× V2 Small int8's CPU time (2–3 s vs 0.75 s per photo on a loaded Apple-silicon machine, 2026-11-07); Large/Giant are CC-BY-NC (Large 1.1 is Apache-2.0 on its card but 1.4 GB, past the 512 MB loader cap); V2 Small stays as the GPU weights only |
 | Face detection | YuNet | MIT / MIT | 0.2 MB | 5 landmarks |
 | Face grouping | SFace | Apache-2.0 / Apache-2.0 | 37 MB | trained on MS-Celeb-1M, VGGFace2, CASIA; opt-in |
 | Sensitive content (NSFW) | Falconsai `nsfw_image_detection` (ViT-B/16; onnx-community's `model_int8.onnx`) | Apache-2.0 / Apache-2.0 | 87 MB | **in use** (`crates/vision/src/nsfw.rs`, rten; pinned revision, size and SHA-256; opt-in, also on the server): flags, never hides ([hidden.md](hidden.md)); 224 px input, softmax of the `nsfw` logit, flagged at 0.7 (uncalibrated); training data not published; fp16 export (172 MB) is the fallback if int8 stops loading |
@@ -152,7 +152,7 @@ stays out (non-commercial).
 ## Do not use
 
 - **Non-commercial or research-only weights:** SCRFD, ArcFace and the rest of InsightFace's models, EdgeFace,
-  Depth Anything V2 Base/Large and DA3 Large/Giant, Depth Pro, RMBG-1.4/2.0, SegFormer (and fine-tunes of it),
+  Depth Anything V2 Base/Large and DA3 Large/Giant (the non-1.1 Large), Depth Pro, RMBG-1.4/2.0, SegFormer (and fine-tunes of it),
   Sapiens, Jina-CLIP v2, MobileCLIP, MAT, Zero-DCE, Deep White-Balance, Flare7K, pyiqa (PolyForm Noncommercial).
 - **Copyleft code:** RawNIND (GPL-3), YOLO-World and the YOLO face detectors, Aesthetic Predictor V2.5 (AGPL-3),
   NNDemosaicAndDenoise.

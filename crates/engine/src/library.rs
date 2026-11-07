@@ -354,6 +354,7 @@ struct PrefsFile {
     /// The work this device does for its sync server (`vision.setHelper`).
     search_helper: Vec<String>,
     /// Of those, the parts held back for now (`vision.setHelperPaused`).
+    depth_size: Option<String>,
     search_helper_paused: Vec<String>,
     /// Of those, the parts that end by themselves once nothing is left to claim (`vision.helperOnce`).
     search_helper_once: Vec<String>,
@@ -691,6 +692,7 @@ impl Session {
         self.vision.set_sensitive_marks(prefs.sensitive_marks);
         // (locked, whatever the last library was)
         self.hidden = crate::hidden::HiddenLock::for_library(prefs.hidden_password.filter(|h| h.starts_with("$argon2")));
+        let _ = self.set_depth_size(prefs.depth_size.as_deref().unwrap_or("small"));
         self.hold_view = prefs.hold_view;
         self.refresh_view();
         self.smart_previews_dir = prefs.smart_previews_dir.filter(|_| on_disk).map(PathBuf::from);
@@ -1190,6 +1192,7 @@ impl Session {
             search_helper_once: self.vision.helper_once.clone(),
             search_helper_usage: Some(self.vision.helper_usage.key().to_string()),
             blur_sensitive: Some(self.blur_sensitive),
+            depth_size: Some(self.depth_size().name().to_string()),
             sensitive_marks: self.vision.sensitive_marks.clone(),
             slideshow: self.slideshow.clone(),
             slide_layout: self.slide_layout.clone(),

@@ -2421,7 +2421,7 @@
   "Depth estimation is turned off in Settings → AI Models.": "La estimación de profundidad está desactivada en Ajustes → Modelos de IA.",
   "This photo has no depth of its own, and depth estimation isn't available in this build.": "Esta foto no tiene profundidad propia y en esta versión no está disponible la estimación de profundidad.",
   "Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth.": "Desenfoca lo que está más cerca o más lejos que el sujeto, como lo haría una apertura grande, usando la profundidad de la foto.",
-  "Depth estimated by AI (Depth Anything V2 Small).": "Profundidad estimada por IA (Depth Anything V2 Small).",
+  "Depth estimated by AI (Depth Anything 3).": "Profundidad estimada por IA (Depth Anything 3).",
   "Depth from the photo.": "Profundidad procedente de la foto.",
   "No depth yet: turn Lens Blur off and on to estimate it.": "Aún no hay profundidad: desactivar y volver a activar Desenfoque de objetivo para estimarla.",
   "Focal Range": "Rango focal",

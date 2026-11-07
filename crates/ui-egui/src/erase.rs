@@ -23,6 +23,9 @@ use crate::theme::Tokens;
 /// and `download` is false, then repaints.
 pub type ModelFetch = Box<dyn Fn(bool, Sender<Result<Vec<u8>, String>>, egui::Context)>;
 
+/// The same for Lens Blur's depth model (Depth Anything 3 in the given size): sends its graph and its weights.
+pub type DepthModelFetch = Box<dyn Fn(lightcraft_engine::depth::Size, bool, Sender<Result<(Vec<u8>, Vec<u8>), String>>, egui::Context)>;
+
 /// The fetch's answer when the model isn't in the site's storage (and wasn't to be downloaded).
 pub const NOT_STORED: &str = "not stored";
 

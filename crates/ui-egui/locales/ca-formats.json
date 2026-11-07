@@ -216,7 +216,7 @@
   "The new area was painted by {by} on this device.": "L'àrea nova s'ha pintat en aquest dispositiu ({by}).",
   "There is a keyword set “{name}” already": "Ja hi ha un conjunt de paraules clau “{name}”",
   "There is a “{name}” at the top level already. Merge the two?": "Ja hi ha “{name}” al nivell superior. Vols combinar-les?",
-  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Aquesta foto no té profunditat pròpia: el desenfocament de lent l'estima amb Depth Anything V2 Small, una descàrrega de {:.0} MB (llicència {}). {}.",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything 3, a {:.0} MB download ({} licence). {}.": "Aquesta foto no té profunditat pròpia: el desenfocament de lent l'estima amb Depth Anything 3, una descàrrega de {:.0} MB (llicència {}). {}.",
   "Trained on: {provenance}": "Entrenat amb: {provenance}",
   "Undo {}": "Desfés {}",
   "Unknown tag{s} {} stay{} as typed (see Tags)": "Etiquetes desconegudes {} sense canvis{:.0}{s:.0} (consulta Etiquetes)",

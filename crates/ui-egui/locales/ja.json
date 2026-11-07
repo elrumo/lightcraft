@@ -2561,7 +2561,7 @@
   "Depth estimation is turned off in Settings → AI Models.": "深度推定は「設定 → AIモデル」でオフになっています。",
   "This photo has no depth of its own, and depth estimation isn't available in this build.": "この写真には深度情報がなく、このビルドでは深度推定を利用できません。",
   "Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth.": "写真の深度情報を使って、絞りを開いたときのように被写体より手前や奥をぼかします。",
-  "Depth estimated by AI (Depth Anything V2 Small).": "AI（Depth Anything V2 Small）で推定した深度です。",
+  "Depth estimated by AI (Depth Anything 3).": "AI（Depth Anything 3）で推定した深度です。",
   "Depth from the photo.": "写真に含まれる深度情報です。",
   "No depth yet: turn Lens Blur off and on to estimate it.": "深度がまだありません。レンズぼかしをオフにしてからオンにすると推定します。",
   "Focal Range": "フォーカス範囲",

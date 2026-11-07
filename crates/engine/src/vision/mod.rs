@@ -36,6 +36,7 @@ use crate::{Session, guard, memory};
 mod colors;
 #[cfg(not(target_arch = "wasm32"))]
 mod helper;
+mod helper_usage;
 mod people;
 mod portable;
 
@@ -49,7 +50,8 @@ mod sensitive;
 mod server;
 use colors::{ColorSpec, ColorWhere, with_colors};
 #[cfg(not(target_arch = "wasm32"))]
-pub use helper::{HelperConditions, HelperJob, HelperPart, HelperUsage};
+pub use helper::{HelperJob, HelperPart};
+pub use helper_usage::{HelperConditions, HelperUsage};
 pub use people::{Cluster, FaceRef, clusters_of};
 use sensitive::{ClassSpec, ClassifierProvider};
 pub use sensitive::{SENSITIVE_BYTES, SENSITIVE_DIR, SENSITIVE_LICENSE_NAME, SENSITIVE_LICENSE_URL, SENSITIVE_MIN, SENSITIVE_NOT_INSTALLED};

@@ -2420,7 +2420,7 @@
   "Depth estimation is turned off in Settings → AI Models.": "Оцінювання глибини вимкнено в Налаштування → Моделі ШІ.",
   "This photo has no depth of its own, and depth estimation isn't available in this build.": "У цього фото немає власної глибини, а оцінювання глибини недоступне в цій збірці.",
   "Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth.": "Розмийте те, що ближче або далі за об’єкт, як це робить широка діафрагма, використовуючи глибину фото.",
-  "Depth estimated by AI (Depth Anything V2 Small).": "Глибину оцінено за допомогою ШІ (Depth Anything V2 Small).",
+  "Depth estimated by AI (Depth Anything 3).": "Глибину оцінено за допомогою ШІ (Depth Anything 3).",
   "Depth from the photo.": "Глибина з фото.",
   "No depth yet: turn Lens Blur off and on to estimate it.": "Глибини ще немає: вимкніть і знову ввімкніть розмиття об’єктива, щоб її оцінити.",
   "Focal Range": "Фокусний діапазон",

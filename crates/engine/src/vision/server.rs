@@ -743,6 +743,14 @@ impl Session {
         Err("a browser can't process photos for the server".into())
     }
 
+    pub fn vision_helper_set_usage(&mut self, _usage: &str) -> Result<Value, String> {
+        Err("a browser can't process photos for the server".into())
+    }
+
+    pub fn vision_helper_set_conditions(&mut self, _conditions: super::HelperConditions) -> Value {
+        self.vision_helper_status()
+    }
+
     pub fn vision_helper_status(&self) -> Value {
         json!({"parts": [], "running": false, "supported": false})
     }

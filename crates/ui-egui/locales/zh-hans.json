@@ -2403,7 +2403,7 @@
   "Depth estimation is turned off in Settings → AI Models.": "深度估算已在“设置 → AI 模型”中关闭。",
   "This photo has no depth of its own, and depth estimation isn't available in this build.": "这张照片本身没有深度数据，且此版本不支持深度估算。",
   "Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth.": "利用照片的深度，模糊比主题更近或更远的部分，效果如同使用大光圈。",
-  "Depth estimated by AI (Depth Anything V2 Small).": "深度由 AI 估算（Depth Anything V2 Small）。",
+  "Depth estimated by AI (Depth Anything 3).": "深度由 AI 估算（Depth Anything 3）。",
   "Depth from the photo.": "深度来自照片。",
   "No depth yet: turn Lens Blur off and on to estimate it.": "尚无深度数据：请先关闭再重新开启“镜头模糊”以进行估算。",
   "Focal Range": "焦点范围",

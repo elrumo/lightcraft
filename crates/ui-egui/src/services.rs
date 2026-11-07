@@ -206,7 +206,7 @@ pub struct Services {
     pub erase_model: Option<erase::ModelFetch>,
     /// Fetches Lens Blur's depth model in the browser build, as [`Services::erase_model`] does
     /// AI Remove's; `None`: the engine downloads it.
-    pub depth_model: Option<erase::ModelFetch>,
+    pub depth_model: Option<erase::DepthModelFetch>,
     /// The system clipboard's text, for Paste in a text field's touch edit menu
     /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V). A host that can only
     /// read it asynchronously (the web) starts the read here, returns `None` and sends the text

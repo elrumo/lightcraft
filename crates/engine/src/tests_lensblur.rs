@@ -40,6 +40,12 @@ fn open(s: &mut Session, path: &Path) -> u64 {
     id
 }
 
+fn install_model(s: &Session, dir: &std::ffi::OsStr) {
+    let dir = PathBuf::from(dir);
+    let (graph, data) = (std::fs::read(dir.join(crate::depth::GRAPH_FILE)).unwrap(), std::fs::read(dir.join(crate::depth::DATA_FILE)).unwrap());
+    s.install_depth_model(&graph, data).unwrap();
+}
+
 fn info(s: &mut Session) -> Value {
     s.execute("lensBlur.info", &json!({})).unwrap()
 }
@@ -53,7 +59,7 @@ fn without_depth_or_model_apply_says_so_and_changes_nothing() {
     assert_eq!(s.develop_of(s.active().unwrap()).unwrap(), before);
     let i = info(&mut s);
     assert_eq!((i["enabled"].as_bool(), i["depth"].is_null(), i["modelReady"].as_bool()), (Some(false), true, Some(false)));
-    assert!(s.install_depth_model(b"not the model").is_err());
+    assert!(s.install_depth_model(b"not the model", Vec::new()).is_err());
     assert!(s.execute("lensBlur.focus", &json!({"x": 0.5, "y": 0.5})).is_err(), "no depth to focus on");
     assert!(s.execute("lensBlur.bokeh", &json!({"shape": "hexagon"})).is_err());
     // turning it off needs no depth
@@ -86,13 +92,13 @@ fn a_portraits_own_depth_is_used_without_the_model() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// With the model (when a copy is at `$LIGHTCRAFT_DEPTH_MODEL`; it is never part of the
+/// With the model (when a folder with its `model.onnx` and `model.onnx_data` is at `$LIGHTCRAFT_DEPTH_MODEL`; it is never part of the
 /// repository): the estimate is stored with the settings and focuses on the subject.
 #[test]
 fn the_models_estimate_is_stored_with_the_settings() {
     let Some(path) = std::env::var_os("LIGHTCRAFT_DEPTH_MODEL") else { return };
     let mut s = Session::with_demo();
-    s.install_depth_model(&std::fs::read(path).unwrap()).unwrap();
+    install_model(&s, &path);
     assert!(s.depth_model_ready());
     let id = s.active().unwrap();
     let i = s.execute("lensBlur.apply", &json!({})).unwrap();
@@ -118,7 +124,7 @@ fn real_photos_render_with_lens_blur() {
     };
     let out = PathBuf::from(out);
     let mut s = Session::new().with_fs();
-    s.install_depth_model(&std::fs::read(model).unwrap()).unwrap();
+    install_model(&s, &model);
     for p in std::env::split_paths(&photos) {
         let id = crate::catalog::PhotoId(open(&mut s, &p));
         let t = std::time::Instant::now();

@@ -95,7 +95,7 @@ search embeddings; generative remove runs in Adobe's cloud.
 | Subject / Sky / Background masks | classical heuristics; the file's own DNG semantic mattes | 🟡 |
 | People (faces, body, hair, skin…) and Landscape masks | — | ⬜ |
 | Object / Describe masks | SAM 3 in pure Rust (Metal / CPU); opt-in 3.4 GB download, no mirror configured | 🟡 |
-| Depth range mask, Lens Blur | the photo's own depth (Portrait HEIC / JPEG, DNG 1.5) or Depth Anything V2 Small (Apache-2.0, opt-in 27 MB); refine brushes ([lens-blur.md](lens-blur.md)) | 🟡 |
+| Depth range mask, Lens Blur | the photo's own depth (Portrait HEIC / JPEG, DNG 1.5) or Depth Anything 3 Small / Base (Apache-2.0, opt-in 105 / 412 MB); refine brushes ([lens-blur.md](lens-blur.md)) | 🟡 |
 | AI Denoise | Bayer only, pure-Rust CPU / GPU, user-installed weights | 🟡 |
 | Raw Details, Super Resolution | — | ⬜ |
 | Generative remove, distractions, reflections | — (generative is out of scope: cloud) | ⬜ |

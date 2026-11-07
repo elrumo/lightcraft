@@ -2423,7 +2423,7 @@
   "Depth estimation is turned off in Settings → AI Models.": "Die Tiefenschätzung ist in Einstellungen → KI-Modelle ausgeschaltet.",
   "This photo has no depth of its own, and depth estimation isn't available in this build.": "Dieses Foto enthält keine eigenen Tiefeninformationen, und die Tiefenschätzung ist in dieser Version nicht verfügbar.",
   "Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth.": "Erzeugt Unschärfe für alles, was näher oder weiter entfernt ist als das Motiv, wie bei weit geöffneter Blende – anhand der Tiefe des Fotos.",
-  "Depth estimated by AI (Depth Anything V2 Small).": "Tiefe per KI geschätzt (Depth Anything V2 Small).",
+  "Depth estimated by AI (Depth Anything 3).": "Tiefe per KI geschätzt (Depth Anything 3).",
   "Depth from the photo.": "Tiefe aus dem Foto.",
   "No depth yet: turn Lens Blur off and on to estimate it.": "Noch keine Tiefe: Schalte Objektivunschärfe aus und wieder ein, um sie zu schätzen.",
   "Focal Range": "Fokusbereich",

@@ -1,15 +1,17 @@
 //! **Lens Blur's depth**: how far each part of a photo is. A photo that carries depth of its own
 //! (a portrait HEIC or JPEG, a DNG with a depth map) uses it; it is read with the photo
 //! (`files.rs`) and rides on the source's mattes, never stored. Any other photo (iPhone ProRAW
-//! included: it stores mattes but no depth) gets an estimate from Depth Anything V2 Small
+//! included: it stores mattes but no depth) gets an estimate from Depth Anything 3
 //! (`lightcraft-depth`), stored in its settings ([`lightcraft_develop::LensBlur::depth`]), so
 //! renders and exports never run the model.
 //!
-//! The model is optional (about 27 MB, Apache-2.0) and never part of LightCraft. The desktop and
-//! phone apps download it like the other models, after the user agreed (`models.download {"id":
-//! "depth-anything-v2-small", "acknowledged": true}`, Settings → AI Models), into
-//! `<models>/depth-anything-v2-small/`; the browser build fetches it itself and hands the bytes
-//! over ([`Session::install_depth_model`]). Either way the file must be exactly the pinned one.
+//! The model is optional (Small 105 MB, Base 412 MB, Apache-2.0) and never part of LightCraft; the
+//! user picks the size ([`Session::set_depth_size`], Small by default). The desktop and phone apps
+//! download it like the other models, after the user agreed (`models.download {"id":
+//! "depth-anything-3-small", "acknowledged": true}`, Settings → AI Models), into
+//! `<models>/depth-anything-3-small/` (the graph and its weights); the browser build fetches them
+//! itself and hands the bytes over ([`Session::install_depth_model`]). Either way the files must be
+//! exactly the pinned ones.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -22,10 +24,10 @@ use lightcraft_raster::resample::{Filter, resize};
 use crate::Session;
 use crate::media::SourceLevel;
 
-pub use lightcraft_depth::{BASE_URL, CREDIT, FILE, FILE_SIZE, GPU_FILE, GPU_FILE_SIZE, GPU_ID, ID, LICENCE, verify};
+pub use lightcraft_depth::{CREDIT, DATA_FILE, GPU_FILE, GPU_FILE_SIZE, GPU_ID, GRAPH_FILE, LICENCE, Pinned, Size};
 
 /// The start of the error when the model isn't here: the apps offer the download on it.
-pub const NOT_INSTALLED: &str = "The depth model (Depth Anything V2 Small) is not downloaded";
+pub const NOT_INSTALLED: &str = "The depth model (Depth Anything 3) is not downloaded";
 
 /// Long edge of the picture handed to the model (it works on ~690 × 518 itself).
 const INPUT_EDGE: usize = 1036;
@@ -34,8 +36,10 @@ const INPUT_EDGE: usize = 1036;
 #[derive(Default)]
 pub struct DepthModel {
     loaded: Mutex<Option<Arc<Estimator>>>,
-    /// Which weights estimate: `auto` (the GPU's when there are any and a GPU; the default, also when empty), `cpu` or `gpu`.
+    /// Which weights estimate: `auto` (Depth Anything 3 when it is downloaded, else the GPU's V2; the default, also when empty), `cpu` or `gpu`.
     choice: Mutex<String>,
+    /// Which size of Depth Anything 3 estimates (Small when unset).
+    size: Mutex<Size>,
 }
 
 /// Where a photo's depth comes from.
@@ -81,9 +85,10 @@ fn model_input(src: &Rgb32f) -> Rgb32f {
 }
 
 impl Session {
-    /// The depth model's file in the models folder (desktop and phone apps).
-    fn depth_model_file(&self) -> Option<std::path::PathBuf> {
-        self.enhancer.model_dir(ID).map(|d| d.join(FILE))
+    /// The chosen size's graph and weights in the models folder (desktop and phone apps).
+    fn depth_files(&self, size: Size) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+        let dir = self.enhancer.model_dir(size.id())?;
+        Some((dir.join(GRAPH_FILE), dir.join(DATA_FILE)))
     }
 
     /// The GPU weights' file (a model of its own, in a folder of its own).
@@ -96,8 +101,27 @@ impl Session {
         cfg!(feature = "vision") && cfg!(any(target_os = "macos", target_os = "ios"))
     }
 
+    /// Which size of Depth Anything 3 estimates.
+    pub fn depth_size(&self) -> Size {
+        *self.depth_model.size.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Choose the size that estimates: the loaded model is let go, so the next estimate loads the chosen one.
+    pub fn set_depth_size(&self, name: &str) -> Result<(), String> {
+        let size = Size::from_name(name).ok_or_else(|| format!("`{name}` is not a size: small or base"))?;
+        *self.depth_model.size.lock().unwrap_or_else(PoisonError::into_inner) = size;
+        *self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        Ok(())
+    }
+
+    /// Both files of `size` are in the models folder (by size: the SHA-256 is checked when it loads).
+    fn depth_size_installed(&self, size: Size) -> bool {
+        let len = |f: &std::path::Path, want: u64| std::fs::metadata(f).is_ok_and(|m| m.len() == want);
+        self.depth_files(size).is_some_and(|(g, d)| len(&g, size.graph().size) && len(&d, size.data().size))
+    }
+
     fn depth_cpu_installed(&self) -> bool {
-        self.depth_model_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == FILE_SIZE))
+        self.depth_size_installed(self.depth_size())
     }
 
     fn depth_gpu_installed(&self) -> bool {
@@ -107,7 +131,7 @@ impl Session {
     /// Whether depth can be estimated now: the model is loaded, or a file of it is in place, and the
     /// user hasn't turned it off.
     pub fn depth_model_ready(&self) -> bool {
-        !self.enhancer.disabled.contains(ID)
+        !self.enhancer.disabled.contains(self.depth_size().id())
             && (self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner).is_some()
                 || self.depth_cpu_installed()
                 || (self.depth_gpu_available() && self.depth_gpu_installed()))
@@ -135,25 +159,30 @@ impl Session {
         serde_json::json!({
             "choice": self.depth_backend(),
             "using": using,
+            "size": self.depth_size().name(),
+            "sizesInstalled": Size::ALL.iter().filter(|s| self.depth_size_installed(**s)).map(|s| s.name()).collect::<Vec<_>>(),
             "cpuInstalled": self.depth_cpu_installed(),
             "gpuInstalled": self.depth_gpu_installed(),
             "gpuAvailable": self.depth_gpu_available(),
         })
     }
 
-    /// Use the model in `bytes` (the browser build's copy). They must be exactly the pinned file.
-    pub fn install_depth_model(&self, bytes: &[u8]) -> Result<(), String> {
-        if !verify(bytes) {
-            return Err("the depth model file is damaged or not the expected one: download it again".into());
-        }
-        let e = Estimator::load(bytes).map_err(|e| e.to_string())?;
+    /// Use the model in `graph` and `data` (the browser build's copy): they must be exactly the files of one
+    /// of the sizes, which then becomes the chosen one.
+    pub fn install_depth_model(&self, graph: &[u8], data: Vec<u8>) -> Result<(), String> {
+        let Some(size) = Size::ALL.into_iter().find(|s| s.verify(graph, &data)) else {
+            return Err("the depth model files are damaged or not the expected ones: download them again".into());
+        };
+        let e = Estimator::load(graph, data).map_err(|e| e.to_string())?;
+        *self.depth_model.size.lock().unwrap_or_else(PoisonError::into_inner) = size;
         *self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(e));
         Ok(())
     }
 
     /// The model, loaded once (from the models folder the first time).
     fn depth_model(&self) -> Result<Arc<Estimator>, String> {
-        if self.enhancer.disabled.contains(ID) {
+        let size = self.depth_size();
+        if self.enhancer.disabled.contains(size.id()) {
             return Err("Depth estimation is turned off: turn its model on in Settings → AI Models.".into());
         }
         let mut slot = self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner);
@@ -162,14 +191,17 @@ impl Session {
         }
         let missing = || {
             format!(
-                "{NOT_INSTALLED}. Download it (about 27 MB, Apache-2.0 licence) when LightCraft offers it, or with `models.download {{\"id\": \"{ID}\", \"acknowledged\": true}}`."
+                "{NOT_INSTALLED}. Download {} (about {} MB, Apache-2.0 licence) when LightCraft offers it, or with `models.download {{\"id\": \"{}\", \"acknowledged\": true}}`.",
+                size.label(),
+                (size.graph().size + size.data().size) / 1_000_000,
+                size.id()
             )
         };
-        // the GPU's weights, when chosen (or when automatic and they are here)
+        // the V2 GPU weights, when chosen (or when automatic and Depth Anything 3 isn't here: they stay as they were)
         #[cfg(feature = "vision")]
         {
             let choice = self.depth_backend();
-            let gpu = self.depth_gpu_file().filter(|f| choice != "cpu" && f.is_file());
+            let gpu = self.depth_gpu_file().filter(|f| (choice == "gpu" || (choice == "auto" && !self.depth_cpu_installed())) && f.is_file());
             match gpu {
                 Some(file) => {
                     let loaded = std::fs::read(&file).map_err(|e| e.to_string()).and_then(|bytes| {
@@ -202,12 +234,18 @@ impl Session {
                 None => {}
             }
         }
-        let file = self.depth_model_file().ok_or_else(missing)?;
-        let bytes = std::fs::read(&file).map_err(|_| missing())?;
-        if !verify(&bytes) {
-            return Err(format!("{} is damaged or not the expected file: delete it in Settings → AI Models and download it again", file.display()));
+        let (graph_file, data_file) = self.depth_files(size).ok_or_else(missing)?;
+        let graph = std::fs::read(&graph_file).map_err(|_| missing())?;
+        let data = std::fs::read(&data_file).map_err(|_| missing())?;
+        if !size.verify(&graph, &data) {
+            return Err(format!(
+                "{} or {} is damaged or not the expected file: delete {} in Settings → AI Models and download it again",
+                graph_file.display(),
+                data_file.display(),
+                size.label()
+            ));
         }
-        let e = Arc::new(Estimator::load(&bytes).map_err(|e| e.to_string())?);
+        let e = Arc::new(Estimator::load(&graph, data).map_err(|e| e.to_string())?);
         *slot = Some(e.clone());
         Ok(e)
     }
@@ -276,11 +314,25 @@ mod tests {
             (Some("gpu"), true, Some(false), Some(false)),
             "{st}"
         );
+        assert_eq!(st["size"], "small", "Small is the default");
         // asking for the GPU without its weights says so, rather than quietly using the CPU
         let e = s.depth_model().err().unwrap_or_default();
         assert!(!e.is_empty(), "no model is installed");
         s.set_depth_backend("auto").unwrap();
         assert_eq!(s.depth_backend(), "auto");
+    }
+
+    #[test]
+    fn the_size_of_depth_anything_is_a_choice() {
+        let s = Session::new();
+        assert_eq!(s.depth_size(), Size::Small);
+        assert!(s.set_depth_size("giant").is_err());
+        s.set_depth_size("base").unwrap();
+        assert_eq!(s.depth_backend_status()["size"], "base");
+        // a size that isn't downloaded says which one to get
+        let e = s.depth_model().err().unwrap_or_default();
+        assert!(e.contains(NOT_INSTALLED) && e.contains("depth-anything-3-base"), "{e}");
+        assert!(s.install_depth_model(b"not", b"the model".to_vec()).is_err());
     }
 
     #[test]

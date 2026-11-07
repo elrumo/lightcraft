@@ -191,29 +191,36 @@ pub const KANDINSKY: ModelSpec = diffusion(
     false,
 );
 
-/// Depth Anything V2 Small: Lens Blur's depth for photos without depth data of their own (see
-/// `lightcraft_depth`, which pins the file and says where it comes from).
-pub const DEPTH: ModelSpec = ModelSpec {
-    id: lightcraft_depth::ID,
-    label: lightcraft_depth::LABEL,
-    purpose: "Lens Blur and Depth Range masks on photos without depth data of their own",
-    files: &[FileSpec {
-        name: lightcraft_depth::FILE,
-        size: Some(lightcraft_depth::FILE_SIZE),
-        sha256: Some(lightcraft_depth::FILE_SHA256),
-        max: lightcraft_depth::FILE_SIZE,
-    }],
-    mirrors_env: "LIGHTCRAFT_DEPTH_MIRRORS",
-    default_mirrors: &[lightcraft_depth::BASE_URL],
-    licence: lightcraft_depth::LICENCE,
-    licence_url: lightcraft_depth::LICENCE_URL,
-    credit: lightcraft_depth::CREDIT,
-    home_url: lightcraft_depth::HOME_URL,
-    diffusion: None,
-    restricted: false,
-};
+/// One size of Depth Anything 3 (see `lightcraft_depth`, which pins the files and says where they come from): the
+/// graph and its weights, which come together, never alone.
+macro_rules! depth_spec {
+    ($size:expr, $env:literal) => {
+        ModelSpec {
+            id: $size.id(),
+            label: $size.label(),
+            purpose: "Lens Blur and Depth Range masks on photos without depth data of their own",
+            files: &[
+                FileSpec { name: $size.graph().name, size: Some($size.graph().size), sha256: Some($size.graph().sha256), max: $size.graph().size },
+                FileSpec { name: $size.data().name, size: Some($size.data().size), sha256: Some($size.data().sha256), max: $size.data().size },
+            ],
+            mirrors_env: $env,
+            default_mirrors: &[$size.base_url()],
+            licence: lightcraft_depth::LICENCE,
+            licence_url: lightcraft_depth::LICENCE_URL,
+            credit: lightcraft_depth::CREDIT,
+            home_url: lightcraft_depth::HOME_URL,
+            diffusion: None,
+            restricted: false,
+        }
+    };
+}
 
-/// Depth Anything V2 Small on the GPU: the same network from the original weights, several times faster than the CPU
+/// Depth Anything 3 Small, the default size: Lens Blur's depth for photos without depth data of their own.
+pub const DEPTH_SMALL: ModelSpec = depth_spec!(lightcraft_depth::Size::Small, "LIGHTCRAFT_DEPTH_MIRRORS");
+/// Depth Anything 3 Base: finer edges than Small, four times the download.
+pub const DEPTH_BASE: ModelSpec = depth_spec!(lightcraft_depth::Size::Base, "LIGHTCRAFT_DEPTH_BASE_MIRRORS");
+
+/// Depth Anything V2 Small on the GPU (the one size that has a GPU port): the same network from the original weights, several times faster than the CPU
 /// file where there is a GPU for it (a Mac, an iPhone). A model of its own, beside the CPU one.
 pub const DEPTH_GPU: ModelSpec = ModelSpec {
     id: lightcraft_depth::GPU_ID,
@@ -227,19 +234,19 @@ pub const DEPTH_GPU: ModelSpec = ModelSpec {
     }],
     mirrors_env: "LIGHTCRAFT_DEPTH_GPU_MIRRORS",
     default_mirrors: &[lightcraft_depth::GPU_BASE_URL],
-    licence: lightcraft_depth::LICENCE,
-    licence_url: lightcraft_depth::LICENCE_URL,
-    credit: lightcraft_depth::CREDIT,
-    home_url: lightcraft_depth::HOME_URL,
+    licence: "Apache-2.0",
+    licence_url: lightcraft_depth::GPU_LICENCE_URL,
+    credit: lightcraft_depth::GPU_CREDIT,
+    home_url: lightcraft_depth::GPU_HOME_URL,
     diffusion: None,
     restricted: false,
 };
 
 /// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's).
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH, &DEPTH_GPU, &SD15, &KANDINSKY, &SDXL];
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &DEPTH_GPU, &SD15, &KANDINSKY, &SDXL];
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH, &SD15, &KANDINSKY, &SDXL];
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &SD15, &KANDINSKY, &SDXL];
 
 /// The enhancement model with this id.
 pub fn find(id: &str) -> Option<&'static ModelSpec> {
