@@ -544,7 +544,7 @@ impl Session {
     /// its original as before).
     pub(crate) fn new_origin(&self, kind: lightcraft_catalog::OriginKind, cloud: Option<String>) -> Option<lightcraft_catalog::Origin> {
         let device = self.sync.as_ref().filter(|st| st.signed_in()).map_or(0, |st| st.config.device);
-        self.keeps_in_place().then(|| lightcraft_catalog::Origin { kind, cloud, device })
+        self.keeps_in_place().then_some(lightcraft_catalog::Origin { kind, cloud, device })
     }
 }
 
@@ -1002,6 +1002,14 @@ impl SyncState {
 /// converted copies apart), when it is a 128-bit hex hash.
 pub fn blob_key(p: &Photo) -> Option<String> {
     lightcraft_catalog::sync::content_key(p)
+}
+
+/// `p`'s file extension with its dot (`.CR3`), for a scratch copy of its original fetched from the server: what reads it by
+/// its name (a frontend's raw developer, the clip check of [`build_proxies`]) then reads it as what it is. Empty for a name
+/// without one, or with an odd one.
+pub(crate) fn scratch_ext(p: &Photo) -> String {
+    let ext = p.extension();
+    if (1..=8).contains(&ext.len()) && ext.bytes().all(|b| b.is_ascii_alphanumeric()) { format!(".{ext}") } else { String::new() }
 }
 
 /// Does the file at `path` hash to `key` (a [`blob_key`])? A file that can't be read doesn't.

@@ -30,6 +30,8 @@ struct Work {
     id: PhotoId,
     /// The server's key for its original.
     key: String,
+    /// Its file name's extension, for the scratch copy of the original ([`super::scratch_ext`]).
+    ext: String,
     /// This device's copy of the original (`None`: fetched from the server).
     original: Option<String>,
     /// Where this device keeps its previews.
@@ -149,7 +151,8 @@ fn work(job: Arc<Rebuild>) {
 
 /// Builds `w`'s previews into this device's preview files and puts them on the server.
 fn build(job: &Rebuild, w: &Work) -> std::result::Result<(), String> {
-    let scratch = std::env::temp_dir().join(format!("lightcraft-rebuild-{}-{}", std::process::id(), w.key));
+    // (named as the photo is: Apple's raw developer, which draws a raw's previews when the frontend gives one, goes by the name)
+    let scratch = std::env::temp_dir().join(format!("lightcraft-rebuild-{}-{}{}", std::process::id(), w.key, w.ext));
     let original = match &w.original {
         Some(path) => path.clone(),
         None => {
@@ -220,7 +223,7 @@ impl Session {
                     Source::File { path } if !path.starts_with(PATH_PREFIX) && Path::new(path).is_file() => Some(path.clone()),
                     _ => None,
                 };
-                items.push(Work { id: *id, key, original, smart, mini, catalogued: Some((p.width, p.height)) });
+                items.push(Work { id: *id, key, ext: super::scratch_ext(p), original, smart, mini, catalogued: Some((p.width, p.height)) });
             }
         }
         let added = items.len();

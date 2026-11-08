@@ -480,7 +480,7 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             match *action {
                 "pause" => st.folders.pause(true),
                 "resume" => st.folders.pause(false),
-                "rebuild" => names.iter().for_each(|n| st.folders.rebuild_all(n)),
+                "rebuild" => names.iter().for_each(|n| st.folders.rebuild_all(&st.data, n)),
                 _ => names.iter().for_each(|n| st.folders.generate_all(n)),
             }
             log::info!("admin {me}: {action} previews (everyone)");
@@ -491,7 +491,7 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             match *action {
                 "pause" => st.folders.pause(true),
                 "resume" => st.folders.pause(false),
-                "rebuild" => st.folders.rebuild_all(name),
+                "rebuild" => st.folders.rebuild_all(&st.data, name),
                 _ => st.folders.generate_all(name),
             }
             log::info!("admin {me}: {action} previews ({name})");

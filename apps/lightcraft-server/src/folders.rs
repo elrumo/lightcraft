@@ -48,6 +48,9 @@ use crate::api::UserLib;
 pub const INDEX: &str = "folders.json";
 /// Left in a user's folder by `lightbites-server scan` while the server runs: scan them soon.
 pub const REQUEST: &str = "scan.request";
+/// In a user's folder while their previews are being built again ([`Scanner::rebuild_all`]): when that was asked for (unix
+/// seconds). A restart goes on with the previews older than that; it goes once none is waiting.
+const REBUILD: &str = "previews-rebuild.json";
 /// The id space of the photos the server adds (no device is given it).
 pub const SPACE: u32 = crate::MAX_SPACE;
 /// Larger files aren't read whole (nor accepted from guests); a scan reads a TIFF in part past this.
@@ -865,6 +868,32 @@ pub fn scan(
 
 /// Every photo file of the library folders that is a photo in the library: its content hash and where it is
 /// (what has previews, or should).
+/// The previews of all of `lib`'s photos that can be built here: its library folders' files ([`preview_jobs`]), then the
+/// originals devices uploaded that no folder holds (kept in the user's photo files). Not clips: a device's upload has its
+/// poster.
+fn all_jobs(lib: &Mutex<UserLib>) -> Vec<(String, PathBuf)> {
+    let (mut jobs, uploads) = {
+        let l = lock(lib);
+        let jobs = preview_jobs(&l);
+        let mut seen: HashSet<String> = jobs.iter().map(|j| j.0.clone()).collect();
+        let blobs = l.dir.join("blobs");
+        let uploads: Vec<(String, PathBuf)> = l
+            .core
+            .catalog()
+            .photos()
+            .filter(|p| p.in_library() && p.kind != MediaKind::Video)
+            .filter_map(|p| p.content_hash.clone())
+            .filter(|h| seen.insert(h.clone()))
+            .filter_map(|h| Some((crate::api::blob_path(&blobs, "original", &h)?, h)))
+            .map(|(path, h)| (h, path))
+            .collect();
+        (jobs, uploads)
+    };
+    // (looked for with the library let go: one file each)
+    jobs.extend(uploads.into_iter().filter(|(_, path)| path.is_file()));
+    jobs
+}
+
 fn preview_jobs(l: &UserLib) -> Vec<(String, PathBuf)> {
     let in_library: HashSet<u64> = l.core.catalog().photos().map(|p| p.id.0).collect();
     l.index
@@ -1151,11 +1180,51 @@ impl Scanner {
     }
 
     /// Queue every preview of this user's photos, the ones there too, soon. A preview is replaced when its new one
-    /// is built (never before), so a photo whose file can't be read any more keeps the preview it has.
-    pub fn rebuild_all(&self, user: &str) {
+    /// is built (never before), so a photo whose file can't be read any more keeps the preview it has. Kept in their
+    /// folder (`data`) until it is done, so a restart goes on with it.
+    pub fn rebuild_all(&self, data: &Path, user: &str) {
+        let since = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Err(e) = accounts::write_private_json(&accounts::user_dir(data, user).join(REBUILD), &serde_json::json!({"since": since})) {
+            log::warn!("{user}'s previews: a restart won't go on with building them again ({e})");
+        }
         lock(&self.failed).retain(|(u, _), _| u != user);
         lock(&self.rebuild_wanted).insert(user.to_string());
         self.wake.notify_all();
+    }
+
+    /// Queue `user`'s previews to be built again ([`Scanner::rebuild_all`]); with `older_than` (a restart going on with one),
+    /// only those that are older or missing.
+    fn queue_rebuilds(&self, st: &State, user: &str, older_than: Option<std::time::SystemTime>) {
+        let Ok(lib) = crate::api::lib(st, user) else { return };
+        let blobs = accounts::user_dir(&st.data, user).join("blobs");
+        let built = |hash: &str| crate::api::blob_path(&blobs, "mini", hash).and_then(|p| std::fs::metadata(p).ok()?.modified().ok());
+        for (hash, file) in all_jobs(&lib) {
+            if older_than.is_none_or(|t| built(&hash).is_none_or(|at| at < t)) {
+                self.queue_rebuild(user, hash, file);
+            }
+        }
+    }
+
+    /// The users whose previews are being built again ([`REBUILD`]), and since when.
+    fn rebuilds_kept(data: &Path) -> Vec<(String, std::time::SystemTime)> {
+        let names: Vec<String> = accounts::read_users(data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+        names
+            .into_iter()
+            .filter_map(|u| {
+                let v: serde_json::Value = serde_json::from_slice(&std::fs::read(accounts::user_dir(data, &u).join(REBUILD)).ok()?).ok()?;
+                Some((u, UNIX_EPOCH + Duration::from_secs(v["since"].as_u64()?)))
+            })
+            .collect()
+    }
+
+    /// Forget a finished rebuild ([`REBUILD`]): nothing of `user`'s waits to be queued, built here or by a device.
+    fn end_rebuild(&self, st: &State, user: &str) {
+        let waiting = lock(&self.rebuild_wanted).contains(user)
+            || lock(&self.jobs).forced.iter().any(|(u, _)| u == user)
+            || st.vision.work.rebuilds_waiting(user) > 0;
+        if !waiting {
+            let _ = std::fs::remove_file(accounts::user_dir(&st.data, user).join(REBUILD));
+        }
     }
 
     /// How many of this user's photos have their previews, and how many photos there are, as counted a few seconds ago
@@ -1288,7 +1357,14 @@ pub(crate) fn run_scanner(st: &Arc<State>) {
     for u in users_with_folders(&st.data) {
         sc.request(&u);
     }
+    // (a rebuild the server stopped in: the previews not built again yet)
+    for (u, since) in Scanner::rebuilds_kept(&st.data) {
+        sc.queue_rebuilds(st, &u, Some(since));
+    }
     while !sc.stop.load(Ordering::SeqCst) {
+        for (u, _) in Scanner::rebuilds_kept(&st.data) {
+            sc.end_rebuild(st, &u);
+        }
         // asked from the command line (`lightbites-server scan` while the server runs)
         for u in users_with_folders(&st.data) {
             let req = accounts::user_dir(&st.data, &u).join(REQUEST);
@@ -1307,21 +1383,17 @@ pub(crate) fn run_scanner(st: &Arc<State>) {
         if let Some(user) = all {
             if let Ok(lib) = crate::api::lib(st, &user) {
                 let blobs = accounts::user_dir(&st.data, &user).join("blobs");
-                let jobs = preview_jobs(&lock(&lib));
-                for (hash, file) in jobs {
+                for (hash, file) in all_jobs(&lib) {
                     sc.queue(&blobs, &user, hash, file);
                 }
             }
             continue;
         }
-        let rebuild = lock(&sc.rebuild_wanted).pop_first();
+        // (taken off the list once queued: `end_rebuild` waits for both)
+        let rebuild = lock(&sc.rebuild_wanted).first().cloned();
         if let Some(user) = rebuild {
-            if let Ok(lib) = crate::api::lib(st, &user) {
-                let jobs = preview_jobs(&lock(&lib));
-                for (hash, file) in jobs {
-                    sc.queue_rebuild(&user, hash, file);
-                }
-            }
+            sc.queue_rebuilds(st, &user, None);
+            lock(&sc.rebuild_wanted).remove(&user);
             continue;
         }
         let next = lock(&sc.wanted).pop_first();

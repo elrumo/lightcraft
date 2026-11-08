@@ -39,7 +39,11 @@ fn photos_kept_in_place_send_previews_never_the_original() {
     assert_eq!(f.core.catalog().photo(kept).unwrap().origin.as_ref(), Some(&origin), "the server knows where it is");
     let before = f.requests.len();
     sync(&mut a, &mut f);
-    assert!(f.requests[before..].iter().all(|r| !r.starts_with("PUT") && !r.starts_with("HEAD")), "nothing left to send: {:?}", &f.requests[before..]);
+    assert!(
+        f.requests[before..].iter().all(|r| !r.starts_with("PUT") && !r.starts_with("HEAD")),
+        "nothing left to send: {:?}",
+        &f.requests[before..]
+    );
 
     // the other device shows it from its previews, edits it, and never asks for the original
     let mut b = open(&root.join("b"));

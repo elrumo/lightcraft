@@ -1640,6 +1640,84 @@ fn rebuild_all_goes_to_the_device_that_builds_the_previews() {
     assert!(files_in(&blobs.join("mini")).iter().all(|p| std::fs::metadata(p).unwrap().modified().unwrap() > before), "all new");
 }
 
+#[test]
+fn rebuild_all_covers_uploaded_photos_and_goes_on_after_a_restart() {
+    // ann's library folder has four photos the server built previews of; a device of hers adds a fifth no folder holds
+    let (f, _) = helper_fixture("rebuild-all-restart", &[]);
+    let Fixture { server, ann, data, nas } = f;
+    let root = data.parent().unwrap().to_path_buf();
+    let blobs = accounts::user_dir(&data, "ann").join("blobs");
+    write_flat(&root.join("in/pink.png"), [240, 120, 200]);
+    let device = |server: &Server, dir: &str| {
+        let mut s = Session::new().with_fs();
+        s.open_library(root.join(dir), false).unwrap();
+        s.vision.set_embedder(Arc::new(Padded));
+        let url = format!("http://{}", server.addr());
+        s.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
+        sync(&mut s);
+        s
+    };
+    let mut s = device(&server, "phone");
+    s.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sync(&mut s);
+    assert_eq!((files_in(&blobs.join("original")).len(), files_in(&blobs.join("mini")).len()), (1, 5), "the fifth photo was uploaded");
+    drop(s);
+    let mini_time = |b: &Path| files_in(&b.join("mini")).iter().map(|p| std::fs::metadata(p).unwrap().modified().unwrap()).max().unwrap();
+    let before = mini_time(&blobs);
+    std::thread::sleep(Duration::from_millis(1100));
+
+    // her previews are a device's to build; "Rebuild All" offers all five again, the uploaded one too
+    assert_eq!(put(&ann, "/api/work/settings", json!({"moved": ["previews"]})).0, 200);
+    accounts::set_admin(&data, "ann", true).unwrap();
+    let admin = admin_login(&server, "ann", "correct horse");
+    assert_eq!(post(&admin, "/api/admin/users/ann/previews/rebuild", b"").0, 200);
+    let offered = |w: &Who| {
+        let mut last = Value::Null;
+        for _ in 0..200 {
+            last = claim(w, json!({"previews": "previews"}), 10).1;
+            let back: Vec<Value> = keys_of(&last).iter().map(|k| json!({"part": "previews", "key": k})).collect();
+            post(w, "/api/work/release", json!({"items": back}).to_string().as_bytes());
+            if keys_of(&last).len() == 5 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        keys_of(&last).len()
+    };
+    assert_eq!(offered(&ann), 5);
+    let kept = accounts::user_dir(&data, "ann").join("previews-rebuild.json");
+    assert!(kept.is_file(), "kept until it is done");
+
+    // the server restarts before any is built: they are all still to build
+    drop(server);
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    cfg.vision_dir = Some(data.join("no-model-here"));
+    let server = Server::start(cfg).unwrap();
+    let ann = login(&server, "ann", "correct horse");
+    assert_eq!(offered(&ann), 5, "the rebuild goes on after a restart");
+
+    // a device builds them; then none is left, all five are new, and the rebuild is over
+    let mut s = device(&server, "phone-2");
+    s.execute("vision.setHelper", &json!({"parts": ["previews"]})).unwrap();
+    for _ in 0..600 {
+        s.vision_poll();
+        sync(&mut s);
+        if keys_of(&claim(&ann, json!({"previews": "previews"}), 10).1).is_empty() && !kept.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let minis = files_in(&blobs.join("mini"));
+    assert_eq!(minis.len(), 5);
+    assert!(minis.iter().all(|p| std::fs::metadata(p).unwrap().modified().unwrap() > before), "all new");
+    assert!(!kept.exists(), "the rebuild is over");
+    drop(s);
+    drop(server);
+    let _ = (nas, std::fs::remove_dir_all(&root));
+}
+
 /// The files under `dir`, at any depth.
 fn files_in(dir: &Path) -> Vec<PathBuf> {
     std::fs::read_dir(dir)

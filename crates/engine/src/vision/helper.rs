@@ -21,8 +21,8 @@ use lightcraft_vision::faces::index::FaceIndex;
 use lightcraft_vision::{EmbeddingIndex, Key, SensitiveIndex, TextIndex};
 use serde_json::{Value, json};
 
-use super::sensitive::{ClassifierProvider, acquire_classifier};
 use super::helper_usage::{HelperConditions, HelperUsage};
+use super::sensitive::{ClassifierProvider, acquire_classifier};
 use super::server::why;
 use super::{
     BATCH, Busy, FinderProvider, Provider, ReaderProvider, SENSITIVE_EDGE, Shared, THUMB_EDGE, acquire, acquire_finder, acquire_reader,
@@ -623,7 +623,8 @@ enum Failure {
 fn build_and_put(cfg: &Config, scratch: &Path, it: &Item) -> Result<(), Failure> {
     let hash = it.photo.content_hash.clone().ok_or_else(|| Failure::Photo("the photo has no content hash".into()))?;
     let name = |what: &str| scratch.join(format!("previews-{}-{what}", it.key.to_hex()));
-    let (original, smart, mini) = (name("original"), name("smart"), name("mini"));
+    // (named as the photo is: Apple's raw developer, which draws a raw's previews when the frontend gives one, goes by the name)
+    let (original, smart, mini) = (name(&format!("original{}", cloud_sync::scratch_ext(&it.photo))), name("smart"), name("mini"));
     let text = |p: &Path| p.to_string_lossy().into_owned();
     let result = (|| {
         let got = call(cfg, "GET", &format!("/api/blobs/original/{hash}"), Body::Empty, Some(text(&original)));

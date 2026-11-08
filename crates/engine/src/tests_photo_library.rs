@@ -441,6 +441,8 @@ fn files_added_in_place_are_kept_where_they_are() {
     assert!(root.join("Pictures/a.xmp").exists());
     // the setting is saved with the library
     s.close_library().unwrap();
+    // (a new session: the old one lets go of the library first)
+    drop(s);
     let s = session(&root);
     assert!(s.keep_in_place);
 }

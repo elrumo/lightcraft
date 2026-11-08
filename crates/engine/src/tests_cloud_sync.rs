@@ -2970,3 +2970,18 @@ fn a_ready_model_on_a_synced_device_downloads_no_previews_by_itself() {
     assert_eq!(minis(&b.sync_tasks()), 2, "asked for: the photos' small previews come down to be looked at");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_fetched_originals_scratch_copy_is_named_with_the_photos_extension() {
+    // (Apple's raw developer goes by the name: a copy without the extension was never developed by it)
+    let named = |name: &str| {
+        let p = lightcraft_catalog::Photo::new(PhotoId(1), Source::Demo { scene: 0 }, name, "CR3", 10, 10, "2026-10-01T00:00:00");
+        crate::cloud_sync::scratch_ext(&p)
+    };
+    assert_eq!(named("IMG_0042.CR3"), ".CR3");
+    assert_eq!(named("clip.mov"), ".mov");
+    assert_eq!(named("README"), "");
+    assert_eq!(named(".hidden"), "");
+    assert_eq!(named("odd.c/../x"), "", "nothing but letters and digits");
+    assert_eq!(named("long.abcdefghij"), "");
+}
