@@ -215,19 +215,22 @@ fn stored_facts(head: &serde_json::Value, bytes: &[u8]) -> Option<(SmartFacts, M
     Some((facts, mattes))
 }
 
+/// The light a preview of `img` is divided by for its 8 bits ([`encode`]): all but the brightest 0.05 % fit into 0..1, and never
+/// under 1.
+fn scale_of(img: &Rgb32f) -> f32 {
+    let mut lum: Vec<f32> = img.data.iter().map(|c| c[0].max(c[1]).max(c[2])).filter(|v| v.is_finite()).collect();
+    if lum.is_empty() {
+        return 1.0;
+    }
+    let k = (((lum.len() as f64) * 0.9995) as usize).min(lum.len() - 1);
+    let (_, v, _) = lum.select_nth_unstable_by(k, f32::total_cmp);
+    v.max(1.0)
+}
+
 /// Encode a source image and its decoder facts (the camera tone curve and the [`SourceInfo`] the
 /// render interprets settings against, if given) as a smart preview.
 pub fn encode(img: &Rgb32f, info: Option<&SourceInfo>) -> Result<Vec<u8>, String> {
-    // scale so all but the brightest 0.05 % fit into 0..1
-    let mut lum: Vec<f32> = img.data.iter().map(|c| c[0].max(c[1]).max(c[2])).filter(|v| v.is_finite()).collect();
-    let scale = if lum.is_empty() {
-        1.0
-    } else {
-        let k = ((lum.len() as f64) * 0.9995) as usize;
-        let k = k.min(lum.len() - 1);
-        let (_, v, _) = lum.select_nth_unstable_by(k, f32::total_cmp);
-        v.max(1.0)
-    };
+    let scale = scale_of(img);
     let data: Vec<[u8; 4]> = img
         .data
         .iter()
@@ -360,7 +363,7 @@ pub(crate) fn host_poster(path: &str, core: &Rgb32f, seconds: f64) -> Option<Rgb
 }
 
 /// The developer's answer to `ask`, when one is set and it gives a picture of `core`'s frame (within 1 % of its aspect), fitted
-/// to `ask.edge` and with every value a number.
+/// to `ask.edge`, with every value a number and none above the light `core`'s own preview keeps ([`scale_of`]).
 fn ask_host(ask: &HostDevelop<'_>, core: &Rgb32f) -> Option<Rgb32f> {
     use lightcraft_raster::resample::{Filter, fit};
     let developer = host_developer().read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()?;
@@ -384,7 +387,11 @@ fn ask_host(ask: &HostDevelop<'_>, core: &Rgb32f) -> Option<Rgb32f> {
         );
         return None;
     }
-    img.data.iter_mut().for_each(|c| *c = c.map(|v| if v.is_finite() { v } else { 0.0 }));
+    // (no brighter than this engine's own preview keeps: a frontend can keep light far above the sensor's clip, such as Core Image's
+    // extended range on an iPhone ProRAW of a ceiling lamp, 20 times this engine's top, and the preview's one scale for its 8 bits
+    // would then leave the rest of the picture in a few levels, posterised and in false colours)
+    let top = scale_of(core);
+    img.data.iter_mut().for_each(|c| *c = c.map(|v| if v.is_finite() { v.min(top) } else { 0.0 }));
     Some(if img.width.max(img.height) > ask.edge { fit(&img, ask.edge, ask.edge, Filter::Mitchell) } else { img })
 }
 

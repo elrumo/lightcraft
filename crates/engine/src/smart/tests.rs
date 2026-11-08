@@ -470,8 +470,8 @@ fn a_frontends_development_is_a_raw_previews_picture_with_the_engines_facts() {
     let (w, h) = (core_img.width, core_img.height);
     let asked = Arc::new(AtomicUsize::new(0));
     let seen = asked.clone();
-    let (good, square, failing, picture) = (path("good"), path("square"), path("failing"), path("png"));
-    let (g, sq, pic) = (good.clone(), square.clone(), picture.clone());
+    let (good, square, failing, picture, lamp) = (path("good"), path("square"), path("failing"), path("png"), path("lamp"));
+    let (g, sq, pic, la) = (good.clone(), square.clone(), picture.clone(), lamp.clone());
     // (other tests build previews while this one runs: anything but this test's own paths gets this engine's picture)
     set_host_developer(Some(Arc::new(move |ask: &HostDevelop<'_>| {
         if ask.original == g {
@@ -481,6 +481,9 @@ fn a_frontends_development_is_a_raw_previews_picture_with_the_engines_facts() {
             Ok(Rgb32f { width: w, height: h, data: vec![[0.25, 0.25, 0.25]; w * h] })
         } else if ask.original == sq {
             Ok(Rgb32f { width: w, height: w, data: vec![[0.25; 3]; w * w] })
+        } else if ask.original == la {
+            // (a lamp in the top quarter far above the sensor's clip, as Core Image's extended range keeps one, over dark shadows)
+            Ok(Rgb32f { width: w, height: h, data: (0..w * h).map(|i| if i < w * h / 4 { [64.0; 3] } else { [0.005; 3] }).collect() })
         } else if ask.original == pic {
             seen.fetch_add(100, Ordering::Relaxed);
             Err("not a raw".into())
@@ -492,7 +495,18 @@ fn a_frontends_development_is_a_raw_previews_picture_with_the_engines_facts() {
     let kept_square = encode_pair_of(Some(&square), &dng, 16, None).unwrap();
     let kept_failing = encode_pair_of(Some(&failing), &dng, 16, None).unwrap();
     let _ = encode_pair_of(Some(&picture), &png, 16, None).unwrap();
+    let (lit, _) = encode_pair_of(Some(&lamp), &dng, 16, None).unwrap();
     set_host_developer(None);
+    // the lamp is kept no brighter than this engine's own preview keeps, so the shadows keep their levels (at the lamp's scale they
+    // were all code 0: black, and a real photo posterised in false colours)
+    let scale = |b: &[u8]| {
+        let rest = b.strip_prefix(MAGIC).unwrap();
+        let nl = rest.iter().position(|c| *c == b'\n').unwrap();
+        serde_json::from_slice::<serde_json::Value>(&rest[..nl]).unwrap()["scale"].as_f64().unwrap()
+    };
+    assert_eq!(scale(&lit), scale(&core_smart), "the lamp at this engine's top");
+    let shadows = decode(&lit).unwrap().0;
+    assert!(shadows.data[w * h / 2..].iter().all(|c| c.iter().all(|v| (0.0035..0.0065).contains(v))), "{:?}", &shadows.data[w * h / 2..][..4]);
     assert_eq!(asked.load(Ordering::Relaxed), 1, "asked once, for the raw only");
     let (img, ..) = decode(&smart).unwrap();
     assert_eq!((img.width, img.height), (w, h));
