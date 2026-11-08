@@ -1431,6 +1431,10 @@ pub(crate) fn people_clusters(st: &State, l: &Mutex<UserLib>, user: &str) -> Res
     };
     let at = {
         let ix = lock(&index);
+        // (read from the file the first time: faces that can't be read now are an error, not nobody)
+        if ix.read_faces().is_none() {
+            return error(500, "the faces found can't be read");
+        }
         (ix.len(), ix.photos(), ix.revision())
     };
     if let Some((k, body)) = lock(&v.people).get(user)

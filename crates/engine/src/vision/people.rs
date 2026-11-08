@@ -145,7 +145,8 @@ impl Session {
         if self.vision.people.at == Some(at) {
             return Ok(self.vision.people.clusters.clone());
         }
-        let clusters = with_faces(&shared, &spec, |ix| clusters_of(ix))?;
+        // (faces that can't be read now are an error, not nobody: nothing is kept of it)
+        let clusters = with_faces(&shared, &spec, |ix| ix.read_faces().is_some().then(|| clusters_of(ix)))?.ok_or("the faces found can't be read")?;
         self.vision.people.at = Some(at);
         self.vision.people.clusters = Arc::new(clusters);
         Ok(self.vision.people.clusters.clone())

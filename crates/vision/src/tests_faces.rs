@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::faces::cluster::{self, face_id, parse_face_id};
-use crate::faces::index::{FaceIndex, REC_LEN};
+use crate::faces::index::{Face, FaceIndex, REC_LEN};
 use crate::faces::{DIM, FaceFound};
 use crate::store::HEADER_LEN;
 use crate::{Error, Key};
@@ -67,7 +67,7 @@ fn faces_are_kept_per_photo_and_survive_a_restart() {
     ];
     assert!(ix.insert_photo(key(3), &bad).unwrap());
     assert_eq!((ix.len(), ix.photos()), (3, 3));
-    assert!(ix.faces().iter().all(|f| (f.embedding.iter().map(|x| x * x).sum::<f32>().sqrt() - 1.0).abs() < 1e-3), "unit length");
+    assert!(ix.faces().iter().all(|f| (f.embedding().iter().map(|x| x * x).sum::<f32>().sqrt() - 1.0).abs() < 1e-3), "unit length");
     let before: Vec<_> = ix.faces().to_vec();
     drop(ix);
 
@@ -77,7 +77,7 @@ fn faces_are_kept_per_photo_and_survive_a_restart() {
     for (a, b) in again.faces().iter().zip(&before) {
         assert_eq!((a.key, a.index, a.rect), (b.key, b.index, b.rect));
         // (f16 storage: close, not equal)
-        assert!(a.embedding.iter().zip(&b.embedding).all(|(x, y)| (x - y).abs() < 2e-3));
+        assert!(a.embedding().iter().zip(&b.embedding()).all(|(x, y)| (x - y).abs() < 2e-3));
     }
 }
 
@@ -104,8 +104,12 @@ fn a_photo_that_was_cut_off_half_way_is_not_believed() {
     drop(f);
     let mut ix = FaceIndex::open(&dir.file()).unwrap();
     assert_eq!(ix.photos(), 1);
-    // and the photo can be looked at again
+    // and the photo can be looked at again, which a restart keeps (its records start over after the ones cut short)
     assert!(ix.insert_photo(key(2), &[found(2, 0.1, &mut seed)]).unwrap());
+    drop(ix);
+    let ix = FaceIndex::open(&dir.file()).unwrap();
+    assert_eq!((ix.len(), ix.photos()), (2, 2));
+    assert_eq!(ix.faces().iter().map(|f| f.key).collect::<Vec<_>>(), [key(1), key(2)]);
 }
 
 #[test]
@@ -197,7 +201,7 @@ fn faces_of_the_same_person_make_one_person() {
         let who = |i: usize| {
             ix.faces().get(i).map(|f| {
                 (0..4u64).max_by(|&a, &b| {
-                    let (da, db): (f32, f32) = (dot(&f.embedding, &person(a + 1, 0.0, &mut 0)), dot(&f.embedding, &person(b + 1, 0.0, &mut 0)));
+                    let (da, db): (f32, f32) = (dot(&f.embedding(), &person(a + 1, 0.0, &mut 0)), dot(&f.embedding(), &person(b + 1, 0.0, &mut 0)));
                     da.total_cmp(&db)
                 })
             })
@@ -226,4 +230,53 @@ fn a_person_is_named_by_their_best_face() {
     for bad in ["", ".", "zz.0", &format!("{}.", key(1).to_hex()), &format!("{}.300", key(1).to_hex()), &format!("{}.-1", key(1).to_hex())] {
         assert_eq!(parse_face_id(bad), None, "{bad:?}");
     }
+}
+
+/// Faces kept as f16 and read into numbers as they are compared group exactly as the same numbers held as f32 did (what
+/// the index kept before); an index opened from its file reads its faces when they are first wanted, the ones found
+/// since included.
+#[test]
+fn faces_kept_as_f16_group_as_their_numbers_did() {
+    let dir = Dir::new();
+    let mut seed = 7;
+    let mut ix = FaceIndex::open(&dir.file()).unwrap();
+    let mut photo = 0;
+    for (who, n) in [(1u64, 9usize), (2, 6), (3, 3)] {
+        for _ in 0..n {
+            ix.insert_photo(key(photo), &[found(who, 0.3, &mut seed)]).unwrap();
+            photo += 1;
+        }
+    }
+    drop(ix);
+    let mut ix = FaceIndex::open(&dir.file()).unwrap();
+    ix.insert_photo(key(photo), &[found(4, 0.3, &mut seed), found(1, 0.3, &mut seed)]).unwrap();
+    assert_eq!((ix.len(), ix.photos()), (20, 19));
+    assert_eq!(ix.faces().len(), 20);
+    let numbers: Vec<Vec<f32>> = ix.faces().iter().map(Face::embedding).collect();
+    // (`cluster::group`'s measure of a face, as it was)
+    let quality = |f: &Face| f.score * ((f.rect[2] - f.rect[0]) * (f.rect[3] - f.rect[1])).max(0.0).sqrt();
+    let items: Vec<(&[f32], f32)> = ix.faces().iter().zip(&numbers).map(|(f, e)| (&e[..], quality(f))).collect();
+    let groups = cluster::group(ix.faces(), cluster::JOIN);
+    assert_eq!(groups, cluster::group_vectors(&items, cluster::JOIN));
+    assert_eq!(groups.iter().map(|g| g.members.len()).collect::<Vec<_>>(), [10, 6, 3, 1]);
+}
+
+/// Faces that can't be read when they are first wanted (the file went short under the index) are not "nobody": no
+/// export says a photo has none, and the next look tries again.
+#[test]
+fn faces_that_cannot_be_read_are_not_taken_for_none() {
+    let dir = Dir::new();
+    let mut seed = 8;
+    let mut ix = FaceIndex::open(&dir.file()).unwrap();
+    ix.insert_photo(key(1), &[found(1, 0.1, &mut seed)]).unwrap();
+    ix.insert_photo(key(2), &[]).unwrap();
+    drop(ix);
+    let ix = FaceIndex::open(&dir.file()).unwrap();
+    let whole = std::fs::read(dir.file()).unwrap();
+    std::fs::OpenOptions::new().write(true).open(dir.file()).unwrap().set_len(HEADER_LEN as u64).unwrap();
+    assert!(ix.read_faces().is_none() && ix.faces().is_empty());
+    assert_eq!(ix.export(|_| false, 10).len(), HEADER_LEN, "no photo is sent as having no faces");
+    std::fs::write(dir.file(), &whole).unwrap();
+    assert_eq!(ix.read_faces().map(<[Face]>::len), Some(1));
+    assert_eq!(FaceIndex::exported_keys(&ix.export(|_| false, 10)).len(), 2);
 }

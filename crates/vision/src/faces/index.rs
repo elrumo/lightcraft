@@ -1,8 +1,11 @@
 //! The faces found in a library's photos, one record per face in an append-only file (the same
 //! kind of store as the search vectors). A photo with no faces gets a marker record, so it is
 //! known to have been looked at; a photo's records are written together and carry the number of
-//! faces it has, so a crash can never leave half a photo that looks complete.
+//! faces it has, so a crash can never leave half a photo that looks complete. Opening it reads
+//! which photos were looked at and how many faces there are: the faces themselves are read the
+//! first time they are wanted ([`FaceIndex::faces`]), and kept as f16, as stored.
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -23,8 +26,15 @@ pub struct Face {
     /// `[x0, y0, x1, y1]`, normalized to the upright photo.
     pub rect: [f32; 4],
     pub score: f32,
-    /// [`DIM`] numbers of unit length.
-    pub embedding: Vec<f32>,
+    /// [`DIM`] numbers of unit length, as f16 bit patterns (as stored: half the memory of f32).
+    pub embedding_f16: [u16; DIM],
+}
+
+impl Face {
+    /// The face's [`DIM`] numbers of unit length.
+    pub fn embedding(&self) -> Vec<f32> {
+        self.embedding_f16.iter().map(|&b| f16_to_f32(b)).collect()
+    }
 }
 
 /// What [`FaceIndex::import`] did.
@@ -40,7 +50,10 @@ pub struct Import {
 pub struct FaceIndex {
     /// `None`: in memory only.
     file: Option<RecordFile>,
-    faces: Vec<Face>,
+    /// Read from the file the first time they are wanted.
+    faces: OnceCell<Vec<Face>>,
+    /// Faces in the index (known before they are read).
+    count: usize,
     /// Photos that were looked at (their faces are in `faces`, or there are none).
     scanned: HashSet<Key>,
     /// Bumped by every change (callers cache what they derive from the faces).
@@ -66,8 +79,8 @@ fn record(key: &Key, index: u8, count: u8, face: Option<&Face>) -> Vec<u8> {
     }
     put(&mut out, &score.to_le_bytes());
     for i in 0..DIM {
-        let v = face.and_then(|f| f.embedding.get(i)).copied().unwrap_or(0.0);
-        put(&mut out, &half::f16::from_f32(v).to_bits().to_le_bytes());
+        let bits = face.and_then(|f| f.embedding_f16.get(i)).copied().unwrap_or(0);
+        put(&mut out, &bits.to_le_bytes());
     }
     out
 }
@@ -95,17 +108,20 @@ fn parse(rec: &[u8]) -> Option<(Key, u8, u8, Option<Face>)> {
         *r = f32_at(rec, KEY_LEN + 4 + i * 4)?;
     }
     let score = f32_at(rec, KEY_LEN + 20)?;
-    let body = rec.get(KEY_LEN + 24..)?;
-    let mut embedding = Vec::with_capacity(DIM);
-    for c in body.as_chunks::<2>().0 {
-        let bits = u16::from_le_bytes(*c);
-        if bits & 0x7c00 == 0x7c00 {
+    let body = rec.get(KEY_LEN + 24..)?.as_chunks::<2>().0;
+    if body.len() != DIM {
+        return None;
+    }
+    let mut embedding_f16 = [0u16; DIM];
+    for (e, c) in embedding_f16.iter_mut().zip(body) {
+        *e = u16::from_le_bytes(*c);
+        if *e & 0x7c00 == 0x7c00 {
             return None;
         }
-        embedding.push(f16_to_f32(bits));
     }
     let sane = rect.iter().all(|v| v.is_finite() && (-0.01..=1.01).contains(v)) && rect[2] > rect[0] && rect[3] > rect[1] && score.is_finite();
-    (sane && embedding.len() == DIM && norm(&embedding) > 0.5).then_some((key, index, count, Some(Face { key, index, rect, score, embedding })))
+    let length = embedding_f16.iter().map(|&b| f16_to_f32(b) * f16_to_f32(b)).sum::<f32>().sqrt();
+    (sane && length > 0.5).then_some((key, index, count, Some(Face { key, index, rect, score, embedding_f16 })))
 }
 
 fn norm(v: &[f32]) -> f32 {
@@ -132,10 +148,12 @@ struct Groups {
 }
 
 impl Groups {
-    /// Adds a record; returns the photo it completed or ended (as `(key, faces)`) when it was not
-    /// of the photo being collected.
-    fn push(&mut self, key: Key, count: u8, face: Option<Face>, done: &mut Vec<(Key, Vec<Face>)>) {
-        if self.key != Some(key) {
+    /// Adds a record (face `index` of `count`); returns the photo it completed or ended (as `(key,
+    /// faces)`) when it was not of the photo being collected. A photo's records start with its
+    /// first face (or its marker): a photo written again after records of it that were never whole
+    /// starts over.
+    fn push(&mut self, key: Key, index: u8, count: u8, face: Option<Face>, done: &mut Vec<(Key, Vec<Face>)>) {
+        if self.key != Some(key) || index == 0 {
             self.finish(done);
             self.key = Some(key);
             self.count = count;
@@ -159,40 +177,66 @@ impl Groups {
     }
 }
 
+/// A file's records read one at a time into whole photos, each the first time it is whole: the
+/// photos, how many faces they have, and the faces when `keep`.
+#[derive(Default)]
+struct Reading {
+    groups: Groups,
+    done: Vec<(Key, Vec<Face>)>,
+    scanned: HashSet<Key>,
+    count: usize,
+    keep: bool,
+    faces: Vec<Face>,
+}
+
+impl Reading {
+    fn record(&mut self, rec: &[u8]) {
+        if let Some((key, index, count, face)) = parse(rec) {
+            self.groups.push(key, index, count, face, &mut self.done);
+        }
+        self.take_done();
+    }
+
+    fn end(&mut self) {
+        self.groups.finish(&mut self.done);
+        self.take_done();
+    }
+
+    fn take_done(&mut self) {
+        for (key, faces) in self.done.drain(..) {
+            if self.scanned.insert(key) {
+                self.count += faces.len();
+                if self.keep {
+                    self.faces.extend(faces);
+                }
+            }
+        }
+    }
+}
+
 impl FaceIndex {
     /// Opens (or creates) the index at `path`. A file written for other models is
     /// [`Error::Mismatch`]: the caller deletes it and starts again. Records that can't be
     /// believed, and photos whose faces are not all there, are ignored.
     pub fn open(path: &Path) -> Result<FaceIndex, Error> {
-        let mut groups = Groups::default();
-        let mut done: Vec<(Key, Vec<Face>)> = Vec::new();
-        let file = RecordFile::open(path, &spec(), |rec| {
-            if let Some((key, _, count, face)) = parse(rec) {
-                groups.push(key, count, face, &mut done);
-            }
-        })?;
-        groups.finish(&mut done);
-        let mut ix = FaceIndex { file: Some(file), faces: Vec::new(), scanned: HashSet::new(), revision: 0 };
-        for (key, faces) in done {
-            if ix.scanned.insert(key) {
-                ix.faces.extend(faces);
-            }
-        }
-        Ok(ix)
+        let mut r = Reading::default();
+        let file = RecordFile::open(path, &spec(), |rec| r.record(rec))?;
+        r.end();
+        Ok(FaceIndex { file: Some(file), faces: OnceCell::new(), count: r.count, scanned: r.scanned, revision: 0 })
     }
 
     /// An index that lives in memory only.
     pub fn in_memory() -> FaceIndex {
-        FaceIndex { file: None, faces: Vec::new(), scanned: HashSet::new(), revision: 0 }
+        FaceIndex { file: None, faces: OnceCell::from(Vec::new()), count: 0, scanned: HashSet::new(), revision: 0 }
     }
 
     /// Faces in the index.
     pub fn len(&self) -> usize {
-        self.faces.len()
+        self.count
     }
 
     pub fn is_empty(&self) -> bool {
-        self.faces.is_empty()
+        self.count == 0
     }
 
     /// Photos that were looked at (with or without faces).
@@ -213,8 +257,21 @@ impl FaceIndex {
         self.scanned.iter()
     }
 
+    /// The faces, read from the file the first time they are wanted; `None` when it can't be read
+    /// now (a library on a drive that went away), which is not "no faces": the next call tries again.
+    pub fn read_faces(&self) -> Option<&[Face]> {
+        if let Some(faces) = self.faces.get() {
+            return Some(faces);
+        }
+        let mut r = Reading { keep: true, ..Reading::default() };
+        self.file.as_ref()?.each(|rec| r.record(rec)).ok()?;
+        r.end();
+        Some(self.faces.get_or_init(|| r.faces))
+    }
+
+    /// [`FaceIndex::read_faces`], none when they can't be read.
     pub fn faces(&self) -> &[Face] {
-        &self.faces
+        self.read_faces().unwrap_or_default()
     }
 
     /// Whether photo `key` was looked at (faces found in it or not).
@@ -235,10 +292,14 @@ impl FaceIndex {
                 let e = unit(&f.embedding)?;
                 let ok = f.rect.iter().all(|v| v.is_finite()) && f.score.is_finite();
                 let r = f.rect.map(|v| v.clamp(0.0, 1.0));
-                (ok && r[2] > r[0] && r[3] > r[1]).then_some((r, f.score, e))
+                let mut embedding_f16 = [0u16; DIM];
+                for (b, x) in embedding_f16.iter_mut().zip(&e) {
+                    *b = half::f16::from_f32(*x).to_bits();
+                }
+                (ok && r[2] > r[0] && r[3] > r[1]).then_some((r, f.score, embedding_f16))
             })
             .enumerate()
-            .filter_map(|(i, (rect, score, embedding))| Some(Face { key, index: u8::try_from(i).ok()?, rect, score, embedding }))
+            .filter_map(|(i, (rect, score, embedding_f16))| Some(Face { key, index: u8::try_from(i).ok()?, rect, score, embedding_f16 }))
             .collect();
         let count = u8::try_from(faces.len()).unwrap_or(0);
         let mut bytes = Vec::with_capacity(REC_LEN * faces.len().max(1));
@@ -252,18 +313,23 @@ impl FaceIndex {
             file.append(&bytes)?;
         }
         self.scanned.insert(key);
-        self.faces.extend(faces);
+        self.count += faces.len();
+        if let Some(all) = self.faces.get_mut() {
+            all.extend(faces);
+        }
         self.revision += 1;
         Ok(true)
     }
 
     /// A file's worth of records (header first) for the photos `skip` doesn't name, at most `max`
     /// photos: what a device sends a server that lacks them. [`FaceIndex::import`] reads it back.
+    /// (No records when the faces can't be read: never a photo said to have none.)
     pub fn export(&self, skip: impl Fn(&Key) -> bool, max: usize) -> Vec<u8> {
         let mut out = spec().header().to_vec();
+        let Some(faces) = self.read_faces() else { return out };
         let mut sent = 0;
         let mut by_photo: HashMap<Key, Vec<&Face>> = HashMap::new();
-        for f in &self.faces {
+        for f in faces {
             by_photo.entry(f.key).or_default().push(f);
         }
         let mut keys: Vec<&Key> = self.scanned.iter().filter(|k| !skip(k)).collect();
@@ -304,8 +370,8 @@ impl FaceIndex {
         let mut done: Vec<(Key, Vec<Face>)> = Vec::new();
         let mut records = 0;
         for rec in body.as_chunks::<REC_LEN>().0 {
-            let (key, _, count, face) = parse(rec).ok_or(Error::Invalid("a face record"))?;
-            groups.push(key, count, face, &mut done);
+            let (key, index, count, face) = parse(rec).ok_or(Error::Invalid("a face record"))?;
+            groups.push(key, index, count, face, &mut done);
             records += 1;
         }
         groups.finish(&mut done);
@@ -338,7 +404,10 @@ impl FaceIndex {
         }
         for (key, faces) in fresh {
             self.scanned.insert(key);
-            self.faces.extend(faces);
+            self.count += faces.len();
+            if let Some(all) = self.faces.get_mut() {
+                all.extend(faces);
+            }
             out.added += 1;
         }
         if out.added > 0 {
@@ -352,7 +421,8 @@ impl FaceIndex {
         if let Some(file) = &mut self.file {
             file.truncate()?;
         }
-        self.faces.clear();
+        self.faces = OnceCell::from(Vec::new());
+        self.count = 0;
         self.scanned.clear();
         self.revision += 1;
         Ok(())

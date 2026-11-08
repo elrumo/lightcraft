@@ -152,8 +152,10 @@ impl Session {
                 // (only the faces of these photos are written out)
                 let wanted: HashSet<Key> = ks.iter().map(|(_, key)| *key).collect();
                 let mut found: HashMap<Key, Vec<Value>> = HashMap::new();
-                for f in ix.faces().iter().filter(|f| wanted.contains(&f.key)) {
-                    found.entry(f.key).or_default().push(json!({"rect": f.rect, "score": f.score, "e": b64(&f.embedding)}));
+                // (faces that can't be read now are not "none": nothing is said of them)
+                let Some(all) = ix.read_faces() else { return };
+                for f in all.iter().filter(|f| wanted.contains(&f.key)) {
+                    found.entry(f.key).or_default().push(json!({"rect": f.rect, "score": f.score, "e": b64(&f.embedding())}));
                 }
                 for (k, key) in &ks {
                     if ix.has(key) {

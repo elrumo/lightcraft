@@ -376,3 +376,29 @@ fn an_in_memory_index_works_like_a_file_one_without_writing() {
     // and a model id that can't be stored is refused here too
     assert!(EmbeddingIndex::in_memory("a-model-id-that-is-far-too-long", DIM).is_err());
 }
+
+/// An index opened from its file holds its keys only: the vectors are read when a search, a vector or an export wants
+/// them, the ones added since it was opened included, and the answers are those of an index that held them all along.
+#[test]
+fn vectors_are_read_from_the_file_when_first_wanted() {
+    let dir = Dir::new();
+    let path = dir.file("ix.bin");
+    let mut all = EmbeddingIndex::in_memory(MODEL, DIM).unwrap();
+    for i in 0..30 {
+        all.insert(key(i), &vec_of(i as u64, DIM)).unwrap();
+    }
+    drop(filled(&path, 20));
+    let mut ix = EmbeddingIndex::open(&path, MODEL, DIM).unwrap();
+    for i in 20..30 {
+        assert!(ix.insert(key(i), &vec_of(i as u64, DIM)).unwrap());
+    }
+    assert_eq!(ix.len(), 30);
+    for q in [3, 25] {
+        assert_eq!(ix.search(&vec_of(q, DIM), 7).unwrap(), all.search(&vec_of(q, DIM), 7).unwrap());
+    }
+    assert_eq!(ix.vector(&key(4)), all.vector(&key(4)));
+    assert_eq!(ix.export(|_| false, 100), all.export(|_| false, 100));
+    // (and once read, what is added is kept with them)
+    ix.insert(key(30), &vec_of(30, DIM)).unwrap();
+    assert_eq!(ix.search(&vec_of(30, DIM), 1).unwrap()[0].key, key(30));
+}

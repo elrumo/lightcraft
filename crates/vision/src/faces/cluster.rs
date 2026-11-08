@@ -6,6 +6,8 @@
 // Whispers) if clusters of one person come out split on real libraries, and an index over the
 // centroids beyond ~100k faces.
 
+use std::borrow::Cow;
+
 use super::DIM;
 use super::index::Face;
 use crate::store::Key;
@@ -43,10 +45,10 @@ fn quality(f: &Face) -> f32 {
     f.score * ((f.rect[2] - f.rect[0]) * (f.rect[3] - f.rect[1])).max(0.0).sqrt()
 }
 
-/// `faces` as people, biggest first (ties: the better face first).
+/// `faces` as people, biggest first (ties: the better face first). Each face's numbers are read
+/// from their f16 form as it is placed.
 pub fn group(faces: &[Face], join: f32) -> Vec<Group> {
-    let items: Vec<(&[f32], f32)> = faces.iter().map(|f| (if f.embedding.len() == DIM { &f.embedding[..] } else { &[][..] }, quality(f))).collect();
-    group_vectors(&items, join)
+    group_with(faces.len(), DIM, |i| faces.get(i).map(|f| Cow::Owned(f.embedding())), |i| faces.get(i).map_or(0.0, quality), join)
 }
 
 /// Unit vectors as people, each `(vector, quality)`: the best faces start a person, a face joins the person whose
@@ -55,14 +57,18 @@ pub fn group(faces: &[Face], join: f32) -> Vec<Group> {
 /// the first one is left out (it belongs to no group).
 pub fn group_vectors(items: &[(&[f32], f32)], join: f32) -> Vec<Group> {
     let dim = items.iter().map(|(v, _)| v.len()).find(|&n| n > 0).unwrap_or(0);
-    let q = |i: usize| items.get(i).map_or(0.0, |it| it.1);
-    let mut order: Vec<usize> = (0..items.len()).filter(|&i| items.get(i).is_some_and(|(v, _)| dim > 0 && v.len() == dim)).collect();
+    group_with(items.len(), dim, |i| items.get(i).map(|(v, _)| Cow::Borrowed(*v)), |i| items.get(i).map_or(0.0, |it| it.1), join)
+}
+
+/// [`group_vectors`] of `n` items, item `i` being `vector(i)` (left out when it isn't `dim` long) of quality `q(i)`.
+fn group_with<'a>(n: usize, dim: usize, vector: impl Fn(usize) -> Option<Cow<'a, [f32]>>, q: impl Fn(usize) -> f32, join: f32) -> Vec<Group> {
+    let mut order: Vec<usize> = (0..n).filter(|&i| dim > 0 && vector(i).is_some_and(|v| v.len() == dim)).collect();
     order.sort_by(|&a, &b| q(b).total_cmp(&q(a)).then(a.cmp(&b)));
     let mut sums: Vec<Vec<f32>> = Vec::new();
     let mut groups: Vec<Group> = Vec::new();
     for i in order {
-        let Some((v, _)) = items.get(i) else { continue };
-        let best = groups.iter().enumerate().map(|(g, grp)| (g, dot(v, &grp.centroid))).max_by(|a, b| a.1.total_cmp(&b.1));
+        let Some(v) = vector(i) else { continue };
+        let best = groups.iter().enumerate().map(|(g, grp)| (g, dot(&v, &grp.centroid))).max_by(|a, b| a.1.total_cmp(&b.1));
         match best {
             Some((g, sim)) if sim >= join => {
                 if let (Some(sum), Some(grp)) = (sums.get_mut(g), groups.get_mut(g)) {

@@ -1,9 +1,11 @@
 //! The embedding index: one unit-length vector per photo (stored as f16, half the disk and RAM of
 //! f32), searched by brute force: exact, with no index to corrupt or rebuild. Measured (release,
-//! dev laptop): 100k photos × 768 dimensions search in ~90 ms and load in ~0.4 s.
+//! dev laptop): 100k photos × 768 dimensions search in ~90 ms and load in ~0.4 s. Opening it reads
+//! the photos' keys only: the vectors (1.5 KB a photo) are read on the first search that needs them.
 // ponytail: brute force, one thread; chunk the scan across threads, or use an approximate index
 // (HNSW), beyond ~1M photos.
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -35,8 +37,10 @@ pub struct EmbeddingIndex {
     spec_model: String,
     dim: usize,
     keys: Vec<Key>,
-    /// `keys.len() × dim` f16 bit patterns, row `i` belonging to `keys[i]`.
-    rows: Vec<u16>,
+    /// `keys.len() × dim` f16 bit patterns, row `i` belonging to `keys[i]`: read from the file the
+    /// first time they are wanted ([`EmbeddingIndex::search`], a vector, an export), so an index
+    /// that is only opened, or only added to, costs its keys.
+    rows: OnceCell<Vec<u16>>,
     pos: HashMap<Key, usize>,
 }
 
@@ -55,6 +59,13 @@ fn bits_of(raw: &[u8]) -> Vec<u16> {
 
 fn f16_is_finite(h: u16) -> bool {
     h & 0x7c00 != 0x7c00
+}
+
+/// A record's key and vector, when it is to be believed: `dim` finite numbers, not all zero.
+fn record_of(rec: &[u8], dim: usize) -> Option<(Key, Vec<u16>)> {
+    let (key, body) = (Key::read(rec)?, rec.get(KEY_LEN..)?);
+    let bits = bits_of(body);
+    (bits.len() == dim && bits.iter().all(|&b| f16_is_finite(b)) && !bits.iter().all(|&b| b & 0x7fff == 0)).then_some((key, bits))
 }
 
 /// `v` scaled to unit length, or `None` when it has a non-finite entry or no length.
@@ -105,24 +116,50 @@ impl EmbeddingIndex {
     /// Records that don't decode to a finite, non-zero vector are ignored.
     pub fn open(path: &Path, model: &str, dim: usize) -> Result<EmbeddingIndex, Error> {
         let spec = Self::spec(model, dim)?;
-        let (mut keys, mut rows, mut pos) = (Vec::new(), Vec::new(), HashMap::new());
+        let (mut keys, mut pos) = (Vec::new(), HashMap::new());
         let file = RecordFile::open(path, &spec, |rec| {
-            let (Some(key), Some(body)) = (Key::read(rec), rec.get(KEY_LEN..)) else { return };
-            let bits = bits_of(body);
-            if bits.len() != dim || !bits.iter().all(|&b| f16_is_finite(b)) || bits.iter().all(|&b| b & 0x7fff == 0) || pos.contains_key(&key) {
-                return;
+            if let Some((key, _)) = record_of(rec, dim)
+                && !pos.contains_key(&key)
+            {
+                pos.insert(key, keys.len());
+                keys.push(key);
             }
-            pos.insert(key, keys.len());
-            keys.push(key);
-            rows.extend_from_slice(&bits);
         })?;
-        Ok(EmbeddingIndex { file: Some(file), spec_model: model.to_string(), dim, keys, rows, pos })
+        Ok(EmbeddingIndex { file: Some(file), spec_model: model.to_string(), dim, keys, rows: OnceCell::new(), pos })
     }
 
     /// An index that lives in memory only.
     pub fn in_memory(model: &str, dim: usize) -> Result<EmbeddingIndex, Error> {
         Self::spec(model, dim)?.check()?;
-        Ok(EmbeddingIndex { file: None, spec_model: model.to_string(), dim, keys: Vec::new(), rows: Vec::new(), pos: HashMap::new() })
+        Ok(EmbeddingIndex { file: None, spec_model: model.to_string(), dim, keys: Vec::new(), rows: OnceCell::from(Vec::new()), pos: HashMap::new() })
+    }
+
+    /// The vectors, read from the file the first time (the records [`EmbeddingIndex::open`] took,
+    /// and those appended since, in the same order as the keys).
+    fn rows(&self) -> Result<&[u16], Error> {
+        if let Some(rows) = self.rows.get() {
+            return Ok(rows);
+        }
+        let mut rows = Vec::with_capacity(self.keys.len().saturating_mul(self.dim));
+        if let Some(file) = &self.file {
+            let (mut n, mut aligned) = (0, true);
+            file.each(|rec| {
+                let Some((key, bits)) = record_of(rec, self.dim) else { return };
+                match self.pos.get(&key) {
+                    Some(&i) if i == n => {
+                        rows.extend_from_slice(&bits);
+                        n += 1;
+                    }
+                    // (a photo's record again: the first one counts, as when the file was opened)
+                    Some(&i) if i < n => {}
+                    _ => aligned = false,
+                }
+            })?;
+            if !aligned || n != self.keys.len() {
+                return Err(Error::Format("the index file changed since it was opened"));
+            }
+        }
+        Ok(self.rows.get_or_init(|| rows))
     }
 
     pub fn len(&self) -> usize {
@@ -172,7 +209,9 @@ impl EmbeddingIndex {
         }
         self.pos.insert(key, self.keys.len());
         self.keys.push(key);
-        self.rows.extend_from_slice(&bits);
+        if let Some(rows) = self.rows.get_mut() {
+            rows.extend_from_slice(&bits);
+        }
         Ok(true)
     }
 
@@ -182,7 +221,7 @@ impl EmbeddingIndex {
             return Err(Error::Invalid("vector size"));
         }
         let q = normalized(query).ok_or(Error::Invalid("query is not finite or has no length"))?;
-        let mut scored: Vec<(f32, usize)> = self.rows.chunks_exact(self.dim).enumerate().map(|(i, row)| (dot(row, &q), i)).collect();
+        let mut scored: Vec<(f32, usize)> = self.rows()?.chunks_exact(self.dim).enumerate().map(|(i, row)| (dot(row, &q), i)).collect();
         let order = |a: &(f32, usize), b: &(f32, usize)| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1));
         if k < scored.len() {
             if k == 0 {
@@ -198,19 +237,20 @@ impl EmbeddingIndex {
     /// A vector as stored (unit length, f16 precision), for comparing photos.
     pub fn vector(&self, key: &Key) -> Option<Vec<f32>> {
         let i = *self.pos.get(key)?;
-        self.rows.get(i * self.dim..(i + 1) * self.dim).map(decode)
+        self.rows().ok()?.get(i * self.dim..(i + 1) * self.dim).map(decode)
     }
 
     /// A file's worth of records (header first) for the photos `skip` doesn't name, at most
     /// `max` of them: what a device sends a server that lacks them. [`EmbeddingIndex::import`]
-    /// reads it back.
+    /// reads it back. (No records when the file can't be read.)
     pub fn export(&self, skip: impl Fn(&Key) -> bool, max: usize) -> Vec<u8> {
         let mut out = Vec::new();
         if let Ok(spec) = Self::spec(&self.spec_model, self.dim) {
             out.extend_from_slice(&spec.header());
         }
+        let rows = self.rows().unwrap_or_default();
         let mut n = 0;
-        for (key, row) in self.keys.iter().zip(self.rows.chunks_exact(self.dim)) {
+        for (key, row) in self.keys.iter().zip(rows.chunks_exact(self.dim)) {
             if n >= max {
                 break;
             }
@@ -259,7 +299,9 @@ impl EmbeddingIndex {
         for (key, bits) in fresh {
             self.pos.insert(key, self.keys.len());
             self.keys.push(key);
-            self.rows.extend_from_slice(&bits);
+            if let Some(rows) = self.rows.get_mut() {
+                rows.extend_from_slice(&bits);
+            }
             out.added += 1;
         }
         Ok(out)

@@ -195,6 +195,21 @@ impl RecordFile {
         Ok(RecordFile { file, rec_len: spec.rec_len, len: keep })
     }
 
+    /// Calls `each` with every whole record in order again: what [`RecordFile::open`] read and what
+    /// was appended since (for what is read only when it is wanted).
+    pub fn each(&self, mut each: impl FnMut(&[u8])) -> Result<(), Error> {
+        let mut file = &self.file;
+        file.seek(SeekFrom::Start(HEADER_LEN as u64))?;
+        let mut reader = BufReader::new(file);
+        let whole = self.len.saturating_sub(HEADER_LEN as u64).checked_div(self.rec_len as u64).unwrap_or(0);
+        let mut buf = vec![0u8; self.rec_len];
+        for _ in 0..whole {
+            reader.read_exact(&mut buf)?;
+            each(&buf);
+        }
+        Ok(())
+    }
+
     /// Empties the file down to its header (forgetting every record).
     pub fn truncate(&mut self) -> Result<(), Error> {
         self.file.set_len(HEADER_LEN as u64)?;
