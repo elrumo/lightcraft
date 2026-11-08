@@ -18,7 +18,7 @@
 //!   reloads the server's state ([`ServerCore::snapshot`]), keeps its device-local state
 //!   ([`carry_local`]) and replays its pending changes on top ([`Outbox::rebase`]).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -284,7 +284,7 @@ enum Slot {
 }
 
 /// What the outbox finds a change by: its [`key_of`] key, a photo's addition by the photo.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Key {
     Added(PhotoId),
     Other(Box<str>),
@@ -372,8 +372,8 @@ impl Pushed {
 pub struct Outbox {
     /// The changes in order; `None` where one was taken out (squeezed out once they are most of it).
     slots: Vec<Option<Slot>>,
-    /// Where each change is in `slots`.
-    at: HashMap<Key, usize>,
+    /// Where each change is in `slots`. Ordered, so the values of one record (`p7.`) are a range.
+    at: BTreeMap<Key, usize>,
     rev: u64,
 }
 
@@ -480,7 +480,6 @@ impl Outbox {
         }
         self.slots.retain(Option::is_some);
         self.slots.shrink_to_fit();
-        self.at.shrink_to_fit();
     }
 
     /// A change waiting to go that hides a photo (or adds one hidden): what a server older than the Hidden
@@ -675,15 +674,25 @@ impl Outbox {
     /// removes; our own op coming back settles its entry.
     pub fn merge_remote(&mut self, remote: &Op) -> Option<Op> {
         let key = key_of(remote)?;
-        if let Some(prefix) = removed_prefix(remote) {
-            // ponytail: one look at every pending change per removal pulled; an index by record if
-            // other devices' removals ever meet a big queue here
-            self.retain(|s| match s {
-                Slot::Added(a) => !matches!(remote, Op::RemovePhoto { id } if *id == a.id),
-                Slot::Change(e) => e.key == key || !e.key.starts_with(&prefix),
-            });
-        }
         let k = Key::of(&key);
+        if let Some(prefix) = removed_prefix(remote) {
+            // the record's values (a photo's addition is found by the photo), but for the removal itself
+            let mut gone: Vec<Key> = self
+                .at
+                .range(Key::Other(prefix.as_str().into())..)
+                .map(|(key, _)| key)
+                .take_while(|key| matches!(key, Key::Other(s) if s.starts_with(&prefix)))
+                .filter(|key| **key != k)
+                .cloned()
+                .collect();
+            if let Op::RemovePhoto { id } = remote {
+                gone.push(Key::Added(*id));
+            }
+            for key in &gone {
+                self.take(key);
+            }
+            self.tidy();
+        }
         let Some(slot) = self.at.get(&k).and_then(|&i| self.slots.get_mut(i)).and_then(Option::as_mut) else {
             return Some(remote.clone());
         };

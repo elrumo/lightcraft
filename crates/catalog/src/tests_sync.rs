@@ -942,6 +942,71 @@ fn an_outbox_written_with_whole_photos_still_reads() {
     assert_eq!(out.take_push(10, &c).0, vec![rate]);
 }
 
+/// A removal pulled from the server drops the pending changes of the record it removes and of no other (photo 1's, not
+/// photo 10's, whose keys sort right after them), and our own removal coming back settles it (HB-281).
+#[test]
+fn a_pulled_removal_drops_only_its_records_changes() {
+    let mut c = Catalog::new();
+    for _ in 0..10 {
+        let op = add_photo(&mut c);
+        c.apply(op).unwrap();
+    }
+    let album = c.alloc_album_id();
+    c.apply(Op::AddAlbum { album: Album::new(album, "Trip") }).unwrap();
+    let mut out = Outbox::default();
+    out.seed(&c);
+    let local = |c: &mut Catalog, out: &mut Outbox, op: Op| {
+        let inv = c.apply(op.clone()).unwrap();
+        out.record(&op, &inv, c);
+    };
+    for id in [1, 3, 10] {
+        local(&mut c, &mut out, Op::SetRating { id: PhotoId(id), rating: 2 });
+    }
+    local(&mut c, &mut out, Op::RenameAlbum { id: album, name: "Rome".into() });
+    local(&mut c, &mut out, Op::RemovePhoto { id: PhotoId(3) });
+    let rm = Op::RemovePhoto { id: PhotoId(1) };
+    assert_eq!(out.merge_remote(&rm), Some(rm));
+    // ours coming back: its addition (kept whole for it), its rating and the removal are done
+    assert_eq!(out.merge_remote(&Op::RemovePhoto { id: PhotoId(3) }), None);
+    let rm = Op::RemoveAlbum { id: album };
+    assert_eq!(out.merge_remote(&rm), Some(rm));
+    let left: Vec<(Subject, &str)> = out.changes().collect();
+    let mut want: Vec<(Subject, &str)> = [2, 4, 5, 6, 7, 8, 9, 10].map(|id| (Subject::Photo(PhotoId(id)), "add")).into();
+    want.push((Subject::Photo(PhotoId(10)), "rating"));
+    assert_eq!(left, want);
+}
+
+/// Removals pulled from the server find the pending changes of what they remove by key: 40,000 of them against 80,000
+/// pending changes. A look at the whole queue for each was quadratic (1.7 s for half as many in a test build, four times
+/// that here); by key it takes milliseconds (HB-281).
+#[test]
+fn pulled_removals_find_their_changes_by_key() {
+    let n = 40_000;
+    let mut c = Catalog::new();
+    for _ in 0..n {
+        let op = add_photo(&mut c);
+        c.apply(op).unwrap();
+    }
+    let ids: Vec<PhotoId> = c.photos().map(|p| p.id).collect();
+    let mut out = Outbox::default();
+    out.seed(&c);
+    for &id in &ids {
+        let op = Op::SetRating { id, rating: 3 };
+        let inv = c.apply(op.clone()).unwrap();
+        out.record(&op, &inv, &c);
+    }
+    assert_eq!(out.len(), 2 * n);
+    let t = std::time::Instant::now();
+    for &id in &ids {
+        let rm = Op::RemovePhoto { id };
+        assert_eq!(out.merge_remote(&rm), Some(rm));
+    }
+    let secs = t.elapsed().as_secs_f64();
+    assert!(out.is_empty(), "{} changes left", out.len());
+    // (generous for a loaded machine)
+    assert!(secs < 1.0, "{n} removals took {secs:.2} s");
+}
+
 /// Many changes taken out and moved last (the outbox squeezes its gaps out as it goes) keep their order.
 #[test]
 fn the_outbox_keeps_its_order_through_many_acknowledgements() {
