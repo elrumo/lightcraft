@@ -273,6 +273,7 @@ pub fn carry_local_mapped(from: &Catalog, to: &mut Catalog, photos: &HashMap<Pho
             p.source = old.source.clone();
             p.file_name = old.file_name.clone();
             p.history = old.history.clone();
+            p.history_cursor = crate::sync::cursor_kept(old, p);
             p.local_baseline = old.local_baseline;
         }
     }

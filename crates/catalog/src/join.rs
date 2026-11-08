@@ -212,6 +212,7 @@ fn fill_in(server: &mut Catalog, outbox: &mut Outbox, sid: PhotoId, l: &Photo) {
         p.source = l.source.clone();
         p.file_name = l.file_name.clone();
         p.history = l.history.clone();
+        p.history_cursor = crate::sync::cursor_kept(l, p);
         p.local_baseline = l.local_baseline;
     }
 }

@@ -810,11 +810,18 @@ fn carry_photo(old: &Arc<Photo>, p: &mut Arc<Photo>) {
     q.source = old.source.clone();
     q.file_name = old.file_name.clone();
     q.history = old.history.clone();
+    q.history_cursor = cursor_kept(old, q);
     q.local_baseline = old.local_baseline;
     // (`==` takes `0.0` for `-0.0`: such a photo keeps this device's zero, which renders the same)
     if **p == **old {
         *p = old.clone();
     }
+}
+
+/// Where `old`'s History stands, for `p`, its copy from elsewhere with its History: the step it is at while the settings
+/// are still that step's; edited elsewhere, History stands at its latest step.
+pub(crate) fn cursor_kept(old: &Photo, p: &Photo) -> Option<usize> {
+    old.history_cursor.filter(|_| p.develop == old.develop)
 }
 
 /// Make a catalog from another device or the server safe to use here (it is untrusted input):

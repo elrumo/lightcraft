@@ -974,3 +974,42 @@ fn the_outbox_keeps_its_order_through_many_acknowledgements() {
     assert_eq!(sent.len(), 400);
     assert!(sent[..300].iter().all(|op| matches!(op, Op::AddPhoto { .. })));
 }
+
+/// Where a photo's History stands is this device's (never synced): a reload or a merge brings it back with the
+/// History, so a photo stepped back in its History is still the open copy after a reload (HB-236) and its History
+/// still shows the step it is at. When the server's copy has other settings, that step no longer describes them and
+/// History stands at its latest step.
+#[test]
+fn a_reload_keeps_where_history_stands() {
+    let mut c = Catalog::default();
+    let op = add_photo(&mut c);
+    c.apply(op).unwrap();
+    let id = c.photos().next().unwrap().id;
+    let step = HistoryStep { label: "Exposure".into(), settings: c.photo(id).unwrap().develop.clone() };
+    c.apply(Op::SetHistory { id, history: vec![step.clone(), step] }).unwrap();
+    c.apply(Op::SetHistoryCursor { id, cursor: Some(0) }).unwrap();
+    // the server's copy of the photo, under `as_id`
+    let server = |as_id: PhotoId| {
+        let mut p = portable(c.photo(id).unwrap());
+        p.id = as_id;
+        let mut page = Catalog::default();
+        page.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        page
+    };
+
+    let mut page = server(id);
+    assert_eq!(page.photo(id).unwrap().history_cursor, None, "the server never has it");
+    share_unchanged(&c, &mut page);
+    assert!(Arc::ptr_eq(page.photo(id).unwrap(), c.photo(id).unwrap()), "the open copy");
+
+    let mut page = server(id);
+    page.apply(develop(&page, id, |s| s.light.exposure = 1.0)).unwrap();
+    carry_local(&c, &mut page);
+    let p = page.photo(id).unwrap();
+    assert_eq!((p.history.len(), p.history_cursor), (2, None), "edited elsewhere: at the latest step");
+
+    let new = PhotoId(id.0 + 1000);
+    let mut merged = server(new);
+    crate::merge::carry_local_mapped(&c, &mut merged, &std::collections::HashMap::from([(id, new)]));
+    assert_eq!(merged.photo(new).unwrap().history_cursor, Some(0), "a merge keeps it too");
+}
