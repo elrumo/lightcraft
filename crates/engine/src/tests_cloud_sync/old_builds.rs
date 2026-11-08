@@ -5,7 +5,7 @@ use lightcraft_catalog::sync::Outbox;
 use serde::Deserialize;
 
 use super::*;
-use crate::cloud_sync::{OLD_OUTBOX, OUTBOX};
+use crate::cloud_sync::{CONFIG, OLD_OUTBOX, OUTBOX};
 
 /// `sync.outbox` as builds from before 2026-11-08 read it: every entry whole. What they can't read they call damaged
 /// and reload the server's library, dropping the photos waiting to go.
@@ -116,6 +116,8 @@ fn a_queue_that_cannot_be_read_is_rebuilt_from_the_servers_library() {
     f.core.push(f.core.head(), &[Op::RemovePhoto { id: ids[1] }]).unwrap();
     let mut a = open(&dir);
     assert!(a.sync_state().unwrap().config.requeue);
+    let config = String::from_utf8(read(&dir, CONFIG).unwrap()).unwrap();
+    assert!(config.contains(r#""requeue": true"#), "written when the library opens, before a change writes the queue over: {config}");
     // a change made before the server answers writes the queue over: the rebuild is still to come after a restart
     a.selection = crate::Selection::single(ids[0]);
     a.execute("photo.rate", &json!({"rating": 3})).unwrap();
