@@ -134,27 +134,43 @@ pub fn has_adjustments(props: &Props) -> bool {
     props.keys().any(|k| k.starts_with("crs:") && !NON_ADJUSTMENT.contains(&k.split('/').next().unwrap_or(k)))
 }
 
+/// What [`to_partial`] did with a packet's fields, gathered while [`traced`] runs.
+#[derive(Default)]
+struct Trace {
+    /// Keys read.
+    read: std::collections::BTreeSet<String>,
+    /// Keys carried over, with the settings paths they were put at.
+    mapped: BTreeMap<String, Vec<String>>,
+    /// Adjustments read but deliberately left out: what the report says, and the keys.
+    skipped: Vec<(String, Vec<String>)>,
+}
+
 thread_local! {
-    /// Keys read by [`to_partial`] while [`to_partial_report`] runs.
-    static READ: std::cell::RefCell<Option<std::collections::BTreeSet<String>>> = const { std::cell::RefCell::new(None) };
-    /// Adjustments [`to_partial`] read but deliberately left out, for the report.
-    static SKIPPED: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+    static TRACE: std::cell::RefCell<Option<Trace>> = const { std::cell::RefCell::new(None) };
+}
+
+fn trace(f: impl FnOnce(&mut Trace)) {
+    TRACE.with(|t| {
+        if let Some(t) = t.borrow_mut().as_mut() {
+            f(t);
+        }
+    });
 }
 
 fn note(k: &str) {
-    READ.with(|r| {
-        if let Some(s) = r.borrow_mut().as_mut() {
-            s.insert(k.to_string());
-        }
+    trace(|t| {
+        t.read.insert(k.to_string());
     });
 }
 
-fn skipped(what: &str) {
-    SKIPPED.with(|r| {
-        if let Some(s) = r.borrow_mut().as_mut() {
-            s.push(what.to_string());
-        }
-    });
+/// Key `k` was carried over to the settings at `path`.
+fn mapped(k: &str, path: &str) {
+    trace(|t| t.mapped.entry(k.to_string()).or_default().push(path.to_string()));
+}
+
+/// Keys `keys` were read and left out: `what` says why.
+fn skipped(keys: &[&str], what: &str) {
+    trace(|t| t.skipped.push((what.to_string(), keys.iter().map(|k| k.to_string()).collect())));
 }
 
 fn first<'a>(props: &'a Props, k: &str) -> Option<&'a str> {
@@ -291,8 +307,10 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     let mut out = Value::Object(Map::new());
     let o = &mut out;
     let n = |o: &mut Value, crs: &str, path: &str| {
-        if let Some(v) = num(props, &format!("crs:{crs}")) {
+        let k = format!("crs:{crs}");
+        if let Some(v) = num(props, &k) {
             put(o, path, json!(v));
+            mapped(&k, path);
         }
     };
     // ---- Light (process version 2012+ names)
@@ -305,6 +323,7 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     // Lightroom's Light panel "HDR" button
     if let Some(on) = boolean(props, "crs:HDREditMode") {
         put(o, "hdr.enabled", json!(on));
+        mapped("crs:HDREditMode", "hdr.enabled");
     }
     // older process versions (most `.lrtemplate` presets): approximate the 2012 sliders from the
     // earlier ones, relative to their defaults (contrast 25, blacks 5, brightness 50)
@@ -312,12 +331,14 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     // presets written by newer versions keep the old fields at their defaults: ignore them there
     let pv2012 = props.keys().any(|k| k.ends_with("2012"));
     let old = |o: &mut Value, crs: &str, path: &str, f: &dyn Fn(f64) -> f64| {
-        let v = num(props, &format!("crs:{crs}"));
+        let k = format!("crs:{crs}");
+        let v = num(props, &k);
         if !pv2012
             && !has(o, path)
             && let Some(v) = v
         {
             put(o, path, json!(f(v).clamp(-100.0, 100.0)));
+            mapped(&k, path);
         }
     };
     old(o, "Exposure", "light.exposure", &|v| v);
@@ -369,13 +390,21 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
         Target::Rendered => rel.or_else(shifted).or(abs),
         Target::RawRelative => rel.or_else(shifted),
     };
+    let wb_keys: &[&str] =
+        if wb.is_some() && wb == rel { &["crs:IncrementalTemperature", "crs:IncrementalTint"] } else { &["crs:Temperature", "crs:Tint"] };
     match (mode, wb) {
-        (Some(m), _) if m != "custom" => put(o, "wb.mode", json!(m)),
+        (Some(m), _) if m != "custom" => {
+            put(o, "wb.mode", json!(m));
+            mapped("crs:WhiteBalance", "wb.mode");
+        }
         (m, Some((t, tint))) => {
             put(o, "wb.mode", json!(m.unwrap_or("custom")));
             put(o, "wb.temp", json!(t));
+            mapped("crs:WhiteBalance", "wb.mode");
+            mapped(wb_keys[0], "wb.temp");
             if let Some(tint) = tint {
                 put(o, "wb.tint", json!(tint));
+                mapped(wb_keys[1], "wb.tint");
             }
             // Kelvin as the other app wrote it: say so, so the value stays Kelvin on a raw with that scale (a
             // preset's Kelvin is read as the relative scale on the files that have only that, as before)
@@ -391,15 +420,22 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
         // the photo stays As Shot (ΔE 12 there) and the report says so
         (_, None) if target == Target::RawRelative && abs.is_some() => {
             put(o, "wb.mode", json!("asShot"));
-            skipped("Temperature, Tint (custom white balance without AsShotTemperature: kept As Shot)");
+            skipped(
+                &["crs:WhiteBalance", "crs:Temperature", "crs:Tint"],
+                "Temperature, Tint (custom white balance without AsShotTemperature: kept As Shot)",
+            );
         }
-        (Some(m), None) => put(o, "wb.mode", json!(m)),
+        (Some(m), None) => {
+            put(o, "wb.mode", json!(m));
+            mapped("crs:WhiteBalance", "wb.mode");
+        }
         (None, None) => {}
     }
 
     // ---- Treatment + B&W mix
     if let Some(bw) = boolean(props, "crs:ConvertToGrayscale") {
         put(o, "treatment", json!(if bw { "bw" } else { "color" }));
+        mapped("crs:ConvertToGrayscale", "treatment");
     }
     for (band, crs) in MIXER_BANDS.iter().zip(CRS_BANDS) {
         n(o, &format!("HueAdjustment{crs}"), &format!("mixer.{band}.hue"));
@@ -421,6 +457,7 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
         // the older single curve, used when no 2012 curve is present
         if !props.contains_key("crs:ToneCurvePV2012") {
             put(o, "curve.master", c);
+            mapped("crs:ToneCurve", "curve.master");
         }
     }
     // Lightroom Classic reads the red / green / blue curves only when the packet holds the master
@@ -429,12 +466,15 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     // blue without the master all leave the photo's channels unchanged there)
     if let Some(c) = curve(props, "crs:ToneCurvePV2012") {
         put(o, "curve.master", c);
+        mapped("crs:ToneCurvePV2012", "curve.master");
         let channels = [("ToneCurvePV2012Red", "red"), ("ToneCurvePV2012Green", "green"), ("ToneCurvePV2012Blue", "blue")]
-            .map(|(crs, ch)| (curve(props, &format!("crs:{crs}")), ch));
-        if channels.iter().all(|(c, _)| c.is_some()) {
-            for (c, ch) in channels {
+            .map(|(crs, ch)| (curve(props, &format!("crs:{crs}")), crs, ch));
+        if channels.iter().all(|(c, ..)| c.is_some()) {
+            for (c, crs, ch) in channels {
                 if let Some(c) = c {
-                    put(o, &format!("curve.{ch}"), c);
+                    let path = format!("curve.{ch}");
+                    put(o, &path, c);
+                    mapped(&format!("crs:{crs}"), &path);
                 }
             }
         }
@@ -442,6 +482,7 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
 
     if let Some(points) = point_colors(props) {
         put(o, "point_colors", points);
+        mapped("crs:PointColors", "point_colors");
     }
 
     // ---- Color grading (split toning fields are shared with the older split-toning panel)
@@ -485,6 +526,7 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
             _ => "highlightPriority",
         };
         put(o, "vignette.style", json!(style));
+        mapped("crs:PostCropVignetteStyle", "vignette.style");
     }
     n(o, "GrainAmount", "grain.amount");
     n(o, "GrainSize", "grain.size");
@@ -496,9 +538,11 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     // carries over, and `LensProfileEnable=0` (the default in most presets) leaves ours as it is.
     if boolean(props, "crs:LensProfileEnable") == Some(true) {
         put(o, "optics.lens_profile", json!(true));
+        mapped("crs:LensProfileEnable", "optics.lens_profile");
     }
     if let Some(b) = boolean(props, "crs:AutoLateralCA") {
         put(o, "optics.remove_ca", json!(b));
+        mapped("crs:AutoLateralCA", "optics.remove_ca");
     }
     n(o, "LensManualDistortionAmount", "optics.distortion");
     n(o, "VignetteAmount", "optics.vignetting");
@@ -513,12 +557,14 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     // ---- Profile: Apple ProRAW's local tone mapping (`ProfileGainTableMap`, 0..100). Lightroom's "Apple ProRaw" look
     // sets it to 100 (its `Parameters`, scaled by the look's `Amount`); a look without it, or a packet that says 0,
     // renders the file without the map. We only have it on or off.
-    let map = num(props, "crs:ProfileGainTableMap").or_else(|| {
+    let own = num(props, "crs:ProfileGainTableMap");
+    let map = own.or_else(|| {
         let look = num(props, "crs:Look/crs:Parameters/crs:ProfileGainTableMap")?;
         Some(look * num(props, "crs:Look/crs:Amount").unwrap_or(1.0).clamp(0.0, 1.0))
     });
     if let Some(amount) = map {
         put(o, "profile.camera_local_tone", json!(amount > 0.0));
+        mapped(if own.is_some() { "crs:ProfileGainTableMap" } else { "crs:Look" }, "profile.camera_local_tone");
     }
 
     // ---- Calibration
@@ -540,6 +586,7 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     n(o, "PerspectiveY", "geometry.offset_y");
     if let Some(u) = num(props, "crs:PerspectiveUpright") {
         put(o, "geometry.upright", json!(upright_mode(u).unwrap_or(Upright::Off)));
+        mapped("crs:PerspectiveUpright", "geometry.upright");
         // a stated mode never keeps a transform solved for another one: it is solved again for this
         // photo, unless the photo's frame is known and Lightroom's own saved matrix is placed
         // ([`saved_upright`], [`crate::sidecar::SidecarData::set_frame`])
@@ -557,6 +604,9 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
                     "crop.geometry",
                     json!({"rect": {"x0": l, "y0": t, "x1": r, "y1": b}, "angle": num(props, "crs:CropAngle").unwrap_or(0.0).clamp(-45.0, 45.0)}),
                 );
+                for k in ["crs:HasCrop", "crs:CropLeft", "crs:CropTop", "crs:CropRight", "crs:CropBottom", "crs:CropAngle"] {
+                    mapped(k, "crop.geometry");
+                }
             }
         }
         Some(false) => {
@@ -564,7 +614,8 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
             for k in ["Left", "Top", "Right", "Bottom", "Angle"] {
                 note(&format!("crs:Crop{k}"));
             }
-            put(o, "crop.geometry", json!({"rect": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 1.0}, "angle": 0.0}))
+            put(o, "crop.geometry", json!({"rect": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 1.0}, "angle": 0.0}));
+            mapped("crs:HasCrop", "crop.geometry");
         }
         None => {}
     }
@@ -578,60 +629,315 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
 /// ([`crate::crs_masks`]; radial masks fitted to `aspect` = width / height); components that
 /// can't be carried over are reported as `Mask: <kind>`.
 pub fn to_partial_report(props: &Props, values: Option<&crate::crs_masks::Values>, target: Target, aspect: f64) -> (Value, Vec<String>) {
-    READ.with(|r| *r.borrow_mut() = Some(Default::default()));
-    SKIPPED.with(|r| *r.borrow_mut() = Some(Vec::new()));
+    let (out, unmapped, _) = traced(props, values, target, aspect);
+    (out, unmapped)
+}
+
+/// [`to_partial_report`], with the [`Trace`] of what went where.
+fn traced(props: &Props, values: Option<&crate::crs_masks::Values>, target: Target, aspect: f64) -> (Value, Vec<String>, Trace) {
+    TRACE.with(|t| *t.borrow_mut() = Some(Trace::default()));
     let mut out = to_partial(props, target);
-    let mut read = READ.with(|r| r.borrow_mut().take()).unwrap_or_default();
-    let mut mask_skips = SKIPPED.with(|r| r.borrow_mut().take()).unwrap_or_default();
+    let mut t = TRACE.with(|t| t.borrow_mut().take()).unwrap_or_default();
+    let mut mask_skips: Vec<String> = t.skipped.iter().map(|(what, _)| what.clone()).collect();
     if let Some(values) = values {
         let (masks, skipped) = crate::crs_masks::masks(values, aspect);
+        let has = |containers: &[&str]| values.keys().any(|k| containers.contains(&k.as_str()));
         if !masks.is_empty() {
             put(&mut out, "masks", Value::Array(masks));
+            crate::crs_masks::CONTAINERS.iter().for_each(|c| t.mapped.entry(c.to_string()).or_default().push("masks".into()));
         }
-        if values.keys().any(|k| crate::crs_masks::CONTAINERS.contains(&k.as_str())) {
-            read.extend(crate::crs_masks::CONTAINERS.iter().map(|c| c.to_string()));
+        if has(&crate::crs_masks::CONTAINERS) {
+            t.read.extend(crate::crs_masks::CONTAINERS.iter().map(|c| c.to_string()));
             mask_skips.extend(skipped.into_iter().map(|k| format!("Mask: {k}")));
         }
         let (spots, skipped) = crate::crs_masks::spots(values, aspect);
         if !spots.is_empty() {
             put(&mut out, "spots", Value::Array(spots));
+            crate::crs_masks::SPOT_CONTAINERS.iter().for_each(|c| t.mapped.entry(c.to_string()).or_default().push("spots".into()));
         }
-        if values.keys().any(|k| crate::crs_masks::SPOT_CONTAINERS.contains(&k.as_str())) {
-            read.extend(crate::crs_masks::SPOT_CONTAINERS.iter().map(|c| c.to_string()));
+        if has(&crate::crs_masks::SPOT_CONTAINERS) {
+            t.read.extend(crate::crs_masks::SPOT_CONTAINERS.iter().map(|c| c.to_string()));
             mask_skips.extend(skipped.into_iter().map(|k| format!("Spot: {k}")));
         }
     }
-    // fields that only switch a panel on/off or name things: not adjustments by themselves; and
-    // Point Color slots that are all empty (-1)
+    let mut unmapped: Vec<String> = props
+        .keys()
+        .filter(|k| k.starts_with("crs:"))
+        .map(|k| k.split('/').next().unwrap_or(k))
+        .filter(|k| !NON_ADJUSTMENT.contains(k) && !t.read.contains(*k))
+        .map(|k| k.trim_start_matches("crs:").to_string())
+        .filter(|k| quiet(props, k).is_none())
+        .collect();
+    unmapped.dedup();
+    unmapped.extend(mask_skips);
+    (out, unmapped, t)
+}
+
+/// Why field `k` (without `crs:`) is no adjustment of its own, when it is one of those: it only switches a panel on or
+/// off or names things, or it is a Point Color list of empty slots (-1), or names one of Lightroom's default profiles.
+fn quiet(props: &Props, k: &str) -> Option<&'static str> {
     let value_is = |k: &str, f: &dyn Fn(&[String]) -> bool| props.get(&format!("crs:{k}")).is_some_and(|v| f(v));
     let empty_points = |v: &[String]| v.iter().all(|s| s.split(',').all(|n| n.trim().parse::<f64>().is_ok_and(|x| x == -1.0) || n.trim().is_empty()));
     // a profile or look that only names one of Lightroom's default profiles
     let names_default_profile = |k: &str| props.get(k).and_then(|v| v.first()).is_some_and(|n| is_default_profile(n));
     // `Upright*` is Upright's analysis record (version, saved matrices, centre, focal length, guides): placed or
     // reported by the photo import's `uprightGeometry` diagnostic, never an adjustment of its own
-    let quiet = |k: &str| {
-        k.starts_with("Enable")
-            || k.starts_with("Upright")
-            || k.starts_with("ToneCurveName")
-            || k == "AutoTone"
-            || k == "AutoGrayscaleMix"
-            || (k == "PointColors" && value_is(k, &empty_points))
-            || (k == "CameraProfile" && names_default_profile("crs:CameraProfile"))
-            || (k == "Look" && names_default_profile("crs:Look/crs:Name"))
-            // the lens profile's strength, written at its default (100 %) next to every profile
-            || (matches!(k, "LensProfileDistortionScale" | "LensProfileVignettingScale") && value_is(k, &|v| v.iter().all(|s| s.trim() == "100")))
+    if k.starts_with("Enable") {
+        Some("panelSwitch")
+    } else if k.starts_with("Upright") {
+        Some("analysis")
+    } else if k.starts_with("ToneCurveName") {
+        Some("bookkeeping")
+    } else if k == "AutoTone" || k == "AutoGrayscaleMix" {
+        Some("auto")
+    } else if (k == "CameraProfile" && names_default_profile("crs:CameraProfile")) || (k == "Look" && names_default_profile("crs:Look/crs:Name")) {
+        Some("defaultProfile")
+    } else if (k == "PointColors" && value_is(k, &empty_points))
+        // the lens profile's strength, written at its default (100 %) next to every profile
+        || (matches!(k, "LensProfileDistortionScale" | "LensProfileVignettingScale") && value_is(k, &|v| v.iter().all(|s| s.trim() == "100")))
+    {
+        Some("unused")
+    } else {
+        None
+    }
+}
+
+/// What became of one field of an XMP packet ([`fields`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FieldStatus {
+    /// Carried over to LightCraft's settings.
+    Applied,
+    /// An adjustment LightCraft does not carry over.
+    NotApplied,
+    /// Not an adjustment: bookkeeping, a panel switch, a value another field sets.
+    Info,
+}
+
+/// One field of an XMP packet and what reading it does ([`fields`]).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Field {
+    /// The field as the packet names it, without `crs:` (`Exposure2012`); `Mask` or `Spot` for a part of a local
+    /// correction that is not carried over.
+    pub field: String,
+    /// Its value as written; for a list or structure its name, if it has one (a profile's).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// How many items a list holds (curve points, masks).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+    /// The panel it belongs to, as the edit panels name it (`Light`, `Tone Curve`; `Other` when unknown).
+    pub section: &'static str,
+    pub status: FieldStatus,
+    /// The settings an applied field sets.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub to: Vec<Setting>,
+    /// Why it is not applied, or only information: `profile`, `mask`, `spot`, `whiteBalance`, `unsupported`;
+    /// `bookkeeping`, `panelSwitch`, `analysis`, `auto`, `defaultProfile`, `unused`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<&'static str>,
+    /// The specifics of the reason: the profile's name, the mask's kind, what was kept instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// An applied field that changes nothing: every setting it sets is left at LightCraft's default.
+    pub default: bool,
+}
+
+/// A LightCraft setting, by its path in the settings (`light.exposure`) and the name the edit panels give it
+/// (`Exposure`; empty when it has none).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct Setting {
+    pub path: String,
+    pub label: &'static str,
+}
+
+impl Setting {
+    pub fn new(path: &str) -> Setting {
+        Setting { path: path.to_string(), label: setting_label(path) }
+    }
+}
+
+/// The name the edit panels give the setting at `path` in the settings JSON (`light.exposure` → `Exposure`), empty
+/// when it has none.
+pub fn setting_label(path: &str) -> &'static str {
+    // settings that are no slider
+    const NAMED: &[(&str, &str)] = &[
+        ("wb.mode", "White Balance"),
+        ("treatment", "Treatment"),
+        ("hdr.enabled", "HDR"),
+        ("curve.master", "Point Curve"),
+        ("curve.red", "Red Channel"),
+        ("curve.green", "Green Channel"),
+        ("curve.blue", "Blue Channel"),
+        ("point_colors", "Point Color"),
+        ("vignette.style", "Style"),
+        ("optics.lens_profile", "Lens Profile Corrections"),
+        ("optics.remove_ca", "Remove Chromatic Aberration"),
+        ("profile.camera_local_tone", "Local Tone Mapping"),
+        ("geometry.upright", "Upright"),
+        ("crop.geometry", "Crop"),
+        ("masks", "Masks"),
+        ("spots", "Remove"),
+    ];
+    if let Some((_, label)) = NAMED.iter().find(|(p, _)| *p == path) {
+        return label;
+    }
+    // a slider: its control id is the path in lower camel case (`detail.sharpen_amount` → `detail.sharpenAmount`),
+    // but for the B&W mixer (`bw.red`) and the defringe amounts (`optics.defringePurple`)
+    let upper = |w: &str| {
+        let mut c = w.chars();
+        c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default()
     };
-    let mut unmapped: Vec<String> = props
-        .keys()
-        .filter(|k| k.starts_with("crs:"))
-        .map(|k| k.split('/').next().unwrap_or(k))
-        .filter(|k| !NON_ADJUSTMENT.contains(k) && !read.contains(*k))
-        .map(|k| k.trim_start_matches("crs:").to_string())
-        .filter(|k| !quiet(k))
-        .collect();
-    unmapped.dedup();
-    unmapped.extend(mask_skips);
-    (out, unmapped)
+    let camel: Vec<String> =
+        path.split('.').map(|seg| seg.split('_').enumerate().map(|(i, w)| if i == 0 { w.to_string() } else { upper(w) }).collect()).collect();
+    let id = camel.join(".");
+    let id = id.strip_prefix("bwMix.").map_or(id.clone(), |band| format!("bw.{band}"));
+    let id = if id.starts_with("optics.defringe") { id.trim_end_matches("Amount").to_string() } else { id };
+    lightcraft_develop::controls::find(&id).map_or("", |c| c.label)
+}
+
+/// The panel a `crs:` field (without the prefix) belongs to, by its name.
+pub fn section_of(field: &str) -> &'static str {
+    // first match wins: the longer names of a family come before the shorter ones
+    const SECTIONS: &[(&str, &str)] = &[
+        ("WhiteBalance", "White Balance"),
+        ("Temperature", "White Balance"),
+        ("Tint", "White Balance"),
+        ("IncrementalT", "White Balance"),
+        ("AsShot", "White Balance"),
+        ("ShadowTint", "Calibration"),
+        ("SplitToning", "Color Grading"),
+        ("ColorGrade", "Color Grading"),
+        ("Parametric", "Tone Curve"),
+        ("ToneCurve", "Tone Curve"),
+        ("CurveRefine", "Tone Curve"),
+        ("HDR", "Light"),
+        ("Exposure", "Light"),
+        ("Contrast", "Light"),
+        ("Highlight", "Light"),
+        ("Shadows", "Light"),
+        ("Whites", "Light"),
+        ("Blacks", "Light"),
+        ("Brightness", "Light"),
+        ("FillLight", "Light"),
+        ("AutoTone", "Light"),
+        ("Texture", "Effects"),
+        ("Clarity", "Effects"),
+        ("Dehaze", "Effects"),
+        ("HueAdjustment", "Color Mixer"),
+        ("SaturationAdjustment", "Color Mixer"),
+        ("LuminanceAdjustment", "Color Mixer"),
+        ("Vibrance", "Color"),
+        ("Saturation", "Color"),
+        ("ConvertToGrayscale", "Color"),
+        ("GrayMixer", "B&W Mixer"),
+        ("AutoGrayscaleMix", "B&W Mixer"),
+        ("PointColors", "Point Color"),
+        ("PostCropVignette", "Vignette"),
+        ("Grain", "Grain"),
+        ("Sharp", "Detail"),
+        ("LuminanceSmoothing", "Detail"),
+        ("LuminanceNoise", "Detail"),
+        ("ColorNoise", "Detail"),
+        ("Enhance", "Detail"),
+        ("Lens", "Optics"),
+        ("Vignette", "Optics"),
+        ("Defringe", "Optics"),
+        ("AutoLateralCA", "Optics"),
+        ("ChromaticAberration", "Optics"),
+        ("CameraProfile", "Profile"),
+        ("Look", "Profile"),
+        ("Profile", "Profile"),
+        ("RedHue", "Calibration"),
+        ("RedSaturation", "Calibration"),
+        ("GreenHue", "Calibration"),
+        ("GreenSaturation", "Calibration"),
+        ("BlueHue", "Calibration"),
+        ("BlueSaturation", "Calibration"),
+        ("Perspective", "Geometry"),
+        ("Upright", "Geometry"),
+        ("Crop", "Crop"),
+        ("HasCrop", "Crop"),
+        ("MaskGroup", "Masks"),
+        ("GradientBased", "Masks"),
+        ("CircularGradient", "Masks"),
+        ("PaintBased", "Masks"),
+        ("Mask", "Masks"),
+        ("Retouch", "Remove"),
+        ("Spot", "Remove"),
+    ];
+    SECTIONS.iter().find(|(prefix, _)| field.starts_with(prefix)).map_or("Other", |(_, s)| s)
+}
+
+/// Every `crs:` field of a packet (one row per top-level property, in the packet's order of names) and what reading it
+/// for `target` does: carried over to which settings, left out and why, or only information; then the parts of local
+/// corrections that are left out. `partial` is what [`to_partial_report`] gives for the same packet.
+pub fn fields(props: &Props, values: Option<&crate::crs_masks::Values>, target: Target, aspect: f64) -> (Value, Vec<Field>) {
+    let (partial, unmapped, t) = traced(props, values, target, aspect);
+    let defaults = serde_json::to_value(lightcraft_develop::DevelopSettings::default()).unwrap_or_default();
+    let at = |v: &Value, path: &str| v.pointer(&format!("/{}", path.replace('.', "/"))).cloned();
+    let mut rows = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for key in props.keys().filter(|k| k.starts_with("crs:")).map(|k| k.split('/').next().unwrap_or(k)) {
+        if !seen.insert(key) {
+            continue;
+        }
+        let field = key.trim_start_matches("crs:").to_string();
+        let exact = props.get(key);
+        let (value, count) = match values.and_then(|v| v.get(key)) {
+            Some(lightcraft_meta::XmpValue::Array(items)) => (None, Some(items.len())),
+            // a structure (a look): its name
+            Some(lightcraft_meta::XmpValue::Struct(_)) => (props.get(&format!("{key}/crs:Name")).and_then(|v| v.first()).cloned(), None),
+            _ => (exact.filter(|v| v.len() == 1).and_then(|v| v.first()).cloned(), exact.map(Vec::len).filter(|n| *n > 1)),
+        };
+        let mut row =
+            Field { field, value, count, section: "", status: FieldStatus::Info, to: Vec::new(), reason: None, detail: None, default: false };
+        row.section = section_of(&row.field);
+        if let Some(paths) = t.mapped.get(key) {
+            row.status = FieldStatus::Applied;
+            let mut paths = paths.clone();
+            paths.dedup();
+            row.default = paths.iter().all(|p| at(&partial, p) == at(&defaults, p));
+            row.to = paths.iter().map(|p| Setting::new(p)).collect();
+        } else if let Some((what, _)) = t.skipped.iter().find(|(_, keys)| keys.iter().any(|k| k == key)) {
+            (row.status, row.reason, row.detail) = (FieldStatus::NotApplied, Some("whiteBalance"), Some(what.clone()));
+        } else if NON_ADJUSTMENT.contains(&key) {
+            row.reason = Some("bookkeeping");
+        } else if let Some(why) = quiet(props, &row.field) {
+            row.reason = Some(why);
+        } else if unmapped.contains(&row.field) {
+            row.status = FieldStatus::NotApplied;
+            row.reason = Some(if matches!(row.field.as_str(), "CameraProfile" | "Look") { "profile" } else { "unsupported" });
+            row.detail = (row.reason == Some("profile")).then(|| row.value.clone()).flatten();
+        } else {
+            // read, and nothing set from it: another field sets that setting, or it is superseded (an older process
+            // version's slider next to the 2012 one)
+            row.reason = Some("unused");
+        }
+        rows.push(row);
+    }
+    for part in &unmapped {
+        let (field, reason, section, kind) = if let Some(kind) = part.strip_prefix("Mask: ") {
+            ("Mask", "mask", "Masks", kind)
+        } else if let Some(kind) = part.strip_prefix("Spot: ") {
+            ("Spot", "spot", "Remove", kind)
+        } else {
+            continue;
+        };
+        rows.push(Field {
+            field: field.into(),
+            value: None,
+            count: None,
+            section,
+            status: FieldStatus::NotApplied,
+            to: Vec::new(),
+            reason: Some(reason),
+            detail: Some(kind.to_string()),
+            default: false,
+        });
+    }
+    (partial, rows)
 }
 
 /// The selected camera profile name from an XMP packet. The name is metadata only: it does not

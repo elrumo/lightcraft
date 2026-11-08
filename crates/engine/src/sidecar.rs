@@ -1077,23 +1077,40 @@ impl Session {
         let Some(orig) = file_path(p) else { return Ok(None) };
         let Some((packet, from)) = read_packet(orig, p.kind, self.sidecar_naming(id)) else { return Ok(None) };
         let mut sc = parse_sidecar(&packet, crate::crs::Target::for_photo(p)).map_err(|e| EngineError::Other(format!("{}: {e}", from.display())))?;
-        if sc.needs_frame() {
-            // Lightroom's crop and saved Upright are on the stored image: the file, as it is now,
-            // says how it is oriented
-            let frame = crate::import::probe_paths(self, &[orig.to_string()])
-                .into_iter()
-                .next()
-                .and_then(std::result::Result::ok)
-                .and_then(|i| i.stored_frame());
-            sc.set_frame(frame);
-            sc.hold_unframed_crop();
-        }
+        self.frame_sidecar(Some(orig), &mut sc);
         let mut warnings = sc.warnings.clone();
         for warning in &mut warnings {
             warning.path = orig.to_string();
         }
         let op = self.sidecar_op(id, sc)?;
         Ok(Some((op, from, warnings)))
+    }
+
+    /// Lightroom's crop and saved Upright are on the stored image: the file at `orig`, as it is now, says how it is
+    /// oriented. Without it (no file, or one that can't be read) the photo's crop is kept, and a warning says so.
+    fn frame_sidecar(&self, orig: Option<&str>, sc: &mut SidecarData) {
+        if sc.needs_frame() {
+            let frame = orig.and_then(|orig| {
+                crate::import::probe_paths(self, &[orig.to_string()])
+                    .into_iter()
+                    .next()
+                    .and_then(std::result::Result::ok)
+                    .and_then(|i| i.stored_frame())
+            });
+            sc.set_frame(frame);
+            sc.hold_unframed_crop();
+        }
+    }
+
+    /// The edit an XMP packet (a sidecar, a preset, another app's or LightCraft's own) holds, read for photo `id` as
+    /// [`Session::read_sidecar_op`] reads the photo's own sidecar (on its white balance scale, a Lightroom crop on its
+    /// stored image): its develop settings only, no rating, keywords or other metadata.
+    pub fn edit_from_xmp(&self, id: PhotoId, xmp: &str) -> Result<SidecarData> {
+        let p = self.catalog.photo(id).ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
+        let read = parse_sidecar(xmp, crate::crs::Target::for_photo(p)).map_err(|e| EngineError::Other(format!("not an XMP packet: {e}")))?;
+        let mut sc = SidecarData { develop: read.develop, warnings: read.warnings, upright: read.upright, ..Default::default() };
+        self.frame_sidecar(file_path(p), &mut sc);
+        Ok(sc)
     }
 
     /// The op that applies what a sidecar says (already read and parsed, e.g. on a worker

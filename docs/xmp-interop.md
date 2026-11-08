@@ -151,6 +151,26 @@ write them, from sidecars and from XMP embedded in the file. Named faces become 
   regions removed in another application go away here too. A sidecar without `mwg-rs:Regions` (an application that
   doesn't do regions) leaves the photo's regions as they are.
 
+## Importing and exporting an edit as an XMP file
+
+An edit can also go in and out as an XMP file of its own, whatever photo it came from:
+
+- `photo.inspectXmp {xmp, id?}` reads a packet given by its text, for the photo `id` (else the first selected, else the
+  active one), and changes nothing. It lists every field, one row per top-level property: `applied` (with the settings
+  it sets, by path and panel label, and `default: true` when it leaves them at LightCraft's defaults), `notApplied` (a
+  Lightroom profile other than the defaults, a mask or spot kind, a custom white balance with no as-shot reference, a
+  field with no counterpart, a crop on a file whose orientation can't be read) or `info` (bookkeeping, panel switches,
+  Upright's analysis record, a value another field sets, the metadata beside the edit). Rows carry the Lightroom panel
+  they belong to (`section`) and, for left-out ones, a `reason` code and its `detail` (the profile's name, the mask's
+  kind). A packet with LightCraft's own settings (`lc:settings`) applies whole; it is listed by the settings that differ
+  from the defaults, and another app's `crs:` fields beside them are `overridden`.
+- `photo.applyXmp {xmp, ids?}` puts the packet's edit on each photo as Read Metadata from File reads a sidecar (the
+  photo's white balance scale, a Lightroom crop and saved Upright on the file's stored image), but never its rating,
+  keywords or other metadata: one undo step for all of them.
+- `photo.exportXmp {id?, path?}` gives the photo's sidecar packet (`<file stem>.xmp`), written to `path` when given. It
+  holds LightCraft's own settings (`lc:settings`) and the metadata, so it comes back exactly in LightCraft; it has no
+  `crs:` fields yet, so Lightroom reads its metadata but not the edit.
+
 ## Reading `crs:` develop fields
 
 Many raw developers store edits as `crs:` properties (`http://ns.adobe.com/camera-raw-settings/1.0/`) in sidecars, in

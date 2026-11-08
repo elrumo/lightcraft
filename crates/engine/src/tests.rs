@@ -48,6 +48,7 @@ mod spots;
 mod sync;
 mod view_follow;
 pub(super) mod xmp;
+mod xmp_files;
 
 fn demo() -> Session {
     Session::with_demo()
