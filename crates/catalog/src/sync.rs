@@ -265,7 +265,7 @@ struct Entry {
 /// A photo added to the library and waiting to go, by its id: what goes is the photo as the
 /// catalog has it when the push is taken ([`Outbox::take_push`]), so a whole library queued at once
 /// costs a few bytes a photo instead of a copy of each (its later changes are queued too, and go
-/// after it). `sync.outbox` holds it as `[id, rev]`, or `[id, rev, hidden, sent]`.
+/// after it). `sync.queue` holds it as `[id, rev]`, or `[id, rev, hidden, sent]`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Added {
     id: PhotoId,
@@ -624,6 +624,47 @@ impl Outbox {
         }
         for k in c.listed_keywords() {
             self.upsert(Op::SetKeyword { path: k.path.clone(), info: Some(k.info.clone()) }, Op::SetKeyword { path: k.path.clone(), info: None });
+        }
+        self.tidy();
+    }
+
+    /// Queue the photos of `here` (this device's library) that `server` (the server's, just read)
+    /// lacks and that wait for nothing here: what a queue that couldn't be read held, rebuilt (a
+    /// photo another device removed since this device last pulled comes back, which beats losing
+    /// one). Returns how many.
+    pub fn requeue_missing(&mut self, here: &Catalog, server: &Catalog) -> usize {
+        let mut n = 0;
+        for p in here.photos().filter(|p| !p.local && server.photo(p.id).is_none()) {
+            if self.slot(&Key::Added(p.id)).is_none() {
+                self.add_photo(p);
+                n += 1;
+            }
+        }
+        self.tidy();
+        n
+    }
+
+    /// Queue `later`'s changes after these: what a build that keeps its queue elsewhere queued
+    /// meanwhile. A value pending in both keeps what it replaced from here and its value from
+    /// `later`.
+    pub fn append(&mut self, later: Outbox) {
+        for s in later.slots.into_iter().flatten() {
+            self.rev += 1;
+            let rev = self.rev;
+            let s = match (self.take(&s.key()), s) {
+                (Some(Slot::Change(mut mine)), Slot::Change(e)) => {
+                    mine.latest = e.latest;
+                    mine.sent = e.sent;
+                    mine.rev = rev;
+                    Slot::Change(mine)
+                }
+                (_, Slot::Change(mut e)) => {
+                    e.rev = rev;
+                    Slot::Change(e)
+                }
+                (_, Slot::Added(a)) => Slot::Added(Added { rev, ..a }),
+            };
+            self.put(s);
         }
         self.tidy();
     }

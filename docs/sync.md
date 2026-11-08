@@ -831,10 +831,20 @@ another device got there first it pulls, merges, and sends again. What the merge
 Ids never collide: the server gives each device an id space at sign-in, and ids a device hands out are
 `space · 2³² + n` (still exact in JavaScript). The library uploaded first keeps the ids it had.
 
-**Never lose a change:** every change is queued in the library's `sync.outbox` *before* it is written to the catalog
+**Never lose a change:** every change is queued in the library's `sync.queue` *before* it is written to the catalog
 log, and the position in the server's order (`sync.json`) only *after*; a crash in between re-sends or re-pulls, and
 both end up the same. A change the server refuses (it no longer applies there) is dropped and the device reloads the
 server's state, replaying its other pending changes on top.
+
+**A queue that can't be read is rebuilt, not dropped.** The queue lives in `sync.queue` (since 2026-11-08; before, in
+`sync.outbox`). Builds from before HB-270 can't read its form (a photo waiting to go is `[id, rev]`) and would reload
+the server's library, dropping the photos still waiting to go, so they never see it: a newer build reads `sync.outbox` once (its changes go
+after `sync.queue`'s, for a device coming back from an older build) and leaves it empty, which an older build reads as
+nothing waiting; the photos stay in its library and go once a newer build runs again. A `sync.queue` that is damaged or
+from a later version is rebuilt: the device pulls up to the server's head (so photos removed on other devices are gone
+here too), reads the server's library and queues again every photo it has that the server lacks (`requeue` in
+`sync.json` keeps that across a restart). Edits, ratings and album changes that were waiting are not rebuilt; the
+server's values stay.
 
 ## iCloud: Apple devices without a server
 

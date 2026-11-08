@@ -239,10 +239,13 @@ pub fn sync_config(dir: &Path) -> Option<lightcraft_engine::cloud_sync::SyncConf
 
 /// The changes a library's device hasn't sent to its server yet (0: none, or it never synced).
 pub fn unsent(dir: &Path) -> usize {
-    std::fs::read(dir.join(lightcraft_engine::cloud_sync::OUTBOX))
-        .ok()
-        .and_then(|b| serde_json::from_slice::<lightcraft_catalog::sync::Outbox>(&b).ok())
-        .map_or(0, |o| o.len())
+    use lightcraft_engine::cloud_sync::{OLD_OUTBOX, OUTBOX};
+    [OUTBOX, OLD_OUTBOX]
+        .iter()
+        .filter_map(|name| std::fs::read(dir.join(name)).ok())
+        .filter_map(|b| serde_json::from_slice::<lightcraft_catalog::sync::Outbox>(&b).ok())
+        .map(|o| o.len())
+        .sum()
 }
 
 /// When a library's catalog last changed (its log or its snapshot), in Unix seconds.

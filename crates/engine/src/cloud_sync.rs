@@ -20,9 +20,9 @@
 //!   device leaves out of the server's document (past the most it holds, or not readable as a preset)
 //!   goes back with what it sends, so leaving something out never deletes it on the other devices.
 //!
-//! Files in the library: `sync.json` ([`SyncConfig`]), `sync.outbox` (changes the server hasn't
-//! acknowledged; written before the op log), `sync.uploaded` (content hashes the server has) and
-//! `sync.presets` (the user presets as last synced).
+//! Files in the library: `sync.json` ([`SyncConfig`]), `sync.queue` (changes the server hasn't
+//! acknowledged; written before the op log; [`OLD_OUTBOX`] before HB-279), `sync.uploaded`
+//! (content hashes the server has) and `sync.presets` (the user presets as last synced).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -51,7 +51,16 @@ pub(crate) use docs::{shared_doc_key, shared_doc_names};
 pub use shares::{SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, ShareOptions};
 
 pub const CONFIG: &str = "sync.json";
-pub const OUTBOX: &str = "sync.outbox";
+/// The queue of changes waiting for the server. Builds from before HB-279 keep theirs in [`OLD_OUTBOX`];
+/// those from before HB-270 call its form (a photo as `[id, rev]`) damaged, which reloads the library and drops
+/// the photos waiting to go (HB-279): under its own name, no such build reads it.
+pub const OUTBOX: &str = "sync.queue";
+/// Where builds from before HB-279 keep the queue. Read once, its changes going after [`OUTBOX`]'s (a
+/// device back from such a build), then left empty, which such a build reads as nothing waiting: the photos
+/// waiting stay in its library, and go once a later build runs again.
+pub const OLD_OUTBOX: &str = "sync.outbox";
+/// An empty queue in the form every build reads.
+const EMPTY_OUTBOX: &[u8] = br#"{"entries":[],"rev":0}"#;
 pub const UPLOADED: &str = "sync.uploaded";
 pub const PRESETS: &str = "sync.presets";
 /// The other shared documents as last synced (the base of their merges), by name.
@@ -153,6 +162,12 @@ pub struct SyncConfig {
     /// The wipe's own marker: the library is being emptied after signing out. Written before anything is removed, so
     /// opening the library finishes a wipe that was cut short. Nothing else sets it.
     pub wiping: bool,
+    /// The queue couldn't be read ([`OUTBOX`] damaged, or written by a later build): once this device has pulled
+    /// up to the server's head, the server's library is read and the photos here it lacks are queued again
+    /// ([`Outbox::requeue_missing`]). Kept here, as the queue is written over before then. (Written only when set:
+    /// every other `sync.json` stays as it was.)
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub requeue: bool,
 }
 
 /// A device joining a server's library with no photos of its own takes the server's: each page
@@ -403,6 +418,8 @@ pub struct SyncState {
     pub outbox: Outbox,
     /// The outbox changed since it was last written.
     outbox_dirty: bool,
+    /// [`OLD_OUTBOX`] still holds changes (they are in `outbox` now): emptied once the outbox is written.
+    old_outbox_left: bool,
     /// Content hashes the server has (all three files).
     pub(crate) uploaded: HashSet<String>,
     /// A sign-in waiting to be sent (the password is never saved).
@@ -571,6 +588,7 @@ impl SyncState {
             config,
             outbox: Outbox::default(),
             outbox_dirty: false,
+            old_outbox_left: false,
             uploaded: HashSet::new(),
             login: None,
             server_format: None,
@@ -657,9 +675,9 @@ impl SyncState {
         self.planned.is_none()
     }
 
-    /// Read a library's sync files (`None`: the library never synced). A damaged outbox reloads
-    /// the library from the server (the server's copy is the reference); a damaged `sync.json`
-    /// reads as never synced.
+    /// Read a library's sync files (`None`: the library never synced). A queue that can't be read
+    /// is rebuilt from the server's library ([`SyncConfig::requeue`]); a damaged `sync.json` reads
+    /// as never synced.
     pub fn load(files: &mut dyn Store) -> Option<SyncState> {
         let bytes = match files.read(CONFIG) {
             Ok(b) => b?,
@@ -684,14 +702,24 @@ impl SyncState {
         let mut st = SyncState::new(config);
         st.config.space = st.config.space.min(MAX_SPACE);
         st.written_config = serde_json::to_string_pretty(&st.config).unwrap_or_default();
-        match files.read(OUTBOX).ok().flatten().map(|b| serde_json::from_slice::<Outbox>(&b)) {
-            Some(Ok(o)) => st.outbox = o,
-            Some(Err(e)) => {
-                log::error!("sync: {OUTBOX} is damaged ({e}); reloading the library from the server");
-                st.needs_snapshot = true;
+        // (a queue that can't be read is rebuilt from the server's library, see `requeue`; the old file's changes go
+        // after the queue's)
+        for name in [OUTBOX, OLD_OUTBOX] {
+            match files.read(name).ok().flatten().map(|b| serde_json::from_slice::<Outbox>(&b)) {
+                Some(Ok(o)) if o.is_empty() => {}
+                Some(Ok(o)) => {
+                    st.outbox.append(o);
+                    st.old_outbox_left |= name == OLD_OUTBOX;
+                }
+                Some(Err(e)) => {
+                    log::error!("sync: {name} is damaged or from a later version ({e}); the photos the server lacks will be queued again");
+                    st.config.requeue = true;
+                    st.old_outbox_left |= name == OLD_OUTBOX;
+                }
+                None => {}
             }
-            None => {}
         }
+        st.outbox_dirty = st.old_outbox_left;
         if let Some(b) = files.read(PRESETS).ok().flatten() {
             st.presets_base = serde_json::from_slice(&b).unwrap_or_default();
         }
@@ -701,8 +729,9 @@ impl SyncState {
             st.uploaded = String::from_utf8_lossy(&b).lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
         }
         // pending changes made before the library closed: reload the server's state once and
-        // replay them on top (merged), in case other devices changed what they touch
-        st.needs_snapshot |= !st.config.library.is_empty() && !st.outbox.is_empty();
+        // replay them on top (merged), in case other devices changed what they touch (a queue being rebuilt
+        // reloads once pulled up to the server's head, which does that too)
+        st.needs_snapshot |= !st.config.library.is_empty() && !st.outbox.is_empty() && !st.config.requeue;
         // signed in but never joined to the server's library (closed while the choice at sign-in waited):
         // fetch it again, which asks again
         st.needs_snapshot |= st.config.library.is_empty() && !st.config.token.is_empty();
@@ -811,6 +840,11 @@ impl SyncState {
             let s = serde_json::to_vec(&self.outbox).map_err(std::io::Error::other)?;
             files.write_atomic(OUTBOX, &s)?;
             self.outbox_dirty = false;
+        }
+        // (after: a crash between the two reads both again, and the old file's changes are queued again over themselves)
+        if self.old_outbox_left {
+            files.write_atomic(OLD_OUTBOX, EMPTY_OUTBOX)?;
+            self.old_outbox_left = false;
         }
         Ok(())
     }
@@ -2219,6 +2253,9 @@ impl Session {
                             self.apply_pulled(st, ops.ops);
                         }
                         st.pull_at = (!more).then(|| Instant::now() + POLL);
+                        // at the server's head, what was removed on other devices meanwhile is gone here too: the queue that
+                        // couldn't be read is rebuilt from the library read now
+                        st.needs_snapshot |= !more && st.config.requeue;
                         st.succeeded();
                     }
                     Err(e) => st.fail(e),
@@ -2487,6 +2524,8 @@ impl Session {
     /// pending changes are kept on top.
     fn adopt_snapshot(&mut self, st: &mut SyncState, snap: proto::Snapshot) -> std::result::Result<(), String> {
         st.needs_snapshot = false;
+        // (joining, every photo here is queued or chosen about anyway)
+        let requeue = std::mem::take(&mut st.config.requeue);
         // joining: this library's ids name other photos than the server's
         let joining = st.config.library != snap.library;
         if joining {
@@ -2532,6 +2571,10 @@ impl Session {
             carry_local(&self.catalog, &mut c);
         }
         c.set_id_space(st.config.space);
+        if requeue && !joining {
+            let n = st.outbox.requeue_missing(&self.catalog, &c);
+            log::info!("sync: the queue that couldn't be read is rebuilt: {n} photo(s) the server lacks queued again");
+        }
         let dropped = st.outbox.rebase(&self.catalog, &mut c);
         st.outbox_changed();
         if dropped > 0 {

@@ -73,6 +73,7 @@ struct Fake {
 }
 
 mod keep_in_place;
+mod old_builds;
 mod presence;
 mod sign_out;
 mod tracks;
@@ -535,7 +536,7 @@ fn changes_made_offline_survive_a_restart() {
     // a crash: nothing but what's on disk is left
     drop(a);
     let mut a = open(&root.join("a"));
-    assert_eq!(a.sync_state().unwrap().outbox.len(), 1, "the change waits in sync.outbox");
+    assert_eq!(a.sync_state().unwrap().outbox.len(), 1, "the change waits in sync.queue");
     f.down = false;
     let st = sync(&mut a, &mut f);
     assert_eq!(st["state"], "idle", "{st}");

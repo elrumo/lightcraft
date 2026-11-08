@@ -20,7 +20,7 @@ use lightcraft_catalog::sync::{Outbox, carry_local};
 use lightcraft_catalog::{Catalog, Store};
 use web_time::Instant;
 
-use super::{Body, CONFIG, DOCS, Job, OUTBOX, PRESETS, SyncConfig, SyncState, Task, UPLOADED};
+use super::{Body, CONFIG, DOCS, Job, OLD_OUTBOX, OUTBOX, PRESETS, SyncConfig, SyncState, Task, UPLOADED};
 use crate::activity::Cancel;
 use crate::{EngineError, LibrarySource, Result, Session};
 
@@ -262,6 +262,7 @@ impl Session {
             let lib = self.library.as_mut().ok_or_else(|| other("sync needs a library that is saved (open or create one first)"))?;
             let files = lib.files_mut();
             empty(files, OUTBOX, &serde_json::to_vec(&Outbox::default()).unwrap_or_default())?;
+            empty(files, OLD_OUTBOX, &serde_json::to_vec(&Outbox::default()).unwrap_or_default())?;
             // (appended to as files are uploaded: left, it would tell the next server it has files it lacks)
             empty(files, UPLOADED, b"")?;
             empty(files, PRESETS, b"[]")?;
