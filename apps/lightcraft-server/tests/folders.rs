@@ -414,6 +414,148 @@ fn sidecars_changed_by_lightroom_are_read_again() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A Lightroom sidecar cropping the stored image's top edge by `top`.
+fn lr_crop_xmp(top: f64) -> String {
+    format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:HasCrop="True" crs:CropTop="{top}" crs:CropLeft="0" crs:CropBottom="1" crs:CropRight="1" crs:CropAngle="0"/></rdf:RDF></x:xmpmeta>"#
+    )
+}
+
+/// Lightroom's crop edges are on the file's stored image: a photo the camera turned (EXIF orientation 6, shown on its side) keeps the
+/// crop on the edge Lightroom cut, both when its file is first scanned and when its sidecar is read again. They used to be taken in the
+/// shown frame, so the cut fell on the other axis (a 9:16 crop of an upright Canon CR3 came out 3648 x 4617 instead of 3078 x 5472).
+#[test]
+fn lightroom_crops_of_turned_photos_in_library_folders_follow_the_files_orientation() {
+    let root = temp("turned-crop");
+    let photos = root.join("photos");
+    std::fs::create_dir_all(&photos).unwrap();
+    // stored 40 x 24, shown 24 x 40: the stored top edge is the shown right edge
+    let img =
+        lightcraft_raster::Rgba8 { width: 40, height: 24, data: (0..40 * 24).map(|i| [(i % 40 * 6) as u8, (i / 40 * 9) as u8, 7, 255]).collect() };
+    let exif = lightcraft_codecs::exif::minimal_exif(6);
+    let meta = lightcraft_codecs::EncodeMeta { exif: Some(&exif), ..Default::default() };
+    let jpeg =
+        lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&img), 90, lightcraft_codecs::ChromaSubsampling::S444, &meta).unwrap();
+    std::fs::write(photos.join("turned.jpg"), jpeg).unwrap();
+    write_sidecar(&photos.join("turned.xmp"), &lr_crop_xmp(0.25), 1_000);
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), None).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    let server = Server::start(cfg).unwrap();
+    assert_eq!(scanned(&server, 0).added, 1);
+    let mut dev = Session::new().with_fs();
+    dev.open_library(root.join("device"), false).unwrap();
+    let url = format!("http://{}", server.addr());
+    dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "device"})).unwrap();
+    sync(&mut dev);
+    let rect = |dev: &Session| {
+        let p = by_place(dev, "photos/turned.jpg").unwrap();
+        assert_eq!((p.width, p.height), (24, 40));
+        let r = p.develop.crop.geometry.rect;
+        [r.x0, r.y0, r.x1, r.y1].map(|v| (v * 1000.0).round() / 1000.0)
+    };
+    assert_eq!(rect(&dev), [0.0, 0.0, 0.75, 1.0], "the stored top quarter is the shown right quarter");
+
+    // Lightroom crops it again: the sidecar read again puts the new crop on the same axis
+    write_sidecar(&photos.join("turned.xmp"), &lr_crop_xmp(0.5), 2_000);
+    server.scan("ann");
+    assert_eq!(scanned(&server, 1).sidecars, 1);
+    sync(&mut dev);
+    assert_eq!(rect(&dev), [0.0, 0.0, 0.5, 1.0]);
+
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Photos imported from Lightroom sidecars before 2026-10-10 kept Lightroom's Kelvin white without its scale (read since on the
+/// relative scale: 5050 K became a blue cast) and a turned photo's crop on the other axis. A server whose index predates the repair
+/// puts both back to what reading the sidecar gives today, once, leaving the rest of the photo as it is.
+#[test]
+fn old_lightroom_imports_in_library_folders_are_repaired_once() {
+    let root = temp("lr-repair");
+    let photos = root.join("photos");
+    std::fs::create_dir_all(&photos).unwrap();
+    let img =
+        lightcraft_raster::Rgba8 { width: 40, height: 24, data: (0..40 * 24).map(|i| [(i % 40 * 6) as u8, (i / 40 * 9) as u8, 7, 255]).collect() };
+    let exif = lightcraft_codecs::exif::minimal_exif(6);
+    let meta = lightcraft_codecs::EncodeMeta { exif: Some(&exif), ..Default::default() };
+    let jpeg =
+        lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&img), 90, lightcraft_codecs::ChromaSubsampling::S444, &meta).unwrap();
+    std::fs::write(photos.join("turned.jpg"), jpeg).unwrap();
+    std::fs::write(photos.join("raw.ORF"), olympus(false, None, 3)).unwrap();
+    let xmp = |crop: bool| {
+        format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:WhiteBalance="Custom" crs:Temperature="5050" crs:Tint="+27" crs:Exposure2012="+0.50" crs:HasCrop="{crop}" crs:CropTop="0.25" crs:CropLeft="0" crs:CropBottom="1" crs:CropRight="1" crs:CropAngle="0"/></rdf:RDF></x:xmpmeta>"#,
+            crop = if crop { "True" } else { "False" }
+        )
+    };
+    write_sidecar(&photos.join("turned.xmp"), &xmp(true), 1_000);
+    write_sidecar(&photos.join("raw.xmp"), &xmp(false), 1_000);
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), None).unwrap();
+    let start = || {
+        let mut cfg = Config::new(&data, "127.0.0.1:0");
+        cfg.scan_interval = None;
+        cfg.preview_threads = Some(1);
+        Server::start(cfg).unwrap()
+    };
+    let server = start();
+    assert_eq!(scanned(&server, 0).added, 2);
+    let mut dev = Session::new().with_fs();
+    let signed_in = |dev: &mut Session, server: &Server, name: &str| {
+        dev.open_library(root.join(name), false).unwrap();
+        let url = format!("http://{}", server.addr());
+        dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": name})).unwrap();
+        sync(dev);
+    };
+    signed_in(&mut dev, &server, "device");
+    let state = |dev: &Session, place: &str| {
+        let d = by_place(dev, place).unwrap().develop.clone();
+        (d.wb, d.crop.geometry, d.light.exposure)
+    };
+    let fresh = [state(&dev, "photos/turned.jpg"), state(&dev, "photos/raw.ORF")];
+
+    // the state the old import left: the white without its scale, the crop's edges unframed (and an edit made since, kept)
+    for place in ["photos/turned.jpg", "photos/raw.ORF"] {
+        dev.selection = lightcraft_engine::Selection::single(by_place(&dev, place).unwrap().id);
+        let crop =
+            if place.ends_with(".jpg") { json!({"rect": {"x0": 0.0, "y0": 0.25, "x1": 1.0, "y1": 1.0}, "angle": 0.0}) } else { json!(fresh[1].1) };
+        let old = json!({"wb": {"mode": "custom", "temp": 5050.0, "tint": 27.0}, "crop": {"geometry": crop}, "light": {"exposure": 0.75}});
+        dev.execute("develop.merge", &json!({"settings": old})).unwrap();
+        assert_eq!(by_place(&dev, place).unwrap().develop.wb.scale, lightcraft_engine::develop::WbScale::Legacy);
+    }
+    sync(&mut dev);
+    assert_ne!(state(&dev, "photos/raw.ORF").0, fresh[1].0);
+    assert_ne!(state(&dev, "photos/turned.jpg").1, fresh[0].1);
+
+    // a server from before the repair: its index doesn't say it was done
+    drop(server);
+    let index = data.join("users/ann/folders.json");
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&index).unwrap()).unwrap();
+    assert_eq!(v.as_object_mut().unwrap().remove("lightroom_repaired"), Some(json!(true)));
+    std::fs::write(&index, serde_json::to_vec(&v).unwrap()).unwrap();
+    let server = start();
+    scanned(&server, 0);
+    let mut dev = Session::new().with_fs();
+    signed_in(&mut dev, &server, "device2");
+    for (place, fresh) in [("photos/turned.jpg", &fresh[0]), ("photos/raw.ORF", &fresh[1])] {
+        let (wb, crop, exposure) = state(&dev, place);
+        assert_eq!(crop, fresh.1, "{place}");
+        assert_eq!(exposure, 0.75, "{place}: an edit made since is kept");
+        if place.ends_with(".ORF") {
+            // (the white a fresh import gives: here As Shot, a body still edited on the relative scale, whose numbers As Shot ignores)
+            assert_eq!((wb.mode, wb.scale), (fresh.0.mode, fresh.0.scale), "{place}");
+            assert!(wb.mode == lightcraft_engine::develop::WbMode::AsShot || (wb.temp, wb.tint) == (fresh.0.temp, fresh.0.tint), "{place}");
+        }
+    }
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn the_scan_of_library_folders_is_reported_to_devices() {
     let root = temp("activity");

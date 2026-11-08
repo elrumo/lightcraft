@@ -278,7 +278,13 @@ can make such folders a user's **library folders** (admin page › Users › the
   changes later (the photo was edited again in Lightroom) is read again by the next scan, without reading the photo
   file again: what it states replaces the photo's values on every device (fields it doesn't state are kept), as
   Read Metadata from File does. Edits made on a device stay until the sidecar changes. The index keeps each
-  sidecar's time; an index written by an older server only notes them on its first scan.
+  sidecar's time; an index written by an older server only notes them on its first scan. Lightroom's crop is on the
+  file's stored image, so the scan reads the file's orientation with it (on a re-read only when the crop needs it): a
+  photo the camera turned keeps its crop on the edge Lightroom cut. Photos imported from Lightroom sidecars before
+  2026-10-10 are repaired once by the first scan of a newer server (`lightroom_repaired` in the index,
+  `sidecar::repair_op`): a custom white stored without its scale (read since as 6500 K = as shot, a strong blue or
+  orange cast) and a crop taken in the shown frame are replaced by what reading the sidecar gives today, each only
+  while it is still exactly what that import wrote, so changes made since stay.
 - **Writable folders (opt-in, per folder).** An admin can let the server write in a library folder (admin page ›
   the user › Library folders › **Writing**, or `lightbites-server folder writable ann Photos on`; add
   `--writable` / `--imports` to `folder add`). The folder must be mounted read-write, writable by the server's user

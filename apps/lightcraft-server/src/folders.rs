@@ -112,6 +112,10 @@ pub struct Index {
     /// The entries' sidecar times are recorded. An index written before they were has none: its
     /// next scan only notes them, so an old sidecar never replaces an edit made on a device.
     pub sidecars: bool,
+    /// The photos imported from Lightroom sidecars were looked at for what imports before 2026-10-10 left wrong (a white read on
+    /// the wrong scale, a turned photo's crop on the other axis: [`sidecar::repair_op`]). An index without it has its next scan
+    /// do it once.
+    pub lightroom_repaired: bool,
     #[serde(skip)]
     by_hash: HashMap<String, Vec<String>>,
 }
@@ -378,6 +382,8 @@ fn describe(file: &Found, hash: &str, bytes: &[u8], now: &str) -> Result<(Photo,
 /// A photo for a new file whose header has been read (`info`).
 fn describe_info(file: &Found, hash: &str, info: lightcraft_engine::media::ProbeInfo, now: &str) -> Result<(Photo, Option<SidecarData>), String> {
     let name = file.key.rsplit('/').next().unwrap_or(&file.key).to_string();
+    // (Lightroom's crop and saved Upright are on the file's stored image: without it a turned photo's crop lands on the wrong axis)
+    let frame = info.stored_frame();
     let mut p = Photo::new(PhotoId(0), Source::File { path: original_path(hash, &name) }, &name, &info.format, info.width, info.height, now);
     p.kind = info.kind;
     p.duration = info.duration;
@@ -399,7 +405,10 @@ fn describe_info(file: &Found, hash: &str, info: lightcraft_engine::media::Probe
         .and_then(|f| std::fs::read_to_string(f).ok())
         .or_else(|| info.xmp.filter(|_| raw));
     let target = lightcraft_engine::crs::Target::for_photo(&p);
-    let sc = packet.and_then(|x| sidecar::parse_sidecar(&x, target).map_err(|e| log::warn!("{}: XMP: {e}", file.key)).ok());
+    let sc = packet.and_then(|x| sidecar::parse_sidecar(&x, target).map_err(|e| log::warn!("{}: XMP: {e}", file.key)).ok()).map(|mut sc| {
+        sc.set_frame(frame);
+        sc
+    });
     Ok((p, sc))
 }
 
@@ -669,28 +678,81 @@ pub(crate) fn push(l: &mut UserLib, ops: &[(Op, usize)], name: &dyn Fn(usize) ->
     }
 }
 
-/// Read again the sidecars in `read` (each file with its sidecar's contents, read before the
-/// lock): what they state replaces their photos' values; then note their times. With
-/// `note_only` (an index from before sidecar times were kept), only note them.
-fn reread_sidecars(lib: &Mutex<UserLib>, read: &[(Found, Option<String>)], note_only: bool, s: &mut Status, now: &str) {
+/// The stored image of `f`'s file, read (header and all, as a new file is) only when its sidecar `packet` has a crop or a saved Upright
+/// that needs it; `None` otherwise or when the file can't be read.
+fn stored_frame(f: &Found, packet: &str) -> Option<sidecar::StoredFrame> {
+    let sc = sidecar::parse_sidecar(packet, lightcraft_engine::crs::Target::Any).ok()?;
+    if !sc.needs_frame() {
+        return None;
+    }
+    probe_frame(f)
+}
+
+/// The stored image of `f`'s file (`None`: it can't be read).
+fn probe_frame(f: &Found) -> Option<sidecar::StoredFrame> {
+    if f.size > FILE_MAX {
+        return None;
+    }
+    let name = f.key.rsplit('/').next().unwrap_or(&f.key).to_string();
+    let _one = (f.size > READ_WHOLE).then(|| lock(&BIG));
+    let bytes = lightcraft_engine::files::read_file(&f.path).ok()?;
+    lightcraft_engine::guard::catch("reading a photo", || lightcraft_engine::files::probe_bytes(&name, &bytes)).ok()?.ok()?.stored_frame()
+}
+
+/// [`sidecar::repair_op`] for the photos of `files` (each with a sidecar), as one push; the file's frame is read only for a photo
+/// whose crop is still the one an old import took from its sidecar. Returns how many photos changed.
+fn repair_lightroom(lib: &Mutex<UserLib>, files: &[Found]) -> usize {
+    let packets: Vec<(&Found, String)> = files
+        .iter()
+        .filter_map(|f| Some((f, std::fs::read_to_string(sidecar::find_sidecar(&f.path.to_string_lossy(), SidecarNaming::Stem)?).ok()?)))
+        .collect();
+    let photo = |l: &UserLib, f: &Found| l.index.files.get(&f.key).and_then(|e| e.photo).and_then(|id| l.core.catalog().photo(PhotoId(id))).cloned();
+    let framed: Vec<bool> = {
+        let l = lock(lib);
+        packets.iter().map(|(f, x)| photo(&l, f).is_some_and(|p| sidecar::repair_needs_frame(&p, x))).collect()
+    };
+    // ponytail: a cropped photo shown as stored also matches (its framed and unframed crop are the same), so its file is read once for
+    // nothing; a header-only probe would make the pass cheap if a big library's first scan after the update drags
+    let frames: Vec<Option<sidecar::StoredFrame>> =
+        packets.iter().zip(framed).map(|((f, _), framed)| framed.then(|| probe_frame(f)).flatten()).collect();
+    let mut l = lock(lib);
+    let ops: Vec<(Op, usize)> = packets
+        .iter()
+        .zip(frames)
+        .enumerate()
+        .filter_map(|(i, ((f, x), frame))| sidecar::repair_op(&*photo(&l, f)?, x, frame).map(|op| (op, i)))
+        .collect();
+    let Some(refused) = push(&mut l, &ops, &|i| packets.get(i).map_or("?", |(f, _)| f.key.as_str()).to_string()) else { return 0 };
+    ops.iter().filter(|(_, i)| !refused.contains(i)).count()
+}
+
+/// Read again the sidecars in `read` (each file with its sidecar's contents and, when its crop needs it, the file's stored frame, read
+/// before the lock): what they state replaces their photos' values; then note their times. With `note_only` (an index from before
+/// sidecar times were kept), only note them.
+fn reread_sidecars(lib: &Mutex<UserLib>, read: &[(Found, Option<String>, Option<sidecar::StoredFrame>)], note_only: bool, s: &mut Status, now: &str) {
     let mut l = lock(lib);
     let mut ops: Vec<(Op, usize)> = Vec::new();
-    for (i, (f, packet)) in read.iter().enumerate() {
+    for (i, (f, packet, frame)) in read.iter().enumerate() {
         let id = l.index.files.get(&f.key).and_then(|e| e.photo).map(PhotoId);
         // (a photo removed on a device stays removed; a sidecar that's gone states nothing)
         let (Some(p), Some(x), false) = (id.and_then(|id| l.core.catalog().photo(id)), packet, note_only) else { continue };
         match sidecar::parse_sidecar(x, lightcraft_engine::crs::Target::for_photo(p)) {
-            Ok(sc) => {
+            Ok(mut sc) => {
+                // Lightroom's crop is on the stored image: in its frame, or left as it is when the file can't say which that is
+                if sc.needs_frame() {
+                    sc.set_frame(*frame);
+                    sc.hold_unframed_crop();
+                }
                 let sc = sc.resolve_label(l.core.catalog());
                 ops.extend(sidecar::sidecar_ops(p, &sc, now, sidecar::READ_LABEL).into_iter().map(|op| (op, i)));
             }
             Err(e) => log::warn!("{}: XMP: {e}", f.key),
         }
     }
-    let Some(refused) = push(&mut l, &ops, &|i| read.get(i).map_or("?", |(f, _)| f.key.as_str()).to_string()) else { return };
+    let Some(refused) = push(&mut l, &ops, &|i| read.get(i).map_or("?", |(f, _, _)| f.key.as_str()).to_string()) else { return };
     let changed: HashSet<usize> = ops.iter().map(|(_, i)| *i).filter(|i| !refused.contains(i)).collect();
     s.sidecars += changed.len();
-    for (i, (f, _)) in read.iter().enumerate() {
+    for (i, (f, _, _)) in read.iter().enumerate() {
         if let Some(e) = l.index.files.get_mut(&f.key).filter(|_| !refused.contains(&i)) {
             e.sidecar = f.sidecar;
         }
@@ -817,23 +879,43 @@ pub fn scan(
     let note_only = !lock(lib).index.sidecars;
     let stale: Vec<Found> = {
         let l = lock(lib);
-        found.into_iter().filter(|f| l.index.files.get(&f.key).is_some_and(|e| e.photo.is_some() && e.sidecar != f.sidecar)).collect()
+        found.iter().filter(|f| l.index.files.get(&f.key).is_some_and(|e| e.photo.is_some() && e.sidecar != f.sidecar)).cloned().collect()
     };
     for chunk in stale.chunks(BATCH) {
         if stop.load(Ordering::Relaxed) {
             break;
         }
-        let read: Vec<(Found, Option<String>)> = chunk
+        let read: Vec<(Found, Option<String>, Option<sidecar::StoredFrame>)> = chunk
             .iter()
             .map(|f| {
                 let packet = f.sidecar.and_then(|_| sidecar::find_sidecar(&f.path.to_string_lossy(), SidecarNaming::Stem));
-                (f.clone(), packet.and_then(|p| std::fs::read_to_string(p).ok()))
+                let packet = packet.and_then(|p| std::fs::read_to_string(p).ok());
+                let frame = packet.as_deref().and_then(|x| stored_frame(f, x));
+                (f.clone(), packet, frame)
             })
             .collect();
         reread_sidecars(lib, &read, note_only, &mut s, &now);
     }
     if !stop.load(Ordering::Relaxed) {
         lock(lib).index.sidecars = true;
+    }
+    // what imports of Lightroom sidecars before 2026-10-10 left wrong, put right once
+    if !stop.load(Ordering::Relaxed) && !lock(lib).index.lightroom_repaired {
+        let with_sidecars: Vec<Found> = {
+            let l = lock(lib);
+            found.iter().filter(|f| f.sidecar.is_some() && l.index.files.get(&f.key).is_some_and(|e| e.photo.is_some())).cloned().collect()
+        };
+        let mut repaired = 0;
+        for chunk in with_sidecars.chunks(BATCH) {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            repaired += repair_lightroom(lib, chunk);
+        }
+        if !stop.load(Ordering::Relaxed) {
+            lock(lib).index.lightroom_repaired = true;
+            log::info!("{user}: {repaired} photos imported from Lightroom sidecars repaired (white balance scale, crop frame)");
+        }
     }
     // gone from folders that are there; every photo file whose previews may be missing
     s.phase = "finishing";

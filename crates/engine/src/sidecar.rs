@@ -455,6 +455,66 @@ pub fn sidecar_ops(p: &Photo, sc: &SidecarData, now: &str, label: &str) -> Vec<O
     ops
 }
 
+/// The label of [`repair_op`]'s step.
+pub const REPAIR_LABEL: &str = "Lightroom import repaired";
+
+/// Put right what an import of Lightroom sidecar `xmp` from before 2026-10-10 left wrong on photo `p`, in its frame
+/// `frame` ([`SidecarData::set_frame`]):
+/// - Lightroom's Kelvin white, stored without its scale: since raws are edited in Kelvin it is read on the old relative
+///   scale, where 6500 K meant as shot (Lightroom's 5050 K on a Canon EOS R6 rendered 1,450 K below as shot, blue).
+/// - its crop, taken in the frame the photo is shown in rather than on the stored image (a turned photo's crop on the
+///   other axis).
+///
+/// Each is replaced by what reading the sidecar gives today, and only while it is still exactly what that import wrote,
+/// so a change made since is kept. `None` when nothing changes. The step keeps the photo's edit time and adds no history.
+pub fn repair_op(p: &Photo, xmp: &str, frame: Option<StoredFrame>) -> Option<Op> {
+    use lightcraft_develop::{WbMode, WbScale};
+    let old = old_reading(xmp)?;
+    let mut today = parse_sidecar(xmp, crate::crs::Target::for_photo(p)).ok()?;
+    today.set_frame(frame);
+    today.hold_unframed_crop();
+    let mut q = p.clone();
+    merge_into(&mut q, &today, "");
+    let mut d = (*p.develop).clone();
+    let num = |k: &str| old.pointer(k).and_then(Value::as_f64);
+    let wb = &p.develop.wb;
+    // (a raw with matrices of its own, a DNG, always read a white without scale as Kelvin: only the raws developed from a fitted look were misread)
+    if p.fitted_look()
+        && wb.mode != WbMode::AsShot
+        && wb.scale == WbScale::Legacy
+        && num("/wb/temp") == Some(wb.temp)
+        && num("/wb/tint").is_none_or(|t| t == wb.tint)
+    {
+        d.wb = q.develop.wb;
+    }
+    if crop_as_read(p, &old) {
+        d.crop.geometry = q.develop.crop.geometry;
+    }
+    (d != *p.develop).then(|| Op::SetDevelop { id: p.id, settings: Arc::new(d), label: REPAIR_LABEL.into(), edited: p.edited.clone() })
+}
+
+/// Whether [`repair_op`] needs the photo's frame: its crop is still the one the old import took from sidecar `xmp`, and
+/// that crop depends on the frame it is read in. Only then is the file worth reading for it.
+pub fn repair_needs_frame(p: &Photo, xmp: &str) -> bool {
+    old_reading(xmp).is_some_and(|old| crop_needs_frame(&old) && crop_as_read(p, &old))
+}
+
+/// Sidecar `xmp` as the imports before 2026-10-10 read it: a raw's `crs:` white as written, without its scale, and the crop
+/// unframed.
+fn old_reading(xmp: &str) -> Option<Value> {
+    match parse_sidecar(xmp, crate::crs::Target::RawAbsolute).ok()?.develop? {
+        DevelopPatch::Partial(v) => Some(v),
+        DevelopPatch::Full(_) => None,
+    }
+}
+
+/// Whether photo `p`'s crop is exactly the one partial settings `v` hold.
+fn crop_as_read(p: &Photo, v: &Value) -> bool {
+    let g = &p.develop.crop.geometry;
+    let same = |k: &str, x: f64| v.pointer(&format!("/crop/geometry/{k}")).and_then(Value::as_f64).is_some_and(|o| (o - x).abs() < 1e-9);
+    same("rect/x0", g.rect.x0) && same("rect/y0", g.rect.y0) && same("rect/x1", g.rect.x1) && same("rect/y1", g.rect.y1) && same("angle", g.angle)
+}
+
 impl SidecarData {
     /// The photo's stored image (`None`: not known). With it, [`merge_into`] puts the packet's crop
     /// into LightCraft's frame (as the Lightroom catalog import does) and keeps Lightroom's saved
@@ -1294,6 +1354,10 @@ mod tests_repair_provenance;
 #[cfg(test)]
 #[path = "sidecar/tests_stem_owners.rs"]
 mod tests_stem_owners;
+
+#[cfg(test)]
+#[path = "sidecar/tests_lightroom_repair.rs"]
+mod tests_lightroom_repair;
 
 #[cfg(test)]
 mod jpeg_header_tests {
