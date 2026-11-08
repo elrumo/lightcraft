@@ -374,9 +374,14 @@ fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
     lightroom_white_to_dial(&mut a6000, "SONY ILCE-6000");
     assert_eq!(a6000["wb"], json!({"mode": "custom", "temp": 6900.0 * 1.02, "tint": -15.0, "scale": "kelvin"}));
     assert_eq!(a6000["light"]["exposure"], 0.5);
+    // the EOS R6: Lightroom's As Shot reads about 10 % above ours, so its Custom 5050 K / +27 (2V2A9273, As Shot 4700 K /
+    // +27 there, 4285 K / +24 here) is the same small step from As Shot on our dial
+    let mut r6 = json!({"wb": {"mode": "custom", "temp": 5050.0, "tint": 27.0, "scale": "kelvin", "lightroom": true}});
+    lightroom_white_to_dial(&mut r6, "Canon Canon EOS R6");
+    assert_eq!(r6["wb"], json!({"mode": "custom", "temp": 5050.0 * 0.9, "tint": 22.5, "scale": "kelvin"}));
     // a body nobody measured keeps the values as written, and the marker never stays
     let mut other = marked();
-    lightroom_white_to_dial(&mut other, "Canon Canon EOS R6");
+    lightroom_white_to_dial(&mut other, "Canon Canon EOS R5");
     assert_eq!(other["wb"], json!({"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin"}));
     // values that are not Lightroom's (a preset saved on that body, in dial units) are left alone
     let mut own = json!({"wb": {"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin"}});

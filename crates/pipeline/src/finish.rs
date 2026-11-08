@@ -349,6 +349,8 @@ pub struct FinishParams {
     pub air_pre: f32,
     pub gain: f32,
     pub ev: f32,
+    /// How far (EV) the Shadows window sits below where it sits for a photo of [`SHADOW_KEY_REF`]'s key ([`shadow_window_shift`]).
+    pub sh_shift: f32,
     /// Grain: strength, lattice spacing (output px), coarse layer weight, seed (see [`grain_params`]).
     pub grain: Option<(f32, f32, f32, u32)>,
     /// Output px → normalized oriented coordinates.
@@ -365,6 +367,26 @@ pub struct FinishParams {
     pub peak: f32,
 }
 
+/// The key ([`crate::local::frame_key`]) of the photo the Shadows window was fitted on, a bright Sony ILCE-6000 street (median L*
+/// 74, key -0.02 EV), where Lightroom's Shadows +100 lifts the darks and mids by 15-18 L*: there the window does not move.
+pub const SHADOW_KEY_REF: f32 = 0.0;
+/// How far the Shadows window follows a photo's key away from [`SHADOW_KEY_REF`] (EV per EV), and how much Exposure counts in that key.
+/// Fitted to Lightroom's exports of a low-key Canon EOS R6 street at dusk (median L* 20, key -2.7 EV) with Shadows +76 and +100 at
+/// Exposure -1, 0 and +1.37: Lightroom lifts its darks by 0.3-4.5 L*, a window that stayed put lifted the whole photo by 8-22 L*
+/// (mean error 12.4 L* by tone band), this one is 0.6 L* off.
+pub const SHADOW_KEY_FOLLOW: f32 = 1.25;
+pub const SHADOW_KEY_EV: f32 = 0.7;
+
+/// How far (EV) the Shadows window moves for a photo whose key ([`crate::local::frame_key`], before exposure) is `key` at Exposure
+/// `ev`: Lightroom's Shadows lifts what is dark *in the photo*, not a fixed brightness. 0 without a key.
+// ponytail: the window only moves down, for photos darker than the bright one it was fitted on; whether Lightroom's moves up for a
+// brighter photo was not measured (add it with exports of a high-key photo)
+pub fn shadow_window_shift(key: Option<f32>, ev: f32) -> f32 {
+    let Some(k) = key.filter(|k| k.is_finite()) else { return 0.0 };
+    let shift = SHADOW_KEY_FOLLOW * (k + SHADOW_KEY_EV * ev - SHADOW_KEY_REF);
+    if shift.is_finite() { shift.clamp(-6.0, 0.0) } else { 0.0 }
+}
+
 impl FinishParams {
     /// Parameters for a `w × h` render into `space`; `ev`/`air_pre` as in [`crate::Prepared`].
     #[allow(clippy::too_many_arguments)]
@@ -376,6 +398,7 @@ impl FinishParams {
         h: usize,
         px_per_long: f64,
         air_pre: f32,
+        shadow_key: Option<f32>,
         space: OutputSpace,
     ) -> FinishParams {
         let effects = s.section_enabled("effects");
@@ -422,6 +445,7 @@ impl FinishParams {
             air_pre,
             gain,
             ev,
+            sh_shift: shadow_window_shift(shadow_key, ev),
             grain,
             out_to_norm: frame.out_to_norm(w, h),
             ow: frame.ow,
@@ -472,7 +496,7 @@ pub(crate) fn finish(
     proof: Option<crate::Proof>,
 ) -> Rgba8 {
     let (w, h) = (p.img.width, p.img.height);
-    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, p.key, space);
     fp.proof = proof.map(|pr| pr.params(space));
     if let Some(d) = display {
         fp.for_display(d, proof);
@@ -501,7 +525,7 @@ pub(crate) fn finish_deep(
 ) -> DeepImage {
     use lightcraft_color::transfer::srgb_to_linear;
     let (w, h) = (p.img.width, p.img.height);
-    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, space);
+    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, p.key, space);
     fp.proof = proof.map(|pr| pr.params(space));
     let trc = fp.out_trc;
     let samples = match depth {
@@ -560,14 +584,15 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
         air_pre,
         gain,
         ev,
+        sh_shift,
         grain,
         ..
     } = fp;
     let band_sharpen = *band_sharpen;
     let dehaze_v4 = *dehaze_v4;
     let fork_refinements = *fork_refinements;
-    let (hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev) =
-        (*hl, *sh, *clar, *tex, *dehaze, *sharpen, *sharpen_mask, *air, *air_pre, *gain, *ev);
+    let (hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev, sh_shift) =
+        (*hl, *sh, *clar, *tex, *dehaze, *sharpen, *sharpen_mask, *air, *air_pre, *gain, *ev, *sh_shift);
     let terms: Vec<[f32; MASK_TERMS]> = p.masks.iter().map(|m| mask_terms(&m.adjust)).collect();
     let out_to_norm = fp.out_to_norm;
     let long = fp.ow.max(fp.oh);
@@ -667,7 +692,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             let mut delta = 0.0f32;
             let (hh, ss) = (hl + l_hl, sh + l_sh);
             if hh != 0.0 || ss != 0.0 {
-                let ws = 1.0 - smooth(-2.15, 1.05, base);
+                let ws = 1.0 - smooth(-2.15 + sh_shift, 1.05 + sh_shift, base);
                 let wh = smooth(-3.3, 4.5, base);
                 delta +=
                     ss * 1.07 * ws * ws.sqrt() + hh * if hh > 0.0 && fork_refinements { HIGHLIGHTS_UP } else { highlights_down(base.max(l1)) } * wh;

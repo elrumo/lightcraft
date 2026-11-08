@@ -786,7 +786,7 @@ pub(crate) fn prepare(
     let ev = s.light.exposure as f32;
     let (cache, keys) = alphas;
     let masks = timed("masks", || masks::evaluate_cached(&s.masks, frame, img.width, img.height, &img, &log_l, ev, mattes, keys, cache));
-    Prepared { img, log_l, base, clarity_blur, texture_blur, sharpen, dark, chroma_blur, air, masks, px_per_long }
+    Prepared { img, log_l, base, clarity_blur, texture_blur, sharpen, dark, chroma_blur, air, key: None, masks, px_per_long }
 }
 
 /// The airlight of the whole output frame, estimated on a small render of it (`proxy_w` px wide):
@@ -797,6 +797,20 @@ pub(crate) fn frame_airlight(src: &Rgb32f, info: &SourceInfo, s: &DevelopSetting
     let ppl = frame.px_per_long(proxy_w);
     let sigma = (0.02 * ppl).max(1.0) as f32;
     airlight(&dark_plane(&img, sigma, dehaze_patch_radius(s, ppl)))
+}
+
+/// The whole frame's key for Shadows: the median log luminance (EV from middle grey, before exposure) of its white-balanced
+/// airlight proxy ([`frame_proxy`]), so every window of a photo and its whole render read the same one.
+pub(crate) fn frame_key(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, frame: &Frame, proxy_w: usize, proxy_h: usize) -> f32 {
+    let mut img = Rgb32f::clone(&frame_proxy(src, frame, proxy_w, proxy_h));
+    white_balance(&mut img, info, s);
+    let mut v: Vec<f32> = img.data.iter().map(|c| log_lum(*c)).filter(|l| l.is_finite()).collect();
+    if v.is_empty() {
+        return 0.0;
+    }
+    let mid = v.len() / 2;
+    let (_, m, _) = v.select_nth_unstable_by(mid, f32::total_cmp);
+    *m
 }
 
 /// How many airlight proxies [`frame_proxy`] keeps (one per photo and frame being zoomed into; each ≤ 1.8 MB).

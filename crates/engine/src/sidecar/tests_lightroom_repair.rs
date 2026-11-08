@@ -18,7 +18,7 @@ const FRAME: StoredFrame = StoredFrame { orientation: Orientation::Rotate270, wi
 fn imported() -> Photo {
     let mut p = Photo::new(PhotoId(5), Source::File { path: "/x/2V2A9273.CR3".into() }, "2V2A9273.CR3", "CR3", 3648, 5472, "2026-10-09T10:42:32");
     p.kind = MediaKind::Raw;
-    p.meta.camera = "Canon EOS R6".into();
+    p.meta.camera = "Canon Canon EOS R6".into();
     p.as_shot_wb = Some((4285.0, 24.0));
     let mut d = DevelopSettings::default();
     d.wb.mode = WbMode::Custom;
@@ -42,7 +42,8 @@ fn repaired(p: &Photo, frame: Option<StoredFrame>) -> Option<DevelopSettings> {
 #[test]
 fn an_old_lightroom_import_gets_its_kelvin_white_and_its_crop_on_the_stored_image() {
     let d = repaired(&imported(), Some(FRAME)).expect("both were left as the old import wrote them");
-    assert_eq!((d.wb.mode, d.wb.temp, d.wb.tint, d.wb.scale), (WbMode::Custom, 5050.0, 27.0, WbScale::Kelvin));
+    // (Lightroom's 5050 K / +27 on the R6's own dial: `kelvin_presets::lightroom_scale`)
+    assert_eq!((d.wb.mode, d.wb.temp, d.wb.tint, d.wb.scale), (WbMode::Custom, 5050.0 * 0.9, 22.5, WbScale::Kelvin));
     let r = d.crop.geometry.rect;
     assert_eq!([r.x0, r.y0, r.x1, r.y1].map(|v| (v * 1e6).round() / 1e6), [0.121077, 0.0, 0.964827, 1.0], "3078 x 5472, as Lightroom exports it");
     // the rest of the photo's settings stay as they are
@@ -58,13 +59,26 @@ fn what_was_changed_since_the_import_is_kept() {
     d.crop.geometry.rect.y1 = 0.9;
     p.develop = Arc::new(d);
     assert_eq!(repaired(&p, Some(FRAME)), None);
-    // a photo already read with the scale: nothing to do
+    // a photo already read as today's import reads it: nothing to do
+    let mut p = imported();
+    let mut d = (*p.develop).clone();
+    (d.wb.temp, d.wb.tint, d.wb.scale) = (5050.0 * 0.9, 22.5, WbScale::Kelvin);
+    d.crop.geometry.rect = lightcraft_geom::Rect { x0: 0.121077, y0: 0.0, x1: 0.964827, y1: 1.0 };
+    p.develop = Arc::new(d);
+    assert_eq!(repaired(&p, Some(FRAME)), None);
+}
+
+#[test]
+fn a_kelvin_white_read_before_the_bodys_dial_was_measured_is_put_on_it() {
+    // imported after 2026-10-10 (with the scale) but before the R6 was measured against Lightroom: Lightroom's numbers as written
     let mut p = imported();
     let mut d = (*p.develop).clone();
     d.wb.scale = WbScale::Kelvin;
     d.crop.geometry.rect = lightcraft_geom::Rect { x0: 0.121077, y0: 0.0, x1: 0.964827, y1: 1.0 };
     p.develop = Arc::new(d);
-    assert_eq!(repaired(&p, Some(FRAME)), None);
+    let d = repaired(&p, Some(FRAME)).unwrap();
+    assert_eq!((d.wb.temp, d.wb.tint, d.wb.scale), (5050.0 * 0.9, 22.5, WbScale::Kelvin));
+    assert_eq!(d.crop.geometry, p.develop.crop.geometry);
 }
 
 #[test]

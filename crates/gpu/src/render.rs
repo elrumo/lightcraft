@@ -711,7 +711,7 @@ pub fn render(
     }
 
     // 5. per-pixel stage
-    let mut fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air, req.space);
+    let mut fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air, plan.shadow_key, req.space);
     fp.capture = prep.sharpen.as_ref().map(|(c, _)| *c);
     // soft proofing as the CPU's `finish` sets it up (an output-device table never gets here: see `render`)
     fp.proof = req.proof.map(|pr| pr.params(req.space));

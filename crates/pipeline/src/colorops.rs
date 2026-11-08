@@ -347,14 +347,18 @@ impl ColorOps {
     }
 }
 
-/// Hue rotation (OkLCh radians) of a calibration primary at ±100.
-pub const CALIB_HUE: f32 = 0.5;
-/// Chroma scale of a calibration primary at ±100 (`1 ± CALIB_SAT`).
-pub const CALIB_SAT: f32 = 0.6;
+/// Hue rotation of each calibration primary (red, green, blue) at ±100: radians about the white in CIE xy. Fitted, with
+/// [`CALIB_SAT`], to Lightroom's exports of a Canon EOS R6 raw with each Calibration slider alone at ±50 (median ΔE of the
+/// sliders' effects 3.60 with the earlier OkLCh model, 2.32 with this one): there Red and Blue Hue turn most colours by
+/// 10-25°, Green Hue less, and Blue Saturation raises the chroma of the colours it doesn't hold (the OkLCh model turned
+/// them instead, worse than no calibration at all).
+pub const CALIB_HUE: [f64; 3] = [0.55, 0.40, 0.55];
+/// Saturation of a calibration primary at ±100: its distance from the white in CIE xy scaled by `1 ± CALIB_SAT`.
+pub const CALIB_SAT: f64 = 0.6;
 
-/// The calibration panel's primaries as a white-preserving 3×3 matrix on linear Rec.2020 (row-major):
-/// each primary is rotated in OkLCh hue and scaled in chroma at constant OkLab lightness, then the
-/// columns are rescaled so that neutral (1, 1, 1) maps to itself. `None` when neutral.
+/// The calibration panel's primaries as a white-preserving 3×3 matrix on linear Rec.2020 (row-major): each Rec. 2020
+/// primary's chromaticity is turned about the white and moved away from or towards it in CIE xy at its own luminance, then
+/// the columns are rescaled so that neutral (1, 1, 1) maps to itself. `None` when neutral.
 pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
     let prim = c.primaries();
     if prim.iter().all(|(h, s)| *h == 0.0 && *s == 0.0) {
@@ -363,20 +367,32 @@ pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
     if let Ok(spec) = std::env::var("LC_CALIB_EXP") {
         return calib_exp(&spec, &prim);
     }
+    let to_xyz = REC2020.to_xyz();
+    let from_xyz = to_xyz.inverse()?;
+    let w = REC2020.white;
     let mut p = [[0.0f64; 3]; 3];
     for (i, (hue, sat)) in prim.iter().enumerate() {
-        let mut e = [0.0f32; 3];
+        let mut e = [0.0f64; 3];
         e[i] = 1.0;
-        let [l, ch, h] = lab_to_lch(oklab_from_2020(e));
-        let h2 = h + (hue.clamp(-100.0, 100.0) / 100.0) as f32 * CALIB_HUE;
-        let c2 = ch * (1.0 + (sat.clamp(-100.0, 100.0) / 100.0) as f32 * CALIB_SAT);
-        let q = oklab_to_2020(lch_to_lab([l, c2, h2]));
+        let xyz = to_xyz.apply(e);
+        let sum = xyz[0] + xyz[1] + xyz[2];
+        if sum.abs() < 1e-12 {
+            return None;
+        }
+        let (dx, dy) = (xyz[0] / sum - w.x, xyz[1] / sum - w.y);
+        let a = hue.clamp(-100.0, 100.0) / 100.0 * CALIB_HUE[i];
+        let k = 1.0 + sat.clamp(-100.0, 100.0) / 100.0 * CALIB_SAT;
+        let (nx, ny) = (w.x + k * (dx * a.cos() - dy * a.sin()), w.y + k * (dx * a.sin() + dy * a.cos()));
+        if ny.abs() < 1e-9 {
+            return None;
+        }
+        let yy = xyz[1];
+        let q = from_xyz.apply([nx / ny * yy, yy, (1.0 - nx - ny) / ny * yy]);
         for (r, row) in p.iter_mut().enumerate() {
-            row[i] = q[r] as f64;
+            row[i] = q[r];
         }
     }
-    let m = Mat3(p);
-    let k = m.inverse()?.apply([1.0, 1.0, 1.0]);
+    let k = Mat3(p).inverse()?.apply([1.0, 1.0, 1.0]);
     Some(std::array::from_fn(|r| std::array::from_fn(|col| (p[r][col] * k[col]) as f32)))
 }
 
@@ -592,6 +608,20 @@ mod tests {
                 assert!(ds > 0.0 || out.iter().all(|v| *v <= top), "{rgb:?} {dh} {ds} {dl} {dp} -> {out:?}");
             }
         }
+    }
+
+    /// What Lightroom's Calibration does to a yellow (the R6 fit of [`CALIB_HUE`]): Blue Saturation raises its chroma
+    /// without turning it, Red Hue turns it towards orange-yellow by several degrees.
+    #[test]
+    fn calibration_saturates_and_turns_the_colours_a_primary_doesnt_hold_like_lightroom() {
+        let yellow = [0.45, 0.38, 0.06];
+        let lch = |c: [f32; 3]| lab_to_lch(oklab_from_2020(c));
+        let with = |cal: Calibration| lch(calibrate(yellow, calibration_matrix(&cal).as_ref(), 0.0));
+        let [_, c0, h0] = lch(yellow);
+        let [_, c1, h1] = with(Calibration { blue_sat: 50.0, ..Default::default() });
+        assert!(c1 > c0 * 1.03 && (h1 - h0).abs() < 0.03, "Blue Saturation +50: chroma {c0} -> {c1}, hue {h0} -> {h1}");
+        let [_, _, h2] = with(Calibration { red_hue: 50.0, ..Default::default() });
+        assert!(h2 - h0 > 0.05, "Red Hue +50: hue {h0} -> {h2}");
     }
 
     #[test]

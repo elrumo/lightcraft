@@ -264,6 +264,8 @@ pub(crate) struct Prepared {
     pub chroma_blur: Option<Arc<Rgb32f>>,
     /// Airlight of `dark` (before exposure).
     pub air: f32,
+    /// The whole frame's key for Shadows ([`local::frame_key`], before exposure), when Shadows is used.
+    pub key: Option<f32>,
     pub masks: Vec<masks::Evaluated>,
     /// Output pixels per unit of the source long edge.
     pub px_per_long: f64,
@@ -449,6 +451,8 @@ pub struct Plan<'a> {
     pub eyes: Vec<redeye::EyeK>,
     /// The whole frame's dehaze airlight, for a windowed render (which can't see the whole frame).
     pub fixed_air: Option<f32>,
+    /// The whole frame's key for Shadows ([`local::frame_key`]), when Shadows is used.
+    pub shadow_key: Option<f32>,
     /// A windowed render works on a larger window when spots reach into it (see
     /// [`spots::window_for_reads`]); this is the requested window inside the rendered one, which
     /// the result is cut to.
@@ -496,6 +500,12 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let mattes = lensblur::mattes_for(s, info.mattes.as_ref());
     let blur = lensblur::Setup::new(s, mattes.as_deref(), px_per_long);
     let mut fixed_air = None;
+    // (the key is the whole frame's, read before a window narrows the frame)
+    let shadow_key = (s.section_enabled("light") && s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.shadows != 0.0)).then(|| {
+        let k = (AIRLIGHT_PROXY_EDGE as f64 / full_w.max(full_h) as f64).min(1.0);
+        let (pw, ph) = (((full_w as f64 * k).round() as usize).max(1), ((full_h as f64 * k).round() as usize).max(1));
+        local::frame_key(src, info, s, &frame, pw, ph)
+    });
     let mut keep = None;
     let mut origin = [0, 0];
     let (frame, w, h) = match req.window {
@@ -547,7 +557,25 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         [d.nr_luminance, d.nr_detail, d.nr_contrast, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
         detail_scale.to_bits(),
     ));
-    Plan { settings, frame, w, h, px_per_long, src_long, detail_scale, geo, lin_key, pre_nr_key, eyes, fixed_air, keep, mattes, blur, origin }
+    Plan {
+        settings,
+        frame,
+        w,
+        h,
+        px_per_long,
+        src_long,
+        detail_scale,
+        geo,
+        lin_key,
+        pre_nr_key,
+        eyes,
+        fixed_air,
+        shadow_key,
+        keep,
+        mattes,
+        blur,
+        origin,
+    }
 }
 
 /// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
@@ -699,6 +727,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     if let Some(a) = plan.fixed_air {
         prep.air = a;
     }
+    prep.key = plan.shadow_key;
     lap("prepare", &mut t);
     if let Some((a, c)) = shared {
         c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes, masks: alphas });

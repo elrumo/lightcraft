@@ -264,3 +264,21 @@ fn the_base_plane_is_cached_per_process() {
     assert_ne!(local::base_key(&s1, sg, 0), local::base_key(&s2, sg, 0), "the process is part of the key");
     assert_ne!(local::base_key(&s2, sg, 0), local::base_key(&s2, sg, sig.base_detail));
 }
+
+/// Lightroom's Shadows lifts what is dark in the photo, not a fixed brightness (`finish::shadow_window_shift`): the same dark block
+/// (Y 0.011) is lifted much less by +100 in a low-key frame (everything else at Y 0.02) than in one around middle grey (Y 0.18),
+/// where a fixed window lifted both alike. On a low-key Canon EOS R6 street Lightroom's +100 moved the darks by about 2 L*.
+#[test]
+fn shadows_lift_what_is_dark_in_the_photo() {
+    let block = |x: usize, y: usize| (W / 4..W / 2).contains(&x) && (H / 4..3 * H / 4).contains(&y);
+    let frame = |rest: f32| Rgb32f::from_fn(W, H, move |x, y| [if block(x, y) { 0.011 } else { rest }; 3]);
+    let lift = |src: &Rgb32f| {
+        let shot = |s: &DevelopSettings| render(src, &SourceInfo::default(), s, &RenderRequest::fit(W, H)).image;
+        let (plain, sh) = (shot(&on(Process::V2)), shot(&with("light.shadows", 100.0)));
+        let at = |img: &Rgba8| luma(img.data[(H / 2) * W + 3 * W / 8]);
+        at(&sh) - at(&plain)
+    };
+    let (low_key, mid_key) = (lift(&frame(0.02)), lift(&frame(0.18)));
+    assert!(mid_key > 10.0, "around middle grey the block comes up: {mid_key} levels");
+    assert!(low_key < 0.35 * mid_key, "in a low-key frame it hardly moves: {low_key} levels against {mid_key}");
+}

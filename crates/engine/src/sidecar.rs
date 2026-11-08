@@ -461,7 +461,8 @@ pub const REPAIR_LABEL: &str = "Lightroom import repaired";
 /// Put right what an import of Lightroom sidecar `xmp` from before 2026-10-10 left wrong on photo `p`, in its frame
 /// `frame` ([`SidecarData::set_frame`]):
 /// - Lightroom's Kelvin white, stored without its scale: since raws are edited in Kelvin it is read on the old relative
-///   scale, where 6500 K meant as shot (Lightroom's 5050 K on a Canon EOS R6 rendered 1,450 K below as shot, blue).
+///   scale, where 6500 K meant as shot (Lightroom's 5050 K on a Canon EOS R6 rendered 1,450 K below as shot, blue); or
+///   stored with it but as Lightroom wrote it, for a body whose dial was measured against Lightroom since.
 /// - its crop, taken in the frame the photo is shown in rather than on the stored image (a turned photo's crop on the
 ///   other axis).
 ///
@@ -478,10 +479,11 @@ pub fn repair_op(p: &Photo, xmp: &str, frame: Option<StoredFrame>) -> Option<Op>
     let mut d = (*p.develop).clone();
     let num = |k: &str| old.pointer(k).and_then(Value::as_f64);
     let wb = &p.develop.wb;
-    // (a raw with matrices of its own, a DNG, always read a white without scale as Kelvin: only the raws developed from a fitted look were misread)
-    if p.fitted_look()
-        && wb.mode != WbMode::AsShot
-        && wb.scale == WbScale::Legacy
+    // Lightroom's numbers as written: without the scale (a raw with matrices of its own, a DNG, always read that as Kelvin:
+    // only the raws developed from a fitted look were misread), or with it but not yet on the dial of a body measured against
+    // Lightroom since (`crs::lightroom_white_to_dial`), which reading the sidecar today gives
+    if wb.mode != WbMode::AsShot
+        && ((wb.scale == WbScale::Legacy && p.fitted_look()) || wb.scale == WbScale::Kelvin)
         && num("/wb/temp") == Some(wb.temp)
         && num("/wb/tint").is_none_or(|t| t == wb.tint)
     {
