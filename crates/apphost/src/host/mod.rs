@@ -67,7 +67,7 @@ pub const MAX_EVENTS: usize = 512;
 const BUSY_TICK: Duration = Duration::from_millis(16);
 /// …and while nothing is (saving, background tasks, sync).
 const IDLE_TICK: Duration = Duration::from_millis(250);
-/// The most `activity` events a second.
+/// The least time between two `activity` events that only move progress (a row that starts or ends goes at once).
 const ACTIVITY_EVERY: Duration = Duration::from_millis(100);
 /// The least time between two of the loupe's histograms sent with drafts (a slider drag).
 const DRAFT_HISTOGRAM_EVERY: Duration = Duration::from_millis(33);
@@ -1162,13 +1162,15 @@ impl Engine {
             self.events.push(Event::State { state: state.clone() }.to_value());
             self.state = Some(state);
         }
+        // a row that starts or ends is sent at once (a short export's row too); progress at most every ACTIVITY_EVERY
         let now = Instant::now();
-        if self.activity.as_ref().is_none_or(|(_, at)| now.duration_since(*at) >= ACTIVITY_EVERY) {
-            let tasks = self.session.activity.list();
-            if self.activity.as_ref().is_none_or(|(last, _)| *last != tasks) {
-                self.events.push(Event::Activity { tasks: tasks.clone() }.to_value());
-                self.activity = Some((tasks, now));
-            }
+        let tasks = self.session.activity.list();
+        let due = self.activity.as_ref().is_none_or(|(last, at)| {
+            *last != tasks && (now.duration_since(*at) >= ACTIVITY_EVERY || !last.iter().map(|t| t.id).eq(tasks.iter().map(|t| t.id)))
+        });
+        if due {
+            self.events.push(Event::Activity { tasks: tasks.clone() }.to_value());
+            self.activity = Some((tasks, now));
         }
     }
 

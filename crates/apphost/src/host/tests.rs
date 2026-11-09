@@ -1449,6 +1449,35 @@ fn libraries_are_switched_made_and_listed_without_a_restart() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A row that starts or ends is in the next tick's `activity` event, however soon after the last one, so a short
+/// export's row reaches the frontend's activity stack; progress alone still waits `ACTIVITY_EVERY`.
+#[test]
+fn an_activity_row_that_starts_or_ends_is_sent_at_once() {
+    let root = std::env::temp_dir().join(format!("lc-host-activity-{}-{}", std::process::id(), lightcraft_preview::next_tick()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (mut e, events) = engine_at_home(&root, Profile::Mobile);
+    let tick = |e: &mut Engine| -> Vec<Value> {
+        e.tick();
+        events.poll(Duration::from_millis(5)).into_iter().filter(|ev| ev["kind"] == "activity").map(|ev| ev["tasks"].clone()).collect()
+    };
+    let exporting = |tasks: &Value| tasks.as_array().is_some_and(|rows| rows.iter().any(|t| t["kind"] == "export"));
+    tick(&mut e);
+    let task = e.session.activity.start("export", "Exporting", lightcraft_engine::activity::Cancel::No);
+    let started = tick(&mut e);
+    let at = Instant::now();
+    assert!(started.last().is_some_and(exporting), "the row is sent at once: {started:?}");
+    task.progress(1, 2);
+    let moved = tick(&mut e);
+    if at.elapsed() < ACTIVITY_EVERY {
+        assert!(moved.is_empty(), "progress alone waits: {moved:?}");
+    }
+    drop(task);
+    let ended = tick(&mut e);
+    assert!(ended.last().is_some_and(|tasks| !exporting(tasks)), "its end is sent at once: {ended:?}");
+    drop(e);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Work that adds photos to the open library would land in the next one: switching waits for it.
 #[test]
 fn a_library_is_not_left_while_work_runs_on_it() {
