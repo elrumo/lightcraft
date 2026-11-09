@@ -769,6 +769,15 @@ pub fn smart_preview_file(s: &Session, id: lightcraft_catalog::PhotoId) -> Optio
     crate::smart::is_valid(&file).then_some(file)
 }
 
+/// The whole mini preview (the sync's grid preview, at most 512 px) this device has of synced photo `id`; `None` for any
+/// other photo, or when it is not here or cut short. A frontend that draws a raw itself draws from it until the smart preview comes.
+pub fn mini_preview_file(s: &Session, id: lightcraft_catalog::PhotoId) -> Option<std::path::PathBuf> {
+    let (dir, p) = (s.media.smart_dir.as_ref()?, s.catalog.photo(id)?);
+    let synced = matches!(&p.source, lightcraft_catalog::Source::File { path } if path.starts_with(lightcraft_catalog::sync::PATH_PREFIX));
+    let file = dir.join(crate::cloud_sync::mini_file_name(p));
+    (synced && crate::smart::is_valid(&file)).then_some(file)
+}
+
 pub fn has_smart_preview(s: &Session, id: lightcraft_catalog::PhotoId) -> bool {
     match (&s.media.smart_dir, s.catalog.photo(id)) {
         (Some(dir), Some(p)) => crate::smart::is_valid(&crate::smart::file_path(dir, p)),
@@ -808,14 +817,15 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             thumbs_location
         ),
-        cmd!(query "photo.smartPreview", "Smart Preview Status", [], None, "{id?} → {smartPreview: bool, originalOnline: bool, path: the whole smart preview this device has of the photo (a synced photo's too) | null}", always, |s, p| {
+        cmd!(query "photo.smartPreview", "Smart Preview Status", [], None, "{id?} → {smartPreview: bool, originalOnline: bool, path: the whole smart preview this device has of the photo (a synced photo's too) | null, mini: a synced photo's whole mini preview (at most 512 px, the same facts) | null}", always, |s, p| {
             let id = s.targets(p)?.first().copied().ok_or_else(|| bad("photo.smartPreview", "no photo"))?;
             let online = match s.catalog.photo(id).map(|p| p.source.clone()) {
                 Some(lightcraft_catalog::Source::File { path }) => std::path::Path::new(&path).exists(),
                 _ => true,
             };
             let path = smart_preview_file(s, id).map(|f| f.to_string_lossy().into_owned());
-            Ok(json!({"smartPreview": has_smart_preview(s, id), "originalOnline": online, "path": path}))
+            let mini = mini_preview_file(s, id).map(|f| f.to_string_lossy().into_owned());
+            Ok(json!({"smartPreview": has_smart_preview(s, id), "originalOnline": online, "path": path, "mini": mini}))
         }),
         cmd!(
             "library.buildPreviews",

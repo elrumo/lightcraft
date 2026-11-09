@@ -2857,6 +2857,48 @@ fn a_file_arriving_beside_its_raws_stem_reads_its_own_sidecar() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
+/// Card #288: a synced raw just opened has its mini preview (the grid's) long before its smart preview, and a frontend that draws raws
+/// itself draws that first. `photo.smartPreview` names the whole mini file beside the smart one; a cut one, or another photo's, is none.
+#[test]
+fn smart_preview_status_names_a_synced_photos_mini_preview() {
+    use lightcraft_catalog::{MediaKind, Op, Photo, Source};
+    let lib = temp_dir("smart-mini-lib");
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+    let id = s.catalog.alloc_photo_id();
+    let mut p = Photo::new(id, Source::File { path: "web/0123abcd/IMG_1.DNG".into() }, "IMG_1.DNG", "DNG", 400, 300, "2026-11-08T10:00:00");
+    p.kind = MediaKind::Raw;
+    s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    let ask = |s: &mut Session| s.execute("photo.smartPreview", &json!({"id": id.0})).unwrap();
+    assert_eq!((&ask(&mut s)["path"], &ask(&mut s)["mini"]), (&json!(null), &json!(null)), "nothing downloaded yet");
+
+    let dir = s.media.smart_dir.clone().unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    let photo = s.catalog.photo(id).unwrap();
+    let (smart, mini) = (dir.join(crate::smart::file_name(photo)), dir.join(crate::cloud_sync::mini_file_name(photo)));
+    let picture = |w: usize, h: usize| lightcraft_raster::Rgb32f { width: w, height: h, data: vec![[0.2; 3]; w * h] };
+    let small = crate::smart::encode(&picture(16, 12), None).unwrap();
+    std::fs::write(&mini, &small[..small.len() / 2]).unwrap();
+    assert_eq!(ask(&mut s)["mini"], json!(null), "a mini cut short is no file to draw from");
+    std::fs::write(&mini, &small).unwrap();
+    let r = ask(&mut s);
+    assert_eq!((&r["mini"], &r["path"]), (&json!(mini.to_string_lossy()), &json!(null)), "the mini first: {r}");
+    std::fs::write(&smart, crate::smart::encode(&picture(40, 30), None).unwrap()).unwrap();
+    let r = ask(&mut s);
+    assert_eq!((&r["mini"], &r["path"]), (&json!(mini.to_string_lossy()), &json!(smart.to_string_lossy())), "then both: {r}");
+
+    // a photo whose original is on this device has no mini preview (the sync's only)
+    let local = s.catalog.alloc_photo_id();
+    let src = temp_dir("smart-mini-src");
+    write_png(&src.join("a.png"), 3);
+    let q = Photo::new(local, Source::File { path: src.join("a.png").to_string_lossy().into_owned() }, "a.png", "PNG", 4, 4, "2026-11-08T10:00:00");
+    s.catalog.apply(Op::AddPhoto { photo: Box::new(q) }).unwrap();
+    std::fs::write(dir.join(crate::cloud_sync::mini_file_name(s.catalog.photo(local).unwrap())), &small).unwrap();
+    assert_eq!(s.execute("photo.smartPreview", &json!({"id": local.0})).unwrap()["mini"], json!(null));
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}
+
 /// Build Smart Previews of a raw takes a frontend's development of it as the proxy's picture (`smart::set_host_developer`),
 /// with this engine's facts; the proxy reads back with the frontend's pixels.
 #[test]
