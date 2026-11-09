@@ -29,6 +29,8 @@ pub enum Section {
     PointColor,
     RedEye,
     LensBlur,
+    Relight,
+    DepthMap,
 }
 
 impl Section {
@@ -51,6 +53,8 @@ impl Section {
             Section::PointColor => "Point Color",
             Section::RedEye => "Red Eye",
             Section::LensBlur => "Lens Blur",
+            Section::Relight => "Relight",
+            Section::DepthMap => "Depth Map",
         }
     }
 }
@@ -457,6 +461,21 @@ controls! {
     "lensBlur.focalDistance" => lens_blur.focal_distance, "Focal Distance", LensBlur, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
     "lensBlur.focalRange" => lens_blur.focal_range, "Focal Range", LensBlur, 0, 100, 0, 1, 0, Plain;
     "lensBlur.boost" => lens_blur.boost, "Boost", LensBlur, 0, 100, 0, 1, 0, Plain;
+    "relight.brightness" => relight.brightness, "Brightness", Relight, 0, 100, 50, 1, 0, Plain;
+    "relight.ambient" => relight.ambient, "Ambient", Relight, 0, 100, 60, 1, 0, Gradient { from: "#202020", to: "#d0d0d0" };
+    "relight.distance" => relight.distance, "Distance", Relight, 0, 100, 70, 1, 0, Plain;
+    "relight.spread" => relight.spread, "Spread", Relight, 0, 100, 50, 1, 0, Plain;
+    "relight.softness" => relight.softness, "Softness", Relight, 0, 100, 30, 1, 0, Plain;
+    "relight.shadows" => relight.shadows, "Shadows", Relight, 0, 100, 60, 1, 0, Plain;
+    "relight.shine" => relight.shine, "Shine", Relight, 0, 100, 0, 1, 0, Plain;
+    "relight.surface" => relight.surface, "Surface", Relight, 0, 100, 50, 1, 0, Plain;
+    "relight.x" => relight.x, "Light Across", Relight, -0.5, 1.5, 0.3, 0.001, 3, Plain;
+    "relight.y" => relight.y, "Light Down", Relight, -0.5, 1.5, 0.25, 0.001, 3, Plain;
+    "depthMap.near" => depth_map.near, "Near", DepthMap, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
+    "depthMap.far" => depth_map.far, "Far", DepthMap, 0, 100, 100, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
+    "depthMap.curve" => depth_map.curve, "Curve", DepthMap, -100, 100, 0, 1, 0, Centered;
+    "depthMap.contours" => depth_map.contours, "Contours", DepthMap, 0, 100, 0, 1, 0, Plain;
+    "depthMap.amount" => depth_map.amount, "Amount", DepthMap, 0, 100, 100, 1, 0, Plain;
 }
 
 /// Template specs of the indexed controls (`<family>.<field>`; addressed as `<family>.<i>.<field>`).
@@ -713,8 +732,46 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
                 s.lens_blur.focal_range = 10.0;
             }
         }
+        _ if id.starts_with("relight.") => {
+            s.relight.enabled = true;
+            s.lens_blur.depth = sample_depth();
+            // (Shine starts at 0 and shows only where a surface faces the light; a light just over the scene casts
+            // shadows long enough to see)
+            if id != "relight.shine" {
+                s.relight.shine = 40.0;
+            }
+            if id != "relight.distance" {
+                s.relight.distance = 55.0;
+            }
+            // (a light that reaches far: moved off the frame it lights the other side more, rather than fading out)
+            if id == "relight.x" || id == "relight.y" {
+                s.relight.spread = 100.0;
+            }
+        }
+        _ if id.starts_with("depthMap.") => {
+            s.depth_map.enabled = true;
+            s.lens_blur.depth = sample_depth();
+            // (Contours starts at 0; the range's ends move only what lies past them)
+            if id != "depthMap.contours" {
+                s.depth_map.contours = 30.0;
+            }
+        }
         _ => {}
     }
+}
+
+/// A depth for the slider sweeps of Relight and Depth Map: a ground that runs from near (bottom) to far (top), with a
+/// near block standing on it left of the middle (which casts a shadow).
+fn sample_depth() -> Option<crate::DepthMap> {
+    let (w, h) = (24usize, 16usize);
+    let v: Vec<f32> = (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            let ground = 0.15 + 0.6 * y as f32 / (h - 1) as f32;
+            if (6..12).contains(&x) && (4..12).contains(&y) { 0.95 } else { ground }
+        })
+        .collect();
+    crate::DepthMap::from_nearness(w, h, &v)
 }
 
 #[cfg(test)]

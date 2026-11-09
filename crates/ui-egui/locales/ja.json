@@ -2700,5 +2700,7 @@
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "このコンピュータには iCloud Drive、Dropbox、Google Drive のフォルダが見つかりませんでした。",
   "Syncing through the cloud folder": "クラウドフォルダ経由で同期中",
   "Synced just now": "たった今同期しました",
-  "Shift Edge": "境界をシフト"
+  "Shift Edge": "境界をシフト",
+  "Relight": "再照明",
+  "Depth Map": "深度マップ"
 }

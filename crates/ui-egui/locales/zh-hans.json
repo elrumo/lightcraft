@@ -2544,5 +2544,7 @@
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "在这台电脑上未找到 iCloud Drive、Dropbox 或 Google Drive 文件夹。",
   "Syncing through the cloud folder": "正在通过云端文件夹同步",
   "Synced just now": "刚刚同步",
-  "Shift Edge": "移动边缘"
+  "Shift Edge": "移动边缘",
+  "Relight": "重新打光",
+  "Depth Map": "深度图"
 }
