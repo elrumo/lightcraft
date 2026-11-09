@@ -77,6 +77,40 @@ pub fn lower_thread_priority() -> bool {
     }
 }
 
+/// A thread's quality of service on macOS and iOS (nothing elsewhere). A thread std starts always runs at the
+/// default class whatever its starter's, so a user-initiated thread that waits on it (a join, a reply on a channel)
+/// waits on a lower class: a priority inversion (Xcode's "Hang Risk"). Take [`Qos::current`] before starting a
+/// thread you will wait on and [`Qos::apply`] it first thing in that thread.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Qos(u32);
+
+impl Qos {
+    /// The calling thread's.
+    pub fn current() -> Qos {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            Qos(priority::qos())
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        {
+            Qos(0)
+        }
+    }
+
+    /// Run the calling thread at this class. Returns whether the system took it (`false` elsewhere, for an
+    /// unspecified class, or when it refused).
+    pub fn apply(self) -> bool {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            self.0 != 0 && priority::set_qos(self.0)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        {
+            false
+        }
+    }
+}
+
 /// Bytes this process can still allocate before iOS ends it for using too much memory, or `None`
 /// where the system sets no such limit (desktops) or doesn't report it (the iOS simulator says 0).
 /// Safe to call at any time, from any thread.
@@ -540,6 +574,21 @@ mod priority {
     unsafe extern "C" {
         /// libSystem (`pthread/qos.h`): the quality of service of the calling thread.
         fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: c_int) -> c_int;
+        /// libSystem (`sys/qos.h`): the calling thread's quality of service class.
+        fn qos_class_self() -> u32;
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub(super) fn qos() -> u32 {
+        // SAFETY: `qos_class_self` takes nothing and only reads the calling thread's class.
+        unsafe { qos_class_self() }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub(super) fn set_qos(class: u32) -> bool {
+        // SAFETY: `pthread_set_qos_class_self_np` takes two integers and touches no memory of ours; it changes only
+        // the calling thread, and refuses (non-zero) a class it does not know.
+        unsafe { pthread_set_qos_class_self_np(class, 0) == 0 }
     }
 
     pub(super) fn lower() -> bool {
@@ -569,6 +618,27 @@ mod tests {
     fn a_thread_lowers_its_own_priority() {
         let took = std::thread::spawn(|| super::lower_thread_priority() && super::lower_thread_priority()).join().unwrap();
         assert_eq!(took, cfg!(any(target_os = "linux", target_os = "macos")));
+    }
+
+    /// A thread started from a user-initiated one runs at the default class until it takes its starter's.
+    #[test]
+    fn a_thread_takes_its_starters_qos() {
+        let (starter, child) = std::thread::spawn(|| {
+            // `QOS_CLASS_USER_INITIATED`
+            if cfg!(any(target_os = "macos", target_os = "ios")) {
+                assert!(super::Qos(0x19).apply());
+            }
+            let starter = super::Qos::current();
+            let child = std::thread::spawn(move || (super::Qos::current() != starter, starter.apply(), super::Qos::current())).join().unwrap();
+            (starter, child)
+        })
+        .join()
+        .unwrap();
+        if cfg!(any(target_os = "macos", target_os = "ios")) {
+            assert_eq!(child, (true, true, starter));
+        } else {
+            assert_eq!(child, (false, false, starter));
+        }
     }
 
     /// Held by the tests that give kept blocks back or switch reuse: the kept blocks are the process's.

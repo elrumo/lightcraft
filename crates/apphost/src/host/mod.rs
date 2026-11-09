@@ -170,9 +170,12 @@ impl Host {
         let (ev, ls, wake) = (events.clone(), leases.clone(), tx.clone());
         let script_tx = tx.clone();
         let control_tx = tx.clone();
+        // the opener waits for it here and every caller waits on it after: at their class, not std's default
+        let qos = lightcraft_sysmem::Qos::current();
         let thread = std::thread::Builder::new()
             .name("lc-engine".into())
             .spawn(move || {
+                qos.apply();
                 let started = lightcraft_engine::guard::catch("starting the engine", || Engine::start(&config, ev, ls, wake)).and_then(|r| r);
                 let mut engine = match started {
                     Ok(engine) => engine,

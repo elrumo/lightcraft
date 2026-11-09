@@ -97,7 +97,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   + `.expect("why it can't fail")`.
 - **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture`.** `sysmem`: libSystem calls,
   `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes),
-  `os_proc_available_memory` (the iOS app's memory limit), `fsync` (volumes that refuse std's `F_FULLFSYNC`, such as an SMB share), `setpriority` / `pthread_set_qos_class_self_np` (`lower_thread_priority`: the sync server's video encoder, and a device's work for its server below the High usage, run at the lowest priority), and `mmap` / `munmap` for `ReturningAlloc`, every
+  `os_proc_available_memory` (the iOS app's memory limit), `fsync` (volumes that refuse std's `F_FULLFSYNC`, such as an SMB share), `setpriority` / `pthread_set_qos_class_self_np` (`lower_thread_priority`: the sync server's video encoder, and a device's work for its server below the High usage, run at the lowest priority), `qos_class_self` / `pthread_set_qos_class_self_np` (`Qos`: a thread std starts runs at the default class, so a thread the engine or a frontend waits on takes its starter's, against priority inversions), and `mmap` / `munmap` for `ReturningAlloc`, every
   app's global allocator (large blocks get pages of their own that go back when freed, but for a few kept for the next
   block of the same size until `release_free_memory`: macOS / iOS 27's allocator keeps freed large blocks dirty in the
   footprint), and `CountingAlloc` (`ReturningAlloc` that counts the bytes in use and refuses requests past a limit:

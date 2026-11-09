@@ -291,9 +291,11 @@ pub(crate) fn probe_all(
             let mut results: Vec<Option<Result<ProbeInfo, String>>> = vec![None; paths.len()];
             let next = std::sync::atomic::AtomicUsize::new(0);
             let out = std::sync::Mutex::new(&mut results);
+            let qos = lightcraft_sysmem::Qos::current();
             std::thread::scope(|sc| {
                 for _ in 0..n {
                     sc.spawn(|| {
+                        qos.apply();
                         loop {
                             let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             if i >= paths.len() {
