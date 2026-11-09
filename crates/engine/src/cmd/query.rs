@@ -492,16 +492,24 @@ pub fn specs() -> Vec<CommandSpec> {
             "Preset Preview Settings",
             [],
             None,
-            "{id: presetId, photo?: photoId (else the active photo), amount?: 0..200 (percent, 100)} → the develop settings of the preset's picture in the Presets panel: the preset over the photo's original, framed as the photo is (what `render.variant {preset}` draws), for a frontend that draws the picture itself; nothing changes",
+            "{id: presetId, photo?: photoId (else the active photo), base?: \"default\", amount?: 0..200 (percent, 100)} → the develop settings of the preset's picture in the Presets panel: the preset over the photo's original, framed as the photo is (what `render.variant {preset}` draws), for a frontend that draws the picture itself; with `base: \"default\"` no photo is needed and the preset goes over the defaults a non-raw photo starts from (a live camera picture); nothing changes",
             always,
             |s, p| {
                 let c = "preset.settings";
                 let pid = p.get("id").and_then(Value::as_str).ok_or_else(|| bad(c, "missing id"))?;
+                let amount = p.get("amount").and_then(Value::as_f64).filter(|a| a.is_finite()).unwrap_or(100.0) / 100.0;
+                match p.get("base") {
+                    None => {}
+                    Some(b) if b.as_str() == Some("default") => {
+                        let preset = s.presets.iter().find(|x| x.id == pid).ok_or_else(|| bad(c, format!("no preset `{pid}`")))?;
+                        return Ok(preset.apply(&lightcraft_develop::DevelopSettings::default(), amount.clamp(0.0, 2.0)).to_json());
+                    }
+                    Some(b) => return Err(bad(c, format!("unknown base {b} (only \"default\")"))),
+                }
                 let id = match p.get("photo").and_then(Value::as_u64) {
                     Some(id) => PhotoId(id),
                     None => s.active().ok_or_else(|| bad(c, "no photo (pass `photo`)"))?,
                 };
-                let amount = p.get("amount").and_then(Value::as_f64).filter(|a| a.is_finite()).unwrap_or(100.0) / 100.0;
                 let d = s.preset_variant(id, pid, amount).map_err(|e| bad(c, e))?;
                 Ok(d.to_json())
             }
