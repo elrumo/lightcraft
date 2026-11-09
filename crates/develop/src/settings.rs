@@ -145,6 +145,10 @@ pub struct DevelopSettings {
     pub effects: Effects,
     pub vignette: Vignette,
     pub grain: Grain,
+    /// Glow: light spread from the photo's bright parts (Effects panel, under Grain). Not written while it is the default,
+    /// so settings without a glow keep their JSON and `hash64` (and every cached preview stays valid).
+    #[serde(skip_serializing_if = "Glow::is_default")]
+    pub glow: Glow,
     pub detail: Detail,
     pub optics: Optics,
     pub geometry: Geometry,
@@ -195,6 +199,7 @@ impl Default for DevelopSettings {
             effects: Effects::default(),
             vignette: Vignette::default(),
             grain: Grain::default(),
+            glow: Glow::default(),
             detail: Detail::default(),
             optics: Optics::default(),
             geometry: Geometry::default(),
@@ -670,6 +675,69 @@ pub struct Grain {
 impl Default for Grain {
     fn default() -> Self {
         Self { amount: 0.0, size: 25.0, roughness: 50.0, seed: 0 }
+    }
+}
+
+/// How the glow spreads (`docs/glow.md`): a soft halo round the highlights, a haze over the whole photo, film's warm halo
+/// round its brightest lights, light smeared along a line, or long thin streaks from the brightest points.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GlowStyle {
+    #[default]
+    Bloom,
+    Diffusion,
+    Halation,
+    Motion,
+    Streak,
+}
+
+impl GlowStyle {
+    pub const ALL: [GlowStyle; 5] = [GlowStyle::Bloom, GlowStyle::Diffusion, GlowStyle::Halation, GlowStyle::Motion, GlowStyle::Streak];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GlowStyle::Bloom => "Bloom",
+            GlowStyle::Diffusion => "Diffusion",
+            GlowStyle::Halation => "Halation",
+            GlowStyle::Motion => "Motion",
+            GlowStyle::Streak => "Streak",
+        }
+    }
+
+    /// Whether the style spreads its light along a line, which `Glow::angle` turns.
+    pub fn directional(self) -> bool {
+        matches!(self, GlowStyle::Motion | GlowStyle::Streak)
+    }
+}
+
+/// Glow (Effects panel): light spread from the photo's bright parts, added in scene-linear light before the tone map, so it
+/// rolls off into the highlights as real scattered light does (`lightcraft_pipeline::glow`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Glow {
+    /// How strong the glow is, 0..100 (0: none).
+    pub amount: f64,
+    pub style: GlowStyle,
+    /// Which tones glow, 0..100: only the brightest highlights at 0, down into the midtones and shadows at 100.
+    pub range: f64,
+    /// How far the glow reaches, 0..100.
+    pub spread: f64,
+    /// The glow's colour, −100 (cool) .. 100 (warm); Halation's runs from yellow-orange to red.
+    pub warmth: f64,
+    /// The direction of Motion and Streak, degrees −90..90 (0: horizontal).
+    pub angle: f64,
+}
+
+impl Default for Glow {
+    fn default() -> Self {
+        Self { amount: 0.0, style: GlowStyle::Bloom, range: 50.0, spread: 50.0, warmth: 0.0, angle: 0.0 }
+    }
+}
+
+impl Glow {
+    /// Whether these are a fresh photo's glow settings (none, nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == Glow::default()
     }
 }
 

@@ -2481,5 +2481,13 @@
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Na tomto počítači nebyla nalezena žádná složka iCloud Drive, Dropbox ani Disku Google.",
   "Syncing through the cloud folder": "Synchronizace přes složku v cloudu",
   "Synced just now": "Právě synchronizováno",
-  "Shift Edge": "Posunout okraj"
+  "Shift Edge": "Posunout okraj",
+  "Glow": "Záře",
+  "Bloom": "Bloom",
+  "Diffusion": "Difuze",
+  "Halation": "Halace",
+  "Motion": "Pohyb",
+  "Streak": "Paprsky",
+  "Spread": "Rozptyl",
+  "Warmth": "Teplost"
 }

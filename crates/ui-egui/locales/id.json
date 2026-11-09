@@ -2353,5 +2353,13 @@
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Tidak ditemukan folder iCloud Drive, Dropbox, atau Google Drive di komputer ini.",
   "Syncing through the cloud folder": "Menyinkronkan melalui folder cloud",
   "Synced just now": "Baru saja disinkronkan",
-  "Shift Edge": "Geser tepi"
+  "Shift Edge": "Geser tepi",
+  "Glow": "Pendar",
+  "Bloom": "Bloom",
+  "Diffusion": "Difusi",
+  "Halation": "Halasi",
+  "Motion": "Gerak",
+  "Streak": "Garis",
+  "Spread": "Sebaran",
+  "Warmth": "Kehangatan"
 }

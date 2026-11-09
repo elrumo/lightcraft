@@ -2545,6 +2545,14 @@
   "Syncing through the cloud folder": "正在通过云端文件夹同步",
   "Synced just now": "刚刚同步",
   "Shift Edge": "移动边缘",
+  "Glow": "光晕",
+  "Bloom": "泛光",
+  "Diffusion": "柔光",
+  "Halation": "光渗",
+  "Motion": "动感",
+  "Streak": "光束",
+  "Spread": "扩散",
+  "Warmth": "暖度",
   "Relight": "重新打光",
   "Depth Map": "深度图"
 }

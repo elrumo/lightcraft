@@ -316,6 +316,32 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         for c in ["grain.amount", "grain.size", "grain.roughness"] {
             control(app, ui, d, c, c == "grain.amount" || d.grain.amount != 0.0);
         }
+        sub_title(ui, crate::i18n::tr("Glow"));
+        control(app, ui, d, "glow.amount", true);
+        {
+            use lightcraft_develop::GlowStyle;
+            let keys: Vec<String> = GlowStyle::ALL
+                .iter()
+                .map(|g| serde_json::to_value(g).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default())
+                .collect();
+            let items: Vec<(&str, &str)> = GlowStyle::ALL.iter().zip(&keys).map(|(g, k)| (crate::i18n::tr(g.label()), k.as_str())).collect();
+            let active = GlowStyle::ALL.iter().position(|g| *g == d.glow.style);
+            let mut chosen = None;
+            egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 2, 4)).show(ui, |ui| {
+                chosen = crate::widgets::segmented(ui, "glowStyle", &items, active, 3);
+            });
+            if let Some(key) = chosen.and_then(|i| keys.get(i)) {
+                let _ = app.run("develop.merge", serde_json::json!({"settings": {"glow": {"style": key}}, "label": "Glow Style"}));
+            }
+        }
+        // (Angle turns only the styles that spread along a line)
+        let mut glow = vec!["glow.range", "glow.spread", "glow.warmth"];
+        if d.glow.style.directional() {
+            glow.push("glow.angle");
+        }
+        for c in glow {
+            control(app, ui, d, c, d.glow.amount != 0.0);
+        }
         ui.add_space(8.0);
     });
     section(app, ui, &d, "detail", "Detail", |app, ui, d| {

@@ -2701,6 +2701,14 @@
   "Syncing through the cloud folder": "クラウドフォルダ経由で同期中",
   "Synced just now": "たった今同期しました",
   "Shift Edge": "境界をシフト",
+  "Glow": "グロー",
+  "Bloom": "ブルーム",
+  "Diffusion": "ディフュージョン",
+  "Halation": "ハレーション",
+  "Motion": "モーション",
+  "Streak": "ストリーク",
+  "Spread": "広がり",
+  "Warmth": "暖かさ",
   "Relight": "再照明",
   "Depth Map": "深度マップ"
 }

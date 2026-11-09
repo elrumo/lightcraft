@@ -2552,6 +2552,14 @@
   "Syncing through the cloud folder": "Синхронизация через облачную папку",
   "Synced just now": "Только что синхронизировано",
   "Shift Edge": "Сместить край",
+  "Glow": "Свечение",
+  "Bloom": "Блум",
+  "Diffusion": "Диффузия",
+  "Halation": "Ореол",
+  "Motion": "Движение",
+  "Streak": "Лучи",
+  "Spread": "Охват",
+  "Warmth": "Теплота",
   "Relight": "Переосвещение",
   "Depth Map": "Карта глубины"
 }

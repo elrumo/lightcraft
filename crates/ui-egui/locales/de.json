@@ -3643,6 +3643,14 @@
   "Syncing through the cloud folder": "Synchronisierung über den Cloud-Ordner",
   "Synced just now": "Gerade synchronisiert",
   "Shift Edge": "Kante verschieben",
+  "Glow": "Leuchten",
+  "Bloom": "Bloom",
+  "Diffusion": "Diffusion",
+  "Halation": "Halation",
+  "Motion": "Bewegung",
+  "Streak": "Streifen",
+  "Spread": "Ausbreitung",
+  "Warmth": "Wärme",
   "Relight": "Neu beleuchten",
   "Depth Map": "Tiefenkarte"
 }

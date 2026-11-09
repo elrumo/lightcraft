@@ -2501,5 +2501,13 @@
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "在這部電腦上找不到 iCloud Drive、Dropbox 或 Google Drive 資料夾。",
   "Syncing through the cloud folder": "正在透過雲端資料夾同步",
   "Synced just now": "剛剛同步",
-  "Shift Edge": "移動邊緣"
+  "Shift Edge": "移動邊緣",
+  "Glow": "光暈",
+  "Bloom": "泛光",
+  "Diffusion": "柔光",
+  "Halation": "光滲",
+  "Motion": "動感",
+  "Streak": "光束",
+  "Spread": "擴散",
+  "Warmth": "暖度"
 }
