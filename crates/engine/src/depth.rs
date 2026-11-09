@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_depth::Estimator;
-use lightcraft_develop::DepthMap;
+use lightcraft_develop::{DepthMap, NormalMap};
 use lightcraft_raster::Rgb32f;
 use lightcraft_raster::resample::{Filter, resize};
 
@@ -28,6 +28,11 @@ pub use lightcraft_depth::{CREDIT, DATA_FILE, GPU_FILE, GPU_FILE_SIZE, GPU_ID, G
 
 /// The start of the error when the model isn't here: the apps offer the download on it.
 pub const NOT_INSTALLED: &str = "The depth model (Depth Anything 3) is not downloaded";
+/// The start of the error when the surface model isn't here (Relight's Estimate Surface): the apps offer its download on it.
+pub const SURFACE_NOT_INSTALLED: &str = "The surface model (MoGe-2) is not downloaded";
+/// Long side of the normals stored with the settings ([`lightcraft_develop::NormalMap`]): fine enough for a face's
+/// shape, about 100 KB.
+pub const SURFACE_STORED_LONG: usize = 384;
 
 /// Long edge of the picture handed to the model (it works on ~690 × 518 itself).
 const INPUT_EDGE: usize = 1036;
@@ -40,6 +45,8 @@ pub struct DepthModel {
     choice: Mutex<String>,
     /// Which size of Depth Anything 3 estimates (Small when unset).
     size: Mutex<Size>,
+    /// Relight's surface model (MoGe-2), kept for the session once loaded.
+    surface: Mutex<Option<Arc<lightcraft_depth::surface::Surface>>>,
 }
 
 /// Where a photo's depth comes from.
@@ -250,6 +257,64 @@ impl Session {
         Ok(e)
     }
 
+    /// The surface model's file in the models folder.
+    fn surface_file(&self) -> Option<std::path::PathBuf> {
+        self.enhancer.model_dir(lightcraft_depth::surface::ID).map(|d| d.join(lightcraft_depth::surface::FILE.name))
+    }
+
+    /// Whether Relight's surface can be estimated now: the model is loaded or its file is in place (by size: the
+    /// SHA-256 is checked when it loads), and the user hasn't turned it off.
+    pub fn surface_model_ready(&self) -> bool {
+        !self.enhancer.disabled.contains(lightcraft_depth::surface::ID)
+            && (self.depth_model.surface.lock().unwrap_or_else(PoisonError::into_inner).is_some()
+                || self.surface_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == lightcraft_depth::surface::FILE.size)))
+    }
+
+    /// The surface model, loaded once (from the models folder the first time).
+    fn surface_model(&self) -> Result<Arc<lightcraft_depth::surface::Surface>, String> {
+        use lightcraft_depth::surface;
+        if self.enhancer.disabled.contains(surface::ID) {
+            return Err("Surface estimation is turned off: turn its model on in Settings → AI Models.".into());
+        }
+        let mut slot = self.depth_model.surface.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(m) = slot.as_ref() {
+            return Ok(m.clone());
+        }
+        let missing = || {
+            format!(
+                "{SURFACE_NOT_INSTALLED}. Download {} (about {} MB, {} licence) when LightCraft offers it, or with `models.download {{\"id\": \"{}\", \"acknowledged\": true}}`.",
+                surface::LABEL,
+                surface::FILE.size / 1_000_000,
+                surface::LICENCE,
+                surface::ID
+            )
+        };
+        let file = self.surface_file().ok_or_else(missing)?;
+        let bytes = std::fs::read(&file).map_err(|_| missing())?;
+        if !surface::FILE.matches(&bytes) {
+            return Err(format!(
+                "{} is damaged or not the expected file: delete {} in Settings → AI Models and download it again",
+                file.display(),
+                surface::LABEL
+            ));
+        }
+        let m = Arc::new(surface::Surface::load(&bytes).map_err(|e| e.to_string())?);
+        *slot = Some(m.clone());
+        Ok(m)
+    }
+
+    /// Estimate which way each part of photo `id` faces with the surface model: normals over the whole uncropped
+    /// photo, as stored in [`lightcraft_develop::Relight::normals`].
+    pub fn estimate_surface(&mut self, id: PhotoId) -> Result<NormalMap, String> {
+        let model = self.surface_model()?;
+        let src = self.source_now(id, SourceLevel::Preview)?;
+        let n = model.estimate(&model_input(&src)).map_err(|e| e.to_string())?;
+        let k = (SURFACE_STORED_LONG as f64 / n.width.max(n.height).max(1) as f64).min(1.0);
+        let (w, h) = (((n.width as f64 * k).round() as usize).max(1), ((n.height as f64 * k).round() as usize).max(1));
+        let n = lightcraft_depth::surface::shrunk(&n, w, h);
+        NormalMap::from_normals(n.width, n.height, &n.data).ok_or_else(|| "the surface model gave no usable answer".to_string())
+    }
+
     /// Whether photo `id`'s file carries depth of its own (read with its source).
     pub fn photo_has_depth(&mut self, id: PhotoId) -> bool {
         if self.source_now(id, SourceLevel::Preview).is_err() {
@@ -286,6 +351,19 @@ impl Session {
             None => info.mattes.as_deref().and_then(lightcraft_pipeline::masks::Mattes::depth)?.clone(),
         };
         Some(lightcraft_pipeline::lensblur::subject_focus(&plane, info.mattes.as_deref()))
+    }
+
+    /// Photo `id` with settings `d` seen as the depths a Depth Range mask reads (0 near, 1 far), at most 512 pixels long:
+    /// the whole photo (`crop` false: the frame masks are drawn on) or as framed. `None` without depth.
+    pub fn depth_view(
+        &mut self,
+        id: PhotoId,
+        d: &lightcraft_develop::DevelopSettings,
+        crop: bool,
+    ) -> Option<lightcraft_pipeline::lensblur::DepthView> {
+        let src = self.source_now(id, SourceLevel::Preview).ok()?;
+        let info = self.source_info(id);
+        lightcraft_pipeline::lensblur::depth_view(&src, &info, d, crop, 512)
     }
 
     /// The focal distance (0–100) at normalized image point `p` (the coordinates of masks and

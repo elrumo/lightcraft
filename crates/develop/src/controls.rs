@@ -743,9 +743,11 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
             if id != "relight.distance" {
                 s.relight.distance = 55.0;
             }
-            // (a light that reaches far: moved off the frame it lights the other side more, rather than fading out)
+            // (a light that reaches far, high in front of the scene: moved off the frame it lights the other side more,
+            // rather than fading out)
             if id == "relight.x" || id == "relight.y" {
                 s.relight.spread = 100.0;
+                s.relight.distance = 80.0;
             }
         }
         _ if id.starts_with("depthMap.") => {

@@ -141,6 +141,84 @@ pub fn nearness_at(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, 
     v.get(v.len() / 2).copied()
 }
 
+/// The depths of a photo as a Depth Range mask reads them (0 the nearest, 1 the farthest: one minus the
+/// nearness), at most `side` pixels on the long side, and where normalized image points (the coordinates of
+/// masks and spots) fall in it ([`depth_view`]).
+pub struct DepthView {
+    pub depth: Plane,
+    pub to_out: lightcraft_geom::Affine,
+}
+
+/// Photo `src` rendered with `s` seen as depths ([`DepthView`]): the whole photo (`crop` false: the frame masks
+/// are drawn on) or as framed. `None` without depth (the photo's own or a stored estimate).
+pub fn depth_view(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, crop: bool, side: usize) -> Option<DepthView> {
+    let mut with_depth = s.clone();
+    with_depth.lens_blur.enabled = true;
+    with_depth.lens_blur.amount = with_depth.lens_blur.amount.max(1.0);
+    let req = crate::RenderRequest { apply_crop: crop, ..crate::RenderRequest::fit(side.max(8), side.max(8)) };
+    let plan = crate::plan(src, info, &with_depth, &req);
+    let near = plan.mattes.as_deref().and_then(Mattes::depth)?;
+    let mut depth = source_to_out(near, &plan.frame, plan.w, plan.h);
+    for v in depth.data.iter_mut() {
+        *v = if v.is_finite() { 1.0 - v.clamp(0.0, 1.0) } else { 1.0 };
+    }
+    Some(DepthView { depth, to_out: plan.frame.norm_to_out(plan.w, plan.h) })
+}
+
+impl DepthView {
+    /// The depths in the box between normalized image points `a` and `b` (a point when they are the same: the
+    /// pixels within two of it), sorted; empty when the box is off the photo.
+    pub fn within(&self, a: lightcraft_geom::Point, b: lightcraft_geom::Point) -> Vec<f32> {
+        let (w, h) = (self.depth.width as i64, self.depth.height as i64);
+        let (p, q) = (self.to_out.apply(a), self.to_out.apply(b));
+        let (x0, x1) = ((p.x.min(q.x).floor() as i64 - 2).max(0), (p.x.max(q.x).floor() as i64 + 2).min(w - 1));
+        let (y0, y1) = ((p.y.min(q.y).floor() as i64 - 2).max(0), (p.y.max(q.y).floor() as i64 + 2).min(h - 1));
+        let mut v = Vec::new();
+        if x0 > x1 || y0 > y1 {
+            return v;
+        }
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                v.extend(self.depth.data.get((y * w + x) as usize));
+            }
+        }
+        v.sort_by(f32::total_cmp);
+        v
+    }
+
+    /// How much of the picture lies at each depth: `bins` counts from the nearest to the farthest, the largest 1.
+    pub fn histogram(&self, bins: usize) -> Vec<f32> {
+        let bins = bins.clamp(1, 1024);
+        let mut counts = vec![0f32; bins];
+        for d in &self.depth.data {
+            if let Some(c) = counts.get_mut(((d.clamp(0.0, 1.0) * bins as f32) as usize).min(bins - 1)) {
+                *c += 1.0;
+            }
+        }
+        let top = counts.iter().copied().fold(0.0f32, f32::max);
+        if top > 0.0 {
+            for c in counts.iter_mut() {
+                *c /= top;
+            }
+        }
+        counts
+    }
+}
+
+/// Half the width of the band of depths a click picks (a Depth Range of 0.1 around the depth clicked).
+pub const PICK_BAND: f32 = 0.05;
+
+/// The near and far ends of the Depth Range that selects what lies at the depths in `sorted` (from
+/// [`DepthView::within`]): a band of [`PICK_BAND`] each side of their median when they are about one depth (a
+/// click), else from their 5th to their 95th percentile (a box dragged over a subject); `None` when there are none.
+pub fn picked_range(sorted: &[f32]) -> Option<(f64, f64)> {
+    let at = |q: f32| sorted.get(((sorted.len().saturating_sub(1)) as f32 * q).round() as usize).copied();
+    let (lo, mid, hi) = (at(0.05)?, at(0.5)?, at(0.95)?);
+    let (lo, hi) = if hi - lo < 2.0 * PICK_BAND { (mid - PICK_BAND, mid + PICK_BAND) } else { (lo, hi) };
+    let (lo, hi) = (f64::from(lo).clamp(0.0, 0.99), f64::from(hi).clamp(0.01, 1.0));
+    Some((lo, hi.max(lo + 0.01)))
+}
+
 /// The focal distance (0–100) that puts the photo's subject in focus, from `depth` (nearness over
 /// the oriented source) and the source's `mattes`: the median depth under its person matte when
 /// it has one (a portrait's), else the nearer part of the middle of the frame (the 75th percentile
@@ -328,7 +406,7 @@ fn luma(c: [f32; 3]) -> f32 {
 }
 
 /// Log luminance of `img` (the guide for the depth's edges).
-fn log_luma(img: &Rgb32f) -> Plane {
+pub(crate) fn log_luma(img: &Rgb32f) -> Plane {
     let mut p = Plane::new(img.width, img.height);
     let w = img.width;
     for_rows(&mut p.data, w, |y, row| {

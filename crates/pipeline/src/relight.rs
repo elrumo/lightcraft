@@ -4,13 +4,16 @@
 //! **Relight** adds a point light to the scene. The depth is a height field over the EXIF-oriented
 //! source, in units of the depth map's long edge: across, down, and toward the camera
 //! ([`SCENE_DEPTH`] from the farthest part of the photo to its nearest). Each of its pixels gets a
-//! normal from the slope of a smoother copy of the depth ([`normal_sigma`]; scaled by Surface), and
-//! from the light: a wrapped Lambert
+//! normal: the surface model's where the settings keep one (`relight.normals`, MoGe-2: the shape of a
+//! face, a floor seen from above), else from the slope of a smoother copy of the depth
+//! ([`normal_sigma`]); either is tilted more or less by Surface. And from the light: a wrapped Lambert
 //! term (Softness wraps the light around shapes), an inverse-square falloff whose reach Spread
 //! sets, a soft shadow from a ray marched through the height field toward the light (Shadows, with
 //! a penumbra Softness widens), and a Blinn-Phong highlight (Shine). Those two planes, the light
 //! and the highlight, are made at the depth map's own size (a pixel of the depth is the finest
-//! detail the light can have) and sampled through the frame like the picture; every output pixel is
+//! detail the light can have) and sampled through the frame like the picture, their edges snapped
+//! to the photo's by the guided filter Lens Blur snaps its depth with ([`crate::lensblur::nearness_out`]:
+//! a light that stops at a face stops at its outline, not a few depth pixels off it); every output pixel is
 //! then `colour × (Ambient + Brightness × light colour × light) + Shine × light colour × highlight`
 //! in scene-linear Rec. 2020, after noise reduction and before Lens Blur, so the blur sees the new
 //! light and every tone and colour tool works on it.
@@ -192,10 +195,46 @@ fn normalized(a: V3) -> V3 {
     if l > 1e-12 { a.map(|v| v / l) } else { [0.0, 0.0, 1.0] }
 }
 
+/// Unit normals over the stored source (`relight.normals` decoded), row-major.
+#[derive(Clone, Debug)]
+pub struct Normals {
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<V3>,
+}
+
+impl Normals {
+    /// The settings' normals, decoded; `None` without them or when they are damaged.
+    pub fn of(s: &DevelopSettings) -> Option<Normals> {
+        let m = s.relight.normals.as_ref()?;
+        let data = m.normals()?;
+        Some(Normals { width: m.w as usize, height: m.h as usize, data })
+    }
+
+    /// The normal at normalized point (`u`, `v`) of the source (0..1 across and down), bilinear between pixel
+    /// centres, edges extended, made one long again.
+    pub fn at(&self, u: f32, v: f32) -> V3 {
+        let (w, h) = (self.width, self.height);
+        if w == 0 || h == 0 || self.data.len() != w * h {
+            return [0.0, 0.0, 1.0];
+        }
+        let fx = (u * w as f32 - 0.5).clamp(0.0, (w - 1) as f32);
+        let fy = (v * h as f32 - 0.5).clamp(0.0, (h - 1) as f32);
+        let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+        let p = |x: usize, y: usize| self.data[y * w + x];
+        let (a, b, c, d) = (p(x0, y0), p(x1, y0), p(x0, y1), p(x1, y1));
+        normalized(std::array::from_fn(|k| (a[k] + (b[k] - a[k]) * tx) * (1.0 - ty) + (c[k] + (d[k] - c[k]) * tx) * ty))
+    }
+}
+
 /// What a render's Relight does, resolved from the settings and the depth.
 #[derive(Clone, Debug)]
 pub struct Setup {
     depth: Arc<Plane>,
+    /// The surface model's normals (x right, y down, z toward the camera), when the settings keep them.
+    normals: Option<Arc<Normals>>,
     /// The light in units of the depth map's long edge over the stored (EXIF-oriented) source: across, down,
     /// and toward the camera from the back of the scene.
     pub light: V3,
@@ -253,9 +292,11 @@ impl Setup {
             light,
             key: 0,
             depth,
+            normals: Normals::of(s).map(Arc::new),
         };
         let key = crate::hash_of((
             depth_key(s, &setup.depth),
+            r.normals.as_ref().map(|n| crate::hash_of(&n.data)),
             w,
             h,
             setup.light.map(f32::to_bits),
@@ -266,16 +307,34 @@ impl Setup {
         Some(Setup { key, ..setup })
     }
 
-    /// The light and the highlight falling on pixel (`i`, `j`) of the smoothed depth `n` (its normal from the
-    /// smoother `m`, the same size), with shadow rays of `steps` steps.
-    pub fn shade(&self, n: &Plane, m: &Plane, i: usize, j: usize, steps: usize) -> (f32, f32) {
-        let long = n.width.max(n.height).max(1) as f32;
-        let px = 1.0 / long;
+    /// Whether the surface model's normals shade the photo (else the depth's slope).
+    pub fn has_normals(&self) -> bool {
+        self.normals.is_some()
+    }
+
+    /// The surface's normal at pixel (`i`, `j`) of the smoothed depth `n`: the surface model's (sampled at the pixel's
+    /// centre) when the settings keep it, else from the slope of the smoother depth `m` (the same size); tilted by Surface.
+    pub fn normal(&self, n: &Plane, m: &Plane, i: usize, j: usize) -> V3 {
+        if let Some(model) = &self.normals {
+            let (u, v) = ((i as f32 + 0.5) / n.width.max(1) as f32, (j as f32 + 0.5) / n.height.max(1) as f32);
+            let c = model.at(u, v);
+            return normalized([self.surface * c[0], self.surface * c[1], c[2]]);
+        }
+        let px = 1.0 / n.width.max(n.height).max(1) as f32;
         let (xi, yi) = (i as isize, j as isize);
         let gx = (m.get_clamped(xi + 1, yi) - m.get_clamped(xi - 1, yi)) / (2.0 * px);
         let gy = (m.get_clamped(xi, yi + 1) - m.get_clamped(xi, yi - 1)) / (2.0 * px);
         let k = self.surface * SCENE_DEPTH;
-        let normal = normalized([-k * gx, -k * gy, 1.0]);
+        normalized([-k * gx, -k * gy, 1.0])
+    }
+
+    /// The light and the highlight falling on pixel (`i`, `j`) of the smoothed depth `n` (its normal from
+    /// [`Setup::normal`]), with shadow rays of `steps` steps.
+    pub fn shade(&self, n: &Plane, m: &Plane, i: usize, j: usize, steps: usize) -> (f32, f32) {
+        let long = n.width.max(n.height).max(1) as f32;
+        let px = 1.0 / long;
+        let (xi, yi) = (i as isize, j as isize);
+        let normal = self.normal(n, m, i, j);
         let p = [(i as f32 + 0.5) * px, (j as f32 + 0.5) * px, SCENE_DEPTH * n.get_clamped(xi, yi)];
         let to = [self.light[0] - p[0], self.light[1] - p[1], self.light[2] - p[2]];
         let dist = dot(to, to).sqrt().max(1e-6);
@@ -352,8 +411,10 @@ pub fn apply(img: &mut Rgb32f, setup: &Setup, frame: &Frame, draft: bool) {
         return;
     }
     let (light, highlight) = setup.planes(if draft { SHADOW_STEPS_DRAFT } else { SHADOW_STEPS });
-    let light = source_to_out(&light, frame, w, h);
-    let highlight = highlight.map(|p| source_to_out(&p, frame, w, h));
+    // (both 0..1, as the guided filter keeps them)
+    let guide = crate::lensblur::log_luma(img);
+    let light = crate::lensblur::nearness_out(&light, frame, w, h, &guide);
+    let highlight = highlight.map(|p| crate::lensblur::nearness_out(&p, frame, w, h, &guide));
     let (a, g, sh) = (setup.ambient, setup.gain, setup.shine);
     for_rows(&mut img.data, w, |y, row| {
         for (x, c) in row.iter_mut().enumerate() {

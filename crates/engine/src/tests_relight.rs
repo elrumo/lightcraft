@@ -224,3 +224,116 @@ fn the_depth_exports_as_data_framed_as_the_photo() {
     let _ = a;
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Normals that face left on the left half of the photo and right on the right, as the surface model leaves them.
+fn surface() -> lightcraft_develop::NormalMap {
+    let n: Vec<[f32; 3]> = (0..16 * 12).map(|i| if i % 16 < 8 { [-0.6, 0.0, 0.8] } else { [0.6, 0.0, 0.8] }).collect();
+    lightcraft_develop::NormalMap::from_normals(16, 12, &n).unwrap()
+}
+
+#[test]
+fn the_surface_model_is_offered_kept_through_reset_and_taken_away_on_request() {
+    let mut s = demo_with_depth();
+    s.execute("relight.apply", &json!({})).unwrap();
+    let info = s.execute("relight.info", &json!({})).unwrap();
+    assert_eq!(
+        (info["normals"].clone(), info["surfaceReady"].clone(), info["surfaceModel"].clone()),
+        (Value::Null, json!(false), json!("moge-2-vits-normal")),
+        "{info}"
+    );
+    // without the model Estimate Surface says so (the apps offer the download on it) and changes nothing
+    let before = dev(&s);
+    let e = s.execute("relight.surface", &json!({})).unwrap_err().to_string();
+    assert!(e.contains(crate::depth::SURFACE_NOT_INSTALLED), "{e}");
+    assert_eq!(dev(&s), before);
+    // the model is listed with its download, licence and size (in builds with the downloadable models)
+    if cfg!(feature = "enhance") {
+        let list = s.execute("models.list", &json!({})).unwrap();
+        let m = list["models"].as_array().unwrap().iter().find(|m| m["id"] == "moge-2-vits-normal").cloned().unwrap_or_else(|| panic!("{list}"));
+        assert_eq!((m["licence"].as_str(), m["installed"].as_bool()), (Some("MIT"), Some(false)), "{m}");
+        assert!(m["downloadBytes"].as_u64().is_some_and(|b| b > 100_000_000), "{m}");
+    }
+    // a surface kept with the settings shades the photo: a light on the left lights the half that faces left
+    let mut d = dev(&s);
+    d.relight.normals = Some(surface());
+    d.relight.ambient = 0.0;
+    d.relight.shadows = 0.0;
+    d.relight.spread = 100.0;
+    d.relight.y = 0.5;
+    d.relight.x = -0.2;
+    s.execute("develop.merge", &json!({"settings": d.to_json()})).unwrap();
+    assert_eq!(s.execute("relight.info", &json!({})).unwrap()["normals"], "model");
+    let img = s.render_now(s.active().unwrap(), 96, 64).unwrap().image;
+    let (l, rgt) = half_lumas(&img);
+    assert!(l > rgt + 10.0, "{l} {rgt}");
+    // Reset keeps it, as it keeps the depth
+    s.execute("relight.reset", &json!({})).unwrap();
+    assert!(dev(&s).relight.normals.is_some() && dev(&s).lens_blur.depth.is_some());
+    // {on: false} goes back to the depth's slope, as one undo step
+    s.execute("relight.surface", &json!({"on": false})).unwrap();
+    assert!(dev(&s).relight.normals.is_none());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(dev(&s).relight.normals.is_some());
+}
+
+#[test]
+fn a_depth_range_is_picked_from_the_photo_and_its_depths_are_counted() {
+    let mut s = Session::with_demo();
+    s.execute("mask.add", &json!({"kind": "depthRange", "lo": 0.0, "hi": 0.3})).unwrap();
+    // no depth: picking says so, and the histogram has nothing to count
+    let e = s.execute("mask.pickDepth", &json!({"x": 0.5, "y": 0.5})).unwrap_err().to_string();
+    assert!(e.contains("no depth"), "{e}");
+    let h = s.execute("depth.histogram", &json!({})).unwrap();
+    assert_eq!((h["bins"].as_array().map(Vec::len), h["depth"].clone()), (Some(0), Value::Null), "{h}");
+    // with depth (near at the bottom, far at the top): a click picks a band around the depth there
+    let mut s = demo_with_depth();
+    s.execute("mask.add", &json!({"kind": "depthRange", "lo": 0.0, "hi": 0.3})).unwrap();
+    let r = s.execute("mask.pickDepth", &json!({"x": 0.5, "y": 0.9})).unwrap();
+    let (lo, hi) = (r["lo"].as_f64().unwrap(), r["hi"].as_f64().unwrap());
+    // (nearness 0.1 + 0.8 · 0.9 = 0.82 there: a depth of about 0.18)
+    assert!((lo + hi) / 2.0 > 0.1 && (lo + hi) / 2.0 < 0.26 && (hi - lo - 0.1).abs() < 0.02, "{r}");
+    let part = dev(&s).masks.last().unwrap().components.last().unwrap().shape.clone();
+    let lightcraft_develop::MaskShape::DepthRange { lo: l, hi: hh, feather } = part else { panic!("{part:?}") };
+    assert_eq!((l, hh, feather), (lo, hi, 0.1), "the smoothness is kept");
+    // a box from the top to the middle covers the far half's depths
+    let r = s.execute("mask.pickDepth", &json!({"x": 0.2, "y": 0.02, "x2": 0.8, "y2": 0.5})).unwrap();
+    let (lo, hi) = (r["lo"].as_f64().unwrap(), r["hi"].as_f64().unwrap());
+    assert!(lo > 0.4 && lo < 0.6 && hi > 0.8, "{r}");
+    // one undo step each
+    s.execute("edit.undo", &json!({})).unwrap();
+    let lightcraft_develop::MaskShape::DepthRange { lo: back, .. } = dev(&s).masks.last().unwrap().components.last().unwrap().shape.clone() else {
+        panic!()
+    };
+    assert!((back - 0.13).abs() < 0.06, "{back}");
+    // a part that isn't a Depth Range is refused
+    s.execute("mask.add", &json!({"kind": "linear"})).unwrap();
+    let e = s.execute("mask.pickDepth", &json!({"x": 0.5, "y": 0.5})).unwrap_err().to_string();
+    assert!(e.contains("no Depth Range"), "{e}");
+    // the histogram counts the photo's depths, near to far, the largest bin 1
+    let h = s.execute("depth.histogram", &json!({"bins": 16})).unwrap();
+    let bins: Vec<f64> = h["bins"].as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+    assert_eq!((bins.len(), h["depth"].as_str()), (16, Some("estimated")), "{h}");
+    assert!(bins.iter().all(|b| (0.0..=1.0).contains(b)) && bins.contains(&1.0), "{bins:?}");
+    // (depths run from 0.1 to 0.9: none at the very nearest or the very farthest)
+    assert!(bins[0] == 0.0 && bins[15] == 0.0 && bins[8] > 0.0, "{bins:?}");
+}
+
+#[test]
+fn auto_sync_leaves_each_photos_depth_and_surface_behind() {
+    let mut s = demo_with_depth();
+    let ids: Vec<u64> = s.catalog.photos().take(2).map(|p| p.id.0).collect();
+    let active = s.active().unwrap().0;
+    let other = *ids.iter().find(|i| **i != active).unwrap();
+    s.execute("library.select", &json!({"ids": [active, other]})).unwrap();
+    s.selection.active = Some(PhotoId(active));
+    s.execute("develop.autoSync", &json!({"on": true})).unwrap();
+    let mut d = dev(&s);
+    d.relight.enabled = true;
+    d.relight.brightness = 70.0;
+    d.relight.normals = Some(surface());
+    d.lens_blur.depth = DepthMap::from_nearness(2, 2, &[0.1, 0.2, 0.3, 0.4]);
+    s.set_develop(PhotoId(active), d, "Relight").unwrap();
+    let o = s.develop_of(PhotoId(other)).unwrap();
+    assert!(o.relight.enabled && o.relight.brightness == 70.0, "the look syncs");
+    assert!(o.relight.normals.is_none() && o.lens_blur.depth.is_none(), "the pictures of the first photo don't");
+}

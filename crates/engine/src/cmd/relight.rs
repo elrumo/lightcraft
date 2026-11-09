@@ -4,7 +4,7 @@
 //! photo has none of its own, as Lens Blur does, and keeping it where Lens Blur keeps it), pick the light's
 //! colour, the palette and its colours.
 
-use lightcraft_develop::{DepthLook, DepthMap, DepthPalette, DevelopSettings, Relight};
+use lightcraft_develop::{DepthLook, DepthMap, DepthPalette, DevelopSettings, NormalMap, Relight};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, has_active, str_param};
@@ -112,7 +112,7 @@ fn merged(mut a: Value, b: Value) -> Value {
 /// The active photo's Relight as the apps show it.
 fn relight_info(s: &mut Session, c: &str) -> Result<Value> {
     let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
-    let r = s.develop_of(id).unwrap_or_default().relight;
+    let r = s.develop_of(id).unwrap_or_default().relight.clone();
     let depth = depth_fields(s, c)?;
     Ok(merged(
         json!({
@@ -128,9 +128,22 @@ fn relight_info(s: &mut Session, c: &str) -> Result<Value> {
             "shadows": r.shadows,
             "shine": r.shine,
             "surface": r.surface,
+            "normals": r.normals.as_ref().map(|_| "model"),
+            "surfaceReady": s.surface_model_ready(),
+            "surfaceModel": lightcraft_depth::surface::ID,
         }),
         depth,
     ))
+}
+
+/// Relight's surface for the active photo when the surface model is here and the photo has none yet (`None`
+/// otherwise): Relight turned on with the model downloaded lights the photo by its shape at once.
+fn surface_to_store(s: &mut Session, c: &str) -> Result<Option<NormalMap>> {
+    let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+    if !s.surface_model_ready() || s.develop_of(id).is_some_and(|d| d.relight.normals.is_some()) {
+        return Ok(None);
+    }
+    s.estimate_surface(id).map(Some).map_err(|e| bad(c, e))
 }
 
 /// The active photo's Depth Map as the apps show it, with every palette's colours (far to near) for the pickers.
@@ -191,7 +204,7 @@ fn on(p: &Value) -> bool {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "relight.info", "Relight Info", [], None, "→ {enabled, x, y, color: [r,g,b], brightness, ambient, distance, spread, softness, shadows, shine, surface, depth: photo|estimated|null, modelReady, model}", has_active, |s, _| relight_info(s, "relight.info")),
+        cmd!(query "relight.info", "Relight Info", [], None, "→ {enabled, x, y, color: [r,g,b], brightness, ambient, distance, spread, softness, shadows, shine, surface, normals: model|null (the surface model's), surfaceReady, surfaceModel, depth: photo|estimated|null, modelReady, model}", has_active, |s, _| relight_info(s, "relight.info")),
         cmd!(
             "relight.apply",
             "Relight",
@@ -208,11 +221,38 @@ pub fn specs() -> Vec<CommandSpec> {
                     });
                 }
                 let estimate = depth_to_store(s, C)?;
+                let normals = surface_to_store(s, C)?;
                 edit(s, C, "Relight", relight_info, |d| {
                     d.relight.enabled = true;
                     if estimate.is_some() {
                         d.lens_blur.depth = estimate;
                     }
+                    if normals.is_some() {
+                        d.relight.normals = normals;
+                    }
+                    Ok(())
+                })
+            }
+        ),
+        cmd!(
+            "relight.surface",
+            "Estimate Surface",
+            [],
+            None,
+            "{on?: bool (default true)} — (re)estimates which way each part of the active photo faces with the surface model (MoGe-2) and stores it with the settings: Relight then shades by it in place of the depth's slope, and still casts its shadows through the depth (fails with \"The surface model … is not downloaded\" when it isn't). {on: false}: back to the depth's slope → relight.info",
+            has_active,
+            |s, p| {
+                const C: &str = "relight.surface";
+                if !on(p) {
+                    return edit(s, C, "Remove Surface", relight_info, |d| {
+                        d.relight.normals = None;
+                        Ok(())
+                    });
+                }
+                let id = s.active().ok_or_else(|| bad(C, "no active photo"))?;
+                let normals = s.estimate_surface(id).map_err(|e| bad(C, e))?;
+                edit(s, C, "Estimate Surface", relight_info, |d| {
+                    d.relight.normals = Some(normals);
                     Ok(())
                 })
             }
@@ -238,11 +278,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reset Relight",
             [],
             None,
-            "{} — the light back to where and how it starts (the depth is kept) → relight.info",
+            "{} — the light back to where and how it starts (the depth and the surface are kept) → relight.info",
             has_active,
             |s, _| {
                 edit(s, "relight.reset", "Reset Relight", relight_info, |d| {
-                    d.relight = Relight { enabled: d.relight.enabled, ..Relight::default() };
+                    d.relight = Relight { enabled: d.relight.enabled, normals: d.relight.normals.take(), ..Relight::default() };
                     Ok(())
                 })
             }

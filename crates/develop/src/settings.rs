@@ -1405,7 +1405,7 @@ impl Bokeh {
 /// frame's edges, for a light off to one side), and its distance runs from the back of the scene (0)
 /// through its nearest part (50) to well in front of it (100). Left out of the JSON while it is the
 /// default, so settings without it keep their JSON and `hash64` (and every cached preview stays valid).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Relight {
     pub enabled: bool,
@@ -1431,6 +1431,11 @@ pub struct Relight {
     pub ambient: f64,
     /// The light's colour, display-encoded sRGB 0–1 (white by default).
     pub color: [f64; 3],
+    /// The surface model's normals for this photo (Estimate Surface), which shade it in place of the
+    /// depth's slope: a picture of this photo, so copies leave it behind, and Reset keeps it. Lighting
+    /// still casts its shadows through the depth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normals: Option<crate::NormalMap>,
 }
 
 impl Default for Relight {
@@ -1448,6 +1453,7 @@ impl Default for Relight {
             surface: 50.0,
             ambient: 60.0,
             color: [1.0, 1.0, 1.0],
+            normals: None,
         }
     }
 }

@@ -265,16 +265,21 @@ fn a_windowed_render_matches_the_whole_one() {
     let win = crate::PixelWindow { x: 20, y: 10, w: 40, h: 30 };
     let req = RenderRequest { window: Some(win), ..RenderRequest::fit(W, H) };
     let part = render(&src, &SourceInfo::default(), &s, &req).image;
-    let mut worst = 0u8;
+    // (the guided filter that snaps the light to the photo's edges sees only the window, as Lens Blur's does: within
+    // three of its radii (here 4 px: two depth pixels) of the window's edges the two differ a little)
+    let margin = 12;
+    let (mut worst, mut inside) = (0u8, 0u8);
     for y in 0..win.h {
         for x in 0..win.w {
             let (a, b) = (part.data[y * win.w + x], whole.data[(y + win.y) * W + x + win.x]);
-            for k in 0..3 {
-                worst = worst.max(a[k].abs_diff(b[k]));
+            let d = (0..3).map(|k| a[k].abs_diff(b[k])).max().unwrap_or(0);
+            worst = worst.max(d);
+            if (margin..win.w - margin).contains(&x) && (margin..win.h - margin).contains(&y) {
+                inside = inside.max(d);
             }
         }
     }
-    assert!(worst <= 1, "worst {worst}");
+    assert!(inside <= 1 && worst <= 24, "inside {inside}, worst {worst}");
 }
 
 #[test]
@@ -291,4 +296,83 @@ fn nan_settings_light_by_the_defaults() {
     assert_eq!(img.width, W);
     let depth = Arc::new(Plane::filled(1, 1, f32::NAN));
     assert!(smoothed(&depth).data[0].is_nan() || smoothed(&depth).data[0].is_finite());
+}
+
+/// A flat depth with the surface model's normals: the left half faces left, the right half right.
+fn with_surface() -> DevelopSettings {
+    let mut s = DevelopSettings::default();
+    s.lens_blur.depth = DepthMap::from_nearness(48, 32, &[0.5; 48 * 32]);
+    let normals: Vec<[f32; 3]> = (0..24 * 16).map(|i| if i % 24 < 12 { [-0.7, 0.0, 0.7] } else { [0.7, 0.0, 0.7] }).collect();
+    s.relight.normals = lightcraft_develop::NormalMap::from_normals(24, 16, &normals);
+    s.relight.enabled = true;
+    s.relight.ambient = 0.0;
+    s.relight.shadows = 0.0;
+    s.relight.spread = 100.0;
+    s.relight.y = 0.5;
+    s
+}
+
+#[test]
+fn the_surface_models_normals_shade_where_the_depth_is_flat() {
+    let mut s = with_surface();
+    let setup = Setup::new(&s, crate::lensblur::mattes_for(&s, None).as_deref(), Orientation::Normal).unwrap();
+    assert!(setup.has_normals());
+    // a light on the left lights what faces left, one on the right what faces right
+    s.relight.x = -0.3;
+    let left = shot(&s);
+    s.relight.x = 1.3;
+    let right = shot(&s);
+    let (l_on_left, l_on_right) = (mean_luma(&left, 8, 40, 16, 48), mean_luma(&left, 56, 88, 16, 48));
+    let (r_on_left, r_on_right) = (mean_luma(&right, 8, 40, 16, 48), mean_luma(&right, 56, 88, 16, 48));
+    assert!(l_on_left > l_on_right + 20.0 && r_on_right > r_on_left + 20.0, "{l_on_left} {l_on_right} {r_on_left} {r_on_right}");
+    // Surface 0: flat again, the two halves alike (the light in the middle)
+    s.relight.surface = 0.0;
+    s.relight.x = 0.5;
+    let flat = shot(&s);
+    let (a, b) = (mean_luma(&flat, 8, 40, 16, 48), mean_luma(&flat, 56, 88, 16, 48));
+    assert!((a - b).abs() < 6.0, "{a} {b}");
+    // without them, the flat depth lights both halves alike too
+    let mut plain = with_surface();
+    plain.relight.normals = None;
+    plain.relight.x = 0.5;
+    let p = shot(&plain);
+    assert!((mean_luma(&p, 8, 40, 16, 48) - mean_luma(&p, 56, 88, 16, 48)).abs() < 12.0);
+    // damaged normals are no normals
+    let mut bad = with_surface();
+    bad.relight.normals = Some(lightcraft_develop::NormalMap { w: 24, h: 16, data: "!!".into() });
+    let setup = Setup::new(&bad, crate::lensblur::mattes_for(&bad, None).as_deref(), Orientation::Normal).unwrap();
+    assert!(!setup.has_normals());
+}
+
+#[test]
+fn the_light_stops_at_the_photos_own_edges() {
+    const EDGE: usize = 43;
+    // a near wall on the left of the depth (48 wide: two output pixels each) under a light, the ground beside it in its
+    // shadow; the light fades out over the wall's rim, a few pixels short of the photo's own edge, a dark left half and
+    // a bright right half meeting at x = EDGE of 96: snapped, it holds up to that edge and stops there
+    let (w, h) = (96usize, 64usize);
+    let src = Rgb32f::from_fn(w, h, |x, _| if x < EDGE { [0.04; 3] } else { [0.5; 3] });
+    let depth: Vec<f32> = (0..48 * 32).map(|i| if i % 48 < 24 { 0.95 } else { 0.1 }).collect();
+    let mut s = DevelopSettings::default();
+    s.lens_blur.depth = DepthMap::from_nearness(48, 32, &depth);
+    s.relight.enabled = true;
+    s.relight.x = 0.25;
+    s.relight.y = 0.5;
+    s.relight.distance = 55.0;
+    s.relight.shadows = 100.0;
+    s.relight.softness = 0.0;
+    // (the surface model's normals, all facing the camera: no rim where the depth's slope would turn the wall's edge away)
+    s.relight.normals = lightcraft_develop::NormalMap::from_normals(48, 32, &[[0.0, 0.0, 1.0]; 48 * 32]);
+    let setup = Setup::new(&s, crate::lensblur::mattes_for(&s, None).as_deref(), Orientation::Normal).unwrap();
+    let (light, _) = setup.planes(SHADOW_STEPS);
+    let frame = crate::plan(&src, &SourceInfo::default(), &s, &RenderRequest::fit(w, h)).frame;
+    let plain = source_to_out(&light, &frame, w, h);
+    let snapped = crate::lensblur::nearness_out(&light, &frame, w, h, &crate::lensblur::log_luma(&src));
+    // the plain light changes most a few pixels short of the edge; the snapped one where the photo's is
+    let row = h / 2;
+    let step = |p: &Plane, x: usize| (p.data[row * w + x + 1] - p.data[row * w + x]).abs();
+    let biggest = |p: &Plane| (40..60).max_by(|a, b| step(p, *a).total_cmp(&step(p, *b))).unwrap_or(0);
+    assert_eq!(biggest(&snapped), EDGE - 1, "snapped at {}", biggest(&snapped));
+    assert!(snapped.data[row * w + EDGE - 1] > 0.1 && snapped.data[row * w + EDGE] < 0.02);
+    assert!(biggest(&plain) < biggest(&snapped), "plain at {}, snapped at {}", biggest(&plain), biggest(&snapped));
 }

@@ -28,10 +28,31 @@ A point light added to the scene (`relight`, a settings object left out of the J
 
 The depth, smoothed by a Gaussian of 1.5 depth pixels (the stored depth is 8-bit: its steps would show as terraces),
 is a height field over the stored photo in units of its long edge, the scene 0.5 long edges deep. At every pixel of the
-depth map: the normal from the depth's slope, a wrapped Lambert term, an inverse-square falloff, the clearance of a ray
+depth map: the normal (below), a wrapped Lambert term, an inverse-square falloff, the clearance of a ray
 marched toward the light through the height field (32 steps, 16 for a draft; soft by the clearance over the distance),
-and the highlight. The two planes (light, highlight) are sampled through the frame like the picture, and every output
-pixel becomes `colour × (ambient + brightness × light colour × light) + shine × highlight`, in linear Rec. 2020.
+and the highlight. The two planes (light, highlight) are sampled through the frame like the picture and **snapped to the
+photo's edges** by the guided filter Lens Blur snaps its depth with (`lensblur::nearness_out`, about two depth pixels wide,
+over the log luminance): a light that stops at a face stops at its outline, not a few depth pixels off it. Every output
+pixel then becomes `colour × (ambient + brightness × light colour × light) + shine × highlight`, in linear Rec. 2020.
+
+### The surface
+
+The normal comes from the depth's slope (a wider Gaussian of the depth, `normal_sigma`) unless the settings keep the
+**surface model's** normals (`relight.normals`, a `NormalMap`): MoGe-2 ViT-S with its normal head (Microsoft Research,
+MIT licence, 35M parameters, an optional 141 MB download, `lightcraft_depth::surface`, run on rten like Depth Anything).
+A relative depth has steps and no perspective, so its slope turns a face into terraces and a floor seen from above into a
+wall facing the camera; the network's normals show the shape. They are estimated once (`relight.surface`, or at once by
+`relight.apply` when the model is here) from the same picture the depth is estimated from, at about 2000 of the network's
+14-pixel patches (about 3 s on a 4-core CPU), and stored over the uncropped, EXIF-oriented photo at 384 pixels on the long
+side: x and y as signed bytes (z is what makes the vector one long), delta coded, deflated and base64 encoded, about 100 KB.
+Where the network sees no surface (its mask: sky), the normal faces the camera. Surface tilts them as it tilts the slope's
+(0 flat, 50 as estimated, 100 twice that). Shadows are still cast through the depth. Like the depth estimate, the surface is a
+picture of this photo: copies, presets and Auto Sync leave it behind, and Reset Relight keeps it.
+
+Removing the photo's own light before the new one lands (a light from the right filling the shadows a light from the left
+cast) needs the photo's albedo apart from its shading. A fit of the photo's light as low-order spherical harmonics over the
+normals was tried and left out: on real photos it fits the dark clothes and the white shirt rather than the light. That
+needs an intrinsic-decomposition model.
 
 ## Depth Map
 
@@ -51,9 +72,19 @@ it is (its crop, straighten and flips unless `crop` is false; its orientation an
 `long` pixels along the long side, so it lines up with an export of the photo. PNG holds it in 16 bits, TIFF as 32-bit
 floats. It needs no look turned on, only depth (`relight::depth_out`).
 
+## Depth in masks
+
+A mask's **Depth Range** part (`MaskShape::DepthRange`, `masks.rs`) selects what lies between two depths (0 the nearest,
+1 the farthest) with a feathered falloff, from the same depth, snapped to the photo's edges as Lens Blur's is. A mask may hold
+several (added: what lies in any of them), and any part may be intersected with one (a brush or a gradient only on the
+background). `mask.pickDepth {id?, component?, x, y, x2?, y2?}` sets a part's ends from the photo: a band of 0.1 around the
+depth at a point, or the 5th to 95th percentile of the depths in a box (`lensblur::picked_range`). `depth.histogram {bins?}`
+counts the framed photo's depths, near to far, for drawing under a range's ends (`DepthView::histogram`). A photo without
+depth gets the estimate from `lensBlur.estimate`.
+
 ## Commands
 
-`relight.info`, `relight.apply {on?}`, `relight.color {color: [r,g,b] | "#rrggbb"}`, `relight.reset`;
+`relight.info`, `relight.apply {on?}`, `relight.surface {on?}`, `relight.color {color: [r,g,b] | "#rrggbb"}`, `relight.reset`;
 `depthMap.info` (with every palette's stops for the pickers), `depthMap.apply {on?}`, `depthMap.palette {palette}`,
 `depthMap.colors {near?, far?}`, `depthMap.invert {on?}`, `depthMap.reset`, `depthMap.export` (above). The sliders are `relight.*` and
 `depthMap.*` through `develop.set`; Copy Settings and presets have a Relight and a Depth Map group.
@@ -62,7 +93,11 @@ floats. It needs no look turned on, only depth (`relight::depth_out`).
 
 `crates/pipeline/src/relight/tests.rs` (the light brightens what faces it and follows the orientation, a block casts a
 shadow away from it, Brightness and Ambient, colour, Shine, the palettes, the range, Invert, Curve, Contours, Amount,
-a windowed render matching the whole one, settings that are not numbers), the slider sweep of every new control
+a windowed render matching the whole one, settings that are not numbers, the surface model's normals shading a flat
+depth, the light stopping at the photo's own edge), `crates/depth/src/surface.rs` (the network's input size, its
+camera-space answer turned to face the camera, the stored size; with `LIGHTCRAFT_SURFACE_MODEL` the real model sees a ball
+round), the slider sweep of every new control
 (`tests_sliders.rs`, prepared by `controls::prepare_to_show`), and `crates/engine/src/tests_relight.rs` (no depth or
 model, a Portrait's own depth, the estimate shared with Lens Blur, undo steps, the light's drag, copies, the export's
-formats, framing and inversion).
+formats, framing and inversion, the surface model offered, kept through Reset and taken away, a Depth Range picked by a
+click and by a box, the depth histogram, Auto Sync leaving the depth and the surface behind).

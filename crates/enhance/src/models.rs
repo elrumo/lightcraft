@@ -242,11 +242,33 @@ pub const DEPTH_GPU: ModelSpec = ModelSpec {
     restricted: false,
 };
 
+/// MoGe-2 ViT-S with its normal head (see `lightcraft_depth::surface`, which pins the file and says where it comes
+/// from): the shape Relight lights, finer than the depth's slope.
+pub const SURFACE: ModelSpec = ModelSpec {
+    id: lightcraft_depth::surface::ID,
+    label: lightcraft_depth::surface::LABEL,
+    purpose: "Relight: which way each part of the photo faces, so the light follows its shapes",
+    files: &[FileSpec {
+        name: lightcraft_depth::surface::FILE.name,
+        size: Some(lightcraft_depth::surface::FILE.size),
+        sha256: Some(lightcraft_depth::surface::FILE.sha256),
+        max: lightcraft_depth::surface::FILE.size,
+    }],
+    mirrors_env: "LIGHTCRAFT_SURFACE_MIRRORS",
+    default_mirrors: &[lightcraft_depth::surface::BASE_URL],
+    licence: lightcraft_depth::surface::LICENCE,
+    licence_url: lightcraft_depth::surface::LICENCE_URL,
+    credit: lightcraft_depth::surface::CREDIT,
+    home_url: lightcraft_depth::surface::HOME_URL,
+    diffusion: None,
+    restricted: false,
+};
+
 /// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's).
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &DEPTH_GPU, &SD15, &KANDINSKY, &SDXL];
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &DEPTH_GPU, &SURFACE, &SD15, &KANDINSKY, &SDXL];
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &SD15, &KANDINSKY, &SDXL];
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &SURFACE, &SD15, &KANDINSKY, &SDXL];
 
 /// The enhancement model with this id.
 pub fn find(id: &str) -> Option<&'static ModelSpec> {

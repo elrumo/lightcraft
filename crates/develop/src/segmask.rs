@@ -323,6 +323,83 @@ impl DepthMap {
     }
 }
 
+/// The surface's facing at each part of the photo, as estimated by a model (Relight's surface,
+/// `lightcraft_depth::surface`), stored with the settings so rendering never needs the model. `w × h`
+/// unit normals over the uncropped, EXIF-oriented photo (laid out as a [`DepthMap`]): x to the right, y
+/// down the photo, z toward the camera (never negative: a surface the camera sees faces it). Only x
+/// and y are kept, each a signed byte (−127..127 for −1..1), interleaved, each byte stored as its
+/// difference from the same component to its left, deflated and base64 encoded; z is what makes the
+/// vector one long.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NormalMap {
+    pub w: u32,
+    pub h: u32,
+    pub data: String,
+}
+
+impl NormalMap {
+    /// From `w × h` normals (x right, y down, z toward the camera; any length, each made one long);
+    /// `None` for an empty or oversized map.
+    pub fn from_normals(w: usize, h: usize, v: &[[f32; 3]]) -> Option<NormalMap> {
+        if w == 0 || h == 0 || w > MAX_DEPTH_SIDE || h > MAX_DEPTH_SIDE || v.len() != w * h {
+            return None;
+        }
+        let code = |c: f32| if c.is_finite() { (c.clamp(-1.0, 1.0) * 127.0).round() as i8 as u8 } else { 0 };
+        let mut q = Vec::with_capacity(2 * v.len());
+        for row in v.chunks(w) {
+            let mut prev = [0u8; 2];
+            for n in row {
+                let n = facing(*n);
+                let c = [code(n[0]), code(n[1])];
+                q.push(c[0].wrapping_sub(prev[0]));
+                q.push(c[1].wrapping_sub(prev[1]));
+                prev = c;
+            }
+        }
+        Some(NormalMap { w: w as u32, h: h as u32, data: base64_encode(&miniz_oxide::deflate::compress_to_vec(&q, 8)) })
+    }
+
+    /// The unit normals (row-major), or `None` when the data is damaged or claims an absurd size.
+    pub fn normals(&self) -> Option<Vec<[f32; 3]>> {
+        let (w, h) = (self.w as usize, self.h as usize);
+        if w == 0 || h == 0 || w > MAX_DEPTH_SIDE || h > MAX_DEPTH_SIDE {
+            return None;
+        }
+        let q = miniz_oxide::inflate::decompress_to_vec_with_limit(&base64_decode(&self.data)?, 2 * w * h).ok()?;
+        if q.len() != 2 * w * h {
+            return None;
+        }
+        let mut out = Vec::with_capacity(w * h);
+        for row in q.chunks(2 * w) {
+            let mut prev = [0u8; 2];
+            for d in row.chunks(2) {
+                prev = [prev[0].wrapping_add(d[0]), prev[1].wrapping_add(d.get(1).copied().unwrap_or(0))];
+                let (x, y) = (f32::from(prev[0] as i8) / 127.0, f32::from(prev[1] as i8) / 127.0);
+                out.push(unit_from_xy(x, y));
+            }
+        }
+        Some(out)
+    }
+}
+
+/// `n` made one long and turned to face the camera (z ≥ 0); straight at the camera when it is no direction.
+fn facing(n: [f32; 3]) -> [f32; 3] {
+    let n = [n[0], n[1], n[2].max(0.0)];
+    let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    if l.is_finite() && l > 1e-6 { n.map(|c| c / l) } else { [0.0, 0.0, 1.0] }
+}
+
+/// The unit vector facing the camera whose x and y are these (scaled back onto the unit circle when they reach past it).
+fn unit_from_xy(x: f32, y: f32) -> [f32; 3] {
+    let r = x * x + y * y;
+    if r >= 1.0 {
+        let l = r.sqrt();
+        [x / l, y / l, 0.0]
+    } else {
+        [x, y, (1.0 - r).sqrt()]
+    }
+}
+
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -363,6 +440,26 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normals_round_trip_within_their_quantization() {
+        let (w, h) = (7, 3);
+        let v: Vec<[f32; 3]> = (0..w * h).map(|i| [(i as f32 * 0.37).sin() * 0.6, (i as f32 * 0.21).cos() * 0.5, 0.7]).collect();
+        let m = NormalMap::from_normals(w, h, &v).unwrap();
+        let back = m.normals().unwrap();
+        assert_eq!(back.len(), v.len());
+        for (a, b) in v.iter().zip(&back) {
+            let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
+            let a = a.map(|c| c / l);
+            assert!(a.iter().zip(b).all(|(p, q)| (p - q).abs() < 0.02), "{a:?} {b:?}");
+            assert!(((b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt() - 1.0).abs() < 1e-4);
+        }
+        // a surface turned away from the camera is taken as facing across, and nonsense as facing the camera
+        let odd = NormalMap::from_normals(2, 1, &[[0.0, 0.0, -1.0], [f32::NAN, 0.0, 0.0]]).unwrap().normals().unwrap();
+        assert_eq!(odd, vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]);
+        assert!(NormalMap::from_normals(0, 1, &[]).is_none());
+        assert!(NormalMap { w: 3, h: 3, data: "AAAA".into() }.normals().is_none());
+    }
 
     #[test]
     fn base64_round_trips() {
