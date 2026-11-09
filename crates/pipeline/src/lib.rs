@@ -33,6 +33,7 @@ pub mod dust;
 pub mod expand;
 pub mod finish;
 pub mod geometry;
+pub mod glow;
 pub mod inpaint;
 pub mod lensblur;
 pub mod local;
@@ -442,11 +443,16 @@ pub struct Plan<'a> {
     pub detail_scale: f32,
     /// Key of the resampled source (together with the source buffer's identity).
     pub geo: u64,
-    /// Key of the white-balanced, retouched, denoised image (and of the planes computed from it).
+    /// Key of the white-balanced, retouched, denoised image with its glow (and of the planes computed from it).
     pub lin_key: u64,
     /// [`Self::lin_key`] without the noise-reduction settings: draft renders reuse the smooth
     /// planes of an image that differs from this one only in its noise reduction.
     pub pre_nr_key: u64,
+    /// Key of the scene-linear image before its glow, which the stage caches keep: a Glow slider's drag re-runs the glow,
+    /// not the white balance and noise reduction under it. [`Self::lin_key`] when there is no glow.
+    pub base_key: u64,
+    /// Glow ([`glow`]), when it adds anything.
+    pub glow: Option<glow::Setup>,
     /// Red eye / pet eye corrections with their detected pupils, in output pixels.
     pub eyes: Vec<redeye::EyeK>,
     /// The whole frame's dehaze airlight, for a windowed render (which can't see the whole frame).
@@ -499,6 +505,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let px_per_long = frame.px_per_long(full_w);
     let mattes = lensblur::mattes_for(s, info.mattes.as_ref());
     let blur = lensblur::Setup::new(s, mattes.as_deref(), px_per_long);
+    let glow = glow::Setup::new(s, px_per_long);
     let mut fixed_air = None;
     // (the key is the whole frame's, read before a window narrows the frame)
     let shadow_key = (s.section_enabled("light") && s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.shadows != 0.0)).then(|| {
@@ -521,6 +528,11 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
             // (and so does Lens Blur, by the largest circle it draws)
             let work = match &blur {
                 Some(b) => grown(work, b.reach(), full_w, full_h),
+                None => work,
+            };
+            // (and so does the glow, by how far its light spreads)
+            let work = match &glow {
+                Some(g) => grown(work, g.reach(full_w.max(full_h)), full_w, full_h),
                 None => work,
             };
             if work != win {
@@ -552,11 +564,17 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         // Lens Blur follows noise reduction; a draft's coarser blur is never kept for a full render
         blur.as_ref().map(|b| (b.key, req.quality == Quality::Draft)),
     ));
-    let lin_key = hash_of((
+    let base_key = hash_of((
         pre_nr_key,
         [d.nr_luminance, d.nr_detail, d.nr_contrast, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
         detail_scale.to_bits(),
     ));
+    // the glow is added after noise reduction: with one, the image the planes are made from is another (and every key is
+    // as it was without one)
+    let (pre_nr_key, lin_key) = match &glow {
+        Some(g) => (hash_of((pre_nr_key, g.key())), hash_of((base_key, g.key()))),
+        None => (pre_nr_key, base_key),
+    };
     Plan {
         settings,
         frame,
@@ -568,6 +586,8 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         geo,
         lin_key,
         pre_nr_key,
+        base_key,
+        glow,
         eyes,
         fixed_air,
         shadow_key,
@@ -683,7 +703,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         Src::Shared(a) => a,
     };
     let plan = plan(src_img, info, s, req);
-    let Plan { ref frame, w, h, px_per_long, detail_scale, geo, lin_key, .. } = plan;
+    let Plan { ref frame, w, h, px_per_long, detail_scale, geo, lin_key, base_key, .. } = plan;
     let s = &*plan.settings;
 
     let shared = match (&src, cache) {
@@ -697,7 +717,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     };
     lap("sample", &mut t);
 
-    let lin = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == lin_key) {
+    let base = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == base_key) {
         Some((_, img)) => img,
         None => {
             // Without a cache the resampled buffer is ours: work on it in place.
@@ -711,6 +731,15 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         }
     };
     lap("wb/spots/nr", &mut t);
+    // the glow, on the image the cache keeps without it
+    let lin = match &plan.glow {
+        Some(g) => {
+            let lit = Arc::new(glow::apply(&base, g));
+            lap("glow", &mut t);
+            lit
+        }
+        None => base.clone(),
+    };
     let mut alphas = cached.as_ref().map(|e| e.masks.clone()).unwrap_or_default();
     let mut planes = match cached.map(|e| e.planes) {
         Some(p) if p.key == lin_key => p,
@@ -730,7 +759,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     prep.key = plan.shadow_key;
     lap("prepare", &mut t);
     if let Some((a, c)) = shared {
-        c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((lin_key, lin)), planes, masks: alphas });
+        c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((base_key, base)), planes, masks: alphas });
     }
     if req.depth != OutputDepth::U8 {
         let deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth, req.proof);

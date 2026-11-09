@@ -681,11 +681,21 @@ pub fn render(
     lap("sample", &mut t, &mut cx);
 
     // 2. white balance, defringe, spots, noise reduction
-    let lin = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == plan.lin_key) {
+    let base = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == plan.base_key) {
         Some((_, b)) => b,
         None => Arc::new(linear(&mut cx, &sampled, info, &plan, &mut host, req.quality == lightcraft_pipeline::Quality::Draft)),
     };
     lap("wb/nr", &mut t, &mut cx);
+    // the glow, on the CPU (as Lens Blur), over the image the cache keeps without it
+    let lin = match &plan.glow {
+        Some(g) => {
+            let cpu = cx.read_rgb(&base, w, h);
+            let lit = Arc::new(cx.gpu.upload(rgb_words(&lightcraft_pipeline::glow::apply(&cpu, g))));
+            lap("glow", &mut t, &mut cx);
+            lit
+        }
+        None => base.clone(),
+    };
 
     // 3. spatial planes
     let mut alphas = cached.as_ref().map(|e| e.masks.clone()).unwrap_or_default();
@@ -707,7 +717,7 @@ pub fn render(
     let (masks, terms) = masks(&mut cx, &lin, &prep, &plan, &mut host, &mut alphas);
     lap("masks", &mut t, &mut cx);
     if let Some(c) = stages {
-        c.put(Entry { src: src.clone(), geo: plan.geo, sampled, lin: Some((plan.lin_key, lin.clone())), planes, masks: alphas });
+        c.put(Entry { src: src.clone(), geo: plan.geo, sampled, lin: Some((plan.base_key, base.clone())), planes, masks: alphas });
     }
 
     // 5. per-pixel stage

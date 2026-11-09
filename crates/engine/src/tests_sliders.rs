@@ -160,6 +160,7 @@ fn all_controls_at_once_round_trip_and_sections_reset() {
         lightcraft_develop::Section::Effects,
         lightcraft_develop::Section::Vignette,
         lightcraft_develop::Section::Grain,
+        lightcraft_develop::Section::Glow,
         lightcraft_develop::Section::Detail,
         lightcraft_develop::Section::Optics,
         lightcraft_develop::Section::Geometry,

@@ -2249,5 +2249,13 @@
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "Không tìm thấy thư mục iCloud Drive, Dropbox hay Google Drive nào trên máy tính này.",
   "Syncing through the cloud folder": "Đang đồng bộ qua thư mục đám mây",
   "Synced just now": "Vừa đồng bộ",
-  "Shift Edge": "Dịch cạnh"
+  "Shift Edge": "Dịch cạnh",
+  "Glow": "Phát sáng",
+  "Bloom": "Bloom",
+  "Diffusion": "Khuếch tán",
+  "Halation": "Quầng sáng",
+  "Motion": "Chuyển động",
+  "Streak": "Vệt sáng",
+  "Spread": "Độ lan",
+  "Warmth": "Độ ấm"
 }

@@ -21,6 +21,7 @@ pub enum Section {
     Effects,
     Vignette,
     Grain,
+    Glow,
     Detail,
     Optics,
     Geometry,
@@ -43,6 +44,7 @@ impl Section {
             Section::Effects => "Effects",
             Section::Vignette => "Vignette",
             Section::Grain => "Grain",
+            Section::Glow => "Glow",
             Section::Detail => "Detail",
             Section::Optics => "Optics",
             Section::Geometry => "Geometry",
@@ -414,6 +416,11 @@ controls! {
     "grain.amount" => grain.amount, "Grain", Grain, 0, 100, 0, 1, 0, Plain;
     "grain.size" => grain.size, "Size", Grain, 0, 100, 25, 1, 0, Plain;
     "grain.roughness" => grain.roughness, "Roughness", Grain, 0, 100, 50, 1, 0, Plain;
+    "glow.amount" => glow.amount, "Glow", Glow, 0, 100, 0, 1, 0, Plain;
+    "glow.range" => glow.range, "Range", Glow, 0, 100, 50, 1, 0, Gradient { from: "#f0f0f0", to: "#303030" };
+    "glow.spread" => glow.spread, "Spread", Glow, 0, 100, 50, 1, 0, Plain;
+    "glow.warmth" => glow.warmth, "Warmth", Glow, -100, 100, 0, 1, 0, Temp;
+    "glow.angle" => glow.angle, "Angle", Glow, -90, 90, 0, 1, 0, Centered;
     "enhance.denoise" => enhance.denoise, "Amount", Detail, 0, 100, 0, 1, 0, Plain;
     "detail.sharpenAmount" => detail.sharpen_amount, "Sharpening", Detail, 0, 150, 0, 1, 0, Plain;
     "detail.sharpenRadius" => detail.sharpen_radius, "Radius", Detail, 0.5, 3, 1, 0.1, 1, Plain;
@@ -691,6 +698,12 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
         _ if id.starts_with("grading.") && id.ends_with(".hue") => put(s, &id.replace(".hue", ".sat"), 60.0),
         "vignette.midpoint" | "vignette.roundness" | "vignette.feather" | "vignette.highlights" => put(s, "vignette.amount", -60.0),
         "grain.size" | "grain.roughness" => put(s, "grain.amount", 60.0),
+        "glow.range" | "glow.spread" | "glow.warmth" => put(s, "glow.amount", 60.0),
+        // (the angle turns only the styles that spread along a line)
+        "glow.angle" => {
+            put(s, "glow.amount", 60.0);
+            s.glow.style = crate::settings::GlowStyle::Streak;
+        }
         "detail.sharpenRadius" | "detail.sharpenDetail" | "detail.sharpenMasking" => put(s, "detail.sharpenAmount", 80.0),
         "detail.nrDetail" | "detail.nrContrast" => put(s, "detail.nrLuminance", 50.0),
         "detail.nrColorDetail" | "detail.nrColorSmoothness" => put(s, "detail.nrColor", 50.0),

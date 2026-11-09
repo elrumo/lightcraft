@@ -2551,5 +2551,13 @@
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "На этом компьютере не найдено ни одной папки iCloud Drive, Dropbox или Google Drive.",
   "Syncing through the cloud folder": "Синхронизация через облачную папку",
   "Synced just now": "Только что синхронизировано",
-  "Shift Edge": "Сместить край"
+  "Shift Edge": "Сместить край",
+  "Glow": "Свечение",
+  "Bloom": "Блум",
+  "Diffusion": "Диффузия",
+  "Halation": "Ореол",
+  "Motion": "Движение",
+  "Streak": "Лучи",
+  "Spread": "Охват",
+  "Warmth": "Теплота"
 }

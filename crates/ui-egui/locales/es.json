@@ -2559,5 +2559,13 @@
   "No iCloud Drive, Dropbox or Google Drive folder was found on this computer.": "No se encontró ninguna carpeta de iCloud Drive, Dropbox ni Google Drive en este ordenador.",
   "Syncing through the cloud folder": "Sincronizando mediante la carpeta en la nube",
   "Synced just now": "Sincronizado ahora mismo",
-  "Shift Edge": "Desplazar borde"
+  "Shift Edge": "Desplazar borde",
+  "Glow": "Resplandor",
+  "Bloom": "Bloom",
+  "Diffusion": "Difusión",
+  "Halation": "Halación",
+  "Motion": "Movimiento",
+  "Streak": "Estela",
+  "Spread": "Extensión",
+  "Warmth": "Calidez"
 }
