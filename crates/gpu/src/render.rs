@@ -916,8 +916,8 @@ fn unwritten(data: &[[u8; 4]]) -> usize {
     data.chunks(4096).filter(|c| c.iter().fold(255u8, |a, p| a & p[3]) != 255).map(|c| c.iter().filter(|p| p[3] != 255).count()).sum()
 }
 
-/// The white-balanced, retouched, denoised image, with Lens Blur (on the CPU; `draft`: its
-/// interactive quality).
+/// The white-balanced, retouched, denoised image, with Depth Map, Relight and Lens Blur (on the CPU;
+/// `draft`: their interactive quality).
 fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, host: &mut Host, draft: bool) -> Buf {
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
@@ -947,13 +947,13 @@ fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, ho
         }
     };
     let img = denoise(cx, img, plan);
-    match &plan.blur {
-        Some(b) => {
-            let mut cpu = cx.read_rgb(&img, w, h);
-            lightcraft_pipeline::lensblur::apply(&mut cpu, b, &plan.frame, plan.origin, draft);
-            cx.gpu.upload(rgb_words(&cpu))
-        }
-        None => img,
+    // (Depth Map, Relight and Lens Blur: on the CPU)
+    if lightcraft_pipeline::has_after_denoise(plan) {
+        let mut cpu = cx.read_rgb(&img, w, h);
+        lightcraft_pipeline::after_denoise(&mut cpu, plan, draft);
+        cx.gpu.upload(rgb_words(&cpu))
+    } else {
+        img
     }
 }
 

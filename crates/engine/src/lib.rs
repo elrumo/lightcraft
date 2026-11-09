@@ -1210,13 +1210,27 @@ impl Session {
         // switching camera local tone mapping off is a change without copying untouched values.
         old_json["profile"]["camera_local_tone"] = Value::Bool(old.profile.camera_local_tone);
         new_json["profile"]["camera_local_tone"] = Value::Bool(new.profile.camera_local_tone);
-        // Compare actual HDR leaves even when persisted defaults omit the whole HDR object.
+        // Compare actual HDR, Relight and Depth Map leaves even when persisted defaults omit the whole object
+        // (turning one of them back to its defaults is a change too).
         old_json["hdr"] = serde_json::json!(old.hdr);
         new_json["hdr"] = serde_json::json!(new.hdr);
+        old_json["relight"] = serde_json::json!(old.relight);
+        new_json["relight"] = serde_json::json!(new.relight);
+        old_json["depth_map"] = serde_json::json!(old.depth_map);
+        new_json["depth_map"] = serde_json::json!(new.depth_map);
         let Some(mut delta) = json_delta(&old_json, &new_json) else { return Vec::new() };
         if let Some(o) = delta.as_object_mut() {
             for k in ["spots", "red_eye", "version", "process"] {
                 o.remove(k);
+            }
+            // (an estimated depth or surface is a picture of this photo: each photo has its own, as copies leave them behind)
+            for (group, k) in [("lens_blur", "depth"), ("relight", "normals")] {
+                if let Some(g) = o.get_mut(group).and_then(Value::as_object_mut) {
+                    g.remove(k);
+                    if g.is_empty() {
+                        o.remove(group);
+                    }
+                }
             }
             if o.is_empty() {
                 return Vec::new();
@@ -1701,6 +1715,8 @@ mod tests_panasonic;
 mod tests_path;
 #[cfg(test)]
 mod tests_photo_library;
+#[cfg(test)]
+mod tests_relight;
 #[cfg(test)]
 mod tests_sliders;
 #[cfg(test)]

@@ -136,6 +136,22 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            query "depth.histogram",
+            "Depth Histogram",
+            [],
+            None,
+            "{bins?: 8..256 (64)} — how much of the active photo, as framed, lies at each depth, from the nearest to the farthest (the largest bin 1), for drawing under a Depth Range's ends → {bins: [..], depth: photo|estimated|null}; no bins without depth",
+            has_active,
+            |s, p| {
+                const C: &str = "depth.histogram";
+                let id = s.active().ok_or_else(|| bad(C, "no active photo"))?;
+                let n = p.get("bins").and_then(Value::as_u64).unwrap_or(64).clamp(8, 256) as usize;
+                let d = s.develop_of(id).unwrap_or_default();
+                let bins = s.depth_view(id, &d, true).map(|v| v.histogram(n)).unwrap_or_default();
+                Ok(json!({"bins": bins, "depth": s.depth_source(id).map(crate::depth::DepthSource::name)}))
+            }
+        ),
+        cmd!(
             "lensBlur.focus",
             "Focus Lens Blur",
             [],

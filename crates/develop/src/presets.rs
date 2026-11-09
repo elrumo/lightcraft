@@ -38,10 +38,12 @@ pub enum SettingsGroup {
     RedEye,
     LensBlur,
     Calibration,
+    Relight,
+    DepthMap,
 }
 
 impl SettingsGroup {
-    pub const ALL: [SettingsGroup; 20] = [
+    pub const ALL: [SettingsGroup; 22] = [
         SettingsGroup::Profile,
         SettingsGroup::Treatment,
         SettingsGroup::WhiteBalance,
@@ -62,6 +64,8 @@ impl SettingsGroup {
         SettingsGroup::RedEye,
         SettingsGroup::LensBlur,
         SettingsGroup::Calibration,
+        SettingsGroup::Relight,
+        SettingsGroup::DepthMap,
     ];
 
     /// Groups included by default when copying (Lightroom excludes crop, masks and spots by default).
@@ -94,6 +98,8 @@ impl SettingsGroup {
             SettingsGroup::RedEye => "Red Eye",
             SettingsGroup::LensBlur => "Lens Blur",
             SettingsGroup::Calibration => "Calibration",
+            SettingsGroup::Relight => "Relight",
+            SettingsGroup::DepthMap => "Depth Map",
         }
     }
 
@@ -120,6 +126,8 @@ impl SettingsGroup {
             SettingsGroup::RedEye => &["red_eye"],
             SettingsGroup::LensBlur => &["lens_blur"],
             SettingsGroup::Calibration => &["calibration"],
+            SettingsGroup::Relight => &["relight"],
+            SettingsGroup::DepthMap => &["depth_map"],
         }
     }
 }
@@ -148,6 +156,10 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     // (a pasted Lens Blur keeps the depth of the photo it lands on)
     if let Some(blur) = out.get_mut("lens_blur").and_then(Value::as_object_mut) {
         blur.remove("depth");
+    }
+    // (and a pasted Relight the surface of the photo it lands on)
+    if let Some(relight) = out.get_mut("relight").and_then(Value::as_object_mut) {
+        relight.remove("normals");
     }
     // (an Object or Describe selection's picture is of the photo it was made on: the clicks and the words stay, the
     // other photo's selection is made again from them, see [`ai_work`])
@@ -384,6 +396,21 @@ mod tests {
         let b = apply_partial(&DevelopSettings::default(), &v, 1.0);
         assert_eq!(b.spots.len(), 1);
         assert_eq!((b.spots[0].points.clone(), b.spots[0].fill.clone()), (a.spots[0].points.clone(), None));
+    }
+
+    #[test]
+    fn copied_relight_leaves_its_surface_behind() {
+        let mut a = DevelopSettings::default();
+        a.relight.enabled = true;
+        a.relight.brightness = 80.0;
+        a.relight.normals = crate::NormalMap::from_normals(1, 1, &[[0.0, 0.0, 1.0]]);
+        let v = extract_groups(&a, &[SettingsGroup::Relight]);
+        assert!(v["relight"].get("normals").is_none(), "{v}");
+        assert_eq!(v["relight"]["brightness"], 80.0);
+        let mut b = DevelopSettings::default();
+        b.relight.normals = crate::NormalMap::from_normals(1, 1, &[[0.6, 0.0, 0.8]]);
+        let c = crate::apply_partial(&b, &v, 1.0);
+        assert_eq!((c.relight.enabled, c.relight.brightness, c.relight.normals.clone()), (true, 80.0, b.relight.normals.clone()));
     }
 
     #[test]

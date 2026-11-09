@@ -47,6 +47,7 @@ mod print;
 pub mod profile_db;
 mod query;
 pub mod recheck;
+mod relight;
 pub mod reload;
 mod slideshow;
 mod stand_in;
@@ -165,6 +166,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(curves::specs());
         v.extend(masks::specs());
         v.extend(lensblur::specs());
+        v.extend(relight::specs());
         v.extend(enhance::specs());
         v.extend(models::specs());
         v.extend(organize::specs());

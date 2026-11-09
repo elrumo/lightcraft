@@ -8,7 +8,8 @@
 //! 1. geometry — user orientation, lens corrections (distortion, CA, vignetting), perspective, crop +
 //!    straighten, flips; one resample at output resolution; then defringe
 //! 2. scene-linear — white balance, exposure, dehaze, local tone (highlights/shadows), texture,
-//!    clarity, local adjustments (masks); Lens Blur ([`lensblur`]) after noise reduction
+//!    clarity, local adjustments (masks); Depth Map, Relight ([`relight`]) and Lens Blur ([`lensblur`])
+//!    after noise reduction
 //! 3. tone map — contrast / whites / blacks filmic curve on luminance, highlight desaturation
 //! 4. colour — vibrance, saturation, colour mixer, colour grading, B&W (OkLCh)
 //! 5. display — gamut map to the output space (sRGB unless [`RenderRequest::space`] says otherwise), encode, tone curves (parametric + point), vignette, grain
@@ -43,6 +44,7 @@ pub mod optics;
 pub mod output;
 pub mod profiles;
 pub mod redeye;
+pub mod relight;
 pub mod spots;
 pub mod tone;
 pub mod transform;
@@ -462,6 +464,10 @@ pub struct Plan<'a> {
     pub mattes: Option<Arc<masks::Mattes>>,
     /// Lens Blur, when it blurs anything.
     pub blur: Option<lensblur::Setup>,
+    /// Depth Map, when it draws the depth.
+    pub depth_look: Option<relight::Look>,
+    /// Relight, when it lights anything.
+    pub relight: Option<relight::Setup>,
     /// Where the rendered pixels sit in the whole output frame (a window's top-left corner).
     pub origin: [usize; 2],
 }
@@ -499,6 +505,8 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let px_per_long = frame.px_per_long(full_w);
     let mattes = lensblur::mattes_for(s, info.mattes.as_ref());
     let blur = lensblur::Setup::new(s, mattes.as_deref(), px_per_long);
+    let depth_look = relight::Look::new(s, mattes.as_deref());
+    let relight = relight::Setup::new(s, mattes.as_deref(), s.orientation);
     let mut fixed_air = None;
     // (the key is the whole frame's, read before a window narrows the frame)
     let shadow_key = (s.section_enabled("light") && s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.shadows != 0.0)).then(|| {
@@ -551,6 +559,9 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         src_long,
         // Lens Blur follows noise reduction; a draft's coarser blur is never kept for a full render
         blur.as_ref().map(|b| (b.key, req.quality == Quality::Draft)),
+        // and so do Depth Map and Relight (a draft's shadows are coarser too)
+        depth_look.as_ref().map(|l| l.key),
+        relight.as_ref().map(|r| (r.key, req.quality == Quality::Draft)),
     ));
     let lin_key = hash_of((
         pre_nr_key,
@@ -574,6 +585,8 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         keep,
         mattes,
         blur,
+        depth_look,
+        relight,
         origin,
     }
 }
@@ -605,6 +618,25 @@ pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     };
     spots::apply_lit(img, &s.spots, &p.frame, p.px_per_long, &light);
     redeye::apply(img, &p.eyes);
+}
+
+/// What follows noise reduction in the scene-linear stage, in place: Depth Map, Relight, then Lens Blur
+/// (`draft`: their interactive quality). The GPU renderer runs it on the CPU too.
+pub fn after_denoise(img: &mut Rgb32f, p: &Plan<'_>, draft: bool) {
+    if let Some(l) = &p.depth_look {
+        relight::apply_look(img, l, &p.frame, p.px_per_long);
+    }
+    if let Some(r) = &p.relight {
+        relight::apply(img, r, &p.frame, draft);
+    }
+    if let Some(b) = &p.blur {
+        lensblur::apply(img, b, &p.frame, p.origin, draft);
+    }
+}
+
+/// Whether anything follows noise reduction in the scene-linear stage ([`after_denoise`]).
+pub fn has_after_denoise(p: &Plan<'_>) -> bool {
+    p.depth_look.is_some() || p.relight.is_some() || p.blur.is_some()
 }
 
 /// The settings a render of `s` for `req` uses: the HDR edit for an [`OutputDepth::F32Hdr`]
@@ -704,9 +736,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
             let mut img = if shared.is_some() { (*sampled).clone() } else { Arc::unwrap_or_clone(sampled.clone()) };
             lin_cpu(&mut img, info, &plan);
             local::denoise(&mut img, s, detail_scale);
-            if let Some(b) = &plan.blur {
-                lensblur::apply(&mut img, b, frame, plan.origin, req.quality == Quality::Draft);
-            }
+            after_denoise(&mut img, &plan, req.quality == Quality::Draft);
             Arc::new(img)
         }
     };
