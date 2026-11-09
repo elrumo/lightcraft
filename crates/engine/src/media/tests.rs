@@ -112,7 +112,12 @@ fn renders_know_the_original_size_whichever_level_they_come_from() {
     let decoded = SourceInfo { raw: true, as_shot_temp: 4800.0, ..Default::default() };
     let thumb = DecodedSource::new(Arc::new(Rgb32f::new(8, 8)), Some(decoded.clone()));
     let info = thumb.info_or(source_info(&p));
-    assert_eq!(info, SourceInfo { native_long: Some(6000), ..decoded }, "the decoder's facts, the catalog's size");
+    // (and the photo's id, which seeds film marks that vary per photo)
+    assert_eq!(
+        info,
+        SourceInfo { native_long: Some(6000), film_salt: lightcraft_pipeline::film::salt_of("1"), ..decoded },
+        "the decoder's facts, the catalog's size"
+    );
     let unknown = Photo::new(PhotoId(2), Source::File { path: "/photos/b.jpg".into() }, "b.jpg", "JPEG", 0, 0, "");
     assert_eq!(source_info(&unknown).native_long, None);
     assert_eq!(source_info(&Photo::new(PhotoId(3), Source::Demo { scene: 0 }, "d", "ARW", 600, 400, "")).native_long, None);

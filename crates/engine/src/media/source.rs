@@ -293,7 +293,7 @@ impl DecodedSource {
     /// either way: the decoder only sees the level it decoded.
     pub fn info_or(&self, header: SourceInfo) -> SourceInfo {
         match &self.info {
-            Some(info) => SourceInfo { native_long: info.native_long.or(header.native_long), ..info.clone() },
+            Some(info) => SourceInfo { native_long: info.native_long.or(header.native_long), film_salt: header.film_salt, ..info.clone() },
             None => SourceInfo {
                 camera_tone: self.camera_tone.or(header.camera_tone),
                 camera_match: self.camera_match.clone().or(header.camera_match),

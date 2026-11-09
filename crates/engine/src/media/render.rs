@@ -156,6 +156,24 @@ impl RenderJob {
         self
     }
 
+    /// Render without the film effects' frame (`film.frame`), for a screen that maps taps onto the photo (Masking, Remove, Red Eye): the frame
+    /// shrinks the photo into its window, so a tap would land elsewhere on it. The photo's settings are untouched; the result gets its own key
+    /// and is never cached as the photo's preview or thumbnail.
+    pub fn with_film_frame(mut self, shown: bool) -> Self {
+        if shown || self.settings.film.frame == lightcraft_develop::FilmFrame::None {
+            return self;
+        }
+        let mut s = (*self.settings).clone();
+        s.film.frame = lightcraft_develop::FilmFrame::None;
+        self.key ^= s.hash64() ^ self.settings.hash64() ^ 0x5bd1_e995_f1f2_a3b4;
+        self.settings = Arc::new(s);
+        self.cache = None;
+        self.view_cache = None;
+        self.preview_cut = None;
+        self.server_tile = None;
+        self
+    }
+
     /// Render with some colour grading wheels (shadows, midtones, highlights) switched off for
     /// viewing (the wheel eyes in the Edit panel). The photo's settings are untouched; the result
     /// gets its own key and is never cached as the photo's preview or thumbnail.
@@ -487,6 +505,8 @@ fn gpu_renders(s: &DevelopSettings, req: &RenderRequest) -> bool {
     lightcraft_pipeline::lut::get(&s.profile.id).is_none_or(|l| l.size <= lightcraft_pipeline::lut::GPU_MAX_SIZE)
         && !s.masks.iter().any(|m| m.visible && m.edits_edges())
         && req.proof.is_none()
+        // (the GPU renderer draws film effects onto its 8-bit picture only: a deep render with them is the CPU's)
+        && (req.depth == lightcraft_pipeline::OutputDepth::U8 || s.film.is_default())
 }
 
 /// Render `src`: on the GPU when `gpu` is set and a GPU is available (`lightcraft_gpu`), else on

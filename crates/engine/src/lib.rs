@@ -1218,6 +1218,8 @@ impl Session {
         new_json["relight"] = serde_json::json!(new.relight);
         old_json["depth_map"] = serde_json::json!(old.depth_map);
         new_json["depth_map"] = serde_json::json!(new.depth_map);
+        old_json["film"] = serde_json::json!(old.film);
+        new_json["film"] = serde_json::json!(new.film);
         let Some(mut delta) = json_delta(&old_json, &new_json) else { return Vec::new() };
         if let Some(o) = delta.as_object_mut() {
             for k in ["spots", "red_eye", "version", "process"] {

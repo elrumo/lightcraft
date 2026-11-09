@@ -2364,5 +2364,13 @@
   "Motion": "Ruch",
   "Streak": "Smuga",
   "Spread": "Zasięg",
-  "Warmth": "Ciepło"
+  "Warmth": "Ciepło",
+  "Add Film Effect": "Dodaj efekt filmowy",
+  "Delete Film Effect": "Usuń efekt filmowy",
+  "Show/Hide Film Effect": "Pokaż/ukryj efekt filmowy",
+  "Duplicate Film Effect": "Duplikuj efekt filmowy",
+  "Reorder Film Effects": "Zmień kolejność efektów filmowych",
+  "Shuffle Film Effect": "Losuj efekt filmowy",
+  "List Film Effects": "Lista efektów filmowych",
+  "Border": "Obramowanie"
 }

@@ -208,6 +208,8 @@ fn setting_section(path: &str) -> &'static str {
         "effects" => "Effects",
         "vignette" => "Vignette",
         "grain" => "Grain",
+        "glow" => "Glow",
+        "film" => "Film",
         "detail" | "enhance" => "Detail",
         "optics" => "Optics",
         "profile" => "Profile",

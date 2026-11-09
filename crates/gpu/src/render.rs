@@ -871,6 +871,11 @@ pub fn render(
     // Generative Expand: area past the photo with nothing generated yet is transparent (after the
     // check above, which reads alpha)
     lightcraft_pipeline::expand::mark_missing(&mut image, &plan.frame);
+    // film effects, drawn on the CPU over the read-back picture (ponytail: a kernel of their own if profiles ask for it)
+    if let Some(f) = plan.film.as_ref().filter(|_| !hdr_out) {
+        f.apply_rgba8(&mut image, plan.origin, plan.full, req.space.trc());
+        lap("film", &mut t, &mut cx);
+    }
     let overlay_mask = overlay_mask.map(|r| match r {
         Ok(b) => cx.read_plane(&b, w, h),
         // a hidden mask: evaluate it on the CPU

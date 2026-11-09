@@ -149,6 +149,9 @@ pub struct DevelopSettings {
     /// so settings without a glow keep their JSON and `hash64` (and every cached preview stays valid).
     #[serde(skip_serializing_if = "Glow::is_default")]
     pub glow: Glow,
+    /// Film effects: a frame and a stack of film marks over the finished picture. Not written while it is the default.
+    #[serde(skip_serializing_if = "Film::is_default")]
+    pub film: Film,
     pub detail: Detail,
     pub optics: Optics,
     pub geometry: Geometry,
@@ -200,6 +203,7 @@ impl Default for DevelopSettings {
             vignette: Vignette::default(),
             grain: Grain::default(),
             glow: Glow::default(),
+            film: Film::default(),
             detail: Detail::default(),
             optics: Optics::default(),
             geometry: Geometry::default(),
@@ -738,6 +742,184 @@ impl Glow {
     /// Whether these are a fresh photo's glow settings (none, nothing changed).
     pub fn is_default(&self) -> bool {
         *self == Glow::default()
+    }
+}
+
+/// The most marks a photo's film effects stack holds (one pass draws them all, so the work per pixel stays bounded).
+pub const MAX_FILM_LAYERS: usize = 8;
+
+/// The film a photo sits in (`docs/film-effects.md`): the photo shrinks into the frame's window, the output keeps its size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilmFrame {
+    #[default]
+    None,
+    /// A 35mm strip with its sprocket holes, along the long edge.
+    Strip,
+    /// A black border with the ragged edge of a filed-out negative carrier.
+    Filed,
+    /// An instant print's frame, wider at the bottom.
+    Instant,
+}
+
+impl FilmFrame {
+    pub const ALL: [FilmFrame; 4] = [FilmFrame::None, FilmFrame::Strip, FilmFrame::Filed, FilmFrame::Instant];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FilmFrame::None => "None",
+            FilmFrame::Strip => "35mm Strip",
+            FilmFrame::Filed => "Filed Edge",
+            FilmFrame::Instant => "Instant",
+        }
+    }
+}
+
+/// A frame's base: a 35mm strip's dark slide base or light (amber) negative base; an instant frame's black or white.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FrameTone {
+    #[default]
+    Dark,
+    Light,
+}
+
+/// What a film effects layer draws.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilmKind {
+    /// Light fogging the film from an edge or a corner.
+    #[default]
+    Leak,
+    /// A band of leaked light across the frame.
+    Streak,
+    /// A blown-out film edge with a ragged boundary.
+    Burn,
+    /// Scanner dust: specks, flecks and hairs.
+    Dust,
+    /// Long scratches along the film.
+    Scratches,
+}
+
+impl FilmKind {
+    pub const ALL: [FilmKind; 5] = [FilmKind::Leak, FilmKind::Streak, FilmKind::Burn, FilmKind::Dust, FilmKind::Scratches];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FilmKind::Leak => "Light Leak",
+            FilmKind::Streak => "Light Streak",
+            FilmKind::Burn => "Edge Burn",
+            FilmKind::Dust => "Dust",
+            FilmKind::Scratches => "Scratches",
+        }
+    }
+
+    /// The fields of [`FilmLayer`] this kind uses, in panel order (the others keep their values and draw nothing).
+    pub fn fields(self) -> &'static [&'static str] {
+        match self {
+            FilmKind::Leak => &["amount", "size", "angle", "color", "texture"],
+            FilmKind::Streak => &["amount", "size", "angle", "offset", "color", "texture"],
+            FilmKind::Burn => &["amount", "size", "angle", "color", "texture"],
+            FilmKind::Dust => &["amount", "size", "fibres", "tone", "texture"],
+            FilmKind::Scratches => &["amount", "size", "angle", "tone", "texture"],
+        }
+    }
+}
+
+/// One mark of the film effects stack. The numbers are generic; each kind reads its own ([`FilmKind::fields`]). Angles
+/// are degrees counter-clockwise: 0 is the right edge (a horizontal line), 90 the top, −90 the bottom.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FilmLayer {
+    /// Stable within the photo ([`Film::next_id`]).
+    pub id: u32,
+    pub kind: FilmKind,
+    pub visible: bool,
+    /// The layer's own random pattern; mixed with the photo's id while [`Film::vary`] is on.
+    pub seed: u32,
+    /// Strength (leaks, streaks, burns) or how many (dust, scratches), 0..100.
+    pub amount: f64,
+    /// Reach, width, depth or size, 0..100.
+    pub size: f64,
+    /// Where the light comes from (leak, burn) or the line's direction (streak, scratches), −180..180.
+    pub angle: f64,
+    /// A streak's place across the frame, −100..100.
+    pub offset: f64,
+    /// The leaked light's colour, −100 (magenta red) .. 100 (yellow).
+    pub color: f64,
+    /// Unevenness (leak, streak), raggedness (burn), softness (dust) or breaks (scratches), 0..100.
+    pub texture: f64,
+    /// Dust and scratches: −100 dark (a print or slide) .. 100 light (a negative scan).
+    pub tone: f64,
+    /// Dust: how many hairs among the specks, 0..100.
+    pub fibres: f64,
+}
+
+impl Default for FilmLayer {
+    fn default() -> Self {
+        FilmLayer::new(0, FilmKind::Leak, 0)
+    }
+}
+
+impl FilmLayer {
+    /// A new layer of `kind` with that kind's starting values.
+    pub fn new(id: u32, kind: FilmKind, seed: u32) -> FilmLayer {
+        let base = FilmLayer {
+            id,
+            kind,
+            visible: true,
+            seed,
+            amount: 50.0,
+            size: 50.0,
+            angle: 0.0,
+            offset: 0.0,
+            color: 0.0,
+            texture: 50.0,
+            tone: 0.0,
+            fibres: 0.0,
+        };
+        match kind {
+            FilmKind::Leak => FilmLayer { amount: 60.0, size: 45.0, angle: 90.0, ..base },
+            FilmKind::Streak => FilmLayer { size: 25.0, ..base },
+            FilmKind::Burn => FilmLayer { amount: 80.0, size: 12.0, angle: -90.0, color: 20.0, texture: 60.0, ..base },
+            FilmKind::Dust => FilmLayer { amount: 40.0, size: 40.0, tone: 100.0, texture: 30.0, fibres: 25.0, ..base },
+            FilmKind::Scratches => FilmLayer { amount: 30.0, size: 20.0, tone: 100.0, ..base },
+        }
+    }
+}
+
+/// Film effects (`docs/film-effects.md`, `lightcraft_pipeline::film`): a frame the photo sits in and a stack of procedural
+/// marks drawn over the finished picture, bottom to top.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Film {
+    pub frame: FilmFrame,
+    pub frame_tone: FrameTone,
+    /// Filed edge and instant frame: how wide the border is, 0..100.
+    pub border: f64,
+    /// 35mm strip: the frame number and arrow along its edge.
+    pub markings: bool,
+    /// Each photo draws its own marks (the seeds are mixed with the photo's id); off, they are the same on every photo.
+    pub vary: bool,
+    /// At most [`MAX_FILM_LAYERS`], bottom to top.
+    pub layers: Vec<FilmLayer>,
+}
+
+impl Default for Film {
+    fn default() -> Self {
+        Film { frame: FilmFrame::None, frame_tone: FrameTone::Dark, border: 30.0, markings: true, vary: true, layers: Vec::new() }
+    }
+}
+
+impl Film {
+    /// Whether these are a fresh photo's film settings (no frame, no layers, nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == Film::default()
+    }
+
+    /// The id a new layer takes.
+    pub fn next_id(&self) -> u32 {
+        self.layers.iter().map(|l| l.id).max().map_or(1, |m| m.saturating_add(1))
     }
 }
 

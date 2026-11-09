@@ -2815,5 +2815,13 @@
   "Motion": "მოძრაობა",
   "Streak": "ზოლი",
   "Spread": "გავრცელება",
-  "Warmth": "სითბო"
+  "Warmth": "სითბო",
+  "Add Film Effect": "ფირის ეფექტის დამატება",
+  "Delete Film Effect": "ფირის ეფექტის წაშლა",
+  "Show/Hide Film Effect": "ფირის ეფექტის ჩვენება/დამალვა",
+  "Duplicate Film Effect": "ფირის ეფექტის დუბლირება",
+  "Reorder Film Effects": "ფირის ეფექტების გადალაგება",
+  "Shuffle Film Effect": "ფირის ეფექტის არევა",
+  "List Film Effects": "ფირის ეფექტების სია",
+  "Border": "კიდე"
 }

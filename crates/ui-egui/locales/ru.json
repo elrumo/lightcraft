@@ -2561,5 +2561,13 @@
   "Spread": "Охват",
   "Warmth": "Теплота",
   "Relight": "Переосвещение",
-  "Depth Map": "Карта глубины"
+  "Depth Map": "Карта глубины",
+  "Add Film Effect": "Добавить эффект плёнки",
+  "Delete Film Effect": "Удалить эффект плёнки",
+  "Show/Hide Film Effect": "Показать/скрыть эффект плёнки",
+  "Duplicate Film Effect": "Дублировать эффект плёнки",
+  "Reorder Film Effects": "Изменить порядок эффектов плёнки",
+  "Shuffle Film Effect": "Перемешать эффект плёнки",
+  "List Film Effects": "Список эффектов плёнки",
+  "Border": "Рамка"
 }

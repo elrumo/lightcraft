@@ -2509,5 +2509,13 @@
   "Motion": "動感",
   "Streak": "光束",
   "Spread": "擴散",
-  "Warmth": "暖度"
+  "Warmth": "暖度",
+  "Add Film Effect": "加入底片效果",
+  "Delete Film Effect": "刪除底片效果",
+  "Show/Hide Film Effect": "顯示/隱藏底片效果",
+  "Duplicate Film Effect": "複製底片效果",
+  "Reorder Film Effects": "重新排列底片效果",
+  "Shuffle Film Effect": "隨機底片效果",
+  "List Film Effects": "列出底片效果",
+  "Border": "邊框"
 }

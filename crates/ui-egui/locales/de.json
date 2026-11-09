@@ -3652,5 +3652,13 @@
   "Spread": "Ausbreitung",
   "Warmth": "Wärme",
   "Relight": "Neu beleuchten",
-  "Depth Map": "Tiefenkarte"
+  "Depth Map": "Tiefenkarte",
+  "Add Film Effect": "Filmeffekt hinzufügen",
+  "Delete Film Effect": "Filmeffekt löschen",
+  "Show/Hide Film Effect": "Filmeffekt ein-/ausblenden",
+  "Duplicate Film Effect": "Filmeffekt duplizieren",
+  "Reorder Film Effects": "Filmeffekte neu anordnen",
+  "Shuffle Film Effect": "Filmeffekt neu würfeln",
+  "List Film Effects": "Filmeffekte auflisten",
+  "Border": "Rand"
 }

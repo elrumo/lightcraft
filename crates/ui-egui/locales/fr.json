@@ -2602,5 +2602,13 @@
   "Spread": "Étendue",
   "Warmth": "Chaleur",
   "Relight": "Rééclairer",
-  "Depth Map": "Carte de profondeur"
+  "Depth Map": "Carte de profondeur",
+  "Add Film Effect": "Ajouter un effet film",
+  "Delete Film Effect": "Supprimer l'effet film",
+  "Show/Hide Film Effect": "Afficher/masquer l'effet film",
+  "Duplicate Film Effect": "Dupliquer l'effet film",
+  "Reorder Film Effects": "Réordonner les effets film",
+  "Shuffle Film Effect": "Mélanger l'effet film",
+  "List Film Effects": "Lister les effets film",
+  "Border": "Bordure"
 }

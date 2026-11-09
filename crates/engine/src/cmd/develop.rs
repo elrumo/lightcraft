@@ -413,7 +413,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     d.wb.mode = WbMode::Custom;
                     settle_wb(d, &info);
                 } else {
-                    controls::set(d, &c, spec.default);
+                    controls::set(d, &c, controls::default_in(d, &c).unwrap_or(spec.default));
                 }
                 refit_crop_angle(c == CROP_ANGLE, before, d, dims);
                 Ok(())

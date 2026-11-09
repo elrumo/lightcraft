@@ -1,6 +1,6 @@
 # Lightroom parity checklist
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-09 · **Change:** minor (LR-EDIT-EFFECTS-GLOW: Glow in the Effects panel, five styles, Range, Spread, Warmth and Angle; no local Glow in masks yet)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-09 · **Change:** minor (LR-EDIT-EFFECTS-FILM: film effects of our own, a frame and a stack of film marks)
 
 The measured, row-by-row checklist: one row per Lightroom feature, menu item and shortcut, what we
 have and what is missing. It answers *does the feature exist?* (feature breadth). Whether it is good
@@ -31,7 +31,7 @@ cited here still exists. Formerly docs/parity.md.
 | C. Views & navigation (VIEW) | 16 | 2 | 0 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 2 | 0 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
-| F. Edit panel — global adjustments (EDIT) | 42 | 7 | 1 | 1 | 27/28 (96%) | 12/15 (80%) |
+| F. Edit panel — global adjustments (EDIT) | 42 | 8 | 1 | 1 | 27/28 (96%) | 12/15 (80%) |
 | G. Profiles (PROF) | 7 | 2 | 2 | 0 | 3/4 (75%) | 3/3 (100%) |
 | H. Crop & rotate (CROP) | 10 | 3 | 0 | 0 | 8/8 (100%) | 2/4 (50%) |
 | I. Remove / healing (REM) | 8 | 2 | 2 | 1 | 4/4 (100%) | 2/3 (67%) |
@@ -53,9 +53,9 @@ cited here still exists. Formerly docs/parity.md.
 | Y. Menus | 90 | 2 | 3 | 5 | 47/47 (100%) | 25/25 (100%) |
 | Z. Keyboard shortcuts (desktop) | 78 | 4 | 2 | 1 | 49/52 (94%) | 24/26 (92%) |
 | Lightroom Classic extras | 40 | 28 | 19 | 8 | — | 22/26 (85%) |
-| **Total** | 428 | 102 | 41 | 27 | 195/203 (96%) | 145/168 (86%) |
+| **Total** | 428 | 103 | 41 | 27 | 195/203 (96%) | 145/168 (86%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **83.9%** of 571 in-scope rows — P0 98.0% of 203 · P1 92.6% of 168 · P2 62.6% of 190.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **83.8%** of 572 in-scope rows — P0 98.0% of 203 · P1 92.6% of 168 · P2 62.6% of 191.
 <!-- /parity:summary -->
 
 ## Top gaps and shortcut notes
@@ -208,6 +208,7 @@ differences and missing bindings are in [ui-parity.md](ui-parity.md#shortcuts).
 | LR-EDIT-EFFECTS-VIGNETTE | Post-crop vignette | P0 | ✅ | `ctl:vignette.*`, `crates/pipeline/src/finish.rs`, `crates/ui-egui/src/panels/edit.rs` | style picker (Highlight / Color / Paint) in the Effects section |
 | LR-EDIT-EFFECTS-GRAIN | Grain | P1 | ✅ | `ctl:grain.*`, `crates/pipeline/src/finish.rs` | Fitted to a Lightroom export of one Sony raw at Grain 100 / Size 25 / Roughness 50 (clean-room: rendered pixels only): per-channel strength 0.084 at mid grey to 0.066 at the ends, white noise on a 1.5 px lattice (of 6000 px) with a cubic reconstruction, so neighbour correlation 0.52, spectrum flat to 0.3 cycles/px; strength falls on downsized renders. Size and Roughness other than 25 / 50 are extrapolated, not measured (export Size 0 / 100 and Roughness 0 / 100 from Lightroom to fit them); amount assumed linear |
 | LR-EDIT-EFFECTS-GLOW | Glow (Bloom, Diffusion, Halation, Motion, Streak) | P1 | 🟡 | `ctl:glow.amount`, `ctl:glow.range`, `ctl:glow.spread`, `ctl:glow.warmth`, `ctl:glow.angle`, `crates/pipeline/src/glow.rs`, `crates/ui-egui/src/panels/edit.rs`, `docs/glow.md` | Effects panel under Grain: Glow, a Style picker with the five styles, Range, Spread, Warmth, and for Motion and Streak an Angle of our own; added in scene-linear light after noise reduction and Lens Blur, before the local tone and the tone map (bright pass on a knee of the exposed luminance, Gaussian or along-a-line box blurs sized by the long edge, Warmth tint; Diffusion also takes light from where it was), so HDR renders keep it above white; the Effects eye, Copy Settings' Effects group and `lc:settings` carry it. Open: no Glow slider in masks yet (Lightroom has one), strengths and sizes chosen by eye and not fitted to Lightroom, not in `crs:` XMP |
+| LR-EDIT-EFFECTS-FILM | Film effects (this fork): a frame and a stack of film marks | P2 | 🟡 | `ctl:film.border`, `cmd:film.add`, `cmd:film.delete`, `cmd:film.visible`, `cmd:film.duplicate`, `cmd:film.move`, `cmd:film.shuffle`, `cmd:film.list`, `crates/pipeline/src/film.rs`, `docs/film-effects.md` | Procedural film effects drawn over the finished picture: a frame the photo shrinks into (35mm strip with sprocket holes and edge markings on a slide or negative base, filed edge, instant) and up to eight marks bottom to top (light leak, light streak, edge burn, dust with hairs, scratches), each with its own sliders (`filmLayer.<i>.*`) and seed, varying per photo unless Same on Every Photo; the Film eye, Reset and Copy Settings' Film Effects group carry it. Open: no egui panel (the native frontend has the UI), a zoomed engine render with a frame renders the whole output, static on video |
 | LR-EDIT-DETAIL-SHARPEN | Sharpening | P0 | ✅ | `ctl:detail.sharpenAmount`, `ctl:detail.sharpenRadius`, `ctl:detail.sharpenDetail`, `ctl:detail.sharpenMasking`, `crates/pipeline/src/tests_sharpen.rs`, `crates/pipeline/src/visualize.rs` | capture sharpening: Radius in the original's pixels, Detail holds back halos on strong edges, a preview shows what the full-size render scaled down shows. (Older LightCraft versions boosted a band at 0.18 % of the long edge, which drew halos at every size.) Tuned against Lightroom's defaults by its behaviour, not measured side by side; Alt/Option-drag previews: Amount greyscale, Radius / Detail the detail band sharpening amplifies, Masking the mask (white = sharpened) |
 | LR-EDIT-DETAIL-NR | Luminance noise reduction | P0 | ✅ | `ctl:detail.nrLuminance`, `ctl:detail.nrDetail`, `ctl:detail.nrContrast` | radii in the original's pixels, so grid, loupe and smaller exports look like the full-size render scaled down (`local::nr_params`, `Plan::detail_scale`, #960); Contrast lowers the filter's edge threshold, so fainter edges and blotchier noise stay (it rendered nothing before the slider sweep found it); Alt/Option-drag on Luminance, Detail and Contrast shows the photo in greyscale |
 | LR-EDIT-DETAIL-CNR | Colour noise reduction | P0 | ✅ | `ctl:detail.nrColor`, `ctl:detail.nrColorDetail`, `ctl:detail.nrColorSmoothness` | preview-size independent like luminance NR (#960) |
@@ -1081,4 +1082,5 @@ Latin stays upright. Advanced Japanese composition remains open. Regression cove
 | 2026-10-27 | minor | LR-PRE-MANAGE: a sync server's admin drags shared presets onto another group (or a new one) and switches a shared preset or a whole group off without deleting it; a `disabled: true` preset stays on `/admin` → Presets and is left out of `GET /api/docs/server-presets`, so no device needs updating (the engine skips it too); the LightBites app's Server Administration ▸ Presets has the same switches; status unchanged (✅) |
 | 2026-10-27 | minor | LR-IMP-FORMATS: a Panasonic RW2 shot at an in-camera aspect ratio (a GH7 at 16:9) imports whole, the camera's frame being its import crop (not an edit, Reset keeps it, the Crop tool's uncropped view shows the rest of the sensor), as an Olympus / OM raw does; photos imported before stay in the camera's frame (`docs/gaps.md` gap 42); status unchanged |
 | 2026-11-09 | minor | LRC-PRINT-JOB: the contact sheet (`export.contactSheet`) in seven styles (`style`, film strips across or down: `vertical`), at paper or social media sizes (`paper`: square, portrait 4:5, story 9:16, wide 16:9), with a logo in each page's corner (`logo`, `logoText`), as a PDF or one JPEG a page (`format`), and its first page alone at 100 dpi for a live preview (`preview`); a native frontend's engine host makes it on a worker with its activity row |
+| 2026-11-09 | minor | LR-EDIT-EFFECTS-FILM: new row 🟡. Film effects (`film`, `docs/film-effects.md`): frames (35mm strip, filed edge, instant) and a stack of procedural marks (leak, streak, burn, dust, scratches) with per-photo seeds |
 | 2026-11-09 | minor | LR-EDIT-EFFECTS-GLOW: new row 🟡. Glow (`glow.*`, `docs/glow.md`): the five styles, Range, Spread, Warmth and an Angle for Motion and Streak, in scene-linear light before the tone map; mask-local Glow and a fit to Lightroom remain |

@@ -2444,5 +2444,13 @@
   "Spread": "Estensione",
   "Warmth": "Calore",
   "Relight": "Riilluminare",
-  "Depth Map": "Mappa di profondità"
+  "Depth Map": "Mappa di profondità",
+  "Add Film Effect": "Aggiungi effetto pellicola",
+  "Delete Film Effect": "Elimina effetto pellicola",
+  "Show/Hide Film Effect": "Mostra/nascondi effetto pellicola",
+  "Duplicate Film Effect": "Duplica effetto pellicola",
+  "Reorder Film Effects": "Riordina effetti pellicola",
+  "Shuffle Film Effect": "Rimescola effetto pellicola",
+  "List Film Effects": "Elenca effetti pellicola",
+  "Border": "Bordo"
 }

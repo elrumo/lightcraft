@@ -1582,7 +1582,7 @@ fn unsupported_raw_imports_as_preview_only_and_survives_reopen() {
     assert_eq!(p.kind, MediaKind::Raw, "still a raw file (filters, Convert to DNG…)");
     assert!(!p.develops_raw());
     // rendered like the JPEG it is: relative white balance, display tone curve, no raw defaults
-    assert_eq!(SourceInfo { native_long: None, ..crate::media::source_info(&p) }, SourceInfo::default());
+    assert_eq!(SourceInfo { native_long: None, film_salt: 0, ..crate::media::source_info(&p) }, SourceInfo::default());
     assert_eq!(*p.develop, lightcraft_develop::DevelopSettings::default());
     assert!(s.render_job(id, 48, 48, false, true).unwrap().run().rendered.is_ok());
     // agents see it

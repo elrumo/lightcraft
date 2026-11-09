@@ -601,6 +601,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     .chain(controls::indexed_instances(&d).into_iter().filter(|(_, c)| sec.is_none_or(|x| x == c.section)).map(|(id, c)| {
                         let mut v = serde_json::to_value(c).unwrap_or_default();
                         v["value"] = json!(controls::get(&d, &id));
+                        // (what a reset puts back: a film effect's slider starts where its kind does)
+                        v["default"] = json!(controls::default_in(&d, &id).unwrap_or(c.default));
                         v["id"] = json!(id);
                         v
                     }))

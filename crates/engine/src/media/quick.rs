@@ -124,14 +124,16 @@ pub fn clip_cover(p: &Photo) -> Option<f64> {
 }
 
 pub fn source_info(p: &Photo) -> SourceInfo {
+    // (film marks that vary per photo are seeded by its id, the one sync uses, so every device draws the same ones)
+    let film_salt = lightcraft_pipeline::film::salt_of(&p.id.0.to_string());
     // Procedural demo scenes are scene-referred HDR (like raw files): use the filmic tone map.
     // (They are drawn afresh at every size, so they have no original size.)
     if matches!(p.source, Source::Demo { .. }) {
-        return SourceInfo { raw: true, ..Default::default() };
+        return SourceInfo { raw: true, film_salt, ..Default::default() };
     }
     // the thumbnail and preview levels are smaller copies: noise reduction works in the original's pixels (#960)
     let native_long = Some(p.width.max(p.height) as usize).filter(|&n| n > 0);
-    SourceInfo { native_long, ..header_info(p) }
+    SourceInfo { native_long, film_salt, ..header_info(p) }
 }
 
 fn header_info(p: &Photo) -> SourceInfo {

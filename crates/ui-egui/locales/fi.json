@@ -2349,5 +2349,13 @@
   "Motion": "Liike",
   "Streak": "Juova",
   "Spread": "Leviäminen",
-  "Warmth": "Lämpö"
+  "Warmth": "Lämpö",
+  "Add Film Effect": "Lisää filmiefekti",
+  "Delete Film Effect": "Poista filmiefekti",
+  "Show/Hide Film Effect": "Näytä/piilota filmiefekti",
+  "Duplicate Film Effect": "Monista filmiefekti",
+  "Reorder Film Effects": "Järjestä filmiefektit",
+  "Shuffle Film Effect": "Sekoita filmiefekti",
+  "List Film Effects": "Luettele filmiefektit",
+  "Border": "Reunus"
 }

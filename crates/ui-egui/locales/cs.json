@@ -2489,5 +2489,13 @@
   "Motion": "Pohyb",
   "Streak": "Paprsky",
   "Spread": "Rozptyl",
-  "Warmth": "Teplost"
+  "Warmth": "Teplost",
+  "Add Film Effect": "Přidat filmový efekt",
+  "Delete Film Effect": "Smazat filmový efekt",
+  "Show/Hide Film Effect": "Zobrazit/skrýt filmový efekt",
+  "Duplicate Film Effect": "Duplikovat filmový efekt",
+  "Reorder Film Effects": "Změnit pořadí filmových efektů",
+  "Shuffle Film Effect": "Zamíchat filmový efekt",
+  "List Film Effects": "Seznam filmových efektů",
+  "Border": "Okraj"
 }

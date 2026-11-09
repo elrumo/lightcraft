@@ -22,6 +22,8 @@ pub enum Section {
     Vignette,
     Grain,
     Glow,
+    Film,
+    FilmLayer,
     Detail,
     Optics,
     Geometry,
@@ -47,6 +49,8 @@ impl Section {
             Section::Vignette => "Vignette",
             Section::Grain => "Grain",
             Section::Glow => "Glow",
+            Section::Film => "Film",
+            Section::FilmLayer => "Film Effect",
             Section::Detail => "Detail",
             Section::Optics => "Optics",
             Section::Geometry => "Geometry",
@@ -425,6 +429,7 @@ controls! {
     "glow.spread" => glow.spread, "Spread", Glow, 0, 100, 50, 1, 0, Plain;
     "glow.warmth" => glow.warmth, "Warmth", Glow, -100, 100, 0, 1, 0, Temp;
     "glow.angle" => glow.angle, "Angle", Glow, -90, 90, 0, 1, 0, Centered;
+    "film.border" => film.border, "Border", Film, 0, 100, 30, 1, 0, Plain;
     "enhance.denoise" => enhance.denoise, "Amount", Detail, 0, 100, 0, 1, 0, Plain;
     "detail.sharpenAmount" => detail.sharpen_amount, "Sharpening", Detail, 0, 150, 0, 1, 0, Plain;
     "detail.sharpenRadius" => detail.sharpen_radius, "Radius", Detail, 0.5, 3, 1, 0.1, 1, Plain;
@@ -597,6 +602,94 @@ pub static INDEXED: &[ControlSpec] = &[
         decimals: 0,
         track: Gradient { from: "#d0d0d0", to: "#101010" },
     },
+    ControlSpec {
+        id: "filmLayer.amount",
+        label: "Amount",
+        section: Section::FilmLayer,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
+    ControlSpec {
+        id: "filmLayer.size",
+        label: "Size",
+        section: Section::FilmLayer,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
+    ControlSpec {
+        id: "filmLayer.angle",
+        label: "Angle",
+        section: Section::FilmLayer,
+        min: -180.0,
+        max: 180.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Centered,
+    },
+    ControlSpec {
+        id: "filmLayer.offset",
+        label: "Offset",
+        section: Section::FilmLayer,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Centered,
+    },
+    ControlSpec {
+        id: "filmLayer.color",
+        label: "Color",
+        section: Section::FilmLayer,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Gradient { from: "#c0304a", to: "#f0d040" },
+    },
+    ControlSpec {
+        id: "filmLayer.texture",
+        label: "Texture",
+        section: Section::FilmLayer,
+        min: 0.0,
+        max: 100.0,
+        default: 50.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
+    ControlSpec {
+        id: "filmLayer.tone",
+        label: "Tone",
+        section: Section::FilmLayer,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Gradient { from: "#101010", to: "#f0f0f0" },
+    },
+    ControlSpec {
+        id: "filmLayer.fibres",
+        label: "Hairs",
+        section: Section::FilmLayer,
+        min: 0.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
 ];
 
 /// `pointColor.3.hueShift` → (`pointColor`, 3, `hueShift`).
@@ -631,13 +724,32 @@ fn indexed_field<'a>(s: &'a mut DevelopSettings, id: &str) -> Option<&'a mut f64
                 _ => return None,
             })
         }
+        "filmLayer" => {
+            let l = s.film.layers.get_mut(i)?;
+            Some(match field {
+                "amount" => &mut l.amount,
+                "size" => &mut l.size,
+                "angle" => &mut l.angle,
+                "offset" => &mut l.offset,
+                "color" => &mut l.color,
+                "texture" => &mut l.texture,
+                "tone" => &mut l.tone,
+                "fibres" => &mut l.fibres,
+                _ => return None,
+            })
+        }
         _ => None,
     }
 }
 
 fn indexed_get(s: &DevelopSettings, id: &str) -> Option<f64> {
     // (a clone keeps one accessor for get and set; these lists are tiny)
-    let mut c = DevelopSettings { point_colors: s.point_colors.clone(), red_eye: s.red_eye.clone(), ..DevelopSettings::default() };
+    let mut c = DevelopSettings {
+        point_colors: s.point_colors.clone(),
+        red_eye: s.red_eye.clone(),
+        film: crate::settings::Film { layers: s.film.layers.clone(), ..Default::default() },
+        ..DevelopSettings::default()
+    };
     indexed_field(&mut c, id).map(|v| *v)
 }
 
@@ -649,6 +761,19 @@ fn indexed_set(s: &mut DevelopSettings, id: &str, v: f64) -> bool {
         }
         None => false,
     }
+}
+
+/// What control `id` goes back to in `s` when it is reset: its spec's default, but for a film effect's slider, the value its
+/// kind starts with (a dust layer's Tone starts light, an edge burn's Angle at the bottom: `FilmLayer::new`).
+pub fn default_in(s: &DevelopSettings, id: &str) -> Option<f64> {
+    let spec = find(id)?;
+    if let Some(("filmLayer", i, field)) = split_indexed(id) {
+        let layer = s.film.layers.get(i)?;
+        let start = crate::settings::FilmLayer::new(layer.id, layer.kind, layer.seed);
+        let mut c = DevelopSettings { film: crate::settings::Film { layers: vec![start], ..Default::default() }, ..DevelopSettings::default() };
+        return indexed_field(&mut c, &format!("filmLayer.0.{field}")).map(|v| *v);
+    }
+    Some(spec.default)
 }
 
 /// The spec of a control id, including indexed ids (`pointColor.0.hueShift` → the
@@ -669,6 +794,7 @@ pub fn indexed_instances(s: &DevelopSettings) -> Vec<(String, &'static ControlSp
         let n = match fam {
             "pointColor" => s.point_colors.len(),
             "redEye" => s.red_eye.len(),
+            "filmLayer" => s.film.layers.len(),
             _ => 0,
         };
         for i in 0..n {
@@ -717,6 +843,7 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
         _ if id.starts_with("grading.") && id.ends_with(".hue") => put(s, &id.replace(".hue", ".sat"), 60.0),
         "vignette.midpoint" | "vignette.roundness" | "vignette.feather" | "vignette.highlights" => put(s, "vignette.amount", -60.0),
         "grain.size" | "grain.roughness" => put(s, "grain.amount", 60.0),
+        "film.border" => s.film.frame = crate::settings::FilmFrame::Filed,
         "glow.range" | "glow.spread" | "glow.warmth" => put(s, "glow.amount", 60.0),
         // (the angle turns only the styles that spread along a line)
         "glow.angle" => {

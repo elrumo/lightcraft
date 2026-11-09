@@ -300,8 +300,9 @@ fn load_bytes_now(
                 mattes,
                 local_tone,
                 hdr_gain: None,
-                // (the catalog knows the original's size: `media::source_info`)
+                // (the catalog knows the original's size and the photo's id: `media::source_info`)
                 native_long: None,
+                film_salt: 0,
             },
             used_reduced,
         ));

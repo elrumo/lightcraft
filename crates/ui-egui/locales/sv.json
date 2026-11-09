@@ -2451,5 +2451,13 @@
   "Motion": "Rörelse",
   "Streak": "Strimma",
   "Spread": "Spridning",
-  "Warmth": "Värme"
+  "Warmth": "Värme",
+  "Add Film Effect": "Lägg till filmeffekt",
+  "Delete Film Effect": "Ta bort filmeffekt",
+  "Show/Hide Film Effect": "Visa/dölj filmeffekt",
+  "Duplicate Film Effect": "Duplicera filmeffekt",
+  "Reorder Film Effects": "Ordna om filmeffekter",
+  "Shuffle Film Effect": "Slumpa filmeffekt",
+  "List Film Effects": "Lista filmeffekter",
+  "Border": "Kant"
 }

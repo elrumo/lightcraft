@@ -2361,5 +2361,13 @@
   "Motion": "Gerak",
   "Streak": "Garis",
   "Spread": "Sebaran",
-  "Warmth": "Kehangatan"
+  "Warmth": "Kehangatan",
+  "Add Film Effect": "Tambah Efek Film",
+  "Delete Film Effect": "Hapus Efek Film",
+  "Show/Hide Film Effect": "Tampilkan/Sembunyikan Efek Film",
+  "Duplicate Film Effect": "Duplikat Efek Film",
+  "Reorder Film Effects": "Urutkan Ulang Efek Film",
+  "Shuffle Film Effect": "Acak Efek Film",
+  "List Film Effects": "Daftar Efek Film",
+  "Border": "Tepi"
 }

@@ -2693,5 +2693,13 @@
   "Motion": "Moviment",
   "Streak": "Ratlla",
   "Spread": "Extensió",
-  "Warmth": "Calidesa"
+  "Warmth": "Calidesa",
+  "Add Film Effect": "Afegeix efecte de pel·lícula",
+  "Delete Film Effect": "Elimina l'efecte de pel·lícula",
+  "Show/Hide Film Effect": "Mostra/amaga l'efecte de pel·lícula",
+  "Duplicate Film Effect": "Duplica l'efecte de pel·lícula",
+  "Reorder Film Effects": "Reordena els efectes de pel·lícula",
+  "Shuffle Film Effect": "Barreja l'efecte de pel·lícula",
+  "List Film Effects": "Llista els efectes de pel·lícula",
+  "Border": "Vora"
 }

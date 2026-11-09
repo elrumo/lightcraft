@@ -36,6 +36,27 @@ impl DevelopSettings {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
+    /// [`Self::to_json`] with the groups left out while they are the default (HDR, Glow, Film, Relight, Depth Map)
+    /// written out: what a value is interpolated from or compared with needs every leaf, not a missing key.
+    pub fn to_json_full(&self) -> Value {
+        let mut v = self.to_json();
+        if let Some(o) = v.as_object_mut() {
+            let groups = [
+                ("hdr", serde_json::to_value(self.hdr)),
+                ("glow", serde_json::to_value(self.glow)),
+                ("film", serde_json::to_value(&self.film)),
+                ("relight", serde_json::to_value(&self.relight)),
+                ("depth_map", serde_json::to_value(self.depth_map)),
+            ];
+            for (k, g) in groups {
+                if let Ok(g) = g {
+                    o.entry(k).or_insert(g);
+                }
+            }
+        }
+        v
+    }
+
     pub fn from_json(v: &Value) -> Result<DevelopSettings, serde_json::Error> {
         serde_json::from_value(v.clone())
     }
@@ -170,6 +191,8 @@ impl DevelopSettings {
             }
             Section::Color => self.wb.mode = WbMode::AsShot,
             Section::Detail => self.enhance.denoise_on = None,
+            // (the frame, the switches and the layers are not sliders: the whole group starts over)
+            Section::Film | Section::FilmLayer => self.film = settings::Film::default(),
             _ => {}
         }
     }
@@ -285,6 +308,25 @@ mod tests {
         assert!(on.to_json().get("hdr").is_some());
         assert_ne!(on.hash64(), s.hash64());
         assert_eq!(DevelopSettings::from_json(&on.to_json()).unwrap(), on);
+    }
+
+    #[test]
+    fn default_film_is_not_serialized_so_existing_hashes_stay() {
+        let s = DevelopSettings::default();
+        assert!(s.to_json().get("film").is_none(), "no film effects must not change the settings JSON or hash64");
+        let mut on = s.clone();
+        on.film.layers.push(FilmLayer::new(on.film.next_id(), FilmKind::Dust, 7));
+        assert!(on.to_json().get("film").is_some());
+        assert_ne!(on.hash64(), s.hash64());
+        assert_eq!(DevelopSettings::from_json(&on.to_json()).unwrap(), on);
+        // the layer's sliders are indexed controls
+        assert_eq!(controls::get(&on, "filmLayer.0.amount"), Some(40.0));
+        assert!(controls::set(&mut on, "filmLayer.0.amount", 250.0));
+        assert_eq!(on.film.layers[0].amount, 100.0, "clamped to the template's range");
+        assert!(controls::indexed_instances(&on).iter().any(|(id, _)| id == "filmLayer.0.fibres"));
+        assert_eq!(controls::get(&on, "filmLayer.1.amount"), None);
+        on.reset_section(Section::Film);
+        assert!(on.film.is_default());
     }
 
     #[test]

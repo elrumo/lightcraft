@@ -2257,5 +2257,13 @@
   "Motion": "Chuyển động",
   "Streak": "Vệt sáng",
   "Spread": "Độ lan",
-  "Warmth": "Độ ấm"
+  "Warmth": "Độ ấm",
+  "Add Film Effect": "Thêm hiệu ứng phim",
+  "Delete Film Effect": "Xóa hiệu ứng phim",
+  "Show/Hide Film Effect": "Hiện/ẩn hiệu ứng phim",
+  "Duplicate Film Effect": "Nhân bản hiệu ứng phim",
+  "Reorder Film Effects": "Sắp xếp lại hiệu ứng phim",
+  "Shuffle Film Effect": "Xáo trộn hiệu ứng phim",
+  "List Film Effects": "Liệt kê hiệu ứng phim",
+  "Border": "Viền"
 }

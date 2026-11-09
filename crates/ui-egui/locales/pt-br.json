@@ -2414,5 +2414,13 @@
   "Spread": "Espalhamento",
   "Warmth": "Calor",
   "Relight": "Reiluminar",
-  "Depth Map": "Mapa de profundidade"
+  "Depth Map": "Mapa de profundidade",
+  "Add Film Effect": "Adicionar efeito de filme",
+  "Delete Film Effect": "Excluir efeito de filme",
+  "Show/Hide Film Effect": "Mostrar/ocultar efeito de filme",
+  "Duplicate Film Effect": "Duplicar efeito de filme",
+  "Reorder Film Effects": "Reordenar efeitos de filme",
+  "Shuffle Film Effect": "Embaralhar efeito de filme",
+  "List Film Effects": "Listar efeitos de filme",
+  "Border": "Borda"
 }

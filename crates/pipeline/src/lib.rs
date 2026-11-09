@@ -32,6 +32,7 @@ pub mod cull;
 pub mod curve;
 pub mod dust;
 pub mod expand;
+pub mod film;
 pub mod finish;
 pub mod geometry;
 pub mod glow;
@@ -147,11 +148,15 @@ pub struct SourceInfo {
     /// Noise reduction sizes its radii in the original's pixels ([`Plan::detail_scale`]), so a
     /// preview looks like the full-size render scaled down (issue #960).
     pub native_long: Option<usize>,
+    /// The photo's id hashed ([`film::salt_of`]): film marks that vary per photo mix it into their seeds. 0 for a render
+    /// of no particular photo.
+    pub film_salt: u32,
 }
 
 impl Default for SourceInfo {
     fn default() -> Self {
         Self {
+            film_salt: 0,
             raw: false,
             as_shot_temp: 6500.0,
             as_shot_tint: 0.0,
@@ -474,8 +479,12 @@ pub struct Plan<'a> {
     pub depth_look: Option<relight::Look>,
     /// Relight, when it lights anything.
     pub relight: Option<relight::Setup>,
+    /// Film effects, when there is a frame or a visible mark: drawn over the finished picture ([`film`]).
+    pub film: Option<film::Setup>,
     /// Where the rendered pixels sit in the whole output frame (a window's top-left corner).
     pub origin: [usize; 2],
+    /// The whole output frame's size (a window's is smaller).
+    pub full: [usize; 2],
 }
 
 /// `win` grown by `m` pixels on every side, inside a `full_w × full_h` frame.
@@ -514,6 +523,8 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let glow = glow::Setup::new(s, px_per_long);
     let depth_look = relight::Look::new(s, mattes.as_deref());
     let relight = relight::Setup::new(s, mattes.as_deref(), s.orientation);
+    // (the Crop tool's uncropped view shows the photo, not the frame it sits in)
+    let film = film::Setup::new(s, info.film_salt, req.space, req.apply_crop);
     let mut fixed_air = None;
     // (the key is the whole frame's, read before a window narrows the frame)
     let shadow_key = (s.section_enabled("light") && s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.shadows != 0.0)).then(|| {
@@ -542,6 +553,12 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
             let work = match &glow {
                 Some(g) => grown(work, g.reach(full_w.max(full_h)), full_w, full_h),
                 None => work,
+            };
+            // (a film frame shrinks the whole photo into its window: the window is cut from the whole output.
+            // ponytail: maps the window back to the photo if a zoomed engine render with a frame ever needs to be fast)
+            let work = match &film {
+                Some(f) if f.has_frame() => PixelWindow { x: 0, y: 0, w: full_w, h: full_h },
+                _ => work,
             };
             if work != win {
                 keep = Some(PixelWindow { x: win.x - work.x, y: win.y - work.y, ..win });
@@ -607,7 +624,9 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         blur,
         depth_look,
         relight,
+        film,
         origin,
+        full: [full_w, full_h],
     }
 }
 
@@ -792,7 +811,10 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((base_key, base)), planes, masks: alphas });
     }
     if req.depth != OutputDepth::U8 {
-        let deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth, req.proof);
+        let mut deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth, req.proof);
+        if let Some(f) = &plan.film {
+            f.apply_deep(&mut deep, plan.origin, plan.full);
+        }
         let deep = match plan.keep {
             Some(k) => deep.cropped(k.x, k.y, k.w, k.h),
             None => deep,
@@ -806,6 +828,10 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     // Generative Expand: area past the photo with nothing generated yet is transparent
     expand::mark_missing(&mut image, frame);
     lap("finish", &mut t);
+    if let Some(f) = &plan.film {
+        f.apply_rgba8(&mut image, plan.origin, plan.full, req.space.trc());
+        lap("film", &mut t);
+    }
     let cut = |i: &Rgba8| match plan.keep {
         Some(k) => i.crop(k.x, k.y, k.w, k.h),
         None => i.clone(),

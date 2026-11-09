@@ -2554,5 +2554,13 @@
   "Spread": "扩散",
   "Warmth": "暖度",
   "Relight": "重新打光",
-  "Depth Map": "深度图"
+  "Depth Map": "深度图",
+  "Add Film Effect": "添加胶片效果",
+  "Delete Film Effect": "删除胶片效果",
+  "Show/Hide Film Effect": "显示/隐藏胶片效果",
+  "Duplicate Film Effect": "复制胶片效果",
+  "Reorder Film Effects": "重新排列胶片效果",
+  "Shuffle Film Effect": "随机胶片效果",
+  "List Film Effects": "列出胶片效果",
+  "Border": "边框"
 }

@@ -40,10 +40,11 @@ pub enum SettingsGroup {
     Calibration,
     Relight,
     DepthMap,
+    Film,
 }
 
 impl SettingsGroup {
-    pub const ALL: [SettingsGroup; 22] = [
+    pub const ALL: [SettingsGroup; 23] = [
         SettingsGroup::Profile,
         SettingsGroup::Treatment,
         SettingsGroup::WhiteBalance,
@@ -66,6 +67,7 @@ impl SettingsGroup {
         SettingsGroup::Calibration,
         SettingsGroup::Relight,
         SettingsGroup::DepthMap,
+        SettingsGroup::Film,
     ];
 
     /// Groups included by default when copying (Lightroom excludes crop, masks and spots by default).
@@ -100,6 +102,7 @@ impl SettingsGroup {
             SettingsGroup::Calibration => "Calibration",
             SettingsGroup::Relight => "Relight",
             SettingsGroup::DepthMap => "Depth Map",
+            SettingsGroup::Film => "Film Effects",
         }
     }
 
@@ -129,6 +132,7 @@ impl SettingsGroup {
             SettingsGroup::Calibration => &["calibration"],
             SettingsGroup::Relight => &["relight"],
             SettingsGroup::DepthMap => &["depth_map"],
+            SettingsGroup::Film => &["film"],
         }
     }
 }
@@ -146,6 +150,14 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
                 out.insert((*k).to_string(), v.clone());
             }
         }
+    }
+    // (no film effects is a choice too: a copy or preset that has the group clears the film of the photo it lands on, which
+    // a group left out of the JSON while it is the default would not)
+    if groups.contains(&SettingsGroup::Film)
+        && !out.contains_key("film")
+        && let Ok(v) = serde_json::to_value(crate::settings::Film::default())
+    {
+        out.insert("film".into(), v);
     }
     if let Some(Value::Array(spots)) = out.get_mut("spots") {
         // (a Tap to Remove spot is the shape of an object in this photo: nowhere else it means anything)
@@ -278,7 +290,7 @@ fn scale_patch(base: &Value, patch: &Value, t: f64) -> Value {
 /// Apply a partial settings object with an amount (1.0 = 100 %). Out-of-range values are clamped
 /// through the control specs, as every merge does ([`DevelopSettings::merged`]).
 pub fn apply_partial(s: &DevelopSettings, partial: &Value, amount: f64) -> DevelopSettings {
-    let patch = if (amount - 1.0).abs() < 1e-9 { Cow::Borrowed(partial) } else { Cow::Owned(scale_patch(&s.to_json(), partial, amount)) };
+    let patch = if (amount - 1.0).abs() < 1e-9 { Cow::Borrowed(partial) } else { Cow::Owned(scale_patch(&s.to_json_full(), partial, amount)) };
     // (a white balance without a scale keeps its old meaning: `DevelopSettings::merged`)
     s.merged(&patch).unwrap_or_else(|_| s.clone())
 }
@@ -458,6 +470,20 @@ mod tests {
             assert!((out.grain.amount - (40.0 * amount).min(100.0)).abs() < 1e-9, "{amount}: grain {}", out.grain.amount);
             assert_eq!(out.grain.seed, seed, "{amount}: seed");
         }
+    }
+
+    /// A group left out of the JSON while it is the default (Glow, Film…) used to make a preset that has it do nothing
+    /// at any amount but 100 %: the photo had no value to scale from, the group became null and the merge failed.
+    #[test]
+    fn amount_scales_groups_the_photo_leaves_out() {
+        let mut a = DevelopSettings::default();
+        a.glow.amount = 60.0;
+        a.light.exposure = 1.0;
+        let p = Preset::from_settings("p", "P", "User", &a, &SettingsGroup::default_copy());
+        let out = p.apply(&DevelopSettings::default(), 0.5);
+        assert!((out.glow.amount - 30.0).abs() < 1e-9, "glow {}", out.glow.amount);
+        assert!((out.light.exposure - 0.5).abs() < 1e-9);
+        assert!(out.film.is_default());
     }
 
     #[test]

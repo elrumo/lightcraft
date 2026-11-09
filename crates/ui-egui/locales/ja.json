@@ -2710,5 +2710,13 @@
   "Spread": "広がり",
   "Warmth": "暖かさ",
   "Relight": "再照明",
-  "Depth Map": "深度マップ"
+  "Depth Map": "深度マップ",
+  "Add Film Effect": "フィルム効果を追加",
+  "Delete Film Effect": "フィルム効果を削除",
+  "Show/Hide Film Effect": "フィルム効果の表示/非表示",
+  "Duplicate Film Effect": "フィルム効果を複製",
+  "Reorder Film Effects": "フィルム効果を並べ替え",
+  "Shuffle Film Effect": "フィルム効果をシャッフル",
+  "List Film Effects": "フィルム効果の一覧",
+  "Border": "ボーダー"
 }

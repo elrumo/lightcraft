@@ -127,8 +127,9 @@ fn indexed_controls_are_set_listed_and_reset() {
     s.execute("library.select", &json!({"ids": [a.0], "active": a.0})).unwrap();
     let eye = serde_json::to_value(lightcraft_develop::RedEye::default()).unwrap();
     s.execute("develop.merge", &json!({"settings": {"point_colors": [{"lum": 0.4, "chroma": 0.1, "hue": 120.0}], "red_eye": [eye]}})).unwrap();
+    s.execute("film.add", &json!({"kind": "dust", "seed": 3})).unwrap();
     let base = dev(&s, a);
-    assert_eq!((base.point_colors.len(), base.red_eye.len()), (1, 1), "the sample and the eye exist");
+    assert_eq!((base.point_colors.len(), base.red_eye.len(), base.film.layers.len()), (1, 1, 1), "the sample, the eye and the film layer exist");
     for spec in INDEXED {
         let (fam, field) = spec.id.split_once('.').unwrap();
         let id = format!("{fam}.0.{field}");

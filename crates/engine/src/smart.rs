@@ -478,6 +478,8 @@ pub fn stored_info(bytes: &[u8]) -> Option<SourceInfo> {
         local_tone: local_tone_in(jpg).map(Arc::new),
         hdr_gain: None,
         native_long: None,
+        // (a source's facts; the photo's id is the header's, `DecodedSource::info_or`)
+        film_salt: 0,
     })
 }
 

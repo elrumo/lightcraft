@@ -15,7 +15,8 @@
 //!   `host.lifecycle {event}` — `resignActive`, `background`, `foreground`, `memoryWarning`,
 //!   `terminate`.
 //! - `render.thumb {photo, edge, priority?}`, `render.view {photo?, width, height, draft?, before?,
-//!   applyCrop?}` (a `draft` comes smaller, as fast as this host renders: a slider drag),
+//!   applyCrop?, filmFrame?}` (a `draft` comes smaller, as fast as this host renders: a slider drag; `filmFrame: false` leaves
+//!   out the film effects' frame, for a screen that maps taps onto the photo),
 //!   `render.prefetch {photos, width, height}`, `render.cancel {slots}`, `render.retain {thumbs, max?}`
 //!   — pictures arrive as `image` events. A thumbnail asked for once stays asked for, every tick, while
 //!   `render.retain` lists its photo and it has no picture (`thumbs_wanted`).
@@ -864,6 +865,8 @@ impl Engine {
                 let (w, h) =
                     (size(p.get("width")).ok_or_else(|| bad("missing `width`"))?, size(p.get("height")).ok_or_else(|| bad("missing `height`"))?);
                 let apply_crop = p.get("applyCrop").and_then(Value::as_bool).unwrap_or(true);
+                // (a screen that maps taps onto the photo asks for it without its film frame)
+                let film_frame = p.get("filmFrame").and_then(Value::as_bool).unwrap_or(true);
                 let draft = p.get("draft").and_then(Value::as_bool).unwrap_or(false);
                 if let Some(pid) = p.get("preset").and_then(Value::as_str) {
                     // resting on a preset: the photo with it, nothing committed (`hover`, its `key` to tell it by).
@@ -902,13 +905,15 @@ impl Engine {
                         Some(v) => Some(serde_json::from_value::<lightcraft_pipeline::Proof>(v.clone()).map_err(|e| bad(&format!("`proof`: {e}")))?),
                         None => None,
                     };
-                    let job = self.sched.job_for(Slot::Main, if draft { job.draft() } else { job }.with_overlay(shown).with_proof(proof));
+                    let job = self
+                        .sched
+                        .job_for(Slot::Main, if draft { job.draft() } else { job }.with_overlay(shown).with_proof(proof).with_film_frame(film_frame));
                     key = job.key;
                     self.sched.request(Slot::Main, job, 100);
                     // zoomed in: the window on screen at the zoom scale too (a drag keeps the one there is;
                     // a proof is of the whole frame, as egui's)
                     match p.get("zoom") {
-                        Some(zoom) if !draft && proof.is_none() => self.request_region(id, (w, h), apply_crop, zoom, shown),
+                        Some(zoom) if !draft && proof.is_none() => self.request_region(id, (w, h), apply_crop, zoom, shown, film_frame),
                         Some(_) => {}
                         None => self.no_region(),
                     }
@@ -1395,7 +1400,15 @@ impl Engine {
     /// The window of the zoomed loupe that is on screen (`render.view {zoom: {drawn, visible}}`:
     /// the photo's long edge as drawn, in pixels, and the part of it on screen, as fractions),
     /// planned with [`crate::region`] and rendered at the zoom scale to be drawn over `main`.
-    fn request_region(&mut self, id: PhotoId, canvas: (usize, usize), apply_crop: bool, zoom: &Value, overlay: lightcraft_pipeline::Overlay) {
+    fn request_region(
+        &mut self,
+        id: PhotoId,
+        canvas: (usize, usize),
+        apply_crop: bool,
+        zoom: &Value,
+        overlay: lightcraft_pipeline::Overlay,
+        film_frame: bool,
+    ) {
         use crate::region;
         let drawn = zoom.get("drawn").and_then(Value::as_f64).filter(|v| v.is_finite());
         let visible: Vec<f64> = zoom
@@ -1456,7 +1469,7 @@ impl Engine {
         if job.level == lightcraft_engine::SourceLevel::Full {
             self.session.media.set_on_screen(Some(id));
         }
-        let job = job.with_overlay(overlay);
+        let job = job.with_overlay(overlay).with_film_frame(film_frame);
         // another window: what the last one's stages hold can't serve it (only a pan back), and a phone needs the room
         if self.memory_limited && self.region.as_ref().is_some_and(|r| (r.full, r.window) != ((fw, fh), window)) {
             self.sched.clear_stages(Slot::Region);

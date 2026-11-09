@@ -2564,5 +2564,13 @@
   "Motion": "Рух",
   "Streak": "Смуга",
   "Spread": "Поширення",
-  "Warmth": "Теплота"
+  "Warmth": "Теплота",
+  "Add Film Effect": "Додати ефект плівки",
+  "Delete Film Effect": "Видалити ефект плівки",
+  "Show/Hide Film Effect": "Показати/сховати ефект плівки",
+  "Duplicate Film Effect": "Дублювати ефект плівки",
+  "Reorder Film Effects": "Змінити порядок ефектів плівки",
+  "Shuffle Film Effect": "Перемішати ефект плівки",
+  "List Film Effects": "Список ефектів плівки",
+  "Border": "Рамка"
 }
