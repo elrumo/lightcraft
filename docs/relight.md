@@ -20,7 +20,7 @@ A point light added to the scene (`relight`, a settings object left out of the J
 - **Distance** (0–100): the light's height over the back of the scene, in scene depths. 0 is the back of the scene, 50
   its nearest part, then out in front of it, quadratically, to five scene depths at 100 (`light_height`).
 - **Brightness** (gain up to ×4), **Spread** (the falloff's reach, 0.15 to 3 long edges, exponential), **Softness**
-  (wraps the light past a surface's edge and widens the shadows' penumbra), **Shadows** (how dark the cast shadows
+  (wraps the light past a surface's edge and widens the shadows' penumbra), **Cast Shadows** (how dark the cast shadows
   are), **Shine** (a Blinn-Phong highlight, exponent 32), **Surface** (how strongly the depth's slope turns the
   surface: 0 flat, 50 as the depth says, 100 twice that), **Ambient** (how much of the photo's own light is kept), and
   the light's **colour** (`relight.color`, display sRGB; normalized by its largest channel, so a coloured gel takes

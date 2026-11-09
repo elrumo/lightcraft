@@ -466,7 +466,7 @@ controls! {
     "relight.distance" => relight.distance, "Distance", Relight, 0, 100, 70, 1, 0, Plain;
     "relight.spread" => relight.spread, "Spread", Relight, 0, 100, 50, 1, 0, Plain;
     "relight.softness" => relight.softness, "Softness", Relight, 0, 100, 30, 1, 0, Plain;
-    "relight.shadows" => relight.shadows, "Shadows", Relight, 0, 100, 60, 1, 0, Plain;
+    "relight.shadows" => relight.shadows, "Cast Shadows", Relight, 0, 100, 60, 1, 0, Plain;
     "relight.shine" => relight.shine, "Shine", Relight, 0, 100, 0, 1, 0, Plain;
     "relight.surface" => relight.surface, "Surface", Relight, 0, 100, 50, 1, 0, Plain;
     "relight.x" => relight.x, "Light Across", Relight, -0.5, 1.5, 0.3, 0.001, 3, Plain;
