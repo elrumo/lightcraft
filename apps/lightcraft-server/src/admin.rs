@@ -1062,9 +1062,10 @@ fn previews(st: &State) -> Value {
         let cov = st.folders.coverage(st, name);
         counted &= cov.is_some();
         let (h, p) = cov.unwrap_or((0, 0));
-        // (previews a device builds again count as waiting)
+        // (previews a device builds again count as waiting, and as done once it has put them here)
         let device = st.vision.work.rebuilds_waiting(name);
-        (left, done, have, photos) = (left + s.previews + device, done + s.previews_done, have + h, photos + p);
+        let device_done = st.vision.work.rebuilds_done(name);
+        (left, done, have, photos) = (left + s.previews + device, done + s.previews_done + device_done, have + h, photos + p);
         rebuilding |= device > 0;
         per_min += s.previews_per_min.unwrap_or(0);
         eta = eta.max(s.previews_eta_secs);
@@ -1077,7 +1078,7 @@ fn previews(st: &State) -> Value {
         building.extend(s.previews_building.iter().cloned());
         // (`device`: their devices build them, as the model parts' `work.<part>.device`)
         let by_device = st.vision.work.previews_moved(name).then(|| json!({"seenSecs": st.vision.work.helper_seen(name).map(|d| d.as_secs())}));
-        users.push(json!({"name": name, "left": s.previews + device, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len(), "device": by_device}));
+        users.push(json!({"name": name, "left": s.previews + device, "done": s.previews_done + device_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len(), "device": by_device}));
     }
     building.sort();
     json!({

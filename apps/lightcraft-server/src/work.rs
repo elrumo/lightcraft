@@ -64,6 +64,8 @@ pub struct Work {
     preview_leases: Mutex<HashMap<(String, Key), Instant>>,
     /// Photos whose previews are there and are to be built again by a device ([`Work::want_rebuild`]).
     rebuilds: Mutex<HashSet<(String, Key)>>,
+    /// Per user, how many of those a device has built since the rebuild began ([`Work::rebuilt`]).
+    rebuilds_done: Mutex<HashMap<String, usize>>,
     seen: Mutex<HashMap<String, Instant>>,
 }
 
@@ -169,9 +171,26 @@ impl Work {
         lock(&self.rebuilds).contains(&(user.to_string(), *key))
     }
 
-    /// A device put a new preview of `user`'s photo `key`: it is rebuilt.
+    /// A device put a new preview of `user`'s photo `key`: it is rebuilt (and counted, when it was waiting for that).
     pub fn rebuilt(&self, user: &str, key: &Key) {
-        lock(&self.rebuilds).remove(&(user.to_string(), *key));
+        if self.forget_rebuild(user, key) {
+            *lock(&self.rebuilds_done).entry(user.to_string()).or_default() += 1;
+        }
+    }
+
+    /// `user`'s photo `key` waits no more (a device couldn't build it: it keeps the previews it has). Whether it did.
+    pub fn forget_rebuild(&self, user: &str, key: &Key) -> bool {
+        lock(&self.rebuilds).remove(&(user.to_string(), *key))
+    }
+
+    /// How many of `user`'s photos a device has built again since the rebuild began.
+    pub fn rebuilds_done(&self, user: &str) -> usize {
+        lock(&self.rebuilds_done).get(user).copied().unwrap_or(0)
+    }
+
+    /// `user`'s rebuild is over: the next one counts from 0.
+    pub fn rebuilds_over(&self, user: &str) {
+        lock(&self.rebuilds_done).remove(user);
     }
 
     /// How many of `user`'s photos wait for a device to build their previews again.
@@ -332,7 +351,7 @@ pub(crate) fn release(st: &State, req: &mut Request, user: &str) -> Resp {
             if it["failed"].as_bool() == Some(true) {
                 st.folders.mark_failed(user, &key.to_hex(), "a device couldn't build its previews");
                 // (it keeps the previews it has)
-                st.vision.work.rebuilt(user, &key);
+                st.vision.work.forget_rebuild(user, &key);
             }
             released += 1;
             continue;
@@ -422,6 +441,20 @@ mod tests {
         std::fs::write(accounts::user_dir(&dir, "ann").join(FILE), b"{damaged").unwrap();
         assert!(w.moved_parts("ann").is_empty(), "a damaged file means nothing moved");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_devices_rebuilt_previews_are_counted_until_the_rebuild_is_over() {
+        let w = Work::default();
+        let (a, b) = (Key([1; 16]), Key([2; 16]));
+        w.want_rebuild("ann", a);
+        w.want_rebuild("ann", b);
+        w.rebuilt("ann", &a);
+        w.rebuilt("ann", &a);
+        assert!(w.forget_rebuild("ann", &b), "a device couldn't build it");
+        assert_eq!((w.rebuilds_waiting("ann"), w.rebuilds_done("ann"), w.rebuilds_done("bob")), (0, 1, 0), "built once, the failure not");
+        w.rebuilds_over("ann");
+        assert_eq!(w.rebuilds_done("ann"), 0, "the next rebuild counts from 0");
     }
 
     #[test]

@@ -1398,10 +1398,11 @@ impl<V> Scheduler<V> {
         }
         // previews built again on this device (Rebuild Previews): a thumbnail that was drawn is drawn again at the
         // size and priority it was asked at, and the new picture reaches the cell without it asking (its key
-        // changed: `MediaCache::preview_gen`). The old picture stays until then.
+        // changed: `MediaCache::preview_gen`). The old picture stays until then. (Its remembered inputs go first: they
+        // hold the old key, which `thumb_current` would find drawn, and nothing would be asked for.)
         for id in session.media.take_rebuilt() {
             self.failed.remove(&Slot::Thumb(id));
-            if let Some((_, bucket, _, _, priority)) = self.thumb_inputs.get(&id).cloned() {
+            if let Some((_, bucket, _, _, priority)) = self.thumb_inputs.remove(&id) {
                 self.request_thumb(session, id, bucket, priority);
             }
         }
@@ -1824,6 +1825,24 @@ mod thumbnail_tests {
         assert!(!r.thumb_current(&p, 384, 10));
         r.evict_thumbs(&Default::default(), 600);
         assert!(r.thumb_inputs.is_empty());
+    }
+    #[test]
+    fn a_rebuilt_preview_draws_the_thumbnail_again() {
+        let p = photo();
+        let slot = Slot::Thumb(p.id);
+        let mut session = Session::new();
+        session.catalog.apply(Op::AddPhoto { photo: Box::new((*p).clone()) }).unwrap();
+        let mut r = Sched::default();
+        r.set_offload(Box::new(Blocked));
+        assert!(r.request_thumb(&mut session, p.id, 384, 5));
+        let (old, _) = r.pending[&slot];
+        assert!(!r.request_thumb(&mut session, p.id, 384, 5), "nothing new: nothing asked");
+        // Rebuild Previews built this photo's previews again: the grid's thumbnail is drawn from them unasked
+        session.media.note_rebuilt(p.id);
+        r.preview_arrived(&mut session);
+        let (new, priority) = r.pending[&slot];
+        assert_ne!(new, old, "a render of the new previews");
+        assert_eq!(priority, 5, "at the priority it was asked at");
     }
     #[test]
     fn render_failures_identify_the_file_for_thumbnail_and_view_slots() {

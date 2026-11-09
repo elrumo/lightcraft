@@ -1306,6 +1306,7 @@ impl Scanner {
             || st.vision.work.rebuilds_waiting(user) > 0;
         if !waiting {
             let _ = std::fs::remove_file(accounts::user_dir(&st.data, user).join(REBUILD));
+            st.vision.work.rebuilds_over(user);
         }
     }
 
