@@ -1,3 +1,4 @@
+use super::border::{BORDER_PARAMS, BORDER_WIDTH_RANGE, Border};
 use super::options::{Conflict, DestinationMode, ExportFormat, HdrCurve, MetadataPolicy, Resize, ResizeMode, SharpenAmount, SharpenFor};
 use super::prepare::DngCompression;
 use super::watermark::{Anchor, Watermark};
@@ -23,6 +24,7 @@ impl Default for ExportOptions {
             metadata: MetadataPolicy::All,
             remove_location: false,
             watermark: None,
+            border: None,
             color_space: OutputSpace::Srgb,
             bit_depth: None,
             on_server: false,
@@ -68,6 +70,7 @@ pub const OPTION_PARAMS: &[&str] = &[
     "metadata",
     "removeLocation",
     "watermark",
+    "border",
     "colorSpace",
     "bitDepth",
     "hdr",
@@ -167,6 +170,9 @@ impl ExportOptions {
             o.retain(|k, _| OPTION_PARAMS.contains(&k.as_str()) || TARGET_PARAMS.contains(&k.as_str()));
             if let Some(w) = o.get_mut("watermark").and_then(serde_json::Value::as_object_mut) {
                 w.retain(|k, _| WATERMARK_PARAMS.contains(&k.as_str()));
+            }
+            if let Some(b) = o.get_mut("border").and_then(serde_json::Value::as_object_mut) {
+                b.retain(|k, _| BORDER_PARAMS.contains(&k.as_str()));
             }
         }
         p
@@ -319,6 +325,7 @@ impl ExportOptions {
                     }
                 }
                 "watermark" => Self::validate_watermark(cmd, v)?,
+                "border" => Self::validate_border(cmd, v)?,
                 "id" => {
                     int(k, v, 0, i64::MAX)?;
                 }
@@ -402,6 +409,33 @@ impl ExportOptions {
         watermark_from_json(v).map(|_| ()).map_err(|e| bad(format!("`watermark`: {e}")))
     }
 
+    /// A `border` value: an object of [`BORDER_PARAMS`].
+    pub(crate) fn validate_border(cmd: &str, v: &serde_json::Value) -> crate::Result<()> {
+        let bad = |msg: String| crate::cmd::bad(cmd, msg);
+        let Some(obj) = v.as_object() else { return Err(bad("`border` must be an object {width, color}".into())) };
+        let (lo, hi) = BORDER_WIDTH_RANGE;
+        for (k, v) in obj {
+            if v.is_null() {
+                continue;
+            }
+            match k.as_str() {
+                "width" => {
+                    if !v.as_f64().is_some_and(|f| f.is_finite() && (f64::from(lo)..=f64::from(hi)).contains(&f)) {
+                        return Err(bad(format!("`border.width` must be a number {lo}..{hi} (fraction of the short edge)")));
+                    }
+                }
+                "color" => {
+                    let ok = v.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(|c| matches!(whole(c), Some(0..=255))));
+                    if !ok {
+                        return Err(bad("`border.color` must be [r, g, b] with 0..255 each (sRGB)".into()));
+                    }
+                }
+                _ => return Err(bad(unknown_key("border key", k, BORDER_PARAMS))),
+            }
+        }
+        Ok(())
+    }
+
     /// Read options from command params (`format`, `quality`, `limitKb`, `sharpen`, `sharpenAmount`,
     /// `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`, `bitDepth`, `ppi`,
     /// `addToPhotos`, `photosAlbum`) and the
@@ -448,6 +482,11 @@ impl ExportOptions {
                 _ => None,
             }
             .filter(|w: &Watermark| !w.text.trim().is_empty() || !w.image.trim().is_empty()),
+            border: p
+                .get("border")
+                .filter(|v| v.is_object())
+                .and_then(|v| serde_json::from_value::<Border>(v.clone()).ok())
+                .filter(|b| b.width.is_finite() && b.width > 0.0),
             color_space: s("colorSpace").and_then(OutputSpace::parse).unwrap_or(d.color_space),
             bit_depth: u("bitDepth").filter(|b| matches!(b, 8 | 10 | 16 | 32)).map(|b| b as u8),
             on_server: p.get("onServer").and_then(Value::as_bool).unwrap_or(d.on_server),

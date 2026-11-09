@@ -1,3 +1,4 @@
+use super::border::{add_border, add_border_deep};
 use super::options::{ExportFormat, MetadataPolicy, SharpenAmount, SharpenFor};
 use super::watermark::{Watermark, draw_watermark, draw_watermark_deep};
 use super::*;
@@ -88,7 +89,7 @@ pub fn encode_image(img: &Rgba8, o: &ExportOptions) -> Result<Vec<u8>, String> {
 
 /// Like [`encode_image`], embedding `meta` (already filtered by the policy) as EXIF + XMP.
 pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
-    let img = finish_8bit(img, o);
+    let img = finish_8bit(img, o)?;
     let space = o.effective_space();
     let profile = icc::write_named(named_space(space));
     let exif = meta.map(lightcraft_meta::write_exif);
@@ -143,8 +144,8 @@ fn encode_jpeg_with_limit(o: &ExportOptions, jpeg: impl Fn(u8) -> lightcraft_cod
     best.ok_or_else(|| format!("cannot fit within {kb} KB"))
 }
 
-/// Output sharpening and the watermark on an 8-bit render in `o.effective_space()`.
-fn finish_8bit(img: &Rgba8, o: &ExportOptions) -> Rgba8 {
+/// Output sharpening, the watermark and the border on an 8-bit render in `o.effective_space()`.
+fn finish_8bit(img: &Rgba8, o: &ExportOptions) -> Result<Rgba8, String> {
     let mut img = img.clone();
     output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
     let space = o.effective_space();
@@ -152,17 +153,23 @@ fn finish_8bit(img: &Rgba8, o: &ExportOptions) -> Rgba8 {
         let wm = Watermark { color: srgb8_in(space, wm.color), target: Some(space), ..wm.clone() };
         draw_watermark(&mut img, &wm);
     }
-    img
+    match &o.border {
+        Some(b) => add_border(img, b, space),
+        None => Ok(img),
+    }
 }
 
-/// Output sharpening and the watermark on a high-bit-depth render.
-fn finish_deep(mut img: DeepImage, o: &ExportOptions) -> DeepImage {
+/// Output sharpening, the watermark and the border on a high-bit-depth render.
+fn finish_deep(mut img: DeepImage, o: &ExportOptions) -> Result<DeepImage, String> {
     output_sharpen_deep(&mut img, o.sharpen, o.sharpen_amount);
     if let Some(wm) = &o.watermark {
         let wm = Watermark { color: srgb8_in(img.space, wm.color), target: Some(img.space), ..wm.clone() };
         draw_watermark_deep(&mut img, &wm);
     }
-    img
+    match &o.border {
+        Some(b) => add_border_deep(img, b),
+        None => Ok(img),
+    }
 }
 
 /// Encode an ISO 21496-1 gain map JPEG from the SDR rendition `sdr` (8-bit, in the output space)
@@ -170,8 +177,8 @@ fn finish_deep(mut img: DeepImage, o: &ExportOptions) -> DeepImage {
 /// against the base as written, so its 8-bit rounding is handed back by the map.
 pub fn encode_gain_map_jpeg(sdr: &Rgba8, hdr: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
     use lightcraft_codecs::gainmap;
-    let base = finish_8bit(sdr, o);
-    let hdr = finish_deep(hdr.clone(), o);
+    let base = finish_8bit(sdr, o)?;
+    let hdr = finish_deep(hdr.clone(), o)?;
     let DeepSamples::F32(hv) = &hdr.samples else {
         return Err("HDR export needs a float HDR render".into());
     };
@@ -236,7 +243,7 @@ pub fn encode_deep(img: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) 
 /// twice, next to its encoding.
 pub fn encode_deep_owned(img: DeepImage, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
     let meta_src = meta;
-    let img = finish_deep(img, o);
+    let img = finish_deep(img, o)?;
     let profile = match img.samples {
         DeepSamples::F32(_) => icc::write_matrix_trc(&img.space.rgb_space(), &lightcraft_codecs::Trc::Linear),
         DeepSamples::U16(_) => icc::write_named(named_space(img.space)),

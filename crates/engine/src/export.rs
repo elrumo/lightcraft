@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::text::{TEXT_FONT as WATERMARK_FONT, cell_glyphs as watermark_cell_glyphs, faces as watermark_fonts};
 
 mod batch;
+mod border;
 mod encoding;
 mod options;
 mod params;
@@ -25,6 +26,7 @@ mod watermark;
 #[cfg(test)]
 use batch::run_batch_with;
 pub use batch::{export_parallelism, run_batch};
+pub use border::{BORDER_PARAMS, BORDER_WIDTH_RANGE, Border, add_border, add_border_deep};
 pub use encoding::{
     encode_deep, encode_deep_owned, encode_gain_map_jpeg, encode_image, encode_rendered, encode_with_metadata, export_metadata, named_space,
     output_sharpen, output_sharpen_deep, removes_location, srgb8_in,
@@ -88,6 +90,9 @@ pub struct ExportOptions {
     pub remove_location: bool,
     /// Text watermark (none when absent or the text is empty).
     pub watermark: Option<Watermark>,
+    /// A frame around the photo, drawn after the watermark (none when absent or 0 wide). The file is larger than the
+    /// export's size by the border; the export's `width` and `height` stay the photo's.
+    pub border: Option<Border>,
     /// Output colour space (AVIF is always sRGB: its muxer cannot embed a profile; lossy JPEG XL
     /// writes Adobe RGB and ProPhoto as Rec. 2020, see [`ExportOptions::effective_space`]).
     pub color_space: OutputSpace,

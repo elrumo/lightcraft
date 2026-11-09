@@ -1507,3 +1507,80 @@ fn export_plan_names_the_space_depth_and_sizes() {
     assert!(s.execute("export.plan", &json!({})).is_err(), "no ids");
     assert!(s.execute("export.plan", &json!({"ids": [999_999_999u64]})).unwrap()["sizes"].as_object().unwrap().is_empty());
 }
+
+/// A border grows the picture by the same width on every side, in its colour, with the photo untouched in the middle and
+/// the watermark on the photo, not on the border.
+#[test]
+fn border_frames_the_photo_on_every_side() {
+    let img = test_image();
+    let o = ExportOptions::from_params(&json!({"format": "png", "border": {"width": 0.125, "color": [10, 20, 30]}})).unwrap();
+    let d = lightcraft_codecs::decode(&encode_image(&img, &o).unwrap(), Default::default()).unwrap().to_srgb8();
+    // 0.125 of the 64 px short edge: 8 px a side
+    assert_eq!((d.width, d.height), (96 + 16, 64 + 16));
+    for (x, y) in [(0, 0), (7, 40), (111, 79), (50, 79), (104, 7)] {
+        assert_eq!(d.get(x, y), [10, 20, 30, 255], "border at {x},{y}");
+    }
+    for y in 0..64 {
+        for x in 0..96 {
+            assert_eq!(d.get(x + 8, y + 8), img.get(x, y), "photo at {x},{y}");
+        }
+    }
+    let marked = ExportOptions::from_params(&json!({"format": "png", "border": {"width": 0.125, "color": [10, 20, 30]},
+        "watermark": {"text": "LightCraft", "size": 0.2, "opacity": 1.0, "shadow": false, "anchor": "topLeft", "insetX": 0, "insetY": 0}}))
+    .unwrap();
+    let m = lightcraft_codecs::decode(&encode_image(&img, &marked).unwrap(), Default::default()).unwrap().to_srgb8();
+    assert_eq!((m.width, m.height), (d.width, d.height));
+    assert!((0..m.width).all(|x| m.get(x, 0) == [10, 20, 30, 255]), "the border stays clear of the watermark");
+    assert_ne!(m.data, d.data, "the watermark is drawn on the photo");
+}
+
+/// High-bit-depth renders get the border too: 16-bit in the space's curve, float linear, and an HDR gain map JPEG over
+/// the bordered SDR picture.
+#[test]
+fn border_on_deep_and_hdr_renders() {
+    let b = Border { width: 0.25, color: [255, 0, 0] };
+    let deep = |samples| DeepImage { width: 4, height: 2, space: OutputSpace::Srgb, samples };
+    let out = add_border_deep(deep(DeepSamples::U16(vec![1000; 24])), &b).unwrap();
+    assert_eq!((out.width, out.height), (6, 4));
+    let DeepSamples::U16(v) = &out.samples else { panic!("16 bit stays 16 bit") };
+    assert_eq!(v[..3], [65535, 0, 0]);
+    assert_eq!(v[(6 + 1) * 3..(6 + 1) * 3 + 3], [1000; 3]);
+    let out = add_border_deep(deep(DeepSamples::F32(vec![0.5; 24])), &b).unwrap();
+    let DeepSamples::F32(v) = &out.samples else { panic!("float stays float") };
+    assert_eq!(v[..3], [1.0, 0.0, 0.0]);
+    assert_eq!(v[(6 + 1) * 3], 0.5);
+
+    let img = Rgba8::filled(64, 48, [100, 120, 140, 255]);
+    let hdr = DeepImage { width: 64, height: 48, space: OutputSpace::Srgb, samples: DeepSamples::F32(vec![2.0; 64 * 48 * 3]) };
+    let o = ExportOptions { hdr: true, border: Some(Border { width: 0.1, color: [255; 3] }), ..Default::default() };
+    let jpeg = encode_gain_map_jpeg(&img, &hdr, &o, None).unwrap();
+    let d = lightcraft_codecs::decode(&jpeg, Default::default()).unwrap();
+    assert_eq!((d.width, d.height), (64 + 10, 48 + 10));
+    assert!(lightcraft_codecs::gainmap::read_jpeg(&jpeg).unwrap().meta.alternate_headroom > 1.0);
+}
+
+/// `border` is checked as the watermark is, kept in a preset, and a stored one with keys this version doesn't know still
+/// exports; 0 wide is none.
+#[test]
+fn border_params_are_checked_and_kept() {
+    for bad in [
+        json!({"border": "white"}),
+        json!({"border": {"width": 0.5}}),
+        json!({"border": {"width": -0.1}}),
+        json!({"border": {"color": [1, 2]}}),
+        json!({"border": {"color": [1, 2, 300]}}),
+        json!({"border": {"widht": 0.1}}),
+    ] {
+        assert!(ExportOptions::from_params(&bad).is_err(), "{bad}");
+    }
+    let o = ExportOptions::from_params(&json!({"border": {"width": 0.05, "color": [0, 0, 0]}})).unwrap();
+    assert_eq!(o.border, Some(Border { width: 0.05, color: [0; 3] }));
+    assert_eq!(ExportOptions::from_json(&o.to_json()), o);
+    assert_eq!(ExportOptions::from_params(&json!({"border": {}})).unwrap().border, Some(Border::default()));
+    assert_eq!(ExportOptions::from_json(&json!({"border": {"width": 0}})).border, None);
+    let stored = ExportOptions::known_keys_only(&json!({"border": {"width": 0.1, "style": "polaroid"}}));
+    assert_eq!(ExportOptions::from_params(&stored).unwrap().border.map(|b| b.width), Some(0.1));
+    // a photo too big to grow is an error, not a crash
+    assert!(add_border(Rgba8::new(1, 1), &Border { width: 0.25, color: [0; 3] }, OutputSpace::Srgb).is_ok());
+    assert_eq!(Border { width: f32::NAN, color: [0; 3] }.px(100, 100), 0);
+}
