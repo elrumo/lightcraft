@@ -446,6 +446,44 @@ fn exports_run_in_the_background_and_answer_when_done() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// A contact sheet is made on a worker: a newer preview takes the place of the one being drawn (answered
+// `cancelled` when it had not finished), and a JPEG sheet answers with a file per page
+#[test]
+fn contact_sheets_are_made_in_the_background() {
+    let h = demo();
+    let dir = std::env::temp_dir().join(format!("lc-host-sheet-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ids: Vec<u64> =
+        h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 6}})), Duration::from_secs(30))["result"]["photos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["id"].as_u64().unwrap())
+            .collect();
+    let file = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    let sheet = |params: Value| json!({"command": "export.contactSheet", "params": params});
+    let preview =
+        |style: &str| sheet(json!({"path": file(&format!("{style}.jpg")), "ids": ids, "preview": true, "style": style, "columns": 2, "rows": 2}));
+    h.submit(&req(2, "engine.execute", preview("classic"))).unwrap();
+    h.submit(&req(3, "engine.execute", preview("film"))).unwrap();
+    h.submit(&req(4, "host.state", json!({}))).unwrap();
+    assert!(h.reply_to(4)["result"]["visibleCount"].as_u64().is_some());
+    let first = h.reply_to(2);
+    assert!(first["result"]["path"].is_string() || first["error"]["code"] == "cancelled", "{first}");
+    let second = h.reply_to(3);
+    assert_eq!((second["result"]["pages"].as_u64(), second["result"]["photos"].as_u64()), (Some(2), Some(6)), "{second}");
+    assert!(Path::new(&file("film.jpg")).is_file());
+    let made = h.call(
+        &req(5, "engine.execute", sheet(json!({"path": file("Sheet.jpg"), "ids": ids, "columns": 2, "rows": 2, "format": "jpg"}))),
+        Duration::from_secs(60),
+    );
+    assert_eq!(made["result"]["paths"], json!([file("Sheet.jpg"), file("Sheet 2.jpg")]), "{made}");
+    assert!(Path::new(&file("Sheet 2.jpg")).is_file());
+    let refused = h.call(&req(6, "engine.execute", sheet(json!({"path": file("x.pdf"), "ids": ids, "style": "poster"}))), Duration::from_secs(30));
+    assert_eq!(refused["error"]["code"], "badParams", "{refused}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // Import as the phone does it: scan for the review (a thumbnail for a candidate), then import the
 // chosen ones in the background — one undo step, the first photo selected
 #[test]

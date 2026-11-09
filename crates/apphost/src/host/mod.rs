@@ -36,6 +36,7 @@
 
 mod admin;
 mod browsing;
+mod contact_sheet;
 mod control;
 pub mod leases;
 mod libraries;
@@ -327,6 +328,8 @@ struct Engine {
     merge: crate::merge::Runner,
     merge_preview: Option<(u64, Option<Sender<Event>>)>,
     merge_shown: u64,
+    /// The contact sheet preview being drawn: its cancel flag, set when a newer one starts.
+    sheet_preview: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Export with Previous runs so far (each writes into a staging folder of its own).
     export_runs: u64,
     /// Lightroom catalog inspection or import on its workers, and the request answered when it ends.
@@ -517,6 +520,7 @@ impl Engine {
             merge: crate::merge::Runner::default(),
             merge_preview: None,
             merge_shown: 0,
+            sheet_preview: None,
             export_runs: 0,
             region: None,
             memory_limited: available.is_some(),
@@ -626,6 +630,14 @@ impl Engine {
         {
             let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
             return lightcraft_engine::guard::catch("`app.export`", || self.start_export(id, call, &params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
+        // a contact sheet is made on a worker (its row in the activity stack; a preview gives way to a newer one)
+        if matches!(req.method.as_str(), "engine.execute" | "ui.menu.invoke" | "command")
+            && req.params.get("command").or(req.params.get("id")).and_then(Value::as_str) == Some("export.contactSheet")
+        {
+            let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
+            return lightcraft_engine::guard::catch("`export.contactSheet`", || self.start_contact_sheet(id, call, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
         // a Lightroom catalog is read and imported on workers (its row in the activity stack): answered

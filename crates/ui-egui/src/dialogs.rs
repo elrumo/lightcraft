@@ -112,6 +112,7 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
             return crate::i18n::tr_format!("{verb} {n} Photo{}", if n == 1 { "" } else { "s" }, verb = crate::i18n::tr(verb), n = n);
         }
         Dialog::LightroomResult { first: Some(_), .. } => "Show in Library",
+        Dialog::ContactSheet { options } if options.format == "jpg" => "Choose JPG…",
         Dialog::ContactSheet { .. } => "Choose PDF…",
         Dialog::SlideshowExport { .. } => "Export…",
         Dialog::Print => "Print to PDF…",
@@ -933,6 +934,23 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                     crate::widgets::name_combo(&c.response, crate::i18n::tr("Paper"));
                 });
                 ui.checkbox(&mut options.landscape, crate::i18n::tr("Landscape"));
+                field(ui, "Style", |ui| {
+                    use lightcraft_engine::contact_sheet::STYLES;
+                    let shown = STYLES.iter().find(|(id, _)| *id == options.style).map_or("", |(_, name)| *name);
+                    let c = crate::widgets::combo_box("contactSheetStyle").selected_text(shown).show_ui(ui, |ui| {
+                        for (id, name) in STYLES {
+                            ui.selectable_value(&mut options.style, (*id).into(), *name);
+                        }
+                    });
+                    crate::widgets::name_combo(&c.response, crate::i18n::tr("Style"));
+                });
+                field(ui, "Format", |ui| {
+                    let c = crate::widgets::combo_box("contactSheetFormat").selected_text(options.format.to_uppercase()).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut options.format, "pdf".into(), "PDF");
+                        ui.selectable_value(&mut options.format, "jpg".into(), "JPG");
+                    });
+                    crate::widgets::name_combo(&c.response, crate::i18n::tr("Format"));
+                });
                 field(ui, "Columns", |ui| {
                     ui.add(egui::DragValue::new(&mut options.columns).range(1..=8));
                 });

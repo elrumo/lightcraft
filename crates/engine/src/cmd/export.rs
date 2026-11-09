@@ -211,14 +211,20 @@ pub fn specs() -> Vec<CommandSpec> {
     #[allow(unused_mut)]
     let mut v = vec![
         cmd!(query "export.contactSheet", "Export Contact Sheet PDF", [], None,
-            "{path, ids?: photo ids (default selection), paper?: a4|letter, landscape?: bool, columns?: 1..8, rows?: 1..10, captions?: bool} → {path, pages, photos, bytes}; replaces an existing output, never an original",
+            "{path, ids?: photo ids (default selection), paper?: a4|letter, landscape?: bool, columns?: 1..8, rows?: 1..10, captions?: bool, style?: classic|minimal|light|dark|film|instant|gallery, format?: pdf|jpg (one JPEG per page: path, then `<name> 2.jpg`, …), preview?: bool (the first page alone at screen resolution, a JPEG)} → {path, paths, pages, photos, bytes}; replaces an existing output, never an original",
             always, |s, p| {
-                let path = p.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).ok_or_else(|| bad("export.contactSheet", "missing path"))?;
-                s.check_write_target(path).map_err(|e| bad("export.contactSheet", e))?;
-                let doc = crate::contact_sheet::prepare(s, p).and_then(|work| work.run(&mut |_, _| true)).map_err(|e| bad("export.contactSheet", e))?;
-                s.check_write_target(path).map_err(|e| bad("export.contactSheet", e))?;
-                crate::export::write_file(path, &doc.bytes).map_err(|e| bad("export.contactSheet", e))?;
-                Ok(json!({"path": path, "pages": doc.pages, "photos": doc.photos, "bytes": doc.bytes.len()}))
+                const ID: &str = "export.contactSheet";
+                let path = p.get("path").and_then(Value::as_str).filter(|s| !s.trim().is_empty()).ok_or_else(|| bad(ID, "missing path"))?;
+                let work = crate::contact_sheet::prepare(s, p).map_err(|e| bad(ID, e))?;
+                let paths = work.paths(path);
+                for path in &paths {
+                    s.check_write_target(path).map_err(|e| bad(ID, e))?;
+                }
+                let doc = work.run(&mut |_, _| true).map_err(|e| bad(ID, e))?;
+                for path in &paths {
+                    s.check_write_target(path).map_err(|e| bad(ID, e))?;
+                }
+                crate::contact_sheet::write(&doc, &paths, &mut |path, bytes| crate::export::write_file(path, bytes)).map_err(|e| bad(ID, e))
             }
         ),
         cmd!(

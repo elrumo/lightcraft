@@ -68,6 +68,10 @@ pub fn start_contact_sheet(app: &mut LightcraftApp, params: &Value) -> Result<Va
     app.session.check_write_target(&path)?;
     let guard = app.session.original_guard();
     let prepared = lightcraft_engine::contact_sheet::prepare(&mut app.session, params)?;
+    let paths = prepared.paths(&path);
+    for path in &paths {
+        app.session.check_write_target(path)?;
+    }
     let total = prepared.len();
     let write = app.services.write_shared.clone();
     let batch = Batch::spawn(&app.session, "Exporting contact sheet", total, move |p, c, _row| {
@@ -82,12 +86,15 @@ pub fn start_contact_sheet(app: &mut LightcraftApp, params: &Value) -> Result<Va
                 if c.load(Ordering::Relaxed) {
                     return Err("Contact sheet cancelled".into());
                 }
-                guard.check(std::path::Path::new(&path))?;
-                match write {
-                    Some(write) => write(&path, &doc.bytes)?,
-                    None => lightcraft_engine::export::write_file(&path, &doc.bytes)?,
+                for path in &paths {
+                    guard.check(std::path::Path::new(path))?;
                 }
-                Ok(vec![json!({"path": path, "pages": doc.pages, "photos": doc.photos, "bytes": doc.bytes.len(), "contactSheet": true})])
+                let mut r = lightcraft_engine::contact_sheet::write(&doc, &paths, &mut |path, bytes| match &write {
+                    Some(write) => write(path, bytes),
+                    None => lightcraft_engine::export::write_file(path, bytes),
+                })?;
+                r["contactSheet"] = json!(true);
+                Ok(vec![r])
             });
         // a PDF isn't something Photos imports: contact sheets never add to Apple Photos
         result.map(|files| (files, None, c.load(Ordering::Relaxed)))

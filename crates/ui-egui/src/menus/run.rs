@@ -1294,7 +1294,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             let mut params = p.clone();
             if p.get("path").is_none() {
-                let req = PickRequest::save("Contact Sheet PDF", "PDF", &["pdf"], "Contact Sheet.pdf");
+                let req = if p.get("format").and_then(Value::as_str) == Some("jpg") {
+                    PickRequest::save("Contact Sheet JPG", "JPG", &["jpg"], "Contact Sheet.jpg")
+                } else {
+                    PickRequest::save("Contact Sheet PDF", "PDF", &["pdf"], "Contact Sheet.pdf")
+                };
                 let paths = match crate::pick::ask(app, id, p, "path", req, |_| None) {
                     Picked::Now(paths) => paths,
                     Picked::Later => return Some(Ok(Value::Null)),
