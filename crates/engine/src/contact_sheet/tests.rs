@@ -136,7 +136,7 @@ fn captions_are_drawn_when_asked_for() {
             let l = o.layout().unwrap();
             let (w, h) = l.render_size(captions);
             let mut page = Rgba8::filled(l.width, l.height, [255; 4]);
-            l.background(&mut page, 0, 1, 1);
+            l.background(&mut page, 0, 1, 1, &o);
             let before = page.clone();
             l.photo(&mut page, 0, 6, &Rgba8::filled(w, h, [40, 200, 90, 255]), "IMG_0007.jpg", captions).unwrap();
             let caption = look(style).unwrap().caption;
@@ -176,10 +176,10 @@ fn every_style_draws_its_own_page() {
     let film = &pages.iter().find(|(s, _)| *s == "film").unwrap().1;
     let l = Options { style: "film".into(), preview: true, columns: 3, rows: 3, ..Default::default() }.layout().unwrap();
     let strip = l.strip(0);
-    let y = (strip.y + Layout::sprockets(strip) / 2.0) as usize;
+    let y = (strip.y + l.sprockets(strip) / 2.0) as usize;
     let light: Vec<bool> = (0..film.width).map(|x| film.get(x, y)[0] > 150).collect();
     let holes = light.windows(2).filter(|w| !w[0] && w[1]).count();
-    let expected = (strip.w / (Layout::sprockets(strip) * 0.95)) as usize;
+    let expected = (strip.w / (l.sprockets(strip) * 0.95)) as usize;
     assert!(expected > 10 && holes >= expected - 1 && holes <= expected, "{holes} sprocket holes along the first strip, {expected} drawn");
     let dark = |img: &Rgba8| img.data.iter().map(|p| u64::from(p[0])).sum::<u64>() / img.data.len() as u64;
     let light_page = &pages.iter().find(|(s, _)| *s == "light").unwrap().1;
@@ -254,5 +254,71 @@ fn jpeg_sheets_write_one_file_per_page() {
     let r = s.execute("export.contactSheet", &json!({"path": pdf, "ids": ids, "columns": 1, "rows": 2})).unwrap();
     assert_eq!(r["paths"], json!([pdf]));
     assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The social media sizes are exact in pixels: 1080 × 1080, 1080 × 1350, 1080 × 1920 and 1920 × 1080.
+#[test]
+fn social_sizes_are_exact_in_pixels() {
+    let mut s = Session::with_demo();
+    let id = s.catalog.photos().next().unwrap().id.0;
+    for (paper, size) in [("square", (1080, 1080)), ("portrait", (1080, 1350)), ("story", (1080, 1920)), ("wide", (1920, 1080))] {
+        let doc = sheet(&mut s, json!({"ids": [id], "paper": paper, "format": "jpg", "style": "dark", "columns": 2, "rows": 3}));
+        let page = decode(&doc.files[0]);
+        assert_eq!((page.width, page.height), size, "{paper}");
+        let preview = decode(&sheet(&mut s, json!({"ids": [id], "paper": paper, "preview": true})).files[0]);
+        assert_eq!((preview.width * 3, preview.height * 3), (size.0 * 2, size.1 * 2), "{paper}: the preview at 100 dpi");
+    }
+}
+
+/// Vertical film strips run down the columns, the photos down each strip, with sprocket holes along both edges.
+#[test]
+fn vertical_film_strips_run_top_to_bottom() {
+    let o = Options { style: "film".into(), vertical: true, columns: 3, rows: 4, ..Default::default() };
+    let l = o.layout().unwrap();
+    let (first, second) = (l.cell(0), l.cell(1));
+    assert_eq!(first.x, second.x, "the second photo is under the first");
+    assert!(second.y > first.y);
+    assert!(l.cell(4).x > first.x, "the fifth starts the next strip");
+    let across = Options { vertical: false, ..o.clone() }.layout().unwrap();
+    assert!(across.cell(1).x > across.cell(0).x, "left to right without it");
+    let strip = l.strip(0);
+    assert!(strip.h > strip.w, "a strip is a column");
+    let mut page = Rgba8::filled(l.width, l.height, [255; 4]);
+    l.background(&mut page, 0, 1, 12, &o);
+    let x = (strip.x + l.sprockets(strip) / 2.0) as usize;
+    let light: Vec<bool> = (0..page.height).map(|y| page.get(x, y)[0] > 150).collect();
+    let holes = light.windows(2).filter(|w| !w[0] && w[1]).count();
+    assert!(holes > 30, "{holes} holes down the strip's edge");
+    // (the photo boxes stay inside their strip, between the sprocket bands)
+    let (b, ..) = l.photo_box(5, true);
+    let s = l.strip_of(5);
+    assert!(b.x >= s.x + l.sprockets(s) && b.right() <= s.right() - l.sprockets(s), "{b:?} in {s:?}");
+}
+
+/// A logo (a graphic and its text) goes at the right of the bottom margin when one is given.
+#[test]
+fn the_logo_is_drawn_in_the_bottom_corner_when_given() {
+    let dir = std::env::temp_dir().join(format!("lc-contact-logo-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = dir.join("mark.png");
+    let mark = Rgba8::filled(64, 64, [230, 120, 20, 255]);
+    std::fs::write(&png, encode_image(&mark, &ExportOptions { format: ExportFormat::Png, ..Default::default() }).unwrap()).unwrap();
+    let corner = |logo: &str, text: &str| {
+        let o = Options { logo: logo.into(), logo_text: text.into(), ..Default::default() };
+        let l = o.layout().unwrap();
+        let mut page = Rgba8::filled(l.width, l.height, [255; 4]);
+        l.background(&mut page, 0, 1, 1, &o);
+        let margin = (l.look.margin * l.scale) as usize;
+        let rows = l.height - margin..l.height;
+        let orange =
+            rows.clone().flat_map(|y| (l.width / 2..l.width).map(move |x| (x, y))).filter(|&(x, y)| page.get(x, y) == [230, 120, 20, 255]).count();
+        let ink = rows.flat_map(|y| (l.width / 2..l.width).map(move |x| (x, y))).filter(|&(x, y)| page.get(x, y)[1] < 100).count();
+        (orange, ink)
+    };
+    let (orange, ink) = corner(&png.to_string_lossy(), "Studio");
+    assert!(orange > 100, "{orange} pixels of the graphic");
+    assert!(ink > 40, "{ink} pixels of its text beside it");
+    assert_eq!(corner("", ""), (0, 0), "no logo asked for");
     let _ = std::fs::remove_dir_all(&dir);
 }

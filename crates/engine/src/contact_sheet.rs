@@ -19,6 +19,17 @@ pub const STYLES: &[(&str, &str)] = &[
     ("gallery", "Gallery"),
 ];
 
+/// The page sizes, `(id, English name, width and height in points)`: the `paper` option. Paper, then the sizes of social
+/// media posts, exact in pixels at the file's 150 dpi (a 1080 px edge is 518.4 points).
+pub const PAPERS: &[(&str, &str, f64, f64)] = &[
+    ("a4", "A4", 595.28, 841.89),
+    ("letter", "Letter", 612.0, 792.0),
+    ("square", "Square 1:1", 518.4, 518.4),
+    ("portrait", "Portrait 4:5", 518.4, 648.0),
+    ("story", "Story 9:16", 518.4, 921.6),
+    ("wide", "Wide 16:9", 921.6, 518.4),
+];
+
 /// The file's resolution, and a preview's.
 const FILE_DPI: f64 = 150.0;
 const PREVIEW_DPI: f64 = 100.0;
@@ -37,6 +48,12 @@ pub struct Options {
     pub format: String,
     /// The first page alone, at screen resolution, as a JPEG (`format` aside).
     pub preview: bool,
+    /// Film strips run top to bottom, the photos down each strip (film style; else left to right, along the rows).
+    pub vertical: bool,
+    /// A graphic (PNG with transparency, JPEG, …) drawn small in each page's bottom corner, a frontend's mark
+    /// (empty: none), and `logo_text` beside it in the style's caption colour.
+    pub logo: String,
+    pub logo_text: String,
 }
 
 impl Default for Options {
@@ -50,6 +67,9 @@ impl Default for Options {
             style: "classic".into(),
             format: "pdf".into(),
             preview: false,
+            vertical: false,
+            logo: String::new(),
+            logo_text: String::new(),
         }
     }
 }
@@ -82,10 +102,8 @@ impl Options {
         }
         let look =
             look(&self.style).ok_or_else(|| format!("style must be one of {}", STYLES.iter().map(|(id, _)| *id).collect::<Vec<_>>().join(", ")))?;
-        let (mut w, mut h) = match self.paper.as_str() {
-            "a4" => (595.28, 841.89),
-            "letter" => (612.0, 792.0),
-            _ => return Err("paper must be a4 or letter".into()),
+        let Some(&(_, _, mut w, mut h)) = PAPERS.iter().find(|(id, ..)| *id == self.paper) else {
+            return Err(format!("paper must be one of {}", PAPERS.iter().map(|(id, ..)| *id).collect::<Vec<_>>().join(", ")));
         };
         if self.landscape {
             std::mem::swap(&mut w, &mut h);
@@ -97,7 +115,8 @@ impl Options {
         let folio = if look.folio { look.caption_pt * 3.0 * scale } else { 0.0 };
         let grid = Rect { x: margin, y: margin, w: width as f64 - 2.0 * margin, h: height as f64 - 2.0 * margin - folio };
         let (cell_w, cell_h) = (grid.w / self.columns as f64, grid.h / self.rows as f64);
-        Ok(Layout { points: (w, h), width, height, scale, look, grid, cell_w, cell_h, columns: self.columns })
+        let vertical = self.vertical && look.film;
+        Ok(Layout { points: (w, h), width, height, scale, look, grid, cell_w, cell_h, columns: self.columns, rows: self.rows, vertical })
     }
 }
 
@@ -221,11 +240,14 @@ struct Layout {
     cell_w: f64,
     cell_h: f64,
     columns: usize,
+    rows: usize,
+    /// Film strips down the columns: the photos go down each one.
+    vertical: bool,
 }
 
 impl Layout {
     fn cell(&self, slot: usize) -> Rect {
-        let (col, row) = (slot % self.columns, slot / self.columns);
+        let (col, row) = if self.vertical { (slot / self.rows, slot % self.rows) } else { (slot % self.columns, slot / self.columns) };
         Rect { x: self.grid.x + col as f64 * self.cell_w, y: self.grid.y + row as f64 * self.cell_h, w: self.cell_w, h: self.cell_h }
     }
 
@@ -234,16 +256,25 @@ impl Layout {
         self.look.caption_pt * self.scale * 2.4
     }
 
-    /// A row's film strip (film style).
-    fn strip(&self, row: usize) -> Rect {
+    /// A row's film strip (film style), or a column's when the strips are vertical.
+    fn strip(&self, index: usize) -> Rect {
         let gap = self.look.gap * self.scale;
-        let y = self.grid.y + row as f64 * self.cell_h + gap;
+        if self.vertical {
+            let x = self.grid.x + index as f64 * self.cell_w + gap;
+            return Rect { x, y: self.grid.y, w: (self.cell_w - 2.0 * gap).max(1.0), h: self.grid.h };
+        }
+        let y = self.grid.y + index as f64 * self.cell_h + gap;
         Rect { x: self.grid.x, y, w: self.grid.w, h: (self.cell_h - 2.0 * gap - self.caption_band()).max(1.0) }
     }
 
-    /// The sprocket band at the top and bottom of a strip.
-    fn sprockets(strip: Rect) -> f64 {
-        strip.h * 0.15
+    /// The strip that holds `slot`.
+    fn strip_of(&self, slot: usize) -> Rect {
+        self.strip(if self.vertical { slot / self.rows } else { slot / self.columns })
+    }
+
+    /// The sprocket band along each edge of a strip.
+    fn sprockets(&self, strip: Rect) -> f64 {
+        (if self.vertical { strip.w } else { strip.h }) * 0.15
     }
 
     /// Where the photo in `slot` is fitted, and the mat's side and bottom widths around it.
@@ -251,9 +282,14 @@ impl Layout {
         let cell = self.cell(slot);
         let gap = self.look.gap * self.scale;
         if self.look.film {
-            let strip = self.strip(slot / self.columns);
-            let band = Self::sprockets(strip);
-            let frame = Rect { x: cell.x + gap, y: strip.y + band + gap, w: cell.w - 2.0 * gap, h: strip.h - 2.0 * band - 2.0 * gap };
+            let strip = self.strip_of(slot);
+            let band = self.sprockets(strip);
+            let frame = if self.vertical {
+                // (its number and name under it, on the strip)
+                Rect { x: strip.x + band + gap, y: cell.y + gap, w: strip.w - 2.0 * band - 2.0 * gap, h: cell.h - 2.0 * gap - self.caption_band() }
+            } else {
+                Rect { x: cell.x + gap, y: strip.y + band + gap, w: cell.w - 2.0 * gap, h: strip.h - 2.0 * band - 2.0 * gap }
+            };
             return (Rect { w: frame.w.max(1.0), h: frame.h.max(1.0), ..frame }, 0.0, 0.0);
         }
         let inner = cell.inset(gap);
@@ -271,21 +307,28 @@ impl Layout {
         ((b.w.floor() as usize).max(1), (b.h.floor() as usize).max(1))
     }
 
-    /// The page behind the photos: paper, film strips for the rows in use, the page number.
-    fn background(&self, page: &mut Rgba8, index: usize, pages: usize, photos: usize) {
+    /// The page behind the photos: paper, film strips for the rows (or columns) in use, the page number, the logo.
+    fn background(&self, page: &mut Rgba8, index: usize, pages: usize, photos: usize, o: &Options) {
         fill(page, Rect { x: 0.0, y: 0.0, w: self.width as f64, h: self.height as f64 }, self.look.paper, 255, 0.0);
         if self.look.film {
-            for row in 0..photos.div_ceil(self.columns) {
-                let strip = self.strip(row);
+            for i in 0..photos.div_ceil(if self.vertical { self.rows } else { self.columns }) {
+                let strip = self.strip(i);
                 fill(page, strip, [30, 27, 24], 255, 0.0);
-                let band = Self::sprockets(strip);
-                let (hole_w, hole_h, pitch) = (band * 0.55, band * 0.4, band * 0.95);
-                let n = (strip.w / pitch).floor().max(0.0) as usize;
-                let x0 = strip.x + (strip.w - n as f64 * pitch) / 2.0 + (pitch - hole_w) / 2.0;
-                for y in [strip.y + (band - hole_h) / 2.0, strip.bottom() - band + (band - hole_h) / 2.0] {
-                    for i in 0..n {
-                        let hole = Rect { x: x0 + i as f64 * pitch, y, w: hole_w, h: hole_h };
-                        fill(page, hole, [214, 210, 200], 255, hole_h * 0.22);
+                let band = self.sprockets(strip);
+                // (measured along the strip, then across it)
+                let (along, across, pitch) = (band * 0.55, band * 0.4, band * 0.95);
+                let length = if self.vertical { strip.h } else { strip.w };
+                let n = (length / pitch).floor().max(0.0) as usize;
+                let start = (length - n as f64 * pitch) / 2.0 + (pitch - along) / 2.0;
+                for edge in [(band - across) / 2.0, if self.vertical { strip.w } else { strip.h } - band + (band - across) / 2.0] {
+                    for k in 0..n {
+                        let at = start + k as f64 * pitch;
+                        let hole = if self.vertical {
+                            Rect { x: strip.x + edge, y: strip.y + at, w: across, h: along }
+                        } else {
+                            Rect { x: strip.x + at, y: strip.y + edge, w: along, h: across }
+                        };
+                        fill(page, hole, [214, 210, 200], 255, across * 0.22);
                     }
                 }
             }
@@ -293,6 +336,58 @@ impl Layout {
         if self.look.folio {
             let band = Rect { x: self.grid.x, y: self.grid.bottom(), w: self.grid.w, h: self.look.caption_pt * 3.0 * self.scale };
             self.text(page, band, &format!("{} / {}", index + 1, pages), false);
+        }
+        self.logo(page, o.logo.trim(), o.logo_text.trim());
+    }
+
+    /// The logo at the right of the bottom margin: the graphic, then its text.
+    fn logo(&self, page: &mut Rgba8, graphic: &str, text: &str) {
+        if graphic.is_empty() && text.is_empty() {
+            return;
+        }
+        let margin = self.look.margin * self.scale;
+        let mark = (margin * 0.42).min(18.0 * self.scale).max(1.0);
+        // (both centred in the bottom margin; the text's band leaves its letters their full size)
+        let middle = self.height as f64 - margin / 2.0;
+        let y = middle - mark / 2.0;
+        let px = (self.look.caption_pt * 1.2 * self.scale) as f32;
+        let text_w = crate::text::TextLayout::new(text, px, false, crate::fonts::CRAFT_FONTS).map_or(0.0, |l| f64::from(l.width).ceil() + 2.0);
+        let mut right = self.grid.right();
+        if text_w > 0.0 {
+            let h = f64::from(px) / 0.45;
+            let band = Rect { x: right - text_w, y: middle - h / 2.0, w: text_w, h };
+            let wm = Watermark {
+                text: text.into(),
+                size: (f64::from(px) / band.w.min(band.h).max(1.0)) as f32,
+                opacity: 1.0,
+                anchor: Anchor::Right,
+                inset_x: 0.0,
+                inset_y: 0.0,
+                color: self.look.caption,
+                shadow: false,
+                ..Default::default()
+            };
+            draw_watermark_in(
+                page,
+                &wm,
+                band.x.round().max(0.0) as usize,
+                band.y.round().max(0.0) as usize,
+                band.w as usize,
+                band.h.max(1.0) as usize,
+            );
+            right -= text_w + mark * 0.35;
+        }
+        if !graphic.is_empty() {
+            let wm = Watermark {
+                image: graphic.into(),
+                image_width: 1.0,
+                opacity: 1.0,
+                anchor: Anchor::Center,
+                inset_x: 0.0,
+                inset_y: 0.0,
+                ..Default::default()
+            };
+            draw_watermark_in(page, &wm, (right - mark).round().max(0.0) as usize, y.round().max(0.0) as usize, mark as usize, mark as usize);
         }
     }
 
@@ -324,9 +419,9 @@ impl Layout {
         let gap = self.look.gap * self.scale;
         let inner = self.cell(slot).inset(gap);
         if self.look.film {
-            let strip = self.strip(slot / self.columns);
             let text = if captions { format!("{}  {name}", number + 1) } else { (number + 1).to_string() };
-            let band = Rect { x: b.x, y: strip.bottom(), w: b.w, h: self.caption_band() };
+            let under = if self.vertical { b.bottom() } else { self.strip_of(slot).bottom() };
+            let band = Rect { x: b.x, y: under, w: b.w, h: self.caption_band() };
             self.text(page, band, &text, true);
         } else if captions {
             let band = match &self.look.mat {
@@ -455,7 +550,7 @@ impl Prepared {
             let image = job.run().rendered?.image;
             let slot = i % per_page;
             if slot == 0 {
-                l.background(&mut page, i / per_page, pages, (count - i).min(per_page));
+                l.background(&mut page, i / per_page, pages, (count - i).min(per_page), &self.options);
             }
             l.photo(&mut page, slot, i, &image, &name, self.options.captions)?;
             if slot + 1 == per_page || i + 1 == count {

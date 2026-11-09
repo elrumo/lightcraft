@@ -927,9 +927,12 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                 let n = app.session.selected().len();
                 ui.label(crate::i18n::tr_format!("{n} selected photos · {pages} pages", n = n, pages = n.div_ceil(options.columns * options.rows)));
                 field(ui, "Paper", |ui| {
-                    let c = crate::widgets::combo_box("contactSheetPaper").selected_text(&options.paper).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut options.paper, "a4".into(), "A4");
-                        ui.selectable_value(&mut options.paper, "letter".into(), crate::i18n::tr("Letter"));
+                    use lightcraft_engine::contact_sheet::PAPERS;
+                    let shown = PAPERS.iter().find(|(id, ..)| *id == options.paper).map_or("", |(_, name, ..)| *name);
+                    let c = crate::widgets::combo_box("contactSheetPaper").selected_text(crate::i18n::tr(shown)).show_ui(ui, |ui| {
+                        for (id, name, ..) in PAPERS {
+                            ui.selectable_value(&mut options.paper, (*id).into(), crate::i18n::tr(name));
+                        }
                     });
                     crate::widgets::name_combo(&c.response, crate::i18n::tr("Paper"));
                 });
@@ -944,6 +947,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
                     });
                     crate::widgets::name_combo(&c.response, crate::i18n::tr("Style"));
                 });
+                if options.style == "film" {
+                    ui.checkbox(&mut options.vertical, crate::i18n::tr("Vertical"));
+                }
                 field(ui, "Format", |ui| {
                     let c = crate::widgets::combo_box("contactSheetFormat").selected_text(options.format.to_uppercase()).show_ui(ui, |ui| {
                         ui.selectable_value(&mut options.format, "pdf".into(), "PDF");
