@@ -31,7 +31,7 @@
 //! implements the same formulas (`RelightKernel`, `DepthLookKernel` in the app), so every constant
 //! here is public.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use lightcraft_develop::{DepthPalette, DevelopSettings};
 use lightcraft_geom::Orientation;
@@ -195,6 +195,30 @@ fn normalized(a: V3) -> V3 {
     if l > 1e-12 { a.map(|v| v / l) } else { [0.0, 0.0, 1.0] }
 }
 
+/// How many decoded normals and smoothed depths are kept ([`Normals::of`], [`Setup::planes`]): a few photos' worth.
+pub const KEPT: usize = 3;
+
+static NORMALS_KEPT: Mutex<Vec<(u64, Arc<Normals>)>> = Mutex::new(Vec::new());
+/// The depth smoothed for the surface and the smoother copy the normals come from, per depth.
+static SMOOTHED_KEPT: Mutex<Vec<(u64, Arc<(Plane, Plane)>)>> = Mutex::new(Vec::new());
+
+/// `value` kept under `key` in `list`, the newest first, at most [`KEPT`].
+fn keep<T>(list: &Mutex<Vec<(u64, Arc<T>)>>, key: u64, value: Arc<T>) {
+    let mut l = list.lock().unwrap_or_else(PoisonError::into_inner);
+    l.retain(|(k, _)| *k != key);
+    l.insert(0, (key, value));
+    l.truncate(KEPT);
+}
+
+/// A depth's identity for [`SMOOTHED_KEPT`]: where it comes from (`depth_key`), its size, and a sample of its values
+/// (a photo's own depth is known by its address, which a later depth may reuse).
+fn depth_identity(source: u64, depth: &Plane) -> u64 {
+    let n = depth.data.len();
+    let step = (n / 256).max(1);
+    let sample: Vec<u32> = depth.data.iter().step_by(step).map(|v| v.to_bits()).collect();
+    crate::hash_of((source, depth.width, depth.height, sample))
+}
+
 /// Unit normals over the stored source (`relight.normals` decoded), row-major.
 #[derive(Clone, Debug)]
 pub struct Normals {
@@ -204,11 +228,18 @@ pub struct Normals {
 }
 
 impl Normals {
-    /// The settings' normals, decoded; `None` without them or when they are damaged.
-    pub fn of(s: &DevelopSettings) -> Option<Normals> {
+    /// The settings' normals, decoded; `None` without them or when they are damaged. The last few decoded are kept
+    /// ([`KEPT`]): every draft of a drag reads the same ones.
+    pub fn of(s: &DevelopSettings) -> Option<Arc<Normals>> {
         let m = s.relight.normals.as_ref()?;
+        let key = crate::hash_of((&m.data, m.w, m.h));
+        if let Some(hit) = NORMALS_KEPT.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|(k, _)| *k == key) {
+            return Some(hit.1.clone());
+        }
         let data = m.normals()?;
-        Some(Normals { width: m.w as usize, height: m.h as usize, data })
+        let made = Arc::new(Normals { width: m.w as usize, height: m.h as usize, data });
+        keep(&NORMALS_KEPT, key, made.clone());
+        Some(made)
     }
 
     /// The normal at normalized point (`u`, `v`) of the source (0..1 across and down), bilinear between pixel
@@ -233,6 +264,8 @@ impl Normals {
 #[derive(Clone, Debug)]
 pub struct Setup {
     depth: Arc<Plane>,
+    /// The depth's identity for the kept smoothed copies ([`depth_identity`]).
+    depth_id: u64,
     /// The surface model's normals (x right, y down, z toward the camera), when the settings keep them.
     normals: Option<Arc<Normals>>,
     /// The light in units of the depth map's long edge over the stored (EXIF-oriented) source: across, down,
@@ -291,11 +324,12 @@ impl Setup {
             shine: colour.map(|c| c * shine),
             light,
             key: 0,
+            depth_id: depth_identity(depth_key(s, &depth), &depth),
             depth,
-            normals: Normals::of(s).map(Arc::new),
+            normals: Normals::of(s),
         };
         let key = crate::hash_of((
-            depth_key(s, &setup.depth),
+            setup.depth_id,
             r.normals.as_ref().map(|n| crate::hash_of(&n.data)),
             w,
             h,
@@ -305,6 +339,17 @@ impl Setup {
             setup.shine.map(f32::to_bits),
         ));
         Some(Setup { key, ..setup })
+    }
+
+    /// The depth smoothed for the surface ([`smoothed`]) and the smoother copy the normals come from ([`normal_sigma`]),
+    /// kept for the last few depths: a drag of the light redraws with the same depth.
+    fn smoothed(&self) -> Arc<(Plane, Plane)> {
+        if let Some(hit) = SMOOTHED_KEPT.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|(k, _)| *k == self.depth_id) {
+            return hit.1.clone();
+        }
+        let made = Arc::new((smoothed(&self.depth), smoothed_by(&self.depth, normal_sigma(self.depth.width.max(self.depth.height)))));
+        keep(&SMOOTHED_KEPT, self.depth_id, made.clone());
+        made
     }
 
     /// Whether the surface model's normals shade the photo (else the depth's slope).
@@ -388,13 +433,13 @@ impl Setup {
 
     /// The light and the highlight over the whole depth map (smoothed): what [`apply`] samples through the frame.
     pub fn planes(&self, steps: usize) -> (Plane, Option<Plane>) {
-        let n = smoothed(&self.depth);
-        let m = smoothed_by(&self.depth, normal_sigma(self.depth.width.max(self.depth.height)));
+        let smooth = self.smoothed();
+        let (n, m) = (&smooth.0, &smooth.1);
         let (w, h) = (n.width, n.height);
         let mut both: Image<[f32; 2]> = Image::new(w, h);
         for_rows(&mut both.data, w, |y, row| {
             for (x, v) in row.iter_mut().enumerate() {
-                let (l, s) = self.shade(&n, &m, x, y, steps);
+                let (l, s) = self.shade(n, m, x, y, steps);
                 *v = [l, s];
             }
         });

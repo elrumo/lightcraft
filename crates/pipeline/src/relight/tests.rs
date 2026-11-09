@@ -376,3 +376,24 @@ fn the_light_stops_at_the_photos_own_edges() {
     assert!(snapped.data[row * w + EDGE - 1] > 0.1 && snapped.data[row * w + EDGE] < 0.02);
     assert!(biggest(&plain) < biggest(&snapped), "plain at {}, snapped at {}", biggest(&plain), biggest(&snapped));
 }
+
+#[test]
+fn the_decoded_surface_and_the_smoothed_depth_are_kept_between_renders() {
+    let s = with_surface();
+    // the same normals decode once
+    let (a, b) = (Normals::of(&s).unwrap(), Normals::of(&s).unwrap());
+    assert!(Arc::ptr_eq(&a, &b));
+    // the same depth is smoothed once, and gives the same light as a fresh setup
+    let mattes = crate::lensblur::mattes_for(&s, None);
+    let setup = Setup::new(&s, mattes.as_deref(), Orientation::Normal).unwrap();
+    assert!(Arc::ptr_eq(&setup.smoothed(), &setup.smoothed()));
+    let first = setup.planes(SHADOW_STEPS).0;
+    let again = Setup::new(&s, crate::lensblur::mattes_for(&s, None).as_deref(), Orientation::Normal).unwrap().planes(SHADOW_STEPS).0;
+    assert_eq!(first.data, again.data);
+    // another depth is smoothed afresh, not taken for the kept one
+    let mut other = s.clone();
+    other.lens_blur.depth = DepthMap::from_nearness(48, 32, &scene_depth(48, 32));
+    let o = Setup::new(&other, crate::lensblur::mattes_for(&other, None).as_deref(), Orientation::Normal).unwrap();
+    assert!(!Arc::ptr_eq(&o.smoothed(), &setup.smoothed()));
+    assert_ne!(o.smoothed().0.data, setup.smoothed().0.data);
+}

@@ -37,9 +37,11 @@ pub const LICENCE_URL: &str = "https://huggingface.co/Ruicheng/moge-2-vits-norma
 pub const CREDIT: &str = "MoGe-2 by Ruicheng Wang et al. (Microsoft Research); ONNX export by Ruicheng Wang";
 pub const HOME_URL: &str = "https://github.com/microsoft/MoGe";
 
-/// How many of its 14-pixel patches the network sees the photo as (its card suggests 1200 to 2500):
-/// about 600 pixels on the long side of a 3:2 photo, a few seconds on a phone's CPU.
-pub const TOKENS: usize = 2000;
+/// How many of its 14-pixel patches the network sees the photo as (its authors suggest 1200 to 2500):
+/// about 500 pixels on the long side of a 3:2 photo, more than the [`shrunk`] copy that is kept. Measured on
+/// two photos against 2000 patches, after that shrink to 384 pixels: the normals turn by 1.5° to 2° (median),
+/// which a relit photo doesn't show, and the estimate takes 1.5 s instead of 2.7 s on a 4-core CPU.
+pub const TOKENS: usize = 1200;
 /// The network's patch size.
 const PATCH: usize = 14;
 /// Below this, the mask says the network sees no surface there (sky, the infinitely far).

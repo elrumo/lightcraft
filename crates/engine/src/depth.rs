@@ -307,6 +307,7 @@ impl Session {
     /// photo, as stored in [`lightcraft_develop::Relight::normals`].
     pub fn estimate_surface(&mut self, id: PhotoId) -> Result<NormalMap, String> {
         let model = self.surface_model()?;
+        let _row = self.activity.start("depth", "Estimating the surface…", crate::activity::Cancel::No);
         let src = self.source_now(id, SourceLevel::Preview)?;
         let n = model.estimate(&model_input(&src)).map_err(|e| e.to_string())?;
         let k = (SURFACE_STORED_LONG as f64 / n.width.max(n.height).max(1) as f64).min(1.0);
@@ -335,6 +336,8 @@ impl Session {
     /// stored in [`lightcraft_develop::LensBlur::depth`].
     pub fn estimate_depth(&mut self, id: PhotoId) -> Result<DepthMap, String> {
         let model = self.depth_model()?;
+        // (a second or more: it shows in the activity stack while it runs)
+        let _row = self.activity.start("depth", "Estimating depth…", crate::activity::Cancel::No);
         let src = self.source_now(id, SourceLevel::Preview)?;
         let mut d = model.estimate(&model_input(&src)).map_err(|e| e.to_string())?;
         lightcraft_pipeline::lensblur::normalize(&mut d);

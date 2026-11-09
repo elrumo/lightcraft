@@ -42,12 +42,15 @@ The normal comes from the depth's slope (a wider Gaussian of the depth, `normal_
 MIT licence, 35M parameters, an optional 141 MB download, `lightcraft_depth::surface`, run on rten like Depth Anything).
 A relative depth has steps and no perspective, so its slope turns a face into terraces and a floor seen from above into a
 wall facing the camera; the network's normals show the shape. They are estimated once (`relight.surface`, or at once by
-`relight.apply` when the model is here) from the same picture the depth is estimated from, at about 2000 of the network's
-14-pixel patches (about 3 s on a 4-core CPU), and stored over the uncropped, EXIF-oriented photo at 384 pixels on the long
+`relight.apply` when the model is here) from the same picture the depth is estimated from, at about 1200 of the network's
+14-pixel patches (the bottom of its authors' range: against 2000 the normals turn by a median 1.5° to 2° once shrunk to the
+size kept, which a relit photo doesn't show, in 1.5 s instead of 2.7 s on a 4-core CPU; the estimate shows in the activity
+stack), and stored over the uncropped, EXIF-oriented photo at 384 pixels on the long
 side: x and y as signed bytes (z is what makes the vector one long), delta coded, deflated and base64 encoded, about 100 KB.
 Where the network sees no surface (its mask: sky), the normal faces the camera. Surface tilts them as it tilts the slope's
 (0 flat, 50 as estimated, 100 twice that). Shadows are still cast through the depth. Like the depth estimate, the surface is a
-picture of this photo: copies, presets and Auto Sync leave it behind, and Reset Relight keeps it.
+picture of this photo: copies, presets and Auto Sync leave it behind, and Reset Relight keeps it. The last few decoded
+surfaces and smoothed depths are kept between renders, so a drag of the light redraws without decoding or smoothing again.
 
 Removing the photo's own light before the new one lands (a light from the right filling the shadows a light from the left
 cast) needs the photo's albedo apart from its shading. A fit of the photo's light as low-order spherical harmonics over the
