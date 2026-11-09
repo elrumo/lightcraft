@@ -167,6 +167,12 @@ pub struct DevelopSettings {
     pub spots: Vec<Spot>,
     pub red_eye: Vec<RedEye>,
     pub lens_blur: LensBlur,
+    /// Relight: a light placed in the scene by the photo's depth. Not written while it is the default.
+    #[serde(skip_serializing_if = "Relight::is_default")]
+    pub relight: Relight,
+    /// Depth Map: the photo drawn as its depth. Not written while it is the default.
+    #[serde(skip_serializing_if = "DepthLook::is_default")]
+    pub depth_map: DepthLook,
     pub enhance: Enhance,
     /// Camera calibration: shadows tint and primary hue/saturation (applied before tone mapping).
     pub calibration: Calibration,
@@ -205,6 +211,8 @@ impl Default for DevelopSettings {
             spots: Vec::new(),
             red_eye: Vec::new(),
             lens_blur: LensBlur::default(),
+            relight: Relight::default(),
+            depth_map: DepthLook::default(),
             enhance: Enhance::default(),
             calibration: Calibration::default(),
             disabled_sections: Vec::new(),
@@ -1453,6 +1461,218 @@ impl Bokeh {
 
     pub fn parse(s: &str) -> Option<Bokeh> {
         Bokeh::ALL.into_iter().find(|b| b.name() == s)
+    }
+}
+
+/// Relight: a light added to the photo's scene and placed in it by the photo's depth (its own depth
+/// map, or the estimate Lens Blur keeps in [`LensBlur::depth`]). The surface the depth describes is
+/// lit by a point light: shapes turned toward it brighten, those turned away and those in the shadow
+/// another part of the scene casts keep the photo's own light, scaled by Ambient.
+///
+/// The light's place is in normalized image coordinates, as masks and spots use (it may be past the
+/// frame's edges, for a light off to one side), and its distance runs from the back of the scene (0)
+/// through its nearest part (50) to well in front of it (100). Left out of the JSON while it is the
+/// default, so settings without it keep their JSON and `hash64` (and every cached preview stays valid).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Relight {
+    pub enabled: bool,
+    /// Where the light is, across (0 the left edge, 1 the right) and down (0 the top, 1 the bottom).
+    pub x: f64,
+    pub y: f64,
+    /// How far in front of the scene the light is, 0–100 (0 at its back, 50 at its nearest part, 100 far out in
+    /// front of it).
+    pub distance: f64,
+    /// How bright the light is, 0–100.
+    pub brightness: f64,
+    /// How far the light reaches before it fades, 0–100.
+    pub spread: f64,
+    /// How the light wraps around shapes and how soft the shadows' edges are, 0–100.
+    pub softness: f64,
+    /// How dark the shadows the light casts are, 0–100.
+    pub shadows: f64,
+    /// Glossy highlights where a surface reflects the light toward the camera, 0–100.
+    pub shine: f64,
+    /// How strongly the depth's shapes turn toward or away from the light, 0–100 (0: flat).
+    pub surface: f64,
+    /// How much of the photo's own light is kept, 0–100 (100: all of it, the new light only adds).
+    pub ambient: f64,
+    /// The light's colour, display-encoded sRGB 0–1 (white by default).
+    pub color: [f64; 3],
+    /// The surface model's normals for this photo (Estimate Surface), which shade it in place of the
+    /// depth's slope: a picture of this photo, so copies leave it behind, and Reset keeps it. Lighting
+    /// still casts its shadows through the depth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normals: Option<crate::NormalMap>,
+}
+
+impl Default for Relight {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            x: 0.3,
+            y: 0.25,
+            distance: 70.0,
+            brightness: 50.0,
+            spread: 50.0,
+            softness: 30.0,
+            shadows: 60.0,
+            shine: 0.0,
+            surface: 50.0,
+            ambient: 60.0,
+            color: [1.0, 1.0, 1.0],
+            normals: None,
+        }
+    }
+}
+
+impl Relight {
+    /// Whether these are the default settings (off, nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == Relight::default()
+    }
+
+    /// Whether a render lights anything (with depth to light by).
+    pub fn active(&self) -> bool {
+        self.enabled && (self.brightness > 0.0 || self.ambient < 100.0)
+    }
+}
+
+/// The colours a [`DepthLook`] draws depth in, from the farthest part of the photo to the nearest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum DepthPalette {
+    /// Black far away to white near by: the classic depth map.
+    #[default]
+    Gray,
+    /// Black through violet, red and orange to a pale yellow.
+    Thermal,
+    /// Deep navy through teal to a pale mint.
+    Ocean,
+    /// Blue, cyan, green, yellow, orange, red.
+    Spectrum,
+    /// Dusk violet through rose and orange to a warm cream.
+    Sunset,
+    /// The two colours of [`DepthLook::far_color`] and [`DepthLook::near_color`].
+    Custom,
+}
+
+impl DepthPalette {
+    pub const ALL: [DepthPalette; 6] =
+        [DepthPalette::Gray, DepthPalette::Thermal, DepthPalette::Ocean, DepthPalette::Spectrum, DepthPalette::Sunset, DepthPalette::Custom];
+
+    /// Stable name (commands, JSON).
+    pub fn name(self) -> &'static str {
+        match self {
+            DepthPalette::Gray => "gray",
+            DepthPalette::Thermal => "thermal",
+            DepthPalette::Ocean => "ocean",
+            DepthPalette::Spectrum => "spectrum",
+            DepthPalette::Sunset => "sunset",
+            DepthPalette::Custom => "custom",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DepthPalette::Gray => "Gray",
+            DepthPalette::Thermal => "Thermal",
+            DepthPalette::Ocean => "Ocean",
+            DepthPalette::Spectrum => "Spectrum",
+            DepthPalette::Sunset => "Sunset",
+            DepthPalette::Custom => "Custom",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<DepthPalette> {
+        DepthPalette::ALL.into_iter().find(|p| p.name() == s)
+    }
+
+    /// The palette's colour stops, far to near, display-encoded sRGB, evenly spaced (original choices).
+    /// `Custom` has none of its own: its two colours are the settings' (these are its placeholder).
+    pub fn stops(self) -> &'static [[f32; 3]] {
+        match self {
+            DepthPalette::Gray | DepthPalette::Custom => &[[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+            DepthPalette::Thermal => {
+                &[[0.0, 0.0, 0.02], [0.25, 0.02, 0.45], [0.72, 0.1, 0.38], [0.97, 0.42, 0.06], [1.0, 0.82, 0.3], [1.0, 0.98, 0.86]]
+            }
+            DepthPalette::Ocean => &[[0.02, 0.03, 0.15], [0.0, 0.22, 0.45], [0.0, 0.52, 0.6], [0.35, 0.8, 0.72], [0.9, 0.99, 0.93]],
+            DepthPalette::Spectrum => {
+                &[[0.2, 0.2, 0.85], [0.1, 0.72, 0.92], [0.28, 0.82, 0.32], [0.98, 0.88, 0.18], [1.0, 0.5, 0.1], [0.86, 0.1, 0.16]]
+            }
+            DepthPalette::Sunset => &[[0.1, 0.05, 0.25], [0.42, 0.1, 0.5], [0.88, 0.3, 0.42], [1.0, 0.64, 0.34], [1.0, 0.92, 0.72]],
+        }
+    }
+}
+
+/// A palette name from a newer build is read as the default, not refused: one unknown name must not
+/// make a photo's whole settings unreadable.
+impl From<String> for DepthPalette {
+    fn from(s: String) -> Self {
+        DepthPalette::parse(&s).unwrap_or_default()
+    }
+}
+
+impl From<DepthPalette> for String {
+    fn from(p: DepthPalette) -> Self {
+        p.name().to_string()
+    }
+}
+
+/// Depth Map: the photo drawn as its depth (its own depth map, or the estimate Lens Blur keeps in
+/// [`LensBlur::depth`]) in a palette's colours, in place of its pixels. It is drawn before the
+/// tone, colour and effects tools, so they edit it as they edit any photo. Depths are 0 (the nearest
+/// part of the photo) to 100 (the farthest), as Lens Blur's. Left out of the JSON while it is the
+/// default.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DepthLook {
+    pub enabled: bool,
+    pub palette: DepthPalette,
+    /// The colours of the nearest and the farthest depth of [`DepthPalette::Custom`], display-encoded sRGB 0–1.
+    pub near_color: [f64; 3],
+    pub far_color: [f64; 3],
+    /// The depths the palette spans, 0–100: nearer than `near` is the near end's colour, farther than
+    /// `far` the far end's.
+    pub near: f64,
+    pub far: f64,
+    /// Bends how depth runs across the palette, −100–100: up gives more of the palette to the near
+    /// depths, down to the far ones.
+    pub curve: f64,
+    /// Lines along equal depths, 0–100 (0: none; more lines as it rises).
+    pub contours: f64,
+    /// How much of the photo is replaced by its depth, 0–100.
+    pub amount: f64,
+    /// The palette runs the other way (its near colour far away).
+    pub invert: bool,
+}
+
+impl Default for DepthLook {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            palette: DepthPalette::Gray,
+            near_color: [1.0, 0.85, 0.55],
+            far_color: [0.08, 0.1, 0.3],
+            near: 0.0,
+            far: 100.0,
+            curve: 0.0,
+            contours: 0.0,
+            amount: 100.0,
+            invert: false,
+        }
+    }
+}
+
+impl DepthLook {
+    /// Whether these are the default settings (off, nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == DepthLook::default()
+    }
+
+    /// Whether a render draws depth (with depth to draw).
+    pub fn active(&self) -> bool {
+        self.enabled && self.amount > 0.0
     }
 }
 

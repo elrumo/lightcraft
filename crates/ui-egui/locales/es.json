@@ -2567,5 +2567,7 @@
   "Motion": "Movimiento",
   "Streak": "Estela",
   "Spread": "Extensión",
-  "Warmth": "Calidez"
+  "Warmth": "Calidez",
+  "Relight": "Reiluminar",
+  "Depth Map": "Mapa de profundidad"
 }

@@ -2552,5 +2552,7 @@
   "Motion": "动感",
   "Streak": "光束",
   "Spread": "扩散",
-  "Warmth": "暖度"
+  "Warmth": "暖度",
+  "Relight": "重新打光",
+  "Depth Map": "深度图"
 }

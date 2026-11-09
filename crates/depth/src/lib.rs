@@ -17,6 +17,7 @@
 
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub mod gpu;
+pub mod surface;
 
 use lightcraft_raster::resample::{Filter, resize};
 use lightcraft_raster::{Plane, Rgb32f};

@@ -2708,5 +2708,7 @@
   "Motion": "モーション",
   "Streak": "ストリーク",
   "Spread": "広がり",
-  "Warmth": "暖かさ"
+  "Warmth": "暖かさ",
+  "Relight": "再照明",
+  "Depth Map": "深度マップ"
 }

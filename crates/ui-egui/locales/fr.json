@@ -2600,5 +2600,7 @@
   "Motion": "Mouvement",
   "Streak": "Traînée",
   "Spread": "Étendue",
-  "Warmth": "Chaleur"
+  "Warmth": "Chaleur",
+  "Relight": "Rééclairer",
+  "Depth Map": "Carte de profondeur"
 }

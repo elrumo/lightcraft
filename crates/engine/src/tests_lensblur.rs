@@ -101,7 +101,24 @@ fn the_models_estimate_is_stored_with_the_settings() {
     install_model(&s, &path);
     assert!(s.depth_model_ready());
     let id = s.active().unwrap();
+    // the estimate shows in the activity stack while it runs
+    let (activity, stop) = (s.activity.clone(), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    let watcher = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                seen.extend(activity.list().into_iter().map(|t| (t.kind, t.label)));
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            seen
+        })
+    };
     let i = s.execute("lensBlur.apply", &json!({})).unwrap();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let seen = watcher.join().unwrap();
+    assert!(seen.iter().any(|(k, l)| *k == "depth" && l == "Estimating depth…"), "{seen:?}");
+    assert!(s.activity.list().is_empty(), "and leaves it when done");
     assert_eq!(i["depth"], "estimated", "{i}");
     let d = s.develop_of(id).unwrap();
     let map = d.lens_blur.depth.clone().expect("a stored estimate");

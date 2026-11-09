@@ -26,8 +26,8 @@ Angle is ours: Lightroom's controls for Motion and Streak beyond the four above 
 
 ## Method (`crates/pipeline/src/glow.rs`)
 
-The glow is added in scene-linear light (linear Rec. 2020) right after noise reduction and Lens Blur, before the local
-tone and the tone map. The stages after it develop the glow with the rest of the light: it rolls off into the
+The glow is added in scene-linear light (linear Rec. 2020) right after noise reduction, Depth Map, Relight and Lens
+Blur, before the local tone and the tone map. The stages after it develop the glow with the rest of the light: it rolls off into the
 highlights as scattered light does, Highlights and Shadows see it, and an HDR render keeps it above SDR white. It runs
 on the un-exposed image (the scene-linear stage's), with Exposure's gain folded into the bright pass's knee.
 

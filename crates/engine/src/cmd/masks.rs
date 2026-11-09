@@ -1057,6 +1057,54 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "mask.pickDepth",
+            "Pick Depth Range",
+            [],
+            None,
+            "{id?, component?: index (none: the mask's last Depth Range part), x, y, x2?, y2?} — sets a Depth Range part's near and far ends from the photo's depth: a band around the depth at (x, y) (normalized image coordinates, as masks use), or with (x2, y2) the depths in the box between the two points (their 5th to 95th percentiles); its smoothness is kept. Fails when the photo has no depth (lensBlur.estimate makes it) → {activeMask, lo, hi} (0 near … 1 far)",
+            has_active,
+            |s, p| {
+                let c = "mask.pickDepth";
+                let mid = mask_id(p, s.active_mask, c)?;
+                let num = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+                let a = Point::new(num("x").ok_or_else(|| bad(c, "missing number `x`"))?, num("y").ok_or_else(|| bad(c, "missing number `y`"))?);
+                let b = match (num("x2"), num("y2")) {
+                    (Some(x), Some(y)) => Point::new(x, y),
+                    _ => a,
+                };
+                let comp = p.get("component").and_then(Value::as_u64).map(|k| k as usize);
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let view = s.depth_view(id, &d, false).ok_or_else(|| bad(c, "the photo has no depth: estimate it first (lensBlur.estimate)"))?;
+                let (lo, hi) =
+                    lightcraft_pipeline::lensblur::picked_range(&view.within(a, b)).ok_or_else(|| bad(c, "that point is off the photo"))?;
+                let mut out = masks_edit(s, c, "Pick Depth Range", |masks, _| {
+                    let i = find(masks, mid, c)?;
+                    let parts = &mut masks[i].components;
+                    let k = match comp {
+                        Some(k) => k,
+                        None => parts
+                            .iter()
+                            .rposition(|x| matches!(x.shape, MaskShape::DepthRange { .. }))
+                            .ok_or_else(|| bad(c, "the mask has no Depth Range part"))?,
+                    };
+                    let part = parts.get_mut(k).ok_or_else(|| bad(c, "no such component"))?;
+                    match &mut part.shape {
+                        MaskShape::DepthRange { lo: l, hi: h, .. } => {
+                            (*l, *h) = (lo, hi);
+                            Ok(())
+                        }
+                        _ => Err(bad(c, "that part isn't a Depth Range")),
+                    }
+                })?;
+                if let Some(o) = out.as_object_mut() {
+                    o.insert("lo".into(), json!(lo));
+                    o.insert("hi".into(), json!(hi));
+                }
+                Ok(out)
+            }
+        ),
+        cmd!(
             "mask.refine",
             "Refine Mask Edges",
             [],
