@@ -501,5 +501,33 @@ pub fn apply_look(img: &mut Rgb32f, look: &Look, frame: &Frame, px_per_long: f64
     });
 }
 
+/// The photo's depth as data, for other programs (`depthMap.export`): nearness (1 the nearest part, 0 the farthest,
+/// relative inverse depth; smoothed as Depth Map draws it), one value per pixel of a render of `src` with settings `s`
+/// fitted into `max_w × max_h`: framed as the photo is (`apply_crop`: its crop, straighten and flips; the user's
+/// orientation and geometry always), so it lines up with an export of the photo at that size. Only the framing and the
+/// depth of `s` are used. `None` without depth (the photo's own, or a stored estimate).
+pub fn depth_out(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, max_w: usize, max_h: usize, apply_crop: bool) -> Option<Plane> {
+    let mut framing = DevelopSettings {
+        process: s.process,
+        orientation: s.orientation,
+        crop: s.crop,
+        expand_fill: s.expand_fill.clone(),
+        geometry: s.geometry.clone(),
+        optics: s.optics,
+        disabled_sections: s.disabled_sections.iter().filter(|x| *x == "optics" || *x == "geometry").cloned().collect(),
+        ..DevelopSettings::default()
+    };
+    framing.lens_blur.depth = s.lens_blur.depth.clone();
+    // (asked for depth, as Depth Map asks for it)
+    framing.depth_map.enabled = true;
+    let req = crate::RenderRequest { apply_crop, ..crate::RenderRequest::fit(max_w.max(1), max_h.max(1)) };
+    let plan = crate::plan(src, info, &framing, &req);
+    let depth = plan.mattes.as_deref().and_then(Mattes::depth)?;
+    if depth.width == 0 || depth.height == 0 || depth.data.len() != depth.width * depth.height {
+        return None;
+    }
+    Some(source_to_out(&smoothed(depth), &plan.frame, plan.w, plan.h))
+}
+
 #[cfg(test)]
 mod tests;

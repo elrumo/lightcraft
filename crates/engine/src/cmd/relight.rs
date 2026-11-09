@@ -7,8 +7,64 @@
 use lightcraft_develop::{DepthLook, DepthMap, DepthPalette, DevelopSettings, Relight};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, cmd, has_active, str_param};
+use super::{CommandSpec, always, bad, bool_or, cmd, has_active, str_param};
+use crate::catalog::PhotoId;
+use crate::media::SourceLevel;
 use crate::{Result, Session};
+
+/// The longest side `depthMap.export` writes, and the most pixels (a 32-bit float plane of this many is 400 MB).
+const EXPORT_MAX_SIDE: usize = 16_384;
+const EXPORT_MAX_PIXELS: usize = 100_000_000;
+
+/// `depthMap.export`: photo `id`'s depth (nearness, white near) written to `path` as a 16-bit PNG or a 32-bit float TIFF,
+/// framed as an export of the photo is (its crop unless `crop` is false) at `long` pixels along its long side (the
+/// original's own when 0). `invert`: white far. → {path, width, height, format, white, depth}
+fn export_depth(s: &mut Session, id: PhotoId, p: &Value) -> Result<Value> {
+    const C: &str = "depthMap.export";
+    let path = str_param(p, "path").filter(|x| !x.trim().is_empty()).ok_or_else(|| bad(C, "missing `path` (the file to write)"))?.to_string();
+    let format = str_param(p, "format").unwrap_or("png").to_ascii_lowercase();
+    if !matches!(format.as_str(), "png" | "tiff") {
+        return Err(bad(C, format!("unknown format `{format}` (png: 16-bit; tiff: 32-bit float)")));
+    }
+    let invert = bool_or(p, "invert", false);
+    let crop = bool_or(p, "crop", true);
+    let asked = p.get("long").and_then(Value::as_u64).unwrap_or(0);
+    let d = s.develop_of(id).ok_or_else(|| bad(C, "no such photo"))?;
+    let src = s.source_now(id, SourceLevel::Preview).map_err(|e| bad(C, e))?;
+    let info = s.source_info(id);
+    let own = info.native_long.unwrap_or(0).max(src.width.max(src.height)).max(1);
+    let long = if asked == 0 { own } else { usize::try_from(asked).unwrap_or(EXPORT_MAX_SIDE) }.clamp(1, EXPORT_MAX_SIDE);
+    let plane = lightcraft_pipeline::relight::depth_out(&src, &info, &d, long, long, crop)
+        .ok_or_else(|| bad(C, "This photo has no depth yet: apply Depth Map, Relight or Lens Blur first, which estimate it"))?;
+    let (w, h) = (plane.width, plane.height);
+    if w == 0 || h == 0 || w.saturating_mul(h) > EXPORT_MAX_PIXELS {
+        return Err(bad(C, format!("a depth map of {w} × {h} is too large to write: ask for a smaller `long`")));
+    }
+    let value = |v: f32| {
+        let v = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        if invert { 1.0 - v } else { v }
+    };
+    let meta = lightcraft_codecs::EncodeMeta::default();
+    let bytes = if format == "png" {
+        let samples: Vec<u16> = plane.data.iter().map(|v| (value(*v) * 65535.0).round() as u16).collect();
+        let img = lightcraft_codecs::EncodeImage::new(w as u32, h as u32, 1, lightcraft_codecs::Samples::U16(&samples));
+        lightcraft_codecs::encode_png(&img, &meta)
+    } else {
+        let samples: Vec<f32> = plane.data.iter().map(|v| value(*v)).collect();
+        let img = lightcraft_codecs::EncodeImage::new(w as u32, h as u32, 1, lightcraft_codecs::Samples::F32(&samples));
+        lightcraft_codecs::encode_tiff(&img, lightcraft_codecs::TiffCompression::Deflate, &meta)
+    }
+    .map_err(|e| bad(C, e.to_string()))?;
+    std::fs::write(&path, bytes).map_err(|e| bad(C, format!("{path}: {e}")))?;
+    Ok(json!({
+        "path": path,
+        "width": w,
+        "height": h,
+        "format": format,
+        "white": if invert { "far" } else { "near" },
+        "depth": s.depth_source(id).map(crate::depth::DepthSource::name),
+    }))
+}
 
 /// Change the active photo's settings with `f` as one undo step labelled `label`, then answer with `info`.
 fn edit(
@@ -279,6 +335,23 @@ pub fn specs() -> Vec<CommandSpec> {
                     d.depth_map.invert = invert;
                     Ok(())
                 })
+            }
+        ),
+        cmd!(
+            query "depthMap.export",
+            "Export Depth Map",
+            [],
+            None,
+            "{path, id?: photo (the active one), format?: png (16-bit, the default) | tiff (32-bit float), invert?: bool (white far; white is near by default), long?: pixels along the long side (the original's own), crop?: bool (default true: framed as an export of the photo)} — writes the photo's depth as data for other programs: relative inverse depth (nearness, 0 farthest to 1 nearest), smoothed as Depth Map draws it, one value per pixel of the framed photo. The photo must have depth (its own, or the estimate Lens Blur, Relight or Depth Map stored) → {path, width, height, format, white: near|far, depth: photo|estimated}",
+            always,
+            |s, p| {
+                let id = p
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .map(PhotoId)
+                    .or_else(|| s.active())
+                    .ok_or_else(|| bad("depthMap.export", "no photo: give `id` or select one"))?;
+                export_depth(s, id, p)
             }
         ),
         cmd!(

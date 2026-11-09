@@ -181,3 +181,46 @@ fn a_copy_of_the_settings_leaves_the_depth_behind() {
     assert!(v["lens_blur"].get("depth").is_none(), "{v}");
     assert!(lightcraft_develop::SettingsGroup::default_copy().contains(&lightcraft_develop::SettingsGroup::Relight));
 }
+
+#[test]
+fn the_depth_exports_as_data_framed_as_the_photo() {
+    let dir = temp_dir("export");
+    let mut s = demo_with_depth();
+    let a = s.active().unwrap();
+    let png = dir.join("depth.png");
+    let r = s.execute("depthMap.export", &json!({"path": png.to_string_lossy(), "long": 300})).unwrap();
+    assert_eq!((r["format"].as_str(), r["white"].as_str(), r["depth"].as_str()), (Some("png"), Some("near"), Some("estimated")), "{r}");
+    let (w, h) = (r["width"].as_u64().unwrap() as usize, r["height"].as_u64().unwrap() as usize);
+    assert_eq!(w.max(h), 300, "{r}");
+    let bytes = std::fs::read(&png).unwrap();
+    // 16-bit greyscale (IHDR: bit depth 16, colour type 0)
+    assert_eq!((bytes[24], bytes[25]), (16, 0));
+    let (pw, ph, px) = lightcraft_codecs::decode_png_codes(&bytes, 1 << 20).unwrap();
+    assert_eq!((pw as usize, ph as usize), (w, h));
+    // the stored depth runs from far (top) to near (bottom): white near
+    let row = |y: usize| px[y * w..(y + 1) * w].iter().map(|p| p[0]).sum::<f32>() / w as f32;
+    assert!(row(h - 2) > row(1) + 0.5, "{} vs {}", row(h - 2), row(1));
+    // inverted, and as 32-bit float TIFF
+    let tiff = dir.join("depth.tif");
+    let r = s.execute("depthMap.export", &json!({"path": tiff.to_string_lossy(), "format": "tiff", "invert": true, "long": 120})).unwrap();
+    assert_eq!(r["white"], "far");
+    let d = lightcraft_codecs::decode(&std::fs::read(&tiff).unwrap(), Default::default()).unwrap();
+    assert_eq!((d.width as u64, d.height as u64), (r["width"].as_u64().unwrap(), r["height"].as_u64().unwrap()));
+    // a crop frames it as an export of the photo is, unless asked for the whole photo
+    let mut dv = dev(&s);
+    dv.crop.geometry.rect = lightcraft_geom::Rect::new(0.0, 0.0, 0.5, 1.0);
+    s.execute("develop.merge", &json!({"settings": dv.to_json()})).unwrap();
+    let cropped = s.execute("depthMap.export", &json!({"path": png.to_string_lossy(), "long": 300})).unwrap();
+    let whole = s.execute("depthMap.export", &json!({"path": png.to_string_lossy(), "long": 300, "crop": false})).unwrap();
+    assert!(cropped["width"].as_u64() < whole["width"].as_u64(), "{cropped} {whole}");
+    // without depth: says so, writes nothing
+    let mut plain = Session::with_demo();
+    let gone = dir.join("none.png");
+    let e = plain.execute("depthMap.export", &json!({"path": gone.to_string_lossy()})).unwrap_err().to_string();
+    assert!(e.contains("no depth"), "{e}");
+    assert!(!gone.exists());
+    assert!(s.execute("depthMap.export", &json!({"path": png.to_string_lossy(), "format": "exr"})).is_err());
+    assert!(s.execute("depthMap.export", &json!({})).is_err(), "a path is needed");
+    let _ = a;
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -42,11 +42,20 @@ with two colours of one's own), darkened by **Contours** (thin lines along equal
 long edge found from the depth's slope, none on a flat), and mixed over the photo by **Amount**. A palette name from a
 newer build reads as Gray rather than making the settings unreadable.
 
+## Export as data
+
+`depthMap.export {path, id?, format?: png | tiff, invert?, long?, crop?}` writes the photo's depth for other programs (3D,
+compositing, displacement, a parallax effect): relative inverse depth (nearness, 0 the farthest part of the photo, 1 the
+nearest; white near unless `invert`), smoothed as Depth Map draws it, one value per pixel of the photo framed as an export of
+it is (its crop, straighten and flips unless `crop` is false; its orientation and geometry always), at the original's size or
+`long` pixels along the long side, so it lines up with an export of the photo. PNG holds it in 16 bits, TIFF as 32-bit
+floats. It needs no look turned on, only depth (`relight::depth_out`).
+
 ## Commands
 
 `relight.info`, `relight.apply {on?}`, `relight.color {color: [r,g,b] | "#rrggbb"}`, `relight.reset`;
 `depthMap.info` (with every palette's stops for the pickers), `depthMap.apply {on?}`, `depthMap.palette {palette}`,
-`depthMap.colors {near?, far?}`, `depthMap.invert {on?}`, `depthMap.reset`. The sliders are `relight.*` and
+`depthMap.colors {near?, far?}`, `depthMap.invert {on?}`, `depthMap.reset`, `depthMap.export` (above). The sliders are `relight.*` and
 `depthMap.*` through `develop.set`; Copy Settings and presets have a Relight and a Depth Map group.
 
 ## Tests
@@ -55,4 +64,5 @@ newer build reads as Gray rather than making the settings unreadable.
 shadow away from it, Brightness and Ambient, colour, Shine, the palettes, the range, Invert, Curve, Contours, Amount,
 a windowed render matching the whole one, settings that are not numbers), the slider sweep of every new control
 (`tests_sliders.rs`, prepared by `controls::prepare_to_show`), and `crates/engine/src/tests_relight.rs` (no depth or
-model, a Portrait's own depth, the estimate shared with Lens Blur, undo steps, the light's drag, copies).
+model, a Portrait's own depth, the estimate shared with Lens Blur, undo steps, the light's drag, copies, the export's
+formats, framing and inversion).
