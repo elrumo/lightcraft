@@ -24,7 +24,8 @@
 //! (issue #1407).
 //!
 //! [`lower_thread_priority`] gives a background thread (the sync server's video encoder) the lowest priority:
-//! `setpriority` on Linux, the background quality of service on macOS.
+//! `setpriority` on Linux, the background quality of service on macOS. [`utility_thread_priority`] gives one a
+//! priority between that and the default (indexing a library on a phone whose owner is using the app).
 //!
 //! This is LightCraft's only crate allowed `unsafe` (FFI calls into libSystem, in `apple`: the ones
 //! above, and `mmap` / `munmap` for the allocator). Its API is safe, and on failure or on other
@@ -108,6 +109,23 @@ impl Qos {
         {
             false
         }
+    }
+}
+
+/// Give the calling thread a priority below the default but not the lowest, for work nobody is waiting for that
+/// should still get on while the machine is in use (indexing a library in an app its owner is using): it gives way to
+/// the interface and to the work a person asked for, and is not held to what is left over as
+/// [`lower_thread_priority`]'s threads are. Nice 10 on Linux, the utility quality of service on macOS and iOS. Only
+/// this thread: a thread it starts later is not lowered. Returns whether the system took it (`false` elsewhere, or
+/// when it refused: a thread already lower than this may not come back up).
+pub fn utility_thread_priority() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "ios"))]
+    {
+        priority::utility()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios")))]
+    {
+        false
     }
 }
 
@@ -592,19 +610,30 @@ mod priority {
     }
 
     pub(super) fn lower() -> bool {
+        // (the lowest nice value; `QOS_CLASS_BACKGROUND`)
+        set(19, 0x09)
+    }
+
+    pub(super) fn utility() -> bool {
+        // (half way down; `QOS_CLASS_UTILITY`)
+        set(10, 0x11)
+    }
+
+    /// Sets the calling thread's nice value (Linux) or quality of service class (macOS, iOS).
+    fn set(nice: c_int, qos: u32) -> bool {
         #[cfg(target_os = "linux")]
         {
+            let _ = qos;
             // SAFETY: `setpriority` takes three integers and touches no memory of ours; `PRIO_PROCESS` (0) with
             // `who` 0 means the calling thread on Linux.
-            unsafe { setpriority(0, 0, 19) == 0 }
+            unsafe { setpriority(0, 0, nice) == 0 }
         }
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
-            // `QOS_CLASS_BACKGROUND`
-            const BACKGROUND: u32 = 0x09;
+            let _ = nice;
             // SAFETY: `pthread_set_qos_class_self_np` takes two integers and touches no memory of ours; it
             // changes only the calling thread.
-            unsafe { pthread_set_qos_class_self_np(BACKGROUND, 0) == 0 }
+            unsafe { pthread_set_qos_class_self_np(qos, 0) == 0 }
         }
     }
 }
@@ -639,6 +668,31 @@ mod tests {
         } else {
             assert_eq!(child, (false, false, starter));
         }
+    }
+
+    /// The utility priority is between the default and the lowest: on Linux the thread's nice value says so.
+    #[test]
+    fn a_thread_takes_the_utility_priority() {
+        /// The calling thread's nice value (field 19 of its `stat`; the name in field 2 may hold spaces).
+        #[cfg(target_os = "linux")]
+        fn nice() -> i32 {
+            let stat = std::fs::read_to_string("/proc/thread-self/stat").unwrap();
+            stat.rsplit(')').next().unwrap().split_whitespace().nth(16).unwrap().parse().unwrap()
+        }
+        let took = std::thread::spawn(|| {
+            let took = super::utility_thread_priority();
+            #[cfg(target_os = "linux")]
+            assert_eq!(nice(), 10);
+            // (and from there the lowest can still be taken)
+            let lowest = super::lower_thread_priority();
+            #[cfg(target_os = "linux")]
+            assert_eq!(nice(), 19);
+            (took, lowest)
+        })
+        .join()
+        .unwrap();
+        let here = cfg!(any(target_os = "linux", target_os = "macos"));
+        assert_eq!(took, (here, here));
     }
 
     /// Held by the tests that give kept blocks back or switch reuse: the kept blocks are the process's.

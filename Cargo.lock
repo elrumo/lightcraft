@@ -5119,6 +5119,7 @@ dependencies = [
  "lightcraft-raster",
  "lightcraft-sysmem",
  "lightcraft-testkit",
+ "rayon",
  "rten",
  "rten-tensor",
  "serde_json",

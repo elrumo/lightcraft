@@ -475,6 +475,9 @@ impl Engine {
         session.set_photo_library_staging(Some(crate::startup::staging(&tmp).0));
         // searches by description and indexing run off the engine thread (as in egui); the tick applies them
         session.vision.background = true;
+        // (a phone's indexing shares it with its owner: half the processors, on lowered threads of its own)
+        let cores = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+        session.vision.index_threads = crate::startup::index_threads(config.profile, cores);
         let sched = match config.render_threads {
             Some(n) => Scheduler::with_worker_threads(n),
             None => Scheduler::default(),

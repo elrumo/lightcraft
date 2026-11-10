@@ -106,6 +106,71 @@ fn a_ready_model_looks_at_the_photos_by_itself_with_a_row_and_once() {
     assert!(s.vision.job().is_some_and(|j| j.total == total), "only the new model's work: {total} photos");
 }
 
+/// The stand-in model, noting where it is run: the thread's name, the size of the rayon pool it is in, its nice value.
+#[derive(Default)]
+struct Where(std::sync::Mutex<Vec<(String, usize, i32)>>);
+
+impl Where {
+    fn seen(&self) -> Vec<(String, usize, i32)> {
+        std::mem::take(&mut self.0.lock().unwrap())
+    }
+
+    /// The calling thread's nice value on Linux (field 19 of its `stat`; the name in field 2 may hold spaces); 0 elsewhere.
+    fn nice() -> i32 {
+        let stat = std::fs::read_to_string("/proc/thread-self/stat").unwrap_or_default();
+        stat.rsplit(')').next().and_then(|rest| rest.split_whitespace().nth(16)).and_then(|n| n.parse().ok()).unwrap_or(0)
+    }
+}
+
+impl Embedder for Where {
+    fn model_id(&self) -> &str {
+        FakeEmbedder.model_id()
+    }
+    fn dim(&self) -> usize {
+        FakeEmbedder.dim()
+    }
+    fn encode_text(&self, t: &str) -> Result<Vec<f32>, Error> {
+        FakeEmbedder.encode_text(t)
+    }
+    fn encode_images(&self, i: &[&Rgba8]) -> Result<Vec<Vec<f32>>, Error> {
+        let name = std::thread::current().name().unwrap_or_default().to_owned();
+        self.0.lock().unwrap().push((name, rayon::current_num_threads(), Self::nice()));
+        FakeEmbedder.encode_images(i)
+    }
+}
+
+/// A host on a small machine (a phone) gives the run threads of its own: the photos are worked on there, on as many
+/// threads as it said and below the default priority, not on the pool the loupe and exports use. Without it a run is
+/// where it always was.
+#[test]
+fn a_host_gives_the_run_threads_of_its_own_at_a_lower_priority() {
+    let here = Where::nice();
+    let run = |threads: Option<usize>| {
+        let model = Arc::new(Where::default());
+        let mut s = app(model.clone());
+        s.vision.index_threads = threads;
+        assert!(s.vision_catch_up());
+        wait_until_finished(&s);
+        assert!(s.vision_poll().messages.iter().any(|m| m.starts_with("Indexed ")), "it ends as any run");
+        assert_eq!(s.vision.indexed(), s.vision_photo_count());
+        let seen = model.seen();
+        assert!(!seen.is_empty());
+        seen
+    };
+
+    let shared = run(None);
+    assert!(shared.iter().all(|(name, _, nice)| name == "lc-vision-index" && *nice == here), "the run's thread, as it was: {shared:?}");
+
+    let own = run(Some(2));
+    let lowered = if cfg!(target_os = "linux") { 10 } else { here };
+    assert!(
+        own.iter().all(|(name, pool, nice)| name.starts_with("lc-vision-index-") && *pool == 2 && *nice == lowered),
+        "on its own two threads, lowered: {own:?}"
+    );
+    // rayon's own pool keeps its priority
+    assert!(rayon::broadcast(|_| Where::nice()).iter().all(|n| *n == here));
+}
+
 #[test]
 fn nothing_ready_starts_nothing() {
     let mut s = Session::with_demo();
