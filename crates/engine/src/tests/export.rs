@@ -57,6 +57,13 @@ fn original_export_copies_the_file_and_writes_its_edits_beside_it() {
     s2.execute("library.import", &json!({"paths": [copy.join(&e.file_name).to_string_lossy()]})).unwrap();
     assert_eq!(s2.catalog.photos().next().unwrap().develop.light.exposure, 0.7, "edits travel in the sidecar");
 
+    // `sidecar: false`: the file alone
+    let alone = ExportOptions::from_params(&json!({"format": "original", "sidecar": false})).unwrap();
+    let e = export_photo(&mut s, id, &alone, 1).unwrap();
+    assert_eq!(e.bytes, dng);
+    assert!(e.sidecars.is_empty(), "no sidecar was asked for");
+    assert!(ExportOptions::from_params(&json!({"sidecar": "no"})).is_err(), "a sidecar that is not a boolean is refused");
+
     // DNG: re-encoded raw data with the edits embedded
     let o = ExportOptions { format: ExportFormat::Dng, ..Default::default() };
     let e = export_photo(&mut s, id, &o, 1).unwrap();

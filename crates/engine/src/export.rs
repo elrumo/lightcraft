@@ -88,6 +88,9 @@ pub struct ExportOptions {
     pub metadata: MetadataPolicy,
     /// Strip GPS / location even when the policy would include it.
     pub remove_location: bool,
+    /// An `Original` export writes the photo's edits beside the file as an XMP sidecar (on by default; off, only the
+    /// file goes out). Other formats have no sidecar.
+    pub sidecar: bool,
     /// Text watermark (none when absent or the text is empty).
     pub watermark: Option<Watermark>,
     /// A frame around the photo, drawn after the watermark (none when absent or 0 wide). The file is larger than the
