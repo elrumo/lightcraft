@@ -195,6 +195,19 @@ fn describe(s: &mut Session, p: &Value) -> crate::Result<Value> {
             .collect();
         return Ok(json!({"total": photos.len(), "revision": revision, "photos": photos}));
     }
+    // a cursor: the photos past the last one a caller has, so a pass over the library walks it once in all (an offset
+    // walks it from the start for every page, and `total` once more), hence no `total` here
+    if let Some(v) = p.get("after").filter(|v| !v.is_null()) {
+        let after = v.as_u64().ok_or_else(|| bad(C, "`after` must be a photo id (0 for the first page)"))?;
+        if p.get("offset").is_some_and(|v| !v.is_null()) {
+            return Err(bad(C, "`after` and `offset` are two ways to page: give one"));
+        }
+        let page: Vec<_> = s.catalog.photos_after(PhotoId(after)).filter(|ph| describable(ph)).take(limit).collect();
+        // a full page may have more after it; a short one is the end
+        let next = if page.len() == limit { page.last().map(|ph| ph.id.0) } else { None };
+        let photos: Vec<Value> = page.into_iter().map(|ph| describe_photo(s, ph, &sensitive)).collect();
+        return Ok(json!({"revision": revision, "photos": photos, "next": next}));
+    }
     let offset = pagination_usize(p.get("offset").and_then(Value::as_u64).unwrap_or(0));
     let total = s.catalog.photos().filter(|ph| describable(ph)).count();
     let photos: Vec<Value> =
@@ -299,7 +312,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Describe Photos",
             [],
             None,
-            "{ids?: [photoId] (at most 1000), offset?, limit?: 1..1000 (200)} → {total, revision, photos: [{id, fileName, kind, format, width, height, duration, captured, imported, rating, flag, label, edited, live, sensitive, title, caption, altText, keywords, people, camera, lens, location, city, state, country, gps}]}: what a system index (Spotlight, Shortcuts) shows of each photo of the library, in id order (`ids`: those, in their order). Never a hidden, deleted or Local photo, whether or not Hidden is unlocked; `revision` changes when any photo, album or keyword does (develop edits aside)",
+            "{ids?: [photoId] (at most 1000), offset? | after?: photoId, limit?: 1..1000 (200)} → {total, revision, photos: [{id, fileName, kind, format, width, height, duration, captured, imported, rating, flag, label, edited, live, sensitive, title, caption, altText, keywords, people, camera, lens, location, city, state, country, gps}]}: what a system index (Spotlight, Shortcuts) shows of each photo of the library, in id order (`ids`: those, in their order). `after` is a cursor (0 for the first page): the photos with a larger id, and `next` (the cursor of the next page, null at the end) in place of `total`, so a pass over a big library walks it once instead of once a page. Never a hidden, deleted or Local photo, whether or not Hidden is unlocked; `revision` changes when any photo, album or keyword does (develop edits aside)",
             always,
             describe
         ),

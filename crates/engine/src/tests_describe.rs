@@ -141,3 +141,103 @@ fn a_photos_position_is_its_offset_in_the_view() {
         assert!(s.execute("catalog.position", &p).is_err(), "{p}");
     }
 }
+
+/// `n` photos added straight to the catalog, ids 1 to n with gaps: every 7th hidden, every 11th deleted, every 13th Local.
+fn synthetic(n: u64) -> (Session, Vec<u64>) {
+    use lightcraft_catalog::{Op, Photo, Source};
+    let mut s = Session::new();
+    let mut shown = Vec::new();
+    for i in 1..=n {
+        // (ids with gaps, as deletes and other devices' id spaces leave them)
+        let id = i * 3;
+        let name = format!("IMG_{i}.jpg");
+        let mut p = Photo::new(PhotoId(id), Source::File { path: name.clone() }, &name, "JPG", 16, 12, "2026-11-10T00:00:00Z");
+        (p.hidden, p.deleted, p.local) = (i % 7 == 0, i % 11 == 0, i % 13 == 0);
+        if p.visible() {
+            shown.push(id);
+        }
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    }
+    (s, shown)
+}
+
+/// A whole pass by the cursor, `limit` at a time: the ids, and how many requests it took.
+fn cursor_pass(s: &mut Session, limit: usize) -> (Vec<u64>, usize) {
+    let (mut out, mut after, mut pages) = (Vec::new(), json!(0), 0);
+    loop {
+        let r = s.execute("catalog.describe", &json!({"after": after, "limit": limit})).unwrap();
+        pages += 1;
+        assert!(r.get("total").is_none(), "a cursor page counts nothing: {}", r["next"]);
+        out.extend(ids(&r));
+        if r["next"].is_null() {
+            return (out, pages);
+        }
+        assert_eq!(r["next"], json!(out.last().unwrap()), "the cursor is the page's last photo");
+        after = r["next"].clone();
+    }
+}
+
+#[test]
+fn a_cursor_pages_a_synthetic_catalog_as_offsets_do() {
+    // (HB-282: the Spotlight pass pages a big library by cursor)
+    let (mut s, shown) = synthetic(2_345);
+    let all = s.execute("catalog.describe", &json!({"limit": 1000})).unwrap();
+    assert_eq!(all["total"], json!(shown.len()), "no cursor: the reply is as before");
+    assert_eq!(ids(&all), shown[..1000]);
+    let mut by_offset = Vec::new();
+    while by_offset.len() < shown.len() {
+        let r = s.execute("catalog.describe", &json!({"offset": by_offset.len(), "limit": 300})).unwrap();
+        by_offset.extend(ids(&r));
+    }
+    let (by_cursor, pages) = cursor_pass(&mut s, 300);
+    assert_eq!(by_cursor, shown, "every photo a system index may show, once, in id order");
+    assert_eq!(by_cursor, by_offset);
+    assert_eq!(pages, shown.len().div_ceil(300), "a short last page ends the pass");
+    // a page that ends on the last photo still says `next`; the one after it is empty and ends the pass
+    let exact = shown.len() - 1;
+    let r = s.execute("catalog.describe", &json!({"after": shown[exact - 1], "limit": 1})).unwrap();
+    assert_eq!((ids(&r), r["next"].clone()), (vec![shown[exact]], json!(shown[exact])));
+    let r = s.execute("catalog.describe", &json!({"after": shown[exact], "limit": 1})).unwrap();
+    assert_eq!((ids(&r), r["next"].clone()), (vec![], Value::Null));
+    // a cursor between ids, or on a hidden photo's, starts at the next photo shown
+    let r = s.execute("catalog.describe", &json!({"after": shown[4] - 1, "limit": 2})).unwrap();
+    assert_eq!(ids(&r), shown[4..6]);
+    let r = s.execute("catalog.describe", &json!({"after": u64::MAX})).unwrap();
+    assert_eq!((ids(&r), r["next"].clone()), (vec![], Value::Null));
+    // `ids` still wins over a cursor
+    let r = s.execute("catalog.describe", &json!({"ids": [shown[9]], "after": 0})).unwrap();
+    assert_eq!(ids(&r), vec![shown[9]]);
+    for p in [json!({"after": "x"}), json!({"after": -1}), json!({"after": 1.5}), json!({"after": 0, "offset": 3}), json!({"after": 0, "limit": 0})] {
+        assert!(s.execute("catalog.describe", &p).is_err(), "{p}");
+    }
+    assert!(s.execute("catalog.describe", &json!({"after": null, "offset": null})).unwrap().get("total").is_some());
+}
+
+/// The card's measurement: `cargo test -p lightcraft-engine --release -- --ignored a_pass_over_200k --nocapture`.
+#[test]
+#[ignore = "timing, 200k photos"]
+fn a_pass_over_200k_photos_walks_the_catalog_once_by_cursor() {
+    let (mut s, shown) = synthetic(200_000);
+    let t = std::time::Instant::now();
+    let mut by_offset = 0;
+    while by_offset < shown.len() {
+        by_offset += ids(&s.execute("catalog.describe", &json!({"offset": by_offset, "limit": 500})).unwrap()).len();
+    }
+    let offset_ms = t.elapsed().as_secs_f64() * 1e3;
+    let t = std::time::Instant::now();
+    let (by_cursor, pages) = cursor_pass(&mut s, 500);
+    let cursor_ms = t.elapsed().as_secs_f64() * 1e3;
+    // the pages alone, without describing a photo: what the offsets' walks cost on top
+    let t = std::time::Instant::now();
+    for page in 0..pages {
+        let _ = s.catalog.photos().filter(|p| p.visible()).count();
+        let _ = s.catalog.photos().filter(|p| p.visible()).skip(page * 500).take(500).count();
+    }
+    let walks_ms = t.elapsed().as_secs_f64() * 1e3;
+    eprintln!(
+        "200k photos, {} shown, {pages} pages of 500: offset pass {offset_ms:.0} ms, cursor pass {cursor_ms:.0} ms (the offsets' walks alone {walks_ms:.0} ms)",
+        shown.len()
+    );
+    assert_eq!(by_cursor.len(), shown.len());
+    assert!(cursor_ms < offset_ms, "the cursor pass is the cheaper one");
+}
