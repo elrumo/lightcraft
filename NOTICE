@@ -95,6 +95,12 @@ Zoo through rten. The models are not part of LightCraft and are never distribute
 they choose to, pinned by size and SHA-256. LightCraft's code reads their published input and output conventions; it
 contains no code from OpenCV.
 
+Colorize stores colours made by DDColor (Xiaoyang Kang et al., DAMO Academy; https://github.com/piddnad/DDColor,
+code and weights under the Apache License 2.0), which a native frontend runs itself, converted to Core ML. The weights
+are not part of LightCraft and are never distributed with it: a user downloads them only when they choose to, from the
+mirror the frontend names, pinned by size and SHA-256. LightCraft's code contains none of DDColor's: the engine stores
+the model's answer and renders it. See docs/colorize.md.
+
 AI denoise weights are not part of LightCraft and are never distributed with it.
 The default build offers user-supplied models only. The optional rawnind-model
 feature offers a separately downloaded RawNIND UtNet2 Bayer checkpoint under

@@ -15,7 +15,7 @@ pub mod settings;
 
 pub use controls::{CONTROLS, ControlSpec, Section, Track};
 pub use presets::{AiWork, Preset, SettingsGroup, ai_work, apply_partial, extract_groups};
-pub use segmask::{DepthMap, ExpandFill, NormalMap, SegMask, SpotFill};
+pub use segmask::{ChromaMap, DepthMap, ExpandFill, NormalMap, SegMask, SpotFill};
 pub use settings::*;
 
 use serde_json::Value;
@@ -36,7 +36,7 @@ impl DevelopSettings {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
-    /// [`Self::to_json`] with the groups left out while they are the default (HDR, Glow, Film, Relight, Depth Map)
+    /// [`Self::to_json`] with the groups left out while they are the default (HDR, Glow, Film, Relight, Depth Map, Colorize)
     /// written out: what a value is interpolated from or compared with needs every leaf, not a missing key.
     pub fn to_json_full(&self) -> Value {
         let mut v = self.to_json();
@@ -47,6 +47,7 @@ impl DevelopSettings {
                 ("film", serde_json::to_value(&self.film)),
                 ("relight", serde_json::to_value(&self.relight)),
                 ("depth_map", serde_json::to_value(self.depth_map)),
+                ("colorize", serde_json::to_value(&self.colorize)),
             ];
             for (k, g) in groups {
                 if let Ok(g) = g {

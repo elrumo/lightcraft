@@ -34,6 +34,7 @@ pub enum Section {
     LensBlur,
     Relight,
     DepthMap,
+    Colorize,
 }
 
 impl Section {
@@ -61,6 +62,7 @@ impl Section {
             Section::LensBlur => "Lens Blur",
             Section::Relight => "Relight",
             Section::DepthMap => "Depth Map",
+            Section::Colorize => "Colorize",
         }
     }
 }
@@ -488,6 +490,7 @@ controls! {
     "depthMap.curve" => depth_map.curve, "Curve", DepthMap, -100, 100, 0, 1, 0, Centered;
     "depthMap.contours" => depth_map.contours, "Contours", DepthMap, 0, 100, 0, 1, 0, Plain;
     "depthMap.amount" => depth_map.amount, "Amount", DepthMap, 0, 100, 100, 1, 0, Plain;
+    "colorize.amount" => colorize.amount, "Amount", Colorize, 0, 100, 100, 1, 0, Gradient { from: "#7a7a7a", to: "#d08040" };
 }
 
 /// Template specs of the indexed controls (`<family>.<field>`; addressed as `<family>.<i>.<field>`).
@@ -889,6 +892,11 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
                 s.relight.spread = 100.0;
                 s.relight.distance = 80.0;
             }
+        }
+        "colorize.amount" => {
+            // (a warm colour over the whole photo: the amount moves every pixel)
+            s.colorize.enabled = true;
+            s.colorize.map = crate::ChromaMap::from_ab(4, 4, &[[20.0, 40.0]; 16]);
         }
         _ if id.starts_with("depthMap.") => {
             s.depth_map.enabled = true;

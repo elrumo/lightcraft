@@ -176,6 +176,10 @@ pub struct DevelopSettings {
     /// Depth Map: the photo drawn as its depth. Not written while it is the default.
     #[serde(skip_serializing_if = "DepthLook::is_default")]
     pub depth_map: DepthLook,
+    /// Colorize: colours a model gave a black-and-white photo. A picture of this photo, so no copyable group carries it
+    /// (Copy Settings, presets, sync-settings leave it). Not written while it is the default.
+    #[serde(skip_serializing_if = "Colorize::is_default")]
+    pub colorize: Colorize,
     pub enhance: Enhance,
     /// Camera calibration: shadows tint and primary hue/saturation (applied before tone mapping).
     pub calibration: Calibration,
@@ -217,6 +221,7 @@ impl Default for DevelopSettings {
             lens_blur: LensBlur::default(),
             relight: Relight::default(),
             depth_map: DepthLook::default(),
+            colorize: Colorize::default(),
             enhance: Enhance::default(),
             calibration: Calibration::default(),
             disabled_sections: Vec::new(),
@@ -1717,6 +1722,42 @@ impl Relight {
     /// Whether a render lights anything (with depth to light by).
     pub fn active(&self) -> bool {
         self.enabled && (self.brightness > 0.0 || self.ambient < 100.0)
+    }
+}
+
+/// Colorize: the colours a model (DDColor, run by the frontend) gave a black-and-white photo, laid over it. Each pixel
+/// keeps its lightness and takes the colour [`Self::map`] has there at that lightness, as a gain on the white-balanced
+/// picture, so White Balance, a print's tone and every colour control after it still act on the result. Left out of the
+/// JSON while it is the default.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Colorize {
+    pub enabled: bool,
+    /// How much of the model's colour is laid over the photo, 0–100.
+    pub amount: f64,
+    /// The model that made [`Self::map`] (`ddcolor-tiny`, `ddcolor-large`), for the panel to say.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    /// The model's colours for this photo; nothing is drawn without them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map: Option<crate::ChromaMap>,
+}
+
+impl Default for Colorize {
+    fn default() -> Self {
+        Self { enabled: false, amount: 100.0, model: String::new(), map: None }
+    }
+}
+
+impl Colorize {
+    /// Whether these are the default settings (off, no colours stored).
+    pub fn is_default(&self) -> bool {
+        *self == Colorize::default()
+    }
+
+    /// Whether a render colours anything.
+    pub fn active(&self) -> bool {
+        self.enabled && self.amount > 0.0 && self.map.is_some()
     }
 }
 

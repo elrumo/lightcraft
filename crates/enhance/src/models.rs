@@ -264,9 +264,62 @@ pub const SURFACE: ModelSpec = ModelSpec {
     restricted: false,
 };
 
-/// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's).
+/// DDColor (Kang et al., ICCV 2023; code and weights Apache-2.0, read 2026-11-10 at the home page and on the authors'
+/// Hugging Face models, which say apache-2.0; trained on ImageNet) converted to Core ML: Colorize's model, which a native
+/// frontend on Apple's systems runs itself (see [`HOST_RUN`]). The three files of an `.mlpackage`, flat (the frontend
+/// puts them back in the package's folders); their pins are the files the conversion made, which the frontend's own
+/// mirror serves (no default: there is no author repository of a Core ML conversion).
+macro_rules! ddcolor_spec {
+    ($id:literal, $label:literal, $purpose:literal, $manifest:expr, $model:expr, $weights:expr) => {
+        ModelSpec {
+            id: $id,
+            label: $label,
+            purpose: $purpose,
+            files: &[
+                FileSpec { name: "Manifest.json", size: Some($manifest.0), sha256: Some($manifest.1), max: $manifest.0 },
+                FileSpec { name: "model.mlmodel", size: Some($model.0), sha256: Some($model.1), max: $model.0 },
+                FileSpec { name: "weight.bin", size: Some($weights.0), sha256: Some($weights.1), max: $weights.0 },
+            ],
+            mirrors_env: "LIGHTCRAFT_DDCOLOR_MIRRORS",
+            default_mirrors: &[],
+            licence: "Apache-2.0",
+            licence_url: "https://github.com/piddnad/DDColor/blob/master/LICENSE",
+            credit: "Xiaoyang Kang, Tao Yang, Wenqi Ouyang, Peiran Ren, Lingzhi Li, Xuansong Xie (DDColor, DAMO Academy)",
+            home_url: "https://github.com/piddnad/DDColor",
+            diffusion: None,
+            restricted: false,
+        }
+    };
+}
+
+/// DDColor Tiny (`ddcolor_paper_tiny`, ConvNeXt-T): Colorize on phones.
+pub const DDCOLOR_TINY: ModelSpec = ddcolor_spec!(
+    "ddcolor-tiny",
+    "DDColor Tiny",
+    "Colorize: colours for black-and-white photos (the small model, for phones)",
+    (617, "1700ddcee54824e2229503197be2a9f8c38af35ac9004d69204de8b320e39b48"),
+    (315_694, "293f90f7c3a0a989f74edd33481927534e0e89ba4d4c750ea44128c442689d57"),
+    (120_975_324, "e4c0a38e521c8bd5b502ea390417e9cccc42dcbeb8e7d4b3c7586283ab67585b")
+);
+/// DDColor (`ddcolor_modelscope`, ConvNeXt-L, the authors' default): Colorize on computers and large tablets.
+pub const DDCOLOR_LARGE: ModelSpec = ddcolor_spec!(
+    "ddcolor-large",
+    "DDColor",
+    "Colorize: colours for black-and-white photos (the large model: more even, truer colours)",
+    (617, "66132f85e2eec13314b7b370adc8164721c0965ae97d6c295361b1b190fc30cc"),
+    (404_548, "cc77ae4226174984b083aaf272dfc3e0ceabebcedc56670ec666a4dd7eab88a7"),
+    (466_715_420, "7ea119f08792d701ce5ead961c4105d4bd6c52dc45aed1cc34a58a11defba8bd")
+);
+
+/// Models the engine downloads but never runs: a frontend runs them (Core ML) and lists them in its open options
+/// (`hostModels`), with where to download them. Elsewhere they are not offered.
+pub const HOST_RUN: &[&str] = &[DDCOLOR_TINY.id, DDCOLOR_LARGE.id];
+
+/// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's, as are the
+/// Core ML conversions).
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &DEPTH_GPU, &SURFACE, &SD15, &KANDINSKY, &SDXL];
+pub const ALL: &[&ModelSpec] =
+    &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &DEPTH_GPU, &SURFACE, &SD15, &KANDINSKY, &SDXL, &DDCOLOR_TINY, &DDCOLOR_LARGE];
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &SURFACE, &SD15, &KANDINSKY, &SDXL];
 
@@ -300,8 +353,10 @@ mod tests {
     fn built_in_mirrors_are_https_and_every_model_is_described() {
         for m in ALL {
             assert!(m.default_mirrors.iter().all(|u| u.starts_with("https://") && !u.ends_with('/')), "{}", m.id);
+            // (a model the frontend runs has no built-in location: the frontend names its own, `HOST_RUN`)
             assert!(
-                m.parts().iter().all(|p| !p.builtin.is_empty() && p.builtin.iter().all(|u| u.starts_with("https://") && !u.ends_with('/'))),
+                m.parts().iter().all(|p| (!p.builtin.is_empty() || HOST_RUN.contains(&m.id))
+                    && p.builtin.iter().all(|u| u.starts_with("https://") && !u.ends_with('/'))),
                 "{}",
                 m.id
             );

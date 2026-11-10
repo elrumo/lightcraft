@@ -23,6 +23,9 @@ Expand on computers and capable phones, [generative-expand.md](generative-expand
 Expand's diffusion models on candle (`crates/diffuse`): **Stable Diffusion 1.5 Inpainting**, **Kandinsky 2.2 Inpaint**
 and **SDXL Inpainting**, and **Depth Anything 3** Small or Base (Lens Blur and Depth Range masks,
 [lens-blur.md](lens-blur.md): the fp32 ONNX exports on rten, from `crates/depth`, on every device and in the browser).
+**DDColor** Tiny and Large (Colorize, [colorize.md](colorize.md), Apache-2.0, trained on ImageNet) are listed and
+downloaded here but run by a native frontend in Core ML (`HOST_RUN` in `crates/enhance`): the frontend names them, with
+its own mirror, in the host's open options (`hostModels`), and nowhere else are they offered.
 The rest of this page is the research behind what to add next
 (2026-10-08; read from each repo's LICENSE and each Hugging Face model card — **re-check the licence of a model when
 you add it**, and write the verdict and the URL you read in its `ModelSpec`).

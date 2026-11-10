@@ -9,6 +9,7 @@ mod before;
 pub(crate) mod browse;
 mod cloud_sync;
 mod color;
+mod colorize;
 pub(crate) mod convert;
 mod cull;
 pub mod curves;
@@ -169,6 +170,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(film::specs());
         v.extend(lensblur::specs());
         v.extend(relight::specs());
+        v.extend(colorize::specs());
         v.extend(enhance::specs());
         v.extend(models::specs());
         v.extend(organize::specs());

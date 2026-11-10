@@ -70,8 +70,13 @@ impl DepthSource {
 /// `src` (scene-linear Rec. 2020) as the model wants it: display-encoded sRGB, exposed so its
 /// median sits at mid-grey, highlights rolled off, at most [`INPUT_EDGE`] pixels long.
 fn model_input(src: &Rgb32f) -> Rgb32f {
+    model_input_at(src, INPUT_EDGE)
+}
+
+/// [`model_input`] at most `edge` pixels long (Colorize's model takes 512).
+pub(crate) fn model_input_at(src: &Rgb32f, edge: usize) -> Rgb32f {
     let (w, h) = (src.width.max(1), src.height.max(1));
-    let k = (INPUT_EDGE as f64 / w.max(h) as f64).min(1.0);
+    let k = (edge.max(1) as f64 / w.max(h) as f64).min(1.0);
     let small = resize(src, ((w as f64 * k).round() as usize).max(1), ((h as f64 * k).round() as usize).max(1), Filter::Box);
     let lum = |c: &[f32; 3]| 0.2627 * c[0] + 0.6780 * c[1] + 0.0593 * c[2];
     let mut l: Vec<f32> = small.data.iter().map(lum).filter(|v| v.is_finite()).collect();

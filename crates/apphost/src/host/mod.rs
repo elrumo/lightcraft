@@ -471,6 +471,8 @@ impl Engine {
             // (a build with the models' code can search, read text, find faces and check photos on the phone)
             session.vision.dir = crate::startup::vision_models_dir(home);
         }
+        // (the models the frontend runs itself, and where it downloads them from)
+        session.enhancer.host_models = config.host_models.clone();
         // the photo-library originals the app fetches are staged with its picks (moved into the library when opened)
         session.set_photo_library_staging(Some(crate::startup::staging(&tmp).0));
         // searches by description and indexing run off the engine thread (as in egui); the tick applies them

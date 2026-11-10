@@ -344,42 +344,86 @@ impl NormalMap {
         if w == 0 || h == 0 || w > MAX_DEPTH_SIDE || h > MAX_DEPTH_SIDE || v.len() != w * h {
             return None;
         }
-        let code = |c: f32| if c.is_finite() { (c.clamp(-1.0, 1.0) * 127.0).round() as i8 as u8 } else { 0 };
-        let mut q = Vec::with_capacity(2 * v.len());
-        for row in v.chunks(w) {
-            let mut prev = [0u8; 2];
-            for n in row {
-                let n = facing(*n);
-                let c = [code(n[0]), code(n[1])];
-                q.push(c[0].wrapping_sub(prev[0]));
-                q.push(c[1].wrapping_sub(prev[1]));
-                prev = c;
-            }
-        }
-        Some(NormalMap { w: w as u32, h: h as u32, data: base64_encode(&miniz_oxide::deflate::compress_to_vec(&q, 8)) })
+        let code = |c: f32| if c.is_finite() { (c.clamp(-1.0, 1.0) * 127.0).round() as i8 } else { 0 };
+        let codes: Vec<[i8; 2]> = v.iter().map(|n| facing(*n)).map(|n| [code(n[0]), code(n[1])]).collect();
+        Some(NormalMap { w: w as u32, h: h as u32, data: pack_pairs(w, &codes) })
     }
 
     /// The unit normals (row-major), or `None` when the data is damaged or claims an absurd size.
     pub fn normals(&self) -> Option<Vec<[f32; 3]>> {
-        let (w, h) = (self.w as usize, self.h as usize);
-        if w == 0 || h == 0 || w > MAX_DEPTH_SIDE || h > MAX_DEPTH_SIDE {
-            return None;
-        }
-        let q = miniz_oxide::inflate::decompress_to_vec_with_limit(&base64_decode(&self.data)?, 2 * w * h).ok()?;
-        if q.len() != 2 * w * h {
-            return None;
-        }
-        let mut out = Vec::with_capacity(w * h);
-        for row in q.chunks(2 * w) {
-            let mut prev = [0u8; 2];
-            for d in row.chunks(2) {
-                prev = [prev[0].wrapping_add(d[0]), prev[1].wrapping_add(d.get(1).copied().unwrap_or(0))];
-                let (x, y) = (f32::from(prev[0] as i8) / 127.0, f32::from(prev[1] as i8) / 127.0);
-                out.push(unit_from_xy(x, y));
-            }
-        }
-        Some(out)
+        let pairs = unpack_pairs(self.w, self.h, &self.data, MAX_DEPTH_SIDE)?;
+        Some(pairs.into_iter().map(|[x, y]| unit_from_xy(f32::from(x) / 127.0, f32::from(y) / 127.0)).collect())
     }
+}
+
+/// Largest side of a stored [`ChromaMap`] (the colourise model answers 512 × 512).
+pub const MAX_CHROMA_SIDE: usize = 1024;
+
+/// The colours a model gave a black-and-white photo (Colorize, [`crate::Colorize::map`]), stored with the settings so
+/// rendering never needs the model. `w × h` CIE Lab a and b values (D65; −127..127, whole units) over the uncropped,
+/// EXIF-oriented photo (laid out as a [`DepthMap`]); the photo keeps its own lightness. Stored as a [`NormalMap`] is:
+/// two signed bytes interleaved, each stored as its difference from the same component to its left, deflated and base64
+/// encoded.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChromaMap {
+    pub w: u32,
+    pub h: u32,
+    pub data: String,
+}
+
+impl ChromaMap {
+    /// From `w × h` Lab (a, b) pairs (rounded, clamped to ±127; not a number is 0); `None` for an empty or oversized map.
+    pub fn from_ab(w: usize, h: usize, v: &[[f32; 2]]) -> Option<ChromaMap> {
+        if w == 0 || h == 0 || w > MAX_CHROMA_SIDE || h > MAX_CHROMA_SIDE || v.len() != w * h {
+            return None;
+        }
+        let code = |c: f32| if c.is_finite() { c.clamp(-127.0, 127.0).round() as i8 } else { 0 };
+        let codes: Vec<[i8; 2]> = v.iter().map(|p| [code(p[0]), code(p[1])]).collect();
+        Some(ChromaMap { w: w as u32, h: h as u32, data: pack_pairs(w, &codes) })
+    }
+
+    /// The Lab (a, b) pairs (row-major), or `None` when the data is damaged or claims an absurd size.
+    pub fn ab(&self) -> Option<Vec<[f32; 2]>> {
+        let pairs = unpack_pairs(self.w, self.h, &self.data, MAX_CHROMA_SIDE)?;
+        Some(pairs.into_iter().map(|[a, b]| [f32::from(a), f32::from(b)]).collect())
+    }
+}
+
+/// Rows of `w` signed byte pairs, each byte stored as its difference from the same component to its left, deflated and
+/// base64 encoded ([`NormalMap`], [`ChromaMap`]).
+fn pack_pairs(w: usize, codes: &[[i8; 2]]) -> String {
+    let mut q = Vec::with_capacity(2 * codes.len());
+    for row in codes.chunks(w.max(1)) {
+        let mut prev = [0u8; 2];
+        for c in row {
+            let c = [c[0] as u8, c[1] as u8];
+            q.push(c[0].wrapping_sub(prev[0]));
+            q.push(c[1].wrapping_sub(prev[1]));
+            prev = c;
+        }
+    }
+    base64_encode(&miniz_oxide::deflate::compress_to_vec(&q, 8))
+}
+
+/// [`pack_pairs`] undone: `w × h` pairs, or `None` when the data is damaged or a side is 0 or past `max_side`.
+fn unpack_pairs(w: u32, h: u32, data: &str, max_side: usize) -> Option<Vec<[i8; 2]>> {
+    let (w, h) = (w as usize, h as usize);
+    if w == 0 || h == 0 || w > max_side || h > max_side {
+        return None;
+    }
+    let q = miniz_oxide::inflate::decompress_to_vec_with_limit(&base64_decode(data)?, 2 * w * h).ok()?;
+    if q.len() != 2 * w * h {
+        return None;
+    }
+    let mut out = Vec::with_capacity(w * h);
+    for row in q.chunks(2 * w) {
+        let mut prev = [0u8; 2];
+        for d in row.chunks(2) {
+            prev = [prev[0].wrapping_add(d[0]), prev[1].wrapping_add(d.get(1).copied().unwrap_or(0))];
+            out.push([prev[0] as i8, prev[1] as i8]);
+        }
+    }
+    Some(out)
 }
 
 /// `n` made one long and turned to face the camera (z ≥ 0); straight at the camera when it is no direction.
@@ -440,6 +484,28 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chroma_round_trips_in_whole_lab_units() {
+        let (w, h) = (5, 4);
+        let v: Vec<[f32; 2]> = (0..w * h).map(|i| [(i as f32 * 0.7).sin() * 60.0, (i as f32 * 0.3).cos() * 90.0 - 10.0]).collect();
+        let m = ChromaMap::from_ab(w, h, &v).unwrap();
+        let back = m.ab().unwrap();
+        assert_eq!(back.len(), v.len());
+        for (a, b) in v.iter().zip(&back) {
+            assert!((a[0] - b[0]).abs() <= 0.5 && (a[1] - b[1]).abs() <= 0.5, "{a:?} {b:?}");
+        }
+        // past the range is clamped, nonsense is no colour
+        let odd = ChromaMap::from_ab(3, 1, &[[300.0, -300.0], [f32::NAN, f32::INFINITY], [-0.4, 0.6]]).unwrap().ab().unwrap();
+        assert_eq!(odd, vec![[127.0, -127.0], [0.0, 0.0], [0.0, 1.0]]);
+        // empty, oversized, the wrong length, damaged data, a size the data doesn't have
+        assert!(ChromaMap::from_ab(0, 1, &[]).is_none());
+        assert!(ChromaMap::from_ab(MAX_CHROMA_SIDE + 1, 1, &vec![[0.0; 2]; MAX_CHROMA_SIDE + 1]).is_none());
+        assert!(ChromaMap::from_ab(2, 2, &[[0.0; 2]; 3]).is_none());
+        assert!(ChromaMap { w: 3, h: 3, data: "AAAA".into() }.ab().is_none());
+        assert!(ChromaMap { w: 6, h: 4, ..m.clone() }.ab().is_none());
+        assert!(ChromaMap { w: u32::MAX, h: u32::MAX, ..m }.ab().is_none());
+    }
 
     #[test]
     fn normals_round_trip_within_their_quantization() {

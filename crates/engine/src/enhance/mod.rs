@@ -65,6 +65,9 @@ pub struct Enhancer {
     pub tile: Option<usize>,
     /// Models the user turned off (Settings ▸ AI Models), by id.
     pub disabled: std::collections::BTreeSet<String>,
+    /// Models the frontend runs itself ([`lightcraft_enhance::models::HOST_RUN`]), by id, with the base URLs it downloads
+    /// them from (tried after the user's own mirrors). Only these of them are offered.
+    pub host_models: std::collections::BTreeMap<String, Vec<String>>,
     /// Download only from the user's own mirrors (the environment variable and
     /// `<id>-mirrors.txt`), never from the built-in location. For tests and for people who want
     /// no connection to any host they didn't choose.
@@ -143,7 +146,14 @@ impl Enhancer {
     fn user_mirrors(&self, spec: &lightcraft_enhance::models::ModelSpec) -> Vec<String> {
         let env = std::env::var(spec.mirrors_env).ok();
         let file = self.dir.as_ref().map(|d| d.join(format!("{}-mirrors.txt", spec.id)));
-        lightcraft_fetch::mirrors(env.as_deref(), file.as_deref(), &[])
+        let mut out = lightcraft_fetch::mirrors(env.as_deref(), file.as_deref(), &[]);
+        for m in self.host_models.get(spec.id).into_iter().flatten() {
+            let m = m.trim().trim_end_matches('/').to_string();
+            if m.starts_with("https://") && !out.contains(&m) {
+                out.push(m);
+            }
+        }
+        out
     }
 
     /// Where model `id` is downloaded from, in order: the user's, then the built-in ones (for a

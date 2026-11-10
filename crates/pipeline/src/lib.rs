@@ -7,7 +7,7 @@
 //! Stage order (see `docs/pipeline.md`):
 //! 1. geometry — user orientation, lens corrections (distortion, CA, vignetting), perspective, crop +
 //!    straighten, flips; one resample at output resolution; then defringe
-//! 2. scene-linear — white balance, exposure, dehaze, local tone (highlights/shadows), texture,
+//! 2. scene-linear — white balance, Colorize ([`colorize`]), exposure, dehaze, local tone (highlights/shadows), texture,
 //!    clarity, local adjustments (masks); Depth Map, Relight ([`relight`]) and Lens Blur ([`lensblur`])
 //!    after noise reduction
 //! 3. tone map — contrast / whites / blacks filmic curve on luminance, highlight desaturation
@@ -27,6 +27,7 @@
 pub mod auto;
 pub mod blemish;
 pub mod camera_look;
+pub mod colorize;
 pub mod colorops;
 pub mod cull;
 pub mod curve;
@@ -479,6 +480,8 @@ pub struct Plan<'a> {
     pub depth_look: Option<relight::Look>,
     /// Relight, when it lights anything.
     pub relight: Option<relight::Setup>,
+    /// Colorize, when it colours anything.
+    pub colorize: Option<colorize::Setup>,
     /// Film effects, when there is a frame or a visible mark: drawn over the finished picture ([`film`]).
     pub film: Option<film::Setup>,
     /// Where the rendered pixels sit in the whole output frame (a window's top-left corner).
@@ -523,6 +526,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let glow = glow::Setup::new(s, px_per_long);
     let depth_look = relight::Look::new(s, mattes.as_deref());
     let relight = relight::Setup::new(s, mattes.as_deref(), s.orientation);
+    let colorize = colorize::Setup::new(s);
     // (the Crop tool's uncropped view shows the photo, not the frame it sits in)
     let film = film::Setup::new(s, info.film_salt, req.space, req.apply_crop);
     let mut fixed_air = None;
@@ -591,6 +595,8 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         // and so do Depth Map and Relight (a draft's shadows are coarser too)
         depth_look.as_ref().map(|l| l.key),
         relight.as_ref().map(|r| (r.key, req.quality == Quality::Draft)),
+        // Colorize follows the white balance
+        colorize.as_ref().map(|c| c.key),
     ));
     let base_key = hash_of((
         pre_nr_key,
@@ -624,17 +630,18 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         blur,
         depth_look,
         relight,
+        colorize,
         film,
         origin,
         full: [full_w, full_h],
     }
 }
 
-/// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
+/// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal, Colorize).
 pub fn lin_needs_cpu(s: &DevelopSettings, info: &SourceInfo) -> bool {
     let o = &s.optics;
     let defringe = s.section_enabled("optics") && (o.defringe_purple_amount > 0.0 || o.defringe_green_amount > 0.0);
-    defringe || !s.spots.is_empty() || local_tone::enabled(info, s)
+    defringe || !s.spots.is_empty() || local_tone::enabled(info, s) || colorize::active(s)
 }
 
 /// The white-balanced, defringed, retouched image (before noise reduction): the CPU part of the
@@ -644,6 +651,9 @@ pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     // (before the white balance: the gain's input is the as-shot development, as in the file)
     local_tone::apply(img, info, p);
     local::white_balance(img, info, s);
+    if let Some(c) = &p.colorize {
+        colorize::apply(img, c, &p.frame);
+    }
     optics::defringe(img, s, p.px_per_long / optics::DEFRINGE_REF_LONG);
     // (an AI fill stored in the plain light is given the per-pixel steps the picture just got, in their order)
     let light = if s.spots.iter().any(|sp| sp.fill.as_ref().is_some_and(|f| f.plain)) {

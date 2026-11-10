@@ -61,6 +61,11 @@ pub struct OpenConfig {
     /// error to act on, also on a phone, never the demo library in its place.
     #[serde(default)]
     pub chosen: bool,
+    /// Models the frontend runs itself (the engine's `HOST_RUN` ids: Core ML conversions on Apple's systems), each with
+    /// the base URLs it is downloaded from (`https://`; file `f` at `<base>/<f>`). The engine lists, downloads and deletes
+    /// them with the others (`models.*`) and never runs them; one left out is not offered.
+    #[serde(default)]
+    pub host_models: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// An error answer: `code` is the kind (the engine's error variants in camelCase —

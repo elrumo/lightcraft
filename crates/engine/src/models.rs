@@ -493,7 +493,9 @@ impl Session {
                     // (Generative Expand's models are offered by the device's profile)
                     available: Enhancer::AVAILABLE
                         && crate::expand::ExpandModel::from_id(m.id).is_none_or(|x| self.expand_available(x))
-                        && (m.id != crate::depth::GPU_ID || self.depth_gpu_available()),
+                        && (m.id != crate::depth::GPU_ID || self.depth_gpu_available())
+                        // (a model the frontend runs, only where it says so)
+                        && (!lightcraft_enhance::models::HOST_RUN.contains(&m.id) || e.host_models.contains_key(m.id)),
                     unavailable: None,
                     installed: e.installed(m.id),
                     enabled: !e.disabled.contains(m.id),

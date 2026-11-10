@@ -1676,6 +1676,8 @@ mod tests_bitmap_mask;
 #[cfg(test)]
 mod tests_cloud_sync;
 #[cfg(test)]
+mod tests_colorize;
+#[cfg(test)]
 mod tests_crop_autoframe;
 #[cfg(test)]
 mod tests_describe;
