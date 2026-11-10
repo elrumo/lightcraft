@@ -324,6 +324,12 @@ pub struct Vision {
     /// Run work in the background and apply results in [`Session::vision_poll`] (the desktop
     /// app); otherwise commands wait for their result (CLI, MCP, tests).
     pub background: bool,
+    /// The threads a background indexing run may take, for a host on a small machine whose owner is using it at the
+    /// same time (a phone, with the app in front): `Some(n)` runs it on `n` threads of its own at a priority below the
+    /// default ([`lightcraft_sysmem::utility_thread_priority`]), its photos' decoding and developing and its ONNX
+    /// models alike, so it leaves processors free and gives way to everything else. `None` (the default): on the
+    /// pools the interactive work uses, as many threads as they have. A run that is waited for is never moved.
+    pub index_threads: Option<usize>,
     /// Send this library's search vectors to the server it syncs with, so the server and the
     /// user's other devices needn't compute them again. Off until the user turns it on
     /// (persisted in the library's prefs.json).
@@ -436,6 +442,7 @@ impl Default for Vision {
             helper_parts: Vec::new(),
             helper_paused: Vec::new(),
             helper_once: Vec::new(),
+            index_threads: None,
             helper_usage: HelperUsage::Auto,
             helper_conditions: HelperConditions::default(),
             thin: false,
@@ -1188,6 +1195,35 @@ fn with_faces<R>(shared: &Shared, spec: &FaceSpec, f: impl FnOnce(&mut FaceIndex
     Ok(r)
 }
 
+/// The pool one background indexing run with threads of its own works on ([`Vision::index_threads`]), and its size:
+/// at most `threads`, and never more than rayon's own pool has (a host that limits that one limits this). Its threads
+/// take a priority below the default as they start, and end with the run. `None` when the system gives no threads (the
+/// run then works as one without threads of its own).
+///
+/// The whole run is installed on it, so the parallel parts of each photo (decoding, developing) stay on these threads
+/// and off rayon's own pool, which serves the loupe and exports and has no priorities. The pool is the run's alone, and
+/// a run takes its photos one after another: a wait inside a photo finds no other photo to start on top of itself.
+/// (Two runs sharing a pool could: one waiting inside a decode would pick up the other's next photo, which then waits
+/// at the memory gate for what the first holds, as [`crate::faces_worker`]'s pools have to rule out.)
+#[cfg(not(target_arch = "wasm32"))]
+fn index_pool(threads: usize) -> Option<(usize, rayon::ThreadPool)> {
+    let threads = threads.clamp(1, rayon::current_num_threads().max(1));
+    let built = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("lc-vision-index-{i}"))
+        .start_handler(|_| {
+            let _ = lightcraft_sysmem::utility_thread_priority();
+        })
+        .build();
+    match built {
+        Ok(pool) => Some((threads, pool)),
+        Err(e) => {
+            log::info!("indexing: no threads of its own ({e}), it shares the others'");
+            None
+        }
+    }
+}
+
 /// What an indexing run does: embed photos (describe), read their text, find faces, or all.
 struct Plan {
     semantic: Option<(Provider, IndexSpec)>,
@@ -1706,7 +1742,11 @@ impl Session {
                 task
             });
             let j = job.clone();
-            let started = std::thread::Builder::new().name("lc-vision-index".into()).spawn(move || run_index(&shared, plan, &j));
+            let own = self.vision.index_threads;
+            let started = std::thread::Builder::new().name("lc-vision-index".into()).spawn(move || match own.and_then(index_pool) {
+                Some((threads, pool)) => pool.install(|| lightcraft_vision::in_background(threads, || run_index(&shared, plan, &j))),
+                None => run_index(&shared, plan, &j),
+            });
             if let Err(e) = started {
                 job.finished.store(true, Ordering::Relaxed);
                 self.vision.index_task = None;
