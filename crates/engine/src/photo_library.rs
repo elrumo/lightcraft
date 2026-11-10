@@ -601,7 +601,9 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
         s.save_photo_library();
         forgotten = true;
     }
-    if s.selection.active == Some(id) || forgotten {
+    // (only while the selection names the photo left: an app closes a page it has left once that page's opening has
+    // answered, which can be after the next page's photo is open, and that one is the photo shown and edited, HB-343)
+    if s.selection.active == Some(id) || s.selection.ids.contains(&id) {
         let back = s.photo_library_return.take().unwrap_or_default();
         let exists = |i: &PhotoId| s.catalog.photo(*i).is_some();
         let selection = Selection { ids: back.ids.into_iter().filter(exists).collect(), active: back.active.filter(exists) };

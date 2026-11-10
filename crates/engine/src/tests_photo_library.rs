@@ -230,6 +230,24 @@ fn auto_advance_stays_when_the_selected_photo_came_from_the_photo_library_too() 
     assert_eq!(s.selection.active, Some(first), "the selection comes back");
 }
 
+/// An app closes a page it has left once that page's own opening has answered, which can be after the next page's
+/// photo is open and shown (HB-343): the photo shown stays the one selected, and leaving it gives the selection back.
+#[test]
+fn closing_a_photo_left_earlier_keeps_the_one_shown_selected() {
+    let root = temp_dir("late-close");
+    let mut s = session(&root);
+    png(&root.join("mine.png"), 9);
+    s.execute("library.import", &json!({"paths": [root.join("mine.png").to_string_lossy()]})).unwrap();
+    let mine = s.catalog.photos().next().unwrap().id;
+    s.selection = Selection::single(mine);
+    let left = id_of(&open(&mut s, "A1", &staged(&root, "IMG_1.png", 1)));
+    let shown = id_of(&open(&mut s, "A2", &staged(&root, "IMG_2.png", 2)));
+    assert_eq!(s.execute("photoLibrary.close", &json!({"id": left.0})).unwrap()["forgotten"], true);
+    assert_eq!(s.selection.active, Some(shown), "the tools still edit the photo on screen");
+    s.execute("photoLibrary.close", &json!({"id": shown.0})).unwrap();
+    assert_eq!(s.selection.active, Some(mine), "the library's selection comes back with the last one left");
+}
+
 #[test]
 fn a_file_from_outside_the_staging_folder_is_copied() {
     let root = temp_dir("copy");
