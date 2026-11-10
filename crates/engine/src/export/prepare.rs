@@ -179,6 +179,8 @@ enum Work {
         lossy_edge: Option<u32>,
         /// The original must not carry a location ([`removes_location`]).
         remove_location: bool,
+        /// An `Original` export writes `packet` beside the file ([`ExportOptions::sidecar`]).
+        sidecar: bool,
         label: String,
         size: (usize, usize),
     },
@@ -311,6 +313,7 @@ fn prepare_guarded(
                 u32::try_from(w.max(h)).unwrap_or(u32::MAX)
             }),
             remove_location: removes_location(p, &session.catalog, o),
+            sidecar: o.sidecar,
             label: p.file_name.clone(),
             size: (p.width as usize, p.height as usize),
         };
@@ -547,7 +550,7 @@ impl PreparedExport {
             }
             #[cfg(target_arch = "wasm32")]
             Work::Server(_) => Err("rendering on the server needs the desktop or iOS app".to_string()),
-            Work::File { path, read, packet, dng, quality, lossy_edge, label, size, remove_location } => {
+            Work::File { path, read, packet, dng, quality, lossy_edge, label, size, remove_location, sidecar } => {
                 let bytes = match &read {
                     Some(r) => r(&path)?,
                     None => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
@@ -571,7 +574,7 @@ impl PreparedExport {
                         bytes,
                         width: size.0,
                         height: size.1,
-                        sidecars: vec![("xmp", packet.into_bytes())],
+                        sidecars: if sidecar { vec![("xmp", packet.into_bytes())] } else { Vec::new() },
                         gpu_fallback: None,
                     });
                 };

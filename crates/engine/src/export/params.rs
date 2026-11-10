@@ -23,6 +23,7 @@ impl Default for ExportOptions {
             dng_compression: DngCompression::Lossless,
             metadata: MetadataPolicy::All,
             remove_location: false,
+            sidecar: true,
             watermark: None,
             border: None,
             color_space: OutputSpace::Srgb,
@@ -69,6 +70,7 @@ pub const OPTION_PARAMS: &[&str] = &[
     "dngCompression",
     "metadata",
     "removeLocation",
+    "sidecar",
     "watermark",
     "border",
     "colorSpace",
@@ -289,7 +291,7 @@ impl ExportOptions {
                     }
                     serde_json::from_value::<Resize>(v.clone()).map_err(|e| bad(format!("`{k}`: {e}")))?;
                 }
-                "dontEnlarge" | "removeLocation" | "background" | "hdr" | "jxlLossless" | "jxlProgressive" | "onServer" => {
+                "dontEnlarge" | "removeLocation" | "sidecar" | "background" | "hdr" | "jxlLossless" | "jxlProgressive" | "onServer" => {
                     boolean(k, v)?;
                 }
                 "addToPhotos" => {
@@ -437,7 +439,7 @@ impl ExportOptions {
     }
 
     /// Read options from command params (`format`, `quality`, `limitKb`, `sharpen`, `sharpenAmount`,
-    /// `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`, `bitDepth`, `ppi`,
+    /// `naming`, `metadata`, `removeLocation`, `sidecar`, `watermark`, `colorSpace`, `bitDepth`, `ppi`,
     /// `addToPhotos`, `photosAlbum`) and the
     /// size: one of `longEdge`, `shortEdge`, `width`, `height` (both = fit inside W × H),
     /// `megapixels`, `percent` (absent or 0 = full size), or a [`Resize`] object as `resize`; plus
@@ -476,6 +478,7 @@ impl ExportOptions {
             dng_compression: enm(p, "dngCompression").unwrap_or(d.dng_compression),
             metadata: s("metadata").and_then(MetadataPolicy::parse).unwrap_or(d.metadata),
             remove_location: p.get("removeLocation").and_then(Value::as_bool).unwrap_or(d.remove_location),
+            sidecar: p.get("sidecar").and_then(Value::as_bool).unwrap_or(d.sidecar),
             watermark: match p.get("watermark") {
                 Some(Value::String(t)) => Some(Watermark { text: t.clone(), ..Default::default() }),
                 Some(v @ Value::Object(_)) => watermark_from_json(v).ok(),
