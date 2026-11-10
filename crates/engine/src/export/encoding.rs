@@ -325,7 +325,10 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, catalog: &lightcraft_c
         out.gps = m.gps.map(|(latitude, longitude)| Gps { latitude, longitude, altitude: None });
     }
     if o.metadata == MetadataPolicy::All {
-        out.model = text(&m.camera);
+        // the catalog keeps make and model joined ("Canon Canon EOS R6"): Exif has a tag for each (HB-284)
+        let (make, model) = lightcraft_catalog::camera_make_model(&m.camera);
+        out.make = text(make);
+        out.model = text(model);
         out.lens_model = text(&m.lens);
         out.focal_length = m.focal_mm.map(f64::from);
         out.f_number = m.aperture.map(f64::from);

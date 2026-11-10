@@ -232,7 +232,7 @@ fn exported_keywords_follow_their_options() {
 fn metadata_policies() {
     use lightcraft_catalog::{Catalog, Photo, PhotoId, Source};
     let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.jpg", "jpeg", 10, 10, "2026-09-30T00:00:00");
-    p.meta.camera = "Synthetic X2".into();
+    p.meta.camera = "Canon Canon EOS R6".into();
     p.meta.copyright = "(c) Me".into();
     p.meta.copyright_status = lightcraft_catalog::CopyrightStatus::Copyrighted;
     p.meta.usage_terms = "Editorial use only".into();
@@ -240,14 +240,14 @@ fn metadata_policies() {
     p.meta.shutter = "1/250".into();
     p.meta.gps = Some((43.0, -110.0));
     let all = export_metadata(&p, &Catalog::new(), &ExportOptions::default()).unwrap();
-    assert_eq!(all.model.as_deref(), Some("Synthetic X2"));
+    assert_eq!((all.make.as_deref(), all.model.as_deref()), (Some("Canon"), Some("Canon EOS R6")));
     assert!((all.exposure_time.unwrap() - 0.004).abs() < 1e-9);
     assert!(all.gps.is_some());
     let o = ExportOptions { metadata: MetadataPolicy::AllExceptCamera, remove_location: true, ..Default::default() };
     let m = export_metadata(&p, &Catalog::new(), &o).unwrap();
-    assert!(m.model.is_none() && m.gps.is_none() && m.copyright.is_some());
+    assert!(m.make.is_none() && m.model.is_none() && m.gps.is_none() && m.copyright.is_some());
     let c = export_metadata(&p, &Catalog::new(), &ExportOptions { metadata: MetadataPolicy::Copyright, ..Default::default() }).unwrap();
-    assert!(c.model.is_none() && c.gps.is_none() && c.copyright.as_deref() == Some("(c) Me"));
+    assert!(c.make.is_none() && c.model.is_none() && c.gps.is_none() && c.copyright.as_deref() == Some("(c) Me"));
     // "copyright only" keeps all the copyright info: status, usage terms, info URL
     assert_eq!(
         (c.copyright_marked, c.usage_terms.as_deref(), c.copyright_url.as_deref()),
@@ -257,11 +257,58 @@ fn metadata_policies() {
     // embedded and readable back from the JPEG
     let jpg = encode_with_metadata(&test_image(), &ExportOptions::default(), Some(&all)).unwrap();
     let back = lightcraft_meta::extract(&jpg);
-    assert_eq!(back.model.as_deref(), Some("Synthetic X2"));
+    assert_eq!((back.make.as_deref(), back.model.as_deref()), (Some("Canon"), Some("Canon EOS R6")));
     assert_eq!(back.copyright.as_deref(), Some("(c) Me"));
     assert_eq!((back.copyright_marked, back.usage_terms.as_deref()), (Some(true), Some("Editorial use only")));
     assert_eq!(back.copyright_url.as_deref(), Some("https://example.com/rights"));
     assert!(back.gps.is_some());
+}
+
+/// HB-284: an exported JPEG and TIFF (the file the Apple apps turn into a HEIC, keeping its tags) carry the camera's
+/// make and model in tags of their own, as the camera wrote them, not the catalog's joined name as the model
+/// ("Canon Canon EOS R6") and no make.
+#[test]
+fn exports_carry_the_cameras_make_and_model() {
+    use lightcraft_catalog::{Catalog, Photo, PhotoId, Source};
+    for (camera, make, model) in [
+        ("Canon Canon EOS R6", Some("Canon"), Some("Canon EOS R6")),
+        ("NIKON CORPORATION NIKON D850", Some("NIKON CORPORATION"), Some("NIKON D850")),
+        ("SONY ILCE-7M3", Some("SONY"), Some("ILCE-7M3")),
+        ("Apple iPhone 15 Pro", Some("Apple"), Some("iPhone 15 Pro")),
+        ("D850", None, Some("D850")),
+        ("", None, None),
+    ] {
+        let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.cr3", "CR3", 10, 10, "2026-09-30T00:00:00");
+        p.meta.camera = camera.into();
+        let m = export_metadata(&p, &Catalog::new(), &ExportOptions::default()).unwrap();
+        for format in ["jpeg", "tiff"] {
+            let o = ExportOptions::from_json(&json!({"format": format, "quality": 60}));
+            let back = lightcraft_meta::extract(&encode_with_metadata(&test_image(), &o, Some(&m)).unwrap());
+            assert_eq!((back.make.as_deref(), back.model.as_deref()), (make, model), "{camera:?} as {format}");
+        }
+    }
+}
+
+/// HB-284 on a real file: the corpus EOS R6 CR3 exported as JPEG and TIFF (a HEIC's source) carries Make `Canon`,
+/// Model `Canon EOS R6`.
+#[test]
+fn corpus_cr3_exports_carry_the_cameras_make_and_model() {
+    let path = std::env::var_os("LIGHTCRAFT_CORPUS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+        .join("raw/cr3-canon-r6-raw.cr3");
+    if !path.exists() {
+        lightcraft_testkit::skip!(Corpus, "no {} in the corpus", path.display());
+        return;
+    }
+    let mut s = crate::Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+    let id = s.catalog.photos().next().unwrap().id;
+    for format in ["jpeg", "tiff"] {
+        let o = ExportOptions::from_json(&json!({"format": format, "longEdge": 256, "quality": 60}));
+        let back = lightcraft_meta::extract(&export_photo(&mut s, id, &o, 1).unwrap().bytes);
+        assert_eq!((back.make.as_deref(), back.model.as_deref()), (Some("Canon"), Some("Canon EOS R6")), "{format}");
+    }
 }
 
 #[test]
