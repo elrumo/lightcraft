@@ -46,22 +46,80 @@ pub use sensitive::{Classifier, SensitiveIndex};
 pub use store::{Error, Key};
 pub use textindex::TextIndex;
 
-/// The thread pool the ONNX models (text, faces) run on: `None` is rten's own, sized for the whole
+/// The thread pool the ONNX models (text, faces) run on, and its size: `None` is rten's own, sized for the whole
 /// machine; a host that shares the machine sets a size ([`set_model_threads`]).
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
-static MODEL_POOL: std::sync::RwLock<Option<std::sync::Arc<rten::ThreadPool>>> = std::sync::RwLock::new(None);
+static MODEL_POOL: std::sync::RwLock<Option<(usize, std::sync::Arc<rten::ThreadPool>)>> = std::sync::RwLock::new(None);
 
 /// Run the ONNX models on at most `threads` threads from now on (runs in progress finish on the old pool).
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
 pub fn set_model_threads(threads: usize) {
-    let pool = std::sync::Arc::new(rten::ThreadPool::with_num_threads(threads.max(1)));
-    *MODEL_POOL.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(pool);
+    let threads = threads.max(1);
+    let pool = std::sync::Arc::new(rten::ThreadPool::with_num_threads(threads));
+    *MODEL_POOL.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((threads, pool));
 }
 
-/// The options a model run takes: the pool [`set_model_threads`] made, if any.
+thread_local! {
+    /// The threads the models this thread runs may take as background work ([`in_background`]), if it is doing some.
+    static BACKGROUND: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run `f` as background work: the ONNX models it runs on this thread use a pool of their own, at most `threads`
+/// threads at a priority below the default ([`lightcraft_sysmem::utility_thread_priority`]), and not the pool the
+/// runs a person is waiting for use. For work that shares a small machine with its owner (a phone indexing its
+/// library while the app is in use): it leaves processors free and gives way. A size set with [`set_model_threads`]
+/// still holds. Nested calls take the inner one's `threads`; a build without the ONNX models only runs `f`.
+pub fn in_background<R>(threads: usize, f: impl FnOnce() -> R) -> R {
+    /// Puts the thread's state back, also when `f` unwinds.
+    struct Was(Option<usize>);
+    impl Drop for Was {
+        fn drop(&mut self) {
+            BACKGROUND.set(self.0);
+        }
+    }
+    let _was = Was(BACKGROUND.replace(Some(threads.max(1))));
+    f()
+}
+
+/// The pool background model runs of `threads` threads use: kept until another size is asked for, its threads
+/// lowered once.
+#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+fn background_pool(threads: usize) -> std::sync::Arc<rten::ThreadPool> {
+    static POOL: std::sync::Mutex<Option<(usize, std::sync::Arc<rten::ThreadPool>)>> = std::sync::Mutex::new(None);
+    /// Is this one of rten's own threads? (A pool rten could not build runs its work on the caller's thread, and a
+    /// `broadcast` from there would reach rayon's global pool: those threads must keep their priority.)
+    fn on_model_thread() -> bool {
+        std::thread::current().name().is_some_and(|n| n.starts_with("rten-"))
+    }
+    let mut kept = POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((n, pool)) = kept.as_ref()
+        && *n == threads
+    {
+        return pool.clone();
+    }
+    let pool = std::sync::Arc::new(rten::ThreadPool::with_num_threads(threads));
+    pool.run(|| {
+        if on_model_thread() {
+            rayon::broadcast(|_| {
+                if on_model_thread() {
+                    let _ = lightcraft_sysmem::utility_thread_priority();
+                }
+            });
+        }
+    });
+    *kept = Some((threads, pool.clone()));
+    pool
+}
+
+/// The options a model run takes: the background pool inside [`in_background`], else the pool
+/// [`set_model_threads`] made, if any.
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
 pub(crate) fn run_options() -> Option<rten::RunOptions> {
-    let pool = MODEL_POOL.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()?;
+    let sized = MODEL_POOL.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let pool = match BACKGROUND.get() {
+        Some(threads) => background_pool(sized.as_ref().map_or(threads, |(most, _)| threads.min(*most))),
+        None => sized?.1,
+    };
     Some(rten::RunOptions::default().with_thread_pool(Some(pool)))
 }
 
@@ -69,5 +127,7 @@ pub(crate) fn run_options() -> Option<rten::RunOptions> {
 mod tests;
 #[cfg(test)]
 mod tests_faces;
+#[cfg(test)]
+mod tests_pools;
 #[cfg(test)]
 mod tests_text;

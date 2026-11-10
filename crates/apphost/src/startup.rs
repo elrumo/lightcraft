@@ -148,6 +148,19 @@ pub fn budget_after_open(profile: Profile, launch: usize, left: Option<usize>) -
     }
 }
 
+/// The threads a background indexing run takes on a machine of `profile` with `cores` processor threads
+/// (`Session::vision.index_threads`). A phone's library is indexed while its owner uses the app: with every processor
+/// at the default priority, the run left nothing for the system's own background work for seconds on end, and the
+/// interface waited with it (a phone's hang report: twelve threads of raw decoding and models on six cores, thermally
+/// limited). So a phone's run gets half its processors (two at least), on threads of its own below the default
+/// priority. A desktop's keeps the shared pools (`None`): it has processors to spare, and its panels show the run.
+pub fn index_threads(profile: Profile, cores: usize) -> Option<usize> {
+    match profile {
+        Profile::Mobile => Some((cores / 2).max(2)),
+        Profile::Desktop => None,
+    }
+}
+
 /// [`set_memory_budget`] for `profile` ([`budget_for`]).
 pub fn set_memory_budget_for(profile: Profile, available: Option<usize>) -> usize {
     let budget = lightcraft_engine::memory::set_budget(budget_for(profile, available));
@@ -180,6 +193,13 @@ pub fn clean_staging(tmp: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_phones_indexing_gets_half_its_processors_and_a_desktops_the_shared_pools() {
+        let phone = [1, 2, 4, 6, 8, 10].map(|cores| index_threads(Profile::Mobile, cores));
+        assert_eq!(phone, [Some(2), Some(2), Some(2), Some(3), Some(4), Some(5)]);
+        assert_eq!(index_threads(Profile::Desktop, 6), None);
+    }
 
     #[test]
     fn staging_is_cleaned_at_launch() {
