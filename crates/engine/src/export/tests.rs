@@ -232,7 +232,7 @@ fn exported_keywords_follow_their_options() {
 fn metadata_policies() {
     use lightcraft_catalog::{Catalog, Photo, PhotoId, Source};
     let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.jpg", "jpeg", 10, 10, "2026-09-30T00:00:00");
-    p.meta.camera = "Synthetic X2".into();
+    p.meta.camera = "Canon Canon EOS R6".into();
     p.meta.copyright = "(c) Me".into();
     p.meta.copyright_status = lightcraft_catalog::CopyrightStatus::Copyrighted;
     p.meta.usage_terms = "Editorial use only".into();
@@ -240,14 +240,14 @@ fn metadata_policies() {
     p.meta.shutter = "1/250".into();
     p.meta.gps = Some((43.0, -110.0));
     let all = export_metadata(&p, &Catalog::new(), &ExportOptions::default()).unwrap();
-    assert_eq!(all.model.as_deref(), Some("Synthetic X2"));
+    assert_eq!((all.make.as_deref(), all.model.as_deref()), (Some("Canon"), Some("Canon EOS R6")));
     assert!((all.exposure_time.unwrap() - 0.004).abs() < 1e-9);
     assert!(all.gps.is_some());
     let o = ExportOptions { metadata: MetadataPolicy::AllExceptCamera, remove_location: true, ..Default::default() };
     let m = export_metadata(&p, &Catalog::new(), &o).unwrap();
-    assert!(m.model.is_none() && m.gps.is_none() && m.copyright.is_some());
+    assert!(m.make.is_none() && m.model.is_none() && m.gps.is_none() && m.copyright.is_some());
     let c = export_metadata(&p, &Catalog::new(), &ExportOptions { metadata: MetadataPolicy::Copyright, ..Default::default() }).unwrap();
-    assert!(c.model.is_none() && c.gps.is_none() && c.copyright.as_deref() == Some("(c) Me"));
+    assert!(c.make.is_none() && c.model.is_none() && c.gps.is_none() && c.copyright.as_deref() == Some("(c) Me"));
     // "copyright only" keeps all the copyright info: status, usage terms, info URL
     assert_eq!(
         (c.copyright_marked, c.usage_terms.as_deref(), c.copyright_url.as_deref()),
@@ -257,11 +257,58 @@ fn metadata_policies() {
     // embedded and readable back from the JPEG
     let jpg = encode_with_metadata(&test_image(), &ExportOptions::default(), Some(&all)).unwrap();
     let back = lightcraft_meta::extract(&jpg);
-    assert_eq!(back.model.as_deref(), Some("Synthetic X2"));
+    assert_eq!((back.make.as_deref(), back.model.as_deref()), (Some("Canon"), Some("Canon EOS R6")));
     assert_eq!(back.copyright.as_deref(), Some("(c) Me"));
     assert_eq!((back.copyright_marked, back.usage_terms.as_deref()), (Some(true), Some("Editorial use only")));
     assert_eq!(back.copyright_url.as_deref(), Some("https://example.com/rights"));
     assert!(back.gps.is_some());
+}
+
+/// HB-284: an exported JPEG and TIFF (the file the Apple apps turn into a HEIC, keeping its tags) carry the camera's
+/// make and model in tags of their own, as the camera wrote them, not the catalog's joined name as the model
+/// ("Canon Canon EOS R6") and no make.
+#[test]
+fn exports_carry_the_cameras_make_and_model() {
+    use lightcraft_catalog::{Catalog, Photo, PhotoId, Source};
+    for (camera, make, model) in [
+        ("Canon Canon EOS R6", Some("Canon"), Some("Canon EOS R6")),
+        ("NIKON CORPORATION NIKON D850", Some("NIKON CORPORATION"), Some("NIKON D850")),
+        ("SONY ILCE-7M3", Some("SONY"), Some("ILCE-7M3")),
+        ("Apple iPhone 15 Pro", Some("Apple"), Some("iPhone 15 Pro")),
+        ("D850", None, Some("D850")),
+        ("", None, None),
+    ] {
+        let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.cr3", "CR3", 10, 10, "2026-09-30T00:00:00");
+        p.meta.camera = camera.into();
+        let m = export_metadata(&p, &Catalog::new(), &ExportOptions::default()).unwrap();
+        for format in ["jpeg", "tiff"] {
+            let o = ExportOptions::from_json(&json!({"format": format, "quality": 60}));
+            let back = lightcraft_meta::extract(&encode_with_metadata(&test_image(), &o, Some(&m)).unwrap());
+            assert_eq!((back.make.as_deref(), back.model.as_deref()), (make, model), "{camera:?} as {format}");
+        }
+    }
+}
+
+/// HB-284 on a real file: the corpus EOS R6 CR3 exported as JPEG and TIFF (a HEIC's source) carries Make `Canon`,
+/// Model `Canon EOS R6`.
+#[test]
+fn corpus_cr3_exports_carry_the_cameras_make_and_model() {
+    let path = std::env::var_os("LIGHTCRAFT_CORPUS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+        .join("raw/cr3-canon-r6-raw.cr3");
+    if !path.exists() {
+        lightcraft_testkit::skip!(Corpus, "no {} in the corpus", path.display());
+        return;
+    }
+    let mut s = crate::Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+    let id = s.catalog.photos().next().unwrap().id;
+    for format in ["jpeg", "tiff"] {
+        let o = ExportOptions::from_json(&json!({"format": format, "longEdge": 256, "quality": 60}));
+        let back = lightcraft_meta::extract(&export_photo(&mut s, id, &o, 1).unwrap().bytes);
+        assert_eq!((back.make.as_deref(), back.model.as_deref()), (Some("Canon"), Some("Canon EOS R6")), "{format}");
+    }
 }
 
 #[test]
@@ -1506,4 +1553,81 @@ fn export_plan_names_the_space_depth_and_sizes() {
     assert!(plan(json!({"colorSpace": "pink"})).is_err());
     assert!(s.execute("export.plan", &json!({})).is_err(), "no ids");
     assert!(s.execute("export.plan", &json!({"ids": [999_999_999u64]})).unwrap()["sizes"].as_object().unwrap().is_empty());
+}
+
+/// A border grows the picture by the same width on every side, in its colour, with the photo untouched in the middle and
+/// the watermark on the photo, not on the border.
+#[test]
+fn border_frames_the_photo_on_every_side() {
+    let img = test_image();
+    let o = ExportOptions::from_params(&json!({"format": "png", "border": {"width": 0.125, "color": [10, 20, 30]}})).unwrap();
+    let d = lightcraft_codecs::decode(&encode_image(&img, &o).unwrap(), Default::default()).unwrap().to_srgb8();
+    // 0.125 of the 64 px short edge: 8 px a side
+    assert_eq!((d.width, d.height), (96 + 16, 64 + 16));
+    for (x, y) in [(0, 0), (7, 40), (111, 79), (50, 79), (104, 7)] {
+        assert_eq!(d.get(x, y), [10, 20, 30, 255], "border at {x},{y}");
+    }
+    for y in 0..64 {
+        for x in 0..96 {
+            assert_eq!(d.get(x + 8, y + 8), img.get(x, y), "photo at {x},{y}");
+        }
+    }
+    let marked = ExportOptions::from_params(&json!({"format": "png", "border": {"width": 0.125, "color": [10, 20, 30]},
+        "watermark": {"text": "LightCraft", "size": 0.2, "opacity": 1.0, "shadow": false, "anchor": "topLeft", "insetX": 0, "insetY": 0}}))
+    .unwrap();
+    let m = lightcraft_codecs::decode(&encode_image(&img, &marked).unwrap(), Default::default()).unwrap().to_srgb8();
+    assert_eq!((m.width, m.height), (d.width, d.height));
+    assert!((0..m.width).all(|x| m.get(x, 0) == [10, 20, 30, 255]), "the border stays clear of the watermark");
+    assert_ne!(m.data, d.data, "the watermark is drawn on the photo");
+}
+
+/// High-bit-depth renders get the border too: 16-bit in the space's curve, float linear, and an HDR gain map JPEG over
+/// the bordered SDR picture.
+#[test]
+fn border_on_deep_and_hdr_renders() {
+    let b = Border { width: 0.25, color: [255, 0, 0] };
+    let deep = |samples| DeepImage { width: 4, height: 2, space: OutputSpace::Srgb, samples };
+    let out = add_border_deep(deep(DeepSamples::U16(vec![1000; 24])), &b).unwrap();
+    assert_eq!((out.width, out.height), (6, 4));
+    let DeepSamples::U16(v) = &out.samples else { panic!("16 bit stays 16 bit") };
+    assert_eq!(v[..3], [65535, 0, 0]);
+    assert_eq!(v[(6 + 1) * 3..(6 + 1) * 3 + 3], [1000; 3]);
+    let out = add_border_deep(deep(DeepSamples::F32(vec![0.5; 24])), &b).unwrap();
+    let DeepSamples::F32(v) = &out.samples else { panic!("float stays float") };
+    assert_eq!(v[..3], [1.0, 0.0, 0.0]);
+    assert_eq!(v[(6 + 1) * 3], 0.5);
+
+    let img = Rgba8::filled(64, 48, [100, 120, 140, 255]);
+    let hdr = DeepImage { width: 64, height: 48, space: OutputSpace::Srgb, samples: DeepSamples::F32(vec![2.0; 64 * 48 * 3]) };
+    let o = ExportOptions { hdr: true, border: Some(Border { width: 0.1, color: [255; 3] }), ..Default::default() };
+    let jpeg = encode_gain_map_jpeg(&img, &hdr, &o, None).unwrap();
+    let d = lightcraft_codecs::decode(&jpeg, Default::default()).unwrap();
+    assert_eq!((d.width, d.height), (64 + 10, 48 + 10));
+    assert!(lightcraft_codecs::gainmap::read_jpeg(&jpeg).unwrap().meta.alternate_headroom > 1.0);
+}
+
+/// `border` is checked as the watermark is, kept in a preset, and a stored one with keys this version doesn't know still
+/// exports; 0 wide is none.
+#[test]
+fn border_params_are_checked_and_kept() {
+    for bad in [
+        json!({"border": "white"}),
+        json!({"border": {"width": 0.5}}),
+        json!({"border": {"width": -0.1}}),
+        json!({"border": {"color": [1, 2]}}),
+        json!({"border": {"color": [1, 2, 300]}}),
+        json!({"border": {"widht": 0.1}}),
+    ] {
+        assert!(ExportOptions::from_params(&bad).is_err(), "{bad}");
+    }
+    let o = ExportOptions::from_params(&json!({"border": {"width": 0.05, "color": [0, 0, 0]}})).unwrap();
+    assert_eq!(o.border, Some(Border { width: 0.05, color: [0; 3] }));
+    assert_eq!(ExportOptions::from_json(&o.to_json()), o);
+    assert_eq!(ExportOptions::from_params(&json!({"border": {}})).unwrap().border, Some(Border::default()));
+    assert_eq!(ExportOptions::from_json(&json!({"border": {"width": 0}})).border, None);
+    let stored = ExportOptions::known_keys_only(&json!({"border": {"width": 0.1, "style": "polaroid"}}));
+    assert_eq!(ExportOptions::from_params(&stored).unwrap().border.map(|b| b.width), Some(0.1));
+    // a photo too big to grow is an error, not a crash
+    assert!(add_border(Rgba8::new(1, 1), &Border { width: 0.25, color: [0; 3] }, OutputSpace::Srgb).is_ok());
+    assert_eq!(Border { width: f32::NAN, color: [0; 3] }.px(100, 100), 0);
 }

@@ -261,7 +261,11 @@ pub fn scan_with(input: SyncInput, progress: &SyncProgress) -> FolderChanges {
         let photos = &photos;
         let labels = &labels;
         let probe = probe.as_ref();
-        let checks = sc.spawn(move || check_photos(photos, labels, listing, probe, progress));
+        let qos = lightcraft_sysmem::Qos::current();
+        let checks = sc.spawn(move || {
+            qos.apply();
+            check_photos(photos, labels, listing, probe, progress)
+        });
         let out = crate::import::scan_files(scan, files, &progress.files);
         // (a check that panicked counts as nothing found; the scan still reports the rest)
         (out, checks.join().unwrap_or_default())
@@ -562,9 +566,11 @@ fn check_photos(
         if n > 1 {
             let next = std::sync::atomic::AtomicUsize::new(0);
             let found = std::sync::Mutex::new(vec![Check::Nothing; photos.len()]);
+            let qos = lightcraft_sysmem::Qos::current();
             std::thread::scope(|sc| {
                 for _ in 0..n {
                     sc.spawn(|| {
+                        qos.apply();
                         while !cancel.load(Relaxed) {
                             let i = next.fetch_add(1, Relaxed);
                             let Some((p, naming)) = photos.get(i) else { break };

@@ -607,7 +607,7 @@ fn exported_avif_metadata_reads_back() {
     let avif = crate::export::encode_with_metadata(&img, &ExportOptions::from_json(&json!({"format": "avif", "quality": 60})), Some(&m)).unwrap();
     assert_eq!(lightcraft_codecs::sniff(&avif), Some(lightcraft_codecs::Format::Avif));
     let back = lightcraft_meta::extract(&avif);
-    assert_eq!(back.model.as_deref(), Some("Synthetic X2"));
+    assert_eq!((back.make.as_deref(), back.model.as_deref()), (Some("Synthetic"), Some("X2")));
     assert_eq!(back.capture_time.map(|d| d.to_iso()).as_deref(), Some("2026-10-12T12:34:56"));
 }
 

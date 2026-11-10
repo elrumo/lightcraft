@@ -94,10 +94,12 @@ pub(crate) fn read_with(size: u64, read_at: &RangeReader, s: Settings, defaults:
     let ranges: Vec<(usize, usize)> = starts.iter().enumerate().map(|(i, s)| (*s, starts.get(i + 1).map_or(end, |n| n - 1))).collect();
 
     let next = AtomicUsize::new(0);
+    let qos = lightcraft_sysmem::Qos::current();
     let done: Vec<Vec<(usize, Vec<(PhotoId, Arc<Photo>)>)>> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..s.threads.min(ranges.len()))
             .map(|_| {
                 scope.spawn(|| {
+                    qos.apply();
                     let mut mine = Vec::new();
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);

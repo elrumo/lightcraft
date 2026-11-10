@@ -307,8 +307,17 @@ fn untouched_of(photos: &[&Photo]) -> HashSet<PhotoId> {
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
         if threads > 1 && photos.len() >= 256 {
             let size = photos.len().div_ceil(threads);
+            let qos = lightcraft_sysmem::Qos::current();
             return std::thread::scope(|sc| {
-                let jobs: Vec<_> = photos.chunks(size).map(|c| sc.spawn(move || check(c))).collect();
+                let jobs: Vec<_> = photos
+                    .chunks(size)
+                    .map(|c| {
+                        sc.spawn(move || {
+                            qos.apply();
+                            check(c)
+                        })
+                    })
+                    .collect();
                 // a job that panicked (it can't) leaves its photos out: they are kept
                 jobs.into_iter().filter_map(|j| j.join().ok()).flatten().collect()
             });

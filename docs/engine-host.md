@@ -85,9 +85,11 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `ui.reply` | `{id, result \| error}` | the app's answer to a `uiRequest` |
 
 **For the system's own features** (a native frontend's search index, shortcuts, Handoff, Live Photos), engine commands
-answer what they need: `catalog.describe {ids? | offset, limit}` is what a system index is told of each photo (words to
-find it by, where and when it was taken; never a hidden, deleted or Local photo, and a `revision` to skip a pass when
-nothing changed), `sync.status`'s `library` names the synced library a photo id belongs to on every device, and
+answer what they need: `catalog.describe {ids? | offset | after, limit}` is what a system index is told of each photo
+(words to find it by, where and when it was taken; never a hidden, deleted or Local photo, and a `revision` to skip a
+pass when nothing changed). A pass over the library pages by cursor: `after: 0`, then `after: next` until `next` is
+null; each page starts where the last one ended, so the pass walks the catalog once, where an `offset` page walks it
+from the start (and counts `total`) every time. `sync.status`'s `library` names the synced library a photo id belongs to on every device, and
 `live.*` keeps a Live Photo's motion clip ([video.md](video.md#live-photos)).
 
 **Live control channel.** With `LIGHTCRAFT_CONTROL_PORT=<port>` in the environment the host also listens on `127.0.0.1:<port>`

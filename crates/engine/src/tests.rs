@@ -2101,3 +2101,21 @@ fn auto_sync_hdr_enabled_preserves_per_photo_tuning() {
         assert!(s.auto_sync, "Auto Sync must remain enabled");
     }
 }
+
+#[test]
+fn preset_settings_without_a_photo_start_from_the_non_raw_defaults() {
+    let mut s = demo();
+    s.execute("develop.set", &json!({"values": {"light.exposure": 0.5}})).unwrap();
+    let pid = s.execute("preset.create", &json!({"name": "Live", "groups": ["light"]})).unwrap()["id"].as_str().unwrap().to_string();
+    let live = s.execute("preset.settings", &json!({"id": pid, "base": "default"})).unwrap();
+    assert_eq!(live["light"]["exposure"], 0.5);
+    // the same as the preset over a non-raw photo's own starting point
+    let jpeg = s.catalog.photos().find(|p| !p.develops_raw() && p.import_look.is_none() && p.embedded_lens.is_none()).unwrap();
+    let preset = s.presets.iter().find(|p| p.id == pid).unwrap();
+    assert_eq!(live, preset.apply(&jpeg.camera_defaults(), 1.0).to_json());
+    // amount scales it; a hostile base is an error, not a guess
+    let half = s.execute("preset.settings", &json!({"id": pid, "base": "default", "amount": 50})).unwrap();
+    assert_eq!(half["light"]["exposure"], 0.25);
+    assert!(s.execute("preset.settings", &json!({"id": pid, "base": "photo"})).is_err());
+    assert!(s.execute("preset.settings", &json!({"id": "nope", "base": "default"})).is_err());
+}

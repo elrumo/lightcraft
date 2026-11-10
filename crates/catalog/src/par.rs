@@ -15,8 +15,17 @@ pub(crate) fn sort_by<T: Copy + Send + Sync>(v: &mut Vec<T>, cmp: impl Fn(&T, &T
         return;
     }
     let part = v.len().div_ceil(threads);
+    let qos = lightcraft_sysmem::Qos::current();
     let sorted = std::thread::scope(|scope| {
-        let workers: Vec<_> = v.chunks_mut(part).map(|c| scope.spawn(|| c.sort_unstable_by(&cmp))).collect();
+        let workers: Vec<_> = v
+            .chunks_mut(part)
+            .map(|c| {
+                scope.spawn(|| {
+                    qos.apply();
+                    c.sort_unstable_by(&cmp)
+                })
+            })
+            .collect();
         // (a part that panicked, a comparison that does: sorted again below, on this thread)
         let joined: Vec<bool> = workers.into_iter().map(|w| w.join().is_ok()).collect();
         joined.iter().all(|ok| *ok)

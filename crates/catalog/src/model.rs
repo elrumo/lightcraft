@@ -401,6 +401,52 @@ pub fn relative_wb_camera(format: &str, camera: &str) -> bool {
     relative_wb_format(format) && lightcraft_raw::spectral::find_camera(camera).is_none() && !lightcraft_raw::kelvin_presets::covers_camera(camera)
 }
 
+/// Exif makes of more than one word whose models don't repeat them (a model that does, like `NIKON CORPORATION`'s
+/// `NIKON D850`, needs no entry).
+// ponytail: a list; a make of several words missing from it splits after its first word.
+const LONG_MAKES: &[&str] = &[
+    "OLYMPUS IMAGING CORP.",
+    "OLYMPUS CORPORATION",
+    "OLYMPUS OPTICAL CO.,LTD",
+    "OM Digital Solutions",
+    "Minolta Co., Ltd.",
+    "KONICA MINOLTA",
+    "SEIKO EPSON CORP.",
+    "Eastman Kodak Company",
+    "RICOH IMAGING COMPANY, LTD.",
+    "Phase One",
+    "Arashi Vision",
+];
+
+/// The Exif make and model a [`Meta::camera`] was joined from (`"Make Model"`), as the camera wrote them, for a file
+/// that carries them again (an export). The make ends where the model repeats its first word (`"Canon Canon EOS R6"`
+/// is `Canon` / `Canon EOS R6`, `"NIKON CORPORATION NIKON D850"` is `NIKON CORPORATION` / `NIKON D850`), else after a
+/// make of several words ([`LONG_MAKES`]), else after the first word (`"SONY ILCE-7M3"`, `"Apple iPhone 15 Pro"`).
+/// One word is a model without a make; an empty camera is neither (`""`).
+pub fn camera_make_model(camera: &str) -> (&str, &str) {
+    let camera = camera.trim();
+    let mut words = Vec::new();
+    let mut from = 0;
+    for w in camera.split_whitespace() {
+        let at = camera.get(from..).and_then(|s| s.find(w)).map_or(from, |i| from + i);
+        words.push((at, w));
+        from = at + w.len();
+    }
+    let split = |at: usize| (camera.get(..at).unwrap_or_default().trim_end(), camera.get(at..).unwrap_or_default().trim_start());
+    let Some(&(_, first)) = words.first() else { return ("", "") };
+    if let Some(&(at, _)) = words.iter().skip(1).find(|(_, w)| w.eq_ignore_ascii_case(first)) {
+        return split(at);
+    }
+    let long = LONG_MAKES.iter().find(|m| {
+        camera.get(..m.len()).is_some_and(|p| p.eq_ignore_ascii_case(m)) && camera.get(m.len()..).is_some_and(|r| r.starts_with(char::is_whitespace))
+    });
+    match (long, words.get(1)) {
+        (Some(m), _) => split(m.len()),
+        (None, Some(&(at, _))) => split(at),
+        (None, None) => ("", camera),
+    }
+}
+
 /// This build's version: what a photo's [`Photo::preview_checked`] stamp is compared with. Every
 /// workspace crate shares one version, so it is the app's.
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -743,6 +789,34 @@ mod edited_tests {
             p.preview_only = Some("unsupported".into());
             assert!(!p.relative_wb() && !p.fitted_look());
         }
+    }
+
+    /// HB-284: a camera joined as the catalog keeps it splits back into the Exif make and model the camera wrote.
+    #[test]
+    fn camera_splits_into_the_make_and_model_it_was_joined_from() {
+        for (make, model) in [
+            ("Canon", "Canon EOS R6"),
+            ("Canon", "Canon EOS 5D Mark III"),
+            ("NIKON CORPORATION", "NIKON D850"),
+            ("NIKON CORPORATION", "NIKON Z 6_2"),
+            ("SONY", "ILCE-7M3"),
+            ("Apple", "iPhone 15 Pro"),
+            ("FUJIFILM", "X-T4"),
+            ("PENTAX Corporation", "PENTAX K-1"),
+            ("Leica Camera AG", "LEICA Q2"),
+            ("OLYMPUS IMAGING CORP.", "E-M5"),
+            ("OM Digital Solutions", "OM-3"),
+            ("OLYMPUS OPTICAL CO.,LTD", "E-10"),
+            ("DJI", "FC3582"),
+        ] {
+            assert_eq!(camera_make_model(&format!("{make} {model}")), (make, model), "{make} / {model}");
+        }
+        // a file with a model but no make, and one with neither
+        assert_eq!(camera_make_model("D850"), ("", "D850"));
+        assert_eq!(camera_make_model(""), ("", ""));
+        assert_eq!(camera_make_model("  "), ("", ""));
+        // spaces inside the model stay as they were
+        assert_eq!(camera_make_model(" Canon  Canon EOS  R6 "), ("Canon", "Canon EOS  R6"));
     }
 
     /// A raw without matrices in the file edits in Kelvin when its camera's matrices are measured (issue #730):

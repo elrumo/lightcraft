@@ -461,6 +461,10 @@ impl Catalog {
     pub fn photos(&self) -> impl Iterator<Item = &Arc<Photo>> {
         self.photos.values()
     }
+    /// The photos with a larger id than `after`, in id order: a cursor's next page, without a walk from the first photo.
+    pub fn photos_after(&self, after: PhotoId) -> impl Iterator<Item = &Arc<Photo>> {
+        self.photos.range((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded)).map(|(_, p)| p)
+    }
     pub fn len(&self) -> usize {
         self.photos.len()
     }

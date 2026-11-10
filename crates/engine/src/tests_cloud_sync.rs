@@ -905,6 +905,45 @@ fn the_open_photo_downloads_its_original_after_its_smart_preview() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Paging onto a synced clip brings its smart preview (its poster) but none of its original, however long it stays: a
+/// clip is a big file, and the frontend asks for it (`sync.downloadOriginals`) once the clip has stayed on screen. Then
+/// it comes, and a picture paged to still downloads its own at once (HB-286).
+#[test]
+fn paging_onto_a_clip_downloads_its_original_only_once_asked_for() {
+    use lightcraft_catalog::MediaKind;
+    let mut f = Fake::new();
+    let root = temp_dir("open-clip");
+    write_png(&root.join("in/a.png"), 1);
+    std::fs::write(root.join("in/IMG_1.MP4"), lightcraft_video::testdata::clip(20, 10, 2)).unwrap();
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    let find = |s: &Session, kind| s.catalog.photos().find(|p| p.kind == kind).map(|p| p.id).unwrap();
+    let (clip, still) = (find(&a, MediaKind::Video), find(&a, MediaKind::Image));
+    sign_in(&mut a);
+    assert_eq!(sync(&mut a, &mut f)["state"], "idle");
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    let original = |f: &Fake, b: &Session, id| {
+        let key = blob_key(b.catalog.photo(id).unwrap()).unwrap();
+        f.requests.iter().any(|r| r == &format!("GET /api/blobs/original/{key}"))
+    };
+    // paged onto the clip, past it and back: its poster comes, its original doesn't
+    for id in [clip, still, clip] {
+        b.selection = crate::Selection::single(id);
+        sync(&mut b, &mut f);
+    }
+    assert!(!original(&f, &b, clip) && is_remote(b.catalog.photo(clip).unwrap()), "{:?}", f.requests);
+    assert_eq!(b.synced_tier(b.catalog.photo(clip).unwrap()), Some(2), "the clip's smart preview is here");
+    assert!(original(&f, &b, still) && here(&b, still), "a picture paged to downloads its original");
+    // the frontend asks for the clip on screen: it comes
+    let r = b.execute("sync.downloadOriginals", &json!({"ids": [clip.0]})).unwrap();
+    assert_eq!(r["queued"], 1, "{r}");
+    sync(&mut b, &mut f);
+    assert!(original(&f, &b, clip) && here(&b, clip), "{:?}", b.catalog.photo(clip).unwrap().source);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A browser exports a photo it holds only the preview of: up to the preview's size from the preview, and
 /// beyond it the message says what to do (instead of failing deep in the render).
 #[test]

@@ -67,8 +67,13 @@ pub fn probe(
     let paths: Vec<String> = items.iter().map(|i| i.path.clone()).collect();
     let done = AtomicUsize::new(0);
     #[cfg(not(target_arch = "wasm32"))]
+    let qos = lightcraft_sysmem::Qos::current();
+    #[cfg(not(target_arch = "wasm32"))]
     let r = std::thread::scope(|sc| {
-        let h = sc.spawn(|| crate::import::probe_all(probe, &paths, &done, cancel));
+        let h = sc.spawn(|| {
+            qos.apply();
+            crate::import::probe_all(probe, &paths, &done, cancel)
+        });
         while !h.is_finished() {
             progress(done.load(Ordering::Relaxed));
             std::thread::sleep(std::time::Duration::from_millis(50));
