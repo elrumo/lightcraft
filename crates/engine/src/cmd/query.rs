@@ -288,6 +288,12 @@ pub fn specs() -> Vec<CommandSpec> {
             }).collect::<crate::Result<Vec<_>>>()?;
             Ok(json!({"photos": photos}))
         }),
+        cmd!(query "catalog.position", "Photo Position", [], None,
+        "{id: photoId} → {index: n | null}: where the photo is in the current view (its offset in `catalog.query`'s pages), null when the view does not show it; for a frontend that opens a photo before it has read the page that holds it",
+        always, |s, p| {
+            let id = p.get("id").and_then(Value::as_u64).ok_or_else(|| bad("catalog.position", "`id` must be a photo id"))?;
+            Ok(json!({"index": s.visible().iter().position(|x| x.0 == id)}))
+        }),
         cmd!(
             query "catalog.describe",
             "Describe Photos",

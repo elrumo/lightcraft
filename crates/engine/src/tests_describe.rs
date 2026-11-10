@@ -117,3 +117,27 @@ fn bad_arguments_are_errors() {
     }
     assert_eq!(s.execute("catalog.flags", &json!({"ids": []})).unwrap(), json!({"photos": []}));
 }
+
+#[test]
+fn a_photos_position_is_its_offset_in_the_view() {
+    // (HB-287: the photo screen opened from Years or Months, before the grid read the page that holds the photo)
+    let mut s = Session::with_demo();
+    let view = s.visible_cloned();
+    assert!(view.len() > 2, "the demo library has photos");
+    let last = view.len() - 1;
+    for i in [0, 1, last] {
+        let r = s.execute("catalog.position", &json!({"id": view[i].0})).unwrap();
+        assert_eq!(r, json!({"index": i}));
+        // (the offset `catalog.query` pages from)
+        let q = s.execute("catalog.query", &json!({"offset": i, "limit": 1})).unwrap();
+        assert_eq!(ids(&q), vec![view[i].0]);
+    }
+    // one the view does not show: none
+    s.execute("library.filter", &json!({"rating": 5})).unwrap();
+    let hidden = view.iter().find(|id| !s.visible_cloned().contains(id)).copied().unwrap();
+    assert_eq!(s.execute("catalog.position", &json!({"id": hidden.0})).unwrap(), json!({"index": null}));
+    assert_eq!(s.execute("catalog.position", &json!({"id": u64::MAX})).unwrap(), json!({"index": null}));
+    for p in [json!({}), json!({"id": "x"}), json!({"id": -1})] {
+        assert!(s.execute("catalog.position", &p).is_err(), "{p}");
+    }
+}
