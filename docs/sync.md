@@ -552,7 +552,9 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
   it the originals used longest ago are deleted, and their photos are the server's again (previews stay; Download
   Originals brings one back). Never an original the server doesn't have, one that is open or selected, or one kept
   available offline, and nothing at all while *Store the originals of all photos on this device* is on. The folder is
-  checked about once a minute and when a download lands. No limit is the default. Every photo you open adds its original, so set one on a device with little room.
+  checked about once a minute and when a download lands. No limit is the default. Every photo you open adds its original, so set one on a device with little room. A clip
+  is the exception: paging onto one brings only its previews, and its original comes once the frontend asks for it
+  (`sync.downloadOriginals`, when the clip stays on screen or plays), so paging past clips downloads none of them.
 - **Make Available Offline:** right-click an album (✓ marks it in the sidebar), or **Photo ▸ Make Available Offline**
   for selected photos: their smart previews stay on the device, so they open and edit without a network.
   `photo.makeAvailableOffline {ids, on: false}` on a photo that an offline album holds leaves just that photo out of the

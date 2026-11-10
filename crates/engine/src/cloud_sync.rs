@@ -2059,12 +2059,17 @@ impl Session {
     /// The download of the open photo's original, once its smart preview is here: the smart preview is
     /// an 8-bit proxy that bands when edited, so the photo is edited from the original as soon as it
     /// arrives (it then stays like any downloaded original, under [`SyncConfig::originals_budget_mb`]).
-    /// Only into an originals folder on a disk, never the browser's storage.
+    /// Only into an originals folder on a disk, never the browser's storage. A clip's only once the frontend has asked
+    /// for it (`sync.downloadOriginals`, when it stays on screen or plays): a clip paged past downloads nothing.
     fn open_original_get(&self, st: &SyncState, p: &Photo, now: Instant) -> Option<Job> {
         if p.origin.is_some() {
             return None;
         }
         let key = self.remote_key(p)?;
+        // (asked for, it comes here, ahead of the planned transfers, as a picture's does)
+        if p.kind == lightcraft_catalog::MediaKind::Video && !st.want_originals.contains(&key) {
+            return None;
+        }
         // (waiting for the smart preview also keeps a failed original from holding its download back: they share a key)
         if st.blob_retry.get(&key).is_some_and(|t| now < *t) || !self.proxy_names(p, &key, st.have.as_ref()?).has_smart {
             return None;
