@@ -4,7 +4,7 @@
 use super::*;
 
 /// Run what is due now without asking for a pull (as the host does between polls): `sync_now_with` pulls every time.
-fn step(s: &mut Session, f: &mut Fake) {
+pub(super) fn step(s: &mut Session, f: &mut Fake) {
     for _ in 0..50 {
         let tasks = s.sync_tasks();
         if tasks.is_empty() {

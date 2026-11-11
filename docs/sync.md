@@ -403,7 +403,10 @@ that site's browser storage, so each site is a separate device. The admin page i
   device ([below](#signing-out)); signing in again as the same user brings the library back from the server, and another
   user starts from an empty library of their own.
 - **File ▸ Pause Syncing** stops talking to the server until resumed; **File ▸ Sync Now** pulls at once (it also pulls
-  every 5 seconds and whenever the window comes back to the front).
+  every 5 seconds while changes come or go, less and less often once nothing has moved for half a minute, down to every
+  30 seconds after three quiet minutes, and at once whenever the window comes back to the front, a change is sent, or a
+  photo shown on two devices is edited on the other; a request every few seconds kept a phone's radio awake for as
+  long as the app was open).
 
 ### When this library and the server's both have photos
 

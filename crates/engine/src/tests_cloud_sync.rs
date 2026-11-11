@@ -3030,3 +3030,42 @@ fn a_fetched_originals_scratch_copy_is_named_with_the_photos_extension() {
     assert_eq!(named("odd.c/../x"), "", "nothing but letters and digits");
     assert_eq!(named("long.abcdefghij"), "");
 }
+
+/// An open app that nothing happens to asks the server for changes less and less often (every few seconds kept a
+/// phone's radio awake), and goes back to the fast rhythm the moment a change goes out, comes in, or the app comes
+/// to the front.
+#[test]
+fn a_quiet_device_asks_the_server_less_often_until_something_moves() {
+    use std::time::Duration;
+    let poll = crate::cloud_sync::POLL;
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("quiet", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    assert!(a.sync_pull_due_in().unwrap() <= poll, "just synced: the fast rhythm");
+    // ten minutes without a change, and a pull that brings none: the next one waits much longer
+    a.sync_quiet_for(Duration::from_secs(600));
+    presence::step(&mut a, &mut f);
+    let slow = a.sync_pull_due_in().unwrap();
+    assert!(slow > poll * 4 && slow <= Duration::from_secs(30), "{slow:?}");
+    // a change made here goes out: the fast rhythm again, from now
+    a.selection = crate::Selection::single(ids[0]);
+    a.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    presence::step(&mut a, &mut f);
+    assert!(a.sync_pull_due_in().unwrap() <= poll);
+    // quiet again; a change from the other device arrives with the pull: fast again
+    b.selection = crate::Selection::single(ids[1]);
+    b.execute("photo.rate", &json!({"rating": 2})).unwrap();
+    sync(&mut b, &mut f);
+    a.sync_quiet_for(Duration::from_secs(600));
+    presence::step(&mut a, &mut f);
+    assert_eq!(a.catalog.photo(ids[1]).unwrap().rating, 2);
+    assert!(a.sync_pull_due_in().unwrap() <= poll);
+    // and coming to the front pulls at once, at the fast rhythm
+    a.sync_quiet_for(Duration::from_secs(600));
+    a.sync_soon();
+    presence::step(&mut a, &mut f);
+    assert!(a.sync_pull_due_in().unwrap() <= poll);
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -80,6 +80,10 @@ const NOT_THIS_LIBRARY: &str = "this library is a copy of another library on tha
 
 /// How often the server is asked for other devices' changes.
 pub const POLL: Duration = Duration::from_secs(5);
+/// ...and the longest wait between two asks once nothing has come or gone for a while. A request every few seconds
+/// keeps a phone's radio awake for as long as the app is open, so a quiet device asks less and less often, and goes
+/// back to [`POLL`] the moment something moves ([`pull_gap`]).
+const POLL_IDLE: Duration = Duration::from_secs(30);
 /// Longest wait between retries after a failure (network down, server away).
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// A missing or failed photo file is tried again after this long.
@@ -436,6 +440,9 @@ pub struct SyncState {
     ready: VecDeque<Job>,
     /// When to pull next (`None`: now).
     pull_at: Option<Instant>,
+    /// The last sign of life: a change came from the server or went to it, the app came to the front, a photo shown
+    /// on two devices moved. The longer ago, the longer the wait between pulls ([`pull_gap`]).
+    lively: Instant,
     /// After a failure: not before then.
     retry_at: Option<Instant>,
     backoff: Duration,
@@ -598,6 +605,7 @@ impl SyncState {
             aux_ready: VecDeque::new(),
             ready: VecDeque::new(),
             pull_at: None,
+            lively: Instant::now(),
             retry_at: None,
             backoff: Duration::from_secs(1),
             held: Vec::new(),
@@ -1219,6 +1227,12 @@ fn server_is_building(d: &Done) -> bool {
 }
 
 /// Why a request failed, for the user.
+/// How long to wait before asking the server for changes again, `quiet` after the last sign of life: [`POLL`] for the
+/// first half minute, then a sixth of the quiet time, up to [`POLL_IDLE`] (reached after three minutes).
+fn pull_gap(quiet: Duration) -> Duration {
+    (quiet / 6).clamp(POLL, POLL_IDLE)
+}
+
 fn why(d: &Done) -> String {
     match d.status {
         0 => format!("can't reach the server: {}", d.body),
@@ -1398,6 +1412,7 @@ impl Session {
     pub fn sync_soon(&mut self) {
         if let Some(st) = self.sync.as_mut() {
             st.pull_at = None;
+            st.lively = Instant::now();
             st.retry_at = None;
             if !st.blob_retry.is_empty() {
                 st.blob_retry.clear();
@@ -2252,7 +2267,7 @@ impl Session {
                 410 => st.needs_snapshot = true,
                 _ if d.ok() => match decode::<proto::Ops>(d) {
                     Ok(ops) => {
-                        let more = ops.ops.len() >= PULL_LIMIT;
+                        let (more, any) = (ops.ops.len() >= PULL_LIMIT, !ops.ops.is_empty());
                         st.server_format = Some(ops.format);
                         st.presets_remote = ops.presets;
                         st.note_docs(&ops.docs);
@@ -2261,7 +2276,11 @@ impl Session {
                         } else {
                             self.apply_pulled(st, ops.ops);
                         }
-                        st.pull_at = (!more).then(|| Instant::now() + POLL);
+                        let now = Instant::now();
+                        if any {
+                            st.lively = now;
+                        }
+                        st.pull_at = (!more).then(|| now + pull_gap(now.duration_since(st.lively)));
                         // at the server's head, what was removed on other devices meanwhile is gone here too: the queue that
                         // couldn't be read is rebuilt from the library read now
                         st.needs_snapshot |= !more && st.config.requeue;
@@ -2287,6 +2306,10 @@ impl Session {
                         st.outbox.acked(&pushed);
                         st.outbox_changed();
                         st.config.cursor = h.head;
+                        // (someone is working here: the other devices' answers are asked for at the fast rhythm again, from now)
+                        let now = Instant::now();
+                        st.lively = now;
+                        st.pull_at = st.pull_at.map(|t| t.min(now + POLL));
                         st.succeeded();
                     }
                     Err(e) => st.fail(e),
@@ -3037,6 +3060,20 @@ impl Session {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn sync_fetch_activity(&mut self) {
         self.sync_fetch_activity_with(&mut run);
+    }
+
+    /// (tests) As if the last sign of life were `ago` ago, with a pull due now; and how long until the next pull.
+    #[cfg(test)]
+    pub(crate) fn sync_quiet_for(&mut self, ago: Duration) {
+        if let Some(st) = self.sync.as_mut() {
+            st.lively = Instant::now().checked_sub(ago).unwrap_or_else(Instant::now);
+            st.pull_at = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_pull_due_in(&self) -> Option<Duration> {
+        self.sync.as_ref()?.pull_at.map(|t| t.saturating_duration_since(Instant::now()))
     }
 
     /// [`Session::sync_now`] with another transport (tests).

@@ -289,6 +289,7 @@ impl SyncState {
                 let moved = v["head"].as_u64().is_some_and(|h| h > self.config.cursor);
                 if moved && !others.is_empty() {
                     self.pull_at = None;
+                    self.lively = now;
                 }
                 let p = &mut self.presence;
                 let shared = !others.is_empty();
