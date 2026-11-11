@@ -25,19 +25,26 @@ A point light added to the scene (`relight`, a settings object left out of the J
   surface: 0 flat, 50 as the depth says, 100 twice that), **Ambient** (how much of the photo's own light is kept), and
   the light's **colour** (`relight.color`, display sRGB; normalized by its largest channel, so a coloured gel takes
   light away).
+- **Near**, **Far** (`relight.near`, `relight.far`, depths 0 the nearest to 100 the farthest, as Lens Blur's): the depths
+  the light reaches. Past each end it fades out over 6 depths (`RANGE_FEATHER`), and what lies outside keeps the photo's
+  own light (Ambient applies only where the light reaches). Left out of the JSON while they span the whole scene.
 
 The depth, smoothed by a Gaussian of 1.5 depth pixels (the stored depth is 8-bit: its steps would show as terraces),
 is a height field over the stored photo in units of its long edge, the scene 0.5 long edges deep. At every pixel of the
 depth map: the normal (below), a wrapped Lambert term, an inverse-square falloff, the clearance of a ray
-marched toward the light through the height field (32 steps, 16 for a draft; soft by the clearance over the distance),
-and the highlight. The two planes (light, highlight) are sampled through the frame like the picture and **snapped to the
+marched toward the light through the height field (32 steps, 16 for a draft; held two depth steps above the ground; soft by
+the clearance over the distance, divided by what the same ray clears over an open surface with the pixel's own slope, so a
+light low over a wall or a floor does not half-shadow it: `open_clearance`, at least `OPEN_MIN`), and the highlight. The two planes (light, highlight) are sampled through the frame like the picture and **snapped to the
 photo's edges** by the guided filter Lens Blur snaps its depth with (`lensblur::nearness_out`, about two depth pixels wide,
 over the log luminance): a light that stops at a face stops at its outline, not a few depth pixels off it. Every output
 pixel then becomes `colour × (ambient + brightness × light colour × light) + shine × highlight`, in linear Rec. 2020.
 
 ### The surface
 
-The normal comes from the depth's slope (a wider Gaussian of the depth, `normal_sigma`) unless the settings keep the
+The normal comes from the depth's slope (a wider Gaussian of the depth, `normal_sigma`, taken after the depth is
+**levelled**: averaged over 2 % of its long side with only the depths within about 1.5 codes of each pixel's own, `levelled`,
+`LEVEL_SCALE`, `LEVEL_RANGE`, so the flat steps of an 8-bit slope melt into it instead of banding the light, card #345,
+while real edges and a face's shape stay) unless the settings keep the
 **surface model's** normals (`relight.normals`, a `NormalMap`): MoGe-2 ViT-S with its normal head (Microsoft Research,
 MIT licence, 35M parameters, an optional 141 MB download, `lightcraft_depth::surface`, run on rten like Depth Anything).
 A relative depth has steps and no perspective, so its slope turns a face into terraces and a floor seen from above into a
@@ -97,7 +104,7 @@ depth gets the estimate from `lensBlur.estimate`.
 `crates/pipeline/src/relight/tests.rs` (the light brightens what faces it and follows the orientation, a block casts a
 shadow away from it, Brightness and Ambient, colour, Shine, the palettes, the range, Invert, Curve, Contours, Amount,
 a windowed render matching the whole one, settings that are not numbers, the surface model's normals shading a flat
-depth, the light stopping at the photo's own edge), `crates/depth/src/surface.rs` (the network's input size, its
+depth, the light stopping at the photo's own edge, an 8-bit wall lit without bands or a shadow on itself, the depth range), `crates/depth/src/surface.rs` (the network's input size, its
 camera-space answer turned to face the camera, the stored size; with `LIGHTCRAFT_SURFACE_MODEL` the real model sees a ball
 round), the slider sweep of every new control
 (`tests_sliders.rs`, prepared by `controls::prepare_to_show`), and `crates/engine/src/tests_relight.rs` (no depth or

@@ -485,6 +485,8 @@ controls! {
     "relight.surface" => relight.surface, "Surface", Relight, 0, 100, 50, 1, 0, Plain;
     "relight.x" => relight.x, "Light Across", Relight, -0.5, 1.5, 0.3, 0.001, 3, Plain;
     "relight.y" => relight.y, "Light Down", Relight, -0.5, 1.5, 0.25, 0.001, 3, Plain;
+    "relight.near" => relight.near, "Near", Relight, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
+    "relight.far" => relight.far, "Far", Relight, 0, 100, 100, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
     "depthMap.near" => depth_map.near, "Near", DepthMap, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
     "depthMap.far" => depth_map.far, "Far", DepthMap, 0, 100, 100, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
     "depthMap.curve" => depth_map.curve, "Curve", DepthMap, -100, 100, 0, 1, 0, Centered;

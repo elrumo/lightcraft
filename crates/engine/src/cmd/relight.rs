@@ -128,6 +128,8 @@ fn relight_info(s: &mut Session, c: &str) -> Result<Value> {
             "shadows": r.shadows,
             "shine": r.shine,
             "surface": r.surface,
+            "near": r.near,
+            "far": r.far,
             "normals": r.normals.as_ref().map(|_| "model"),
             "surfaceReady": s.surface_model_ready(),
             "surfaceModel": lightcraft_depth::surface::ID,
@@ -204,7 +206,7 @@ fn on(p: &Value) -> bool {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "relight.info", "Relight Info", [], None, "→ {enabled, x, y, color: [r,g,b], brightness, ambient, distance, spread, softness, shadows, shine, surface, normals: model|null (the surface model's), surfaceReady, surfaceModel, depth: photo|estimated|null, modelReady, model}", has_active, |s, _| relight_info(s, "relight.info")),
+        cmd!(query "relight.info", "Relight Info", [], None, "→ {enabled, x, y, color: [r,g,b], brightness, ambient, distance, spread, softness, shadows, shine, surface, near, far (the depths it reaches, 0 nearest to 100 farthest), normals: model|null (the surface model's), surfaceReady, surfaceModel, depth: photo|estimated|null, modelReady, model}", has_active, |s, _| relight_info(s, "relight.info")),
         cmd!(
             "relight.apply",
             "Relight",

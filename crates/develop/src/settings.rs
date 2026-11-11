@@ -1686,6 +1686,13 @@ pub struct Relight {
     pub ambient: f64,
     /// The light's colour, display-encoded sRGB 0–1 (white by default).
     pub color: [f64; 3],
+    /// The depths the light reaches, 0 (the nearest part of the photo) to 100 (the farthest), as Lens Blur's: what lies
+    /// nearer than `near` or farther than `far` keeps the photo's own light (a soft edge past each end). Left out of the
+    /// JSON while they span the whole scene, so settings saved before them keep their JSON.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub near: f64,
+    #[serde(skip_serializing_if = "is_hundred")]
+    pub far: f64,
     /// The surface model's normals for this photo (Estimate Surface), which shade it in place of the
     /// depth's slope: a picture of this photo, so copies leave it behind, and Reset keeps it. Lighting
     /// still casts its shadows through the depth.
@@ -1708,9 +1715,15 @@ impl Default for Relight {
             surface: 50.0,
             ambient: 60.0,
             color: [1.0, 1.0, 1.0],
+            near: 0.0,
+            far: 100.0,
             normals: None,
         }
     }
+}
+
+fn is_hundred(v: &f64) -> bool {
+    *v == 100.0
 }
 
 impl Relight {

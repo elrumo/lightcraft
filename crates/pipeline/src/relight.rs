@@ -6,15 +6,18 @@
 //! ([`SCENE_DEPTH`] from the farthest part of the photo to its nearest). Each of its pixels gets a
 //! normal: the surface model's where the settings keep one (`relight.normals`, MoGe-2: the shape of a
 //! face, a floor seen from above), else from the slope of a smoother copy of the depth
-//! ([`normal_sigma`]); either is tilted more or less by Surface. And from the light: a wrapped Lambert
-//! term (Softness wraps the light around shapes), an inverse-square falloff whose reach Spread
-//! sets, a soft shadow from a ray marched through the height field toward the light (Shadows, with
-//! a penumbra Softness widens), and a Blinn-Phong highlight (Shine). Those two planes, the light
+//! ([`normal_sigma`], after the 8-bit depth's steps are levelled: [`levelled`]); either is tilted more or
+//! less by Surface. And from the light: a wrapped Lambert term (Softness wraps the light around shapes),
+//! an inverse-square falloff whose reach Spread sets, a soft shadow from a ray marched through the
+//! height field toward the light (Shadows, with a penumbra Softness widens, measured against what the
+//! ray would clear over an open surface of the same slope), a Blinn-Phong highlight (Shine), and the
+//! depth range (Near, Far) the light reaches. Those two planes, the light
 //! and the highlight, are made at the depth map's own size (a pixel of the depth is the finest
 //! detail the light can have) and sampled through the frame like the picture, their edges snapped
 //! to the photo's by the guided filter Lens Blur snaps its depth with ([`crate::lensblur::nearness_out`]:
 //! a light that stops at a face stops at its outline, not a few depth pixels off it); every output pixel is
 //! then `colour × (Ambient + Brightness × light colour × light) + Shine × light colour × highlight`
+//! (past the depth range, the photo's own colour)
 //! in scene-linear Rec. 2020, after noise reduction and before Lens Blur, so the blur sees the new
 //! light and every tone and colour tool works on it.
 //!
@@ -52,6 +55,13 @@ pub const NORMAL_SCALE: f32 = 0.004;
 pub fn normal_sigma(long: usize) -> f32 {
     (NORMAL_SCALE * long as f32).max(SMOOTH_SIGMA)
 }
+/// The stored depth is 8-bit: a gentle slope (a wall, a floor) is a staircase of flat steps one code apart, which the
+/// normals would read as ripples in the light (card #345). Before the normals' Gaussian the depth is levelled: averaged
+/// over this fraction of its long side, but only with depths within about [`LEVEL_RANGE`] of each pixel's own, so the
+/// steps of a slope melt into it while a real edge (many codes at once) and a face's shape stay.
+pub const LEVEL_SCALE: f32 = 0.02;
+/// The depth difference (nearness) at which a neighbour's weight in the levelling has fallen to `exp(-1/2)`.
+pub const LEVEL_RANGE: f32 = 1.5 / 255.0;
 /// How deep the scene is, farthest to nearest, in units of the depth map's long edge.
 pub const SCENE_DEPTH: f32 = 0.5;
 /// The light's gain at Brightness 100 on a surface that faces it, close by.
@@ -77,6 +87,11 @@ pub const FRONT_MAX: f32 = 4.0;
 /// How far above the surface a shadow ray is held (in nearness, two steps of the 8-bit depth): a surface
 /// doesn't shadow itself.
 pub const RAY_BIAS: f32 = 2.0 / 255.0;
+/// How far past each end of Relight's depth range (`relight.near`, `relight.far`, depths 0–100) its light fades out.
+pub const RANGE_FEATHER: f32 = 6.0;
+/// The least open-surface clearance a shadow is measured against ([`Setup::open_clearance`]): a surface turned away from
+/// the light keeps the shadow its ray finds.
+pub const OPEN_MIN: f32 = 0.05;
 /// How dark a contour line is.
 pub const CONTOUR_DARK: f32 = 0.8;
 /// Half the width of a contour line, as a fraction of the long edge. A line thinner than a pixel is drawn a pixel
@@ -134,6 +149,42 @@ pub fn smoothed_by(depth: &Plane, sigma: f32) -> Plane {
                     acc += if k == 0 { wt * at(0) } else { wt * (at(-k) + at(k)) };
                 }
                 *v = acc;
+            }
+        });
+        out
+    };
+    pass(&pass(depth, true), false)
+}
+
+/// `depth` levelled ([`LEVEL_SCALE`], [`LEVEL_RANGE`]): each pixel the Gaussian-weighted mean of the depths near
+/// its own, across then down, its edges extended.
+pub fn levelled(depth: &Plane) -> Plane {
+    let (w, h) = (depth.width, depth.height);
+    if w == 0 || h == 0 || depth.data.len() != w * h {
+        return depth.clone();
+    }
+    let weights = gaussian_weights((LEVEL_SCALE * w.max(h) as f32).max(SMOOTH_SIGMA));
+    let range = -1.0 / (2.0 * LEVEL_RANGE * LEVEL_RANGE);
+    let pass = |src: &Plane, across: bool| {
+        let mut out = Plane::new(w, h);
+        for_rows(&mut out.data, w, |y, row| {
+            for (x, v) in row.iter_mut().enumerate() {
+                let (x, y) = (x as isize, y as isize);
+                let at = |k: isize| if across { src.get_clamped(x + k, y) } else { src.get_clamped(x, y + k) };
+                let c = at(0);
+                let (mut acc, mut sum) = (0.0, 0.0);
+                for (k, wt) in weights.iter().enumerate() {
+                    let k = k as isize;
+                    for d in if k == 0 { [at(0), f32::NAN] } else { [at(-k), at(k)] } {
+                        if d.is_nan() {
+                            continue;
+                        }
+                        let wr = wt * (range * (d - c) * (d - c)).exp();
+                        acc += wr * d;
+                        sum += wr;
+                    }
+                }
+                *v = if sum > 0.0 { acc / sum } else { c };
             }
         });
         out
@@ -213,9 +264,10 @@ fn keep<T>(list: &Mutex<Vec<(u64, Arc<T>)>>, key: u64, value: Arc<T>) {
 /// A depth's identity for [`SMOOTHED_KEPT`]: where it comes from (`depth_key`), its size, and a sample of its values
 /// (a photo's own depth is known by its address, which a later depth may reuse).
 fn depth_identity(source: u64, depth: &Plane) -> u64 {
-    let n = depth.data.len();
-    let step = (n / 256).max(1);
-    let sample: Vec<u32> = depth.data.iter().step_by(step).map(|v| v.to_bits()).collect();
+    // (a 16 x 16 grid over the whole map: every n/256-th value fell in one column of a map whose size divides by 256)
+    let (w, h) = (depth.width, depth.height);
+    let sample: Vec<u32> =
+        (0..256).filter_map(|k| depth.data.get(((k / 16) * h / 16 + h / 32) * w + (k % 16) * w / 16 + w / 32).map(|v| v.to_bits())).collect();
     crate::hash_of((source, depth.width, depth.height, sample))
 }
 
@@ -281,6 +333,10 @@ pub struct Setup {
     pub penumbra: f32,
     /// What each output pixel keeps of its own light, and what the light adds (times its colour).
     pub ambient: f32,
+    /// The depths the light reaches (0 nearest, 100 farthest); `ranged` when they leave part of the scene out.
+    pub near: f32,
+    pub far: f32,
+    pub ranged: bool,
     pub gain: V3,
     /// The highlight's light (working space).
     pub shine: V3,
@@ -313,7 +369,11 @@ impl Setup {
         let colour = if top > 1e-6 { colour.map(|c| c / top) } else { [0.0; 3] };
         let brightness = num(r.brightness, 0.0, 100.0, 50.0) / 100.0 * BRIGHTNESS_MAX;
         let shine = num(r.shine, 0.0, 100.0, 0.0) / 100.0 * SHINE_MAX * brightness;
+        let (near, far) = (num(r.near, 0.0, 100.0, 0.0), num(r.far, 0.0, 100.0, 100.0));
         let setup = Setup {
+            near,
+            far,
+            ranged: near > 0.0 || far < 100.0,
             surface: num(r.surface, 0.0, 100.0, 50.0) / 50.0,
             wrap: softness * WRAP_MAX,
             reach,
@@ -334,7 +394,7 @@ impl Setup {
             w,
             h,
             setup.light.map(f32::to_bits),
-            [setup.surface, setup.wrap, setup.reach, setup.shadows, setup.penumbra, setup.ambient].map(f32::to_bits),
+            [setup.surface, setup.wrap, setup.reach, setup.shadows, setup.penumbra, setup.ambient, setup.near, setup.far].map(f32::to_bits),
             setup.gain.map(f32::to_bits),
             setup.shine.map(f32::to_bits),
         ));
@@ -347,7 +407,7 @@ impl Setup {
         if let Some(hit) = SMOOTHED_KEPT.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|(k, _)| *k == self.depth_id) {
             return hit.1.clone();
         }
-        let made = Arc::new((smoothed(&self.depth), smoothed_by(&self.depth, normal_sigma(self.depth.width.max(self.depth.height)))));
+        let made = Arc::new((smoothed(&self.depth), smoothed_by(&levelled(&self.depth), normal_sigma(self.depth.width.max(self.depth.height)))));
         keep(&SMOOTHED_KEPT, self.depth_id, made.clone());
         made
     }
@@ -388,7 +448,7 @@ impl Setup {
         let diffuse = ((ndl + self.wrap) / (1.0 + self.wrap)).max(0.0);
         let q = dist / self.reach;
         let fall = 1.0 / (1.0 + q * q);
-        let lit = if self.shadows > 0.0 { 1.0 - self.shadows * (1.0 - self.clearance(n, p, to, dist, steps)) } else { 1.0 };
+        let lit = if self.shadows > 0.0 { 1.0 - self.shadows * (1.0 - self.open_clearance(n, m, i, j, p, to, dist, steps)) } else { 1.0 };
         let light = diffuse * fall * lit;
         let highlight = if self.shine != [0.0; 3] && ndl > 0.0 {
             let half = normalized([dir[0], dir[1], dir[2] + 1.0]);
@@ -397,6 +457,20 @@ impl Setup {
             0.0
         };
         (light, highlight)
+    }
+
+    /// [`Setup::clearance`] over what the same ray would clear over an open surface with the pixel's own slope (of the
+    /// levelled depth `m`, the scene's own, not tilted by Surface): only what stands between the point and the light
+    /// shadows it. (A soft penumbra reads a light low over a slope as half hidden by the slope itself, which Lambert's term
+    /// already darkens; with the 8-bit depth's steps on that slope it drew bands, card #345.) At least [`OPEN_MIN`] of it.
+    #[allow(clippy::too_many_arguments)]
+    fn open_clearance(&self, n: &Plane, m: &Plane, i: usize, j: usize, p: V3, to: V3, dist: f32, steps: usize) -> f32 {
+        let px = 1.0 / n.width.max(n.height).max(1) as f32;
+        let (xi, yi) = (i as isize, j as isize);
+        let gx = SCENE_DEPTH * (m.get_clamped(xi + 1, yi) - m.get_clamped(xi - 1, yi)) / (2.0 * px);
+        let gy = SCENE_DEPTH * (m.get_clamped(xi, yi + 1) - m.get_clamped(xi, yi - 1)) / (2.0 * px);
+        let open = self.penumbra * (to[2] - gx * to[0] - gy * to[1]) / dist;
+        (self.clearance(n, p, to, dist, steps) / open.clamp(OPEN_MIN, 1.0)).min(1.0)
     }
 
     /// How much of the light reaches surface point `p` past the rest of the scene (1 all of it, 0 none): a
@@ -422,7 +496,7 @@ impl Setup {
             if q[0] < 0.0 || q[1] < 0.0 || q[0] > mw || q[1] > mh {
                 break;
             }
-            let ground = SCENE_DEPTH * (sample(n, q[0] * long, q[1] * long) + RAY_BIAS);
+            let ground = SCENE_DEPTH * (sample(n, q[0] * long, q[1] * long) - RAY_BIAS);
             clear = clear.min((self.penumbra * (q[2] - ground) / (t * dist)).clamp(0.0, 1.0));
             if clear <= 0.0 {
                 break;
@@ -431,21 +505,41 @@ impl Setup {
         clear
     }
 
-    /// The light and the highlight over the whole depth map (smoothed): what [`apply`] samples through the frame.
+    /// How much of the light reaches nearness `n` (1 nearest, 0 farthest) by the depth range: 1 between Near and Far,
+    /// fading to 0 over [`RANGE_FEATHER`] past each end.
+    pub fn reach_at(&self, n: f32) -> f32 {
+        if !self.ranged {
+            return 1.0;
+        }
+        let depth = 100.0 * (1.0 - n.clamp(0.0, 1.0));
+        smooth(self.near - RANGE_FEATHER, self.near, depth) * (1.0 - smooth(self.far, self.far + RANGE_FEATHER, depth))
+    }
+
+    /// The light and the highlight over the whole depth map (smoothed), each times how much of the light reaches that
+    /// depth ([`Setup::reach_at`]), and that share itself when the range leaves part of the scene out: what [`apply`]
+    /// samples through the frame.
     pub fn planes(&self, steps: usize) -> (Plane, Option<Plane>) {
+        let (light, highlight, _) = self.planes_in_range(steps);
+        (light, highlight)
+    }
+
+    /// [`Setup::planes`] and the range's share of the light (`None` when the range spans the whole scene).
+    pub fn planes_in_range(&self, steps: usize) -> (Plane, Option<Plane>, Option<Plane>) {
         let smooth = self.smoothed();
         let (n, m) = (&smooth.0, &smooth.1);
         let (w, h) = (n.width, n.height);
-        let mut both: Image<[f32; 2]> = Image::new(w, h);
-        for_rows(&mut both.data, w, |y, row| {
+        let mut all: Image<[f32; 3]> = Image::new(w, h);
+        for_rows(&mut all.data, w, |y, row| {
             for (x, v) in row.iter_mut().enumerate() {
-                let (l, s) = self.shade(n, m, x, y, steps);
-                *v = [l, s];
+                let r = self.reach_at(n.get_clamped(x as isize, y as isize));
+                let (l, s) = if r > 0.0 { self.shade(n, m, x, y, steps) } else { (0.0, 0.0) };
+                *v = [l * r, s * r, r];
             }
         });
-        let light = Plane { width: w, height: h, data: both.data.iter().map(|v| v[0]).collect() };
-        let highlight = (self.shine != [0.0; 3]).then(|| Plane { width: w, height: h, data: both.data.iter().map(|v| v[1]).collect() });
-        (light, highlight)
+        let light = Plane { width: w, height: h, data: all.data.iter().map(|v| v[0]).collect() };
+        let highlight = (self.shine != [0.0; 3]).then(|| Plane { width: w, height: h, data: all.data.iter().map(|v| v[1]).collect() });
+        let reach = self.ranged.then(|| Plane { width: w, height: h, data: all.data.iter().map(|v| v[2]).collect() });
+        (light, highlight, reach)
     }
 }
 
@@ -455,18 +549,22 @@ pub fn apply(img: &mut Rgb32f, setup: &Setup, frame: &Frame, draft: bool) {
     if w == 0 || h == 0 {
         return;
     }
-    let (light, highlight) = setup.planes(if draft { SHADOW_STEPS_DRAFT } else { SHADOW_STEPS });
-    // (both 0..1, as the guided filter keeps them)
+    let (light, highlight, reach) = setup.planes_in_range(if draft { SHADOW_STEPS_DRAFT } else { SHADOW_STEPS });
+    // (all 0..1, as the guided filter keeps them)
     let guide = crate::lensblur::log_luma(img);
     let light = crate::lensblur::nearness_out(&light, frame, w, h, &guide);
     let highlight = highlight.map(|p| crate::lensblur::nearness_out(&p, frame, w, h, &guide));
+    let reach = reach.map(|p| crate::lensblur::nearness_out(&p, frame, w, h, &guide));
     let (a, g, sh) = (setup.ambient, setup.gain, setup.shine);
     for_rows(&mut img.data, w, |y, row| {
         for (x, c) in row.iter_mut().enumerate() {
             let i = y * w + x;
             let l = light.data.get(i).copied().unwrap_or(0.0);
             let s = highlight.as_ref().and_then(|p| p.data.get(i).copied()).unwrap_or(0.0);
-            *c = std::array::from_fn(|k| c[k] * (a + g[k] * l) + sh[k] * s);
+            // (past the depth range the photo keeps its own light: Ambient only where the light reaches)
+            let r = reach.as_ref().and_then(|p| p.data.get(i).copied()).unwrap_or(1.0);
+            let keep = 1.0 - r * (1.0 - a);
+            *c = std::array::from_fn(|k| c[k] * (keep + g[k] * l) + sh[k] * s);
         }
     });
 }

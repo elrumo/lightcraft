@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use lightcraft_develop::{DepthMap, DepthPalette, DevelopSettings};
+use lightcraft_develop::{DepthMap, DepthPalette, DevelopSettings, Relight};
 use lightcraft_geom::Orientation;
 use lightcraft_raster::{Plane, Rgb32f};
 
@@ -114,6 +114,33 @@ fn the_light_brightens_what_faces_it_and_its_place_follows_the_photo() {
     let turned = shot(&t);
     let (u_left, u_right) = (mean_luma(&turned, 0, 12, 52, 64), mean_luma(&turned, 84, 96, 52, 64));
     assert!(u_right > u_left + 5.0, "{u_left} vs {u_right}");
+}
+
+/// Card #345: the depth range. Near 0 to Far 10 lights the near block only; the ground (depths 25 to 85) keeps the
+/// photo's own light, Ambient included, as with Relight off. The whole range (the default) is not written.
+#[test]
+fn the_depth_range_limits_the_light_to_its_depths() {
+    let plain = shot(&with_depth());
+    let mut s = with_depth();
+    s.relight.enabled = true;
+    s.relight.x = 0.4;
+    s.relight.y = 0.5;
+    let whole = shot(&s);
+    s.relight.far = 10.0;
+    let near_only = shot(&s);
+    // (the block: x 24..48, rows 16..48; the ground below it)
+    let (b_plain, b_lit) = (mean_luma(&plain, 28, 44, 20, 44), mean_luma(&near_only, 28, 44, 20, 44));
+    assert!((b_lit - mean_luma(&whole, 28, 44, 20, 44)).abs() < 2.0, "the block is lit as with the whole range");
+    assert!((b_lit - b_plain).abs() > 5.0, "the block is lit: {b_lit} vs {b_plain}");
+    let (g_plain, g_lit) = (mean_luma(&plain, 60, 96, 52, 64), mean_luma(&near_only, 60, 96, 52, 64));
+    assert!((g_lit - g_plain).abs() < 1.0, "the ground keeps its own light: {g_lit} vs {g_plain}");
+    assert!((mean_luma(&whole, 60, 96, 52, 64) - g_plain).abs() > 5.0, "lit by the whole range");
+    assert!(
+        DevelopSettings { relight: Relight { enabled: true, ..Relight::default() }, ..DevelopSettings::default() }.to_json()["relight"]
+            .get("near")
+            .is_none()
+    );
+    assert_eq!(s.to_json()["relight"]["far"], 10.0);
 }
 
 #[test]
@@ -396,4 +423,47 @@ fn the_decoded_surface_and_the_smoothed_depth_are_kept_between_renders() {
     let o = Setup::new(&other, crate::lensblur::mattes_for(&other, None).as_deref(), Orientation::Normal).unwrap();
     assert!(!Arc::ptr_eq(&o.smoothed(), &setup.smoothed()));
     assert_ne!(o.smoothed().0.data, setup.smoothed().0.data);
+}
+
+/// Card #345: a wall seen at an angle, stored as 8-bit depth (a staircase of flat steps one code apart), lit from the
+/// side. Its light is smooth (no bands where the steps are) and the wall does not shadow itself.
+#[test]
+fn an_8_bit_wall_is_lit_without_bands_and_casts_no_shadow_on_itself() {
+    let (w, h) = (1024usize, 768usize);
+    let wall: Vec<f32> = (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            ((0.30 + 0.05 * x as f32 / w as f32 + 0.02 * y as f32 / h as f32) * 255.0).round() / 255.0
+        })
+        .collect();
+    let mut m = crate::masks::Mattes::default();
+    m.set_depth(Plane { width: w, height: h, data: wall });
+    let light = |softness: f64, shadows: f64| {
+        let mut s = DevelopSettings::default();
+        s.relight.enabled = true;
+        (s.relight.x, s.relight.y, s.relight.spread, s.relight.softness, s.relight.shadows) = (0.1, 0.6, 66.0, softness, shadows);
+        Setup::new(&s, Some(&m), Orientation::Normal).unwrap().planes(SHADOW_STEPS).0
+    };
+    for softness in [0.0, 30.0, 100.0] {
+        let lit = light(softness, 60.0);
+        let unshadowed = light(softness, 0.0);
+        let (mut ripple, mut n) = (0.0f64, 0);
+        for y in h / 8..7 * h / 8 {
+            for x in w / 8..7 * w / 8 {
+                let i = y * w + x;
+                let v = lit.data[i];
+                // (a smooth light is straight over 16 pixels; a step's ripple is not)
+                let bend = v - 0.5 * (lit.data[i - 8] + lit.data[i + 8]);
+                ripple += f64::from(bend / v.max(1e-3)).powi(2);
+                n += 1;
+                assert!(
+                    (v - unshadowed.data[i]).abs() <= 0.02 * unshadowed.data[i],
+                    "softness {softness}: ({x}, {y}) shadowed: {v} vs {}",
+                    unshadowed.data[i]
+                );
+            }
+        }
+        let ripple = (ripple / f64::from(n)).sqrt();
+        assert!(ripple < 0.004, "softness {softness}: ripple {ripple}");
+    }
 }
