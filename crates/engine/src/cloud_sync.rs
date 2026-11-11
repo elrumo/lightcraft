@@ -2063,6 +2063,10 @@ impl Session {
     /// for it (`sync.downloadOriginals`, when it stays on screen or plays): a clip paged past downloads nothing.
     fn open_original_get(&self, st: &SyncState, p: &Photo, now: Instant) -> Option<Job> {
         if p.origin.is_some() {
+        // a clip's original comes only once the frontend asks for it (`sync.downloadOriginals`, `open_original_get`)
+        if p.kind == lightcraft_catalog::MediaKind::Video && !st.want_originals.contains(&key) {
+            return Some(json!({"state": "onRequest"}));
+        }
             return None;
         }
         let key = self.remote_key(p)?;

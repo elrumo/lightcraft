@@ -565,7 +565,7 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 - A downloaded original (`<library>/sync/originals/<hash>/<name>`) becomes the photo's file on this device only. It is
   checked against the photo's content hash before it is used, and a download that breaks off is continued, not started
   again (`<name>.part`); an upload that breaks off is continued from what the server kept.
-- A native frontend can say where the open photo's original stands: *Loading original* with how much has arrived, *Original loaded* once it is here, or *Smart preview* while it can't come (paused, offline, a failed download). The state is the host's `sync.original` (`Session::original_status`).
+- A native frontend can say where the open photo's original stands: *Loading original* with how much has arrived, *Original loaded* once it is here, or *Smart preview* while it can't come (paused, offline, a failed download). A clip's original comes only once the frontend asks for it (`sync.downloadOriginals`): until then the state is `onRequest`, and there is nothing to show. The state is the host's `sync.original` (`Session::original_status`).
 - Photos whose original is on the server are not *Missing Photos*; Info says “Original on the sync server”.
 - Photos you import on any desktop device are uploaded with their previews in the background.
 

@@ -936,11 +936,16 @@ fn paging_onto_a_clip_downloads_its_original_only_once_asked_for() {
     assert!(!original(&f, &b, clip) && is_remote(b.catalog.photo(clip).unwrap()), "{:?}", f.requests);
     assert_eq!(b.synced_tier(b.catalog.photo(clip).unwrap()), Some(2), "the clip's smart preview is here");
     assert!(original(&f, &b, still) && here(&b, still), "a picture paged to downloads its original");
+    // (HB-379: nobody has asked for the clip's original, so it isn't "loading"; a picture's says as before)
+    assert_eq!(b.original_status(clip), Some(json!({"state": "onRequest"})));
+    assert_eq!(b.original_status(still), Some(json!({"state": "original"})));
     // the frontend asks for the clip on screen: it comes
     let r = b.execute("sync.downloadOriginals", &json!({"ids": [clip.0]})).unwrap();
     assert_eq!(r["queued"], 1, "{r}");
+    assert_eq!(b.original_status(clip).unwrap()["state"], "loading");
     sync(&mut b, &mut f);
     assert!(original(&f, &b, clip) && here(&b, clip), "{:?}", b.catalog.photo(clip).unwrap().source);
+    assert_eq!(b.original_status(clip), Some(json!({"state": "original"})));
     let _ = std::fs::remove_dir_all(&root);
 }
 
