@@ -34,7 +34,8 @@
 //! retries the queue ([`Session::unsaved`] reports it meanwhile), so nothing is lost once the
 //! disk is writable again. The log is compacted into a snapshot when it
 //! grows (see [`lightcraft_catalog::SnapshotPolicy`]; written by a worker thread on native, see
-//! [`lightcraft_catalog::journal`]) and on [`Session::close_library`].
+//! [`lightcraft_catalog::journal`]) and on [`Session::close_library`] when anything changed since the snapshot on
+//! disk was written.
 
 use std::path::{Path, PathBuf};
 
@@ -629,7 +630,7 @@ impl Session {
         // in this process its own range: otherwise an empty library opened after one that was
         // never edited this session would look unchanged and show the old library's numbers.
         static LOADS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        catalog.set_revision(LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1) << 32);
+        journal.set_revision(&mut catalog, LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1) << 32);
         self.catalog = catalog;
         // (nothing of the list the last library showed is this one's)
         self.refresh_view();
@@ -1078,7 +1079,8 @@ impl Session {
         ops.or(presets).map(|why| (n, why))
     }
 
-    /// Flush everything and write a snapshot (on quit). Ends an open interaction first.
+    /// Flush everything and write a snapshot (on quit). Ends an open interaction first. No snapshot is written when
+    /// the one on disk already holds the catalog as it is ([`Journal::holds`]).
     ///
     /// The snapshot is written even when appending the queued ops fails: it is a fresh file
     /// holding everything in memory, so it saves those ops too (the log handle may be the only
@@ -1093,6 +1095,17 @@ impl Session {
         self.save_sidecar_times();
         let unlogged = if persisted.is_err() { self.pending_log.len() as u64 } else { 0 };
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
+        // a background snapshot in flight lands first (the one below would wait for it too): it may hold everything
+        if let Err(e) = lib.journal.wait() {
+            log::warn!("library: background snapshot failed ({e}); writing one now");
+        }
+        // Nothing changed since catalog.snap was written (or loaded): writing it again would only cost the time and the
+        // disk writes of the whole catalog (263 MB for 228,000 photos). Closing twice (a Mac quit closes on `terminate`,
+        // then again as the engine stops) writes it at most once.
+        if self.pending_log.is_empty() && lib.journal.holds(&self.catalog) {
+            self.library_identity = std::sync::Arc::new(());
+            return Ok(());
+        }
         let before = lib.journal.seq();
         let snapshot = lib.journal.snapshot_with_unlogged(&self.catalog, unlogged);
         if unlogged > 0 && lib.journal.seq() == before + unlogged {

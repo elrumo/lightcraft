@@ -2,9 +2,10 @@
 //! [`EngineError::NotSaved`], its change stays applied and queued, and the next save writes it.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use lightcraft_catalog::{Flag, MemStore, SnapshotPolicy, Store};
+use lightcraft_catalog::journal::{LOG, SNAPSHOT};
+use lightcraft_catalog::{Flag, MemStore, Op, SnapshotPolicy, Store};
 use serde_json::json;
 
 use crate::library::LibraryStores;
@@ -19,6 +20,8 @@ struct Flaky {
     snapshots_only: bool,
     /// Only appends fail (a dead log handle; fresh files can still be written).
     appends_only: bool,
+    /// `catalog.snap` writes so far.
+    snapshots: Arc<AtomicUsize>,
 }
 
 impl Flaky {
@@ -29,6 +32,9 @@ impl Flaky {
         self.fail.store(on, Ordering::SeqCst);
     }
     /// The files as a crash at this moment would leave them.
+    fn snapshots(&self) -> usize {
+        self.snapshots.load(Ordering::SeqCst)
+    }
     fn crash_copy(&self) -> Flaky {
         let m = MemStore::new();
         *m.files.lock().unwrap() = self.files.files.lock().unwrap().clone();
@@ -43,6 +49,9 @@ impl Store for Flaky {
     fn write_atomic(&mut self, name: &str, data: &[u8]) -> std::io::Result<()> {
         if self.failing() && !self.appends_only {
             return Err(std::io::Error::other("disk full"));
+        }
+        if name == SNAPSHOT {
+            self.snapshots.fetch_add(1, Ordering::SeqCst);
         }
         self.files.write_atomic(name, data)
     }
@@ -61,8 +70,13 @@ impl Store for Flaky {
 }
 
 fn open(store: &Flaky, seed: bool) -> Session {
+    open_with(store, &MemStore::new(), seed)
+}
+
+/// [`open`] with the library's other files (`view.json`, …) in `files`.
+fn open_with(store: &Flaky, files: &MemStore, seed: bool) -> Session {
     let mut s = Session::new();
-    let stores = LibraryStores { dir: "flaky".into(), catalog: Box::new(store.clone()), files: Box::new(MemStore::new()), on_disk: false };
+    let stores = LibraryStores { dir: "flaky".into(), catalog: Box::new(store.clone()), files: Box::new(files.clone()), on_disk: false };
     s.open_library_in(stores, seed).unwrap();
     s
 }
@@ -215,4 +229,64 @@ fn a_preset_that_cannot_be_written_counts_as_unsaved_until_it_is() {
     s.persist().unwrap();
     assert!(s.unsaved().is_none(), "written once the disk works again");
     assert!(String::from_utf8_lossy(&stored(&files)).contains("Mine"));
+}
+
+/// HB-402: every quit wrote the whole catalog.snap again, also when nothing had changed (263 MB and about 2 s for
+/// 228,000 photos; twice on a Mac, which closes the library on `terminate` and again as the engine stops). Now only
+/// a library that changed is written, once however often it is closed; the view is still saved.
+#[test]
+fn closing_writes_the_snapshot_only_when_something_changed() {
+    let (store, files) = (Flaky::default(), MemStore::new());
+    let mut s = open_with(&store, &files, true);
+    let other = s.catalog.photos().map(|p| p.id).find(|id| Some(*id) != s.selection.active).unwrap();
+    let written = store.snapshots();
+    s.selection.active = Some(other);
+    s.close_library().unwrap();
+    s.close_library().unwrap();
+    assert_eq!(store.snapshots(), written, "nothing changed since the demo photos were saved");
+    let view: serde_json::Value = serde_json::from_slice(&files.get("view.json").unwrap()).unwrap();
+    assert_eq!(view["selection"]["active"], json!(other.0), "the view is saved: {view}");
+    drop(s);
+
+    let mut s = open_with(&store, &files, false);
+    s.close_library().unwrap();
+    assert_eq!(store.snapshots(), written, "reopened, nothing changed");
+    drop(s);
+
+    let mut s = open_with(&store, &files, false);
+    let id = s.selection.active.unwrap();
+    s.execute("photo.rate", &json!({"rating": 3})).unwrap();
+    s.close_library().unwrap();
+    s.close_library().unwrap();
+    assert_eq!(store.snapshots(), written + 1, "a change: written once");
+    assert_eq!(store.files.get(LOG).unwrap(), b"", "the log is compacted");
+    drop(s);
+    let s = open_with(&store, &files, false);
+    assert_eq!(s.catalog.photo(id).unwrap().rating, 3);
+}
+
+/// What changed the catalog without a logged op is still saved at close: an op applied to the catalog and never
+/// logged, and the repairs made to a damaged snapshot when it was loaded.
+#[test]
+fn changes_outside_the_log_are_saved_at_close() {
+    let (store, files) = (Flaky::default(), MemStore::new());
+    let mut s = open_with(&store, &files, true);
+    let id = s.selection.active.unwrap();
+    let written = store.snapshots();
+    s.catalog.apply(Op::SetRating { id, rating: 5 }).unwrap();
+    s.close_library().unwrap();
+    assert_eq!(store.snapshots(), written + 1);
+    drop(s);
+    assert_eq!(open_with(&store, &files, false).catalog.photo(id).unwrap().rating, 5);
+
+    let mut v: serde_json::Value = serde_json::from_slice(&store.files.get(SNAPSHOT).unwrap()).unwrap();
+    v["catalog"]["next_photo"] = 1.into();
+    store.files.set(SNAPSHOT, serde_json::to_vec(&v).unwrap());
+    let mut s = open_with(&store, &files, false);
+    assert!(!s.library.as_ref().unwrap().report.repaired.is_empty());
+    s.close_library().unwrap();
+    assert_eq!(store.snapshots(), written + 2);
+    drop(s);
+    let s = open_with(&store, &files, false);
+    assert_eq!(s.library.as_ref().unwrap().report.repaired, Vec::<String>::new());
 }

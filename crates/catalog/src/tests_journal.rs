@@ -428,3 +428,119 @@ fn snapshot_with_seq_near_u64_max_is_corrupt() {
         assert!(matches!(e, Some(CatalogError::Corrupt(_))), "seq {seq}: {e:?}");
     }
 }
+
+/// Closing a library writes no snapshot while the one on disk holds the catalog ([`Journal::holds`], HB-402): no op
+/// logged or applied since it was written or loaded, whatever path applied it.
+#[test]
+fn the_snapshot_holds_the_catalog_until_anything_changes_it() {
+    let m = MemStore::new();
+    let (mut j, mut c, _) = open(&m);
+    assert!(j.holds(&c), "a new library");
+    let op = Op::SetLabelName { label: ColorLabel::ALL[0], name: Some("x".into()) };
+    c.apply(op.clone()).unwrap();
+    assert!(!j.holds(&c), "applied, not logged");
+    j.append(&[op]).unwrap();
+    assert!(!j.holds(&c), "logged, not in the snapshot");
+    j.snapshot(&c).unwrap();
+    assert!(j.holds(&c));
+    // renumbered through the journal (as a host does after opening), still held; behind its back, no longer known
+    j.set_revision(&mut c, 7 << 32);
+    assert!(j.holds(&c));
+    c.set_revision(8 << 32);
+    assert!(!j.holds(&c));
+    j.set_revision(&mut c, 9 << 32);
+    assert!(!j.holds(&c), "unknown stays unknown");
+    j.snapshot(&c).unwrap();
+    drop(j);
+
+    let (mut j, c, _) = open(&m);
+    assert!(j.holds(&c), "reopened unchanged");
+    // a catalog replaced wholesale (a sync reload) gets a newer revision: not held until written
+    let mut fresh = c.clone();
+    fresh.set_revision(c.revision + 1);
+    assert!(!j.holds(&fresh));
+    j.snapshot(&fresh).unwrap();
+    assert!(j.holds(&fresh));
+    // a log with records left in it: not held (closing compacts it)
+    let mut c = fresh;
+    let op = Op::SetLabelName { label: ColorLabel::ALL[1], name: Some("y".into()) };
+    c.apply(op.clone()).unwrap();
+    j.append(&[op]).unwrap();
+    drop(j);
+    let (j, c, r) = open(&m);
+    assert_eq!(r.replayed, 1);
+    assert!(!j.holds(&c));
+    // so is one whose records the snapshot already holds (a crash between writing it and emptying the log)
+    let log = m.get(LOG).unwrap();
+    let mut j = j;
+    j.snapshot(&c).unwrap();
+    assert!(j.holds(&c));
+    drop(j);
+    m.set(LOG, log);
+    let (j, c, r) = open(&m);
+    assert_eq!(r.stale, 1);
+    assert!(!j.holds(&c));
+}
+
+/// A MemStore that can't write `catalog.snap` (a full disk, a read-only volume).
+#[derive(Clone)]
+struct NoSnapshot(MemStore);
+
+impl Store for NoSnapshot {
+    fn read(&mut self, name: &str) -> std::io::Result<Option<Vec<u8>>> {
+        self.0.read(name)
+    }
+    fn write_atomic(&mut self, name: &str, data: &[u8]) -> std::io::Result<()> {
+        if name == SNAPSHOT {
+            return Err(std::io::Error::other("read-only"));
+        }
+        self.0.write_atomic(name, data)
+    }
+    fn append(&mut self, name: &str, data: &[u8]) -> std::io::Result<()> {
+        self.0.append(name, data)
+    }
+    fn truncate(&mut self, name: &str, len: u64) -> std::io::Result<()> {
+        self.0.truncate(name, len)
+    }
+    fn describe(&self) -> String {
+        "no snapshot".into()
+    }
+}
+
+/// What the open changed in memory and did not write (repairs of a damaged snapshot, a format upgrade that failed) is
+/// not held: the closing snapshot saves it.
+#[test]
+fn a_repaired_or_not_upgraded_snapshot_is_not_held() {
+    let mut c = Catalog::new();
+    let id = c.alloc_photo_id();
+    c.apply(Op::AddPhoto { photo: Box::new(Photo::new(id, Source::File { path: "/p/1.jpg".into() }, "1.jpg", "JPEG", 4, 3, "2026-01-01")) }).unwrap();
+    let m = MemStore::new();
+    let (mut j, _, _) = open(&m);
+    j.snapshot(&c).unwrap();
+    drop(j);
+    // an id counter behind the ids in use: repaired on load
+    let mut v: serde_json::Value = serde_json::from_slice(&m.get(SNAPSHOT).unwrap()).unwrap();
+    v["catalog"]["next_photo"] = 1.into();
+    m.set(SNAPSHOT, serde_json::to_vec(&v).unwrap());
+    let (mut j, c, r) = open(&m);
+    assert!(!r.repaired.is_empty());
+    assert!(!j.holds(&c));
+    j.snapshot(&c).unwrap();
+    assert!(j.holds(&c));
+    drop(j);
+    let (j, c, r) = open(&m);
+    assert!(r.repaired.is_empty(), "{:?}", r.repaired);
+    assert!(j.holds(&c));
+    drop(j);
+
+    // an older format whose upgrade can't be written: not held, and the next open upgrades it
+    let old = MemStore::new();
+    old.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":1,\"seq\":0,\"catalog\":{}}}\n", c.to_snapshot()).into_bytes());
+    let (j, c, r) = Journal::open(Box::new(NoSnapshot(old.clone()))).unwrap();
+    assert_eq!(r.upgraded_from, Some(1));
+    assert!(!j.holds(&c));
+    drop(j);
+    let (j, c, r) = open(&old);
+    assert_eq!(r.upgraded_from, Some(1));
+    assert!(j.holds(&c));
+}

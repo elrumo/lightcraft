@@ -1,6 +1,6 @@
 # Lightroom parity checklist
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** patch (LR-EDIT-EFFECTS-GRAIN: Digital Noise and Color Noise styles; LR-EDIT-EFFECTS-FILM: a leak's Position, Film Effects presets)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** patch (LR-BEHAV-AUTOSAVE: quitting an unchanged library writes no snapshot)
 
 The measured, row-by-row checklist: one row per Lightroom feature, menu item and shortcut, what we
 have and what is missing. It answers *does the feature exist?* (feature breadth). Whether it is good
@@ -472,7 +472,7 @@ differences and missing bindings are in [ui-parity.md](ui-parity.md#shortcuts).
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-BEHAV-AUTOSAVE | Instant autosave | P0 | ✅ | `crates/catalog/src/journal.rs`, `crates/engine/src/library.rs` | every change fsynced before the command returns; a failed write fails the command ("saved in memory but not written to disk"), keeps the change queued and retries; top-bar warning until saved; a write that fails part-way is cut back to the last whole record so the retry never reads back as damage (logs from older builds with such a fragment load in full); quitting saves queued changes in the closing snapshot even when the log can't be appended to; versioned catalog format (`journal::VERSION`): older libraries are upgraded on open, a library from a newer LightCraft is refused untouched ("written by a newer version"); a damaged or hand-edited snapshot that still reads is made consistent on open (`Catalog::repair`: records filed under another id, stacks of missing, repeated or too few photos, folders inside themselves, id counters behind the ids in use) instead of panicking or hanging later |
+| LR-BEHAV-AUTOSAVE | Instant autosave | P0 | ✅ | `crates/catalog/src/journal.rs`, `crates/engine/src/library.rs` | every change fsynced before the command returns; a failed write fails the command ("saved in memory but not written to disk"), keeps the change queued and retries; top-bar warning until saved; a write that fails part-way is cut back to the last whole record so the retry never reads back as damage (logs from older builds with such a fragment load in full); quitting saves queued changes in the closing snapshot even when the log can't be appended to, and writes no snapshot when nothing changed since the one on disk (`Journal::holds`: no op logged or applied since it was written or loaded, no repair at open; was 263 MB per quit for 228,000 photos, twice on a Mac); versioned catalog format (`journal::VERSION`): older libraries are upgraded on open, a library from a newer LightCraft is refused untouched ("written by a newer version"); a damaged or hand-edited snapshot that still reads is made consistent on open (`Catalog::repair`: records filed under another id, stacks of missing, repeated or too few photos, folders inside themselves, id counters behind the ids in use) instead of panicking or hanging later |
 | LR-BEHAV-UNDO | Global undo | P0 | ✅ | `cmd:edit.undo`, `crates/engine/src/tests.rs` (`rating_flag_undo_redo`), `crates/engine/src/tests/filesystem_history.rs` | covers ratings, albums, deletes, edits; partial file/XMP moves keep unfinished repairs across retries and discarded history; merged renames move directly to their final catalog path |
 | LR-BEHAV-MULTISELECT | Multi-selection | P0 | ✅ | `cmd:library.select` (`replace`/`add`/`toggle`/`range`), `cmd:library.selectAll` | |
 | LR-BEHAV-BATCH | Batch apply to selection | P0 | ✅ | `cmd:photo.rate`, `cmd:develop.paste`, `cmd:preset.apply`, `cmd:app.export` | |
@@ -820,6 +820,7 @@ Latin stays upright. Advanced Japanese composition remains open. Regression cove
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-11 | patch | LR-BEHAV-AUTOSAVE: closing a library writes no snapshot when the one on disk already holds the catalog (HB-402; a Mac quit wrote 263 MB twice for 228,000 photos); status unchanged (✅) |
 | 2026-11-11 | minor | LRC-PRINT-JOB: the contact sheet's page number can be left out (`pageNumbers`), its film style picks up dust, hairs, scratches, grain and light leaks from a seed (`seed`), and its preview reads the thumbnail cache |
 | 2026-11-11 | patch | LR-EDIT-EFFECTS-GRAIN: `grain.style` (film, digital, color) on the CPU and GPU renderers. LR-EDIT-EFFECTS-FILM: a light leak's Position (`filmLayer.<i>.offset`) and seven built-in Film Effects presets. Statuses and feature counts unchanged |
 | 2026-11-11 | minor | LR-EDIT-LIGHT-CURVE-PARAM / -POINT: region shapes, natural-spline point curves and the curves' ProPhoto space fitted to Lightroom's exports of six cameras |

@@ -337,3 +337,25 @@ proptest! {
         prop_assert_eq!(c.to_snapshot(), live.to_snapshot());
     }
 }
+
+/// A background snapshot holds the catalog it copied once it has landed ([`Journal::holds`], HB-402), not while it
+/// is being written, and not when the catalog changed meanwhile, even by an op that was never logged.
+#[test]
+fn a_landed_background_snapshot_holds_the_catalog_it_copied() {
+    let g = Gated::new();
+    let (mut j, mut live, _) = Journal::open(Box::new(g.clone())).unwrap();
+    edit(&mut j, &mut live, 1);
+    j.snapshot_in_background(&live).unwrap();
+    assert!(!j.holds(&live), "still being written");
+    g.set_gate(true);
+    j.wait().unwrap();
+    assert!(j.holds(&live));
+
+    g.set_gate(false);
+    edit(&mut j, &mut live, 2);
+    j.snapshot_in_background(&live).unwrap();
+    live.apply(Op::SetLabelName { label: ColorLabel::ALL[0], name: Some("x".into()) }).unwrap();
+    g.set_gate(true);
+    j.wait().unwrap();
+    assert!(!j.holds(&live), "changed after the copy");
+}

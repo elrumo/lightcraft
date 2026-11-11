@@ -226,12 +226,20 @@ pub struct Journal {
     index: Vec<(u64, u64)>,
     /// How much of the log one read takes (tests make it small).
     pull_window: usize,
+    /// The [`Catalog::revision`] of the catalog the last snapshot was written from, or of the one loaded at open
+    /// (`None`: unknown, or the catalog loaded differs from the files: repaired at open, or `catalog.snap` is in an
+    /// older format). Revisions count every applied op and a catalog replaced wholesale gets a newer one, so a
+    /// catalog still at this revision, with no op logged after the snapshot ([`Journal::holds`]), is what the
+    /// snapshot holds, whatever path changed it.
+    saved_revision: Option<u64>,
 }
 
 /// A background snapshot in flight.
 struct Pending {
     /// The snapshot holds the state after this op.
     seq: u64,
+    /// The revision of the catalog it was copied from.
+    revision: u64,
     /// Log bytes / records appended since it started (all `> seq`): the log once it's done.
     tail: Vec<u8>,
     tail_records: u64,
@@ -524,6 +532,7 @@ impl Journal {
             floor: snapshot_seq,
             index: Vec::new(),
             pull_window: PULL_WINDOW,
+            saved_revision: None,
         };
         let log = log.unwrap_or_default();
 
@@ -622,11 +631,17 @@ impl Journal {
         // Bring an older (or new, or snapshot-less) library to this version's format before
         // anything is appended: a snapshot in this format makes older builds refuse the library
         // instead of misreading ops or dropping fields they don't know.
-        if report.created {
+        // (`saved`: catalog.snap now holds the catalog loaded, repairs included, in this format; a damaged log's
+        // snapshot above failed the open if it wasn't written)
+        let saved = if report.created {
             // tiny: written directly, not counted as a compaction
             let empty = format!("{{\"format\":\"{FORMAT}\",\"version\":{VERSION},\"seq\":0,\"catalog\":{}}}\n", catalog.to_snapshot());
-            if let Err(e) = j.store.write_atomic(SNAPSHOT, empty.as_bytes()) {
-                log::warn!("catalog: can't write the new library's snapshot: {e}");
+            match j.store.write_atomic(SNAPSHOT, empty.as_bytes()) {
+                Ok(()) => true,
+                Err(e) => {
+                    log::warn!("catalog: can't write the new library's snapshot: {e}");
+                    false
+                }
             }
         } else if report.damaged.is_none() && snapshot_version != Some(VERSION) {
             report.upgraded_from = Some(snapshot_version.unwrap_or(0));
@@ -635,12 +650,20 @@ impl Journal {
                     if let Some(v) = report.upgraded_from {
                         log::info!("catalog: upgraded from format v{v} to v{VERSION}");
                     }
+                    true
                 }
-                // nothing lost: the old files are intact and still load; retried on next open
-                Err(e) => log::warn!("catalog: can't write the format v{VERSION} snapshot: {e}"),
+                // nothing lost: the old files are intact and still load; retried on next open (and by the next
+                // snapshot, closing included: `saved_revision` stays unknown)
+                Err(e) => {
+                    log::warn!("catalog: can't write the format v{VERSION} snapshot: {e}");
+                    false
+                }
             }
-        }
+        } else {
+            report.damaged.is_some() || report.repaired.is_empty()
+        };
         catalog.set_revision(0);
+        j.saved_revision = saved.then_some(0);
         Ok((j, catalog, report))
     }
 
@@ -734,6 +757,7 @@ impl Journal {
         // the snapshot is durable: it holds every op up to `seq`
         self.seq = seq;
         self.snapshot_seq = seq;
+        self.saved_revision = Some(catalog.revision);
         let t2 = web_time::Instant::now();
         let kept = if keep_bytes == 0 { Vec::new() } else { self.log_tail(keep_bytes) };
         // A crash here leaves old records in the log; they are skipped by seq on load.
@@ -781,7 +805,7 @@ impl Journal {
         let t0 = web_time::Instant::now();
         let Some(mut writer) = self.store.background_writer() else { return self.snapshot(catalog) };
         let copy = catalog.clone();
-        let seq = self.seq;
+        let (seq, revision) = (self.seq, catalog.revision);
         let spawned = std::thread::Builder::new().name("catalog-snapshot".into()).spawn(move || write_snapshot(writer.as_mut(), seq, &copy));
         let worker = match spawned {
             Ok(w) => w,
@@ -790,8 +814,16 @@ impl Journal {
                 return self.snapshot(catalog);
             }
         };
-        self.pending =
-            Some(Pending { seq, tail: Vec::new(), tail_records: 0, records: self.log_records, started: t0, start_ms: ms_since(t0), worker });
+        self.pending = Some(Pending {
+            seq,
+            revision,
+            tail: Vec::new(),
+            tail_records: 0,
+            records: self.log_records,
+            started: t0,
+            start_ms: ms_since(t0),
+            worker,
+        });
         Ok(())
     }
 
@@ -842,6 +874,7 @@ impl Journal {
         // Keep exactly the ones appended since (a crash before this rewrite skips the stale ones).
         let t1 = web_time::Instant::now();
         self.snapshot_seq = p.seq;
+        self.saved_revision = Some(p.revision);
         if let Err(e) = self.store.write_atomic(LOG, &p.tail) {
             // the log stays whole (stale records are skipped on load); compact again later
             self.retry_at_records = self.log_records + self.policy.max_records;
@@ -897,6 +930,22 @@ impl Journal {
 
     pub fn seq(&self) -> u64 {
         self.seq
+    }
+
+    /// `catalog.snap` already holds `catalog` as it is, so another snapshot would write the same: every logged op is
+    /// in it, `catalog` has not changed since it was written (or loaded unchanged) and no background snapshot is
+    /// being written. What closing a library checks before writing one (issue HB-402: 263 MB on every quit). (An id
+    /// counter moved by an allocation no op used is not saved, as after a crash: that id was never used, and the
+    /// ops that add records raise the counters again when they are replayed.)
+    pub fn holds(&self, catalog: &Catalog) -> bool {
+        self.pending.is_none() && self.seq == self.snapshot_seq && self.log_records == 0 && self.saved_revision == Some(catalog.revision)
+    }
+
+    /// Count `catalog`'s revisions from `at` ([`Catalog::set_revision`]) and keep [`Journal::holds`] right: a host
+    /// numbers each catalog it loads in a range of its own.
+    pub fn set_revision(&mut self, catalog: &mut Catalog, at: u64) {
+        self.saved_revision = (self.saved_revision == Some(catalog.revision)).then_some(at);
+        catalog.set_revision(at);
     }
 
     /// The logged ops after op `after`, oldest first, at most `limit` of them. Only ops still in
