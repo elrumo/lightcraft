@@ -4,7 +4,8 @@
 
 Film effects put a photo on film and mark it as film gets marked: a **frame** the photo sits in (a 35mm strip with its
 sprocket holes, a filed-out negative carrier's black edge, an instant print's frame) and a **stack of marks** drawn over
-the finished picture, bottom to top: light leaks, light streaks, a burnt-out edge, dust with hairs, scratches. All of it
+the finished picture, bottom to top: light leaks, light streaks, a burnt-out edge, dust with hairs, scratches, and the
+picture turned into a negative. All of it
 is procedural (no texture files): numbers, a seed and a hash. Nothing here is fitted to or taken from another
 application.
 
@@ -35,6 +36,7 @@ Angles are degrees counter-clockwise: 0 the right edge (a horizontal line), 90 t
 | `burn` Edge Burn | amount, size (Depth), angle (Edge), color, texture (Roughness) | 80, 12, −90, 20, 60 |
 | `dust` Dust | amount, size, fibres (Hairs), tone (Dark ↔ Light), texture (Softness) | 40, 40, 25, 100, 30 |
 | `scratches` Scratches | amount, size (Width), angle, tone, texture (Breaks) | 30, 20, 0, 100, 50 |
+| `negative` Negative | amount, texture (Orange Mask) | 100, 60 |
 
 Commands (`crates/engine/src/cmd/film.rs`), each one undo step: `film.add {kind, seed?}` (a random seed, the kind's
 starting values, on top), `film.delete {id}`, `film.visible {id, visible?}`, `film.duplicate {id}` (above the original,
@@ -114,6 +116,14 @@ hair or scratch is light when its own random number is under `(tone + 1)/2`.
   `(0.0002 + 0.0022·size^1.5)·(0.5 + r2)`, a faint halo, broken where `value_noise(along·3 + 17 j, 0.5)` is under
   `0.75·texture`, running a random part of the frame.
 
+### Negative
+
+The layer turns what is under it into a negative, per channel of the picture (clamped to 0..1): `n = (1 −
+c^(1/2.2))^2.2` (film inverts densities; inverted in linear light the picture is washed out), tinted by a colour
+negative's orange mask, `n · (1 + mask·(M − 1))` with `M = (1, 0.52, 0.26)`, and mixed in by the amount, `c + (n − c)·
+amount`. Marks under it in the stack are inverted with the photo; marks over it are drawn on the negative. It has no
+pattern (Shuffle changes nothing).
+
 ### Frames
 
 The frame's window is a rectangle in whole output pixels (rounded half up); the picture is shrunk into it covering it,
@@ -172,7 +182,7 @@ little tone. `presets::tests::film_effects_presets_draw_film`.
 
 ## Tests
 
-`film::tests` (each kind marks where it should and leaves the rest; dust and scratches follow their tone; hairs come with
+`film::tests` (each kind marks where it should and leaves the rest; a negative inverts what is under it; dust and scratches follow their tone; hairs come with
 fibres; the same marks at any size; a window is cut from the whole; seeds, salts and Same on Every Photo; the strip's
 window and hole pitch, the negative's amber; filed and instant borders; hostile numbers and one-pixel pictures; 8-bit and
 deep alike), `lightcraft_develop` (`default_film_is_not_serialized_so_existing_hashes_stay`,

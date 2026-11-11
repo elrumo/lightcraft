@@ -834,10 +834,12 @@ pub enum FilmKind {
     Dust,
     /// Long scratches along the film.
     Scratches,
+    /// The picture as a negative: inverted, on a colour negative's orange mask.
+    Negative,
 }
 
 impl FilmKind {
-    pub const ALL: [FilmKind; 5] = [FilmKind::Leak, FilmKind::Streak, FilmKind::Burn, FilmKind::Dust, FilmKind::Scratches];
+    pub const ALL: [FilmKind; 6] = [FilmKind::Leak, FilmKind::Streak, FilmKind::Burn, FilmKind::Dust, FilmKind::Scratches, FilmKind::Negative];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -846,6 +848,7 @@ impl FilmKind {
             FilmKind::Burn => "Edge Burn",
             FilmKind::Dust => "Dust",
             FilmKind::Scratches => "Scratches",
+            FilmKind::Negative => "Negative",
         }
     }
 
@@ -857,6 +860,7 @@ impl FilmKind {
             FilmKind::Burn => &["amount", "size", "angle", "color", "texture"],
             FilmKind::Dust => &["amount", "size", "fibres", "tone", "texture"],
             FilmKind::Scratches => &["amount", "size", "angle", "tone", "texture"],
+            FilmKind::Negative => &["amount", "texture"],
         }
     }
 }
@@ -872,7 +876,7 @@ pub struct FilmLayer {
     pub visible: bool,
     /// The layer's own random pattern; mixed with the photo's id while [`Film::vary`] is on.
     pub seed: u32,
-    /// Strength (leaks, streaks, burns) or how many (dust, scratches), 0..100.
+    /// Strength (leaks, streaks, burns), how many (dust, scratches) or how far inverted (negative), 0..100.
     pub amount: f64,
     /// Reach, width, depth or size, 0..100.
     pub size: f64,
@@ -882,7 +886,7 @@ pub struct FilmLayer {
     pub offset: f64,
     /// The leaked light's colour, −100 (magenta red) .. 100 (yellow).
     pub color: f64,
-    /// Unevenness (leak, streak), raggedness (burn), softness (dust) or breaks (scratches), 0..100.
+    /// Unevenness (leak, streak), raggedness (burn), softness (dust), breaks (scratches) or the orange mask (negative), 0..100.
     pub texture: f64,
     /// Dust and scratches: −100 dark (a print or slide) .. 100 light (a negative scan).
     pub tone: f64,
@@ -919,6 +923,7 @@ impl FilmLayer {
             FilmKind::Burn => FilmLayer { amount: 80.0, size: 12.0, angle: -90.0, color: 20.0, texture: 60.0, ..base },
             FilmKind::Dust => FilmLayer { amount: 40.0, size: 40.0, tone: 100.0, texture: 30.0, fibres: 25.0, ..base },
             FilmKind::Scratches => FilmLayer { amount: 30.0, size: 20.0, tone: 100.0, ..base },
+            FilmKind::Negative => FilmLayer { amount: 100.0, texture: 60.0, ..base },
         }
     }
 }

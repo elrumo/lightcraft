@@ -58,12 +58,12 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Film Effect",
             [],
             None,
-            "{kind: leak|streak|burn|dust|scratches, seed?: u32} — a new layer on top of the stack with the kind's starting values; answers {id, index}",
+            "{kind: leak|streak|burn|dust|scratches|negative, seed?: u32} — a new layer on top of the stack with the kind's starting values; answers {id, index}",
             has_active,
             |s, p| {
                 let c = "film.add";
                 let kind: FilmKind = serde_json::from_value(p.get("kind").cloned().ok_or_else(|| bad(c, "missing `kind`"))?)
-                    .map_err(|_| bad(c, "`kind` must be leak, streak, burn, dust or scratches"))?;
+                    .map_err(|_| bad(c, "`kind` must be leak, streak, burn, dust, scratches or negative"))?;
                 let seed = seed_param(p, c)?;
                 film_edit(s, c, "Add Film Effect", |film| {
                     room(film, c)?;

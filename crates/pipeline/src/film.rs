@@ -387,6 +387,7 @@ impl Setup {
                 FilmKind::Burn => self.light(c, burn(ctx, l, q, u, v), l.color),
                 FilmKind::Dust => self.marks(c, dust(ctx, l, q)),
                 FilmKind::Scratches => self.marks(c, scratches(ctx, l, q)),
+                FilmKind::Negative => negative(c, l),
             };
         }
         c
@@ -526,6 +527,22 @@ impl Setup {
         let c = c.map(|x| x * shade);
         mix3(self.out(paper), c, inside)
     }
+}
+
+/// What the orange mask of a colour negative leaves of each channel (a tint of the inverted picture).
+const NEGATIVE_MASK: [f32; 3] = [1.0, 0.52, 0.26];
+
+/// `c` as a negative: each channel inverted in a display gamma of 2.2 (film inverts densities: inverted in linear
+/// light the picture is washed out), tinted by the orange mask (Texture) and mixed in by the layer's amount. What is
+/// drawn under the layer is inverted with the photo; what is over it is not.
+fn negative(c: [f32; 3], l: &Layer) -> [f32; 3] {
+    std::array::from_fn(|j| {
+        // (a NaN reads as black, and what is not a number is not mixed back in)
+        let v = if c[j].is_nan() { 0.0 } else { c[j].clamp(0.0, 1.0) };
+        let base = if c[j].is_finite() { c[j] } else { v };
+        let inverted = (1.0 - v.powf(1.0 / 2.2)).powf(2.2) * (1.0 + l.texture * (NEGATIVE_MASK[j] - 1.0));
+        base + (inverted - base) * l.amount
+    })
 }
 
 /// Where a pixel is: the whole output's size in long-edge units, a pixel's size, the frame's window.

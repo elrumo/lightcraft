@@ -133,6 +133,42 @@ fn a_streak_crosses_the_frame_and_a_burn_blows_out_its_edge() {
     assert!((mean_luma(&px, w, 0, 0, w, 10) - luma(GREY)).abs() < 0.01);
 }
 
+/// A negative inverts the picture (white to black, a dark grey to a light one), its orange mask keeps the red and takes
+/// the blue, half its amount is halfway, and the marks over it are not inverted with the photo.
+#[test]
+fn a_negative_inverts_the_picture_under_it() {
+    let (w, h) = (40, 30);
+    let mut s = with(&[(FilmKind::Negative, 1)], FilmFrame::None);
+    s.film.layers[0].texture = 0.0;
+    let grey = draw(&s, 0, w, h)[0];
+    let expected = (1.0 - 0.18f32.powf(1.0 / 2.2)).powf(2.2);
+    assert!(grey.iter().all(|v| (v - expected).abs() < 1e-5) && expected > 0.18, "{grey:?} {expected}");
+    let mut white = vec![[1.0f32, 1.0, 1.0]; w * h];
+    Setup::new(&s, 0, OutputSpace::Srgb, true).unwrap().apply_linear(&mut white, w, h, [0, 0], [w, h]);
+    assert!(white[0].iter().all(|v| v.abs() < 1e-6), "{:?}", white[0]);
+    // (hostile pixels: no panic, and a NaN reads as black, so it comes out white)
+    let mut odd = vec![[f32::NAN, f32::INFINITY, -5.0]; w * h];
+    Setup::new(&s, 0, OutputSpace::Srgb, true).unwrap().apply_linear(&mut odd, w, h, [0, 0], [w, h]);
+    assert_eq!(odd[0], [1.0, 0.0, 1.0]);
+    s.film.layers[0].amount = 50.0;
+    assert!((draw(&s, 0, w, h)[0][0] - (0.18 + expected) / 2.0).abs() < 1e-5);
+    s.film.layers[0].amount = 100.0;
+    s.film.layers[0].texture = 100.0;
+    let masked = draw(&s, 0, w, h)[0];
+    assert!((masked[0] - expected).abs() < 1e-5 && (masked[2] - expected * 0.26).abs() < 1e-5 && masked[1] < masked[0], "{masked:?}");
+    // light dust over the negative stays light; under it, it is inverted to dark
+    s.film.layers[0].texture = 0.0;
+    let mut dust = FilmLayer::new(2, FilmKind::Dust, 9);
+    dust.amount = 100.0;
+    dust.size = 80.0;
+    s.film.layers.push(dust.clone());
+    let over = draw(&s, 0, 600, 400);
+    assert!(over.iter().any(|c| luma(*c) > expected + 0.2), "light dust over the negative");
+    s.film.layers = vec![dust, s.film.layers[0].clone()];
+    let under = draw(&s, 0, 600, 400);
+    assert!(under.iter().any(|c| luma(*c) < 0.05) && under.iter().all(|c| luma(*c) <= expected + 1e-4), "dust under the negative is dark");
+}
+
 #[test]
 fn dust_and_scratches_follow_their_tone() {
     let (w, h) = (600, 400);
