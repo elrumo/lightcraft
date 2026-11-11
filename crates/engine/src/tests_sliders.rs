@@ -90,8 +90,9 @@ fn every_control_survives_the_commands_undo_copy_paste_and_reset() {
         // a preset or `develop.merge` of the whole settings
         assert_eq!(untouched.merged(&d.to_json()).unwrap(), d, "{}: merged", c.id);
         // Copy and Paste Settings: the group that holds the control is copied by default (crop.* is the
-        // Crop group, which Lightroom leaves out unless ticked, and which has its own tests)
-        if !c.id.starts_with("crop.") {
+        // Crop group, which Lightroom leaves out unless ticked, and which has its own tests; Colorize's colours are a
+        // picture of this photo, which no copyable group carries, `tests_colorize`)
+        if !c.id.starts_with("crop.") && !c.id.starts_with("colorize.") {
             let key = json_key(c);
             assert!(
                 copied.iter().any(|g| g.keys().contains(&key.as_str())),
