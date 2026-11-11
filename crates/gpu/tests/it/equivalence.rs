@@ -1288,6 +1288,11 @@ fn every_control_matches_the_cpu_at_both_ends_and_through_the_stage_cache() {
             for (name, s) in [("default", at(c.default)), ("min", at(c.min)), ("max", at(c.max)), ("default again", at(c.default))] {
                 let cpu = render(&src, &info, &s, &req).image;
                 let Some(gpu) = lightcraft_gpu::render(&src, &info, &s, &req, Some(&cache)) else {
+                    // (an entirely black picture is handed back to the CPU on purpose, `render.rs`: Depth Map at Far 0
+                    // paints every pixel in the Gray palette's far end, black, and its contour lines only darken)
+                    if cpu.data.iter().all(|p| p[..3] == [0, 0, 0]) {
+                        continue;
+                    }
                     bad.push(format!("{} = {name}: the GPU did not render it", c.id));
                     continue;
                 };
