@@ -322,3 +322,49 @@ fn the_logo_is_drawn_in_the_bottom_corner_when_given() {
     assert_eq!(corner("", ""), (0, 0), "no logo asked for");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The film style's wear comes from the seed: the same seed draws the same page, another seed other dust, and the
+/// paper around the strips stays clean.
+#[test]
+fn film_wear_follows_the_seed() {
+    let mut s = Session::with_demo();
+    let ids: Vec<_> = s.catalog.photos().take(4).map(|p| p.id.0).collect();
+    let page = |s: &mut Session, seed: u64| {
+        let p = json!({"ids": ids, "style": "film", "preview": true, "columns": 2, "rows": 2, "seed": seed});
+        decode(&sheet(s, p).files[0])
+    };
+    let (a, again, b) = (page(&mut s, 7), page(&mut s, 7), page(&mut s, 8));
+    assert_eq!(a, again, "one seed, one page");
+    let differ = a.data.iter().zip(&b.data).filter(|(p, q)| (0..3).any(|c| p[c].abs_diff(q[c]) > 24)).count();
+    assert!(differ > 200, "{differ} pixels changed with the seed");
+    let o = Options { style: "film".into(), preview: true, columns: 2, rows: 2, ..Default::default() };
+    let l = o.layout().unwrap();
+    let below = l.strip(1).bottom() + l.caption_band() + 4.0;
+    let paper = look("film").unwrap().paper;
+    for y in (below as usize..(l.grid.bottom() as usize).min(a.height)).step_by(7) {
+        for x in (0..a.width).step_by(5) {
+            let p = a.get(x, y);
+            assert!((0..3).all(|c| p[c].abs_diff(paper[c]) <= 8), "({x}, {y}) {p:?} under the strips");
+        }
+    }
+}
+
+/// The page number can be left out: the grid then takes its band.
+#[test]
+fn page_numbers_can_be_left_out() {
+    for style in ["minimal", "dark", "film", "gallery"] {
+        let on = Options { style: style.into(), ..Default::default() };
+        let off = Options { page_numbers: false, ..on.clone() };
+        let (lo, lf) = (on.layout().unwrap(), off.layout().unwrap());
+        assert!(lf.grid.h > lo.grid.h, "{style}: the grid takes the number's band");
+        let ink = |o: &Options, l: &Layout| {
+            let mut page = Rgba8::filled(l.width, l.height, [255; 4]);
+            l.background(&mut page, 0, 3, 1, o);
+            let band = lo.grid.bottom() as usize..(lo.grid.bottom() + lo.look.caption_pt * 3.0 * lo.scale) as usize;
+            let paper = l.look.paper;
+            band.flat_map(|y| (0..l.width).map(move |x| (x, y))).filter(|&(x, y)| (0..3).any(|c| page.get(x, y)[c].abs_diff(paper[c]) > 40)).count()
+        };
+        assert!(ink(&on, &lo) > 10, "{style}: a number is printed");
+        assert_eq!(ink(&off, &lf), 0, "{style}: no number");
+    }
+}

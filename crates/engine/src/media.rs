@@ -34,6 +34,7 @@ mod settings_hash;
 mod source;
 
 pub use cache::DenoiseIndex;
+pub(crate) use quick::shrink;
 pub use quick::{QuickJob, QuickSource, clip_cover, content_key, source_info};
 pub use render::{RenderJob, RenderResult, develop, develop_hdr, develop_reporting, develop_reporting_hdr, fit_for_display};
 pub(crate) use render::{band_pixels, bandable_at};

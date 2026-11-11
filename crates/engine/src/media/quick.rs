@@ -87,17 +87,17 @@ impl QuickJob {
     }
 }
 
-/// `img` scaled down to fit `edge` × `edge` (in linear light, its alpha kept: an expanded crop's empty corners stay
+/// `img` scaled down to fit `w` × `h` (in linear light, its alpha kept: an expanded crop's empty corners stay
 /// empty); as it is when it already fits.
-pub(super) fn shrink(img: &Rgba8, edge: usize) -> Rgba8 {
+pub(crate) fn shrink(img: &Rgba8, w: usize, h: usize) -> Rgba8 {
     use lightcraft_color::transfer::{decode_srgb8, encode_srgb8};
     use lightcraft_raster::resample::{Filter, fit};
-    let edge = edge.max(1);
-    if img.width.max(img.height) <= edge || img.width == 0 || img.height == 0 {
+    let (w, h) = (w.max(1), h.max(1));
+    if (img.width <= w && img.height <= h) || img.width == 0 || img.height == 0 {
         return img.clone();
     }
     let linear = img.map(|p| [decode_srgb8(p[0]), decode_srgb8(p[1]), decode_srgb8(p[2]), f32::from(p[3]) / 255.0]);
-    fit(&linear, edge, edge, Filter::Mitchell)
+    fit(&linear, w, h, Filter::Mitchell)
         .map(|p| [encode_srgb8(p[0]), encode_srgb8(p[1]), encode_srgb8(p[2]), (p[3].clamp(0.0, 1.0) * 255.0).round() as u8])
 }
 

@@ -33,6 +33,8 @@ pub const PAPERS: &[(&str, &str, f64, f64)] = &[
 /// The file's resolution, and a preview's.
 const FILE_DPI: f64 = 150.0;
 const PREVIEW_DPI: f64 = 100.0;
+/// The largest thumbnail a preview takes its photos from ([`crate::media`]'s `THUMB_SIZES`).
+const THUMB_EDGE: usize = 512;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
@@ -54,6 +56,11 @@ pub struct Options {
     /// (empty: none), and `logo_text` beside it in the style's caption colour.
     pub logo: String,
     pub logo_text: String,
+    /// The page number under the grid, in the styles that print one.
+    pub page_numbers: bool,
+    /// The film style's wear (dust, hairs, scratches, grain, light leaks) comes from this number: another seed, other
+    /// wear; the same seed, the same wear in a preview and the file.
+    pub seed: u64,
 }
 
 impl Default for Options {
@@ -70,6 +77,8 @@ impl Default for Options {
             vertical: false,
             logo: String::new(),
             logo_text: String::new(),
+            page_numbers: true,
+            seed: 0,
         }
     }
 }
@@ -112,11 +121,26 @@ impl Options {
         let scale = if self.preview { PREVIEW_DPI } else { FILE_DPI } / 72.0;
         let (width, height) = ((w * scale).round() as usize, (h * scale).round() as usize);
         let margin = look.margin * scale;
-        let folio = if look.folio { look.caption_pt * 3.0 * scale } else { 0.0 };
+        let numbered = look.folio && self.page_numbers;
+        let folio = if numbered { look.caption_pt * 3.0 * scale } else { 0.0 };
         let grid = Rect { x: margin, y: margin, w: width as f64 - 2.0 * margin, h: height as f64 - 2.0 * margin - folio };
         let (cell_w, cell_h) = (grid.w / self.columns as f64, grid.h / self.rows as f64);
         let vertical = self.vertical && look.film;
-        Ok(Layout { points: (w, h), width, height, scale, look, grid, cell_w, cell_h, columns: self.columns, rows: self.rows, vertical })
+        Ok(Layout {
+            points: (w, h),
+            width,
+            height,
+            scale,
+            look,
+            grid,
+            cell_w,
+            cell_h,
+            columns: self.columns,
+            rows: self.rows,
+            vertical,
+            numbered,
+            seed: self.seed,
+        })
     }
 }
 
@@ -243,6 +267,10 @@ struct Layout {
     rows: usize,
     /// Film strips down the columns: the photos go down each one.
     vertical: bool,
+    /// The page number is printed under the grid.
+    numbered: bool,
+    /// [`Options::seed`].
+    seed: u64,
 }
 
 impl Layout {
@@ -313,7 +341,7 @@ impl Layout {
         if self.look.film {
             for i in 0..photos.div_ceil(if self.vertical { self.rows } else { self.columns }) {
                 let strip = self.strip(i);
-                fill(page, strip, [30, 27, 24], 255, 0.0);
+                fill(page, strip, self.film_base(index, i), 255, 0.0);
                 let band = self.sprockets(strip);
                 // (measured along the strip, then across it)
                 let (along, across, pitch) = (band * 0.55, band * 0.4, band * 0.95);
@@ -333,7 +361,7 @@ impl Layout {
                 }
             }
         }
-        if self.look.folio {
+        if self.numbered {
             let band = Rect { x: self.grid.x, y: self.grid.bottom(), w: self.grid.w, h: self.look.caption_pt * 3.0 * self.scale };
             self.text(page, band, &format!("{} / {}", index + 1, pages), false);
         }
@@ -416,6 +444,11 @@ impl Layout {
             fill(page, mat, m.color, 255, 0.0);
         }
         blit(page, image, x as usize, y as usize)?;
+        if self.look.film {
+            // (a negative's frame has slightly rounded corners)
+            let strip = if self.vertical { slot / self.rows } else { slot / self.columns };
+            round_corners(page, shown, 0.035 * shown.w.min(shown.h), self.film_base(number / (self.columns * self.rows), strip));
+        }
         let gap = self.look.gap * self.scale;
         let inner = self.cell(slot).inset(gap);
         if self.look.film {
@@ -502,7 +535,15 @@ pub fn prepare(session: &mut Session, p: &Value) -> Result<Prepared, String> {
     let mut items = Vec::with_capacity(ids.len());
     for id in ids {
         let name = session.catalog.photo(id).ok_or("no such photo")?.file_name.clone();
-        let job = session.export_job(id, w, h, OutputSpace::Srgb, OutputDepth::U8)?;
+        // A preview's photos are the photos' thumbnails (made once, then kept: the next preview reads them back) or, for
+        // a cell larger than the largest thumbnail, a screen render; the file's are exported at its resolution.
+        let job = if !options.preview {
+            session.export_job(id, w, h, OutputSpace::Srgb, OutputDepth::U8)?
+        } else if w.max(h) <= THUMB_EDGE {
+            session.thumb_job(id, w.max(h)).ok_or("no such photo")?
+        } else {
+            session.render_job(id, w, h, false, true).ok_or("no such photo")?
+        };
         items.push((name, job));
     }
     Ok(Prepared { options, items, photos })
@@ -543,25 +584,43 @@ impl Prepared {
         let mut files = Vec::new();
         let mut size = 0usize;
         let mut page = Rgba8::filled(l.width, l.height, [255; 4]);
-        for (i, (name, job)) in self.items.into_iter().enumerate() {
-            if !progress(i, &name) {
-                return Err("Contact sheet cancelled".into());
+        let (w, h) = l.render_size(self.options.captions);
+        // A preview renders its photos side by side (thumbnails, small); a file's, which read whole raws, one at a time.
+        let at_once = if self.options.preview { rayon::current_num_threads().clamp(1, 8) } else { 1 };
+        let mut items = self.items.into_iter().enumerate();
+        loop {
+            let batch: Vec<_> = items.by_ref().take(at_once).collect();
+            if batch.is_empty() {
+                break;
             }
-            let image = job.run().rendered?.image;
-            let slot = i % per_page;
-            if slot == 0 {
-                l.background(&mut page, i / per_page, pages, (count - i).min(per_page), &self.options);
-            }
-            l.photo(&mut page, slot, i, &image, &name, self.options.captions)?;
-            if slot + 1 == per_page || i + 1 == count {
-                let jpg = encode_image(&page, &ExportOptions { format: ExportFormat::Jpeg, quality: 92, ..Default::default() })?;
-                size = size.saturating_add(jpg.len());
-                if size > 256 * 1024 * 1024 {
-                    return Err("contact sheet exceeds 256 MiB; select fewer photos".into());
+            for (i, (name, _)) in &batch {
+                if !progress(*i, name) {
+                    return Err("Contact sheet cancelled".into());
                 }
-                match pdf.as_mut() {
-                    Some(pdf) => pdf.image_page(&jpg, l.width, l.height, l.points, "")?,
-                    None => files.push(jpg),
+            }
+            use rayon::prelude::*;
+            let ready: Vec<_> =
+                batch.into_par_iter().map(|(i, (name, job))| (i, name, job.run().rendered.map(|r| crate::media::shrink(&r.image, w, h)))).collect();
+            for (i, name, image) in ready {
+                let image = image?;
+                let slot = i % per_page;
+                if slot == 0 {
+                    l.background(&mut page, i / per_page, pages, (count - i).min(per_page), &self.options);
+                }
+                l.photo(&mut page, slot, i, &image, &name, self.options.captions)?;
+                if slot + 1 == per_page || i + 1 == count {
+                    if l.look.film {
+                        l.wear(&mut page, i / per_page, slot + 1);
+                    }
+                    let jpg = encode_image(&page, &ExportOptions { format: ExportFormat::Jpeg, quality: 92, ..Default::default() })?;
+                    size = size.saturating_add(jpg.len());
+                    if size > 256 * 1024 * 1024 {
+                        return Err("contact sheet exceeds 256 MiB; select fewer photos".into());
+                    }
+                    match pdf.as_mut() {
+                        Some(pdf) => pdf.image_page(&jpg, l.width, l.height, l.points, "")?,
+                        None => files.push(jpg),
+                    }
                 }
             }
         }
@@ -645,6 +704,223 @@ fn blit(dst: &mut Rgba8, src: &Rgba8, x: usize, y: usize) -> Result<(), String> 
         }
     }
     Ok(())
+}
+
+/// The film style's wear: what a strip of negatives picks up in a sleeve and a scanner. Original procedural work, drawn
+/// from [`Options::seed`]: positions and sizes are fractions of a strip and lengths in points, so a preview and the file
+/// show the same wear.
+impl Layout {
+    /// The film base of strip `strip` on page `page`: each strip a shade of its own (strips are cut from rolls of
+    /// different ages).
+    fn film_base(&self, page: usize, strip: usize) -> [u8; 3] {
+        let mut r = Rng::new(&[self.seed, page as u64, strip as u64, 1]);
+        let (lift, warm) = (r.range(-5.0, 6.0), r.range(-2.0, 4.0));
+        let c = |v: f64| v.round().clamp(0.0, 255.0) as u8;
+        [c(30.0 + lift + warm), c(27.0 + lift), c(24.0 + lift - warm)]
+    }
+
+    /// Grain, dust, hairs, scratches along the strip and now and then a light leak at a strip's end, over the strips of
+    /// page `page` that hold its `photos`.
+    fn wear(&self, page: &mut Rgba8, index: usize, photos: usize) {
+        let pt = self.scale;
+        for i in 0..photos.div_ceil(if self.vertical { self.rows } else { self.columns }) {
+            let strip = self.strip(i);
+            let band = self.sprockets(strip);
+            // (between the sprocket bands: the picture area)
+            let area = if self.vertical {
+                Rect { x: strip.x + band, y: strip.y, w: (strip.w - 2.0 * band).max(1.0), h: strip.h }
+            } else {
+                Rect { x: strip.x, y: strip.y + band, w: strip.w, h: (strip.h - 2.0 * band).max(1.0) }
+            };
+            let mut r = Rng::new(&[self.seed, index as u64, i as u64, 2]);
+            // A point of the area, `along` and `across` it in 0..1.
+            let at = |along: f64, across: f64| {
+                if self.vertical { (area.x + across * area.w, area.y + along * area.h) } else { (area.x + along * area.w, area.y + across * area.h) }
+            };
+            let (length, width) = if self.vertical { (area.h, area.w) } else { (area.w, area.h) };
+            grain(page, area, mix(self.seed ^ ((index as u64) << 32) ^ i as u64), 7.0);
+            // a light leak: warm light fogging one end of the strip
+            if r.next() < 0.3 {
+                let end = if r.next() < 0.5 { 0.0 } else { 1.0 };
+                let (cx, cy) = at(end, r.range(0.2, 0.8));
+                let reach = length * r.range(0.12, 0.3);
+                glow(page, area, (cx, cy), reach, [255, 118, 40], r.range(0.22, 0.4));
+            }
+            // dust: about one speck to 900 square points, most of them small, most of them light (dust on the negative
+            // prints light), some dark
+            let specks = (length * width / (pt * pt) / 900.0 * r.range(0.6, 1.5)) as usize;
+            for _ in 0..specks.min(400) {
+                let (x, y) = at(r.next(), r.next());
+                let size = (0.25 + 0.7 * r.next().powi(3)) * pt;
+                let (color, alpha) = if r.next() < 0.78 { ([238, 236, 230], r.range(0.55, 0.95)) } else { ([6, 6, 6], r.range(0.45, 0.8)) };
+                // (a clump of one to three grains)
+                for _ in 0..1 + (r.next() * 2.4) as usize {
+                    let (dx, dy) = (r.range(-1.0, 1.0) * size, r.range(-1.0, 1.0) * size);
+                    dot(page, area, x + dx, y + dy, size * r.range(0.5, 1.0), color, alpha);
+                }
+            }
+            // hairs and fibres: thin curling lines
+            let hairs = usize::from(r.next() < 0.55) + usize::from(r.next() < 0.18);
+            for _ in 0..hairs {
+                let (mut x, mut y) = at(r.next(), r.next());
+                let (mut angle, mut turn) = (r.range(0.0, std::f64::consts::TAU), r.range(-0.08, 0.08));
+                let radius = r.range(0.14, 0.3) * pt;
+                let steps = (r.range(5.0, 20.0) * pt / (0.4 * pt).max(0.5)) as usize;
+                let alpha = r.range(0.55, 0.85);
+                for _ in 0..steps.min(4000) {
+                    dot(page, area, x, y, radius, [236, 234, 228], alpha);
+                    turn = (turn + r.range(-0.03, 0.03)).clamp(-0.12, 0.12);
+                    angle += turn;
+                    x += angle.cos() * 0.4 * pt;
+                    y += angle.sin() * 0.4 * pt;
+                }
+            }
+            // scratches along the strip (the way film runs through a camera and a scanner), broken now and then
+            let scratches = usize::from(r.next() < 0.45) + usize::from(r.next() < 0.12);
+            for _ in 0..scratches {
+                let (from, span) = (r.next() * 0.6, r.range(0.2, 0.9));
+                let (mut across, drift) = (r.range(0.05, 0.95), r.range(-0.02, 0.02));
+                let radius = r.range(0.1, 0.22) * pt;
+                let alpha = r.range(0.2, 0.42);
+                let steps = (length * span / (0.5 * pt).max(0.5)) as usize;
+                let mut gap = 0usize;
+                for k in 0..steps.min(20_000) {
+                    let along = from + span * k as f64 / steps.max(1) as f64;
+                    across = (across + drift / steps.max(1) as f64).clamp(0.0, 1.0);
+                    if gap > 0 {
+                        gap -= 1;
+                        continue;
+                    }
+                    if r.next() < 0.004 {
+                        gap = (r.range(2.0, 14.0) * pt) as usize;
+                    }
+                    let (x, y) = at(along.min(1.0), across);
+                    dot(page, area, x, y, radius, [228, 226, 220], alpha);
+                }
+            }
+        }
+    }
+}
+
+/// Paint `color` outside the rounded corners of `r`, `radius` pixels round.
+fn round_corners(page: &mut Rgba8, r: Rect, radius: f64, color: [u8; 3]) {
+    if radius < 0.5 {
+        return;
+    }
+    let reach = radius.ceil() as usize;
+    let (x0, y0) = (r.x.round().max(0.0) as usize, r.y.round().max(0.0) as usize);
+    let (x1, y1) = ((r.right().round().max(0.0) as usize).min(page.width), (r.bottom().round().max(0.0) as usize).min(page.height));
+    for y in (y0..y0.saturating_add(reach).min(y1)).chain(y1.saturating_sub(reach).max(y0)..y1) {
+        for x in (x0..x0.saturating_add(reach).min(x1)).chain(x1.saturating_sub(reach).max(x0)..x1) {
+            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+            let dx = (r.x + radius - px).max(px - (r.right() - radius)).max(0.0);
+            let dy = (r.y + radius - py).max(py - (r.bottom() - radius)).max(0.0);
+            let outside = ((dx * dx + dy * dy).sqrt() - radius + 0.5).clamp(0.0, 1.0);
+            if outside > 0.0 {
+                blend(page, x, y, color, outside);
+            }
+        }
+    }
+}
+
+/// A round dot of `radius` pixels at `(cx, cy)`, its edge smoothed, inside `clip`.
+fn dot(page: &mut Rgba8, clip: Rect, cx: f64, cy: f64, radius: f64, color: [u8; 3], alpha: f64) {
+    if !(cx.is_finite() && cy.is_finite() && radius.is_finite()) {
+        return;
+    }
+    let reach = radius + 1.0;
+    let lo = |v: f64, edge: f64| v.max(edge).max(0.0).floor() as usize;
+    let (x0, y0) = (lo(cx - reach, clip.x), lo(cy - reach, clip.y));
+    let (x1, y1) = (
+        ((cx + reach).min(clip.right()).max(0.0).ceil() as usize).min(page.width),
+        ((cy + reach).min(clip.bottom()).max(0.0).ceil() as usize).min(page.height),
+    );
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let d = ((x as f64 + 0.5 - cx).powi(2) + (y as f64 + 0.5 - cy).powi(2)).sqrt();
+            let cover = (radius + 0.5 - d).clamp(0.0, 1.0);
+            if cover > 0.0 {
+                blend(page, x, y, color, alpha * cover);
+            }
+        }
+    }
+}
+
+/// Light added around `(cx, cy)`, fading out by `reach` pixels, inside `clip`.
+fn glow(page: &mut Rgba8, clip: Rect, (cx, cy): (f64, f64), reach: f64, color: [u8; 3], strength: f64) {
+    let span = |lo: f64, hi: f64, max: usize| ((lo.max(0.0).floor() as usize).min(max), (hi.max(0.0).ceil() as usize).min(max));
+    let (x0, x1) = span((cx - reach).max(clip.x), (cx + reach).min(clip.right()), page.width);
+    let (y0, y1) = span((cy - reach).max(clip.y), (cy + reach).min(clip.bottom()), page.height);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let d = ((x as f64 + 0.5 - cx).powi(2) + (y as f64 + 0.5 - cy).powi(2)).sqrt() / reach.max(1.0);
+            let a = strength * (1.0 - d).max(0.0).powi(2);
+            if a > 0.0
+                && let Some(p) = page.data.get_mut(y * page.width + x)
+            {
+                for c in 0..3 {
+                    p[c] = (f64::from(p[c]) + f64::from(color[c]) * a).min(255.0) as u8;
+                }
+            }
+        }
+    }
+}
+
+/// Film grain inside `r`: each pixel's lightness moved by up to `amount` levels, the same for a seed.
+fn grain(page: &mut Rgba8, r: Rect, seed: u64, amount: f64) {
+    let clamp = |v: f64, max: usize| (v.round().max(0.0) as usize).min(max);
+    let (x0, x1) = (clamp(r.x, page.width), clamp(r.right(), page.width));
+    let (y0, y1) = (clamp(r.y, page.height), clamp(r.bottom(), page.height));
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let h = mix(seed ^ ((y as u64) << 32 | x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15));
+            // (two uniform numbers summed: a softer, bell-shaped spread)
+            let n = ((h & 0xffff) as f64 + ((h >> 16) & 0xffff) as f64) / 65535.0 - 1.0;
+            if let Some(p) = page.data.get_mut(y * page.width + x) {
+                for c in 0..3 {
+                    p[c] = (f64::from(p[c]) + n * amount).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    }
+}
+
+/// `color` over the pixel at `(x, y)` at `alpha` (0..1).
+fn blend(page: &mut Rgba8, x: usize, y: usize, color: [u8; 3], alpha: f64) {
+    let a = alpha.clamp(0.0, 1.0);
+    if x >= page.width {
+        return;
+    }
+    if let Some(p) = page.data.get_mut(y * page.width + x) {
+        for c in 0..3 {
+            p[c] = (f64::from(color[c]) * a + f64::from(p[c]) * (1.0 - a)).round() as u8;
+        }
+    }
+}
+
+/// splitmix64's mixing step.
+fn mix(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// A seeded stream of numbers in 0..1 (splitmix64).
+struct Rng(u64);
+
+impl Rng {
+    fn new(parts: &[u64]) -> Self {
+        Self(parts.iter().fold(0x2545_f491_4f6c_dd1d, |s, p| mix(s ^ p.wrapping_mul(0x9e37_79b9_7f4a_7c15))))
+    }
+
+    fn next(&mut self) -> f64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        (mix(self.0) >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    fn range(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * self.next()
+    }
 }
 
 #[cfg(test)]

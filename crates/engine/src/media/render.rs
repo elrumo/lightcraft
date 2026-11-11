@@ -310,7 +310,8 @@ impl RenderJob {
             return Some(Arc::unwrap_or_clone(img));
         }
         let img = self.cache_larger.iter().find_map(|k| cache.get_at(self.cache_generation, *k))?;
-        let small = shrink(&img, self.request.max_w.max(self.request.max_h));
+        let edge = self.request.max_w.max(self.request.max_h);
+        let small = shrink(&img, edge, edge);
         cache.put_at(self.cache_generation, *key, Arc::new(small.clone()));
         Some(small)
     }
