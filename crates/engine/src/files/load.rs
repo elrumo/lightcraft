@@ -314,7 +314,7 @@ fn load_bytes_now(
     // an HDR photo's gain map (an iPhone HEIC, an Ultra HDR JPEG), turned like the picture
     let hdr_gain = lightcraft_codecs::gainmap::read(&bytes).map(|g| Arc::new(orient_gain(g, orientation)));
     drop(bytes);
-    let img = d.to_working();
+    let img = d.into_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
     Ok((img.into_oriented(orientation), None, SourceInfo { mattes: depth, hdr_gain, ..SourceInfo::default() }, false))
 }

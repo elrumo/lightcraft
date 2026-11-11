@@ -90,9 +90,10 @@ pub(super) fn default_crop_from([x0, y0, x1, y1]: [f64; 4], orientation: Orienta
 pub fn load_embedded_preview(bytes: &[u8], max_edge: usize) -> Option<(Rgb32f, SourceInfo)> {
     // always the largest JPEG: a source's geometry must not depend on its size level (previews match exports)
     let d = decode_raw_preview(bytes, fit_box(max_edge), None)?;
-    let img = d.to_working();
+    let orientation = preview_orientation(bytes, d.orientation);
+    let img = d.into_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
-    Some((img.oriented(preview_orientation(bytes, d.orientation)), SourceInfo::default()))
+    Some((img.into_oriented(orientation), SourceInfo::default()))
 }
 
 /// The embedded preview of a raw file for display (sRGB, oriented, no larger than `max_edge`): the

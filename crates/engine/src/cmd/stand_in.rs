@@ -129,8 +129,7 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     let decoded =
         lightcraft_codecs::decode(&tiff, DecodeOptions { max_size: None, max_pixels: MAX_PIXELS }).map_err(|e| bad(C, format!("{src}: {e}")))?;
     drop(tiff);
-    let rgb = decoded.to_working();
-    drop(decoded);
+    let rgb = decoded.into_working();
     if rgb.width == 0 || rgb.height == 0 {
         return Err(bad(C, format!("{src}: an empty picture")));
     }

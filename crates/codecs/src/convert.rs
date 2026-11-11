@@ -125,10 +125,11 @@ pub(crate) fn finish(format: Format, raw: Raw, meta: Meta, source_dims: (u32, u3
         rgb_or_gray(&raw, ch, &meta, parsed_icc.as_ref(), float)
     };
 
+    // (the decoder's samples are converted: give them back before the image is unpremultiplied and fitted)
+    let (premultiplied, bit_depth, model) = (raw.premultiplied, raw.bit_depth, raw.model);
+    drop(raw);
     let mut image = image;
-    if raw.premultiplied
-        && let Some(a) = &alpha
-    {
+    if premultiplied && let Some(a) = &alpha {
         for (p, &av) in image.data.iter_mut().zip(&a.data) {
             if av > 0.0 {
                 *p = p.map(|c| c / av);
@@ -160,10 +161,10 @@ pub(crate) fn finish(format: Format, raw: Raw, meta: Meta, source_dims: (u32, u3
         has_alpha: alpha.is_some(),
         alpha,
         space,
-        bit_depth: raw.bit_depth,
+        bit_depth,
         float,
-        grayscale: raw.model == Model::Gray,
-        cmyk: raw.model == Model::Cmyk,
+        grayscale: model == Model::Gray,
+        cmyk: model == Model::Cmyk,
         orientation,
         exif: meta.exif,
         xmp: meta.xmp,

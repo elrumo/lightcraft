@@ -133,6 +133,14 @@ impl Decoded {
         to_working(self)
     }
 
+    /// [`Self::to_working`], converting the decoded pixels where they are instead of next to a copy: a full-size
+    /// decode then holds one float picture, not two (a 267 MP JPEG: 3.2 GB less at its peak).
+    pub fn into_working(self) -> Rgb32f {
+        let Decoded { mut image, alpha, space, .. } = self;
+        working_in_place(&mut image, alpha.as_ref(), &space);
+        image
+    }
+
     /// Display-encoded 8-bit sRGB (gamut clipped), with alpha.
     pub fn to_srgb8(&self) -> Rgba8 {
         let m = self.space.to_space(&lightcraft_color::SRGB);
@@ -263,20 +271,24 @@ pub fn decode_unguarded(bytes: &[u8], format: Format, opts: &DecodeOptions) -> R
 /// The working space has no alpha: transparency is flattened onto white, in linear light like the rest
 /// of the pipeline (issue #1212).
 pub fn to_working(d: &Decoded) -> Rgb32f {
-    let mut img = if d.space.is_working() {
-        d.image.clone()
-    } else {
-        let m = d.space.to_working().to_f32();
-        d.image.map(|p| mat_apply(&m, p))
-    };
+    let mut img = d.image.clone();
+    working_in_place(&mut img, d.alpha.as_ref(), &d.space);
+    img
+}
+
+/// [`to_working`] in `img` itself.
+fn working_in_place(img: &mut Rgb32f, alpha: Option<&Plane>, space: &SourceSpace) {
+    if !space.is_working() {
+        let m = space.to_working().to_f32();
+        img.map_in_place(|p| mat_apply(&m, p));
+    }
     // white is (1, 1, 1) in the working space too: the conversion is white-preserving
-    if let Some(a) = d.alpha.as_ref().filter(|a| a.width == img.width && a.height == img.height) {
+    if let Some(a) = alpha.filter(|a| a.width == img.width && a.height == img.height) {
         for (p, &av) in img.data.iter_mut().zip(&a.data) {
             let av = av.clamp(0.0, 1.0);
             *p = p.map(|c| c * av + (1.0 - av));
         }
     }
-    img
 }
 
 /// Where a thumbnail came from.
@@ -374,5 +386,23 @@ mod checked_arithmetic_tests {
         assert_eq!(checked_sample_buf_len(1, 1, 1), Some(1));
         // 300 Mpx RGBA is within the default pixel limit, so it must not be refused by sample count.
         assert_eq!(checked_sample_buf_len(20_000, 15_000, 4), Some(1_200_000_000));
+    }
+}
+
+#[cfg(test)]
+mod working_tests {
+    use super::*;
+
+    /// Converting a decode in place gives what converting a copy of it gives: the colour matrix (an sRGB PNG is not in
+    /// the working space) and transparency flattened onto white.
+    #[test]
+    fn into_working_is_to_working_without_the_copy() {
+        let (w, h) = (37, 23);
+        let data: Vec<[u8; 4]> = (0..w * h).map(|i| [(i * 7) as u8, (i * 13) as u8, (i * 29) as u8, (i * 3 % 256) as u8]).collect();
+        let png = encode_png(&EncodeImage::rgba8(&Rgba8 { width: w, height: h, data }), &EncodeMeta::default()).unwrap();
+        let d = decode(&png, DecodeOptions::default()).unwrap();
+        assert!(d.alpha.is_some() && !d.space.is_working());
+        let copy = d.to_working();
+        assert_eq!(d.into_working().data, copy.data);
     }
 }
