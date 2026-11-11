@@ -5,14 +5,79 @@ use super::*;
 
 /// Unsharp mask on an 8-bit image (separable box-blur approximation of a small Gaussian).
 pub fn output_sharpen(img: &mut Rgba8, target: SharpenFor, amount: SharpenAmount) {
-    let src: Vec<[f32; 3]> = img.data.iter().map(|p| [p[0] as f32, p[1] as f32, p[2] as f32]).collect();
-    if let Some(out) = unsharp(img.width, img.height, &src, target, amount) {
-        for (p, v) in img.data.iter_mut().zip(out) {
-            for c in 0..3 {
-                p[c] = v[c].round().clamp(0.0, 255.0) as u8;
+    if let Some(out) = sharpened(img, target, amount) {
+        *img = out;
+    }
+}
+
+/// Rows [`sharpened`] works on at a time.
+const SHARPEN_ROWS: usize = 32;
+
+/// [`output_sharpen`]'s picture (`None`: nothing to do), made in bands of [`SHARPEN_ROWS`] rows, each from its rows and
+/// the few around it as floats: never the whole picture's floats (a 267 MP export held 3 GB of them, and as much again
+/// for each blur pass). The same values as [`unsharp`] on the whole picture, in the same order of operations.
+fn sharpened(img: &Rgba8, target: SharpenFor, amount: SharpenAmount) -> Option<Rgba8> {
+    use rayon::prelude::*;
+    let (r, k) = sharpen_kernel(target, amount)?;
+    let (w, h) = (img.width, img.height);
+    if w < 3 || h < 3 || img.data.len() < w * h {
+        return None;
+    }
+    let n = (2 * r + 1) as f32;
+    let float = |p: &[u8; 4]| [p[0] as f32, p[1] as f32, p[2] as f32];
+    let at = |x: isize, y: usize| float(&img.data[y * w + x.clamp(0, w as isize - 1) as usize]);
+    let mut out = img.clone();
+    let band = |(b, rows): (usize, &mut [[u8; 4]])| {
+        let y0 = b * SHARPEN_ROWS;
+        let y1 = (y0 + rows.len() / w).min(h);
+        // the horizontal pass over the band's rows and `r` more on each side (clamped at the picture's edges)
+        let (top, bottom) = (y0.saturating_sub(r), (y1 + r).min(h));
+        let mut across = vec![[0f32; 3]; (bottom - top) * w];
+        for y in top..bottom {
+            for x in 0..w {
+                let mut acc = [0f32; 3];
+                for d in -(r as isize)..=r as isize {
+                    let p = at(x as isize + d, y);
+                    acc = [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]];
+                }
+                across[(y - top) * w + x] = acc.map(|v| v / n);
             }
         }
-    }
+        for y in y0..y1 {
+            for x in 0..w {
+                let mut acc = [0f32; 3];
+                for d in -(r as isize)..=r as isize {
+                    let sy = (y as isize + d).clamp(0, h as isize - 1) as usize;
+                    let p = across[(sy - top) * w + x];
+                    acc = [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]];
+                }
+                let (s, b) = (float(&img.data[y * w + x]), acc.map(|v| v / n));
+                let o = &mut rows[(y - y0) * w + x];
+                for c in 0..3 {
+                    o[c] = (s[c] + (s[c] - b[c]) * k).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    };
+    out.data.par_chunks_mut(w * SHARPEN_ROWS).enumerate().for_each(band);
+    Some(out)
+}
+
+/// The blur radius and the strength of output sharpening for `target` (`None`: none).
+fn sharpen_kernel(target: SharpenFor, amount: SharpenAmount) -> Option<(usize, f32)> {
+    let (radius, base) = match target {
+        SharpenFor::None => return None,
+        SharpenFor::Screen => (1usize, 0.35f32),
+        SharpenFor::Matte => (2, 0.6),
+        SharpenFor::Glossy => (1, 0.5),
+    };
+    let k = base
+        * match amount {
+            SharpenAmount::Low => 0.6,
+            SharpenAmount::Standard => 1.0,
+            SharpenAmount::High => 1.5,
+        };
+    Some((radius, k))
 }
 
 /// [`output_sharpen`] on a high-bit-depth image (float images are sharpened in linear light).
@@ -40,18 +105,7 @@ pub fn output_sharpen_deep(img: &mut DeepImage, target: SharpenFor, amount: Shar
 
 /// The sharpened values of `src` (`w × h`), or `None` when nothing is to be done.
 fn unsharp(w: usize, h: usize, src: &[[f32; 3]], target: SharpenFor, amount: SharpenAmount) -> Option<Vec<[f32; 3]>> {
-    let (radius, base) = match target {
-        SharpenFor::None => return None,
-        SharpenFor::Screen => (1usize, 0.35f32),
-        SharpenFor::Matte => (2, 0.6),
-        SharpenFor::Glossy => (1, 0.5),
-    };
-    let k = base
-        * match amount {
-            SharpenAmount::Low => 0.6,
-            SharpenAmount::Standard => 1.0,
-            SharpenAmount::High => 1.5,
-        };
+    let (radius, k) = sharpen_kernel(target, amount)?;
     if w < 3 || h < 3 {
         return None;
     }
@@ -145,17 +199,22 @@ fn encode_jpeg_with_limit(o: &ExportOptions, jpeg: impl Fn(u8) -> lightcraft_cod
 }
 
 /// Output sharpening, the watermark and the border on an 8-bit render in `o.effective_space()`.
-fn finish_8bit(img: &Rgba8, o: &ExportOptions) -> Result<Rgba8, String> {
-    let mut img = img.clone();
-    output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
+fn finish_8bit<'a>(img: &'a Rgba8, o: &ExportOptions) -> Result<std::borrow::Cow<'a, Rgba8>, String> {
+    use std::borrow::Cow;
+    let sharp = sharpened(img, o.sharpen, o.sharpen_amount);
+    if sharp.is_none() && o.watermark.is_none() && o.border.is_none() {
+        // (nothing to add: the render is encoded as it is, not a copy of it — a 267 MP export's 1 GB)
+        return Ok(Cow::Borrowed(img));
+    }
+    let mut img = sharp.unwrap_or_else(|| img.clone());
     let space = o.effective_space();
     if let Some(wm) = &o.watermark {
         let wm = Watermark { color: srgb8_in(space, wm.color), target: Some(space), ..wm.clone() };
         draw_watermark(&mut img, &wm);
     }
     match &o.border {
-        Some(b) => add_border(img, b, space),
-        None => Ok(img),
+        Some(b) => add_border(img, b, space).map(Cow::Owned),
+        None => Ok(Cow::Owned(img)),
     }
 }
 
@@ -336,4 +395,34 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, catalog: &lightcraft_c
         out.iso = m.iso;
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Output sharpening in bands of rows gives the bytes the whole-picture unsharp mask gives, at every setting, across
+    /// band edges and the picture's own edges (sizes that leave a short last band, a picture narrower than the kernel).
+    #[test]
+    fn banded_sharpening_is_the_whole_picture_unsharp_mask() {
+        for (w, h) in [(3, 3), (5, 200), (103, 77), (64, 2 * SHARPEN_ROWS + 1), (257, 3 * SHARPEN_ROWS)] {
+            let mut img = Rgba8::new(w, h);
+            for (i, p) in img.data.iter_mut().enumerate() {
+                let v = (i as u64).wrapping_mul(2_654_435_761) >> 7;
+                *p = [v as u8, (v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8];
+            }
+            for target in [SharpenFor::Screen, SharpenFor::Matte, SharpenFor::Glossy] {
+                for amount in [SharpenAmount::Low, SharpenAmount::Standard, SharpenAmount::High] {
+                    let src: Vec<[f32; 3]> = img.data.iter().map(|p| [p[0] as f32, p[1] as f32, p[2] as f32]).collect();
+                    let whole = unsharp(w, h, &src, target, amount).unwrap();
+                    let banded = sharpened(&img, target, amount).unwrap();
+                    for ((b, o), v) in banded.data.iter().zip(&img.data).zip(&whole) {
+                        let want: [u8; 3] = std::array::from_fn(|c| v[c].round().clamp(0.0, 255.0) as u8);
+                        assert_eq!((&b[..3], b[3]), (&want[..], o[3]), "{w}×{h} {target:?} {amount:?}");
+                    }
+                }
+            }
+        }
+        assert!(sharpened(&Rgba8::new(10, 10), SharpenFor::None, SharpenAmount::High).is_none());
+    }
 }

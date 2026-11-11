@@ -534,9 +534,13 @@ impl PreparedExport {
                 if let Some(r) = host.as_ref().and_then(HostPixels::read) {
                     return encode_render_export(file_name, r, None, &opts, meta.as_ref());
                 }
-                let result = if banded { job.run_banded() } else { job.run() };
-                let r = result.rendered?;
-                let gpu_fallback = result.gpu_fallback;
+                // (only the picture: the decoded source a render hands back for the cache goes now, not after the encode —
+                // a 267 MP JPEG's 3 GB of floats were still held while its export was sharpened and encoded)
+                let (r, gpu_fallback) = {
+                    let result = if banded { job.run_banded() } else { job.run() };
+                    (result.rendered, result.gpu_fallback)
+                };
+                let r = r?;
                 let hdr = match hdr_job {
                     Some(hj) => Some(hj.run().rendered?),
                     None => None,
