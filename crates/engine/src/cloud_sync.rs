@@ -2048,6 +2048,10 @@ impl Session {
             let progress = (p.file_size > 0 && got > 0).then(|| (got as f64 * 100.0 / p.file_size as f64).floor().min(100.0) / 100.0);
             return Some(json!({"state": "loading", "progress": progress}));
         }
+        // a clip's original comes only once the frontend asks for it (`sync.downloadOriginals`, `open_original_get`)
+        if p.kind == lightcraft_catalog::MediaKind::Video && !st.want_originals.contains(&key) {
+            return Some(json!({"state": "onRequest"}));
+        }
         let coming = st.has_token()
             && !st.config.paused
             && !st.config.leaving
@@ -2063,10 +2067,6 @@ impl Session {
     /// for it (`sync.downloadOriginals`, when it stays on screen or plays): a clip paged past downloads nothing.
     fn open_original_get(&self, st: &SyncState, p: &Photo, now: Instant) -> Option<Job> {
         if p.origin.is_some() {
-        // a clip's original comes only once the frontend asks for it (`sync.downloadOriginals`, `open_original_get`)
-        if p.kind == lightcraft_catalog::MediaKind::Video && !st.want_originals.contains(&key) {
-            return Some(json!({"state": "onRequest"}));
-        }
             return None;
         }
         let key = self.remote_key(p)?;
