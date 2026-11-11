@@ -155,14 +155,32 @@ pub fn fs_pair_loader() -> PairLoader {
     })
 }
 
-/// Working memory (bytes) of loading `bytes` for a source of at most `max_edge` pixels: its size times a
-/// rule of thumb for compressed images; for a raw, what its decode allocates — the samples (16 bits each), some
-/// tiles in flight, and unless the load bins the mosaic ([`bin_factor`]) the full-size normalised and RGB float
-/// images.
+/// Working memory (bytes) of loading `bytes` for a source of at most `max_edge` pixels: at least its size times a
+/// rule of thumb for compressed images; for a picture file, what its decode passes through for the pixels its header
+/// declares (a 3 MB JPEG may be 268 MP: 15 bytes a pixel decoded whole, a progressive JPEG's coefficients when it is
+/// scaled while decoded); for a raw, what its decode allocates — the samples (16 bits each), some tiles in flight, and
+/// unless the load bins the mosaic ([`bin_factor`]) the full-size normalised and RGB float images.
 pub(super) fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
     let factor = if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 3 } else { 6 };
     let by_size = bytes.len().saturating_mul(factor);
-    let Ok(info) = lightcraft_raw::probe_info(bytes) else { return by_size };
+    let Ok(info) = lightcraft_raw::probe_info(bytes) else {
+        let Ok(h) = lightcraft_codecs::read_header(bytes) else { return by_size };
+        let px = (h.width as usize).saturating_mul(h.height as usize);
+        let long = h.width.max(h.height).max(1) as usize;
+        if max_edge >= long {
+            // the decoder's samples and the float picture, or the picture and its copy turned upright
+            return by_size.max(px.saturating_mul(24));
+        }
+        let fitted = ((px as f64) * (max_edge as f64 / long as f64).powi(2)).ceil() as usize;
+        let pass = if h.format == lightcraft_codecs::Format::Jpeg {
+            // scaled in the DCT domain to at most twice the box a side (15 bytes a pixel), a progressive file's
+            // coefficients for the whole picture
+            px.saturating_mul(3).saturating_add(fitted.saturating_mul(60))
+        } else {
+            px.saturating_mul(15).saturating_add(fitted.saturating_mul(12))
+        };
+        return by_size.max(pass);
+    };
     let px = info.width.saturating_mul(info.height);
     if let Some(k) = stream_bin_factor(&info, max_edge) {
         // binned while decoding: block sums (18 bytes per block) and the tiles in flight, never the samples

@@ -741,6 +741,16 @@ impl crate::Session {
         self.media.insert_source(id, level, r);
         Ok(input)
     }
+
+    /// Whether photo `id`'s original can be read whole on this device, for a tool that would read it for a few of its
+    /// pixels (AI Remove, Generative Expand): at its decode's peak, 24 bytes a pixel (what the zoom's check counts), within
+    /// what an export may take here ([`crate::Session::export_limit`]). Always on a desktop, where memory swaps; on a
+    /// phone a picture past it would end the app, so the tool works from the preview's pixels instead.
+    pub(crate) fn original_fits(&self, id: PhotoId) -> bool {
+        let Some(limit) = self.export_limit() else { return true };
+        let px = self.catalog.photo(id).map_or(0, |p| (p.width as usize).saturating_mul(p.height as usize));
+        px.saturating_mul(24) <= limit
+    }
 }
 
 /// The long edge to read photo `p`'s source at for an export `out_long` pixels long, when that is less than half the
@@ -769,6 +779,21 @@ pub(crate) fn export_source_edge(p: &Photo, out_long: usize) -> Option<usize> {
 /// at the size the export needs ([`export_source_edge`]).
 pub(crate) fn export_source_pixels(p: &Photo, out_long: usize) -> usize {
     let px = (p.width.max(1) as usize).saturating_mul(p.height.max(1) as usize);
+    if p.kind == MediaKind::Image {
+        // An export up to a preview's size reads the picture at that size (the codec fits it while decoding: a JPEG in
+        // the DCT domain), so it holds that many pixels, not the photo's: counted whole, a 2048 px export of a 267 MP JPEG
+        // needed 15 GB and a phone refused it at any size. Its decode still passes through the whole picture: a
+        // progressive JPEG keeps every coefficient (3 bytes a pixel at 4:2:0), any other format decodes it whole first
+        // (15 bytes a pixel), counted here as the source pixels that cost as much (`export_need`'s 56 bytes each).
+        let level = SourceLevel::for_size(source_edge_needed(p, &p.develop, true, out_long));
+        if level == SourceLevel::Full {
+            return px;
+        }
+        let long = p.width.max(p.height).max(1) as f64;
+        let fitted = ((px as f64) * (level.max_edge() as f64 / long).min(1.0).powi(2)).ceil() as usize;
+        let decode = px.saturating_mul(if p.format.eq_ignore_ascii_case("JPEG") { 3 } else { 15 }) / 56;
+        return fitted.max(decode).min(px);
+    }
     if !p.format.eq_ignore_ascii_case("DNG") {
         return px;
     }

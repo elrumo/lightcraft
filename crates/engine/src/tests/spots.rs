@@ -172,6 +172,43 @@ fn poll_all(s: &mut Session) -> Vec<String> {
     panic!("the fill never finished");
 }
 
+/// A small stroke on a photo bigger than its preview reads the original for the pixels around it, unless the original
+/// would not fit in the device's memory (an export limit, as on a phone, where reading it would end the app): then the
+/// preview's pixels paint it.
+#[test]
+fn a_small_stroke_reads_the_original_only_where_it_fits_in_memory() {
+    use crate::media::SourceLevel;
+    let dir = std::env::temp_dir().join(format!("lc-erase-original-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (w, h) = (3200, 2400);
+    let data: Vec<[u8; 4]> = (0..w * h).map(|i| [(i % w / 13) as u8, (i / w / 10) as u8, (i % 251) as u8, 255]).collect();
+    let img = lightcraft_raster::Rgba8 { width: w, height: h, data };
+    let bytes = lightcraft_codecs::encode_jpeg(
+        &lightcraft_codecs::EncodeImage::rgba8(&img),
+        90,
+        lightcraft_codecs::ChromaSubsampling::S420,
+        &lightcraft_codecs::EncodeMeta::default(),
+    )
+    .unwrap();
+    let path = dir.join("big.jpg");
+    std::fs::write(&path, bytes).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+    let id = s.catalog.photos().next().unwrap().id;
+    s.execute("library.select", &json!({"ids": [id.0], "active": id.0})).unwrap();
+    s.execute("spot.add", &json!({"points": [[0.4, 0.5]], "size": 0.01})).unwrap();
+    let d = (*s.develop_of(id).unwrap()).clone();
+    let brush = || crate::erase::Brush::Net(std::sync::Arc::new(Flat));
+    // far below the 3200 × 2400 original's 184 MB at its decode
+    s.set_export_limit(Some(64 << 20));
+    s.erase_job_with(id, &d, 0, brush()).unwrap();
+    assert!(!s.media.has_source(id, SourceLevel::Full), "a phone that can't hold the original paints from the preview");
+    s.set_export_limit(None);
+    s.erase_job_with(id, &d, 0, brush()).unwrap();
+    assert!(s.media.has_source(id, SourceLevel::Full), "with room, the original gives the stroke its pixels");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_fill_painted_on_a_worker_is_stored_with_its_spot_as_one_undo_step() {
     let mut s = Session::with_demo();

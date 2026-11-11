@@ -863,8 +863,23 @@ fn raw_load_weight_follows_the_decoded_size() {
     assert!(full >= samples + info.width * info.height * (info.cpp * 4 + 12), "{full}");
     assert!(binned >= samples && binned < full, "{binned} {full}");
     assert!(by_size < full, "{by_size} {full}");
-    // not a raw: the file's size times the rule of thumb
+    // not a picture at all: the file's size times the rule of thumb
     assert_eq!(load_weight(&[1, 2, 3, 4], 100), 12);
+}
+
+/// The work gate counts a picture file by the pixels its header declares, not by its size (a few MB of JPEG can declare
+/// 268 MP): a full-size load as the decode's samples and floats, a scaled one as much less.
+#[test]
+fn picture_load_weight_follows_the_declared_pixels() {
+    let (w, h) = (1000, 800);
+    let img = lightcraft_raster::Rgba8 { width: w, height: h, data: vec![[90, 120, 200, 255]; w * h] };
+    let opts = lightcraft_codecs::EncodeMeta::default();
+    let jpeg =
+        lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&img), 90, lightcraft_codecs::ChromaSubsampling::S420, &opts).unwrap();
+    let full = load_weight(&jpeg, usize::MAX);
+    assert!(full >= w * h * 24 && full > jpeg.len() * 6, "{full} for {} bytes", jpeg.len());
+    let scaled = load_weight(&jpeg, 100);
+    assert!(scaled >= w * h * 3 && scaled < full / 4, "{scaled} {full}");
 }
 
 /// [`cr3_with_preview`] plus a full-size CRX raw track whose `CMP1` coding header is garbage:

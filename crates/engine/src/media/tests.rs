@@ -504,6 +504,24 @@ fn work_gate_keeps_its_peak() {
     assert_eq!(g.peak_urgent(), (190, 2));
 }
 
+/// An export up to a preview's size reads a picture file at that size, so its memory need counts the fitted pixels or
+/// the decode's pass through the whole picture, whichever costs more, not the photo's floats: counted whole, a 2048 px
+/// export of a 267 MP JPEG needed 15 GB and a phone refused it at any size. A raw, and a full-size export, count the photo.
+#[test]
+fn a_small_export_of_a_big_picture_counts_what_its_read_holds() {
+    let (w, h) = (20_000u32, 13_336u32);
+    let px = w as usize * h as usize;
+    let file = |name: &str, format: &str| Photo::new(PhotoId(1), Source::File { path: format!("/photos/{name}") }, name, format, w, h, "");
+    let (jpeg, png) = (file("big.jpg", "JPEG"), file("big.png", "PNG"));
+    // (a progressive JPEG's coefficients, 3 bytes a pixel, cost more than the 2560 px picture it is fitted to)
+    assert_eq!(export_source_pixels(&jpeg, 2048), px * 3 / 56);
+    assert_eq!(export_source_pixels(&png, 2048), px * 15 / 56);
+    assert_eq!(export_source_pixels(&jpeg, 8000), px, "a full-size read holds the whole picture");
+    let mut raw = file("big.ARW", "ARW");
+    raw.kind = MediaKind::Raw;
+    assert_eq!(export_source_pixels(&raw, 2048), px);
+}
+
 #[test]
 fn exports_of_at_most_half_the_size_read_a_source_of_about_that_size() {
     let s = crate::Session::with_demo();
