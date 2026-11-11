@@ -54,6 +54,10 @@ impl DevelopSettings {
                     o.entry(k).or_insert(g);
                 }
             }
+            // (and film's grain style, left out the same way)
+            if let Some(grain) = o.get_mut("grain").and_then(Value::as_object_mut) {
+                grain.entry("style").or_insert(Value::from("film"));
+            }
         }
         v
     }

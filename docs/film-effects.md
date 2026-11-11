@@ -1,6 +1,6 @@
 # Film effects
 
-> **Last updated:** 2026-11-09 · **Status:** built (core settings, commands and renderer; `ctl:film.border`, `filmLayer.<i>.*`, `cmd:film.add`); the editing UI is a native frontend's, not egui's
+> **Last updated:** 2026-11-11 · **Status:** built (core settings, commands and renderer; `ctl:film.border`, `filmLayer.<i>.*`, `cmd:film.add`; grain styles; Film Effects presets); the editing UI is a native frontend's, not egui's
 
 Film effects put a photo on film and mark it as film gets marked: a **frame** the photo sits in (a 35mm strip with its
 sprocket holes, a filed-out negative carrier's black edge, an instant print's frame) and a **stack of marks** drawn over
@@ -30,7 +30,7 @@ Angles are degrees counter-clockwise: 0 the right edge (a horizontal line), 90 t
 
 | Kind | Fields (label) | Starting values |
 |---|---|---|
-| `leak` Light Leak | amount, size (Reach), angle (Direction), color, texture | 60, 45, 90, 0, 50 |
+| `leak` Light Leak | amount, size (Reach), angle (Direction), offset (Position), color, texture | 60, 45, 90, 0, 0, 50 |
 | `streak` Light Streak | amount, size (Width), angle, offset, color, texture | 50, 25, 0, 0, 0, 50 |
 | `burn` Edge Burn | amount, size (Depth), angle (Edge), color, texture (Roughness) | 80, 12, −90, 20, 60 |
 | `dust` Dust | amount, size, fibres (Hairs), tone (Dark ↔ Light), texture (Softness) | 40, 40, 25, 100, 30 |
@@ -76,7 +76,8 @@ nothing added over white in an HDR render.
 With `dir = (cos θ, −sin θ)`, `q` the position from the frame's centre, `ext = |dir.x|·w/2 + |dir.y|·h/2`: the depth from
 the edge the light comes from is `t = ext − q·dir` and the place along that edge `s = −q.x·dir.y + q.y·dir.x`.
 
-- **Leak**: reach `R = 0.05 + 0.6·size`; a patch centred at `(rand_n(0,0,seed,1) − 0.5)·0.9·edge length`, width `(R·(0.6
+- **Leak**: reach `R = 0.05 + 0.6·size`; a patch centred at `((rand_n(0,0,seed,1) − 0.5)·0.9 + offset·0.5)·edge length`
+  (the seed's place along the edge, moved by Position; edge length `|dir.y|·w + |dir.x|·h`), width `(R·(0.6
   + 0.8·rand_n(0,0,seed,2)) + 0.08)·(1 + 0.8·t/R)`, Gaussian across it; falloff `0.65·e^(−t/0.25R) + 0.35·e^(−2(t/R)²)`;
   bands `n = fbm((s + 0.6R·warp)·1.8/R, t·0.5/R, seed, 2)`, `warp = fbm(s·1.5/R, t·0.8/R, seed ^ 0x1111, 2) − 0.5`;
   `I = amount·3·falloff·patch·(1 − texture + texture·1.6·smoothstep(0.2, 0.8, n))`.
@@ -86,6 +87,15 @@ the edge the light comes from is `t = ext − q·dir` and the place along that e
   a grainy boundary `(fbm(u/0.0015, v/0.0015, seed ^ 0x2222, 2) − 0.5)·rough·0.6D` added to `t`; inside =
   `smoothstep(edge + soft, edge − soft, t')`, `soft = max(0.75pu, 0.12D)`; glow `e^(−max(t − edge, 0)/(0.8D + 0.015))`;
   `I = amount·(5·inside + 1.2·glow·(1 − inside))`.
+
+### Moving a mark on the photo
+
+A frontend that lets a leak, a streak or a burn be dragged on the photo sets its sliders from the finger's place `q`
+(from the frame's centre): a **streak** keeps its angle and passes through it, `offset = clamp(q·n / ext_n, −1, 1)·100`;
+a **leak** or a **burn** comes from the edge the finger is toward, `angle = atan2(−q.y, q.x)`, and the leak is centred
+on that direction by the offset that undoes its seed's place, `offset = −(rand_n(0,0,seed,1) − 0.5)·1.8·100` (`seed` as
+drawn, per-photo variation included). `film::tests::a_leak_moves_along_its_edge_with_its_offset` pins the number a
+native frontend's arithmetic is checked against. No engine command: it is one drag of the layer's sliders.
 
 ### Marks: dust, hairs, scratches
 
@@ -122,6 +132,31 @@ size. A windowed render with a frame works on the whole output and keeps its win
   teeth reaching into the photo by up to about a third of the border).
 - **Instant**: sides and top `0.02 + 0.07·border`, the bottom 3.5 times that (the window keeps 30 % of the height),
   white `(0.80, 0.79, 0.76)` or black paper with a faint texture, and a soft shadow on the picture along its top and left.
+
+## Grain
+
+The photo's grain (`grain` in the settings, the Effects panel's Grain: `ctl:grain.amount`, `grain.size`,
+`grain.roughness`) is not a layer of the stack: it is added to the encoded picture before the LUT and the film effects
+(`finish::grain_apply`). A frontend may show it as the stack's first layer; it is the same setting. `grain.style`
+(`GrainStyle`, left out of the JSON while it is `film`, so older settings keep their hash; a copy writes it, and Auto
+Sync compares it) says what the grain is. All three use the same lattice noise (`grain_noise`: Size, Roughness and the
+attenuation at small sizes are shared), with `n_k` the noise of seed `seed ^ GRAIN_CHANNEL[k]` for channel `k`:
+
+| Style | Added to channel `k` of the encoded pixel `e` |
+|---|---|
+| `film` | `amount·n·strength(e_k)`, one noise for the three channels, film grain's strength (0.0575 at the ends, 0.084 at mid grey) |
+| `digital` Digital Noise | `amount·(0.8·n + 0.6·n_k)·(0.10 − 0.06·e_k)`: a sensor's noise, partly each channel's own, strongest in the shadows |
+| `color` Color Noise | `amount·(n_k − mean(n))·1.2247·(0.10 − 0.06·e_k)` on a lattice twice as coarse: blotches of colour that leave a grey its brightness |
+
+Tests: `finish::tests::grain_styles_are_film_a_sensor_and_colour`, the GPU equivalence cases `grain (digital)` and
+`grain (colour)`, `presets::tests::grain_style_wire_names_and_copies`.
+
+## Presets
+
+The built-in **Film Effects** group (`presets::film_effects`): Light Leak, First Frame (a burnt edge and a leak),
+Dusty Negative (filed edge, dust, scratches), 35mm Slide, Negative Strip, Instant Print and Old Projector. Each sets
+`film` (a frame and marks with fixed seeds; every photo still draws its own, `film.vary`) with film's grain and a
+little tone. `presets::tests::film_effects_presets_draw_film`.
 
 ## Renderers
 

@@ -159,6 +159,10 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     {
         out.insert("film".into(), v);
     }
+    // (and film's grain, left out while it is the style, replaces the noise of the photo it lands on)
+    if let Some(grain) = out.get_mut("grain").and_then(Value::as_object_mut) {
+        grain.entry("style").or_insert(Value::from("film"));
+    }
     if let Some(Value::Array(spots)) = out.get_mut("spots") {
         // (a Tap to Remove spot is the shape of an object in this photo: nowhere else it means anything)
         spots.retain(|spot| spot.get("shape").is_none());
@@ -484,6 +488,36 @@ mod tests {
         assert!((out.glow.amount - 30.0).abs() < 1e-9, "glow {}", out.glow.amount);
         assert!((out.light.exposure - 0.5).abs() < 1e-9);
         assert!(out.film.is_default());
+    }
+
+    /// The grain's styles as a frontend sends them through `develop.merge`; film's is left out of the JSON (settings
+    /// from before the styles keep their hash) but written in a copy, so pasting film grain replaces digital noise.
+    #[test]
+    fn grain_style_wire_names_and_copies() {
+        use crate::GrainStyle::*;
+        for (id, style) in [("film", Film), ("digital", Digital), ("color", Color)] {
+            let s: DevelopSettings = serde_json::from_value(json!({"grain": {"style": id}})).unwrap();
+            assert_eq!(s.grain.style, style);
+            assert_eq!(serde_json::to_value(s.grain.style).unwrap(), json!(id));
+        }
+        let mut film = DevelopSettings::default();
+        assert!(film.to_json().pointer("/grain/style").is_none());
+        assert_eq!(film.hash64(), DevelopSettings::from_json(&json!({})).unwrap().hash64());
+        film.grain.amount = 30.0;
+        let mut noisy = film.clone();
+        noisy.grain.style = Digital;
+        assert_ne!(noisy.hash64(), film.hash64());
+        assert_eq!(DevelopSettings::from_json(&noisy.to_json()).unwrap(), noisy);
+        let copy = Preset::from_settings("p", "P", "User", &film, &[SettingsGroup::Grain]);
+        assert_eq!(copy.apply(&noisy, 1.0).grain.style, Film);
+        assert_eq!(copy.apply(&noisy, 0.3).grain.style, Digital, "under half, a discrete value stays the photo's");
+        assert_eq!(film.to_json_full().pointer("/grain/style"), Some(&json!("film")));
+        // (and noise at a part of its amount lands on a photo whose JSON has no style: it used to make the style null, and
+        // the whole preset did nothing)
+        let noise = Preset::from_settings("n", "N", "User", &noisy, &[SettingsGroup::Grain]);
+        let part = noise.apply(&DevelopSettings::default(), 0.3);
+        assert!((part.grain.amount - 9.0).abs() < 1e-9 && part.grain.style == Film, "{:?}", part.grain);
+        assert_eq!(noise.apply(&DevelopSettings::default(), 0.7).grain.style, Digital);
     }
 
     #[test]

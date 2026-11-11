@@ -403,6 +403,30 @@ fn grain_strength(v: f32) -> f32 {
     return 0.0575 + 0.106 * c * (1.0 - c);
 }
 
+fn noise_strength(v: f32) -> f32 {
+    return 0.10 - 0.06 * clamp(v, 0.0, 1.0);
+}
+
+// `finish.rs`: grain_apply (style 0 film, 1 digital, 2 colour).
+fn grain_apply(e: vec3<f32>, x: f32, y: f32, amt: f32, coarse: f32, seed: u32, style: u32) -> vec3<f32> {
+    if (style == 1u) {
+        let g = 0.8 * grain_noise(x, y, coarse, seed);
+        let own = vec3<f32>(grain_noise(x, y, coarse, seed ^ GRAIN_C0), grain_noise(x, y, coarse, seed ^ GRAIN_C1), grain_noise(x, y, coarse, seed ^ GRAIN_C2));
+        return e + amt * (g + 0.6 * own) * vec3<f32>(noise_strength(e.x), noise_strength(e.y), noise_strength(e.z));
+    }
+    if (style == 2u) {
+        let c = vec3<f32>(
+            grain_noise(x / 2.0, y / 2.0, coarse, seed ^ GRAIN_C0),
+            grain_noise(x / 2.0, y / 2.0, coarse, seed ^ GRAIN_C1),
+            grain_noise(x / 2.0, y / 2.0, coarse, seed ^ GRAIN_C2),
+        );
+        let mean = (c.x + c.y + c.z) / 3.0;
+        return e + amt * (c - mean) * 1.2247449 * vec3<f32>(noise_strength(e.x), noise_strength(e.y), noise_strength(e.z));
+    }
+    let g = amt * grain_noise(x, y, coarse, seed);
+    return e + g * vec3<f32>(grain_strength(e.x), grain_strength(e.y), grain_strength(e.z));
+}
+
 // 0 for a NaN or an infinity (by its bits: NaN comparisons may be optimized away).
 fn finite_or_0(v: f32) -> f32 {
     if ((bitcast<u32>(v) & 0x7f800000u) == 0x7f800000u) {
@@ -793,8 +817,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let sc = pf(F_GRAIN_SC);
         let coarse = pf(F_GRAIN_COARSE);
         let seed = pu(F_GRAIN_SEED);
-        let g = pf(F_GRAIN_AMT) * grain_noise(gx * sc, gy * sc, coarse, seed);
-        e = e + g * vec3<f32>(grain_strength(e.x), grain_strength(e.y), grain_strength(e.z));
+        e = grain_apply(e, gx * sc, gy * sc, pf(F_GRAIN_AMT), coarse, seed, pu(F_GRAIN_STYLE));
     }
     if (pu(F_HAS_LUT) != 0u) {
         // a LUT profile: it sees SDR values, an HDR render keeps what is above SDR white (`finish_with`)

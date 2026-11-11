@@ -93,6 +93,31 @@ fn a_leak_lights_the_edge_it_comes_from_in_warm_light() {
     assert!(brightest[0] > brightest[2], "{brightest:?}");
 }
 
+/// A leak's offset moves it along its edge, and the offset that undoes its seed's place puts it in the middle of the
+/// edge (what a frontend sets when the leak is dragged on the photo: the angle toward the finger, this offset).
+#[test]
+fn a_leak_moves_along_its_edge_with_its_offset() {
+    let (w, h) = (300, 200);
+    let mut s = with(&[(FilmKind::Leak, 3)], FilmFrame::None);
+    s.film.layers[0].texture = 0.0;
+    // the brightest column of the top rows (the leak comes from the top: angle 90, where `s` runs to the right)
+    let column = |s: &DevelopSettings| {
+        let px = draw(s, 0, w, h);
+        (0..w).max_by(|&a, &b| mean_luma(&px, w, a, 0, a + 1, 20).total_cmp(&mean_luma(&px, w, b, 0, b + 1, 20))).unwrap() as i32
+    };
+    s.film.layers[0].offset = -60.0;
+    let left = column(&s);
+    s.film.layers[0].offset = 60.0;
+    let right = column(&s);
+    // (60 of 100 is 0.3 of the edge each way)
+    assert!((right - left - 180).abs() <= 2, "left {left} right {right}");
+    // (the seed as drawn: mixed with the photo's salt while the marks vary per photo)
+    s.film.layers[0].offset = f64::from(-(rand_n(0, 0, effective_seed(3, 0, true), 1) - 0.5) * 1.8 * 100.0);
+    // (the number a native frontend's own arithmetic is checked against)
+    assert!((s.film.layers[0].offset - 23.9288).abs() < 1e-3, "{}", s.film.layers[0].offset);
+    assert!((column(&s) - w as i32 / 2).abs() <= 1, "centred {}", column(&s));
+}
+
 #[test]
 fn a_streak_crosses_the_frame_and_a_burn_blows_out_its_edge() {
     let (w, h) = (300, 200);

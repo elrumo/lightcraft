@@ -1220,6 +1220,9 @@ impl Session {
         new_json["depth_map"] = serde_json::json!(new.depth_map);
         old_json["film"] = serde_json::json!(old.film);
         new_json["film"] = serde_json::json!(new.film);
+        // (and the grain's style, left out while it is film's: going back to film grain is a change)
+        old_json["grain"]["style"] = serde_json::json!(old.grain.style);
+        new_json["grain"]["style"] = serde_json::json!(new.grain.style);
         let Some(mut delta) = json_delta(&old_json, &new_json) else { return Vec::new() };
         if let Some(o) = delta.as_object_mut() {
             for k in ["spots", "red_eye", "version", "process"] {

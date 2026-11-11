@@ -560,7 +560,7 @@ fn leak(ctx: &Ctx, l: &Layer, q: [f32; 2]) -> f32 {
     let (t, s) = from_edge(ctx, dir, q);
     let reach = 0.05 + 0.6 * l.size;
     let edge_len = dir[1].abs() * ctx.uw + dir[0].abs() * ctx.uh;
-    let centre = (rand_n(0, 0, l.seed, 1) - 0.5) * 0.9 * edge_len;
+    let centre = ((rand_n(0, 0, l.seed, 1) - 0.5) * 0.9 + l.offset * 0.5) * edge_len;
     let spread = reach * (0.6 + 0.8 * rand_n(0, 0, l.seed, 2)) + 0.08;
     // (the light spreads as it goes in: the patch widens away from the edge)
     let width = spread * (1.0 + 0.8 * t / reach);

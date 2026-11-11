@@ -5,7 +5,7 @@ use lightcraft_color::Mat3;
 use lightcraft_color::luminance_2020;
 use lightcraft_color::spline::{Lut1, MonotoneCurve};
 use lightcraft_color::transfer::{linear_to_srgb, srgb_to_linear};
-use lightcraft_develop::{DevelopSettings, LocalAdjustments, Process, ToneCurve, VignetteStyle};
+use lightcraft_develop::{DevelopSettings, GrainStyle, LocalAdjustments, Process, ToneCurve, VignetteStyle};
 use lightcraft_geom::Point;
 use lightcraft_raster::Rgba8;
 
@@ -244,6 +244,40 @@ fn grain_noise(x: f32, y: f32, coarse: f32, seed: u32) -> f32 {
     if coarse > 0.0 { g * (1.0 - coarse * coarse).max(0.0).sqrt() + grain_field(x / 3.0, y / 3.0, seed ^ 0x55) * coarse } else { g }
 }
 
+/// What each channel's own noise adds to the seed (digital and colour noise; shared with the GPU kernel).
+pub const GRAIN_CHANNEL: [u32; 3] = [0x9e37_79b9, 0x3c6e_f372, 0xdaa6_6d2b];
+
+/// Std of digital and colour noise added to an encoded channel value `v` at Grain 100: a sensor's noise shows most in
+/// the shadows.
+#[inline]
+pub fn noise_strength(v: f32) -> f32 {
+    0.10 - 0.06 * v.clamp(0.0, 1.0)
+}
+
+/// The encoded pixel `e` with its grain, at lattice coordinates `(x, y)` (`docs/film-effects.md` → Grain). Film: one noise for the
+/// three channels, by film grain's strength at each value. Digital: a sensor's noise, 0.8 of it the same in the three
+/// channels and 0.6 each channel's own (unit variance together), by [`noise_strength`]. Color: each channel's own
+/// noise on a lattice twice as coarse, less the three's mean, so a grey keeps its brightness and takes colour.
+#[inline]
+pub fn grain_apply(e: [f32; 3], x: f32, y: f32, amt: f32, coarse: f32, seed: u32, style: GrainStyle) -> [f32; 3] {
+    match style {
+        GrainStyle::Film => {
+            let g = amt * grain_noise(x, y, coarse, seed);
+            e.map(|v| v + g * grain_strength(v))
+        }
+        GrainStyle::Digital => {
+            let g = 0.8 * grain_noise(x, y, coarse, seed);
+            std::array::from_fn(|k| e[k] + amt * (g + 0.6 * grain_noise(x, y, coarse, seed ^ GRAIN_CHANNEL[k])) * noise_strength(e[k]))
+        }
+        GrainStyle::Color => {
+            let c: [f32; 3] = std::array::from_fn(|k| grain_noise(x / 2.0, y / 2.0, coarse, seed ^ GRAIN_CHANNEL[k]));
+            let mean = (c[0] + c[1] + c[2]) / 3.0;
+            // (the three less their mean have 2/3 of the variance)
+            std::array::from_fn(|k| e[k] + amt * (c[k] - mean) * 1.224_744_9 * noise_strength(e[k]))
+        }
+    }
+}
+
 /// Number of per-mask terms in [`mask_terms`].
 pub const MASK_TERMS: usize = 21;
 
@@ -375,8 +409,8 @@ pub struct FinishParams {
     pub ev: f32,
     /// How far (EV) the Shadows window sits below where it sits for a photo of [`SHADOW_KEY_REF`]'s key ([`shadow_window_shift`]).
     pub sh_shift: f32,
-    /// Grain: strength, lattice spacing (output px), coarse layer weight, seed (see [`grain_params`]).
-    pub grain: Option<(f32, f32, f32, u32)>,
+    /// Grain: strength, lattice spacing (output px), coarse layer weight, seed (see [`grain_params`]), and what it is.
+    pub grain: Option<(f32, f32, f32, u32, GrainStyle)>,
     /// Output px → normalized oriented coordinates.
     pub out_to_norm: lightcraft_geom::Affine,
     pub ow: f64,
@@ -436,7 +470,7 @@ impl FinishParams {
         let grain = (s.grain.amount > 0.0 && effects).then(|| {
             let (amt, cell, coarse) =
                 grain_params((s.grain.amount / 100.0) as f32, (s.grain.size / 100.0) as f32, (s.grain.roughness / 100.0) as f32, px_per_long as f32);
-            (amt, cell, coarse, s.grain.seed)
+            (amt, cell, coarse, s.grain.seed, s.grain.style)
         });
         let calibration = s.section_enabled("calibration");
         let peak = s.hdr.peak();
@@ -891,12 +925,11 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                     e = refine_saturation(e0, e, fp.refine_sat);
                 }
             }
-            if let Some((amt, cell, coarse, seed)) = *grain {
+            if let Some((amt, cell, coarse, seed, style)) = *grain {
                 let n = out_to_norm.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
                 let (gx, gy) = ((n.x * fp.ow) as f32 / long as f32, (n.y * fp.oh) as f32 / long as f32);
                 let sc = fp.px_per_long as f32 / cell;
-                let g = amt * grain_noise(gx * sc, gy * sc, coarse, seed);
-                e = e.map3(|v| v + g * grain_strength(v));
+                e = grain_apply(e, gx * sc, gy * sc, amt, coarse, seed, style);
             }
             let e = match &p_lut {
                 Some((l, k)) => lut_pixel(l, *k, e, lut_sp.as_ref(), hdr),
@@ -1061,6 +1094,34 @@ mod tests {
         // luma is kept
         let y = |e: [f32; 3]| 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
         assert!((y(r) - y(after)).abs() < 1e-5);
+    }
+
+    /// Digital noise is a sensor's (the channels differ, the shadows are noisier than the highlights); colour noise
+    /// leaves a grey its brightness and gives it colour; film's grain is the same in the three channels.
+    #[test]
+    fn grain_styles_are_film_a_sensor_and_colour() {
+        let stats = |style, v: f32| {
+            let n = 4096;
+            let (mut mean, mut chroma) = (Vec::with_capacity(n), 0.0f32);
+            for i in 0..n {
+                let e = grain_apply([v; 3], (i % 64) as f32 * 0.7 + 0.3, (i / 64) as f32 * 0.7 + 0.3, 1.0, 0.0, 11, style);
+                mean.push((e[0] + e[1] + e[2]) / 3.0 - v);
+                chroma += (e[0] - e[1]).abs() + (e[1] - e[2]).abs();
+            }
+            let std = (mean.iter().map(|m| m * m).sum::<f32>() / n as f32).sqrt();
+            (std, chroma / n as f32)
+        };
+        let (film, film_chroma) = stats(GrainStyle::Film, 0.5);
+        assert!((film - grain_strength(0.5)).abs() < 0.01 && film_chroma < 1e-6, "film {film} {film_chroma}");
+        let (dark, digital_chroma) = stats(GrainStyle::Digital, 0.1);
+        let (light, _) = stats(GrainStyle::Digital, 0.9);
+        assert!(dark > 1.5 * light && light > 0.02 && digital_chroma > 0.02, "digital {dark} {light} {digital_chroma}");
+        let (colour, colour_chroma) = stats(GrainStyle::Color, 0.5);
+        assert!(colour < 1e-6 && colour_chroma > 0.05, "colour {colour} {colour_chroma}");
+        // hostile numbers: no panic
+        for style in GrainStyle::ALL {
+            let _ = grain_apply([f32::NAN, f32::INFINITY, -1e30], f32::MAX, f32::NAN, 1.0, 0.5, u32::MAX, style);
+        }
     }
 
     #[test]

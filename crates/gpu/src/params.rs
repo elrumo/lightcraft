@@ -1,7 +1,7 @@
 //! Parameter blocks: the per-pixel stage's [`FinishParams`] packed into the 32-bit words the
 //! `finish` kernel reads (`F_*` constants, generated from [`FIELDS`]), plus its auxiliary tables.
 
-use lightcraft_develop::VignetteStyle;
+use lightcraft_develop::{GrainStyle, VignetteStyle};
 use lightcraft_pipeline::colorops::POINT_WORDS;
 use lightcraft_pipeline::finish::{FinishParams, MASK_TERMS, srgb_lut};
 
@@ -75,6 +75,7 @@ const FIELDS: &[(&str, usize)] = &[
     ("GRAIN_SC", 1),
     ("GRAIN_COARSE", 1),
     ("GRAIN_SEED", 1),
+    ("GRAIN_STYLE", 1),
     ("GRAIN_AFF", 6),
     ("REFINE_SAT", 1),
     ("CALIB", 1),
@@ -313,12 +314,20 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
         p.b("PROOF_DEST_WARN", pp.dest_warning);
         p.b("PROOF_DISP_WARN", pp.display_warning);
     }
-    if let Some((amt, cell, coarse, seed)) = fp.grain {
+    if let Some((amt, cell, coarse, seed, style)) = fp.grain {
         p.b("GRAIN", true);
         p.f("GRAIN_AMT", amt);
         p.f("GRAIN_SC", fp.px_per_long as f32 / cell);
         p.f("GRAIN_COARSE", coarse);
         p.u("GRAIN_SEED", seed);
+        p.u(
+            "GRAIN_STYLE",
+            match style {
+                GrainStyle::Film => 0,
+                GrainStyle::Digital => 1,
+                GrainStyle::Color => 2,
+            },
+        );
         let long = fp.ow.max(fp.oh);
         let [a, b, c, d, e, f] = fp.out_to_norm.0;
         let (kx, ky) = (fp.ow / long, fp.oh / long);

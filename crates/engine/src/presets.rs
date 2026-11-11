@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use lightcraft_develop::Preset;
+use lightcraft_develop::{Film, FilmFrame, FilmKind, FilmLayer, FrameTone, Preset};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -381,8 +381,80 @@ fn p(group: &str, id: &str, name: &str, settings: serde_json::Value) -> Preset {
     Preset { id: format!("lc.{id}"), name: name.into(), group: group.into(), settings, favorite: false, builtin: true }
 }
 
-pub fn builtin() -> Vec<Preset> {
+/// A film effects preset's `film` group (`docs/film-effects.md`): the frame and the marks, bottom to top. Each photo it
+/// lands on draws its own marks from these seeds (`film.vary`).
+fn film(frame: FilmFrame, frame_tone: FrameTone, marks: Vec<FilmLayer>) -> Value {
+    let layers = marks.into_iter().zip(1..).map(|(l, id)| FilmLayer { id, ..l }).collect();
+    serde_json::to_value(Film { frame, frame_tone, layers, ..Film::default() }).unwrap_or_default()
+}
+
+/// The Film Effects presets: frames, leaks, burns, dust and scratches, with the grain and tone that go with them.
+fn film_effects() -> Vec<Preset> {
+    use FilmKind::{Burn, Dust, Leak, Scratches, Streak};
+    let mark = |kind, seed| FilmLayer::new(0, kind, seed);
+    let grain = |amount: f64, size: f64, roughness: f64| json!({"amount": amount, "size": size, "roughness": roughness, "style": "film"});
+    let g = "Film Effects";
     vec![
+        p(
+            g,
+            "fx-light-leak",
+            "Light Leak",
+            json!({"film": film(FilmFrame::None, FrameTone::Dark, vec![FilmLayer { angle: 180.0, amount: 65.0, size: 50.0, color: 10.0, ..mark(Leak, 11) }]), "grain": grain(18.0, 30.0, 55.0)}),
+        ),
+        p(
+            g,
+            "fx-first-frame",
+            "First Frame",
+            json!({"film": film(FilmFrame::None, FrameTone::Dark, vec![
+                FilmLayer { angle: 180.0, size: 20.0, ..mark(Burn, 21) },
+                FilmLayer { angle: 180.0, amount: 45.0, size: 60.0, color: 30.0, ..mark(Leak, 22) },
+            ]), "grain": grain(22.0, 30.0, 55.0), "curve": {"shadows": 15.0}}),
+        ),
+        p(
+            g,
+            "fx-dusty-negative",
+            "Dusty Negative",
+            json!({"film": film(FilmFrame::Filed, FrameTone::Dark, vec![
+                FilmLayer { amount: 45.0, ..mark(Dust, 31) },
+                FilmLayer { amount: 25.0, angle: 90.0, ..mark(Scratches, 32) },
+            ]), "grain": grain(28.0, 35.0, 60.0), "light": {"contrast": 8.0}}),
+        ),
+        p(
+            g,
+            "fx-slide",
+            "35mm Slide",
+            json!({"film": film(FilmFrame::Strip, FrameTone::Dark, vec![FilmLayer { amount: 18.0, size: 30.0, tone: -100.0, fibres: 10.0, ..mark(Dust, 41) }]), "light": {"contrast": 12.0}, "color": {"saturation": 8.0}, "grain": grain(12.0, 20.0, 45.0)}),
+        ),
+        p(
+            g,
+            "fx-negative-strip",
+            "Negative Strip",
+            json!({"film": film(FilmFrame::Strip, FrameTone::Light, vec![
+                FilmLayer { amount: 30.0, ..mark(Dust, 51) },
+                FilmLayer { amount: 35.0, size: 55.0, angle: 45.0, color: -20.0, ..mark(Leak, 52) },
+            ]), "grain": grain(24.0, 30.0, 55.0), "curve": {"shadows": 12.0}}),
+        ),
+        p(
+            g,
+            "fx-instant",
+            "Instant Print",
+            json!({"film": film(FilmFrame::Instant, FrameTone::Light, vec![FilmLayer { amount: 30.0, size: 60.0, angle: 45.0, color: 40.0, ..mark(Leak, 61) }]), "curve": {"shadows": 28.0, "highlights": -12.0}, "color": {"saturation": -10.0}, "light": {"contrast": -8.0}, "grain": grain(14.0, 25.0, 50.0)}),
+        ),
+        p(
+            g,
+            "fx-projector",
+            "Old Projector",
+            json!({"film": film(FilmFrame::None, FrameTone::Dark, vec![
+                FilmLayer { amount: 35.0, size: 55.0, tone: -100.0, fibres: 45.0, ..mark(Dust, 71) },
+                FilmLayer { amount: 45.0, angle: 90.0, tone: -100.0, ..mark(Scratches, 72) },
+                FilmLayer { amount: 25.0, size: 35.0, angle: 90.0, offset: 55.0, color: 60.0, ..mark(Streak, 73) },
+            ]), "vignette": {"amount": -28.0}, "color": {"saturation": -15.0}, "grain": grain(32.0, 40.0, 65.0)}),
+        ),
+    ]
+}
+
+pub fn builtin() -> Vec<Preset> {
+    let mut list = vec![
         p(
             "Color",
             "warm-glow",
@@ -631,7 +703,9 @@ pub fn builtin() -> Vec<Preset> {
             "Sepia Tone",
             json!({"treatment": "bw", "grading": {"shadows": {"hue": 32.0, "sat": 22.0, "lum": 0.0}, "highlights": {"hue": 42.0, "sat": 18.0, "lum": 0.0}}, "curve": {"shadows": 10.0}}),
         ),
-    ]
+    ];
+    list.extend(film_effects());
+    list
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -777,6 +851,25 @@ mod tests {
             assert!(ids.insert(pr.id.clone()));
             let out = pr.apply(&base, 1.0);
             assert_ne!(out, base, "{} had no effect", pr.id);
+        }
+    }
+
+    /// The Film Effects presets put film on the photo: marks that draw (each with its own id), and film's grain.
+    #[test]
+    fn film_effects_presets_draw_film() {
+        let base = lightcraft_develop::DevelopSettings::default();
+        let fx = film_effects();
+        assert!(fx.len() >= 6);
+        for pr in fx {
+            let out = pr.apply(&base, 1.0);
+            assert!(!out.film.layers.is_empty() && out.film.vary, "{}", pr.id);
+            let mut ids: Vec<u32> = out.film.layers.iter().map(|l| l.id).collect();
+            ids.dedup();
+            assert_eq!(ids, (1..=out.film.layers.len() as u32).collect::<Vec<_>>(), "{}", pr.id);
+            assert!(out.film.layers.iter().all(|l| l.visible && l.amount > 0.0 && l.kind.fields().contains(&"amount")), "{}", pr.id);
+            assert!(out.grain.amount > 0.0, "{}", pr.id);
+            // and at half strength it still parses (the marks' numbers scale, their seeds stay whole)
+            assert_eq!(pr.apply(&base, 0.5).film.layers.len(), out.film.layers.len(), "{}", pr.id);
         }
     }
 

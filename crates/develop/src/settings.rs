@@ -671,6 +671,33 @@ impl Default for Vignette {
     }
 }
 
+/// What the grain is (`lightcraft_pipeline::finish::grain_apply`): film's grain, a sensor's noise (a part of it each
+/// channel's own, strongest in the shadows) or colour noise (coarse blotches of colour that leave the brightness).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GrainStyle {
+    #[default]
+    Film,
+    Digital,
+    Color,
+}
+
+impl GrainStyle {
+    pub const ALL: [GrainStyle; 3] = [GrainStyle::Film, GrainStyle::Digital, GrainStyle::Color];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GrainStyle::Film => "Film Grain",
+            GrainStyle::Digital => "Digital Noise",
+            GrainStyle::Color => "Color Noise",
+        }
+    }
+
+    fn is_film(&self) -> bool {
+        *self == GrainStyle::Film
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Grain {
@@ -679,11 +706,14 @@ pub struct Grain {
     pub roughness: f64,
     /// Seed for the procedural grain (stable per photo).
     pub seed: u32,
+    /// Not written while it is film's grain, so settings from before the styles keep their JSON and `hash64`.
+    #[serde(skip_serializing_if = "GrainStyle::is_film")]
+    pub style: GrainStyle,
 }
 
 impl Default for Grain {
     fn default() -> Self {
-        Self { amount: 0.0, size: 25.0, roughness: 50.0, seed: 0 }
+        Self { amount: 0.0, size: 25.0, roughness: 50.0, seed: 0, style: GrainStyle::Film }
     }
 }
 
@@ -822,7 +852,7 @@ impl FilmKind {
     /// The fields of [`FilmLayer`] this kind uses, in panel order (the others keep their values and draw nothing).
     pub fn fields(self) -> &'static [&'static str] {
         match self {
-            FilmKind::Leak => &["amount", "size", "angle", "color", "texture"],
+            FilmKind::Leak => &["amount", "size", "angle", "offset", "color", "texture"],
             FilmKind::Streak => &["amount", "size", "angle", "offset", "color", "texture"],
             FilmKind::Burn => &["amount", "size", "angle", "color", "texture"],
             FilmKind::Dust => &["amount", "size", "fibres", "tone", "texture"],
@@ -848,7 +878,7 @@ pub struct FilmLayer {
     pub size: f64,
     /// Where the light comes from (leak, burn) or the line's direction (streak, scratches), −180..180.
     pub angle: f64,
-    /// A streak's place across the frame, −100..100.
+    /// A streak's place across the frame, or a leak's along its edge from where its seed put it, −100..100.
     pub offset: f64,
     /// The leaked light's colour, −100 (magenta red) .. 100 (yellow).
     pub color: f64,
