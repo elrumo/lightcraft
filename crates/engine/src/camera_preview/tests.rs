@@ -1,6 +1,6 @@
 use super::colour::{camera_match, spectral};
 use super::look_fit::{NEUTRAL_TONE, fit_neutral_tone, maker_exposure, neutral_curve, neutral_look, prior, typical_look, without_chroma};
-use super::proxy::{PROXY_BASE, fingerprint, fits_cache, vignetting_from_proxies};
+use super::proxy::{PROXY_BASE, fingerprint, fits_cache, lens_key, vignetting_from_proxies};
 use super::*;
 
 fn steep_toe_scene() -> (Rgb32f, Rgb32f) {
@@ -1024,11 +1024,20 @@ fn corpus_cr3_kept_fits_are_the_fits() {
     let kept = || {
         let mut raw = lightcraft_raw::decode(&bytes).unwrap();
         let (xy, t, look, matched, lens) = decode_fits(&mut raw, &bytes, None, None);
-        let key = (fingerprint(&bytes), raw.width, raw.height, crate::profile_db::generation());
+        let key = (fingerprint(&bytes), raw.width, raw.height, crate::profile_db::generation(), lens_key(None, None));
         assert!(fits_cache().lock().unwrap().contains(&key));
         format!("{xy:?} {t:?} {look:?} {matched:?} {lens:?} {:?}", raw.color)
     };
     assert!(fresh.contains("Some(") && fresh.contains("color_matrix: [Some("), "a look and filled matrices: {fresh}");
+    // A decode given a lens correction (a database profile) keeps fits of its own: a decode without one still gets the
+    // vignetting it measures (#385: kept by the same key, the profile's lens came back instead)
+    let profile = lightcraft_develop::EmbeddedLens {
+        warp: Some(Default::default()),
+        origin: lightcraft_develop::LensOrigin::Database { serial: 1 },
+        ..Default::default()
+    };
+    let mut raw = lightcraft_raw::decode(&bytes).unwrap();
+    assert_eq!(decode_fits(&mut raw, &bytes, None, Some(profile)).4, Some(profile));
     // (the first may already be kept: other tests decode this file too)
     assert_eq!(kept(), fresh);
     assert_eq!(kept(), fresh);

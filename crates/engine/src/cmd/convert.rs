@@ -1102,7 +1102,8 @@ mod tests {
         s.execute("library.import", &json!({"paths": [f.to_string_lossy()]})).unwrap();
         let id = s.active().unwrap();
         let ph = s.catalog.photo(id).unwrap().clone();
-        assert!(ph.embedded_lens.is_none() && ph.develop.optics.lens_profile && !ph.is_edited(), "import: on, nothing measured yet");
+        assert!(ph.embedded_lens.is_none(), "import: nothing measured yet: {:?}", ph.embedded_lens);
+        assert!(ph.develop.optics.lens_profile && !ph.is_edited(), "import: corrections on, not edited: {:?}", ph.develop.optics);
         let (w, h) = (192, 128);
         let on = s.render_now(id, w, h).unwrap().image;
         let learnt = s.catalog.photo(id).unwrap().embedded_lens.as_deref().copied();

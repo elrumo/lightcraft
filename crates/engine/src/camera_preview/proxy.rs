@@ -421,8 +421,25 @@ pub(super) struct Fits {
 /// fits on other samples), at most this many.
 const FITS_KEPT: usize = 64;
 
-/// Keyed by the file, the decoded size and the profile database generation (its camera and lens profiles feed the fits).
-type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize, u64), std::sync::Arc<Fits>>;
+/// Keyed by the file, the decoded size, the profile database generation (its camera and lens profiles feed the fits) and
+/// the lens inputs of the decode ([`lens_key`]).
+type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize, u64, u64), std::sync::Arc<Fits>>;
+
+/// The lens inputs [`decode_fits`] depends on beyond the file: the warp its camera applied to the JPEG and the lens
+/// correction it is given. Without them a decode given a database profile kept fits a decode without one then read
+/// back, the profile's lens in place of the vignetting it would have measured (#385).
+pub(super) fn lens_key(geometry: Option<&LensGeometry>, lens: Option<&lightcraft_develop::EmbeddedLens>) -> u64 {
+    let mut h = lightcraft_preview::Hasher128::new();
+    h.u64(u64::from(geometry.is_some()));
+    for v in geometry.iter().flat_map(|g| g.k.iter().chain(&g.center)) {
+        h.u64(v.to_bits());
+    }
+    h.u64(u64::from(lens.is_some()));
+    if let Some(l) = lens {
+        h.update(&serde_json::to_vec(l).unwrap_or_default());
+    }
+    h.finish().0 as u64
+}
 
 pub(super) fn fits_cache() -> &'static std::sync::Mutex<FitsCache> {
     static CACHE: std::sync::OnceLock<std::sync::Mutex<FitsCache>> = std::sync::OnceLock::new();
@@ -453,9 +470,9 @@ pub(super) fn fingerprint(bytes: &[u8]) -> lightcraft_preview::Hash128 {
 /// and, for a raw without lens data of its own (`lens`, the file's or the lens database's), [`jpeg_vignetting`], with
 /// their proxies built once ([`sharing_proxies`]). Kept per file: a photo is decoded again at each level (thumbnail,
 /// preview, full size for zoom and export, and after its decoded source is evicted), and these fits were ~45 % of a
-/// CR3's preview decode. They depend only on the file, the decoded raw and the camera and lens profiles (read once per
-/// process, and again when the profile database changes, which the key follows), so a kept result is what fitting
-/// again gives. Returns the as-shot white, the camera transform, the
+/// CR3's preview decode. They depend only on the file, the decoded raw, the camera and lens profiles (read once per
+/// process, and again when the profile database changes) and the lens inputs given here, all of which the key follows,
+/// so a kept result is what fitting again gives. Returns the as-shot white, the camera transform, the
 /// look, the Camera Matching profile and the lens correction.
 pub(crate) fn decode_fits(
     raw: &mut RawImage,
@@ -463,7 +480,7 @@ pub(crate) fn decode_fits(
     lens_geometry: Option<&LensGeometry>,
     lens: Option<lightcraft_develop::EmbeddedLens>,
 ) -> (Xy, CameraTransform, Option<CameraLook>, Option<CameraMatch>, Option<lightcraft_develop::EmbeddedLens>) {
-    let key = (fingerprint(bytes), raw.width, raw.height, crate::profile_db::generation());
+    let key = (fingerprint(bytes), raw.width, raw.height, crate::profile_db::generation(), lens_key(lens_geometry, lens.as_ref()));
     let kept = fits_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key).cloned();
     let fits = match kept {
         Some(fits) => {

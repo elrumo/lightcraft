@@ -2,7 +2,8 @@
 //! profiles, face and denoise models).
 //!
 //! [`config_dir`] picks it, in order:
-//! 1. `$LIGHTCRAFT_CONFIG_DIR`, when set (tests, agents, custom setups).
+//! 1. `$LIGHTCRAFT_CONFIG_DIR`, when set (tests, agents, custom setups). Unset, the engine's own tests get an empty
+//!    folder of their process instead of the person's (what is installed there must not change a test's result).
 //! 2. **Portable mode** (issue #1200, as in PhotoCraft): a marker file ([`PORTABLE_MARKERS`]) beside the
 //!    executable puts everything in `<exe dir>/LightCraftData`, so a copy on a USB stick leaves nothing in
 //!    `%APPDATA%`. If that folder can't be written (read-only medium, Program Files), a warning is logged
@@ -39,6 +40,12 @@ enum Platform {
 /// On iOS `$HOME` is the app's container, where only `Documents/`, `Library/` and `tmp/` are the app's to
 /// write: it takes the macOS layout.
 pub fn config_dir() -> Option<PathBuf> {
+    // The engine's own tests never read or write the person's settings folder: the camera and lens profiles installed
+    // there changed what an import and a decode give, so tests passed on one machine and failed on another (#385).
+    #[cfg(test)]
+    if std::env::var_os("LIGHTCRAFT_CONFIG_DIR").is_none() {
+        return Some(test_config_dir());
+    }
     let platform = if cfg!(any(target_os = "macos", target_os = "ios")) {
         Platform::Mac
     } else if cfg!(windows) {
@@ -47,6 +54,19 @@ pub fn config_dir() -> Option<PathBuf> {
         Platform::Other
     };
     config_dir_with(platform, |name| std::env::var_os(name), portable_dir)
+}
+
+/// The settings folder of this test process: empty when it starts (a leftover of an earlier process with the same id is
+/// removed), shared by its tests.
+#[cfg(test)]
+pub(crate) fn test_config_dir() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("lightcraft-test-config-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    })
+    .clone()
 }
 
 /// `portable` is asked only without an override, so an isolated run never probes beside the executable.
@@ -187,6 +207,20 @@ impl Session {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+
+    /// The engine's tests read their own settings folder, never the person's (#385: lens profiles installed there gave an
+    /// imported CR3 a lens correction it has none of, and failed the tests on that machine only).
+    #[test]
+    fn tests_never_read_the_persons_settings_folder() {
+        if std::env::var_os("LIGHTCRAFT_CONFIG_DIR").is_some() {
+            return;
+        }
+        let dir = config_dir().unwrap();
+        assert!(dir.starts_with(std::env::temp_dir()) && dir == test_config_dir(), "{}", dir.display());
+        if std::env::var_os(crate::profile_db::ENV_DIR).is_none() {
+            assert_eq!(crate::profile_db::dir(), Some(dir.join("profile-db")));
+        }
+    }
 
     fn resolve(platform: Platform, vars: &[(&str, &str)]) -> Option<PathBuf> {
         config_dir_with(platform, |name| vars.iter().find_map(|(key, value)| (*key == name).then(|| OsString::from(value))), || None)
