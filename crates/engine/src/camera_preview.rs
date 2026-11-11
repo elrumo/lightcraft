@@ -39,8 +39,7 @@ use hue_sat::{MIN_LUMINANCE_KEPT, NO_LUMINANCE_KEPT, fit_hue_sat, hue_saturation
 pub(crate) use look_fit::fit_preview;
 #[cfg(test)]
 use look_fit::{
-    FIT_PREVIEW_MAX_PIXELS, SENSOR_CLIP, at_most, clips_more, correct_vignetting, fit_look, fit_look_with, sony_dro_off_tone, with_dro_off_tone,
-    without_clipped,
+    FIT_PREVIEW_MAX_PIXELS, at_most, clips_more, correct_vignetting, fit_look, fit_look_with, sony_dro_off_tone, with_dro_off_tone, without_clipped,
 };
 pub(crate) use look_fit::{fit_neutral, neutral_pairs};
 #[cfg(test)]

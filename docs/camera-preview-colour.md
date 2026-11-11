@@ -124,8 +124,16 @@ before reducing it: its camera preview already contains their distortion and vig
 corrections. This uses the raw decoder's existing opcode implementation, including chained
 warps. The separate proxy vignetting multiplier is skipped in this case. The editable source
 still has lens corrections removed, so the pipeline applies them once through Enable Profile
-Corrections. Developing this proxy requires a full-resolution demosaic; files without such
-opcodes keep their binned proxy.
+Corrections. The proxy is developed binned, to plain block means at a quarter of its own
+binning factor; the opcodes are applied at that scale (warps, radial vignetting and gain maps
+over the whole image are defined relative to its size) and the result is reduced to the proxy's
+size as the full-size development was. Until HB-418 that was a full-resolution demosaic, which
+held 1.4 GB for a 50 MP Pixel 8 Pro DNG at any size asked for; the decode now peaks at 0.44 GB.
+On the ten test DNGs with lens opcodes the fitted tone curves moved by at most 0.021, the
+chroma curves by at most 0.05 (0.14 at one point of the Pixel 6 Pro's) and the held-out errors
+by at most 0.0012; the look guard's scene renders of four of them moved by a median CIEDE2000
+of 0.16 or less. A list with operations in full-size pixels (bad pixels,
+per-row tables, a gain map over part of the image) still gets the full-resolution demosaic.
 
 ## Camera profiles (pooled per model)
 

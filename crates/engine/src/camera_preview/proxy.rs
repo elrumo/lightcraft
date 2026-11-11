@@ -609,8 +609,9 @@ fn proxies_with(
     // The camera may have corrected its JPEG with the lens warp the file carries (Nikon Z lenses always, at up to 9 %
     // zoom; other cameras when their correction setting is on): the sensor moved into that geometry is a candidate,
     // kept below when it lines up with the JPEG better than the uncorrected one.
+    // (a DNG's proxy has its `OpcodeList3` applied already)
     let warped = lens
-        .filter(|_| raw.format != RawFormat::Cr3)
+        .filter(|_| raw.format != RawFormat::Cr3 && raw.opcodes.list3.is_empty())
         .and_then(|l| Some((into_lens_geometry(&sensor, raw, k, l)?, into_lens_geometry(&clipped, raw, k, l)?)));
     let gain = 2f32.powf(transform.baseline_exposure as f32);
     let to_working = |p: [f32; 3]| transform.matrix.apply_f32(std::array::from_fn(|i| p[i] * transform.wb[i] * gain));
@@ -912,11 +913,21 @@ pub(super) fn into_lens_geometry(img: &Rgb32f, raw: &RawImage, k: usize, lens: &
 }
 
 pub(super) fn sensor_proxy(raw: &RawImage, k: usize, edge: usize) -> Option<Rgb32f> {
+    let whole = || Some(fit(&raw.develop(lightcraft_raw::Method::Bilinear).ok()?, edge, edge, Filter::Box));
     // Linear (three-sample) data needs no demosaicing: developed and fitted to `edge`, not binned by `k`
     // (`develop_binned` bins it too, for previews, but a small image would then halve below `edge`).
-    // Lens opcodes cannot be applied to a binned mosaic: they are defined at full resolution.
-    if (raw.cpp == 3 && raw.cfa.is_none()) || (raw.format == RawFormat::Dng && !raw.opcodes.list3.is_empty()) {
-        return Some(fit(&raw.develop(lightcraft_raw::Method::Bilinear).ok()?, edge, edge, Filter::Box));
+    if raw.cpp == 3 && raw.cfa.is_none() {
+        return whole();
+    }
+    // A DNG's lens opcodes: applied to plain block means at a quarter of the proxy's binning, then reduced to `edge` as
+    // the full-size development they were applied to before was (which held 1.3 GB for a 50 MP mosaic, HB-418; the
+    // fitted looks stay within about 0.03). Only an `OpcodeList3` that can't be applied there needs that development.
+    if raw.format == RawFormat::Dng && !raw.opcodes.list3.is_empty() {
+        let fine = (2..=(k / 4).max(2)).rev().find(|&f| raw.can_bin(f));
+        return match fine.map(|f| raw.develop_binned(f, f32::INFINITY)).transpose().ok()?.flatten() {
+            Some(img) => Some(fit(&img, edge, edge, Filter::Box)),
+            None => whole(),
+        };
     }
     raw.develop_binned(k, SENSOR_CLIP).ok()?
 }

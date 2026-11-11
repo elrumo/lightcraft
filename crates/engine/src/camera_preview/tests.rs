@@ -2728,25 +2728,33 @@ fn dng_sensor_proxy_gets_the_embedded_vignetting_correction() {
     assert!(plain.data.iter().all(|p| *p == [0.2; 3]));
 }
 
-/// Lens opcodes prevent mosaic binning. The DNG fit still gets a proxy, with the file's
-/// full-resolution corrections applied once rather than silently losing the tone fit.
+/// A DNG's lens opcodes reach its sensor proxy applied once, on a binned development (HB-418: the full-size one they
+/// were applied to held 1.3 GB for a 50 MP mosaic's thumbnail), reduced to `edge` as that was; a list the binned
+/// scale can't take still gets the full-size development.
 #[test]
-fn dng_sensor_proxy_applies_lens_opcodes_before_downsampling() {
+fn dng_sensor_proxy_applies_lens_opcodes_at_the_binned_scale() {
     use lightcraft_raw::Opcode;
     let bytes = crate::tests_xmp::synthetic_dng_with(None, Default::default());
     let mut raw = lightcraft_raw::decode(&bytes).unwrap();
     raw.data = lightcraft_raw::RawData::U16(vec![4000; raw.width * raw.height]);
     raw.opcodes.list3 = vec![Opcode::FixVignetteRadial { k: [1.0, 0.0, 0.0, 0.0, 0.0], center: [0.5, 0.5] }];
-    assert!(raw.develop_binned(2, SENSOR_CLIP).unwrap().is_none());
-    let proxy = sensor_proxy(&raw, 2, 32).expect("a corrected CFA proxy even when binning is unavailable");
-    assert_eq!((proxy.width, proxy.height), (32, 24));
-    let center = proxy.data[12 * 32 + 16][1];
+    let proxy = sensor_proxy(&raw, 8, 12).expect("a binned proxy with the file's corrections");
+    assert_eq!((proxy.width, proxy.height), (12, 9));
+    // (block means at a quarter of the binning, 2 here, not the full-size development)
+    let binned = raw.develop_binned(2, f32::INFINITY).unwrap().expect("binned with its OpcodeList3");
+    assert_eq!(proxy.data, fit(&binned, 12, 12, Filter::Box).data);
+    let center = proxy.data[4 * 12 + 6][1];
     let corner = proxy.data[0][1];
-    assert!((1.8..2.1).contains(&(corner / center)), "one vignetting gain, not zero or two: {corner} / {center}");
-    let full = raw.develop(lightcraft_raw::Method::Bilinear).unwrap();
-    assert_eq!(proxy.data, full.data, "the same opcode interpretation as raw development");
-    let small = sensor_proxy(&raw, 2, 16).unwrap();
-    assert_eq!(small.data, fit(&full, 16, 16, Filter::Box).data, "correct first, then reduce");
+    assert!((1.5..2.2).contains(&(corner / center)), "one vignetting gain, not zero or two: {corner} / {center}");
+    let full = fit(&raw.develop(lightcraft_raw::Method::Bilinear).unwrap(), 12, 12, Filter::Box);
+    // (within 4 %: this vignetting doubles the corners of a 32 px picture, curving within a block)
+    assert!(proxy.data.iter().zip(&full.data).all(|(a, b)| (a[1] / b[1] - 1.0).abs() < 0.04), "the full-size development reduced");
+    // (per-row scales are in full-size pixels)
+    let area = lightcraft_raw::opcodes::Area { top: 0, left: 0, bottom: 24, right: 32, plane: 0, planes: 3, row_pitch: 1, col_pitch: 1 };
+    raw.opcodes.list3.push(Opcode::ScalePerRow { area, scales: vec![1.0; 24] });
+    let whole = sensor_proxy(&raw, 2, 32).unwrap();
+    assert_eq!((whole.width, whole.height), (32, 24));
+    assert_eq!(whole.data, raw.develop(lightcraft_raw::Method::Bilinear).unwrap().data);
 }
 
 /// Which DNGs get a tone fitted to their camera JPEG: a colour matrix, a tone curve that is absent or the

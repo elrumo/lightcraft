@@ -19,8 +19,14 @@
 //! partly clipped without the block's green jumping to the clip level, which would read as a green
 //! speckle once reconstructed. [`RawImage::develop_binned`] instead gives such a channel the block's
 //! maximum sample of the colour, so that plain value thresholds see it as clipped.
+//!
+//! A DNG's `OpcodeList3` works on the active area's RGB, so with one the whole active area is binned (in blocks
+//! aligned with the default crop's), the list is applied at that scale and the crop taken after. Its warps and radial vignetting are defined relative to
+//! the image's size, as a gain map over all of it is; a list with anything else defined in full-size pixels (bad
+//! pixels, per-row tables, a gain map over part of the image) is not binned.
 
-use crate::{Normalized, RawData, RawImage, Result, Rgb32f};
+use crate::opcodes::{self, Opcode};
+use crate::{Normalized, RawData, RawImage, Rect, Result, Rgb32f};
 use rayon::prelude::*;
 
 impl RawImage {
@@ -39,8 +45,9 @@ impl RawImage {
     }
 
     /// Like [`RawImage::develop`] at `1/k` of the size (camera RGB, white = 1.0, default crop applied,
-    /// not oriented). `None` when the data cannot be binned ([`RawImage::can_bin`]) or carries an
-    /// `OpcodeList3` (whose operations are defined at full resolution); callers then demosaic.
+    /// not oriented, `OpcodeList3` applied at the binned scale). `None` when the data cannot be binned
+    /// ([`RawImage::can_bin`]) or carries an `OpcodeList3` that can't be applied there (see the module
+    /// documentation); callers then demosaic.
     pub fn develop_binned(&self, k: usize, clip: f32) -> Result<Option<Rgb32f>> {
         Ok(self.bin(k, clip, true)?.map(|(img, _)| img))
     }
@@ -48,6 +55,7 @@ impl RawImage {
     /// Like [`RawImage::develop_binned`], with every channel the mean of its block's samples, and the
     /// clip mask: per output pixel, bits [`crate::highlight::CLIPPED_R`] / `_G` / `_B` for the colours
     /// with a sample at or above `clip` in the block. Hand both to [`crate::highlight::reconstruct_masked`].
+    /// `None` also for an `OpcodeList3` with a warp (the mask would not move with the picture).
     pub fn develop_binned_masked(&self, k: usize, clip: f32) -> Result<Option<(Rgb32f, Vec<u8>)>> {
         self.bin(k, clip, false)
     }
@@ -56,14 +64,37 @@ impl RawImage {
     /// block's maximum sample of the colour instead of the mean.
     fn bin(&self, k: usize, clip: f32, keep_max: bool) -> Result<Option<(Rgb32f, Vec<u8>)>> {
         self.validate()?;
-        if !self.can_bin(k) || !self.opcodes.list3.is_empty() {
+        if !self.can_bin(k) {
             return Ok(None);
         }
-        let Some(cfa) = &self.cfa else { return self.bin_linear(k, clip, keep_max) };
         let a = self.active_area;
         // bin the default crop (relative to the active area) only
         let c = self.crop.clipped(a.width, a.height);
-        let c = if c.width < k || c.height < k { crate::Rect::new(0, 0, a.width, a.height) } else { c };
+        let c = if c.width < k || c.height < k { Rect::new(0, 0, a.width, a.height) } else { c };
+        if self.opcodes.list3.is_empty() {
+            return self.bin_region(k, clip, keep_max, c);
+        }
+        // `OpcodeList3` works on the active area: all of it binned (in blocks that line up with the crop's), the list
+        // applied at that scale, then the crop
+        if !list3_binnable(&self.opcodes.list3, a, !keep_max) {
+            return Ok(None);
+        }
+        let (ox, oy) = (c.x % k, c.y % k);
+        let all = Rect::new(ox, oy, a.width.saturating_sub(ox) / k * k, a.height.saturating_sub(oy) / k * k);
+        let Some((mut img, mask)) = self.bin_region(k, clip, keep_max, all)? else { return Ok(None) };
+        opcodes::apply_list3(&self.opcodes.list3, &mut img);
+        let (x, y, w, h) = ((c.x - ox) / k, (c.y - oy) / k, c.width / k, c.height / k);
+        if w == 0 || h == 0 || x + w > img.width || y + h > img.height {
+            return Ok(None);
+        }
+        let mask = mask.chunks(img.width.max(1)).skip(y).take(h).flat_map(|row| row.iter().skip(x).take(w).copied()).collect();
+        Ok(Some((img.into_crop(x, y, w, h), mask)))
+    }
+
+    /// [`RawImage::bin`] of the part `c` of the active area, `OpcodeList3` left out.
+    fn bin_region(&self, k: usize, clip: f32, keep_max: bool, c: Rect) -> Result<Option<(Rgb32f, Vec<u8>)>> {
+        let Some(cfa) = &self.cfa else { return self.bin_linear(k, clip, keep_max, c) };
+        let a = self.active_area;
         let (bw, bh) = (c.width / k, c.height / k);
         if bw == 0 || bh == 0 {
             return Ok(None);
@@ -133,11 +164,9 @@ impl RawImage {
 }
 
 impl RawImage {
-    /// [`RawImage::bin`] for three-sample-per-pixel data.
-    fn bin_linear(&self, k: usize, clip: f32, keep_max: bool) -> Result<Option<(Rgb32f, Vec<u8>)>> {
+    /// [`RawImage::bin_region`] for three-sample-per-pixel data.
+    fn bin_linear(&self, k: usize, clip: f32, keep_max: bool, c: Rect) -> Result<Option<(Rgb32f, Vec<u8>)>> {
         let a = self.active_area;
-        let c = self.crop.clipped(a.width, a.height);
-        let c = if c.width < k || c.height < k { crate::Rect::new(0, 0, a.width, a.height) } else { c };
         let (bw, bh) = (c.width / k, c.height / k);
         if bw == 0 || bh == 0 {
             return Ok(None);
@@ -193,6 +222,25 @@ impl RawImage {
         });
         Ok(Some((out, mask)))
     }
+}
+
+/// Can `list` (an `OpcodeList3` of an image whose active area is `a`) be applied to that area binned as to the
+/// full-size one: only warps, radial vignetting and gain maps over the whole image (all relative to its size), and
+/// the operations [`opcodes::apply_list3`] skips; no warp with a clip mask (`masked`).
+fn list3_binnable(list: &[Opcode], a: Rect, masked: bool) -> bool {
+    opcodes::applied_ops(list).all(|op| match op {
+        Opcode::WarpRectilinear { .. } | Opcode::WarpRectilinear2 { .. } => !masked,
+        Opcode::FixVignetteRadial { .. } | Opcode::WarpFisheye { .. } | Opcode::TrimBounds { .. } | Opcode::Unknown { .. } => true,
+        Opcode::GainMap { area, .. } => {
+            area.top == 0
+                && area.left == 0
+                && area.bottom as usize >= a.height
+                && area.right as usize >= a.width
+                && area.row_pitch <= 1
+                && area.col_pitch <= 1
+        }
+        _ => false,
+    })
 }
 
 /// Colours of the `k × k` samples of a block whose corner sits at pattern position `(i, j)`
@@ -349,6 +397,61 @@ mod tests {
         let c = raw.develop_binned(3, 2.0).unwrap().unwrap();
         assert_eq!((c.width, c.height), (6, 4));
         assert!((c.get(0, 0)[0] - (0..9).map(|t| (sample(3 + t % 3, 3 + t / 3, 0) as f32 - 100.0) / 4000.0).sum::<f32>() / 9.0).abs() < 1e-5);
+    }
+
+    /// HB-418: an `OpcodeList3` of a warp, radial vignetting and a gain map over the whole image is applied to the
+    /// binned active area (the full-size development a 50 MP mosaic needed for it held 1.3 GB), as the full-size
+    /// development reduced has it; a list with an operation in full-size pixels is not binned, nor a warp with a mask.
+    #[test]
+    fn lens_opcodes_apply_at_the_binned_scale() {
+        use crate::opcodes::Area;
+        use lightcraft_raster::resample::{Filter, resize};
+        let img = Rgb32f::from_fn(96, 64, |x, y| [0.2 + 0.3 * (x as f32 / 96.0), 0.4 - 0.2 * (y as f32 / 64.0), 0.25 + (x + y) as f32 / 1600.0]);
+        let mut raw = raw_from(&mosaic_from_rgb(&img, &Cfa::bayer("RGGB").unwrap()), 0.0, 4095.0);
+        raw.crop = Rect::new(4, 4, 88, 56);
+        let area = |bottom, right| Area { top: 0, left: 0, bottom, right, plane: 0, planes: 3, row_pitch: 1, col_pitch: 1 };
+        let gains = |area| Opcode::GainMap {
+            area,
+            points_v: 2,
+            points_h: 2,
+            spacing: [1.0, 1.0],
+            origin: [0.0, 0.0],
+            map_planes: 1,
+            gains: vec![1.0, 1.2, 0.9, 1.1],
+        };
+        raw.opcodes.list3 = vec![
+            Opcode::WarpRectilinear { planes: vec![[1.0, 0.04, 0.0, 0.0, 0.0, 0.0]], center: [0.5, 0.5] },
+            Opcode::FixVignetteRadial { k: [0.5, 0.0, 0.0, 0.0, 0.0], center: [0.5, 0.5] },
+            gains(area(64, 96)),
+        ];
+        let b = raw.develop_binned(4, 2.0).unwrap().expect("binned with its OpcodeList3");
+        let full = resize(&raw.develop(Method::Bilinear).unwrap(), 22, 14, Filter::Box);
+        assert_eq!((b.width, b.height), (full.width, full.height));
+        let plain = RawImage { opcodes: OpcodeLists::default(), ..raw.clone() }.develop_binned(4, 2.0).unwrap().unwrap();
+        // (the corner's vignetting gain is about 1.4: the opcodes are there)
+        assert!(b.get(0, 0)[1] > 1.3 * plain.get(0, 0)[1], "{:?} vs {:?}", b.get(0, 0), plain.get(0, 0));
+        for y in 1..b.height - 1 {
+            for x in 1..b.width - 1 {
+                for c in 0..3 {
+                    assert!((b.get(x, y)[c] - full.get(x, y)[c]).abs() < 0.01, "({x},{y}) {:?} vs {:?}", b.get(x, y), full.get(x, y));
+                }
+            }
+        }
+        // a crop off the block grid: the blocks start at its corner, as without a list
+        let mut off = RawImage { crop: Rect::new(6, 6, 85, 53), ..raw.clone() };
+        off.opcodes.list3 = vec![Opcode::FixVignetteRadial { k: [0.0; 5], center: [0.5, 0.5] }];
+        let plain = RawImage { opcodes: OpcodeLists::default(), ..off.clone() }.develop_binned(4, 2.0).unwrap().unwrap();
+        assert_eq!(off.develop_binned(4, 2.0).unwrap().unwrap().data, plain.data);
+        // a clip mask doesn't move with a warp; the gains alone keep it
+        assert!(raw.develop_binned_masked(4, 2.0).unwrap().is_none());
+        raw.opcodes.list3.remove(0);
+        let (m, mask) = raw.develop_binned_masked(4, 2.0).unwrap().unwrap();
+        assert_eq!(((m.width, m.height), mask.len()), ((22, 14), 22 * 14));
+        // operations in full-size pixels: a gain map over part of the image, per-row scales
+        for op in [gains(area(32, 96)), Opcode::ScalePerRow { area: area(64, 96), scales: vec![1.0; 64] }] {
+            raw.opcodes.list3 = vec![op];
+            assert!(raw.develop_binned(4, 2.0).unwrap().is_none());
+        }
     }
 
     #[test]
