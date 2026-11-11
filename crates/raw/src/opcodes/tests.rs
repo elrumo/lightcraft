@@ -142,6 +142,49 @@ fn bad_pixels_list_is_capped_inside_a_rectangle() {
     assert_bad_pixels_capped(Opcode::FixBadPixelsList { bayer_phase: 0, points: vec![], rects: vec![[1, 0, 2053, 2048]] });
 }
 
+/// A truncated DNG's missing rows equal `FixBadPixelsConstant`'s constant (0), so its bad list is the whole cap and
+/// each of those 4 M pixels asks whether its 8 neighbours are bad. Asked of a hash set, that took seconds per call
+/// and minutes per preview (the corrupt-file sweep's hangs on truncated Leica and Pixel DNGs). Timed against a walk of
+/// the same neighbours that reads the buffer instead, best of three, so a loaded machine slows both alike: one bit per
+/// pixel costs about as much as the walk, a hash set over ten times as much.
+#[test]
+fn a_whole_image_of_bad_pixels_costs_one_walk_not_a_hash_set() {
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+    let (w, h) = (2048usize, 2048usize);
+    let bad: Vec<(usize, usize)> = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).collect();
+    let walk = |buf: &[f32]| {
+        let mut sum = 0.0f32;
+        for &(x, y) in &bad {
+            for (dx, dy) in [(-1isize, 0isize), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)] {
+                let (nx, ny) = (x as isize + dx, y as isize + dy);
+                if nx >= 0
+                    && ny >= 0
+                    && nx < w as isize
+                    && ny < h as isize
+                    && let Some(v) = buf.get(ny as usize * w + nx as usize)
+                {
+                    sum += v;
+                }
+            }
+        }
+        sum
+    };
+    let (mut fix, mut reference) = (Duration::MAX, Duration::MAX);
+    for _ in 0..3 {
+        let mut buf = vec![0.0f32; w * h];
+        let t = Instant::now();
+        black_box(walk(black_box(&buf)));
+        reference = reference.min(t.elapsed());
+        let t = Instant::now();
+        fix_pixels(black_box(&mut buf), w, h, 1, None, black_box(&bad));
+        fix = fix.min(t.elapsed());
+        assert!(buf.iter().all(|&v| v == 0.0), "every neighbour is bad, so nothing is repaired");
+    }
+    let ratio = fix.as_secs_f64() / reference.as_secs_f64();
+    assert!(fix < reference * 4, "bad-pixel repair took {fix:?}, {ratio:.1} times a walk of the same neighbours ({reference:?})");
+}
+
 #[test]
 fn vignette_and_warp_identity() {
     let mut img = Rgb32f::from_fn(9, 7, |x, y| [x as f32 / 9.0, y as f32 / 7.0, 0.5]);
