@@ -491,6 +491,20 @@ fn work_gate_waits_for_room() {
 }
 
 #[test]
+fn work_gate_keeps_its_peak() {
+    use crate::memory::WorkGate;
+    let g = WorkGate::new(100);
+    let background = g.acquire(60);
+    let (loupe, stand_in) = (g.acquire_urgent(150), g.acquire_urgent(40));
+    drop((background, loupe, stand_in));
+    drop(g.acquire(30));
+    assert_eq!(g.usage().0, 0);
+    // the most held at once and by how many, in all and by interactive work, after they are gone
+    assert_eq!(g.peak(), (250, 3));
+    assert_eq!(g.peak_urgent(), (190, 2));
+}
+
+#[test]
 fn exports_of_at_most_half_the_size_read_a_source_of_about_that_size() {
     let s = crate::Session::with_demo();
     let p = s.catalog.photos().next().unwrap().clone();

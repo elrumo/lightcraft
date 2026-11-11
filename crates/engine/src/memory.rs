@@ -161,58 +161,114 @@ pub fn cache_share(budget: usize) -> usize {
 }
 
 /// A weighted semaphore over bytes of working memory: [`WorkGate::acquire`] waits while other
-/// holders already use the limit (one holder may always proceed, whatever its size).
+/// holders already use the limit (one holder may always proceed, whatever its size). It keeps the most
+/// held at once ([`WorkGate::peak`]), which `host.memory` reports: a memory test sees the decodes that
+/// overlapped between two of its samples.
 pub struct WorkGate {
-    state: Mutex<(usize, usize)>,
+    state: Mutex<GateState>,
     cv: Condvar,
+}
+
+#[derive(Default)]
+struct GateState {
+    /// Bytes held, by everything.
+    held: usize,
+    limit: usize,
+    /// Bytes held by interactive work.
+    urgent: usize,
+    holders: usize,
+    urgent_holders: usize,
+    /// The most held at once and the most holders at once, in all and by interactive work ([`WorkGate::peak`]).
+    peak: usize,
+    peak_holders: usize,
+    peak_urgent: usize,
+    peak_urgent_holders: usize,
+}
+
+impl GateState {
+    fn take(&mut self, bytes: usize, urgent: bool) {
+        self.held = self.held.saturating_add(bytes);
+        if urgent {
+            self.urgent = self.urgent.saturating_add(bytes);
+            self.urgent_holders += 1;
+        }
+        self.holders += 1;
+        self.peak = self.peak.max(self.held);
+        self.peak_holders = self.peak_holders.max(self.holders);
+        self.peak_urgent = self.peak_urgent.max(self.urgent);
+        self.peak_urgent_holders = self.peak_urgent_holders.max(self.urgent_holders);
+    }
 }
 
 /// Bytes held from a [`WorkGate`] until dropped.
 pub struct Permit<'a> {
     gate: &'a WorkGate,
     bytes: usize,
+    urgent: bool,
 }
 
 impl WorkGate {
     pub fn new(limit: usize) -> WorkGate {
-        WorkGate { state: Mutex::new((0, limit)), cv: Condvar::new() }
+        WorkGate { state: Mutex::new(GateState { limit, ..GateState::default() }), cv: Condvar::new() }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, (usize, usize)> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, GateState> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn set_limit(&self, limit: usize) {
-        self.lock().1 = limit;
+        self.lock().limit = limit;
         self.cv.notify_all();
     }
 
     /// Bytes held now and the limit.
     pub fn usage(&self) -> (usize, usize) {
-        *self.lock()
+        let g = self.lock();
+        (g.held, g.limit)
+    }
+
+    /// The most bytes held at once and the most holders at once, since the gate was made.
+    pub fn peak(&self) -> (usize, usize) {
+        let g = self.lock();
+        (g.peak, g.peak_holders)
+    }
+
+    /// [`Self::peak`] of interactive work alone.
+    pub fn peak_urgent(&self) -> (usize, usize) {
+        let g = self.lock();
+        (g.peak_urgent, g.peak_urgent_holders)
     }
 
     /// Hold `bytes`, waiting until they fit (or nothing else is held).
     pub fn acquire(&self, bytes: usize) -> Permit<'_> {
         let mut g = self.lock();
-        while g.0 > 0 && g.0 + bytes > g.1 {
+        while g.held > 0 && g.held.saturating_add(bytes) > g.limit {
             g = self.cv.wait(g).unwrap_or_else(|e| e.into_inner());
         }
-        g.0 += bytes;
-        Permit { gate: self, bytes }
+        g.take(bytes, false);
+        Permit { gate: self, bytes, urgent: false }
     }
 
-    /// Hold `bytes` without waiting (interactive work): counted, so background work waits for it.
+    /// Hold `bytes` without waiting (interactive work): counted, so background work waits for it. (Not
+    /// for other interactive work either: paging in the loupe holds the main decode and the stand-in's
+    /// beside it, and a stand-in that waited for the decode would come after the picture it stands in
+    /// for. Measured with `page_bench`: the two are the gate's whole peak.)
     pub fn acquire_urgent(&self, bytes: usize) -> Permit<'_> {
-        self.lock().0 += bytes;
-        Permit { gate: self, bytes }
+        let mut g = self.lock();
+        g.take(bytes, true);
+        Permit { gate: self, bytes, urgent: true }
     }
 }
 
 impl Drop for Permit<'_> {
     fn drop(&mut self) {
         let mut g = self.gate.lock();
-        g.0 = g.0.saturating_sub(self.bytes);
+        g.held = g.held.saturating_sub(self.bytes);
+        if self.urgent {
+            g.urgent = g.urgent.saturating_sub(self.bytes);
+            g.urgent_holders = g.urgent_holders.saturating_sub(1);
+        }
+        g.holders = g.holders.saturating_sub(1);
         drop(g);
         self.gate.cv.notify_all();
     }
@@ -309,9 +365,14 @@ pub struct MemoryReport {
     /// The memory budget (see [`budget`]) and the engine caches' share of it.
     pub budget: usize,
     pub cache_budget: usize,
-    /// Working memory of decodes / probes in flight and its limit ([`work_gate`]).
+    /// Working memory of decodes / probes in flight and its limit ([`work_gate`]), and the most it
+    /// held at once and by how many decodes at once since launch.
     pub work_bytes: usize,
     pub work_limit: usize,
+    pub work_peak: usize,
+    pub work_peak_holders: usize,
+    pub work_peak_urgent: usize,
+    pub work_peak_urgent_holders: usize,
     /// Live/peak heap when the binary counts allocations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heap: Option<HeapUsage>,
@@ -369,6 +430,10 @@ impl crate::Session {
             cache_budget: self.media.budget(),
             work_bytes: work_gate().usage().0,
             work_limit: work_gate().usage().1,
+            work_peak: work_gate().peak().0,
+            work_peak_holders: work_gate().peak().1,
+            work_peak_urgent: work_gate().peak_urgent().0,
+            work_peak_urgent_holders: work_gate().peak_urgent().1,
             heap: heap_stats(),
         }
     }
