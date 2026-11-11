@@ -68,6 +68,11 @@ pub const MAX_EVENTS: usize = 512;
 const BUSY_TICK: Duration = Duration::from_millis(16);
 /// …and while nothing is (saving, background tasks, sync).
 const IDLE_TICK: Duration = Duration::from_millis(250);
+/// …and once nothing at all has happened for [`SLEEPY_AFTER`] of those in a row (no request, no event, no task running):
+/// every look around wakes the processor, and an app left open spends most of its life here. A request or a wake still
+/// gets through at once, and puts the thread back on [`IDLE_TICK`].
+const SLEEPY_TICK: Duration = Duration::from_secs(1);
+const SLEEPY_AFTER: u32 = 8;
 /// The least time between two `activity` events that only move progress (a row that starts or ends goes at once).
 const ACTIVITY_EVERY: Duration = Duration::from_millis(100);
 /// The least time between two of the loupe's histograms sent with drafts (a slider drag).
@@ -115,17 +120,36 @@ enum Msg {
     Close,
 }
 
+/// How long the engine's thread waits for a message before it looks around: `busy` while renders are in flight, and
+/// `quiet` idle ticks in a row have had nothing in them.
+fn tick_wait(busy: bool, quiet: u32) -> Duration {
+    if busy {
+        BUSY_TICK
+    } else if quiet >= SLEEPY_AFTER {
+        SLEEPY_TICK
+    } else {
+        IDLE_TICK
+    }
+}
+
 /// The event queue: the engine thread pushes, [`Host::poll`] drains.
 #[derive(Default)]
 struct Events {
     queue: Mutex<(VecDeque<Value>, bool)>,
     cv: Condvar,
+    /// Events pushed so far (what tells a tick that said nothing from one that did).
+    pushed: std::sync::atomic::AtomicU64,
 }
 
 impl Events {
     fn push(&self, e: Value) {
         self.queue.lock().unwrap_or_else(PoisonError::into_inner).0.push_back(e);
+        self.pushed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.cv.notify_all();
+    }
+
+    fn pushed(&self) -> u64 {
+        self.pushed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn wake(&self) {
@@ -305,6 +329,8 @@ struct Engine {
     ui_pending: HashMap<u64, (u64, Sender<Event>)>,
     next_ui: u64,
     busy: bool,
+    /// Idle ticks in a row in which nothing happened ([`SLEEPY_TICK`]).
+    quiet: u32,
     /// Self-hosted sync: requests in flight on worker threads ([`crate::sync`]).
     sync: crate::sync::Driver,
     sync_exec: Box<dyn Fn(Task, Sender<Done>)>,
@@ -512,6 +538,7 @@ impl Engine {
             ui_pending: HashMap::new(),
             next_ui: 0,
             busy: false,
+            quiet: 0,
             sync: crate::sync::Driver::default(),
             sync_exec,
             in_front: true,
@@ -546,12 +573,13 @@ impl Engine {
 
     fn run(&mut self, rx: Receiver<Msg>) {
         loop {
-            let wait = if self.busy { BUSY_TICK } else { IDLE_TICK };
+            let wait = tick_wait(self.busy, self.quiet);
             let first = match rx.recv_timeout(wait) {
                 Ok(m) => Some(m),
                 Err(RecvTimeoutError::Timeout) => None,
                 Err(RecvTimeoutError::Disconnected) => break,
             };
+            let (asked, said) = (first.is_some(), self.events.pushed());
             let mut close = false;
             for msg in first.into_iter().chain(std::iter::from_fn(|| rx.try_recv().ok())) {
                 if self.handle(msg) {
@@ -570,6 +598,9 @@ impl Engine {
             if trace::on() && t0.elapsed() >= Duration::from_millis(1) {
                 trace::line(&format!("tick {:.2} ms", t0.elapsed().as_secs_f64() * 1e3));
             }
+            // (quiet: nobody asked, nothing was said, no render, task or face scan is running)
+            let running = self.busy || self.faces_scan.is_some() || self.activity.as_ref().is_some_and(|(tasks, _)| !tasks.is_empty());
+            self.quiet = if asked || running || self.events.pushed() != said { 0 } else { self.quiet.saturating_add(1) };
         }
         self.shutdown();
     }

@@ -1598,3 +1598,20 @@ fn a_chosen_library_that_isnt_there_is_an_error_at_start() {
     drop(h);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// An engine nothing happens to looks around less often (each look wakes the processor: an app left open spends most of
+// its life here), a busy one never does, and a sleepy one still answers (a request ends its wait: no tick is waited for)
+#[test]
+fn an_engine_left_alone_sleeps_longer_and_still_answers() {
+    assert_eq!(tick_wait(true, u32::MAX), BUSY_TICK);
+    assert_eq!(tick_wait(false, 0), IDLE_TICK);
+    assert_eq!(tick_wait(false, SLEEPY_AFTER - 1), IDLE_TICK);
+    assert_eq!(tick_wait(false, SLEEPY_AFTER), SLEEPY_TICK);
+    let h = demo();
+    // (the demo's thumbnails and first state settle, then SLEEPY_AFTER idle ticks pass)
+    std::thread::sleep(IDLE_TICK * (SLEEPY_AFTER + 8));
+    for id in 1..=2 {
+        let r = h.call(&req(id, "host.state", json!({})), Duration::from_secs(30));
+        assert!(r["error"].is_null() && r["result"].is_object(), "{r}");
+    }
+}
