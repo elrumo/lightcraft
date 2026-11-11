@@ -623,13 +623,21 @@ impl crate::Session {
         self.catalog.photo(id).and_then(|p| p.embedded_lens.as_deref().copied()).or_else(|| self.source_info(id).lens)
     }
 
-    /// Makes sure a decode of photo `id` is cached, so [`Self::embedded_lens`] sees the lens data the decoder finds (the vignetting
-    /// a CR3's camera corrected in its JPEG is measured from the pixels, so a raw not yet decoded has none). A source the media
-    /// cache holds already has it; otherwise the photo is decoded at thumbnail size. Changes no edit.
+    /// Makes sure what a decode of photo `id` finds is known, so [`Self::embedded_lens`] sees the lens data the decoder finds (the
+    /// vignetting a CR3's camera corrected in its JPEG is measured from the pixels, so a raw not yet decoded has none). A source
+    /// the media cache holds already has it, and so do the facts kept of one since dropped for memory
+    /// ([`MediaCache::release_sources`]); otherwise the photo is decoded at thumbnail size. Changes no edit.
     pub fn ensure_decoded(&mut self, id: PhotoId) -> Result<(), String> {
         let known = self.media.cached_source(id).is_some_and(|s| s.info.is_some() || s.from_proxy);
         if !known {
+            if self.media.kept_facts(id).is_some() {
+                return Ok(());
+            }
             self.source_now(id, SourceLevel::Thumb)?;
+        }
+        if !self.media.facts_kept(id) {
+            let (level, colour) = (self.scene_level_of(id), self.scene_colour_of(id));
+            self.media.keep_facts(id, level, colour);
         }
         Ok(())
     }
@@ -640,10 +648,7 @@ impl crate::Session {
     /// size, which fits the same look as any larger level does. `None` for a photo with no such curve (a rendered file, a
     /// raw nothing was fitted to). A decode records what every render does (the as-shot white balance): no edit.
     pub fn camera_tone_of(&mut self, id: PhotoId) -> Result<Option<lightcraft_pipeline::tone::CameraTone>, String> {
-        let known = self.media.cached_source(id).is_some_and(|s| s.info.is_some() || s.from_proxy);
-        if !known {
-            self.source_now(id, SourceLevel::Thumb)?;
-        }
+        self.ensure_decoded(id)?;
         Ok(self.source_info(id).camera_tone)
     }
 
@@ -677,13 +682,15 @@ impl crate::Session {
 
     /// The luminance quantiles ([`crate::scene_level`]) of the scene-linear picture photo `id`'s file develops to, for a frontend that
     /// develops raws with another decoder and has to bring its light to this one's scale before the camera tone curve acts on it. Read
-    /// from a cached source decoded from the file (call [`Self::camera_tone_of`] first so one is cached); `None` for a source that is
-    /// a smart preview or a rendered file, and for a picture too small to say. Changes nothing.
+    /// from a cached source decoded from the file, else from the facts kept of one ([`MediaCache::release_sources`]; call
+    /// [`Self::camera_tone_of`] first so one is known); `None` for a source that is a smart preview or a rendered file, and for a
+    /// picture too small to say. Changes nothing.
     pub fn scene_level_of(&self, id: PhotoId) -> Option<[f32; 9]> {
         self.media
             .cached_source(id)
             .filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy)
             .and_then(|s| crate::scene_level::luminance_quantiles(&s.image))
+            .or_else(|| self.media.kept_facts(id).and_then(|k| k.level))
     }
 
     /// The mean scene-linear colour of a coarse grid of the same picture as [`Self::scene_level_of`] ([`crate::scene_level::colour_grid`]),
@@ -693,6 +700,7 @@ impl crate::Session {
             .cached_source(id)
             .filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy)
             .and_then(|s| crate::scene_level::colour_grid(&s.image))
+            .or_else(|| self.media.kept_facts(id).and_then(|k| k.colour.clone()))
     }
 
     /// Borrow source mattes for selection notices without constructing render facts each frame.

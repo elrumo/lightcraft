@@ -78,6 +78,7 @@ impl Default for MediaCache {
             preview_gen: std::collections::HashMap::new(),
             thumb_seq: 0,
             denoise: DenoiseIndex::default(),
+            kept: Lru::new(KEPT_FACTS_BYTES),
         }
     }
 }
@@ -85,6 +86,22 @@ impl Default for MediaCache {
 /// Memory for rendered previews out of the cache share.
 fn rendered_budget(share: usize) -> usize {
     RENDERED_MEM_BYTES.min(share / 4)
+}
+
+/// Bytes the kept facts ([`KeptFacts`]) may take: mostly mattes and local tone tables (an iPhone ProRAW's are a few MB),
+/// the rest a few KB a photo.
+const KEPT_FACTS_BYTES: usize = 32 << 20;
+
+/// What a decode of a photo found besides its pixels (the decoder's facts or a smart preview's stored ones, and the scene
+/// level and colour of its picture), kept when the pixels go so that asking for them again decodes nothing. Forgotten
+/// with the photo's sources when its file changes ([`MediaCache::forget`]) or the library does.
+#[derive(Clone)]
+pub(super) struct KeptFacts {
+    /// The facts, on an empty picture.
+    pub source: DecodedSource,
+    /// [`crate::Session::scene_level_of`] and [`crate::Session::scene_colour_of`] of the decoded picture.
+    pub level: Option<[f32; 9]>,
+    pub colour: Option<Vec<Option<[f32; 3]>>>,
 }
 
 impl MediaCache {
@@ -109,12 +126,53 @@ impl MediaCache {
         }
     }
 
-    /// Forget every decoded source (photo ids changed meaning, e.g. another library was opened).
+    /// Forget every decoded source and what the decodes found (photo ids changed meaning, e.g. another library was opened).
     pub fn clear_sources(&mut self) {
+        self.release_sources();
+        self.kept = Lru::new(KEPT_FACTS_BYTES);
+    }
+
+    /// Drop every decoded picture (memory is short), keeping what the decodes of recently asked photos found (their
+    /// facts, kept when a frontend asked for them): asked again, they answer without a decode.
+    pub fn release_sources(&mut self) {
         self.settings_hashes = SettingsHashes::default();
         self.thumbs = Lru::new(THUMB_SOURCE_BYTES.min(self.budget));
         self.previews.clear();
         self.full.clear();
+    }
+
+    /// Keep the facts of `id`'s cached source past [`Self::release_sources`], with its picture's scene `level` and
+    /// `colour`. Nothing to keep for a source with no facts; facts already kept for the same kind of source (decoded or
+    /// a smart preview) stay as they are.
+    pub(super) fn keep_facts(&mut self, id: PhotoId, level: Option<[f32; 9]>, colour: Option<Vec<Option<[f32; 3]>>>) {
+        let Some(s) = self.cached_source(id).filter(|s| s.info.is_some() || s.from_proxy) else { return };
+        // (no gain map: only an HDR render of the pixels reads it, and it is the size of a picture)
+        let info = s.info.clone().map(|i| SourceInfo { hdr_gain: None, ..i });
+        let source = DecodedSource {
+            info,
+            camera_tone: s.camera_tone,
+            camera_match: s.camera_match.clone(),
+            local_tone: s.local_tone.clone(),
+            from_proxy: s.from_proxy,
+            reduced: s.reduced,
+            ..DecodedSource::new(Arc::new(Rgb32f::new(0, 0)), None)
+        };
+        let colour_bytes = colour.as_ref().map_or(0, |c| c.len() * std::mem::size_of::<Option<[f32; 3]>>());
+        let cost = source.bytes().saturating_add(colour_bytes);
+        if cost <= KEPT_FACTS_BYTES {
+            self.kept.insert(id, KeptFacts { source, level, colour }, cost);
+        }
+    }
+
+    /// Whether `id`'s cached source has its facts kept already (marking them used).
+    pub(super) fn facts_kept(&mut self, id: PhotoId) -> bool {
+        let Some(proxy) = self.cached_source(id).map(|s| s.from_proxy) else { return false };
+        self.kept.get(&id).is_some_and(|k| k.source.from_proxy == proxy)
+    }
+
+    /// The facts kept for `id` ([`Self::keep_facts`]).
+    pub(super) fn kept_facts(&self, id: PhotoId) -> Option<&KeptFacts> {
+        self.kept.peek(&id)
     }
 
     /// How many full-resolution originals to keep at once (at least one). Compare and Reference
@@ -224,9 +282,9 @@ impl MediaCache {
         cached().find(|s| s.info.is_some()).or_else(|| cached().next())
     }
 
-    /// The decoder's cached facts, else `header` (with a smart preview's stored camera tone curve).
+    /// The decoder's cached facts, else the kept ones, else `header` (with a smart preview's stored camera tone curve).
     pub(super) fn source_facts(&self, id: PhotoId, header: SourceInfo) -> SourceInfo {
-        match self.cached_source(id) {
+        match self.cached_source(id).or_else(|| self.kept.peek(&id).map(|k| &k.source)) {
             Some(s) => s.info_or(header),
             None => header,
         }
@@ -261,8 +319,9 @@ impl MediaCache {
         self.enforce_budget();
     }
 
-    /// Forget a photo's decoded sources (e.g. after its file changed).
+    /// Forget a photo's decoded sources and what they found (e.g. after its file changed).
     pub fn forget(&mut self, id: PhotoId) {
+        self.kept.remove(&id);
         self.thumbs.remove(&id);
         self.previews.retain(|e| e.0 != id);
         self.full.retain(|e| e.0 != id);

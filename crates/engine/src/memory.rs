@@ -449,7 +449,9 @@ impl crate::Session {
     /// some back): forget the decoded sources (decoded again when next shown), the raws' kept colour
     /// fits, the GPU's pooled buffers and the photo-understanding models nothing is using (search, text, faces,
     /// sensitive content: loaded again when next needed), and hand freed pages back to the system. Returns the bytes
-    /// freed from the caches. Rendered previews stay: they are small and redrawing the grid without them is slow.
+    /// freed from the caches. Rendered previews stay: they are small and redrawing the grid without them is slow. So do
+    /// the facts the decodes of recently asked photos found (camera tone, scene level, lens, mattes: a few MB at most): a
+    /// frontend that asks for them again gets them without decoding the raw again.
     pub fn release_memory(&mut self) -> usize {
         let held = self.memory_report().engine_bytes;
         if self.vision_unload_idle(web_time::Duration::ZERO) {
@@ -457,7 +459,7 @@ impl crate::Session {
         }
         // (the AI Remove networks: loaded again from their files at the next stroke)
         self.unload_erasers();
-        self.media.clear_sources();
+        self.media.release_sources();
         crate::camera_preview::forget_fits();
         lightcraft_gpu::trim_pool(0);
         release();
@@ -513,5 +515,67 @@ mod tests {
         let after = s.memory_report();
         assert_eq!(after.thumb_sources.bytes + after.preview_sources.bytes + after.full_source.bytes, 0, "{after:?}");
         assert!(s.render_now(ids[0], 256, 256).is_ok());
+    }
+
+    /// What a decode found of a photo (camera tone, scene level and colour, lens, local tone, camera look, mattes) outlives a
+    /// memory warning and a return to the grid (both drop the decoded sources): a frontend that asks for it again on the next
+    /// open decodes nothing (card 417: each such decode of a CR3 took 1.1 to 1.4 s and 130 to 190 MB). A changed file, or
+    /// another library, is decoded again.
+    #[test]
+    fn releasing_memory_keeps_what_the_decodes_found() {
+        use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+        use lightcraft_pipeline::{SourceInfo, tone::CameraTone};
+        use serde_json::json;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut s = crate::Session::new();
+        let id = PhotoId(1);
+        let photo = Photo::new(id, Source::File { path: "/photos/a.CR3".into() }, "a.CR3", "CR3", 6000, 4000, "");
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(photo) }).unwrap();
+        let tone = CameraTone::new(std::array::from_fn(|i| {
+            let x = 0.004 * 1.17f32.powi(i as i32);
+            [x, x / (1.0 + x)]
+        }))
+        .unwrap();
+        let info = SourceInfo { raw: true, as_shot_temp: 4800.0, camera_tone: Some(tone), ..Default::default() };
+        let mut picture = lightcraft_raster::Rgb32f::new(96, 64);
+        for (i, p) in picture.data.iter_mut().enumerate() {
+            let v = (i % 97) as f32 / 97.0;
+            *p = [v, v * 0.8, v * 0.6];
+        }
+        let decodes = Arc::new(AtomicUsize::new(0));
+        let n = decodes.clone();
+        s.media.file_loader = Some(Arc::new(move |_, _, _| {
+            n.fetch_add(1, Ordering::SeqCst);
+            Ok((picture.clone(), info.clone()))
+        }));
+        // what the Apple renderer asks on every open
+        let open = |s: &mut crate::Session| -> Vec<serde_json::Value> {
+            let p = json!({"id": id.0});
+            let mut out: Vec<_> =
+                ["photo.cameraTone", "photo.localTone", "photo.cameraMatch", "photo.mattes"].iter().map(|c| s.execute(c, &p).unwrap()).collect();
+            out.push(s.execute("photo.lensProfile", &json!({"id": id.0, "decode": true})).unwrap());
+            out
+        };
+        let first = open(&mut s);
+        assert_eq!(decodes.load(Ordering::SeqCst), 1, "one decode answers them all");
+        assert!(first[0]["tone"].is_object() && first[0]["level"].is_array() && first[0]["colour"].is_object(), "{}", first[0]);
+
+        s.release_memory();
+        let after = s.memory_report();
+        assert_eq!(after.thumb_sources.bytes + after.preview_sources.bytes + after.full_source.bytes, 0, "{after:?}");
+        assert_eq!(open(&mut s), first, "the same answers");
+        assert_eq!(s.source_info(id).as_shot_temp, 4800.0, "and the same facts for the develop commands");
+        assert_eq!(decodes.load(Ordering::SeqCst), 1, "nothing decoded again");
+
+        // the file changed: read again
+        s.media.forget(id);
+        open(&mut s);
+        assert_eq!(decodes.load(Ordering::SeqCst), 2);
+        // another library: its photo 1 is another photo
+        s.media.clear_sources();
+        open(&mut s);
+        assert_eq!(decodes.load(Ordering::SeqCst), 3);
     }
 }

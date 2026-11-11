@@ -109,6 +109,9 @@ pub struct MediaCache {
     preview_gen: std::collections::HashMap<PhotoId, u64>,
     /// Which photos have a cached denoised picture, and how to read it.
     pub denoise: DenoiseIndex,
+    /// What the decodes of recently asked photos found besides their pixels, kept when the pixels go
+    /// ([`MediaCache::release_sources`]).
+    kept: Lru<PhotoId, cache::KeptFacts>,
 }
 
 #[cfg(test)]
