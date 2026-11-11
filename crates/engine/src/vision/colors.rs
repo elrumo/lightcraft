@@ -2,7 +2,7 @@
 //!
 //! No model and no download: [`lightcraft_vision::colors::extract`] reads a small copy of the neutral rendering that
 //! indexing makes anyway, so it runs in the same pass as the description (`describe_photos`), and for photos that are
-//! already described (or when no description model is here) in a silent stage of its own ([`color_photos`]) that
+//! already described (or when no description model is here) in a stage of its own ([`color_photos`], a part of the bar) that
 //! `vision.index` always includes. The palettes are derived data in the library's `search/` folder
 //! (`colors-<engine>.bin`), never in the catalog. A server keeps its own (`apps/lightcraft-server/src/colors.rs`) and
 //! `library.search` with the server as source asks it; this device's index is for local searches.
@@ -77,8 +77,10 @@ pub(super) fn keep(shared: &Shared, spec: &ColorSpec, key: Key, img: &lightcraft
     }
 }
 
-/// Works out the palettes of `work`'s photos, one at a time. Silent: it neither counts in the run's totals nor fails it.
+/// Works out the palettes of `work`'s photos, one at a time. Each is a step of the run's bar (`IndexJob::colored`), but a
+/// photo it can't render doesn't fail the run.
 pub(super) fn color_photos(shared: &Arc<Shared>, spec: &ColorSpec, work: Vec<(Key, crate::media::RenderJob)>, job: &IndexJob) {
+    job.coloring.store(!work.is_empty(), Ordering::Relaxed);
     for (key, render) in work {
         if job.cancel.load(Ordering::Relaxed) {
             break;
@@ -87,6 +89,8 @@ pub(super) fn color_photos(shared: &Arc<Shared>, spec: &ColorSpec, work: Vec<(Ke
             Ok(r) => keep(shared, spec, key, &r.image),
             Err(e) => log::debug!("colours: can't render a photo: {e}"),
         }
+        job.colored.fetch_add(1, Ordering::Relaxed);
+        job.done.fetch_add(1, Ordering::Relaxed);
         shared.touch();
     }
 }

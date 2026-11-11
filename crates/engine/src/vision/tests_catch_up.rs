@@ -297,3 +297,50 @@ fn short_of_memory_the_idle_models_are_unloaded_and_busy_ones_kept() {
     s.vision_index(None, true).unwrap();
     assert_eq!(s.vision.indexed(), s.vision_photo_count());
 }
+
+/// Holds its first photo until let go, so the test can look at the run's bar between the colours and the checking.
+struct Held {
+    reached: std::sync::mpsc::Sender<()>,
+    go: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl Classifier for Held {
+    fn engine(&self) -> &str {
+        "test-held"
+    }
+    fn score(&self, _: &Rgba8) -> Result<f32, Error> {
+        if self.reached.send(()).is_ok() {
+            let _ = self.go.lock().unwrap().recv_timeout(Duration::from_secs(60));
+        }
+        Ok(0.05)
+    }
+}
+
+/// HB-331: a phone with no description model works out the colours of every photo before its first other model looks
+/// at one. That pass is part of the bar: it moved from 0 while it ran (it sat at "0 / 1070" for the whole pass, which
+/// looked stuck), and what the run says at its end counts photos, not colour steps.
+#[test]
+fn the_colours_worked_out_before_the_other_models_move_the_bar() {
+    let mut s = Session::with_demo();
+    s.vision.background = true;
+    let photos = s.vision_photo_count();
+    assert!(photos > 0);
+    let (reached, at_first) = std::sync::mpsc::channel();
+    let (let_go, go) = std::sync::mpsc::channel();
+    s.vision.set_classifier(Arc::new(Held { reached, go: std::sync::Mutex::new(go) }));
+    s.vision.sensitive = true;
+    assert!(s.vision_catch_up(), "the classifier is ready and no photo is checked");
+    let job = s.vision.job().cloned().unwrap();
+    assert_eq!(job.total, 2 * photos, "each photo's colours and its check");
+    at_first.recv_timeout(Duration::from_secs(60)).expect("the classifier gets to the photos");
+    // every colour is worked out and the first photo is being checked
+    assert_eq!(job.done.load(Ordering::Relaxed), photos, "the colour pass moved the bar");
+    assert_eq!(job.phase(), "checking");
+    s.vision_poll();
+    assert_eq!(index_rows(&s)[0].done, photos as u64, "and the row's");
+    drop(let_go);
+    wait_until_finished(&s);
+    let polled = s.vision_poll();
+    let said = format!("Indexed {photos} photos for search.");
+    assert!(polled.messages.contains(&said), "{polled:?}");
+}

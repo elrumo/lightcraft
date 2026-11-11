@@ -58,7 +58,8 @@ fn a_colour_word_finds_the_photos_that_are_mostly_that_colour_with_no_model() {
     assert!(s.execute("library.search", &json!({"q": "red", "wait": true})).is_err());
     // no model here, yet indexing works the colours out
     let run = s.execute("vision.index", &json!({"wait": true})).unwrap();
-    assert_eq!(run["total"], 0, "no model's work in it: {run}");
+    // (each photo's colours are a step of the run's bar, HB-331; no model's work in it)
+    assert_eq!(run["total"], 5, "{run}");
     assert_eq!(s.vision_colors_len(), 5);
 
     let r = s.execute("library.search", &json!({"q": "red", "wait": true})).unwrap();
@@ -131,7 +132,8 @@ fn photos_already_described_get_their_colours_without_being_described_again() {
     s.vision.set_embedder(Arc::new(FakeEmbedder));
     assert_eq!(s.vision_colors_len(), 0);
     let again = s.execute("vision.index", &json!({"wait": true})).unwrap();
-    assert_eq!(again["total"], 0, "nothing is described again: {again}");
+    // (nothing is described again: the five steps are the colours alone)
+    assert_eq!(again["total"], 5, "{again}");
     assert_eq!(s.vision_colors_len(), 5);
     assert_eq!(s.vision.indexed(), 5);
     assert!(s.execute("library.search", &json!({"q": "red", "wait": true})).is_ok());
@@ -147,7 +149,8 @@ fn processing_again_forgets_only_the_colours() {
     let before = std::fs::metadata(&file).unwrap().len();
     let r = s.execute("vision.reprocess", &json!({"part": "colors", "scope": "device"})).unwrap();
     assert_eq!((r["part"].clone(), r["device"].clone(), r["indexing"].clone()), (json!("colors"), json!(true), json!(true)), "{r}");
-    assert_eq!(s.vision.job().map(|j| j.total), Some(0), "no photo is described again");
+    // (no photo is described again: the five steps are the colours alone)
+    assert_eq!(s.vision.job().map(|j| j.total), Some(5));
     assert_eq!(std::fs::metadata(&file).unwrap().len(), before, "made again");
     assert_eq!(found(&s.execute("library.search", &json!({"q": "red", "wait": true})).unwrap())[0], red);
     assert!(s.execute("vision.reprocess", &json!({"part": "colours", "scope": "device"})).is_err());

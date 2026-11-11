@@ -138,8 +138,9 @@ fn search_needs_a_query_an_index_and_a_model() {
         let e = plain.execute("library.search", &json!({"q": "red", "wait": true})).unwrap_err().to_string();
         // (no model here and no server to ask: it says where search could come from)
         assert!(e.contains("server") && e.contains("isn't signed in"), "{e}");
-        // (no model to index with, but the colours of the photos need none: that is all this run does)
-        assert_eq!(plain.execute("vision.index", &json!({"wait": true})).unwrap()["total"], 0);
+        // (no model to index with, but the colours of the photos need none: that is all this run does, a step each)
+        let photos = plain.vision_photo_count();
+        assert_eq!(plain.execute("vision.index", &json!({"wait": true})).unwrap()["total"], photos);
         assert!(plain.vision_colors_len() > 0);
         assert!(plain.execute("library.search", &json!({"q": "red", "wait": true})).is_ok(), "a colour needs no model");
         let e = plain.execute("library.search", &json!({"q": "red car", "wait": true})).unwrap_err().to_string();

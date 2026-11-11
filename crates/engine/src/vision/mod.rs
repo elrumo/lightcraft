@@ -249,12 +249,19 @@ const CATCH_UP_EVERY: Duration = Duration::from_secs(5);
 /// An indexing run.
 #[derive(Debug, Default)]
 pub struct IndexJob {
+    /// The units of work: each photo described, read, scanned or checked, and each photo whose colours alone are
+    /// worked out (those are part of the bar: a phone with no description model works out a whole library's colours
+    /// before it reads a word, and a bar that left them out sat at 0 for all of it, HB-331).
     pub total: usize,
     pub done: AtomicUsize,
     pub failed: AtomicUsize,
+    /// Of `done`, the photos whose colours alone were worked out (not "indexed" in what the run says at its end).
+    pub colored: AtomicUsize,
     /// Set to stop the run after the photo in hand (also by its activity row's ✕).
     pub cancel: Arc<AtomicBool>,
     pub finished: AtomicBool,
+    /// The run is working out the colours of the photos it didn't describe (after describing).
+    pub coloring: AtomicBool,
     /// The run is reading the text in photos (after describing them).
     pub reading: AtomicBool,
     /// The run is looking for faces in photos (after reading them).
@@ -269,7 +276,8 @@ impl IndexJob {
         self.error.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    /// What the run is doing now: `describing`, `reading` (text), `finding` (faces) or `checking` (sensitive content).
+    /// What the run is doing now: `describing`, `coloring`, `reading` (text), `finding` (faces) or `checking`
+    /// (sensitive content).
     pub fn phase(&self) -> &'static str {
         if self.checking.load(Ordering::Relaxed) {
             "checking"
@@ -277,6 +285,8 @@ impl IndexJob {
             "finding"
         } else if self.reading.load(Ordering::Relaxed) {
             "reading"
+        } else if self.coloring.load(Ordering::Relaxed) {
+            "coloring"
         } else {
             "describing"
         }
@@ -1722,7 +1732,7 @@ impl Session {
                 }
             }
         }
-        let job = Arc::new(IndexJob { total: embed.len() + read.len() + scan.len() + check.len() + failed, ..Default::default() });
+        let job = Arc::new(IndexJob { total: embed.len() + read.len() + scan.len() + check.len() + color.len() + failed, ..Default::default() });
         job.done.store(failed, Ordering::Relaxed);
         job.failed.store(failed, Ordering::Relaxed);
         self.vision.job = Some(job.clone());
@@ -1939,6 +1949,7 @@ impl Session {
                 task.detail(match job.phase() {
                     "reading" => "PP-OCRv6",
                     "finding" => "YuNet + SFace",
+                    "coloring" => "Colours",
                     "checking" => "NSFW Image Detection",
                     _ => "SigLIP 2",
                 });
@@ -1951,13 +1962,18 @@ impl Session {
             && !self.vision.job_reported
         {
             self.vision.job_reported = true;
-            let (done, failed) = (job.done.load(Ordering::Relaxed), job.failed.load(Ordering::Relaxed));
-            out.messages.push(match job.error() {
-                Some(e) => format!("Indexing photos for search stopped: {e}"),
-                None if job.cancel.load(Ordering::Relaxed) => format!("Indexing photos for search was cancelled after {done} photos."),
-                None if failed > 0 => format!("Indexed {} photos for search; {failed} could not be read.", done.saturating_sub(failed)),
-                None => format!("Indexed {done} photos for search."),
-            });
+            // (photos: the colours alone of a photo are a step of the bar, not a photo indexed)
+            let (done, failed) =
+                (job.done.load(Ordering::Relaxed).saturating_sub(job.colored.load(Ordering::Relaxed)), job.failed.load(Ordering::Relaxed));
+            let said = match job.error() {
+                Some(e) => Some(format!("Indexing photos for search stopped: {e}")),
+                None if job.cancel.load(Ordering::Relaxed) => Some(format!("Indexing photos for search was cancelled after {done} photos.")),
+                None if failed > 0 => Some(format!("Indexed {} photos for search; {failed} could not be read.", done.saturating_sub(failed))),
+                // (a run that only worked out colours has nothing to say)
+                None if done == 0 => None,
+                None => Some(format!("Indexed {done} photos for search.")),
+            };
+            out.messages.extend(said);
         }
         out.messages.append(&mut self.vision.messages);
         self.vision_server_poll(&mut out);
