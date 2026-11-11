@@ -321,7 +321,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Catalog Statistics",
             [],
             None,
-            "{counts?: bool} — with counts only photos, picks, rejects, deleted and albums: the sidebar's, read after every change (edited, byDate and keywords take seconds in a big library)",
+            "{counts?: bool, byDate?: bool} — with counts only photos, picks, rejects, deleted and albums: the sidebar's, read after every change (edited and keywords take seconds in a big library); with byDate those and byDate, a sidebar's dates, without edited and keywords",
             always,
             |s, p| {
                 let sensitive = s.sensitive_photos().len();
@@ -337,7 +337,12 @@ pub fn specs() -> Vec<CommandSpec> {
                     "hidden": s.hidden.unlocked().then(|| s.catalog.photos().filter(|p| p.in_library() && p.hidden).count()),
                     "albums": s.catalog.albums().filter(|a| !a.folder).count(),
                 });
-                if p.get("counts").and_then(Value::as_bool) != Some(true) {
+                let flag = |name: &str| p.get(name).and_then(Value::as_bool) == Some(true);
+                // (the dates are one pass over the capture days; `edited` compares every photo's settings with its
+                // import defaults and `keywords` gathers every keyword, which is where the seconds go)
+                if flag("byDate") {
+                    stats["byDate"] = json!(s.catalog.date_groups());
+                } else if !flag("counts") {
                     stats["edited"] = json!(all.iter().filter(|p| p.is_edited()).count());
                     stats["byDate"] = json!(s.catalog.date_groups());
                     stats["keywords"] = json!(s.catalog.keywords());

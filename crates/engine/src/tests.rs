@@ -158,6 +158,10 @@ fn demo_library_loads() {
     let counts = s.execute("catalog.stats", &json!({"counts": true})).unwrap();
     assert_eq!((&counts["photos"], &counts["picks"], &counts["deleted"]), (&st["photos"], &st["picks"], &st["deleted"]));
     assert!(counts["byDate"].is_null() && counts["edited"].is_null() && counts["keywords"].is_null());
+    // a sidebar's dates: the same dates, still without the two that take the seconds
+    let dates = s.execute("catalog.stats", &json!({"byDate": true})).unwrap();
+    assert_eq!((&dates["byDate"], &dates["photos"]), (&st["byDate"], &st["photos"]));
+    assert!(dates["edited"].is_null() && dates["keywords"].is_null());
     let albums = s.execute("albums.list", &json!({})).unwrap();
     assert!(albums.as_array().unwrap().iter().any(|a| a["folder"] == true));
 }
