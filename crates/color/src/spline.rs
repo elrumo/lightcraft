@@ -1,4 +1,4 @@
-//! Curves for tone mapping: monotone cubic Hermite splines (Fritsch–Carlson) and lookup tables.
+//! Curves for tone mapping: cubic Hermite splines (monotone, Fritsch–Carlson, or natural) and lookup tables.
 //!
 //! Monotone interpolation never overshoots between control points, so a point curve can't invert
 //! tones by accident (a common complaint with natural cubic splines).
@@ -49,6 +49,37 @@ impl MonotoneCurve {
             }
         }
         MonotoneCurve { xs, ys, ms }
+    }
+
+    /// A tone curve's point curve as Lightroom draws it: the natural cubic spline through the points (second
+    /// derivative 0 at both ends), which can overshoot between points where the monotone curve can't. Fitted to
+    /// Lightroom's exports with a point curve against the same photo without one, the spline matches to about 1/255
+    /// and [`MonotoneCurve::new`] is flatter (`docs/lightroom-preset-fit.md`). Same normalization as `new`.
+    pub fn natural(points: &[(f64, f64)]) -> MonotoneCurve {
+        let mut c = MonotoneCurve::new(points);
+        let (xs, ys) = (&c.xs, &c.ys);
+        let n = xs.len();
+        if n < 3 {
+            return c;
+        }
+        let h: Vec<f64> = xs.windows(2).map(|w| w[1] - w[0]).collect();
+        let d: Vec<f64> = (0..n - 1).map(|i| (ys[i + 1] - ys[i]) / h[i]).collect();
+        // second derivatives at the inner points (tridiagonal, Thomas algorithm); 0 at the ends
+        let mut m2 = vec![0.0; n];
+        let (mut cp, mut dp) = (vec![0.0; n], vec![0.0; n]);
+        for i in 1..n - 1 {
+            let (a, b, c, r) = (h[i - 1], 2.0 * (h[i - 1] + h[i]), h[i], 6.0 * (d[i] - d[i - 1]));
+            let den = b - a * cp[i - 1];
+            cp[i] = c / den;
+            dp[i] = (r - a * dp[i - 1]) / den;
+        }
+        for i in (1..n - 1).rev() {
+            m2[i] = dp[i] - cp[i] * m2[i + 1];
+        }
+        let mut ms: Vec<f64> = (0..n - 1).map(|i| d[i] - h[i] * (2.0 * m2[i] + m2[i + 1]) / 6.0).collect();
+        ms.push(d[n - 2] + h[n - 2] * (m2[n - 2] + 2.0 * m2[n - 1]) / 6.0);
+        c.ms = ms;
+        c
     }
 
     pub fn identity() -> MonotoneCurve {
@@ -120,6 +151,24 @@ impl Lut1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn natural_spline_is_the_cubic_through_the_points() {
+        let pts = [(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)];
+        let c = MonotoneCurve::natural(&pts);
+        for (x, y) in pts {
+            assert!((c.eval(x) - y).abs() < 1e-12);
+        }
+        // natural end conditions: the second derivative vanishes at both ends
+        let e = 1e-4;
+        let y2 = |x: f64| (c.eval(x + e) - 2.0 * c.eval(x) + c.eval(x - e)) / (e * e);
+        assert!(y2(e).abs() < 0.05 && y2(1.0 - e).abs() < 0.05, "{} {}", y2(e), y2(1.0 - e));
+        // continuous second derivative at the inner point
+        assert!((y2(0.5 - 2.0 * e) - y2(0.5 + 2.0 * e)).abs() < 0.05);
+        // two points stay a straight line
+        let line = MonotoneCurve::natural(&[(0.0, 0.1), (1.0, 0.9)]);
+        assert!((line.eval(0.5) - 0.5).abs() < 1e-12);
+    }
 
     #[test]
     fn identity_curve() {

@@ -59,18 +59,42 @@ fn curve_luts(c: &ToneCurve) -> Option<[Lut1; 3]> {
     const N: usize = 1024;
     let mut base = crate::curve::ParametricCurve::new(c).to_lut();
     let to_pts = |p: &[Point]| p.iter().map(|q| (q.x, q.y)).collect::<Vec<_>>();
+    // a natural spline can overshoot between points; Lightroom clips the curve to the graph
+    let spline = |pts: &[(f64, f64)]| {
+        let mut l = MonotoneCurve::natural(pts).to_lut(N);
+        l.v.iter_mut().for_each(|v| *v = v.clamp(0.0, 1.0));
+        l
+    };
     if master {
-        base = MonotoneCurve::new(&to_pts(&c.master)).to_lut(N).compose(&base);
+        base = spline(&to_pts(&c.master)).compose(&base);
     }
     let per = [&c.red, &c.green, &c.blue];
     Some(std::array::from_fn(|i| {
         if chans.get(i).copied().unwrap_or(false) {
             let pts = per.get(i).map(|&p| to_pts(p)).unwrap_or_default();
-            MonotoneCurve::new(&pts).to_lut(N).compose(&base)
+            spline(&pts).compose(&base)
         } else {
             base.clone()
         }
     }))
+}
+
+/// The space the tone curves work in, as Lightroom's do: ProPhoto's primaries under the sRGB curve. Fitted to
+/// Lightroom's exports of six cameras with red / green / blue curves against the same photos without them, curves on
+/// sRGB's own primaries gave a third of Lightroom's change in chroma (mean ΔE 9.0 against 3.4 here;
+/// `docs/lightroom-preset-fit.md`). The matrices take the working space (linear Rec. 2020) there and back; the GPU
+/// kernel gets the same numbers (`gpu/src/ctx.rs`).
+/// The third value is that space's luminance weights, which Refine Saturation pivots on there.
+pub fn curve_space() -> ([[f32; 3]; 3], [[f32; 3]; 3], [f32; 3]) {
+    let m = lightcraft_color::REC2020.to_space(&lightcraft_color::PROPHOTO);
+    let back = m.inverse().unwrap_or(Mat3::IDENTITY);
+    (m.to_f32(), back.to_f32(), lightcraft_color::PROPHOTO.luma().map(|v| v as f32))
+}
+
+/// Curve `l` at an encoded `x`; above white it continues with slope 1 from its end point.
+#[inline]
+fn curve_past_white(l: &Lut1, x: f32) -> f32 {
+    if x > 1.0 { l.eval(1.0) + (x - 1.0) } else { l.eval(x) }
 }
 
 /// A LUT profile's table is made for sRGB. For an output with other primaries (Display P3, a monitor's own, Adobe RGB,
@@ -603,6 +627,10 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
     let srgb = srgb_lut();
     let peak = fp.peak;
     let hdr = peak > 1.0;
+    // SDR: the curves work in their own wide space before the gamut map; HDR keeps them on the encoded output
+    let (to_wide, from_wide, wide_luma) = curve_space();
+    let wide_curves = if hdr { None } else { curves.as_ref() };
+    let out_curves = if hdr { curves.as_ref() } else { None };
     let mut out = vec![T::default(); w * h];
     for_rows(&mut out, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {
@@ -802,6 +830,15 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 }
             }
 
+            if let Some(l) = wide_curves {
+                let e0 = mul3(&to_wide, d).map3(|v| linear_to_srgb(v.max(0.0)));
+                let mut e = [curve_past_white(&l[0], e0[0]), curve_past_white(&l[1], e0[1]), curve_past_white(&l[2], e0[2])];
+                if fp.refine_sat < 1.0 {
+                    e = refine_saturation_in(e0, e, fp.refine_sat, wide_luma);
+                }
+                d = mul3(&from_wide, e.map3(srgb_to_linear));
+            }
+
             // --- gamut map to the output space (desaturate towards luminance until in range);
             // soft proofing maps into the proof space first and shows that in the output space
             let mut warn = None;
@@ -846,14 +883,10 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             } else {
                 r.map3(|v| encode_srgb(srgb, v))
             };
-            if let Some(l) = curves {
+            if let Some(l) = out_curves {
                 let e0 = e;
-                e = if hdr {
-                    // above SDR white the curves continue with slope 1 from their end point
-                    std::array::from_fn(|k| if e[k] > 1.0 { l[k].eval(1.0) + (e[k] - 1.0) } else { l[k].eval(e[k]) })
-                } else {
-                    [l[0].eval(e[0]), l[1].eval(e[1]), l[2].eval(e[2])]
-                };
+                // above SDR white the curves continue with slope 1 from their end point
+                e = std::array::from_fn(|k| l.get(k).map_or(e[k], |l| curve_past_white(l, e[k])));
                 if fp.refine_sat < 1.0 {
                     e = refine_saturation(e0, e, fp.refine_sat);
                 }
@@ -933,7 +966,13 @@ pub fn defringe_weight(c: [f32; 3], det: f32) -> f32 {
 /// `(s_curve / s_before)^refine`, so 1 keeps the curve, 0 restores the original saturation.
 #[inline]
 pub fn refine_saturation(before: [f32; 3], after: [f32; 3], refine: f32) -> [f32; 3] {
-    let luma = |e: [f32; 3]| 0.2126 * e[0] + 0.7152 * e[1] + 0.0722 * e[2];
+    refine_saturation_in(before, after, refine, [0.2126, 0.7152, 0.0722])
+}
+
+/// [`refine_saturation`] in a space whose luminance weights are `w` (the curves' wide space, [`curve_space`]).
+#[inline]
+pub fn refine_saturation_in(before: [f32; 3], after: [f32; 3], refine: f32, w: [f32; 3]) -> [f32; 3] {
+    let luma = |e: [f32; 3]| w[0] * e[0] + w[1] * e[1] + w[2] * e[2];
     let chroma = |e: [f32; 3]| e[0].max(e[1]).max(e[2]) - e[0].min(e[1]).min(e[2]);
     let (y0, y1) = (luma(before), luma(after));
     let s0 = chroma(before) / y0.max(1e-4);

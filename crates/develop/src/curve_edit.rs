@@ -46,7 +46,7 @@ pub fn grab(points: &[Point], x: f64, y: f64, reach: f64) -> Grab {
     if let Some(index) = nearest(&pts, x, y, reach) {
         return Grab { points: pts, index, added: false };
     }
-    let on_curve = MonotoneCurve::new(&pts.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>()).eval(x).clamp(0.0, 1.0);
+    let on_curve = MonotoneCurve::natural(&pts.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>()).eval(x).clamp(0.0, 1.0);
     let y = if (on_curve - y).abs() <= reach { on_curve } else { y };
     let mut v = pts;
     let index = v.iter().position(|p| p.x > x).unwrap_or(v.len());

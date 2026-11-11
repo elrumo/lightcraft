@@ -334,7 +334,11 @@ fn calibrate(c0: vec3<f32>) -> vec3<f32> {
 
 // `finish::refine_saturation`.
 fn refine_saturation(before: vec3<f32>, after: vec3<f32>, refine: f32) -> vec3<f32> {
-    let lw = vec3<f32>(0.2126, 0.7152, 0.0722);
+    return refine_saturation_in(before, after, refine, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// `finish::refine_saturation_in`: pivoting on the luminance weights `lw`.
+fn refine_saturation_in(before: vec3<f32>, after: vec3<f32>, refine: f32, lw: vec3<f32>) -> vec3<f32> {
     let y0 = dot(before, lw);
     let y1 = dot(after, lw);
     let s0 = (max(before.x, max(before.y, before.z)) - min(before.x, min(before.y, before.z))) / max(y0, 1e-4);
@@ -727,6 +731,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
+    // SDR: the curves work in their own wide space before the gamut map (`finish::curve_space`)
+    if (pu(F_CURVES) != 0u && !hdr) {
+        let w = mul3(CURVE_TO_WIDE, d);
+        let e0 = vec3<f32>(srgb_exact(max(w.x, 0.0)), srgb_exact(max(w.y, 0.0)), srgb_exact(max(w.z, 0.0)));
+        var e = vec3<f32>(curve(0u, e0.x), curve(1u, e0.y), curve(2u, e0.z));
+        let top = vec3<f32>(curve(0u, 1.0), curve(1u, 1.0), curve(2u, 1.0)) + e0 - 1.0;
+        e = select(e, top, e0 > vec3<f32>(1.0));
+        let rs = pf(F_REFINE_SAT);
+        if (rs < 1.0) {
+            e = refine_saturation_in(e0, e, rs, CURVE_LUMA);
+        }
+        d = mul3(CURVE_FROM_WIDE, vec3<f32>(srgb_decode(e.x), srgb_decode(e.y), srgb_decode(e.z)));
+    }
+
     // --- gamut map to the output space (desaturate towards luminance until in range);
     // soft proofing maps into the proof space first and shows that in the output space
     // (warn: 0 none, 1 destination gamut, 2 display gamut)
@@ -756,14 +774,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // takes the exact curve (`finish_with`'s `exact`)
         e = vec3<f32>(srgb_exact(max(r.x, 0.0)), srgb_exact(max(r.y, 0.0)), srgb_exact(max(r.z, 0.0)));
     }
-    if (pu(F_CURVES) != 0u) {
+    if (pu(F_CURVES) != 0u && hdr) {
         let e0 = e;
         e = vec3<f32>(curve(0u, e.x), curve(1u, e.y), curve(2u, e.z));
-        if (hdr) {
-            // above SDR white the curves continue with slope 1 from their end point
-            let top = vec3<f32>(curve(0u, 1.0), curve(1u, 1.0), curve(2u, 1.0)) + e0 - 1.0;
-            e = select(e, top, e0 > vec3<f32>(1.0));
-        }
+        // above SDR white the curves continue with slope 1 from their end point
+        let top = vec3<f32>(curve(0u, 1.0), curve(1u, 1.0), curve(2u, 1.0)) + e0 - 1.0;
+        e = select(e, top, e0 > vec3<f32>(1.0));
         let rs = pf(F_REFINE_SAT);
         if (rs < 1.0) {
             e = refine_saturation(e0, e, rs);

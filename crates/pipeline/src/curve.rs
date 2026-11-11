@@ -1,8 +1,8 @@
 //! The parametric tone curve model shared by the pipeline renderer and the UI curve editor.
 //!
 //! Lightroom-style tone curve parametric model: four regions (shadows, darks, lights, highlights)
-//! separated by three split points. Each region contributes a cosine-windowed bump, summed and
-//! forced monotone.
+//! separated by three split points. Each region contributes a bump fitted to Lightroom's response, summed
+//! and forced monotone.
 
 use lightcraft_color::spline::Lut1;
 use lightcraft_develop::ToneCurve;
@@ -13,8 +13,51 @@ pub const PARAM_AMOUNTS: [&str; 4] = ["curve.shadows", "curve.darks", "curve.lig
 /// Resolution the parametric curve is sampled at, matching the renderer's LUT.
 pub const PARAM_LUT: usize = 1024;
 
-/// The parametric (region) curve of a [`ToneCurve`]: the four region amounts, each a cosine bump
-/// over its window between two splits, summed and then forced monotone.
+/// Each region's response, fitted to Lightroom's exports of two raws (Sony ILCE-6000, Nikon D70) with one slider at a
+/// time (±50, ±100) and with moved splits (`docs/lightroom-preset-fit.md`): a smoothstep bump rising from `a` to its peak
+/// at `p` and falling to `b`, positions on the split grid (0 = black, 1..3 = the splits, 4 = white, fractions between),
+/// lifting `gain` per unit of slider (separate for raising and lowering) times `(width / 0.5)^k`. Lights reaches far
+/// below its own window and grows with it; Darks lifts from black.
+/// `(a, p, b, k, gain_up, gain_down)`, shadows first.
+const REGION_SHAPES: [(f32, f32, f32, f32, f32, f32); 4] = [
+    (0.0, 0.5, 2.125, 0.0, 0.112, 0.135),
+    (0.0, 0.875, 4.0, 0.0, 0.212, 0.258),
+    (0.625, 3.25, 4.0, 1.5, 0.152, 0.110),
+    (2.0, 3.375, 4.0, 0.0, 0.149, 0.137),
+];
+
+fn smooth01(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// How far region `region` at slider `amount` lifts the curve at `x` (0 for a zero amount).
+fn region_lift(splits: &[f64; 3], region: usize, amount: f64, x: f64) -> f64 {
+    let Some(&(ua, up, ub, k, gain_up, gain_down)) = REGION_SHAPES.get(region) else { return 0.0 };
+    if amount == 0.0 || !amount.is_finite() {
+        return 0.0;
+    }
+    let grid = [0.0, splits[0], splits[1], splits[2], 1.0];
+    // a position on the split grid: 0 = black, 1..3 = the splits, 4 = white
+    let at = |u: f32| {
+        let i = (u.max(0.0) as usize).min(3);
+        let (lo, hi) = (grid.get(i).copied().unwrap_or(0.0), grid.get(i + 1).copied().unwrap_or(1.0));
+        lo + (u as f64 - i as f64) * (hi - lo)
+    };
+    let (a, p, b) = (at(ua), at(up), at(ub));
+    let rise = if x > a && x <= p && p > a {
+        smooth01((x - a) / (p - a))
+    } else if x > p && x < b && b > p {
+        smooth01((b - x) / (b - p))
+    } else {
+        0.0
+    };
+    let gain = if amount > 0.0 { gain_up } else { gain_down } as f64 * ((b - a) / 0.5).max(0.0).powf(k as f64);
+    amount / 100.0 * gain * rise
+}
+
+/// The parametric (region) curve of a [`ToneCurve`]: the four region amounts, each a bump placed on
+/// the splits ([`REGION_SHAPES`]), summed and then forced monotone.
 ///
 /// This is the renderer's curve, not an approximation of it — both `curve_luts` in the pipeline
 /// and the curve editor in the UI use this struct so they can never disagree.
@@ -37,24 +80,12 @@ impl ParametricCurve {
         let (a0, a1, a2, a3) = (clean_amt(c.shadows), clean_amt(c.darks), clean_amt(c.lights), clean_amt(c.highlights));
         let splits = [s0 as f64, s1 as f64, s2 as f64];
         let amounts = [a0, a1, a2, a3];
-        let regions = [(0.0, s0, a0), (s0, s1, a1), (s1, s2, a2), (s2, 1.0, a3)];
         let mut lut = [0.0_f32; PARAM_LUT];
         let mut prev = 0.0_f32;
         for (i, entry) in lut.iter_mut().enumerate() {
-            let x = i as f32 / (PARAM_LUT - 1) as f32;
-            let mut d = 0.0_f32;
-            for (a, b, amt) in regions {
-                if amt == 0.0 {
-                    continue;
-                }
-                let (ctr, half) = ((a + b) / 2.0, (b - a) * 0.75 + 0.05);
-                if half <= f32::EPSILON {
-                    continue;
-                }
-                let t = ((x - ctr) / half).clamp(-1.0, 1.0);
-                d += (amt / 100.0) as f32 * 0.22 * (0.5 + 0.5 * (t * std::f32::consts::PI).cos());
-            }
-            let y = (x + d * 4.0 * x * (1.0 - x)).clamp(0.0, 1.0);
+            let x = i as f64 / (PARAM_LUT - 1) as f64;
+            let d: f64 = amounts.iter().enumerate().map(|(r, &amt)| region_lift(&splits, r, amt, x)).sum();
+            let y = (x + d).clamp(0.0, 1.0) as f32;
             prev = prev.max(y);
             *entry = prev;
         }
@@ -97,23 +128,6 @@ impl ParametricCurve {
         }
     }
 
-    /// The half-width of region `region`'s own bump, as fraction of the graph.
-    pub fn region_half(&self, region: usize) -> f64 {
-        let (a, b) = self.region_window(region);
-        (b - a) * 0.75 + 0.05
-    }
-
-    /// The cosine window region `region` applies at `x` (1 at its centre, 0 at the window edges).
-    pub fn region_window_at(&self, region: usize, x: f64) -> f64 {
-        let ctr = self.region_x(region);
-        let half = self.region_half(region);
-        if half <= f64::EPSILON {
-            return 0.0;
-        }
-        let t = ((x - ctr) / half).clamp(-1.0, 1.0);
-        0.5 + 0.5 * (t * std::f64::consts::PI).cos()
-    }
-
     /// The region that owns graph position `x`: the one whose own window contains it. The four
     /// windows tile 0..1, so this is always defined and a drag anywhere on the curve moves exactly
     /// one slider — the region under the pointer.
@@ -133,12 +147,12 @@ impl ParametricCurve {
         }
     }
 
-    /// How much output level region `region`'s bump gains at `x` per unit of its slider: the bump is
-    /// linear in the amount, so this is a constant for a given `x`. A drag converts the pointer's
-    /// vertical motion into a slider change through it.
+    /// How much output level region `region`'s bump gains at `x` per unit of its slider, on the side
+    /// (raising or lowering) its slider is on now. A drag converts the pointer's vertical motion into a
+    /// slider change through it.
     pub fn level_per_unit(&self, region: usize, x: f64) -> f64 {
-        let x = x.clamp(0.0, 1.0);
-        0.22 / 100.0 * self.region_window_at(region, x) * 4.0 * x * (1.0 - x)
+        let side = if self.amounts.get(region).copied().unwrap_or(0.0) < 0.0 { -1.0 } else { 1.0 };
+        region_lift(&self.splits, region, side, x.clamp(0.0, 1.0)) * side
     }
 
     /// The baseline level at `x` from the identity diagonal plus the contributions of all regions
@@ -146,36 +160,28 @@ impl ParametricCurve {
     /// regions fixed.
     pub fn base_level_without(&self, region: usize, x: f64) -> f64 {
         let x = x.clamp(0.0, 1.0);
-        let mut d = 0.0;
-        for i in 0..4 {
-            if i == region {
-                continue;
-            }
-            let amt = self.amounts.get(i).copied().unwrap_or(0.0);
-            if amt == 0.0 {
-                continue;
-            }
-            d += (amt / 100.0) * 0.22 * self.region_window_at(i, x);
-        }
-        x + d * 4.0 * x * (1.0 - x)
+        let others: f64 = (0..4).filter(|&i| i != region).map(|i| region_lift(&self.splits, i, self.amounts.get(i).copied().unwrap_or(0.0), x)).sum();
+        x + others
     }
 
     /// The curve level region `region` sits at when its slider holds `amount`, at graph position `x`,
     /// holding the other regions fixed at their current settings.
     pub fn handle_level_at(&self, region: usize, amount: f64, x: f64) -> f64 {
-        (self.base_level_without(region, x) + amount * self.level_per_unit(region, x)).clamp(0.0, 1.0)
+        (self.base_level_without(region, x) + region_lift(&self.splits, region, amount, x.clamp(0.0, 1.0))).clamp(0.0, 1.0)
     }
 
     /// The amount that puts region `region`'s curve at `level` at `x`, with the other three
     /// regions held fixed — the inverse of [`Self::handle_level_at`]. A level the region cannot
     /// reach saturates rather than jumping.
     pub fn amount_at_level(&self, region: usize, level: f64, x: f64) -> f64 {
-        let per_unit = self.level_per_unit(region, x);
+        let x = x.clamp(0.0, 1.0);
+        let delta = level.clamp(0.0, 1.0) - self.base_level_without(region, x);
+        let side = if delta < 0.0 { -1.0 } else { 1.0 };
+        let per_unit = region_lift(&self.splits, region, side, x) * side;
         if per_unit.abs() <= f64::EPSILON {
             return self.amounts.get(region).copied().unwrap_or(0.0);
         }
-        let base = self.base_level_without(region, x);
-        ((level.clamp(0.0, 1.0) - base) / per_unit).clamp(-100.0, 100.0).round()
+        (delta / per_unit).clamp(-100.0, 100.0).round()
     }
 
     /// The graph position split `split` (0..=2) sits at, 0..1.
@@ -213,8 +219,8 @@ mod tests {
         let model = ParametricCurve::new(&c);
         assert_eq!(model.region_at(0.51), 2, "x=0.51 is inside the Lights region");
         let level = model.at(0.51);
-        assert!((level - 0.5619).abs() < 0.001, "extracted model at 0.51 is ~0.5619: {level}");
-        // With other regions held fixed, inverting at level ~0.5619 must return Lights = 0, NOT 45!
+        assert!(level > 0.53, "Darks +60 lifts x = 0.51: {level}");
+        // With other regions held fixed, inverting at that level must return Lights = 0, not Darks' lift read as Lights
         let lights = model.amount_at_level(2, level, 0.51);
         assert_eq!(lights, 0.0, "zero vertical delta preserves Lights=0: {lights}");
     }
@@ -229,10 +235,35 @@ mod tests {
             for x in [centre, centre + (upper - centre) * 0.5] {
                 for amount in [-100.0, -40.0, 0.0, 30.0, 100.0] {
                     let level = model.handle_level_at(region, amount, x);
+                    // (a level pinned to the bottom or top of the graph can't tell how far past it the slider went)
+                    if level <= 0.0 || level >= 1.0 {
+                        continue;
+                    }
                     let back = model.amount_at_level(region, level, x);
                     assert!((back - amount).abs() <= 1.0, "region {region} at {x}: {amount} -> {level} -> {back}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn regions_lift_where_lightroom_s_do() {
+        // Lightroom's exports of an ILCE-6000 and a D70 raw with one slider moved, read as a curve on 0..255 (lift at x)
+        let lift = |c: ToneCurve, x: f64| (ParametricCurve::new(&c).at(x) - x) * 255.0;
+        let cases = [
+            (ToneCurve { shadows: 50.0, ..Default::default() }, 0.15, 14.0),
+            (ToneCurve { shadows: -100.0, ..Default::default() }, 0.18, -37.0),
+            (ToneCurve { darks: 50.0, ..Default::default() }, 0.40, 23.0),
+            (ToneCurve { darks: -50.0, ..Default::default() }, 0.20, -31.0),
+            (ToneCurve { lights: 50.0, ..Default::default() }, 0.70, 35.5),
+            (ToneCurve { lights: 50.0, split_shadows: 15.0, split_mid: 35.0, split_highlights: 60.0, ..Default::default() }, 0.65, 50.0),
+            (ToneCurve { highlights: 50.0, ..Default::default() }, 0.82, 20.0),
+            (ToneCurve { highlights: 50.0, ..Default::default() }, 0.40, -1.0),
+            (ToneCurve { highlights: 100.0, ..Default::default() }, 0.80, 37.0),
+        ];
+        for (c, x, want) in cases {
+            let got = lift(c.clone(), x);
+            assert!((got - want).abs() < 6.0, "{c:?} at {x}: {got:.1} against Lightroom's {want}");
         }
     }
 }

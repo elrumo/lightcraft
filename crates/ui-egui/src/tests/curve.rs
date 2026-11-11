@@ -561,12 +561,17 @@ fn a_curve_level_and_its_amount_are_inverses() {
         for x in [centre, centre + (upper - centre) * 0.5] {
             for amount in [-100.0, -40.0, 0.0, 30.0, 100.0] {
                 let level = model.handle_level_at(region, amount, x);
+                // (a level pinned to the bottom or top of the graph can't tell how far past it the slider went)
+                if level <= 0.0 || level >= 1.0 {
+                    continue;
+                }
                 let back = model.amount_at_level(region, level, x);
                 assert!((back - amount).abs() <= 1.0, "region {region} at {x}: {amount} → {level} → {back}");
             }
         }
     }
-    let centre = model.region_x(3);
+    // (low in the Highlights' reach, where white and black are both past what it can do)
+    let centre = 0.6;
     assert_eq!(model.amount_at_level(3, 1.0, centre), 100.0, "a level above the region's reach saturates high");
     assert_eq!(model.amount_at_level(3, 0.0, centre), -100.0, "and one below saturates low");
 }

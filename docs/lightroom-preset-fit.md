@@ -1,6 +1,6 @@
 # Matching a Lightroom preset: the Phoenix 200 "Orange You Glad" test
 
-> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-06 · **Change:** Highlights above 0 superseded by the single-slider fit
+> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-11 · **Change:** tone curves fitted to Lightroom's exports of six cameras
 
 One preset, one raw, one Lightroom export. It measures where LightCraft's render of a whole look departs from
 Lightroom's, and what was changed because of it. It is **one scene** (a Sony ILCE-6000, E PZ 16-50mm at 16 mm, sunset
@@ -77,6 +77,38 @@ needs a Lightroom export of this raw with nothing applied to separate it from th
 Each of these is mirrored in the GPU kernel (the constants reach WGSL from the CPU values, `gpu/src/ctx.rs`) and
 `crates/gpu/tests/it/equivalence.rs` renders them on both.
 
+## The tone curves, across six cameras (2026-11-11)
+
+To make sure the curve work is about Lightroom and not one photo, Lightroom exported raws of six bodies (Sony
+ILCE-6000 and ILCE-6700, Canon EOS RP, Fujifilm X-A5, Nikon D70, Olympus E-1; private clones in the LightBites app's
+`test-raws/light/`, each a one-change XMP sidecar next to a copy of the raw) with Adobe Standard and nothing else, then
+with only red / green / blue curves, only a master point curve, only Dehaze, only the light sliders, only a parametric
+curve or only a point curve; and two of them (ILCE-6000, D70) with one parametric region at ±50 / ±100, with moved
+splits, and with three point-curve shapes. Each change is measured as its *effect* (the export with it minus the export
+without it, against the same difference in our renders), so each camera's starting colour drops out.
+
+- **Curve space** (`finish::curve_space`). Lightroom's channel curves change chroma two to three times as much as ours
+  did on sRGB's own primaries (+7 to +12 against +1 to +5). Applying all the curves on ProPhoto's primaries under the
+  sRGB curve, before the gamut map, matches on every camera (ProPhoto with gamma 2.2 fits as well). SDR only: an HDR
+  render keeps its curves on the encoded output.
+- **Point curves** (`MonotoneCurve::natural`). Lightroom's point curve is the natural cubic spline through the points
+  (within about 1/255); the monotone spline we used is flatter between points. The curve is clipped to 0..1.
+- **Parametric regions** (`curve::REGION_SHAPES`). Lightroom's regions reach well past their own windows and are
+  stronger: Lights +50 lifts +36/255 at 0.70 from 0.2 to 1, Darks lifts from black (+10 at 0.02), and moving the splits
+  widens Lights' reach and strength (+51 at 0.65 with splits 15 / 35 / 60). Each region is now a smoothstep bump placed on
+  the split grid with its own gains for raising and lowering, fitted to both raws together (2 to 4/255 rms).
+
+| Effect error, mean ΔE (ours against Lightroom) | Before | After |
+|---|---:|---:|
+| Red / green / blue curves, six cameras | 9.0 | 2.6 |
+| Master point curve, six cameras | 4.0 | 2.3 |
+| Parametric probes (S / D / L / H, splits, point shapes), two raws | 4.1 | 2.2 |
+| Light sliders, parametric, point curve, six cameras | 2.5 | 1.4 |
+| The Phoenix 200 preset, whole render | 11.5 | 10.1 |
+
+Dehaze is untouched (negative Dehaze still lifts the darks more than Lightroom's on the D70: +6.5 L* against +3.9).
+The D70's Highlights probes moved from 0.6 to 0.8 and its S-curve point probe from 2.9 to 3.8; nothing else got worse.
+
 ## What is left (ΔE about 8 here)
 
 Measured on the render of the shipped build against the export, by lightness and by hue:
@@ -106,6 +138,10 @@ Measured on the render of the shipped build against the export, by lightness and
   preset cannot separate, so it was not applied.
 
 ## Reproducing
+
+The six-camera comparison is a scratch script (render each sidecar with `lightcraft-cli render`, box-downsample both to
+150 px wide, compare the effects inside 0.8 of the half diagonal); the references are the private exports named above.
+
 
 The fit's scratch tooling (env-var tunables in the pipeline, a coordinate-descent driver) is not kept: the final
 constants are the ones named above. To re-measure, render with the CLI as in *Method* and compare the two JPEGs at

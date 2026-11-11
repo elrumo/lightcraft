@@ -111,7 +111,7 @@ fn edit_point(s: &mut Session, p: &Value) -> Result<Value> {
     let samples: Vec<f64> = if n < 2 {
         Vec::new()
     } else {
-        let curve = lightcraft_color::spline::MonotoneCurve::new(&next.iter().map(|q| (q.x, q.y)).collect::<Vec<_>>());
+        let curve = lightcraft_color::spline::MonotoneCurve::natural(&next.iter().map(|q| (q.x, q.y)).collect::<Vec<_>>());
         (0..n).map(|i| curve.eval(i as f64 / (n - 1) as f64).clamp(0.0, 1.0)).collect()
     };
     Ok(json!({

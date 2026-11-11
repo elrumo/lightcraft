@@ -116,7 +116,7 @@ fn targeted(s: &mut Session, p: &Value) -> Result<Value> {
                 if pts.is_empty() {
                     *pts = vec![Point::new(0.0, 0.0), Point::new(1.0, 1.0)];
                 }
-                let curve = MonotoneCurve::new(&pts.iter().map(|q| (q.x, q.y)).collect::<Vec<_>>());
+                let curve = MonotoneCurve::natural(&pts.iter().map(|q| (q.x, q.y)).collect::<Vec<_>>());
                 let dy = delta / 255.0;
                 match pts.iter().position(|q| (q.x - v).abs() < 0.03) {
                     Some(i) => pts[i].y = (pts[i].y + dy).clamp(0.0, 1.0),
@@ -235,7 +235,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     _ => return Err(bad(c, "channel must be master|red|green|blue")),
                 };
                 let pts: Vec<(f64, f64)> = if pts.len() < 2 { vec![(0.0, 0.0), (1.0, 1.0)] } else { pts.iter().map(|q| (q.x, q.y)).collect() };
-                let curve = MonotoneCurve::new(&pts);
+                let curve = MonotoneCurve::natural(&pts);
                 let samples: Vec<f64> = (0..n).map(|i| curve.eval(i as f64 / (n - 1) as f64).clamp(0.0, 1.0)).collect();
                 Ok(json!({"points": pts.iter().map(|(x, y)| [*x, *y]).collect::<Vec<_>>(), "samples": samples}))
             }
