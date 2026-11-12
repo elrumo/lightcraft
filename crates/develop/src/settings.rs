@@ -1783,6 +1783,10 @@ pub struct Colorize {
     pub enabled: bool,
     /// How much of the model's colour is laid over the photo, 0–100.
     pub amount: f64,
+    /// Neutral Highlights, 0–100: how far the model's colour is held back toward white (100: whites stay white).
+    pub highlights: f64,
+    /// Neutral Shadows, 0–100: the same toward black.
+    pub shadows: f64,
     /// The model that made [`Self::map`] (`ddcolor-tiny`, `ddcolor-large`), for the panel to say.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub model: String,
@@ -1793,11 +1797,16 @@ pub struct Colorize {
 
 impl Default for Colorize {
     fn default() -> Self {
-        Self { enabled: false, amount: 100.0, model: String::new(), map: None }
+        Self { enabled: false, amount: 100.0, highlights: Self::HIGHLIGHTS, shadows: Self::SHADOWS, model: String::new(), map: None }
     }
 }
 
 impl Colorize {
+    /// The default Neutral Highlights and Neutral Shadows: chosen on 126 photos made grey and coloured again
+    /// (`docs/colorize.md`), where they take the tint off whites and blacks without thinning the colour of the rest.
+    pub const HIGHLIGHTS: f64 = 70.0;
+    pub const SHADOWS: f64 = 40.0;
+
     /// Whether these are the default settings (off, no colours stored).
     pub fn is_default(&self) -> bool {
         *self == Colorize::default()

@@ -70,19 +70,26 @@ impl DepthSource {
 /// `src` (scene-linear Rec. 2020) as the model wants it: display-encoded sRGB, exposed so its
 /// median sits at mid-grey, highlights rolled off, at most [`INPUT_EDGE`] pixels long.
 fn model_input(src: &Rgb32f) -> Rgb32f {
-    model_input_at(src, INPUT_EDGE)
+    model_input_at(src, INPUT_EDGE, true)
 }
 
-/// [`model_input`] at most `edge` pixels long (Colorize's model takes 512).
-pub(crate) fn model_input_at(src: &Rgb32f, edge: usize) -> Rgb32f {
+/// [`model_input`] at most `edge` pixels long (Colorize's model takes 512). `expose`: the exposure to mid-grey and the
+/// highlight roll-off, which a scene-linear raw needs; without it the picture is only encoded, as a developed photo (a
+/// JPEG, a scan) should reach a model trained on such pictures: Colorize's colours are closer to a photo's own that way
+/// (CIEDE2000 10.8 against 10.0 over 126 photos made grey, `docs/colorize.md`).
+pub(crate) fn model_input_at(src: &Rgb32f, edge: usize, expose: bool) -> Rgb32f {
     let (w, h) = (src.width.max(1), src.height.max(1));
     let k = (edge.max(1) as f64 / w.max(h) as f64).min(1.0);
     let small = resize(src, ((w as f64 * k).round() as usize).max(1), ((h as f64 * k).round() as usize).max(1), Filter::Box);
     let lum = |c: &[f32; 3]| 0.2627 * c[0] + 0.6780 * c[1] + 0.0593 * c[2];
-    let mut l: Vec<f32> = small.data.iter().map(lum).filter(|v| v.is_finite()).collect();
-    l.sort_by(f32::total_cmp);
-    let median = l.get(l.len() / 2).copied().unwrap_or(0.18).max(1e-4);
-    let gain = (0.18 / median).clamp(0.05, 64.0);
+    let gain = if expose {
+        let mut l: Vec<f32> = small.data.iter().map(lum).filter(|v| v.is_finite()).collect();
+        l.sort_by(f32::total_cmp);
+        let median = l.get(l.len() / 2).copied().unwrap_or(0.18).max(1e-4);
+        (0.18 / median).clamp(0.05, 64.0)
+    } else {
+        1.0
+    };
     let m = lightcraft_color::REC2020.to_space(&lightcraft_color::SRGB).to_f32();
     let mut out = small;
     for p in out.data.iter_mut() {
@@ -90,7 +97,8 @@ pub(crate) fn model_input_at(src: &Rgb32f, edge: usize) -> Rgb32f {
         *p = std::array::from_fn(|r| {
             let x = (m[r][0] * c[0] + m[r][1] * c[1] + m[r][2] * c[2]).max(0.0);
             // (an extended Reinhard roll-off, white at 4)
-            lightcraft_color::transfer::linear_to_srgb((x * (1.0 + x / 16.0) / (1.0 + x)).min(1.0))
+            let x = if expose { x * (1.0 + x / 16.0) / (1.0 + x) } else { x };
+            lightcraft_color::transfer::linear_to_srgb(x.min(1.0))
         });
     }
     out
@@ -429,5 +437,11 @@ mod tests {
         assert!(i.data.iter().flatten().all(|v| (0.0..=1.0).contains(v)), "0..1, NaN gone");
         // brighter stays brighter
         assert!(i.data[i.width - 1][0] > i.data[0][0]);
+        // a developed photo is only encoded (Colorize): a dark grey stays dark, where the exposed input lifts it to mid-grey
+        let dark = Rgb32f::from_fn(64, 48, |_, _| [0.02; 3]);
+        let (plain, exposed) = (model_input_at(&dark, 32, false), model_input_at(&dark, 32, true));
+        assert_eq!((plain.width, plain.height), (32, 24));
+        assert!((plain.data[0][1] - lightcraft_color::transfer::linear_to_srgb(0.02)).abs() < 1e-3, "{:?}", plain.data[0]);
+        assert!(exposed.data[0][1] > 0.4, "{:?}", exposed.data[0]);
     }
 }

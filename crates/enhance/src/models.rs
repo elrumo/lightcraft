@@ -301,7 +301,9 @@ pub const DDCOLOR_TINY: ModelSpec = ddcolor_spec!(
     (315_694, "293f90f7c3a0a989f74edd33481927534e0e89ba4d4c750ea44128c442689d57"),
     (120_975_324, "e4c0a38e521c8bd5b502ea390417e9cccc42dcbeb8e7d4b3c7586283ab67585b")
 );
-/// DDColor (`ddcolor_modelscope`, ConvNeXt-L, the authors' default): Colorize on computers and large tablets.
+/// DDColor (`ddcolor_modelscope`, ConvNeXt-L, the authors' default): Colorize's first large model. It paints more colour
+/// than photographs have, so [`DDCOLOR_ARTISTIC`] took its place; kept so a copy already downloaded stays listed and can
+/// be deleted.
 pub const DDCOLOR_LARGE: ModelSpec = ddcolor_spec!(
     "ddcolor-large",
     "DDColor",
@@ -311,15 +313,40 @@ pub const DDCOLOR_LARGE: ModelSpec = ddcolor_spec!(
     (466_715_420, "7ea119f08792d701ce5ead961c4105d4bd6c52dc45aed1cc34a58a11defba8bd")
 );
 
+/// DDColor Artistic (`ddcolor_artistic`, ConvNeXt-L; apache-2.0 on its Hugging Face page, read 2026-11-12; trained on
+/// ImageNet and the authors' own artistic pictures): the checkpoint whose colours are the most like photographs' of the
+/// four (`docs/colorize.md`), Colorize's large model since then.
+pub const DDCOLOR_ARTISTIC: ModelSpec = ddcolor_spec!(
+    "ddcolor-artistic",
+    "DDColor Artistic",
+    "Colorize: colours for black-and-white photos (the large model: the most natural colours)",
+    (617, "6a312ae7155f0f493a42979eeb6d60f6876d321506dd598e7e0134ff019a8dbd"),
+    (404_548, "220da2d8337f7ac2dc79276919067f132a2382d1372f397ebd378f82e989739a"),
+    (466_715_420, "09f2ce82017271423c1ef7f0f6e746ebc8a709e19ae11574226033a1af51f8a2")
+);
+
 /// Models the engine downloads but never runs: a frontend runs them (Core ML) and lists them in its open options
 /// (`hostModels`), with where to download them. Elsewhere they are not offered.
-pub const HOST_RUN: &[&str] = &[DDCOLOR_TINY.id, DDCOLOR_LARGE.id];
+pub const HOST_RUN: &[&str] = &[DDCOLOR_TINY.id, DDCOLOR_LARGE.id, DDCOLOR_ARTISTIC.id];
 
 /// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's, as are the
 /// Core ML conversions).
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub const ALL: &[&ModelSpec] =
-    &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &DEPTH_GPU, &SURFACE, &SD15, &KANDINSKY, &SDXL, &DDCOLOR_TINY, &DDCOLOR_LARGE];
+pub const ALL: &[&ModelSpec] = &[
+    &NOMOS_SPAN_2X,
+    &MIGAN,
+    &LAMA,
+    &DEPTH_SMALL,
+    &DEPTH_BASE,
+    &DEPTH_GPU,
+    &SURFACE,
+    &SD15,
+    &KANDINSKY,
+    &SDXL,
+    &DDCOLOR_TINY,
+    &DDCOLOR_LARGE,
+    &DDCOLOR_ARTISTIC,
+];
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &SURFACE, &SD15, &KANDINSKY, &SDXL];
 
