@@ -55,6 +55,8 @@ pub struct Setup {
     /// Neutral Highlights and Neutral Shadows, 0..1 ([`tone_keep`]).
     highlights: f32,
     shadows: f32,
+    /// The colours go over the photo's black-and-white version ([`lightcraft_develop::ColorizeBase::Bw`]).
+    mono: bool,
     /// Changes with the map and the sliders (the stage caches' key).
     pub key: u64,
 }
@@ -71,8 +73,9 @@ impl Setup {
         let plane = |k: usize| Plane { width: w, height: h, data: ab.iter().map(|p| p[k]).collect() };
         let unit = |v: f64| if v.is_finite() { (v / 100.0).clamp(0.0, 1.0) as f32 } else { 0.0 };
         let (amount, highlights, shadows) = (unit(s.colorize.amount), unit(s.colorize.highlights), unit(s.colorize.shadows));
-        let key = crate::hash_of((&m.data, m.w, m.h, [amount, highlights, shadows].map(f32::to_bits)));
-        Some(Setup { a: plane(0), b: plane(1), amount, highlights, shadows, key })
+        let mono = s.colorize.base == lightcraft_develop::ColorizeBase::Bw;
+        let key = crate::hash_of((&m.data, m.w, m.h, [amount, highlights, shadows].map(f32::to_bits), mono));
+        Some(Setup { a: plane(0), b: plane(1), amount, highlights, shadows, mono, key })
     }
 }
 
@@ -90,6 +93,10 @@ pub fn apply(img: &mut Rgb32f, setup: &Setup, frame: &Frame) {
             let i = y * w + x;
             let (pa, pb) = (a.data.get(i).copied().unwrap_or(0.0), b.data.get(i).copied().unwrap_or(0.0));
             let lum = conv.luminance(*c);
+            if setup.mono && lum.is_finite() {
+                // (a scan's tint comes off, by Amount, before the model's colours go on)
+                *c = c.map(|v| v + (lum - v) * k);
+            }
             let keep = tone_keep(lightness(lum), setup.highlights, setup.shadows);
             let g = conv.gain(lum, pa * keep, pb * keep);
             *c = std::array::from_fn(|n| c[n] * (1.0 + (g[n] - 1.0) * k));

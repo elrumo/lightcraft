@@ -1793,11 +1793,39 @@ pub struct Colorize {
     /// The model's colours for this photo; nothing is drawn without them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map: Option<crate::ChromaMap>,
+    /// What the colours are laid over: the photo as it is, or its black-and-white version.
+    #[serde(skip_serializing_if = "ColorizeBase::is_default")]
+    pub base: ColorizeBase,
+}
+
+/// What Colorize's colours are laid over. A scan of a black-and-white print is seldom purely grey: `Color` keeps the
+/// tint it has (the colours scale with it), `Bw` takes it off first (each pixel is its luminance, by Amount).
+/// Either way the black-and-white treatment is not applied to a colorized photo (it would take the colours back off).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorizeBase {
+    #[default]
+    Color,
+    Bw,
+}
+
+impl ColorizeBase {
+    pub fn is_default(&self) -> bool {
+        *self == ColorizeBase::default()
+    }
 }
 
 impl Default for Colorize {
     fn default() -> Self {
-        Self { enabled: false, amount: 100.0, highlights: Self::HIGHLIGHTS, shadows: Self::SHADOWS, model: String::new(), map: None }
+        Self {
+            enabled: false,
+            amount: 100.0,
+            highlights: Self::HIGHLIGHTS,
+            shadows: Self::SHADOWS,
+            model: String::new(),
+            map: None,
+            base: ColorizeBase::Color,
+        }
     }
 }
 

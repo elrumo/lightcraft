@@ -233,6 +233,8 @@ impl ColorOps {
     pub fn new(s: &DevelopSettings) -> ColorOps {
         let bands = s.mixer.bands();
         let g = &s.grading;
+        // (the black-and-white treatment would take the colours of a colorized photo back off)
+        let bw = crate::is_bw(s) && !crate::colorize::active(s);
         ColorOps {
             vibrance: (s.color.vibrance / 100.0) as f32,
             saturation: (s.color.saturation / 100.0) as f32,
@@ -241,12 +243,12 @@ impl ColorOps {
             lum: std::array::from_fn(|i| (bands[i].lum / 100.0) as f32 * MIXER_LUM[i]),
             lum_shape: std::array::from_fn(|i| (bands[i].lum / 100.0) as f32 * MIXER_LUM_SHAPE[i]),
             mixer: !s.mixer.is_neutral(),
-            points: if crate::is_bw(s) {
+            points: if bw {
                 Vec::new()
             } else {
                 s.point_colors.iter().take(lightcraft_develop::MAX_POINT_COLORS).filter(|p| !p.is_neutral()).map(PointK::new).collect()
             },
-            bw: crate::is_bw(s).then(|| s.bw_mix.bands().map(|v| (v / 100.0) as f32)),
+            bw: bw.then(|| s.bw_mix.bands().map(|v| (v / 100.0) as f32)),
             grading: (!g.is_neutral()).then(|| {
                 (
                     [wheel(&g.shadows), wheel(&g.midtones), wheel(&g.highlights), wheel(&g.global)],

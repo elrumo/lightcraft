@@ -1,6 +1,6 @@
 # Colorize
 
-> **Last updated:** 2026-11-12 · **Change:** minor (Neutral Highlights and Neutral Shadows; a developed photo reaches the model as it is)
+> **Last updated:** 2026-11-12 · **Change:** minor (Colorize over the photo's colour or its black and white version; Neutral Highlights and Neutral Shadows; a developed photo reaches the model as it is)
 
 Colorize gives a black-and-white photo colours made by a model, as an edit: the colours are stored with the photo's
 settings, so rendering, exporting, the sync server and other devices never run the model, and every other control still
@@ -27,16 +27,16 @@ photo and on its mirror image and averages the two answers, so a colouring is tw
 - `colorize.input {photo?, maxEdge?: 512}` → `{photo, width, height, png}`: the photo as the model sees it, uncropped
   and as its file is oriented. A developed photo (a JPEG, a scan) goes as it is; a raw's scene-linear light is exposed
   to mid-grey first (Lens Blur's model input).
-- `colorize.apply {photo?, map: {width, height, data}, model?, on?}`: stores the model's answer and turns Colorize on,
+- `colorize.apply {photo?, map: {width, height, data}, model?, on?, base?: "color"|"bw"}`: stores the model's answer and turns Colorize on,
   one undo step. `data` is base64 of `width × height` signed byte pairs (a, then b, in Lab units), row by row, over the
-  picture `colorize.input` gave, at any size of its shape up to 1024. Without `map` it turns Colorize on or off.
+  picture `colorize.input` gave, at any size of its shape up to 1024. Without `map` it turns Colorize on or off; `base` alone only changes what the colours go over (below).
 - `colorize.clear {photo?}`: Remove Colors. `colorize.info {photo?}`: what the panel shows.
 - `colorize.amount` (0–100, default 100), `colorize.highlights` (Neutral Highlights, 0–100, default 70) and
   `colorize.shadows` (Neutral Shadows, 0–100, default 40) are develop controls.
 
 ## Storing and rendering
 
-`DevelopSettings::colorize` holds `enabled`, `amount`, `model` and `map`, a `ChromaMap` (`crates/develop/src/segmask.rs`:
+`DevelopSettings::colorize` holds `enabled`, `amount`, `model`, `base` and `map`, a `ChromaMap` (`crates/develop/src/segmask.rs`:
 two signed bytes a pixel, delta-coded per row, deflated, base64, as Relight's normals). No copyable group carries it
 (Copy Settings, presets): the colours are of this photo.
 
@@ -47,6 +47,12 @@ it still act on the photo. Amount mixes the factors toward 1. Before that the ma
 of the pixel's lightness: 1 in the mid tones, `1 − Neutral Highlights` at white (a smooth step from L 70 to 100) and
 `1 − Neutral Shadows` at black (from L 25 down to 0). The map is read through the photo's framing (orientation,
 geometry, crop) bilinear. The GPU renderer runs this stage on the CPU (`lin_needs_cpu`).
+
+`base` (`ColorizeBase`, `color` by default, left out of the JSON then) is what the colours go over. A scan of a print is
+seldom purely grey: `color` multiplies the colours onto the photo as it is, so its tint scales with them; `bw` first
+takes the tint off, each pixel moving to its luminance by Amount, then lays the colours on. The black-and-white treatment
+(and the `lc.mono` / `lc.bw.*` looks) is not applied to a colorized photo in either case: it would take the colours back
+off. The `bw` base is the plain luminance: the treatment's own colour mixer does not shape it.
 
 ## How true the colours are
 

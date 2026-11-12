@@ -11,12 +11,21 @@ use crate::Session;
 use crate::catalog::PhotoId;
 
 fn grey_photo() -> (Session, PhotoId, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("lc-colorize-{}", std::process::id()));
+    photo(|v| [v, v, v])
+}
+
+/// A scan of a print that is not purely grey: a warm cast on a grey ramp.
+fn tinted_photo() -> (Session, PhotoId, std::path::PathBuf) {
+    photo(|v| [v.saturating_add(14), v, v.saturating_sub(14)])
+}
+
+fn photo(pixel: fn(u8) -> [u8; 3]) -> (Session, PhotoId, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("lc-colorize-{}-{}", std::process::id(), pixel(100)[0]));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("grey.jpg");
     let (w, h) = (96usize, 64usize);
-    let data: Vec<[u8; 4]> = (0..w * h).map(|i| 60 + (i % w) as u8).map(|v| [v, v, v, 255]).collect();
+    let data: Vec<[u8; 4]> = (0..w * h).map(|i| 60 + (i % w) as u8).map(pixel).map(|[r, g, b]| [r, g, b, 255]).collect();
     let img = lightcraft_raster::Rgba8 { width: w, height: h, data };
     let bytes = lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&img), 95, Default::default(), &Default::default()).unwrap();
     std::fs::write(&path, bytes).unwrap();
@@ -98,6 +107,37 @@ fn a_models_colours_colour_a_grey_photo_as_an_edit() {
     assert_eq!(s.render_now(id, 96, 64).unwrap().image, grey);
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(dev(&s, id).colorize.map.is_some());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn colours_go_over_the_photo_or_over_its_black_and_white_and_survive_the_bw_treatment() {
+    let (mut s, id, dir) = tinted_photo();
+    let tinted = s.render_now(id, 96, 64).unwrap().image;
+    assert!(colourfulness(&tinted) > 20.0, "{}", colourfulness(&tinted));
+    // neutral colours from the model (a = b = 0): what is left is the photo's own tint, or none of it
+    let r = s.execute("colorize.apply", &json!({"map": map(8, 8, 0, 0)})).unwrap();
+    assert_eq!(r["base"], "color", "{r}");
+    let over_colour = s.render_now(id, 96, 64).unwrap().image;
+    assert!(colourfulness(&over_colour) > 0.8 * colourfulness(&tinted), "{}", colourfulness(&over_colour));
+    // `base` alone changes what they go over, nothing else
+    let r = s.execute("colorize.apply", &json!({"base": "bw"})).unwrap();
+    assert_eq!((r["base"].as_str(), r["enabled"].as_bool()), (Some("bw"), Some(true)), "{r}");
+    let over_bw = s.render_now(id, 96, 64).unwrap().image;
+    assert!(colourfulness(&over_bw) < 2.0, "{}", colourfulness(&over_bw));
+    assert!(s.execute("colorize.apply", &json!({"base": "sepia"})).is_err());
+    assert_eq!(dev(&s, id).colorize.base, lightcraft_develop::ColorizeBase::Bw);
+    // warm colours over the black and white version, with the black-and-white treatment on: the colours stay
+    s.execute("colorize.apply", &json!({"map": map(8, 8, 20, 40)})).unwrap();
+    let warm = s.render_now(id, 96, 64).unwrap().image;
+    assert!(warmth(&warm) > 15.0, "{}", warmth(&warm));
+    s.execute("develop.treatment", &json!({})).unwrap();
+    assert_eq!(dev(&s, id).treatment, lightcraft_develop::Treatment::Bw);
+    let with_treatment = s.render_now(id, 96, 64).unwrap().image;
+    assert!(warmth(&with_treatment) > 15.0, "{}", warmth(&with_treatment));
+    // the choice is the photo's and is kept by Remove Colors, like Amount
+    s.execute("colorize.clear", &json!({})).unwrap();
+    assert_eq!(dev(&s, id).colorize.base, lightcraft_develop::ColorizeBase::Bw);
     let _ = std::fs::remove_dir_all(dir);
 }
 

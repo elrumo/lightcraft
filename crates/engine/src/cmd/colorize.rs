@@ -5,8 +5,8 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use lightcraft_develop::ChromaMap;
 use lightcraft_develop::segmask::MAX_CHROMA_SIDE;
+use lightcraft_develop::{ChromaMap, ColorizeBase};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, cmd, has_active, photo_id, str_param};
@@ -35,6 +35,7 @@ fn info(s: &Session, id: PhotoId) -> Value {
         "shadows": c.shadows,
         "model": (!c.model.is_empty()).then_some(c.model),
         "colors": c.map.as_ref().map(|m| json!({"width": m.w, "height": m.h})),
+        "base": c.base,
     })
 }
 
@@ -60,7 +61,7 @@ fn map_param(p: &Value, c: &str) -> Result<Option<ChromaMap>> {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "colorize.info", "Colorize Info", [], None, "{photo?} → {photo, enabled, amount, highlights, shadows, model: string|null, colors: {width, height}|null}", has_active, |s, p| {
+        cmd!(query "colorize.info", "Colorize Info", [], None, "{photo?} → {photo, enabled, amount, highlights, shadows, model: string|null, colors: {width, height}|null, base: \"color\"|\"bw\"}", has_active, |s, p| {
             let id = target(s, p, "colorize.info")?;
             Ok(info(s, id))
         }),
@@ -91,7 +92,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Colorize",
             [],
             None,
-            "{photo?, on?: bool (default true), map?: {width, height, data: base64 of signed byte pairs, Lab a then b, over the photo colorize.input gave}, model?: string} — stores the model's colours for the photo and turns Colorize on (one undo step); without `map`, turns it on or off with the colours it has (an error when there are none) → colorize.info",
+            "{photo?, on?: bool (default true), map?: {width, height, data: base64 of signed byte pairs, Lab a then b, over the photo colorize.input gave}, model?: string, base?: \"color\"|\"bw\" (what the colours go over: the photo as it is, or its black-and-white version)} — stores the model's colours for the photo and turns Colorize on (one undo step); without `map`, turns it on or off with the colours it has (an error when there are none), and `base` alone only changes what they go over → colorize.info",
             has_active,
             |s, p| {
                 const C: &str = "colorize.apply";
@@ -104,6 +105,12 @@ pub fn specs() -> Vec<CommandSpec> {
                     d.colorize.model = str_param(p, "model").unwrap_or_default().chars().take(64).collect();
                 } else if on && d.colorize.map.is_none() {
                     return Err(bad(C, "this photo has no colours yet: run the model and send its `map`"));
+                }
+                match str_param(p, "base") {
+                    None => {}
+                    Some("color") => d.colorize.base = ColorizeBase::Color,
+                    Some("bw") => d.colorize.base = ColorizeBase::Bw,
+                    Some(other) => return Err(bad(C, format!("`base` is \"color\" or \"bw\", not \"{other}\""))),
                 }
                 d.colorize.enabled = on;
                 s.set_develop(id, d, "Colorize")?;
@@ -125,6 +132,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     amount: d.colorize.amount,
                     highlights: d.colorize.highlights,
                     shadows: d.colorize.shadows,
+                    base: d.colorize.base,
                     ..Default::default()
                 };
                 s.set_develop(id, d, "Remove Colors")?;
