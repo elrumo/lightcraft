@@ -402,20 +402,35 @@ pub fn relative_wb_camera(format: &str, camera: &str) -> bool {
 }
 
 /// Exif makes of more than one word whose models don't repeat them (a model that does, like `NIKON CORPORATION`'s
-/// `NIKON D850`, needs no entry).
-// ponytail: a list; a make of several words missing from it splits after its first word.
-const LONG_MAKES: &[&str] = &[
-    "OLYMPUS IMAGING CORP.",
-    "OLYMPUS CORPORATION",
-    "OLYMPUS OPTICAL CO.,LTD",
-    "OM Digital Solutions",
-    "Minolta Co., Ltd.",
-    "KONICA MINOLTA",
-    "SEIKO EPSON CORP.",
-    "Eastman Kodak Company",
-    "RICOH IMAGING COMPANY, LTD.",
-    "Phase One",
-    "Arashi Vision",
+/// `NIKON D850`, needs no entry), each with the brand a frontend shows it as. The makes of the brands the raw
+/// readers know (`lightcraft_raw`'s vendor checks: Olympus / OM, Minolta, Epson, Kodak, Ricoh / Pentax, Samsung,
+/// Mamiya, Leica, Fujifilm, Phase One) as their cameras write them (checked against the Exif makes of the app's test raws,
+/// 2026-11-12), and a few phone and camera makers of rendered files. The longest one that starts the camera is its make.
+// ponytail: a list; a make of several words missing from it splits after its first word. Keeping the make apart in the
+// catalog would be exact, but changes the catalog format and sync (card #368, option 2).
+pub const LONG_MAKES: &[(&str, &str)] = &[
+    ("OLYMPUS IMAGING CORP.", "OLYMPUS"),
+    ("OLYMPUS CORPORATION", "OLYMPUS"),
+    ("OLYMPUS OPTICAL CO.,LTD", "OLYMPUS"),
+    ("OM Digital Solutions", "OM"),
+    ("Minolta Co., Ltd.", "Minolta"),
+    ("MINOLTA CO.,LTD", "MINOLTA"),
+    ("KONICA MINOLTA", "KONICA MINOLTA"),
+    ("Konica Minolta Camera, Inc.", "Konica Minolta"),
+    ("SEIKO EPSON CORP.", "EPSON"),
+    ("Eastman Kodak Company", "Kodak"),
+    ("RICOH IMAGING COMPANY, LTD.", "RICOH"),
+    ("SAMSUNG TECHWIN", "SAMSUNG"),
+    ("SAMSUNG TECHWIN Co.", "SAMSUNG"),
+    ("Mamiya-OP Co.,Ltd.", "Mamiya"),
+    ("Leica Camera AG", "Leica"),
+    ("FUJI PHOTO FILM CO., LTD.", "FUJIFILM"),
+    ("CASIO COMPUTER CO.,LTD.", "CASIO"),
+    ("Phase One", "Phase One"),
+    ("Phase One A/S", "Phase One"),
+    ("Arashi Vision", "Insta360"),
+    ("LG Electronics", "LG"),
+    ("HMD Global", "Nokia"),
 ];
 
 /// The Exif make and model a [`Meta::camera`] was joined from (`"Make Model"`), as the camera wrote them, for a file
@@ -437,9 +452,14 @@ pub fn camera_make_model(camera: &str) -> (&str, &str) {
     if let Some(&(at, _)) = words.iter().skip(1).find(|(_, w)| w.eq_ignore_ascii_case(first)) {
         return split(at);
     }
-    let long = LONG_MAKES.iter().find(|m| {
-        camera.get(..m.len()).is_some_and(|p| p.eq_ignore_ascii_case(m)) && camera.get(m.len()..).is_some_and(|r| r.starts_with(char::is_whitespace))
-    });
+    let long = LONG_MAKES
+        .iter()
+        .map(|(m, _)| m)
+        .filter(|m| {
+            camera.get(..m.len()).is_some_and(|p| p.eq_ignore_ascii_case(m))
+                && camera.get(m.len()..).is_some_and(|r| r.starts_with(char::is_whitespace))
+        })
+        .max_by_key(|m| m.len());
     match (long, words.get(1)) {
         (Some(m), _) => split(m.len()),
         (None, Some(&(at, _))) => split(at),
@@ -817,6 +837,56 @@ mod edited_tests {
         assert_eq!(camera_make_model("  "), ("", ""));
         // spaces inside the model stay as they were
         assert_eq!(camera_make_model(" Canon  Canon EOS  R6 "), ("Canon", "Canon EOS  R6"));
+    }
+
+    /// HB-368: every make the core's raw readers know, as their cameras write it, splits back to that make, and so does every
+    /// make of several words in [`LONG_MAKES`] under a model that doesn't repeat it.
+    #[test]
+    fn every_make_the_readers_know_splits_back_to_itself() {
+        for (make, model) in [
+            ("Canon", "Canon EOS R5"),
+            ("NIKON CORPORATION", "NIKON Z 8"),
+            ("NIKON", "COOLPIX P1000"),
+            ("SONY", "ILCE-1"),
+            ("Hasselblad", "X2D 100C"),
+            ("PENTAX Corporation", "PENTAX K-3"),
+            ("PENTAX", "K10D"),
+            ("RICOH IMAGING COMPANY, LTD.", "PENTAX K-1 Mark II"),
+            ("RICOH IMAGING COMPANY, LTD.", "RICOH GR III"),
+            ("SAMSUNG", "NX1"),
+            ("SAMSUNG TECHWIN", "Pro 815"),
+            ("SEIKO EPSON CORP.", "R-D1"),
+            ("Eastman Kodak Company", "DCS Pro 14N"),
+            ("KODAK", "DCS760C"),
+            ("Mamiya-OP Co.,Ltd.", "MAMIYA ZD"),
+            ("Leica Camera AG", "LEICA M11"),
+            ("Leica Camera AG", "M8 Digital Camera"),
+            ("FUJIFILM", "GFX100S"),
+            ("FUJI PHOTO FILM CO., LTD.", "FinePixS2Pro"),
+            ("OLYMPUS CORPORATION", "E-M1MarkII"),
+            ("OM Digital Solutions", "OM-1"),
+            ("Minolta Co., Ltd.", "DiMAGE A2"),
+            ("MINOLTA CO.,LTD", "DiMAGE 7Hi"),
+            ("KONICA MINOLTA", "DYNAX 7D"),
+            ("Panasonic", "DC-S5M2"),
+            ("SIGMA", "fp L"),
+            ("Phase One", "IQ4 150MP"),
+            ("Phase One A/S", "P45+"),
+            ("Konica Minolta Camera, Inc.", "DiMAGE A2"),
+            ("SAMSUNG TECHWIN Co.", "Pro 815"),
+            ("LEICA CAMERA AG", "D-Lux 7"),
+            ("Arashi Vision", "Insta360 X5"),
+            ("CASIO COMPUTER CO.,LTD.", "EX-F1"),
+            ("DJI", "FC3582"),
+            ("Google", "Pixel 8 Pro"),
+        ] {
+            assert_eq!(camera_make_model(&format!("{make} {model}")), (make, model), "{make} / {model}");
+        }
+        for (make, _) in LONG_MAKES {
+            assert_eq!(camera_make_model(&format!("{make} X1")), (*make, "X1"), "{make}");
+            // in other cases too, as the make was written
+            assert_eq!(camera_make_model(&format!("{} X1", make.to_lowercase())).1, "X1", "{make}");
+        }
     }
 
     /// A raw without matrices in the file edits in Kelvin when its camera's matrices are measured (issue #730):
