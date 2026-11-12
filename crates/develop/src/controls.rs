@@ -493,6 +493,8 @@ controls! {
     "depthMap.contours" => depth_map.contours, "Contours", DepthMap, 0, 100, 0, 1, 0, Plain;
     "depthMap.amount" => depth_map.amount, "Amount", DepthMap, 0, 100, 100, 1, 0, Plain;
     "colorize.amount" => colorize.amount, "Amount", Colorize, 0, 100, 100, 1, 0, Gradient { from: "#7a7a7a", to: "#d08040" };
+    "colorize.highlights" => colorize.highlights, "Neutral Highlights", Colorize, 0, 100, 70, 1, 0, Plain;
+    "colorize.shadows" => colorize.shadows, "Neutral Shadows", Colorize, 0, 100, 40, 1, 0, Plain;
 }
 
 /// Template specs of the indexed controls (`<family>.<field>`; addressed as `<family>.<i>.<field>`).
@@ -895,8 +897,8 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
                 s.relight.distance = 80.0;
             }
         }
-        "colorize.amount" => {
-            // (a warm colour over the whole photo: the amount moves every pixel)
+        _ if id.starts_with("colorize.") => {
+            // (a warm colour over the whole photo: the amount moves every pixel, the two tone sliders its whites and blacks)
             s.colorize.enabled = true;
             s.colorize.map = crate::ChromaMap::from_ab(4, 4, &[[20.0, 40.0]; 16]);
         }

@@ -31,6 +31,8 @@ fn info(s: &Session, id: PhotoId) -> Value {
         "photo": id.0,
         "enabled": c.enabled,
         "amount": c.amount,
+        "highlights": c.highlights,
+        "shadows": c.shadows,
         "model": (!c.model.is_empty()).then_some(c.model),
         "colors": c.map.as_ref().map(|m| json!({"width": m.w, "height": m.h})),
     })
@@ -58,7 +60,7 @@ fn map_param(p: &Value, c: &str) -> Result<Option<ChromaMap>> {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "colorize.info", "Colorize Info", [], None, "{photo?} → {photo, enabled, amount, model: string|null, colors: {width, height}|null}", has_active, |s, p| {
+        cmd!(query "colorize.info", "Colorize Info", [], None, "{photo?} → {photo, enabled, amount, highlights, shadows, model: string|null, colors: {width, height}|null}", has_active, |s, p| {
             let id = target(s, p, "colorize.info")?;
             Ok(info(s, id))
         }),
@@ -67,14 +69,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "Colorize Input Image",
             [],
             None,
-            "{photo?, maxEdge?: 512} → {photo, width, height, png: base64}. The photo as a colourise model sees it: uncropped, as its file is oriented (the user's rotation not applied), without edits, exposed so its middle tone sits at mid-grey, sRGB, at most `maxEdge` long. The model's colours for it go back to colorize.apply at any size of the same shape",
+            "{photo?, maxEdge?: 512} → {photo, width, height, png: base64}. The photo as a colourise model sees it: uncropped, as its file is oriented (the user's rotation not applied), without edits, sRGB, at most `maxEdge` long (a raw exposed so its middle tone sits at mid-grey, a developed photo as it is). The model's colours for it go back to colorize.apply at any size of the same shape",
             has_active,
             |s, p| {
                 const C: &str = "colorize.input";
                 let id = target(s, p, C)?;
                 let edge = (super::f64_or(p, "maxEdge", INPUT_EDGE as f64) as usize).clamp(16, MAX_CHROMA_SIDE);
                 let src = s.source_now(id, SourceLevel::Preview).map_err(|e| bad(C, e))?;
-                let img = crate::depth::model_input_at(&src, edge);
+                // (a raw's scene-linear light is exposed to mid-grey; a developed photo goes as it is)
+                let raw = s.source_info(id).raw;
+                let img = crate::depth::model_input_at(&src, edge, raw);
                 let bytes: Vec<u8> =
                     img.data.iter().flat_map(|c| c.map(|v| if v.is_finite() { (v.clamp(0.0, 1.0) * 255.0).round() as u8 } else { 0 })).collect();
                 let enc = lightcraft_codecs::EncodeImage::new(img.width as u32, img.height as u32, 3, lightcraft_codecs::Samples::U8(&bytes));
@@ -117,7 +121,12 @@ pub fn specs() -> Vec<CommandSpec> {
                 const C: &str = "colorize.clear";
                 let id = target(s, p, C)?;
                 let mut d = (*s.develop_of(id).ok_or_else(|| bad(C, "no such photo"))?).clone();
-                d.colorize = lightcraft_develop::Colorize { amount: d.colorize.amount, ..Default::default() };
+                d.colorize = lightcraft_develop::Colorize {
+                    amount: d.colorize.amount,
+                    highlights: d.colorize.highlights,
+                    shadows: d.colorize.shadows,
+                    ..Default::default()
+                };
                 s.set_develop(id, d, "Remove Colors")?;
                 Ok(info(s, id))
             }
