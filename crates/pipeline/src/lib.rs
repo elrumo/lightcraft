@@ -63,7 +63,7 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
-use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, par_rows};
+use lightcraft_raster::{Histogram, PixelView, Plane, Rgb32f, Rgba8, SourcePixels, par_rows};
 
 pub use tone::ToneMap;
 
@@ -292,8 +292,9 @@ pub fn native_output_size(src_w: usize, src_h: usize, s: &DevelopSettings) -> (f
 }
 
 /// The geometric frame `render` uses for `src` (lens data, automatic CA estimate included).
-pub fn frame_for(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, apply_crop: bool) -> geometry::Frame {
-    let mut frame = geometry::Frame::with_lens(src.width, src.height, s, apply_crop, info.lens.as_ref());
+pub fn frame_for<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, s: &DevelopSettings, apply_crop: bool) -> geometry::Frame {
+    let src: PixelView<'a> = src.into();
+    let mut frame = geometry::Frame::with_lens(src.width(), src.height(), s, apply_crop, info.lens.as_ref());
     if s.optics.remove_ca && s.section_enabled("optics") {
         frame.add_lateral_ca(optics::estimate_lateral_ca(src));
     }
@@ -403,13 +404,13 @@ impl StageCache {
         self.entries.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn get(&self, src: &Arc<Rgb32f>, geo: u64) -> Option<CacheEntry> {
-        self.lock().iter().find(|e| e.geo == geo && Arc::ptr_eq(&e.src, src)).cloned()
+    fn get(&self, src: &SourcePixels, geo: u64) -> Option<CacheEntry> {
+        self.lock().iter().find(|e| e.geo == geo && e.src.ptr_eq(src)).cloned()
     }
 
     fn put(&self, e: CacheEntry) {
         let mut v = self.lock();
-        v.retain(|o| !(o.geo == e.geo && Arc::ptr_eq(&o.src, &e.src)));
+        v.retain(|o| !(o.geo == e.geo && o.src.ptr_eq(&e.src)));
         v.push(e);
         while v.len() > self.capacity {
             v.remove(0);
@@ -419,7 +420,7 @@ impl StageCache {
 
 #[derive(Clone)]
 struct CacheEntry {
-    src: Arc<Rgb32f>,
+    src: SourcePixels,
     geo: u64,
     sampled: Arc<Rgb32f>,
     lin: Option<(u64, Arc<Rgb32f>)>,
@@ -501,7 +502,8 @@ fn grown(win: PixelWindow, m: usize, full_w: usize, full_h: usize) -> PixelWindo
 const AIRLIGHT_PROXY_EDGE: usize = 384;
 
 /// Resolve `s` against `src` for `req` (see [`Plan`]).
-pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &RenderRequest) -> Plan<'a> {
+pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a DevelopSettings, req: &RenderRequest) -> Plan<'a> {
+    let src: PixelView<'b> = src.into();
     let mut settings: Cow<'a, DevelopSettings> = match profiles::effective(s) {
         Cow::Borrowed(b) => upright::resolve(src, info, b),
         Cow::Owned(o) => Cow::Owned(upright::resolve(src, info, &o).into_owned()),
@@ -572,7 +574,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         }
         None => (frame, full_w, full_h),
     };
-    let src_long = src.width.max(src.height);
+    let src_long = src.width().max(src.height());
     // (an original reported smaller than the source is the source)
     let native_long = info.native_long.unwrap_or(0).max(src_long).max(1);
     let detail_scale = local::detail_scale(px_per_long, native_long);
@@ -708,7 +710,7 @@ pub const HDR_HISTOGRAM_DRAG_EDGE: usize = 192;
 /// white, whatever the headroom limit, so the scale stays put) on the right ([`Histogram::of_hdr`]). A preview of
 /// an HDR edit shows its SDR rendition; this says how far its highlights go. `None` for SDR edits,
 /// high-bit-depth, windowed and proofed requests (their histogram stays the image's).
-pub fn hdr_histogram(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Option<Histogram> {
+pub fn hdr_histogram<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Option<Histogram> {
     // a drag's drafts keep their own histogram: a second render per tick would slow them down
     if !s.hdr.enabled || req.depth != OutputDepth::U8 || req.window.is_some() || req.proof.is_some() || req.quality == Quality::Draft {
         return None;
@@ -731,19 +733,23 @@ pub fn hdr_histogram(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: 
 }
 
 /// Render `src` with settings `s`.
-pub fn render(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Rendered {
-    render_impl(Src::Borrowed(src), info, s, req, None)
+///
+/// `src` may be held in half floats ([`lightcraft_raster::Rgb16f`]): a window of it (a zoomed view, an export's band)
+/// reads and widens only the part it shows, and its 8-bit render is the floats' within one level.
+pub fn render<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Rendered {
+    render_impl(Src::Borrowed(src.into()), info, s, req, None)
 }
 
 /// [`render`], reusing (and refreshing) the intermediate results in `cache`. The output is
 /// identical to [`render`]'s.
-pub fn render_cached(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, cache: &StageCache) -> Rendered {
-    render_impl(Src::Shared(src), info, s, req, Some(cache))
+pub fn render_cached(src: impl Into<SourcePixels>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, cache: &StageCache) -> Rendered {
+    let src = src.into();
+    render_impl(Src::Shared(&src), info, s, req, Some(cache))
 }
 
 enum Src<'a> {
-    Borrowed(&'a Rgb32f),
-    Shared(&'a Arc<Rgb32f>),
+    Borrowed(PixelView<'a>),
+    Shared(&'a SourcePixels),
 }
 
 fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, cache: Option<&StageCache>) -> Rendered {
@@ -759,9 +765,9 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         }
     };
     let mut t = profiling().then(web_time::Instant::now);
-    let src_img: &Rgb32f = match &src {
-        Src::Borrowed(r) => r,
-        Src::Shared(a) => a,
+    let src_img: PixelView<'_> = match &src {
+        Src::Borrowed(r) => *r,
+        Src::Shared(a) => a.view(),
     };
     let plan = plan(src_img, info, s, req);
     let Plan { ref frame, w, h, px_per_long, detail_scale, geo, lin_key, base_key, .. } = plan;
@@ -869,7 +875,14 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
 /// The colour a colour-range mask would sample at normalized image point `p` (OkLab of the
 /// exposed scene colours, as [`MaskShape::ColorRange`](lightcraft_develop::MaskShape) compares
 /// them), averaged over 3 × 3 pixels of a render fitting `req`. `None` outside the image.
-pub fn color_range_sample(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, p: lightcraft_geom::Point) -> Option<[f64; 3]> {
+pub fn color_range_sample<'a>(
+    src: impl Into<PixelView<'a>>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    req: &RenderRequest,
+    p: lightcraft_geom::Point,
+) -> Option<[f64; 3]> {
+    let src: PixelView<'a> = src.into();
     // Pick from the same settings as the render: disabled panels contribute nothing, and an
     // SDR preview of an HDR edit includes the SDR rendition's exposure offset.
     let effective = s.effective();
@@ -972,6 +985,8 @@ pub(crate) fn for_rows<T: Send>(data: &mut [T], w: usize, f: impl Fn(usize, &mut
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_compact;
 #[cfg(test)]
 mod tests_dehaze;
 #[cfg(test)]

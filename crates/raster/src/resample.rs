@@ -1,6 +1,6 @@
 //! Separable resampling with precomputed filter weights.
 
-use crate::{Image, par_rows};
+use crate::{Image, PixelView, Rgb32f, par_rows};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Filter {
@@ -128,20 +128,63 @@ pub fn resize<T: Pixel>(img: &Image<T>, w: usize, h: usize, filter: Filter) -> I
 /// row per entry of `wy`, each a first source index (a column of the image; a row counted from `rows.start`) and
 /// its weights. A part of a larger resize is that resize's taps for the part. Taps past the image read nothing.
 pub fn resize_with<T: Pixel>(img: &Image<T>, rows: std::ops::Range<usize>, wx: &[(usize, Vec<f32>)], wy: &[(usize, Vec<f32>)]) -> Image<T> {
-    let (w, h) = (wx.len().max(1), wy.len().max(1));
+    let w = wx.len().max(1);
     let rows = rows.start.min(img.height)..rows.end.min(img.height);
     let mut tmp = Image::<T>::new(w, rows.len());
     par_rows(&mut tmp.data, w, |y, row| {
         let at = (rows.start + y) * img.width;
-        let src = img.data.get(at..at + img.width).unwrap_or_default();
-        for ((lo, ws), o) in wx.iter().zip(row.iter_mut()) {
-            let mut acc = T::zero();
-            for (s, wt) in src.get(*lo..).unwrap_or_default().iter().zip(ws) {
-                acc = acc.madd(*s, *wt);
-            }
-            *o = acc;
-        }
+        horizontal(img.data.get(at..at + img.width).unwrap_or_default(), wx, row);
     });
+    vertical(&tmp, wy)
+}
+
+/// [`resize_with`] of a picture held in floats or half floats: a row of half floats is widened as it is read, so
+/// the floats it gives are those [`resize_with`] gives for the picture widened whole.
+pub fn resize_view_with(img: PixelView<'_>, rows: std::ops::Range<usize>, wx: &[(usize, Vec<f32>)], wy: &[(usize, Vec<f32>)]) -> Rgb32f {
+    let half = match img {
+        PixelView::F32(i) => return resize_with(i, rows, wx, wy),
+        PixelView::F16(h) => h,
+    };
+    let w = wx.len().max(1);
+    let rows = rows.start.min(half.height)..rows.end.min(half.height);
+    // (the columns the taps read: a window's taps reach a part of each row)
+    let x0 = wx.iter().map(|t| t.0).min().unwrap_or(0).min(half.width);
+    let x1 = wx.iter().map(|t| t.0.saturating_add(t.1.len())).max().unwrap_or(0).clamp(x0, half.width);
+    let shifted: Vec<(usize, Vec<f32>)> = wx.iter().map(|(lo, ws)| (lo.saturating_sub(x0), ws.clone())).collect();
+    let mut tmp = Rgb32f::new(w, rows.len());
+    par_rows(&mut tmp.data, w, |y, row| {
+        let at = (rows.start + y) * half.width;
+        let mut wide = vec![[0f32; 3]; x1 - x0];
+        crate::compact::widen_into(half.data.get(at + x0..at + x1).unwrap_or_default(), &mut wide);
+        horizontal(&wide, &shifted, row);
+    });
+    vertical(&tmp, wy)
+}
+
+/// [`resize`] of a picture held in floats or half floats ([`resize_view_with`]).
+pub fn resize_view(img: PixelView<'_>, w: usize, h: usize, filter: Filter) -> Rgb32f {
+    let (w, h) = (w.max(1), h.max(1));
+    if img.width() == w && img.height() == h {
+        return img.to_f32().into_owned();
+    }
+    resize_view_with(img, 0..img.height(), &weights(img.width(), w, filter), &weights(img.height(), h, filter))
+}
+
+/// One row of a separable resize: each output column the weighted sum of `src` from its first tap on.
+#[inline]
+fn horizontal<T: Pixel>(src: &[T], wx: &[(usize, Vec<f32>)], row: &mut [T]) {
+    for ((lo, ws), o) in wx.iter().zip(row.iter_mut()) {
+        let mut acc = T::zero();
+        for (s, wt) in src.get(*lo..).unwrap_or_default().iter().zip(ws) {
+            acc = acc.madd(*s, *wt);
+        }
+        *o = acc;
+    }
+}
+
+/// The vertical pass of a separable resize over the horizontal pass's rows.
+fn vertical<T: Pixel>(tmp: &Image<T>, wy: &[(usize, Vec<f32>)]) -> Image<T> {
+    let (w, h) = (tmp.width.max(1), wy.len().max(1));
     let mut out = Image::<T>::new(w, h);
     par_rows(&mut out.data, w, |y, row| {
         let Some((lo, ws)) = wy.get(y) else { return };
@@ -207,6 +250,23 @@ mod tests {
         assert_eq!((hh.width, hh.height), (32, 32));
         let m3 = hh.data.iter().sum::<f32>() / hh.len() as f32;
         assert!((mean - m3).abs() < 1e-5);
+    }
+
+    /// A picture in half floats resizes, whole or in part, to what its floats widened whole resize to.
+    #[test]
+    fn half_floats_resize_like_their_widened_floats() {
+        let img = Image::from_fn(61, 47, |x, y| [((x * 7 + y * 3) % 13) as f32 / 5.0, (x as f32).sin(), y as f32 * 0.01]);
+        let half = crate::Rgb16f::from_f32(&img);
+        let wide = half.widen();
+        for filter in [Filter::Mitchell, Filter::Lanczos3, Filter::Box] {
+            assert_eq!(resize_view(PixelView::from(&half), 19, 23, filter).data, resize(&wide, 19, 23, filter).data, "{filter:?}");
+            // a part: the taps of columns 4..11 and rows 6..15 of the whole resize, reading rows 9..40
+            let (wx, wy) = (weights(61, 19, filter), weights(47, 23, filter));
+            let (px, py) = (wx[4..11].to_vec(), wy[6..15].iter().map(|(lo, w)| (lo.saturating_sub(9), w.clone())).collect::<Vec<_>>());
+            let a = resize_view_with(PixelView::from(&half), 9..40, &px, &py);
+            assert_eq!(a.data, resize_with(&wide, 9..40, &px, &py).data, "{filter:?} part");
+        }
+        assert_eq!(resize_view(PixelView::from(&half), 61, 47, Filter::Mitchell).data, wide.data);
     }
 
     #[test]

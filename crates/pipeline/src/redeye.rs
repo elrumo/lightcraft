@@ -14,7 +14,7 @@
 
 use lightcraft_develop::RedEye;
 use lightcraft_geom::{Orientation, Point};
-use lightcraft_raster::Rgb32f;
+use lightcraft_raster::{PixelView, Rgb32f};
 
 use crate::for_rows;
 use crate::geometry::Frame;
@@ -78,11 +78,13 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
 
 /// Find the pupil inside `eye`'s ellipse on `src` (the EXIF-oriented source; `o` = the user
 /// orientation, `ow × oh` = the oriented image size in any unit).
-pub fn detect(src: &Rgb32f, o: Orientation, ow: f64, oh: f64, eye: &RedEye) -> Pupil {
+pub fn detect<'a>(src: impl Into<PixelView<'a>>, o: Orientation, ow: f64, oh: f64, eye: &RedEye) -> Pupil {
+    let src: PixelView<'a> = src.into();
+    let (sw, sh) = (src.width(), src.height());
     let long = ow.max(oh);
     let (rx, ry) = (eye.rx.max(1e-4), eye.ry.max(1e-4));
     let fallback = Pupil { center: eye.center, radius: 0.5 * rx.min(ry), found: false };
-    if src.width == 0 || src.height == 0 {
+    if sw == 0 || sh == 0 {
         return fallback;
     }
     // samples inside the ellipse: (normalized point, colour)
@@ -98,8 +100,8 @@ pub fn detect(src: &Rgb32f, o: Orientation, ow: f64, oh: f64, eye: &RedEye) -> P
                 continue;
             }
             let s = oriented_to_source(o, n);
-            let (px, py) = ((s.x * src.width as f64) as usize, (s.y * src.height as f64) as usize);
-            samples.push((n, src.data[py.min(src.height - 1) * src.width + px.min(src.width - 1)]));
+            let (px, py) = ((s.x * sw as f64) as usize, (s.y * sh as f64) as usize);
+            samples.push((n, src.get(px.min(sw - 1), py.min(sh - 1)).unwrap_or_default()));
         }
     }
     if samples.is_empty() {
@@ -136,7 +138,7 @@ pub fn detect(src: &Rgb32f, o: Orientation, ow: f64, oh: f64, eye: &RedEye) -> P
 }
 
 /// Resolve the eyes for a `w × h` render of `frame` (`ppl` = output pixels per long-edge unit).
-pub fn resolve(src: &Rgb32f, eyes: &[RedEye], orientation: Orientation, frame: &Frame, w: usize, h: usize, ppl: f64) -> Vec<EyeK> {
+pub fn resolve(src: PixelView<'_>, eyes: &[RedEye], orientation: Orientation, frame: &Frame, w: usize, h: usize, ppl: f64) -> Vec<EyeK> {
     if eyes.is_empty() {
         return Vec::new();
     }

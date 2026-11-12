@@ -12,6 +12,7 @@ workspace = true
 serde = { workspace = true }
 lightcraft-geom = { workspace = true }
 lightcraft-color = { workspace = true }
+half = { workspace = true }
 rayon = { workspace = true, optional = true }
 
 [features]

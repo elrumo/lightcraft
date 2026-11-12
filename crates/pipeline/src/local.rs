@@ -7,7 +7,7 @@ use lightcraft_develop::{DevelopSettings, Process};
 use lightcraft_raster::blur::gaussian;
 use std::sync::Arc;
 
-use lightcraft_raster::{Plane, Rgb32f, par_join};
+use lightcraft_raster::{PixelView, Plane, Rgb32f, par_join};
 
 use crate::geometry::Frame;
 use crate::{Prepared, Quality, SourceInfo, for_rows, masks, timed};
@@ -791,7 +791,14 @@ pub(crate) fn prepare(
 
 /// The airlight of the whole output frame, estimated on a small render of it (`proxy_w` px wide):
 /// a windowed render must dehaze with the frame's airlight, not that of the pixels it holds.
-pub(crate) fn frame_airlight(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, frame: &Frame, proxy_w: usize, proxy_h: usize) -> f32 {
+pub(crate) fn frame_airlight<'a>(
+    src: impl Into<PixelView<'a>>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    frame: &Frame,
+    proxy_w: usize,
+    proxy_h: usize,
+) -> f32 {
     let mut img = Rgb32f::clone(&frame_proxy(src, frame, proxy_w, proxy_h));
     white_balance(&mut img, info, s);
     let ppl = frame.px_per_long(proxy_w);
@@ -801,7 +808,14 @@ pub(crate) fn frame_airlight(src: &Rgb32f, info: &SourceInfo, s: &DevelopSetting
 
 /// The whole frame's key for Shadows: the median log luminance (EV from middle grey, before exposure) of its white-balanced
 /// airlight proxy ([`frame_proxy`]), so every window of a photo and its whole render read the same one.
-pub(crate) fn frame_key(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, frame: &Frame, proxy_w: usize, proxy_h: usize) -> f32 {
+pub(crate) fn frame_key<'a>(
+    src: impl Into<PixelView<'a>>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    frame: &Frame,
+    proxy_w: usize,
+    proxy_h: usize,
+) -> f32 {
     let mut img = Rgb32f::clone(&frame_proxy(src, frame, proxy_w, proxy_h));
     white_balance(&mut img, info, s);
     let mut v: Vec<f32> = img.data.iter().map(|c| log_lum(*c)).filter(|l| l.is_finite()).collect();
@@ -819,7 +833,8 @@ const FRAME_PROXIES_KEPT: usize = 4;
 /// `frame.sample(src, w, h)`, kept for the last few (source, frame, size): sampling a 64 MP original down to the
 /// airlight proxy reads all of it (~190 ms of CPU), and every window of a zoomed view with Dehaze asked for it again,
 /// on each pan and slider tick. The proxy is taken before white balance, so a WB change still hits.
-fn frame_proxy(src: &Rgb32f, frame: &Frame, w: usize, h: usize) -> Arc<Rgb32f> {
+fn frame_proxy<'a>(src: impl Into<PixelView<'a>>, frame: &Frame, w: usize, h: usize) -> Arc<Rgb32f> {
+    let src: PixelView<'a> = src.into();
     type Entry = (u64, Frame, usize, usize, Arc<Rgb32f>);
     static CACHE: std::sync::Mutex<Vec<Entry>> = std::sync::Mutex::new(Vec::new());
     let key = crate::optics::fingerprint(src);

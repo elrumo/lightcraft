@@ -22,12 +22,12 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
 use lightcraft_develop::DevelopSettings;
 use lightcraft_pipeline::{RenderRequest, Rendered, SourceInfo, StageCache};
-use lightcraft_raster::Rgb32f;
+use lightcraft_raster::SourcePixels;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod backend;
@@ -493,7 +493,13 @@ pub fn stage_bytes(stages: &StageCache) -> usize {
 
 /// Render `src` with `s` on the GPU, reusing the device-resident stages kept with `stages` (the
 /// view's CPU stage cache). `None`: render on the CPU instead. [`try_render`] also says why.
-pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, stages: Option<&StageCache>) -> Option<Rendered> {
+pub fn render(
+    src: impl Into<SourcePixels>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    req: &RenderRequest,
+    stages: Option<&StageCache>,
+) -> Option<Rendered> {
     try_render(src, info, s, req, stages).ok()
 }
 
@@ -512,7 +518,7 @@ pub fn handles(depth: lightcraft_pipeline::OutputDepth, device_proof: bool, over
 /// when the GPU render failed and the CPU must render it. The reason belongs to this call, unlike
 /// [`last_fallback`], which the latest render on any thread overwrites.
 pub fn try_render(
-    src: &Arc<Rgb32f>,
+    src: impl Into<SourcePixels>,
     info: &SourceInfo,
     s: &DevelopSettings,
     req: &RenderRequest,
@@ -522,7 +528,7 @@ pub fn try_render(
     if !handles(req.depth, device_proof, req.overlay) {
         return Err(Fallback::NotTried);
     }
-    attempt(src, info, s, req, stages).map(|(r, _)| r)
+    attempt(&src.into(), info, s, req, stages).map(|(r, _)| r)
 }
 
 /// [`try_render`] for the loupe's HDR picture of an HDR edit: a float HDR request
@@ -535,7 +541,7 @@ pub fn try_render(
 /// (what `lightcraft_engine::hdr_view::HdrPicture` holds). It matches the CPU's float render within
 /// the bounds in `docs/gpu-pipeline.md`.
 pub fn try_render_hdr(
-    src: &Arc<Rgb32f>,
+    src: impl Into<SourcePixels>,
     info: &SourceInfo,
     s: &DevelopSettings,
     req: &RenderRequest,
@@ -544,7 +550,7 @@ pub fn try_render_hdr(
     if req.depth != lightcraft_pipeline::OutputDepth::F32Hdr || req.proof.is_some() || req.overlay != lightcraft_pipeline::Overlay::None {
         return Err(Fallback::NotTried);
     }
-    match attempt(src, info, s, req, stages)? {
+    match attempt(&src.into(), info, s, req, stages)? {
         (r, Some(halves)) => Ok((r, halves)),
         (_, None) => Err(Fallback::Failed("GPU render: no HDR picture came back".into())),
     }
@@ -552,7 +558,7 @@ pub fn try_render_hdr(
 
 /// A render on the GPU, the HDR picture beside it for a float HDR request (see [`try_render`]).
 fn attempt(
-    src: &Arc<Rgb32f>,
+    src: &SourcePixels,
     info: &SourceInfo,
     s: &DevelopSettings,
     req: &RenderRequest,

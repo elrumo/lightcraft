@@ -21,8 +21,8 @@
 
 use lightcraft_develop::{DevelopSettings, Spot, SpotFill, SpotMode};
 use lightcraft_geom::{Affine, CropGeometry, Point, Rect};
-use lightcraft_raster::Rgb32f;
 use lightcraft_raster::resample::{Filter, fit};
+use lightcraft_raster::{PixelView, Rgb32f};
 
 use crate::geometry::Frame;
 
@@ -111,13 +111,14 @@ pub fn auto_source(img: &Rgb32f, target: (f32, f32), r: f32) -> (f32, f32) {
 /// A source offset (normalized, as [`Spot::source_offset`]) for `spot` on `src` developed with
 /// `s`: the best match, or with `avoid` (the current offset) the best one at least a spot radius
 /// away from it ("refresh source"). `None` when no candidate fits in the image.
-pub fn pick_source(
-    src: &Rgb32f,
+pub fn pick_source<'a>(
+    src: impl Into<PixelView<'a>>,
     info: &crate::SourceInfo,
     s: &lightcraft_develop::DevelopSettings,
     spot: &Spot,
     avoid: Option<Point>,
 ) -> Option<Point> {
+    let src: PixelView<'a> = src.into();
     let frame = crate::frame_for(src, info, s, true);
     let (w, h) = frame.fit(512, 512);
     if w == 0 || h == 0 {
@@ -678,7 +679,8 @@ pub struct EraseInput {
 /// the camera's white, no Defringe; red eye, which follows the spots, is left out too), so the same stroke gets the
 /// same input whatever the profile and the sliders say, and the fill is stored in that light ([`SpotFill::plain`]).
 /// The earlier spots (part of the retouch) stay. `None` for a spot without points or outside the image.
-pub fn erase_input(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, index: usize) -> Option<EraseInput> {
+pub fn erase_input<'a>(src: impl Into<PixelView<'a>>, info: &crate::SourceInfo, s: &DevelopSettings, index: usize) -> Option<EraseInput> {
+    let src: PixelView<'a> = src.into();
     let spot = s.spots.get(index)?;
     let frame = crate::frame_for(src, info, s, false);
     let (ow, oh) = (frame.ow, frame.oh);

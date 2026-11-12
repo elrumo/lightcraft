@@ -1,7 +1,7 @@
 //! Image buffers and basic raster operations for LightCraft.
 //!
 //! - [`Image<T>`]: interleaved, row-major pixels (`Rgb32f = Image<[f32; 3]>`, `Rgba8 = Image<[u8; 4]>`,
-//!   `Plane = Image<f32>`).
+//!   `Plane = Image<f32>`); [`Rgb16f`] holds a big picture in half floats ([`compact`]).
 //! - Resampling ([`resample`]): separable Lanczos-3 / Mitchell / box, rayon-parallel; point sampling for warps
 //!   ([`sample`]: Lanczos-3 held to its neighbours' range).
 //! - Blur ([`blur`]): separable Gaussian via repeated box filters (O(1) per pixel in the radius).
@@ -11,11 +11,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod blur;
+pub mod compact;
 pub mod histogram;
 pub mod morph;
 pub mod resample;
 pub mod sample;
 
+pub use compact::{PixelView, Rgb16f, SourcePixels};
 pub use histogram::{HdrBins, Histogram};
 
 /// Run `f` over row chunks, in parallel when the `parallel` feature is on.

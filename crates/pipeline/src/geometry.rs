@@ -7,8 +7,8 @@
 
 use lightcraft_develop::{DevelopSettings, EmbeddedLens};
 use lightcraft_geom::{Affine, CropGeometry, Homography, Orientation, Point, Rect};
-use lightcraft_raster::resample::{Filter, resize, resize_with, weights};
-use lightcraft_raster::{Rgb32f, orient_map, par_rows};
+use lightcraft_raster::resample::{Filter, resize, resize_view, resize_view_with, resize_with, weights};
+use lightcraft_raster::{PixelView, Rgb32f, orient_map, par_rows};
 
 use crate::optics::{Warp, reorient_lens};
 
@@ -307,19 +307,25 @@ impl Frame {
 
     /// Sample the source into a `w × h` output buffer: orientation, crop, rotation, flips — one
     /// bilinear resample from a pre-filtered (area-downscaled) copy, so minification never aliases.
-    pub fn sample(&self, src: &Rgb32f, w: usize, h: usize) -> Rgb32f {
-        let plan = self.sample_plan(src.width, src.height, w, h);
+    ///
+    /// A source in half floats ([`PixelView::F16`]) is read the same way, the part a window reads widened to floats
+    /// as it is read; only a sample that reads it all at full size (a whole-frame 1:1 render) widens it whole.
+    pub fn sample<'a>(&self, src: impl Into<PixelView<'a>>, w: usize, h: usize) -> Rgb32f {
+        let src: PixelView<'a> = src.into();
+        let plan = self.sample_plan(src.width(), src.height(), w, h);
+        let half = matches!(src, PixelView::F16(_));
         // a window of a big original reads a small part of it: only that part is oriented and prefiltered
-        // (the same pixels; read in place when there is neither to do)
-        let cut = if self.orient != Orientation::Normal || plan.prefilter.is_some() { self.source_cut(&plan, w, h) } else { None };
+        // (the same pixels; read in place when there is neither to do, and widened when it is in half floats)
+        let cut = if half || self.orient != Orientation::Normal || plan.prefilter.is_some() { self.source_cut(&plan, w, h) } else { None };
         let (base, off) = match cut {
             Some(c) => (std::borrow::Cow::Owned(c.base(src, self.orient, &plan)), [c.base[0] as f32, c.base[1] as f32]),
             None => {
-                let oriented = if self.orient == Orientation::Normal { None } else { Some(src.oriented(self.orient)) };
-                let base = match (plan.prefilter, oriented) {
-                    (Some((nw, nh)), o) => std::borrow::Cow::Owned(resize(o.as_ref().unwrap_or(src), nw, nh, Filter::Mitchell)),
-                    (None, Some(o)) => std::borrow::Cow::Owned(o),
-                    (None, None) => std::borrow::Cow::Borrowed(src),
+                let base = match (plan.prefilter, self.orient) {
+                    // (an upright picture is prefiltered from its rows as they are, half floats widened row by row)
+                    (Some((nw, nh)), Orientation::Normal) => std::borrow::Cow::Owned(resize_view(src, nw, nh, Filter::Mitchell)),
+                    (Some((nw, nh)), o) => std::borrow::Cow::Owned(resize(&oriented(src, o), nw, nh, Filter::Mitchell)),
+                    (None, Orientation::Normal) => src.to_f32(),
+                    (None, o) => std::borrow::Cow::Owned(oriented(src, o)),
                 };
                 (base, [0.0; 2])
             }
@@ -378,6 +384,17 @@ pub struct SamplePlan {
     pub mode: SampleMode,
 }
 
+/// `src` turned upright by `o`, in floats (half floats widened as they are read: one float copy, not two).
+fn oriented(src: PixelView<'_>, o: Orientation) -> Rgb32f {
+    match src {
+        PixelView::F32(i) => i.oriented(o),
+        PixelView::F16(_) => {
+            let (w, h) = if o.swaps_axes() { (src.height(), src.width()) } else { (src.width(), src.height()) };
+            SourceCut { base: [0, 0, w, h], src: [0, 0, w, h] }.cut(src, o)
+        }
+    }
+}
+
 /// The part of the source a sample reads ([`Frame::source_cut`]): what a window of a big original is made from,
 /// instead of orienting, prefiltering (and on the GPU, uploading) the whole image. The same pixels as the
 /// whole-image path: the base is the whole prefilter's pixels, made with its taps.
@@ -403,28 +420,34 @@ impl SourceCut {
 
     /// The oriented pixels [`Self::src`] of `img` (the frame's orientation `orient` on top of it), as
     /// `img.oriented(orient)` holds them.
-    pub fn cut(&self, img: &Rgb32f, orient: Orientation) -> Rgb32f {
+    pub fn cut<'a>(&self, img: impl Into<PixelView<'a>>, orient: Orientation) -> Rgb32f {
+        let img: PixelView<'a> = img.into();
         let (w, h) = self.src_size();
         let [x0, y0, ..] = self.src;
-        let mut out = Rgb32f::new(w, h);
         if orient == Orientation::Normal {
-            par_rows(&mut out.data, w, |y, row| {
-                let at = (y0 + y) * img.width + x0;
-                if let Some(s) = img.data.get(at..at + row.len()) {
-                    row.copy_from_slice(s);
+            let mut out = img.region(x0, y0, x0 + w, y0 + h);
+            if (out.width, out.height) != (w, h) {
+                // (a cut past the picture reads black there, as it always did)
+                let mut padded = Rgb32f::new(w, h);
+                for (dst, src) in padded.data.chunks_mut(w.max(1)).zip(out.data.chunks(out.width.max(1))) {
+                    dst.iter_mut().zip(src).for_each(|(d, s)| *d = *s);
                 }
-            });
+                out = padded;
+            }
             return out;
         }
-        let m = orient_map(orient, img.width, img.height);
+        let mut out = Rgb32f::new(w, h);
+        let (iw, ih) = (img.width(), img.height());
+        let m = orient_map(orient, iw, ih);
         par_rows(&mut out.data, w, |y, row| {
             let oy = (y0 + y) as i64;
             for (x, px) in row.iter_mut().enumerate() {
                 let ox = (x0 + x) as i64;
                 let (sx, sy) = (m[0] * ox + m[1] * oy + m[2], m[3] * ox + m[4] * oy + m[5]);
-                let at = usize::try_from(sy).ok().zip(usize::try_from(sx).ok()).filter(|&(_, sx)| sx < img.width).map(|(sy, sx)| sy * img.width + sx);
-                if let Some(v) = at.and_then(|i| img.data.get(i)) {
-                    *px = *v;
+                if let (Ok(sx), Ok(sy)) = (usize::try_from(sx), usize::try_from(sy))
+                    && let Some(v) = img.get(sx, sy)
+                {
+                    *px = v;
                 }
             }
         });
@@ -448,10 +471,11 @@ impl SourceCut {
 
     /// The base pixels of `img` (`orient` on top of it): its cut, prefiltered (an upright image's rows are read in
     /// place: a window of a frame two thirds of a 48 MP original's size holds no 290 MB cut).
-    pub fn base(&self, img: &Rgb32f, orient: Orientation, plan: &SamplePlan) -> Rgb32f {
+    pub fn base<'a>(&self, img: impl Into<PixelView<'a>>, orient: Orientation, plan: &SamplePlan) -> Rgb32f {
+        let img: PixelView<'a> = img.into();
         match orient {
             Orientation::Normal => match self.taps(plan, [0, self.src[1]]) {
-                Some([wx, wy]) => resize_with(img, self.src[1]..self.src[3], &wx, &wy),
+                Some([wx, wy]) => resize_view_with(img, self.src[1]..self.src[3], &wx, &wy),
                 None => self.cut(img, orient),
             },
             _ => {

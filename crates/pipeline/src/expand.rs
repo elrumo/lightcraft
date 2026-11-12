@@ -33,7 +33,7 @@ use std::sync::{Arc, OnceLock};
 
 use lightcraft_develop::{DevelopSettings, ExpandFill, SpotFill};
 use lightcraft_geom::{Affine, CropGeometry, EXPAND_MAX, Point, Rect};
-use lightcraft_raster::{Rgb32f, Rgba8, par_rows};
+use lightcraft_raster::{PixelView, Rgb32f, Rgba8, par_rows};
 
 use crate::geometry::{BLANK, Frame};
 
@@ -303,7 +303,8 @@ pub struct ExpandInput {
 /// The canvas a model needs to fill the area past the photo under `s`'s crop: the crop's bounding
 /// box with a little context, resampled from `src` at its own resolution up to `max_side` pixels
 /// (at most [`MAX_CANVAS`]). `None` when Expand is off or the crop shows no area past the photo.
-pub fn expand_input(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, max_side: usize) -> Option<ExpandInput> {
+pub fn expand_input<'a>(src: impl Into<PixelView<'a>>, info: &crate::SourceInfo, s: &DevelopSettings, max_side: usize) -> Option<ExpandInput> {
+    let src: PixelView<'a> = src.into();
     if !s.crop.expand {
         return None;
     }

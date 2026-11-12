@@ -20,7 +20,7 @@ use std::sync::Mutex;
 use lightcraft_color::perceptual::{oklab_from_2020, oklab_to_2020};
 use lightcraft_develop::{DevelopSettings, EmbeddedLens, EmbeddedVignette, EmbeddedWarp, EmbeddedWarpStage};
 use lightcraft_geom::{Affine, Homography, Interval, Orientation, Point, Real};
-use lightcraft_raster::{Plane, Rgb32f};
+use lightcraft_raster::{PixelView, Plane, Rgb32f};
 
 use crate::for_rows;
 
@@ -423,15 +423,18 @@ pub fn reorient_lens(lens: &EmbeddedLens, o: Orientation, w: f64, h: f64) -> Emb
 /// (`[α_R, α_B]`, dimensionless; red edges sit at `r·(1 + α_R)`). Strong, radially oriented green edges are
 /// located in each plane with sub-pixel 1-D matching of normalized edge profiles; a weighted, outlier-trimmed
 /// least-squares fit of displacement = α·r gives the scale. Results are cached per image.
-pub fn estimate_lateral_ca(img: &Rgb32f) -> [f64; 2] {
+///
+/// A picture in half floats is widened whole for it (once: the result is kept).
+pub fn estimate_lateral_ca<'a>(img: impl Into<PixelView<'a>>) -> [f64; 2] {
     static CACHE: Mutex<Vec<(u64, [f64; 2])>> = Mutex::new(Vec::new());
+    let img: PixelView<'a> = img.into();
     let key = fingerprint(img);
     if let Ok(c) = CACHE.lock()
         && let Some((_, v)) = c.iter().find(|(k, _)| *k == key)
     {
         return *v;
     }
-    let v = estimate_lateral_ca_uncached(img);
+    let v = estimate_lateral_ca_uncached(&img.to_f32());
     if let Ok(mut c) = CACHE.lock() {
         c.push((key, v));
         if c.len() > 16 {
@@ -442,13 +445,16 @@ pub fn estimate_lateral_ca(img: &Rgb32f) -> [f64; 2] {
 }
 
 /// Cheap content fingerprint of an image (dimensions + 512 sampled pixels), for analysis caches.
-pub(crate) fn fingerprint(img: &Rgb32f) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ ((img.width as u64) << 32 | img.height as u64);
-    let n = img.data.len();
+pub(crate) fn fingerprint<'a>(img: impl Into<PixelView<'a>>) -> u64 {
+    let img: PixelView<'a> = img.into();
+    let (w, ht) = (img.width(), img.height());
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ ((w as u64) << 32 | ht as u64);
+    let n = img.len();
     for i in 0..512usize {
         // (an empty image has no pixels to sample: its dimensions are the fingerprint)
-        let Some(p) = img.data.get((i.wrapping_mul(2_654_435_761) ^ i) % n.max(1)) else { break };
-        for c in *p {
+        let at = (i.wrapping_mul(2_654_435_761) ^ i) % n.max(1);
+        let Some(p) = img.get(at % w.max(1), at / w.max(1)) else { break };
+        for c in p {
             h ^= c.to_bits() as u64;
             h = h.wrapping_mul(0x0100_0000_01b3);
         }

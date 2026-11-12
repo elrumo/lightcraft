@@ -12,7 +12,7 @@ use lightcraft_pipeline::local::plane_at;
 use lightcraft_pipeline::masks::{AlphaCache, AlphaKeys, alpha_key};
 use lightcraft_pipeline::{Plan, RenderRequest, Rendered, SourceInfo, local};
 use lightcraft_raster::resample::Filter;
-use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, orient_map};
+use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, SourcePixels, orient_map};
 
 use crate::ctx::{Buf, FailKind, Gpu, fail, groups1, groups2};
 use crate::params::{Present, finish_block};
@@ -23,14 +23,14 @@ use crate::params::{Present, finish_block};
 pub struct GpuStages {
     entries: Mutex<Vec<Entry>>,
     /// The uploaded source (a view renders one photo at several sizes).
-    source: Mutex<Option<(Arc<Rgb32f>, Arc<Buf>)>>,
+    source: Mutex<Option<(SourcePixels, Arc<Buf>)>>,
 }
 
 const CAPACITY: usize = 2;
 
 #[derive(Clone)]
 struct Entry {
-    src: Arc<Rgb32f>,
+    src: SourcePixels,
     geo: u64,
     sampled: Arc<Buf>,
     lin: Option<(u64, Arc<Buf>)>,
@@ -66,23 +66,23 @@ impl Planes {
 }
 
 impl GpuStages {
-    fn get(&self, src: &Arc<Rgb32f>, geo: u64) -> Option<Entry> {
-        self.lock().iter().find(|e| e.geo == geo && Arc::ptr_eq(&e.src, src)).cloned()
+    fn get(&self, src: &SourcePixels, geo: u64) -> Option<Entry> {
+        self.lock().iter().find(|e| e.geo == geo && e.src.ptr_eq(src)).cloned()
     }
 
     fn put(&self, e: Entry) {
         let mut v = self.lock();
-        v.retain(|o| !(o.geo == e.geo && Arc::ptr_eq(&o.src, &e.src)));
+        v.retain(|o| !(o.geo == e.geo && o.src.ptr_eq(&e.src)));
         v.push(e);
         while v.len() > CAPACITY {
             v.remove(0);
         }
     }
 
-    fn source(&self, src: &Arc<Rgb32f>, upload: impl FnOnce() -> Buf) -> Arc<Buf> {
+    fn source(&self, src: &SourcePixels, upload: impl FnOnce() -> Buf) -> Arc<Buf> {
         let mut g = self.source.lock().unwrap_or_else(|e| e.into_inner());
         match &*g {
-            Some((s, b)) if Arc::ptr_eq(s, src) => b.clone(),
+            Some((s, b)) if s.ptr_eq(src) => b.clone(),
             _ => {
                 *g = None; // free the previous photo's buffer first
                 let b = Arc::new(upload());
@@ -516,14 +516,14 @@ fn coverage_mask(wp: &lightcraft_pipeline::optics::Warp, o2t: &lightcraft_geom::
 
 /// The base [`resample`] reads for the whole source `src_buf` (`Frame::sample`): oriented and prefiltered on
 /// the device. May be the source buffer itself.
-fn whole_base(cx: &mut Cx<'_>, src: &Rgb32f, src_buf: Arc<Buf>, plan: &Plan<'_>, sp: &SamplePlan) -> (Arc<Buf>, (usize, usize)) {
+fn whole_base(cx: &mut Cx<'_>, (sw, sh): (usize, usize), src_buf: Arc<Buf>, plan: &Plan<'_>, sp: &SamplePlan) -> (Arc<Buf>, (usize, usize)) {
     let fr = &plan.frame;
     let oriented = if fr.orient == Orientation::Normal {
         src_buf
     } else {
         let out = cx.gpu.buffer(sp.ow * sp.oh * 3);
-        let mut p = vec![src.width as u32, src.height as u32, sp.ow as u32, sp.oh as u32];
-        p.extend(orient_map(fr.orient, src.width, src.height).map(|v| v as u32));
+        let mut p = vec![sw as u32, sh as u32, sp.ow as u32, sp.oh as u32];
+        p.extend(orient_map(fr.orient, sw, sh).map(|v| v as u32));
         cx.run("orient", &p, &[Some(&src_buf), Some(&out), None], groups2(sp.ow, sp.oh, [16, 16]));
         Arc::new(out)
     };
@@ -537,8 +537,8 @@ fn whole_base(cx: &mut Cx<'_>, src: &Rgb32f, src_buf: Arc<Buf>, plan: &Plan<'_>,
 /// (cut, oriented and prefiltered with the whole image's taps, as `Frame::sample` makes it) and uploaded. The
 /// whole source is never on the device: a window of a 48 MP original uploads tens of MB instead of 560 (and its
 /// oriented, prefiltered copies).
-fn cut_base(cx: &mut Cx<'_>, src: &Rgb32f, cut: &SourceCut, plan: &Plan<'_>, sp: &SamplePlan) -> (Arc<Buf>, (usize, usize)) {
-    (Arc::new(cx.gpu.upload(rgb_words(&cut.base(src, plan.frame.orient, sp)))), cut.base_size())
+fn cut_base(cx: &mut Cx<'_>, src: &SourcePixels, cut: &SourceCut, plan: &Plan<'_>, sp: &SamplePlan) -> (Arc<Buf>, (usize, usize)) {
+    (Arc::new(cx.gpu.upload(rgb_words(&cut.base(src.view(), plan.frame.orient, sp)))), cut.base_size())
 }
 
 /// Resample the base (the prefiltered oriented source, of which `base` holds the `bw × bh` from `off` on) into
@@ -596,7 +596,7 @@ pub(crate) fn profiling() -> bool {
 /// picture (see [`crate::try_render_hdr`]); the 8-bit image is its reduction.
 pub fn render(
     gpu: &Gpu,
-    src: &Arc<Rgb32f>,
+    src: &SourcePixels,
     info: &SourceInfo,
     s: &DevelopSettings,
     req: &RenderRequest,
@@ -614,7 +614,7 @@ pub fn render(
         }
         None => cx.flush(),
     };
-    let plan = lightcraft_pipeline::plan(src, info, s, req);
+    let plan = lightcraft_pipeline::plan(src.view(), info, s, req);
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
     let _limit = match fault {
@@ -635,10 +635,13 @@ pub fn render(
     lap("plan", &mut t, &mut cx);
 
     // 1. geometry (on the CPU when the source exceeds the device's buffer limit)
-    let sp = plan.frame.sample_plan(src.width, src.height, w, h);
+    let (sw, sh) = (src.width(), src.height());
+    let sp = plan.frame.sample_plan(sw, sh, w, h);
     // a window of a source too big for a view to keep (the original a zoom window is cut from) uploads only
-    // what it reads; a smaller one stays on the device for the view's next render
-    let big = src.data.len() * 12 > RETAIN_SOURCE_BYTES;
+    // what it reads; a smaller one stays on the device for the view's next render. A source in half floats is a big
+    // original: a window of it is widened from its cut, never from the whole picture.
+    let compact = src.as_f32().is_none();
+    let big = compact || sw * sh * 12 > RETAIN_SOURCE_BYTES;
     let cut = (cached.is_none() && big).then(|| plan.frame.source_cut(&sp, w, h)).flatten().filter(|c| {
         let (bw, bh) = c.base_size();
         gpu.fits(bw * bh * 3)
@@ -647,32 +650,30 @@ pub fn render(
         Some(e) => e.sampled.clone(),
         // (a WarpRectilinear2 chain also goes to the CPU: its degree-14 polynomial needs f64; so
         // does Generative Expand, whose fill is put in at the resample)
-        None if (cut.is_some() || gpu.fits(src.data.len() * 3))
-            && !plan.frame.warp.as_ref().is_some_and(|w| w.needs_f64())
-            && !plan.frame.expands() =>
-        {
+        None if (cut.is_some() || gpu.fits(sw * sh * 3)) && !plan.frame.warp.as_ref().is_some_and(|w| w.needs_f64()) && !plan.frame.expands() => {
             let (base, size, off) = match &cut {
                 Some(c) => {
                     let (base, size) = cut_base(&mut cx, src, c, &plan, &sp);
                     (base, size, [c.base[0], c.base[1]])
                 }
                 None => {
-                    let upload = || gpu.upload(rgb_words(src));
+                    // (a source in half floats is widened for the upload, and the floats go when it is done)
+                    let upload = || gpu.upload(rgb_words(&src.to_f32()));
                     // (a source too big for a view's stages to keep is the one shared copy: a
                     // whole-frame render of the original, e.g. a large preview size)
-                    let src_buf = match stages {
-                        Some(c) if src.data.len() * 12 <= RETAIN_SOURCE_BYTES => c.source(src, upload),
-                        Some(_) => shared_source(src, upload),
-                        None => Arc::new(upload()),
+                    let src_buf = match (stages, src.as_f32()) {
+                        (Some(c), _) if !big => c.source(src, upload),
+                        (Some(_), Some(f)) => shared_source(f, upload),
+                        _ => Arc::new(upload()),
                     };
-                    let (base, size) = whole_base(&mut cx, src, src_buf, &plan, &sp);
+                    let (base, size) = whole_base(&mut cx, (sw, sh), src_buf, &plan, &sp);
                     (base, size, [0; 2])
                 }
             };
             resample(&mut cx, base, size, off, &plan, &sp)
         }
         None => {
-            let img = plan.frame.sample(src, w, h);
+            let img = plan.frame.sample(src.view(), w, h);
             let b = Arc::new(gpu.upload(rgb_words(&img)));
             host.sampled = Some(img);
             b

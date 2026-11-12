@@ -20,7 +20,7 @@ use std::sync::Mutex;
 
 use lightcraft_develop::{Crop, DevelopSettings, Geometry, Upright};
 use lightcraft_geom::{Homography, Orientation, Point};
-use lightcraft_raster::{Plane, Rgb32f};
+use lightcraft_raster::{PixelView, Plane};
 
 use crate::SourceInfo;
 
@@ -545,7 +545,8 @@ const ANALYSIS_LONG: usize = 1024;
 
 /// Analyse a source: the lens-corrected (optics applied, no perspective/crop) image at [`ANALYSIS_LONG`] px,
 /// segment detection and vanishing points. Cached per source + optics settings.
-pub fn analyze_source(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> Analysis {
+pub fn analyze_source<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, s: &DevelopSettings) -> Analysis {
+    let src: PixelView<'a> = src.into();
     static CACHE: Mutex<Vec<(u64, Analysis)>> = Mutex::new(Vec::new());
     let mut base = s.clone();
     base.geometry = Geometry::default();
@@ -589,7 +590,7 @@ pub const STRAIGHTEN_MIN_LINES: usize = 3;
 /// The rotation (degrees, clockwise +) that levels `src`'s dominant horizon/plumb lines, if they agree
 /// (the consensus rule of Upright Level), within [`STRAIGHTEN_MAX_DEGREES`] and backed by at least
 /// [`STRAIGHTEN_MIN_LINES`] lines. Used by the crop panel's Auto straighten.
-pub fn level_degrees(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings) -> Option<f64> {
+pub fn level_degrees<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, s: &DevelopSettings) -> Option<f64> {
     let a = analyze_source(src, info, s);
     straighten_angle(&a)
 }
@@ -600,7 +601,7 @@ pub fn straighten_angle(a: &Analysis) -> Option<f64> {
 }
 
 /// The automatic Upright correction for `mode` on `src` (identity for Off and Guided).
-pub fn auto_transform(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, mode: Upright) -> Homography {
+pub fn auto_transform<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, s: &DevelopSettings, mode: Upright) -> Homography {
     if matches!(mode, Upright::Off | Upright::Guided) {
         return Homography::IDENTITY;
     }
@@ -608,7 +609,7 @@ pub fn auto_transform(src: &Rgb32f, info: &SourceInfo, s: &DevelopSettings, mode
 }
 
 /// Fill in a missing automatic Upright transform (settings from XMP/CLI that name a mode but carry no analysis).
-pub fn resolve<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings) -> Cow<'a, DevelopSettings> {
+pub fn resolve<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a DevelopSettings) -> Cow<'a, DevelopSettings> {
     let g = &s.geometry;
     if matches!(g.upright, Upright::Off | Upright::Guided) || g.upright_transform.is_some() || !s.section_enabled("geometry") {
         return Cow::Borrowed(s);
