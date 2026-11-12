@@ -30,6 +30,9 @@
 //! - `host.libraries {recent?}` — the libraries to offer; `host.library.open {path} | new {name} | delete {path}` —
 //!   another library without a restart, a new one, one deleted ([`libraries`]).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
+//! - `host.slow` — the steps of this thread that took [`SLOW_STEP`] or more since the last ask (a request, or a part of
+//!   the work between requests), oldest first, at most [`SLOW_KEPT`]: `[{what, ms, agoMs}]`. Where a frontend's requests
+//!   waited, on a device too slow to trace (`LIGHTCRAFT_HOST_TRACE` prints every step, on a terminal).
 //! - `host.prepareExports {on}` — the frontend prepares exports itself (draws their pictures, writes a format the engine
 //!   cannot): a script's or the control channel's `app.export` then goes to it as a `uiRequest` `ui.export` (its params), which
 //!   it runs as its own export.
@@ -78,6 +81,65 @@ const SLEEPY_TICK: Duration = Duration::from_secs(1);
 const SLEEPY_AFTER: u32 = 8;
 /// The least time between two `activity` events that only move progress (a row that starts or ends goes at once).
 const ACTIVITY_EVERY: Duration = Duration::from_millis(100);
+/// A step of the engine thread this long or longer is kept for `host.slow`: a frontend's request waits for it.
+const SLOW_STEP: Duration = Duration::from_millis(50);
+/// How many slow steps are kept between two asks (the oldest go).
+const SLOW_KEPT: usize = 24;
+
+/// The steps of the engine thread that took [`SLOW_STEP`] or more, until `host.slow` asks: what, how long, when it ended.
+#[derive(Default)]
+struct SlowSteps(std::collections::VecDeque<(String, Duration, Instant)>);
+
+impl SlowSteps {
+    /// Keep `what`, which took `took` and ended at `at`, if it was slow; past [`SLOW_KEPT`] the oldest goes.
+    fn note(&mut self, what: &str, took: Duration, at: Instant) {
+        if took < SLOW_STEP {
+            return;
+        }
+        if self.0.len() >= SLOW_KEPT {
+            self.0.pop_front();
+        }
+        self.0.push_back((what.to_string(), took, at));
+    }
+
+    /// The steps kept, oldest first, as `[{what, ms, agoMs}]` (`agoMs` before `now`); they are forgotten once told.
+    fn take(&mut self, now: Instant) -> Value {
+        Value::Array(
+            self.0
+                .drain(..)
+                .map(|(what, took, at)| {
+                    json!({"what": what, "ms": u64::try_from(took.as_millis()).unwrap_or(u64::MAX), "agoMs": u64::try_from(now.saturating_duration_since(at).as_millis()).unwrap_or(u64::MAX)})
+                })
+                .collect(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod slow_steps_tests {
+    use super::*;
+
+    #[test]
+    fn only_slow_steps_are_kept_the_newest_ones_and_each_is_told_once() {
+        let t = Instant::now();
+        let mut s = SlowSteps::default();
+        s.note("render.view", Duration::from_millis(10), t);
+        assert_eq!(s.take(t), json!([]), "a quick step is not kept");
+        s.note("engine.execute photo.inspect", Duration::from_millis(900), t);
+        s.note("tick: saving", SLOW_STEP, t + Duration::from_millis(5));
+        assert_eq!(
+            s.take(t + Duration::from_millis(20)),
+            json!([{"what": "engine.execute photo.inspect", "ms": 900, "agoMs": 20}, {"what": "tick: saving", "ms": 50, "agoMs": 15}])
+        );
+        assert_eq!(s.take(t), json!([]), "told once");
+        for i in 0..SLOW_KEPT + 3 {
+            s.note(&format!("step {i}"), SLOW_STEP, t);
+        }
+        let kept = s.take(t);
+        assert_eq!(kept.as_array().map(Vec::len), Some(SLOW_KEPT));
+        assert_eq!(kept[0]["what"], "step 3", "the oldest go first");
+    }
+}
 /// The least time between two of the loupe's histograms sent with drafts (a slider drag).
 const DRAFT_HISTOGRAM_EVERY: Duration = Duration::from_millis(33);
 /// How long an automation script waits for an answer.
@@ -356,6 +418,8 @@ struct Engine {
     focus_next: Instant,
     /// How far that scan is (`HostState::faces`).
     faces_scan: Option<Value>,
+    /// The steps of this thread that took [`SLOW_STEP`] or more, until `host.slow` asks: what, how long, when.
+    slow: SlowSteps,
     /// `app.export` running on its worker: answered when it ends.
     export: Option<PendingExport>,
     /// `enhance.superRes` running on its worker: answered when it ends.
@@ -556,6 +620,7 @@ impl Engine {
             faces_next: Instant::now(),
             focus_next: Instant::now(),
             faces_scan: None,
+            slow: SlowSteps::default(),
             export: None,
             lightroom: Default::default(),
             lightroom_reply: None,
@@ -606,6 +671,7 @@ impl Engine {
             if trace::on() && t0.elapsed() >= Duration::from_millis(1) {
                 trace::line(&format!("tick {:.2} ms", t0.elapsed().as_secs_f64() * 1e3));
             }
+            self.note_slow("tick", t0);
             // (quiet: nobody asked, nothing was said, no render, task or face scan is running)
             let running = self.busy || self.faces_scan.is_some() || self.activity.as_ref().is_some_and(|(tasks, _)| !tasks.is_empty());
             self.quiet = if asked || running || self.events.pushed() != said { 0 } else { self.quiet.saturating_add(1) };
@@ -615,15 +681,24 @@ impl Engine {
 
     /// Handle one message; true when the engine should stop.
     fn handle(&mut self, msg: Msg) -> bool {
-        let traced = match &msg {
-            Msg::Request(req) | Msg::Call(req, _) if trace::on() => Some((trace::name(req), Instant::now())),
+        let named = match &msg {
+            Msg::Request(req) | Msg::Call(req, _) => Some((trace::name(req), Instant::now())),
             _ => None,
         };
         let stop = self.handle_msg(msg);
-        if let Some((name, t0)) = traced {
-            trace::line(&format!("{name} {:.2} ms", t0.elapsed().as_secs_f64() * 1e3));
+        if let Some((name, t0)) = named {
+            if trace::on() {
+                trace::line(&format!("{name} {:.2} ms", t0.elapsed().as_secs_f64() * 1e3));
+            }
+            self.note_slow(&name, t0);
         }
         stop
+    }
+
+    /// Keep `what`, begun at `t0`, when it took [`SLOW_STEP`] or more (`host.slow`).
+    fn note_slow(&mut self, what: &str, t0: Instant) {
+        let now = Instant::now();
+        self.slow.note(what, now.saturating_duration_since(t0), now);
     }
 
     fn handle_msg(&mut self, msg: Msg) -> bool {
@@ -785,6 +860,7 @@ impl Engine {
                 Ok(Value::Array(v))
             }
             "host.state" => Ok(serde_json::to_value(self.snapshot()).unwrap_or_default()),
+            "host.slow" => Ok(self.slow.take(Instant::now())),
             // what memory the engine holds: its caches (`library.memory`) and the views' stage caches; and what
             // the system still lets the app use before it ends it (iOS)
             "host.memory" => {
@@ -1122,7 +1198,9 @@ impl Engine {
             }
         }
         let mut collect = Collect::default();
+        let part = Instant::now();
         let polled = self.sched.poll(&mut self.session, &mut collect);
+        self.note_slow("tick: renders", part);
         for (slot, image, hdr) in collect.0 {
             let Some(shown) = self.sched.textures.get(&slot) else { continue };
             let (width, height) = (u32::try_from(image.width).unwrap_or(u32::MAX), u32::try_from(image.height).unwrap_or(u32::MAX));
@@ -1190,7 +1268,10 @@ impl Engine {
             self.events.push(Event::RenderFailed { slot: slot.name(), photo, key, error }.to_value());
         }
         self.busy = polled.wake_after.is_some_and(|d| d <= BUSY_TICK);
+        let part = Instant::now();
         let synced = self.sync.poll(&mut self.session, self.in_front, Some(&*self.sync_exec));
+        self.note_slow("tick: sync", part);
+        let part = Instant::now();
         let (sched, session) = (&mut self.sched, &mut self.session);
         let mut built = false;
         self.thumbs_wanted.retain(|id, (edge, priority)| {
@@ -1201,6 +1282,7 @@ impl Engine {
             true
         });
         self.busy |= built;
+        self.note_slow("tick: thumbnails", part);
         if let Some(url) = synced.link {
             self.events.push(Event::Copy { text: url.clone() }.to_value());
             self.events.push(Event::Message { text: format!("Link copied: {url}"), level: "info".into() }.to_value());
@@ -1208,6 +1290,7 @@ impl Engine {
         if synced.ask_conflict {
             self.events.push(Event::Ask { dialog: "syncChoice".into(), params: json!({}) }.to_value());
         }
+        let part = Instant::now();
         self.pump_faces();
         self.pump_focus();
         self.poll_export();
@@ -1221,8 +1304,13 @@ impl Engine {
         self.poll_scan();
         self.poll_import();
         self.poll_browse();
+        self.note_slow("tick: background jobs", part);
+        let part = Instant::now();
         self.session.persist_if_dirty();
+        self.note_slow("tick: saving", part);
+        let part = Instant::now();
         let state = self.snapshot();
+        self.note_slow("tick: state", part);
         if self.state.as_ref() != Some(&state) {
             self.events.push(Event::State { state: state.clone() }.to_value());
             self.state = Some(state);
