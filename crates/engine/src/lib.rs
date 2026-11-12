@@ -1466,8 +1466,13 @@ impl Session {
                 visible.retain(|id| cmd::missing::is_missing(cat, avail, *id));
             }
             let mut stacked = Default::default();
-            if self.source != LibrarySource::RecentlyDeleted && !self.stacks_off {
-                (visible, stacked) = self.catalog.arrange_stacks_counted(&visible);
+            if self.source != LibrarySource::RecentlyDeleted {
+                // (with View ▸ Stacks off, a virtual copy's stack still shows: a copy is always with its original)
+                (visible, stacked) = if self.stacks_off {
+                    self.catalog.arrange_stacks_counted_if(&visible, |st| self.catalog.stack_holds_copy(st))
+                } else {
+                    self.catalog.arrange_stacks_counted(&visible)
+                };
             }
             self.visible = visible.into();
             self.visible_stacked = Arc::new(stacked);

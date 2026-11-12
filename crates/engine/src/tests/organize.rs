@@ -360,6 +360,19 @@ fn stack_toggle_takes_the_tapped_photo_without_a_selection_and_stacks_can_be_swi
     assert_eq!(s.visible_cloned().len(), n);
     // no stack badges either: every photo shows flat
     assert_eq!(badged(&mut s), 0);
+    // but a virtual copy is always stacked with its original (#329): its stack folds and is badged with Stacks off
+    let original = vis[0];
+    s.execute("photo.virtualCopy", &json!({"ids": [original.0]})).unwrap();
+    let shown = s.visible_cloned();
+    assert_eq!(shown.len(), n + 1, "the copy's stack is expanded: both show, the other stack stays flat");
+    let at = shown.iter().position(|p| *p == original).unwrap();
+    assert!(s.catalog.photo(shown[at + 1]).is_some_and(|p| p.copy_of == Some(original)), "the copy right after its original");
+    assert_eq!(badged(&mut s), 2, "the original and its copy carry the badge, the plain stack none");
+    s.execute("stack.toggle", &json!({"ids": [original.0]})).unwrap();
+    assert_eq!(s.visible_cloned().len(), n, "collapsed: one cell for the original and its copy");
+    // Stacks on again: every stack as before
+    s.execute("view.stacks", &json!({"on": true})).unwrap();
+    assert_eq!(badged(&mut s), 2);
 }
 
 /// A huge `start` is a validation error, not an arithmetic overflow in the numbering.

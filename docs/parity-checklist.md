@@ -1,6 +1,6 @@
 # Lightroom parity checklist
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-11 · **Change:** patch (LR-BEHAV-AUTOSAVE: quitting an unchanged library writes no snapshot)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-12 · **Change:** patch (LR-LIB-VIRTUALCOPY: a virtual copy's stack shows even with View ▸ Stacks off)
 
 The measured, row-by-row checklist: one row per Lightroom feature, menu item and shortcut, what we
 have and what is missing. It answers *does the feature exist?* (feature breadth). Whether it is good
@@ -120,7 +120,7 @@ differences and missing bindings are in [ui-parity.md](ui-parity.md#shortcuts).
 | LR-LIB-CULL | Assisted culling | P2 | 🟡 | `cmd:photo.analyze`, `cmd:dialog.cull`, `crates/pipeline/src/cull.rs` | Photo ▸ Assisted Culling…: focus score (0–100), clipping, burst grouping (look-alike shots within 10 s, both limits adjustable in the dialog and as `burstGap` / `similarity`, #2275) with the sharpest marked; reject below a focus score, pick each burst's best; classical measures — no eyes-closed / expression detection |
 | LR-LIB-ACTIVITY | Comments & likes | OOS | 🚫 | | |
 | LR-LIB-QUICKCOLL | Quick collection [Classic] | P2 | ✅ | `cmd:album.toggleTarget`, `cmd:album.clearQuick` | B in the grids |
-| LR-LIB-VIRTUALCOPY | Virtual copies [Classic] | P1 | ✅ | `cmd:photo.virtualCopy`, `cmd:photo.delete`, `crates/engine/src/cmd/organize.rs` | “Copy N” badge, stacked with the original, same albums, no XMP writes; deleting a copy dissolves or renumbers the stack (#1493); no “Set Copy as Master” |
+| LR-LIB-VIRTUALCOPY | Virtual copies [Classic] | P1 | ✅ | `cmd:photo.virtualCopy`, `cmd:photo.delete`, `crates/engine/src/cmd/organize.rs` | “Copy N” badge, stacked with the original, same albums, no XMP writes; deleting a copy dissolves or renumbers the stack (#1493); a copy's stack shows even with View ▸ Stacks off (`Catalog::stack_holds_copy`); no “Set Copy as Master” |
 
 ## C. Views & navigation (VIEW)
 
@@ -820,6 +820,7 @@ Latin stays upright. Advanced Japanese composition remains open. Regression cove
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-12 | patch | LR-LIB-VIRTUALCOPY: a virtual copy is always stacked with its original, even with View ▸ Stacks off (the other stacks still follow it; maintainer decision on card #329); status unchanged (✅) |
 | 2026-11-11 | patch | LR-BEHAV-AUTOSAVE: closing a library writes no snapshot when the one on disk already holds the catalog (HB-402; a Mac quit wrote 263 MB twice for 228,000 photos); status unchanged (✅) |
 | 2026-11-11 | minor | LRC-PRINT-JOB: the contact sheet's page number can be left out (`pageNumbers`), its film style picks up dust, hairs, scratches, grain and light leaks from a seed (`seed`), and its preview reads the thumbnail cache |
 | 2026-11-11 | patch | LR-EDIT-EFFECTS-GRAIN: `grain.style` (film, digital, color) on the CPU and GPU renderers. LR-EDIT-EFFECTS-FILM: a light leak's Position (`filmLayer.<i>.offset`) and seven built-in Film Effects presets. Statuses and feature counts unchanged |

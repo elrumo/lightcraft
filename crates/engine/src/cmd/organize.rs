@@ -214,7 +214,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Stacks",
             ["View", "Stacks"],
             None,
-            "{on?: bool} (default: switch); off shows every photo of a stack flat",
+            "{on?: bool} (default: switch); off shows every photo of a stack flat, but for a stack holding a virtual copy (always with its original)",
             always,
             |s, p| {
                 s.stacks_off = !bool_or(p, "on", s.stacks_off);

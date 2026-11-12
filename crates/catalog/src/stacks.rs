@@ -24,6 +24,11 @@ impl Catalog {
     pub fn stack_of(&self, photo: PhotoId) -> Option<&Stack> {
         self.stack_id_of(photo).and_then(|id| self.stacks.get(&id))
     }
+    /// Whether `stack` holds a virtual copy. Such a stack shows even with View ▸ Stacks off: a copy is always shown with
+    /// its original.
+    pub fn stack_holds_copy(&self, stack: &Stack) -> bool {
+        stack.photos.iter().any(|p| self.photos.get(p).is_some_and(|ph| ph.copy_of.is_some()))
+    }
     /// Photo → (stack, position in the stack), for every stacked photo.
     pub fn stack_index(&self) -> HashMap<PhotoId, (StackId, usize)> {
         self.stacks.iter().flat_map(|(id, s)| s.photos.iter().enumerate().map(move |(i, p)| (*p, (*id, i)))).collect()
@@ -179,11 +184,16 @@ impl Catalog {
     /// [`Catalog::arrange_stacks`], and how many of `ids` each collapsed stack's shown photo stands
     /// for (only stacks showing one photo for two or more).
     pub fn arrange_stacks_counted(&self, ids: &[PhotoId]) -> (Vec<PhotoId>, HashMap<PhotoId, usize>) {
+        self.arrange_stacks_counted_if(ids, |_| true)
+    }
+
+    /// [`Catalog::arrange_stacks_counted`] for the stacks `keep` takes; the others' photos stay where `ids` has them.
+    pub fn arrange_stacks_counted_if(&self, ids: &[PhotoId], keep: impl Fn(&Stack) -> bool) -> (Vec<PhotoId>, HashMap<PhotoId, usize>) {
         let mut counts = HashMap::new();
         if self.stacks.is_empty() {
             return (ids.to_vec(), counts);
         }
-        let index: ById<StackId> = self.stacks.iter().flat_map(|(id, s)| s.photos.iter().map(move |p| (*p, *id))).collect();
+        let index: ById<StackId> = self.stacks.iter().filter(|(_, s)| keep(s)).flat_map(|(id, s)| s.photos.iter().map(move |p| (*p, *id))).collect();
         let present: ById<()> = ids.iter().map(|id| (*id, ())).collect();
         let mut done: HashSet<StackId> = HashSet::new();
         let mut out = Vec::with_capacity(ids.len());
