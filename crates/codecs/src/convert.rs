@@ -5,7 +5,7 @@ use crate::icc::{self, IccColorModel, IccKind};
 use crate::space::{NamedSpace, SourceSpace, SpaceOrigin, Trc};
 use crate::{DecodeOptions, Decoded, Error, Format, Result, exif};
 use lightcraft_raster::resample::{Filter, fit};
-use lightcraft_raster::{Plane, Rgb32f, par_rows};
+use lightcraft_raster::{Image, Plane, Rgb32f, par_rows};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Model {
@@ -117,6 +117,10 @@ pub(crate) fn finish(format: Format, raw: Raw, meta: Meta, source_dims: (u32, u3
     });
 
     let parsed_icc = meta.icc.as_deref().and_then(icc::parse);
+    if let Some(d) = finish_half(format, &raw, ch, &meta, parsed_icc.as_ref(), float, opts) {
+        drop(raw);
+        return Ok(Decoded { exif: meta.exif, xmp: meta.xmp, icc: meta.icc, source_width: source_dims.0, source_height: source_dims.1, ..d });
+    }
     let (image, space) = if let Some(space) = meta.already_linear.clone() {
         (to_rgb_passthrough(&raw, ch), space)
     } else if raw.model == Model::Cmyk {
@@ -158,6 +162,7 @@ pub(crate) fn finish(format: Format, raw: Raw, meta: Meta, source_dims: (u32, u3
         width: image.width as u32,
         height: image.height as u32,
         image,
+        half: None,
         has_alpha: alpha.is_some(),
         alpha,
         space,
@@ -171,6 +176,45 @@ pub(crate) fn finish(format: Format, raw: Raw, meta: Meta, source_dims: (u32, u3
         icc: meta.icc,
         source_width: source_dims.0,
         source_height: source_dims.1,
+    })
+}
+
+/// [`finish`] for a decode asked for in half floats ([`DecodeOptions::half`]): the samples made linear and put in the
+/// working space pixel by pixel, each stored in half floats as it is made, so the picture never exists in floats (the
+/// very values [`Decoded::into_working`] gives, rounded once). `None` where that does not apply (alpha to flatten,
+/// CMYK, a CMS's own linear output, a picture to fit): [`finish`] decodes it as usual. Metadata fields are left empty.
+fn finish_half(format: Format, raw: &Raw, ch: usize, meta: &Meta, info: Option<&icc::IccInfo>, float: bool, opts: &DecodeOptions) -> Option<Decoded> {
+    let fits = opts.max_size.is_none_or(|(mw, mh)| (raw.width as u64) <= u64::from(mw) && (raw.height as u64) <= u64::from(mh));
+    if !opts.half || raw.alpha || raw.model == Model::Cmyk || meta.already_linear.is_some() || !fits {
+        return None;
+    }
+    let (Linear::Curves(t), space) = rgb_or_gray_plan(raw, ch, meta, info, float) else { return None };
+    let m = (!space.is_working()).then(|| space.to_working().to_f32());
+    let half = match &m {
+        Some(m) => linearize(raw, ch, &t, |p| lightcraft_raster::compact::narrow(crate::mat_apply(m, p))),
+        None => linearize(raw, ch, &t, lightcraft_raster::compact::narrow),
+    };
+    let summary = meta.exif.as_deref().map(exif::summarize).unwrap_or_default();
+    let orientation = meta.orientation.or(summary.orientation).filter(|o| (1..=8).contains(o)).unwrap_or(1);
+    Some(Decoded {
+        format,
+        width: half.width as u32,
+        height: half.height as u32,
+        image: Rgb32f::new(0, 0),
+        half: Some(half),
+        alpha: None,
+        space,
+        bit_depth: raw.bit_depth,
+        float,
+        has_alpha: false,
+        grayscale: raw.model == Model::Gray,
+        cmyk: false,
+        orientation,
+        exif: None,
+        xmp: None,
+        icc: None,
+        source_width: 0,
+        source_height: 0,
     })
 }
 
@@ -191,10 +235,11 @@ fn to_rgb_passthrough(raw: &Raw, ch: usize) -> Rgb32f {
     img
 }
 
-/// Per-channel linearization via LUTs (8/16-bit) or direct evaluation (float).
-fn linearize(raw: &Raw, ch: usize, trc: &[Trc; 3]) -> Rgb32f {
+/// Per-channel linearization via LUTs (8/16-bit) or direct evaluation (float), each linear pixel stored as `out` makes
+/// it (the pixel itself, or its working-space colour in half floats).
+fn linearize<T: Copy + Default + Send>(raw: &Raw, ch: usize, trc: &[Trc; 3], out: impl Fn([f32; 3]) -> T + Sync + Send) -> Image<T> {
     let gray = raw.model == Model::Gray;
-    let mut img = Rgb32f::new(raw.width, raw.height);
+    let mut img = Image::<T>::new(raw.width, raw.height);
     let w = raw.width;
     match &raw.buf {
         Buf::U8(v) => {
@@ -202,12 +247,12 @@ fn linearize(raw: &Raw, ch: usize, trc: &[Trc; 3]) -> Rgb32f {
             par_rows(&mut img.data, w, |y, row| {
                 for (x, o) in row.iter_mut().enumerate() {
                     let i = (y * w + x) * ch;
-                    *o = if gray {
+                    *o = out(if gray {
                         let l = luts[1][v[i] as usize];
                         [l, l, l]
                     } else {
                         [luts[0][v[i] as usize], luts[1][v[i + 1] as usize], luts[2][v[i + 2] as usize]]
-                    };
+                    });
                 }
             });
         }
@@ -220,12 +265,12 @@ fn linearize(raw: &Raw, ch: usize, trc: &[Trc; 3]) -> Rgb32f {
             par_rows(&mut img.data, w, |y, row| {
                 for (x, o) in row.iter_mut().enumerate() {
                     let i = (y * w + x) * ch;
-                    *o = if gray {
+                    *o = out(if gray {
                         let l = l0[v[i] as usize];
                         [l, l, l]
                     } else {
                         [lr[v[i] as usize], l0[v[i + 1] as usize], lb[v[i + 2] as usize]]
-                    };
+                    });
                 }
             });
         }
@@ -235,14 +280,14 @@ fn linearize(raw: &Raw, ch: usize, trc: &[Trc; 3]) -> Rgb32f {
                 for (x, o) in row.iter_mut().enumerate() {
                     let i = (y * w + x) * ch;
                     let s = |c: usize| normalize_float(v[i + c]);
-                    *o = if gray {
+                    *o = out(if gray {
                         let l = if lin { s(0) } else { trc[1].to_linear(s(0)) };
                         [l, l, l]
                     } else if lin {
                         [s(0), s(1), s(2)]
                     } else {
                         [trc[0].to_linear(s(0)), trc[1].to_linear(s(1)), trc[2].to_linear(s(2))]
-                    };
+                    });
                 }
             });
         }
@@ -265,25 +310,39 @@ fn from_vec(w: usize, h: usize, data: Vec<[f32; 3]>) -> Rgb32f {
     Rgb32f { width: w, height: h, data }
 }
 
+/// How an RGB or gray decode becomes linear light: per-channel curves still to apply, or pixels a CMS made.
+enum Linear {
+    Curves([Trc; 3]),
+    Done(Rgb32f),
+}
+
 fn rgb_or_gray(raw: &Raw, ch: usize, meta: &Meta, info: Option<&icc::IccInfo>, float: bool) -> (Rgb32f, SourceSpace) {
+    match rgb_or_gray_plan(raw, ch, meta, info, float) {
+        (Linear::Curves(t), space) => (linearize(raw, ch, &t, |p| p), space),
+        (Linear::Done(img), space) => (img, space),
+    }
+}
+
+/// What [`rgb_or_gray`] does with the samples, and the space it gives them.
+fn rgb_or_gray_plan(raw: &Raw, ch: usize, meta: &Meta, info: Option<&icc::IccInfo>, float: bool) -> (Linear, SourceSpace) {
     let gray = raw.model == Model::Gray;
     if let (Some(bytes), Some(info)) = (meta.icc.as_deref(), info) {
         match (&info.kind, gray) {
             (IccKind::MatrixTrc { to_xyz_d50, trc }, false) => {
                 let space = SourceSpace { named: info.named, to_xyz_d50: *to_xyz_d50, trc: Some(trc.clone()), origin: SpaceOrigin::IccMatrixTrc };
-                return (linearize(raw, ch, trc), space);
+                return (Linear::Curves(trc.clone()), space);
             }
             (IccKind::MatrixTrc { to_xyz_d50, trc }, true) => {
                 // Gray data with an RGB profile: neutral axis only needs the green curve.
                 let t = [trc[1].clone(), trc[1].clone(), trc[1].clone()];
                 let space = SourceSpace { named: info.named, to_xyz_d50: *to_xyz_d50, trc: Some(t.clone()), origin: SpaceOrigin::IccMatrixTrc };
-                return (linearize(raw, ch, &t), space);
+                return (Linear::Curves(t), space);
             }
             (IccKind::Gray { trc }, true) => {
                 let t = [trc.clone(), trc.clone(), trc.clone()];
                 let mut space = SourceSpace::named(NamedSpace::Srgb, SpaceOrigin::IccMatrixTrc);
                 space.trc = Some(t.clone());
-                return (linearize(raw, ch, &t), space);
+                return (Linear::Curves(t), space);
             }
             (IccKind::NeedsCms, _) => {
                 let wanted = if gray { IccColorModel::Gray } else { IccColorModel::Rgb };
@@ -293,7 +352,7 @@ fn rgb_or_gray(raw: &Raw, ch: usize, meta: &Meta, info: Option<&icc::IccInfo>, f
                     if let Some(px) = icc::cms_to_linear_rec2020(bytes, &samples, nc) {
                         let mut s = SourceSpace::named(NamedSpace::Rec2020, SpaceOrigin::IccCms);
                         s.trc = None;
-                        return (from_vec(raw.width, raw.height, px), s);
+                        return (Linear::Done(from_vec(raw.width, raw.height, px)), s);
                     }
                 }
             }
@@ -304,11 +363,11 @@ fn rgb_or_gray(raw: &Raw, ch: usize, meta: &Meta, info: Option<&icc::IccInfo>, f
         // Present but unusable (malformed, mismatched model, CMS failure): assume sRGB.
         let s = SourceSpace::named(NamedSpace::Srgb, SpaceOrigin::IccUnsupported);
         let t = NamedSpace::Srgb.trc();
-        return (linearize(raw, ch, &[t.clone(), t.clone(), t]), s);
+        return (Linear::Curves([t.clone(), t.clone(), t]), s);
     }
     if let Some(h) = &meta.hint {
         let t = h.trc.clone().unwrap_or([Trc::Srgb, Trc::Srgb, Trc::Srgb]);
-        return (linearize(raw, ch, &t), h.clone());
+        return (Linear::Curves(t), h.clone());
     }
     let adobe = meta.exif.as_deref().map(exif::summarize).is_some_and(|s| s.adobe_rgb_hint);
     let mut s = if adobe {
@@ -321,7 +380,7 @@ fn rgb_or_gray(raw: &Raw, ch: usize, meta: &Meta, info: Option<&icc::IccInfo>, f
         s.trc = Some([Trc::Linear, Trc::Linear, Trc::Linear]);
     }
     let t = s.trc.clone().unwrap_or([Trc::Srgb, Trc::Srgb, Trc::Srgb]);
-    (linearize(raw, ch, &t), s)
+    (Linear::Curves(t), s)
 }
 
 fn cmyk(raw: &Raw, ch: usize, icc_bytes: Option<&[u8]>, info: Option<&icc::IccInfo>) -> (Rgb32f, SourceSpace) {

@@ -255,12 +255,12 @@ pub(super) fn camera_match(start: (&CameraTransform, Option<&CameraLook>), from:
 
 /// `img`, linear Rec.2020 in a raw's starting look, in the camera's own look `m` (the Camera Matching profile): the
 /// starting look's table undone, then the camera look's matrix and table, as the decode applies a fitted look
-/// ([`crate::files::CameraColourModel::apply`]).
-pub(crate) fn camera_matched(img: &Rgb32f, m: &CameraMatch) -> Rgb32f {
+/// ([`crate::files::CameraColourModel::apply`]). A picture in half floats is looked at a strip of rows at a time and stays
+/// in half floats ([`crate::media::per_pixel`]).
+pub(crate) fn camera_matched(img: &lightcraft_raster::SourcePixels, m: &CameraMatch) -> lightcraft_raster::SourcePixels {
     // (the maths is the pipeline's, which also puts the look on a generated fill stored in the plain light)
-    let mut out = img.clone();
-    m.look().apply_image(&mut out);
-    out
+    let look = m.look();
+    crate::media::per_pixel(img, |strip, _| look.apply_image(strip))
 }
 
 /// The colour a raw starts from ([`starting_colour`]) as DNG colour tags, for a DNG of the raw's camera RGB (Photo

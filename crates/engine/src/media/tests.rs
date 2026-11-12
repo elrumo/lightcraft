@@ -131,10 +131,42 @@ fn denoise_mix_is_reserved_before_the_source_enters_the_cache() {
     source.denoised = Some(Arc::new(Twin::new(Arc::new(Rgb32f::new(8, 8)))));
     let reserved = source.bytes();
     assert!(reserved >= 3 * 8 * 8 * 12);
-    assert_eq!(source.image_for(0.5).data[0], [0.5; 3]);
+    assert_eq!(source.image_for(0.5).to_f32().data[0], [0.5; 3]);
     assert_eq!(source.bytes(), reserved, "creating a mix cannot evade the LRU's recorded cost");
     let _ = source.image_for(0.25);
     assert_eq!(source.bytes(), reserved, "changing Amount replaces the reserved mix");
+}
+
+/// A per-pixel step on a picture in half floats ([`crate::media::per_pixel`]) works a strip of rows at a time and gives
+/// the step's floats rounded once, the strips' seams included; on floats it is the step itself. A denoise mix of a
+/// source in half floats stays in half floats, as does its cost (6 bytes a pixel).
+#[test]
+fn per_pixel_steps_keep_half_floats_and_their_strips_join_up() {
+    use lightcraft_raster::{Rgb16f, SourcePixels};
+    let img = Rgb32f::from_fn(37, 150, |x, y| [x as f32 / 9.0, (y as f32 * 0.07).sin(), 0.01 * (x + y) as f32]);
+    let step = |p: &mut Rgb32f, y0: usize| {
+        for (i, px) in p.data.iter_mut().enumerate() {
+            let y = y0 + i / p.width;
+            *px = [px[0] * 1.7 + y as f32 * 1e-3, px[1] - 0.2, px[2].sqrt()];
+        }
+    };
+    let half = Rgb16f::from_f32(&img);
+    let mut want = half.widen();
+    step(&mut want, 0);
+    let got = crate::media::per_pixel(&SourcePixels::from(half.clone()), step);
+    assert!(got.as_f32().is_none());
+    assert_eq!(got.to_f32().data, Rgb16f::from_f32(&want).widen().data);
+    let mut floats = img.clone();
+    step(&mut floats, 0);
+    assert_eq!(crate::media::per_pixel(&SourcePixels::from(img.clone()), step).to_f32().data, floats.data);
+
+    let mut source = DecodedSource::new(half.clone(), None);
+    assert_eq!(source.bytes() - DecodedSource::new(Rgb16f::new(1, 1), None).bytes(), (37 * 150 - 1) * 6);
+    source.denoised = Some(Arc::new(Twin::new(Rgb16f::from_f32(&Rgb32f::filled(37, 150, [1.0; 3])))));
+    let mixed = source.image_for(0.5);
+    assert!(mixed.as_f32().is_none());
+    let (m, p) = (mixed.to_f32(), half.widen());
+    assert!(m.data.iter().zip(&p.data).all(|(m, p)| (0..3).all(|k| (m[k] - (p[k] + 1.0) / 2.0).abs() <= 2e-3 * m[k].abs().max(1.0))));
 }
 
 /// Camera Matching (`lc.camera`) develops a source that carries the camera's own look in that look: its matrix
@@ -163,11 +195,11 @@ fn camera_matching_develops_the_cameras_own_look() {
     let base = source.bytes();
     let mut s = DevelopSettings::default();
     let (image, got) = source.develop_input(&s, SourceInfo::default());
-    assert!(Arc::ptr_eq(&image, &source.image) && got.camera_tone == Some(neutral), "Color: the plain picture and tone");
+    assert!(image.ptr_eq(&source.image) && got.camera_tone == Some(neutral), "Color: the plain picture and tone");
     s.profile.id = CAMERA.into();
     let (image, got) = source.develop_input(&s, SourceInfo::default());
-    assert_eq!((image.data[0], got.camera_tone), ([0.4, 0.3, 0.2], Some(camera)));
-    assert!(Arc::ptr_eq(&image, &source.develop_input(&s, SourceInfo::default()).0), "made once");
+    assert_eq!((image.to_f32().data[0], got.camera_tone), ([0.4, 0.3, 0.2], Some(camera)));
+    assert!(image.ptr_eq(&source.develop_input(&s, SourceInfo::default()).0), "made once");
     assert_eq!(source.bytes(), base + edge * 2 * 12, "and counted");
     s.profile.id = "lc.color".into();
     let _ = source.develop_input(&s, SourceInfo::default());
@@ -176,14 +208,14 @@ fn camera_matching_develops_the_cameras_own_look() {
     // a thumbnail's is made each time, never kept
     let thumb = DecodedSource::new(picture(4), Some(info));
     let (a, b) = (thumb.develop_input(&s, SourceInfo::default()).0, thumb.develop_input(&s, SourceInfo::default()).0);
-    assert!(a.data[0] == [0.4, 0.3, 0.2] && !Arc::ptr_eq(&a, &b) && thumb.bytes() == DecodedSource::new(picture(4), None).bytes());
+    assert!(a.to_f32().data[0] == [0.4, 0.3, 0.2] && !a.ptr_eq(&b) && thumb.bytes() == DecodedSource::new(picture(4), None).bytes());
     // a smart preview carries the look too (no decoder facts)
     let proxy = DecodedSource::proxy((*picture(4)).clone(), Some(neutral), Some(m), None);
     assert_eq!(proxy.develop_input(&s, SourceInfo { raw: true, ..Default::default() }).1.camera_tone, Some(camera));
     // a source without it (a JPEG, a raw that starts from the camera's look): Camera Look is Color
     let other = DecodedSource::new(picture(edge), Some(SourceInfo { camera_tone: Some(neutral), ..Default::default() }));
     let (image, got) = other.develop_input(&s, SourceInfo::default());
-    assert!(Arc::ptr_eq(&image, &other.image) && got.camera_tone == Some(neutral));
+    assert!(image.ptr_eq(&other.image) && got.camera_tone == Some(neutral));
 }
 
 /// `photo.cameraMatch`: a frontend that develops a raw itself gets the camera look the source carries, as JSON that reads back to the
@@ -283,6 +315,7 @@ fn decoder_info_survives_render_jobs_cache_and_eviction() {
         denoise: None,
         reduced: None,
         catalogued: None,
+        compact: None,
     };
     job.info = SourceInfo::default(); // Header facts cannot override decoder facts.
     job.settings = Arc::new(DevelopSettings::default());
@@ -340,6 +373,7 @@ fn old_relative_white_balance_on_a_kelvin_camera_keeps_its_look_and_learns_the_a
         denoise: None,
         reduced: None,
         catalogued: None,
+        compact: None,
     };
     let undo_before = s.undo.len();
     let request = job.request;

@@ -151,7 +151,7 @@ pub(crate) fn finish_picture(
     edits: bool,
 ) -> Rgba8 {
     if edits {
-        return crate::media::develop(&Arc::new(picture), info, settings, req, None, true).image;
+        return crate::media::develop(picture, info, settings, req, None, true).image;
     }
     let m = lightcraft_color::WORKING.to_space(&lightcraft_color::SRGB).to_f32();
     let enc = lightcraft_color::transfer::encode_srgb8;

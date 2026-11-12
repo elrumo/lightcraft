@@ -77,7 +77,7 @@ impl WireJob {
     pub fn from_job(job: &RenderJob, thumb_cached: bool, view: &str) -> WireJob {
         let max_edge = match &job.source {
             SourceRef::Demo { max_edge, .. } | SourceRef::File { max_edge, .. } | SourceRef::Fit { max_edge, .. } => *max_edge,
-            SourceRef::Loaded(img) => img.image.width.max(img.image.height),
+            SourceRef::Loaded(img) => img.image.width().max(img.image.height()),
             SourceRef::Smart { .. } => 2560,
             SourceRef::Synced { max_edge, .. } | SourceRef::Bytes { max_edge, .. } => *max_edge,
         };
@@ -278,7 +278,7 @@ impl WorkerCore {
                 if keep {
                     // (room for the picture in the camera's own look too, which Camera Matching keeps beside it)
                     let looks = if src.info_or(job.info()).camera_match.is_some() { 2 } else { 1 };
-                    let cost = src.image.width * src.image.height * 12 * looks + 64;
+                    let cost = src.image.bytes() * looks + 64;
                     self.sources.insert(key, src.clone(), cost);
                 }
                 src

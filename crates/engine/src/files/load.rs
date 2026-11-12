@@ -29,6 +29,20 @@ pub fn load_vec_for(bytes: Vec<u8>, max_edge: usize, catalogued: Catalogued) -> 
     rayon::scope(move |_| load_bytes_now(std::borrow::Cow::Owned(bytes), max_edge, None, false, catalogued).map(|(img, _, info, _)| (img, info)))
 }
 
+/// [`load_vec_for`] of the whole picture, held in half floats ([`lightcraft_raster::Rgb16f`]: 6 bytes a pixel, a full-size
+/// source for 8-bit renders). A picture file is decoded straight to half floats, never whole in floats; a raw is
+/// developed in floats and narrowed after.
+pub fn load_vec_compact_for(bytes: Vec<u8>, catalogued: Catalogued) -> Result<(SourcePixels, SourceInfo), String> {
+    rayon::scope(move |_| {
+        if lightcraft_raw::probe(&bytes).is_some() {
+            let (img, _, info, _) = load_bytes_now(std::borrow::Cow::Owned(bytes), usize::MAX, None, false, catalogued)?;
+            return Ok((SourcePixels::from(img).compact(), info));
+        }
+        let (img, info) = load_picture(std::borrow::Cow::Owned(bytes), usize::MAX, true)?;
+        Ok((img.compact(), info))
+    })
+}
+
 /// [`load_vec`] for a thumbnail: a DNG that keeps reduced-resolution copies of its raw image (Lightroom's HDR and
 /// panorama merges) develops the smallest that covers `max_edge` instead of the whole image. The flag says whether
 /// it did: such a picture is not the full image, and an export never renders from it.
@@ -307,16 +321,28 @@ fn load_bytes_now(
             used_reduced,
         ));
     }
-    let d = lightcraft_codecs::decode(&bytes, fit_box(max_edge)).map_err(|e| e.to_string())?;
+    let (img, info) = load_picture(bytes, max_edge, false)?;
+    Ok((img.into_f32(), None, info, false))
+}
+
+/// A picture file (not a raw) decoded into the working space, no larger than `max_edge`, oriented; in half floats
+/// straight from the file's samples where the decode can make them (`half`, [`lightcraft_codecs::DecodeOptions::half`]).
+fn load_picture(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize, half: bool) -> Result<(SourcePixels, SourceInfo), String> {
+    let mut d = lightcraft_codecs::decode(&bytes, lightcraft_codecs::DecodeOptions { half, ..fit_box(max_edge) }).map_err(|e| e.to_string())?;
     // a Portrait photo's depth map (HEIC, JPEG), oriented like the picture
     let orientation = Orientation::from_exif(d.orientation);
     let depth = lightcraft_codecs::depth::depth(&bytes).map(|z| depth_mattes(z.width, z.height, z.data, orientation));
     // an HDR photo's gain map (an iPhone HEIC, an Ultra HDR JPEG), turned like the picture
     let hdr_gain = lightcraft_codecs::gainmap::read(&bytes).map(|g| Arc::new(orient_gain(g, orientation)));
     drop(bytes);
+    let info = SourceInfo { mattes: depth, hdr_gain, ..SourceInfo::default() };
+    // (made only for a picture that fits the box)
+    if let Some(h) = d.half.take() {
+        return Ok((h.into_oriented(orientation).into(), info));
+    }
     let img = d.into_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
-    Ok((img.into_oriented(orientation), None, SourceInfo { mattes: depth, hdr_gain, ..SourceInfo::default() }, false))
+    Ok((img.into_oriented(orientation).into(), info))
 }
 
 /// A gain map turned by `o`, as the picture it belongs to is (a JPEG's EXIF orientation; a HEIC's is applied already).

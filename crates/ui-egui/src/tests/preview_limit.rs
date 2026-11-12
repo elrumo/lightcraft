@@ -886,7 +886,8 @@ mod in_the_loupe {
         h.step();
         assert!(h.app.region_view.is_some());
         assert_eq!(h.app.renderer.textures.get(&Slot::Region).map(|t| t.key), Some(first_key), "the first window arrived");
-        assert!(h.app.session.memory_report().full_source.bytes >= WIDTH as usize * HEIGHT as usize * 3 * 4);
+        // (held in half floats: 6 bytes a pixel)
+        assert!(h.app.session.memory_report().full_source.bytes >= WIDTH as usize * HEIGHT as usize * 3 * 2);
         assert!(h.app.session.media.has_source(id, SourceLevel::Full), "the original was accepted before any supersession");
 
         let second = next_region_job(&mut h, &work);
@@ -907,7 +908,7 @@ mod in_the_loupe {
         assert_eq!(h.app.renderer.textures.get(&Slot::Region).map(|t| t.key), Some(second_key), "the superseded draft still reached the screen");
         assert_eq!(h.app.renderer.wanted(Slot::Region), Some(third.key), "the newest request is still pending");
         assert_eq!(h.app.renderer.discarded, discarded, "the superseded draft was accepted, not discarded");
-        assert!(h.app.session.memory_report().full_source.bytes >= WIDTH as usize * HEIGHT as usize * 3 * 4);
+        assert!(h.app.session.memory_report().full_source.bytes >= WIDTH as usize * HEIGHT as usize * 3 * 2);
         assert!(matches!(&third.source, SourceRef::Loaded(_)), "the pending window still reuses the original");
     }
 
@@ -948,14 +949,15 @@ mod in_the_loupe {
         assert_eq!(old.request_id, old_request);
         assert_eq!(old.level, SourceLevel::Full);
         let loaded = old.loaded.as_ref().expect("the first window decoded the original");
-        assert_eq!((loaded.image.width, loaded.image.height), (WIDTH as usize, HEIGHT as usize));
+        assert_eq!((loaded.image.width(), loaded.image.height()), (WIDTH as usize, HEIGHT as usize));
+        assert!(loaded.image.as_f32().is_none(), "the original a window is cut from is held in half floats");
         deliver(&work, Slot::Region, old);
         renderer.poll(&ctx, &mut session);
 
         assert_eq!(renderer.textures.get(&Slot::Region).map(|t| t.key), Some(old_key));
         assert_eq!(renderer.wanted(Slot::Region), Some(new_key));
         assert_eq!(renderer.discarded, 0, "the superseded result was accepted, not discarded");
-        assert!(session.memory_report().full_source.bytes >= full_w * full_h * 3 * 4);
+        assert!(session.memory_report().full_source.bytes >= full_w * full_h * 3 * 2);
         assert!(session.media.has_source(id, SourceLevel::Full));
         let reused = session.region_job(id, full_w, full_h, window, true).expect("another window");
         assert!(matches!(&reused.source, SourceRef::Loaded(_)), "the accepted original is reused");

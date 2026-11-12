@@ -364,6 +364,40 @@ fn a_script_runs_and_writes_its_replies() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+// #377: a frontend that prepares its exports (`host.prepareExports`) gets the control channel's (or a script's) `app.export` as a
+// `ui.export` request and runs it as its own; its answer is the export's reply. Its own `app.export` is the engine's as before.
+#[test]
+fn a_frontend_that_prepares_exports_runs_the_control_channels_export() {
+    use std::io::{BufRead, BufReader, Write};
+    let (host, _) = Host::open(OpenConfig { demo: true, render_threads: Some(1), ..Default::default() }).unwrap();
+    let addr = control::start(0, host.tx.clone()).unwrap();
+    let h = Watch::new(host);
+    h.submit(&req(1, "host.prepareExports", json!({"on": true}))).unwrap();
+    assert_eq!(h.wait_for(|e| e["kind"] == "reply" && e["id"] == 1)["result"]["on"], true);
+
+    let mut conn = std::net::TcpStream::connect(addr).unwrap();
+    conn.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    let mut lines = BufReader::new(conn.try_clone().unwrap()).lines();
+    let dir = std::env::temp_dir().join(format!("lc-prepare-exports-{}", std::process::id()));
+    let export = json!({"command": "app.export", "params": {"ids": [1], "format": "heic", "dir": dir.to_string_lossy()}});
+    writeln!(conn, "{}", json!({"id": 7, "method": "engine.execute", "params": export})).unwrap();
+    let ui = h.wait_for(|e| e["kind"] == "uiRequest");
+    assert_eq!(ui["method"], "ui.export");
+    assert_eq!(ui["params"], export["params"], "the export's own params");
+    h.submit(&req(2, "ui.reply", json!({"id": ui["id"], "result": {"files": [{"photo": 1}]}}))).unwrap();
+    let r: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+    assert_eq!((r["id"].as_u64(), r["result"]["files"][0]["photo"].as_u64()), (Some(7), Some(1)), "{r}");
+
+    // off again: the engine exports it itself (a HEIC, which it cannot write, is its error)
+    h.submit(&req(3, "host.prepareExports", json!({"on": false}))).unwrap();
+    assert_eq!(h.wait_for(|e| e["kind"] == "reply" && e["id"] == 3)["result"]["on"], false);
+    writeln!(conn, "{}", json!({"id": 8, "method": "engine.execute", "params": export})).unwrap();
+    let r: Value = serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+    assert_eq!(r["id"].as_u64(), Some(8), "{r}");
+    assert!(r.to_string().contains("HEIC"), "{r}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 // The live control channel: engine requests are answered with the client's id, a `ui.*` one goes to
 // the frontend as a `uiRequest`, and a web page's HTTP request is refused before anything runs
 #[test]
@@ -1185,13 +1219,13 @@ fn a_zoom_decodes_the_original_only_when_it_fits_in_memory() {
     let mp48 = 8064.0 * 6048.0;
     // a desktop: no limit
     assert!(original_fits(None, false, mp48));
-    // an iPhone 17 Pro with a 48 MP ProRAW open: 1.6 GB left is not enough, the 2 GB it has is
-    assert!(!original_fits(Some(1_600 << 20), false, mp48));
+    // an iPhone 17 Pro with a 48 MP ProRAW open: 1.4 GB left is not enough, the 2 GB it has is
+    assert!(!original_fits(Some(1_400 << 20), false, mp48));
     assert!(original_fits(Some(2_000 << 20), false, mp48));
     // decoded already: nothing more to hold
     assert!(original_fits(Some(64 << 20), true, mp48));
     // a 12 MP photo fits where a 48 MP one doesn't
-    assert!(original_fits(Some(1_600 << 20), false, 4032.0 * 3024.0));
+    assert!(original_fits(Some(1_400 << 20), false, 4032.0 * 3024.0));
     // nonsense sizes never decode
     assert!(!original_fits(Some(1 << 30), false, f64::NAN));
     assert!(!original_fits(Some(1 << 30), false, f64::INFINITY));

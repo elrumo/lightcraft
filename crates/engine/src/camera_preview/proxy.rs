@@ -518,7 +518,7 @@ fn proxy_base(raw: &RawImage, bytes: &[u8], edge: u32) -> Option<std::rc::Rc<Pro
     }
     let decoded = crate::files::decode_raw_preview(
         bytes,
-        lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: FIT_PREVIEW_MAX_PIXELS },
+        lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: FIT_PREVIEW_MAX_PIXELS, half: false },
         None,
     );
     if decoded.is_none() && lightcraft_pipeline::profiling() {

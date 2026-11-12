@@ -80,11 +80,16 @@ pub struct DecodeOptions {
     pub max_size: Option<(u32, u32)>,
     /// Refuse images with more pixels than this (default 1 Gpx).
     pub max_pixels: u64,
+    /// Give the picture in the working space in half floats ([`Decoded::half`]) where the decode can make it straight
+    /// from the file's samples (no alpha, no CMYK, nothing to fit): a big picture then never exists in floats, which
+    /// take twice the memory. Elsewhere the decode is as usual.
+    #[serde(default)]
+    pub half: bool,
 }
 
 impl Default for DecodeOptions {
     fn default() -> Self {
-        DecodeOptions { max_size: None, max_pixels: 1 << 30 }
+        DecodeOptions { max_size: None, max_pixels: 1 << 30, half: false }
     }
 }
 
@@ -98,8 +103,11 @@ impl DecodeOptions {
 #[derive(Clone, Debug)]
 pub struct Decoded {
     pub format: Format,
-    /// Linear light, in the primaries described by [`Decoded::space`].
+    /// Linear light, in the primaries described by [`Decoded::space`] (empty when the picture is in [`Self::half`]).
     pub image: Rgb32f,
+    /// The picture in the working space (linear Rec.2020 D65, what [`Self::into_working`] gives) in half floats, when
+    /// [`DecodeOptions::half`] asked for it and the decode made it.
+    pub half: Option<lightcraft_raster::Rgb16f>,
     /// Straight (unassociated) alpha 0..1, when the source has transparency.
     pub alpha: Option<Plane>,
     pub space: SourceSpace,
@@ -131,6 +139,15 @@ impl Decoded {
     /// Pixels converted to linear Rec.2020 D65.
     pub fn to_working(&self) -> Rgb32f {
         to_working(self)
+    }
+
+    /// The picture in the working space as it was decoded: [`Self::half`] when there is one, else
+    /// [`Self::into_working`].
+    pub fn into_working_pixels(self) -> lightcraft_raster::SourcePixels {
+        match self.half {
+            Some(h) => h.into(),
+            None => self.into_working().into(),
+        }
     }
 
     /// [`Self::to_working`], converting the decoded pixels where they are instead of next to a copy: a full-size
@@ -353,7 +370,7 @@ pub fn decode_thumbnail_with(bytes: &[u8], opts: &ThumbnailOptions) -> Result<Th
     {
         return Ok(t);
     }
-    let d = decode(bytes, DecodeOptions { max_size: Some((max_edge, max_edge)), max_pixels: opts.max_pixels })?;
+    let d = decode(bytes, DecodeOptions { max_size: Some((max_edge, max_edge)), max_pixels: opts.max_pixels, half: false })?;
     Ok(Thumbnail {
         image: d.to_srgb8(),
         orientation: d.orientation,
@@ -404,5 +421,33 @@ mod working_tests {
         assert!(d.alpha.is_some() && !d.space.is_working());
         let copy = d.to_working();
         assert_eq!(d.into_working().data, copy.data);
+    }
+
+    /// A decode asked for in half floats is the working picture's half floats, bit for bit: an 8-bit JPEG (in the
+    /// file's colour, converted to the working space) and a 16-bit PNG; a picture with transparency to flatten, or one
+    /// to fit, is decoded as usual.
+    #[test]
+    fn a_half_decode_is_the_working_pictures_half_floats() {
+        let (w, h) = (41, 29);
+        let rgba: Vec<[u8; 4]> = (0..w * h).map(|i| [(i * 7) as u8, (i * 13) as u8, (i * 29) as u8, 255]).collect();
+        let img = Rgba8 { width: w, height: h, data: rgba };
+        let jpeg = encode_jpeg(&EncodeImage::rgba8(&img), 90, ChromaSubsampling::S420, &EncodeMeta::default()).unwrap();
+        let wide: Vec<u16> = (0..w * h * 3).map(|i| (i * 2731 % 65536) as u16).collect();
+        let png16 = encode_png(&EncodeImage::new(w as u32, h as u32, 3, encode::Samples::U16(&wide)), &EncodeMeta::default()).unwrap();
+        for (name, bytes) in [("JPEG", &jpeg), ("16-bit PNG", &png16)] {
+            let half = DecodeOptions { half: true, ..Default::default() };
+            let (a, b) = (decode(bytes, half).unwrap(), decode(bytes, DecodeOptions::default()).unwrap());
+            assert!(a.image.is_empty() && (a.width, a.height) == (b.width, b.height), "{name}");
+            let want = lightcraft_raster::Rgb16f::from_f32(&b.into_working());
+            assert_eq!(a.into_working_pixels().view().to_f32().data, want.widen().data, "{name}");
+        }
+        // transparency: the floats, as ever
+        let clear = Rgba8 { width: 4, height: 4, data: vec![[200, 100, 50, 128]; 16] };
+        let png = encode_png(&EncodeImage::rgba8(&clear), &EncodeMeta::default()).unwrap();
+        let d = decode(&png, DecodeOptions { half: true, ..Default::default() }).unwrap();
+        assert!(d.half.is_none() && d.image.len() == 16);
+        // to fit: the floats, fitted
+        let d = decode(&jpeg, DecodeOptions { half: true, ..DecodeOptions::fit(16, 16) }).unwrap();
+        assert!(d.half.is_none() && d.image.width == 16);
     }
 }

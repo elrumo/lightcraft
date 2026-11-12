@@ -607,7 +607,7 @@ impl Session {
         // the preview has fewer pixels than the canvas wants: read the original (where it fits in this device's memory: else
         // the preview's pixels make the canvas, a little softer)
         let full = self.catalog.photo(id).map_or(0, |p| p.width.max(p.height) as usize);
-        if input.native < side as f64 && full > src.width.max(src.height) && self.original_fits(id) {
+        if input.native < side as f64 && full > src.width().max(src.height()) && self.original_fits(id) {
             (src, info) = self.plain_source_now(id, &d, SourceLevel::Full)?;
             input = lightcraft_pipeline::expand::expand_input(&src, &info, &d, side).ok_or(nothing)?;
         }

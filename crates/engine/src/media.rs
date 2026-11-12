@@ -23,7 +23,7 @@ use lightcraft_catalog::{MediaKind, Op, Photo, PhotoId, Source};
 use lightcraft_develop::DevelopSettings;
 use lightcraft_pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
 use lightcraft_preview::{DiskCache, Hash128, Hasher128, Lru, PreviewCache};
-use lightcraft_raster::{Histogram, Rgb32f, Rgba8};
+use lightcraft_raster::{Histogram, Rgb32f, Rgba8, SourcePixels};
 use serde::{Deserialize, Serialize};
 
 mod cache;
@@ -44,10 +44,11 @@ pub(crate) use session::{export_binned_edge, export_binned_need, export_source_p
 #[cfg(test)]
 use settings_hash::SETTINGS_HASH_ENTRIES;
 use settings_hash::SettingsHashes;
+pub(crate) use source::per_pixel;
 pub use source::{
-    CameraCrop, Catalogued, DISK_CACHE_BYTES, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe, MakeProduct, PairLoader,
-    PreviewLoader, ProbeInfo, ProxyBytes, RENDER_CACHE_VERSION, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES, ThumbAsk, Twin, face_edge,
-    hdr_from_gain, thumb_bucket,
+    CameraCrop, Catalogued, CompactLoader, DISK_CACHE_BYTES, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe, MakeProduct,
+    PairLoader, PreviewLoader, ProbeInfo, ProxyBytes, RENDER_CACHE_VERSION, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES, ThumbAsk, Twin,
+    face_edge, hdr_from_gain, thumb_bucket,
 };
 
 pub struct MediaCache {
@@ -69,6 +70,9 @@ pub struct MediaCache {
     /// share of [`crate::memory::budget`]); the least recently used entry of any of them goes first.
     budget: usize,
     pub file_loader: Option<FileLoader>,
+    /// What full-size originals for 8-bit renders load files with, in half floats ([`CompactLoader`]); `None`:
+    /// [`Self::file_loader`], in floats.
+    pub compact_loader: Option<CompactLoader>,
     /// What grid thumbnails load files with (see [`ReducedLoader`]); `None`: [`Self::file_loader`].
     pub reduced_loader: Option<ReducedLoader>,
     pub file_probe: Option<FileProbe>,

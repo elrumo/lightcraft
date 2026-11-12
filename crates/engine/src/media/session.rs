@@ -590,6 +590,22 @@ impl crate::Session {
                 *denoise = Some(wanted);
             }
         }
+        // A 16-bit, float or HDR export renders from floats: half floats' steps (one in 2048) would show in its finer
+        // ones. A full-size original kept in half floats is read again.
+        if depth != lightcraft_pipeline::OutputDepth::U8 {
+            let half = match &job.source {
+                SourceRef::Loaded(s) => s.image.as_f32().is_none(),
+                SourceRef::Fit { from, .. } => from.image.as_f32().is_none(),
+                _ => false,
+            };
+            if half {
+                let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
+                job.source = self.media.source_ref_uncached(&p, job.level);
+            }
+            if let SourceRef::File { compact, .. } = &mut job.source {
+                *compact = None;
+            }
+        }
         // A DNG exported at half its size or less is read at about the size the export needs (a linear raw — Apple ProRAW —
         // is binned while it is decoded, so a 4096 px export of a 48 MP photo never holds 48 MP of floats).
         if let (Some(p), SourceRef::File { max_edge, .. }) = (self.catalog.photo(id), &mut job.source) {
@@ -689,7 +705,7 @@ impl crate::Session {
         self.media
             .cached_source(id)
             .filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy)
-            .and_then(|s| crate::scene_level::luminance_quantiles(&s.image))
+            .and_then(|s| s.image.as_f32().and_then(|i| crate::scene_level::luminance_quantiles(i)))
             .or_else(|| self.media.kept_facts(id).and_then(|k| k.level))
     }
 
@@ -699,7 +715,7 @@ impl crate::Session {
         self.media
             .cached_source(id)
             .filter(|s| s.info.as_ref().is_some_and(|i| i.raw) && !s.from_proxy)
-            .and_then(|s| crate::scene_level::colour_grid(&s.image))
+            .and_then(|s| s.image.as_f32().and_then(|i| crate::scene_level::colour_grid(i)))
             .or_else(|| self.media.kept_facts(id).and_then(|k| k.colour.clone()))
     }
 
@@ -712,7 +728,7 @@ impl crate::Session {
     pub fn source_now(&mut self, id: PhotoId, level: SourceLevel) -> Result<Arc<Rgb32f>, String> {
         let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
         let r = self.media.source_ref(&p, level).load_source()?;
-        let image = r.image.clone();
+        let image = r.image.to_f32();
         if let Some(info) = &r.info {
             self.learn_as_shot_wb(id, info);
         }
@@ -730,16 +746,22 @@ impl crate::Session {
         if let Some(info) = &r.info {
             self.learn_as_shot_wb(id, info);
         }
-        let input = r.develop_input(&p.develop, source_info(&p));
+        let (image, info) = r.develop_input(&p.develop, source_info(&p));
         self.media.insert_source(id, level, r);
-        Ok(input)
+        Ok((image.to_f32(), info))
     }
 
     /// What a generative model is given of photo `id` for settings `s` (AI Remove, Generative Expand): the photo in its
     /// plain light, the decode with the Denoise `s` asks for (its pixels are the photo the user sees, and can't be put on
     /// pixels the photo never had) but without the Camera Matching look, which a render puts on the stored fill as on
     /// the photo ([`lightcraft_develop::SpotFill::plain`]); and the facts to render it against, as a render has them.
-    pub fn plain_source_now(&mut self, id: PhotoId, s: &DevelopSettings, level: SourceLevel) -> Result<(Arc<Rgb32f>, SourceInfo), String> {
+    /// A full-size original comes in half floats (the tools read only the part around their stroke or canvas from it).
+    pub fn plain_source_now(
+        &mut self,
+        id: PhotoId,
+        s: &DevelopSettings,
+        level: SourceLevel,
+    ) -> Result<(lightcraft_raster::SourcePixels, SourceInfo), String> {
         let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
         let r = self.media.source_ref(&p, level).load_source()?;
         if let Some(info) = &r.info {
@@ -751,13 +773,13 @@ impl crate::Session {
     }
 
     /// Whether photo `id`'s original can be read whole on this device, for a tool that would read it for a few of its
-    /// pixels (AI Remove, Generative Expand): at its decode's peak, 24 bytes a pixel (what the zoom's check counts), within
+    /// pixels (AI Remove, Generative Expand): at its decode's peak, 20 bytes a pixel (what the zoom's check counts), within
     /// what an export may take here ([`crate::Session::export_limit`]). Always on a desktop, where memory swaps; on a
     /// phone a picture past it would end the app, so the tool works from the preview's pixels instead.
     pub(crate) fn original_fits(&self, id: PhotoId) -> bool {
         let Some(limit) = self.export_limit() else { return true };
         let px = self.catalog.photo(id).map_or(0, |p| (p.width as usize).saturating_mul(p.height as usize));
-        px.saturating_mul(24) <= limit
+        px.saturating_mul(20) <= limit
     }
 }
 

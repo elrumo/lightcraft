@@ -100,6 +100,10 @@ pub struct ThumbAsk {
     pub shown: bool,
 }
 
+/// Decodes a file whole into a linear Rec.2020 picture in half floats (a full-size original for 8-bit renders: half the
+/// memory of floats, see [`lightcraft_raster::Rgb16f`]), in the frame of a photo catalogued as [`Catalogued`] says.
+pub type CompactLoader = Arc<dyn Fn(&str, Catalogued) -> Result<(SourcePixels, SourceInfo), String> + Send + Sync>;
+
 /// [`FileLoader`] for a thumbnail: a raw file that keeps smaller copies of its raw image (Lightroom's merged DNGs)
 /// develops the smallest that covers `max_edge` (set by the app); the flag says it did. Never used for an export,
 /// which must render the full image.
@@ -130,26 +134,56 @@ pub type PairLoader = Arc<dyn Fn(&str, usize, &DenoiseSpec, Catalogued) -> Resul
 
 /// A photo's denoised picture next to its plain one, and the last mix of the two that was asked for.
 pub struct Twin {
-    pub image: Arc<Rgb32f>,
+    pub image: SourcePixels,
     /// The Amount (in thousandths) and the picture mixed for it, so dragging other sliders keeps one source picture.
-    mix: std::sync::Mutex<Option<(u32, Arc<Rgb32f>)>>,
+    mix: std::sync::Mutex<Option<(u32, SourcePixels)>>,
 }
 
 impl Twin {
-    pub fn new(image: Arc<Rgb32f>) -> Twin {
-        Twin { image, mix: std::sync::Mutex::new(None) }
+    pub fn new(image: impl Into<SourcePixels>) -> Twin {
+        Twin { image: image.into(), mix: std::sync::Mutex::new(None) }
     }
 
     /// Bytes reserved for the twin and its lazy mix, before either cache cost can grow.
     fn bytes(&self) -> usize {
-        self.image.data.len().saturating_mul(24)
+        self.image.bytes().saturating_mul(2)
     }
+}
+
+/// Rows a per-pixel step widens of a picture in half floats at a time ([`per_pixel`]).
+const STRIP_ROWS: usize = 64;
+
+/// `src` with the per-pixel step `f` applied, held as `src` is: a picture in floats is copied and stepped whole, one in
+/// half floats a strip of rows at a time (widened, stepped and narrowed again), so a big original never has a whole
+/// float copy made for it. `f` gets each strip with the row it starts at.
+pub(crate) fn per_pixel(src: &SourcePixels, f: impl Fn(&mut Rgb32f, usize) + Sync + Send) -> SourcePixels {
+    let half = match src {
+        SourcePixels::F32(img) => {
+            let mut out = (**img).clone();
+            f(&mut out, 0);
+            return out.into();
+        }
+        SourcePixels::F16(h) => h,
+    };
+    let w = half.width.max(1);
+    let mut out = lightcraft_raster::Rgb16f::new(half.width, half.height);
+    lightcraft_raster::par_rows(&mut out.data, w * STRIP_ROWS, |i, chunk| {
+        let y0 = i * STRIP_ROWS;
+        let mut strip = half.region(0, y0, half.width, y0 + chunk.len() / w);
+        f(&mut strip, y0);
+        for (o, p) in chunk.iter_mut().zip(&strip.data) {
+            *o = p.map(half::f16::from_f32);
+        }
+    });
+    out.into()
 }
 
 /// Pixels and the source interpretation learned while decoding; they must be cached together.
 #[derive(Clone)]
 pub struct DecodedSource {
-    pub image: Arc<Rgb32f>,
+    /// The picture: in floats, or for a full-size original in half floats ([`lightcraft_raster::Rgb16f`], half the
+    /// memory; its 8-bit renders are the floats' within one level), which a render widens a window of at a time.
+    pub image: SourcePixels,
     pub info: Option<SourceInfo>,
     /// A smart preview's stored camera tone curve: the one decoder fact its pixels need that the
     /// catalog's header facts lack (used when `info` is `None`).
@@ -161,10 +195,10 @@ pub struct DecodedSource {
     /// The same picture developed from the AI-denoised mosaic, when the photo has one cached.
     pub denoised: Option<Arc<Twin>>,
     /// The picture last developed in the camera's own look, and the one it was made from ([`Self::develop_input`]).
-    pub camera_matched: Arc<std::sync::Mutex<Option<(Arc<Rgb32f>, Arc<Rgb32f>)>>>,
+    pub camera_matched: Arc<std::sync::Mutex<Option<(SourcePixels, SourcePixels)>>>,
     /// The picture an HDR render starts from, made from the file's gain map, and the one it was made from
     /// ([`Self::hdr_input`]).
-    pub hdr_made: Arc<std::sync::Mutex<Option<(Arc<Rgb32f>, Arc<Rgb32f>)>>>,
+    pub hdr_made: Arc<std::sync::Mutex<Option<(SourcePixels, SourcePixels)>>>,
     /// These pixels came from the photo's smart preview (an offline original), not from its file.
     /// A refresh must never rebuild a proxy from itself: that would stamp its older look as current.
     pub from_proxy: bool,
@@ -174,9 +208,9 @@ pub struct DecodedSource {
 }
 
 impl DecodedSource {
-    pub fn new(image: Arc<Rgb32f>, info: Option<SourceInfo>) -> Self {
+    pub fn new(image: impl Into<SourcePixels>, info: Option<SourceInfo>) -> Self {
         DecodedSource {
-            image,
+            image: image.into(),
             info,
             camera_tone: None,
             camera_match: None,
@@ -197,7 +231,7 @@ impl DecodedSource {
         camera_match: Option<Arc<lightcraft_pipeline::CameraMatch>>,
         local_tone: Option<Arc<lightcraft_pipeline::local_tone::LocalTone>>,
     ) -> Self {
-        DecodedSource { camera_tone, camera_match, local_tone, from_proxy: true, ..DecodedSource::new(Arc::new(image), None) }
+        DecodedSource { camera_tone, camera_match, local_tone, from_proxy: true, ..DecodedSource::new(image, None) }
     }
 
     /// The picture and facts to develop `s` from: [`Self::image_for`] its Denoise amount and [`Self::info_or`]
@@ -205,7 +239,7 @@ impl DecodedSource {
     /// ([`lightcraft_pipeline::CameraMatch`]; any other source renders as with `lc.color`). That picture is made once
     /// and kept while the profile stays, so the stages after it are reused as sliders move; a thumbnail-size one is
     /// not kept (rendered once, and its cache entry's cost was counted when it was stored).
-    pub fn develop_input(&self, s: &DevelopSettings, header: SourceInfo) -> (Arc<Rgb32f>, SourceInfo) {
+    pub fn develop_input(&self, s: &DevelopSettings, header: SourceInfo) -> (SourcePixels, SourceInfo) {
         let image = self.image_for(s.denoise_amount());
         let mut info = self.info_or(header);
         // (never held while the picture is made: the UI thread reads the cost through it)
@@ -215,12 +249,12 @@ impl DecodedSource {
             return (image, info);
         };
         info.camera_tone = m.tone;
-        let hit = kept().as_ref().filter(|(from, _)| Arc::ptr_eq(from, &image)).map(|(_, matched)| matched.clone());
+        let hit = kept().as_ref().filter(|(from, _)| from.ptr_eq(&image)).map(|(_, matched)| matched.clone());
         if let Some(matched) = hit {
             return (matched, info);
         }
-        let matched = Arc::new(crate::camera_preview::camera_matched(&image, &m));
-        if image.width.max(image.height) > SourceLevel::Thumb.max_edge() {
+        let matched = crate::camera_preview::camera_matched(&image, &m);
+        if image.width().max(image.height()) > SourceLevel::Thumb.max_edge() {
             *kept() = Some((image, matched.clone()));
         }
         (matched, info)
@@ -230,15 +264,21 @@ impl DecodedSource {
     /// ([`SourceInfo::hdr_gain`]: an iPhone HEIC, an Ultra HDR JPEG) gets the highlights its gain map holds, up to the
     /// file's own headroom; any other source is its own HDR input. The SDR render never uses it, so the SDR look is the
     /// base picture's. Made once and kept while `image` stays.
-    pub fn hdr_input(&self, image: &Arc<Rgb32f>, info: &SourceInfo) -> Arc<Rgb32f> {
+    ///
+    /// A picture in half floats is widened whole for it and the result kept in half floats.
+    // ponytail: the gain map is applied to the whole picture at once; per strip if HDR edits of huge pictures matter
+    pub fn hdr_input(&self, image: &SourcePixels, info: &SourceInfo) -> SourcePixels {
         let Some(gain) = &info.hdr_gain else { return image.clone() };
         let kept = || self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let hit = kept().as_ref().filter(|(from, _)| Arc::ptr_eq(from, image)).map(|(_, made)| made.clone());
+        let hit = kept().as_ref().filter(|(from, _)| from.ptr_eq(image)).map(|(_, made)| made.clone());
         if let Some(made) = hit {
             return made;
         }
-        let Some(made) = hdr_from_gain(image, gain) else { return image.clone() };
-        let made = Arc::new(made);
+        let Some(made) = hdr_from_gain(&image.to_f32(), gain) else { return image.clone() };
+        let made: SourcePixels = match image {
+            SourcePixels::F32(_) => made.into(),
+            SourcePixels::F16(_) => lightcraft_raster::Rgb16f::from_f32(&made).into(),
+        };
         *kept() = Some((image.clone(), made.clone()));
         made
     }
@@ -246,9 +286,9 @@ impl DecodedSource {
     /// The picture to develop for a Denoise `amount` (0 to 1, see [`DevelopSettings::denoise_amount`]): the plain one,
     /// the denoised one, or a mix of the two. A mix is made once per amount and kept, so the stages after it are
     /// reused until the amount changes.
-    pub fn image_for(&self, amount: f32) -> Arc<Rgb32f> {
+    pub fn image_for(&self, amount: f32) -> SourcePixels {
         let Some(twin) = &self.denoised else { return self.image.clone() };
-        if amount.is_nan() || amount <= 0.0 || twin.image.width != self.image.width || twin.image.height != self.image.height {
+        if amount.is_nan() || amount <= 0.0 || twin.image.width() != self.image.width() || twin.image.height() != self.image.height() {
             return self.image.clone();
         }
         if amount >= 1.0 {
@@ -261,11 +301,11 @@ impl DecodedSource {
         {
             return img.clone();
         }
-        let mut mixed = (*self.image).clone();
-        if !lightcraft_denoise::product::blend(&mut mixed, &twin.image, thousandths as f32 / 1000.0) {
-            return self.image.clone();
-        }
-        let mixed = Arc::new(mixed);
+        // (the same size, checked above: `blend` mixes each strip with the same rows of the twin)
+        let (a, other) = (thousandths as f32 / 1000.0, twin.image.view());
+        let mixed = per_pixel(&self.image, |strip, y0| {
+            lightcraft_denoise::product::blend(strip, &other.region(0, y0, strip.width, y0 + strip.height), a);
+        });
         *memo = Some((thousandths, mixed.clone()));
         mixed
     }
@@ -275,17 +315,10 @@ impl DecodedSource {
         let mattes = self.info.as_ref().and_then(|i| i.mattes.as_ref()).map_or(0, |m| m.bytes());
         let local_tone = self.info.as_ref().and_then(|i| i.local_tone.as_ref()).or(self.local_tone.as_ref());
         let mattes = mattes + local_tone.map_or(0, |t| t.map.gains.len() * 4);
-        let matched = self.camera_matched.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.data.len() * 12);
-        let hdr = self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.data.len() * 12);
+        let matched = self.camera_matched.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.bytes());
+        let hdr = self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.bytes());
         let gain = self.info.as_ref().and_then(|i| i.hdr_gain.as_ref()).map_or(0, |g| g.gain.data.len());
-        self.image.data.len() * 12
-            + 64
-            + std::mem::size_of::<SourceInfo>()
-            + mattes
-            + self.denoised.as_ref().map_or(0, |t| t.bytes())
-            + matched
-            + hdr
-            + gain
+        self.image.bytes() + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes()) + matched + hdr + gain
     }
 
     /// What to render these pixels against: the decoder's facts, else `header` (the catalog's)
@@ -302,6 +335,13 @@ impl DecodedSource {
             },
         }
     }
+}
+
+/// `img` fitted within `max_edge × max_edge` (never enlarged), read as it is held.
+fn fit_view(img: lightcraft_raster::PixelView<'_>, max_edge: usize, filter: lightcraft_raster::resample::Filter) -> Rgb32f {
+    let (w, h) = (img.width().max(1) as f64, img.height().max(1) as f64);
+    let k = (max_edge as f64 / w.max(h)).min(1.0);
+    lightcraft_raster::resample::resize_view(img, ((w * k).round() as usize).max(1), ((h * k).round() as usize).max(1), filter)
 }
 
 /// `image` (linear working light) with its file's gain map applied in full: the HDR rendition, SDR white = 1 and the
@@ -339,6 +379,10 @@ pub enum SourceRef {
         reduced: Option<ReducedLoader>,
         /// The size the photo was catalogued with: which frame its raw is developed in ([`Catalogued`]).
         catalogued: Catalogued,
+        /// Load the whole picture in half floats with this, instead of `loader` (a full-size original for 8-bit
+        /// renders: used when `max_edge` asks for the whole picture); `None` for every other job, a deep export's
+        /// included.
+        compact: Option<CompactLoader>,
     },
     /// A smart preview standing in for a missing original.
     Smart {
@@ -360,22 +404,23 @@ pub enum SourceRef {
 }
 
 impl SourceRef {
+    /// The picture in floats (a full-size one held in half floats is widened: for readers of small pictures).
     pub fn load(&self) -> Result<Arc<Rgb32f>, String> {
-        self.load_source().map(|s| s.image)
+        self.load_source().map(|s| s.image.to_f32())
     }
 
     pub fn load_source(&self) -> Result<DecodedSource, String> {
         let image = match self {
             SourceRef::Loaded(a) => return Ok((**a).clone()),
             SourceRef::Fit { from, max_edge } => {
-                if from.image.width.max(from.image.height) <= *max_edge {
+                if from.image.width().max(from.image.height()) <= *max_edge {
                     return Ok((**from).clone());
                 }
                 // Lanczos, not a box average: a box at 2-3:1 halves the contrast of detail near
                 // the output's resolution limit and aliases what is finer
-                let image = lightcraft_raster::resample::fit(&from.image, *max_edge, *max_edge, lightcraft_raster::resample::Filter::Lanczos3);
+                let image = fit_view(from.image.view(), *max_edge, lightcraft_raster::resample::Filter::Lanczos3);
                 return Ok(DecodedSource {
-                    image: Arc::new(image),
+                    image: image.into(),
                     denoised: None,
                     camera_matched: Default::default(),
                     hdr_made: Default::default(),
@@ -383,12 +428,14 @@ impl SourceRef {
                 });
             }
             SourceRef::Demo { scene, max_edge } => crate::demo::scene_pixels(scene, *max_edge)?,
-            SourceRef::File { path, max_edge, loader, fallback, denoise, reduced, catalogued } => {
-                let plain = || match (reduced, loader) {
-                    (Some(l), _) => l(path, *max_edge, *catalogued)
-                        .map(|(image, info, reduced)| DecodedSource { reduced, ..DecodedSource::new(Arc::new(image), Some(info)) }),
-                    (None, Some(l)) => l(path, *max_edge, *catalogued).map(|(image, info)| DecodedSource::new(Arc::new(image), Some(info))),
-                    (None, None) => Err(format!("no decoder available for {path}")),
+            SourceRef::File { path, max_edge, loader, fallback, denoise, reduced, catalogued, compact } => {
+                // (a whole picture only: a read narrowed to the size an export needs is the loader's)
+                let plain = || match (reduced, compact.as_ref().filter(|_| *max_edge == usize::MAX), loader) {
+                    (Some(l), _, _) => l(path, *max_edge, *catalogued)
+                        .map(|(image, info, reduced)| DecodedSource { reduced, ..DecodedSource::new(image, Some(info)) }),
+                    (None, Some(c), _) => c(path, *catalogued).map(|(image, info)| DecodedSource::new(image, Some(info))),
+                    (None, None, Some(l)) => l(path, *max_edge, *catalogued).map(|(image, info)| DecodedSource::new(image, Some(info))),
+                    (None, None, None) => Err(format!("no decoder available for {path}")),
                 };
                 // the denoised picture comes with the plain one from a single decode; when it cannot be read the
                 // pair loader gives the plain picture alone (the cached file is never a reason to fail a render)
@@ -405,9 +452,13 @@ impl SourceRef {
                                 if spec.make.is_some() && twin.is_none() {
                                     return Err("the cached AI Denoise picture could not be read; clear the denoise cache and retry".into());
                                 }
+                                // (a full-size pair for 8-bit renders is held in half floats too, both pictures)
+                                let keep = |img: Rgb32f| -> SourcePixels {
+                                    if compact.is_some() && *max_edge == usize::MAX { SourcePixels::from(img).compact() } else { img.into() }
+                                };
                                 Ok(DecodedSource {
-                                    denoised: twin.map(|t| Arc::new(Twin::new(Arc::new(t)))),
-                                    ..DecodedSource::new(Arc::new(image), Some(info))
+                                    denoised: twin.map(|t| Arc::new(Twin::new(keep(t)))),
+                                    ..DecodedSource::new(keep(image), Some(info))
                                 })
                             })
                         } else {
@@ -434,9 +485,8 @@ impl SourceRef {
                     return Err("this photo's preview is still downloading".into());
                 };
                 let mut s = crate::smart::load(path)?;
-                if s.image.width.max(s.image.height) > *max_edge {
-                    use lightcraft_raster::resample::{Filter, fit};
-                    s.image = Arc::new(fit(&s.image, *max_edge, *max_edge, Filter::Mitchell));
+                if s.image.width().max(s.image.height()) > *max_edge {
+                    s.image = fit_view(s.image.view(), *max_edge, lightcraft_raster::resample::Filter::Mitchell).into();
                 }
                 return Ok(s);
             }

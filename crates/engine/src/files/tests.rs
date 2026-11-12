@@ -846,7 +846,7 @@ fn linear_raw_previews_are_binned_while_decoding() {
         }
     }
     // and the gate counts it for the blocks and tiles, not the image
-    let (binned, whole) = (load_weight(&dng, 40), load_weight(&dng, 10_000));
+    let (binned, whole) = (load_weight(&dng, 40, false), load_weight(&dng, 10_000, false));
     assert!(binned < whole + (160 << 20), "{binned} {whole}");
     assert!(binned >= 160 << 20, "{binned}");
 }
@@ -858,13 +858,13 @@ fn raw_load_weight_follows_the_decoded_size() {
     let by_size = dng.len() * 3;
     let info = lightcraft_raw::probe_info(&dng).unwrap();
     let samples = info.width * info.height * info.cpp * 2;
-    let full = load_weight(&dng, usize::MAX / 20);
-    let binned = load_weight(&dng, 4);
+    let full = load_weight(&dng, usize::MAX / 20, false);
+    let binned = load_weight(&dng, 4, false);
     assert!(full >= samples + info.width * info.height * (info.cpp * 4 + 12), "{full}");
     assert!(binned >= samples && binned < full, "{binned} {full}");
     assert!(by_size < full, "{by_size} {full}");
     // not a picture at all: the file's size times the rule of thumb
-    assert_eq!(load_weight(&[1, 2, 3, 4], 100), 12);
+    assert_eq!(load_weight(&[1, 2, 3, 4], 100, false), 12);
 }
 
 /// The work gate counts a picture file by the pixels its header declares, not by its size (a few MB of JPEG can declare
@@ -876,10 +876,82 @@ fn picture_load_weight_follows_the_declared_pixels() {
     let opts = lightcraft_codecs::EncodeMeta::default();
     let jpeg =
         lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&img), 90, lightcraft_codecs::ChromaSubsampling::S420, &opts).unwrap();
-    let full = load_weight(&jpeg, usize::MAX);
+    let full = load_weight(&jpeg, usize::MAX, false);
     assert!(full >= w * h * 24 && full > jpeg.len() * 6, "{full} for {} bytes", jpeg.len());
-    let scaled = load_weight(&jpeg, 100);
+    let scaled = load_weight(&jpeg, 100, false);
     assert!(scaled >= w * h * 3 && scaled < full / 4, "{scaled} {full}");
+}
+
+/// A full-size load in half floats ([`load_vec_compact_for`]) is a picture file's working floats rounded once, counted
+/// at the gate as half the floats' decode: the samples and the half floats, never the float picture.
+#[test]
+fn a_compact_load_is_the_floats_rounded_once_and_weighs_half() {
+    let (w, h) = (300, 200);
+    let img =
+        lightcraft_raster::Rgba8 { width: w, height: h, data: (0..w * h).map(|i| [(i * 7) as u8, (i / 3) as u8, (i * 13) as u8, 255]).collect() };
+    let jpeg = encode_jpeg(&EncodeImage::rgba8(&img), 90, ChromaSubsampling::S420, &EncodeMeta::default()).unwrap();
+    let (floats, _) = load_vec_for(jpeg.clone(), usize::MAX, None).unwrap();
+    let (half, _) = load_vec_compact_for(jpeg.clone(), None).unwrap();
+    assert!(half.as_f32().is_none(), "held in half floats");
+    assert_eq!(half.to_f32().data, lightcraft_raster::Rgb16f::from_f32(&floats).widen().data);
+    assert_eq!(load_weight(&jpeg, usize::MAX, true), (w * h * 12).max(jpeg.len() * 6));
+    assert_eq!(load_weight(&jpeg, usize::MAX, false), (w * h * 24).max(jpeg.len() * 6));
+}
+
+/// A photo bigger than a preview is held at full size in half floats for an 8-bit export: its banded render is the very
+/// render of those half floats as floats (the bands widen only their rows, exactly), and within one level of the
+/// original floats' but where a clipped channel meets a nearly empty one (saturated yellow at 255, 240, 20 here), whose
+/// tone mapping makes any rounding a few levels: a few pixels in a hundred thousand. A 16-bit export reads it in floats,
+/// even when the half floats are in memory already.
+#[test]
+fn a_full_size_original_is_half_floats_for_8_bit_renders_and_floats_for_deep_exports() {
+    use crate::media::{DecodedSource, SourceLevel, SourceRef};
+    use lightcraft_pipeline::{OutputDepth, OutputSpace};
+    let (w, h) = (3000, 1800);
+    let img = lightcraft_raster::Rgba8::from_fn(w, h, |x, y| [(x * 255 / w) as u8, (y * 255 / h) as u8, ((x ^ y) & 255) as u8, 255]);
+    let jpeg = encode_jpeg(&EncodeImage::rgba8(&img), 92, ChromaSubsampling::S420, &EncodeMeta::default()).unwrap();
+    let dir = std::env::temp_dir().join(format!("lc-compact-full-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("big.jpg");
+    std::fs::write(&path, &jpeg).unwrap();
+    let mut s = crate::Session::new().with_fs();
+    let r = s.execute("library.import", &serde_json::json!({"paths": [path.to_string_lossy()]})).unwrap();
+    let id = lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap());
+
+    let job = s.export_job(id, w, w, OutputSpace::Srgb, OutputDepth::U8).unwrap();
+    assert!(job.level == SourceLevel::Full && matches!(&job.source, SourceRef::File { compact: Some(_), .. }), "read in half floats");
+    let half = job.source.load_source().unwrap();
+    assert!(half.image.as_f32().is_none(), "the original is held in half floats");
+    let with = |image: lightcraft_raster::SourcePixels| {
+        let mut j = job.clone();
+        j.source = SourceRef::Loaded(Box::new(DecodedSource { image, ..half.clone() }));
+        j.run_banded().rendered.unwrap().image
+    };
+    let mut floats = job.clone();
+    if let SourceRef::File { compact, .. } = &mut floats.source {
+        *compact = None;
+    }
+    let floats = floats.source.load_source().unwrap().image;
+    assert!(floats.as_f32().is_some());
+    let (widened, original) = (with(half.image.to_f32().into()), with(floats));
+    let compact = job.clone().run_banded().rendered.unwrap().image;
+    assert!(compact.data == widened.data, "the bands read the half floats exactly");
+    let levels: Vec<u8> = compact.data.iter().zip(&original.data).flat_map(|(p, q)| (0..3).map(move |k| p[k].abs_diff(q[k]))).collect();
+    let past_one = levels.iter().filter(|d| **d > 1).count();
+    assert!(past_one * 10_000 < levels.len() && levels.iter().all(|d| *d <= 12), "{past_one} of {} values past one level", levels.len());
+
+    // a 16-bit export: floats, from the file again when the half floats are cached
+    let deep = s.export_job(id, w, w, OutputSpace::Srgb, OutputDepth::U16).unwrap();
+    assert!(matches!(&deep.source, SourceRef::File { compact: None, .. }), "a deep export reads floats");
+    let r = s.export_job(id, w, w, OutputSpace::Srgb, OutputDepth::U8).unwrap().run();
+    s.accept(&r);
+    assert!(s.media.has_source(id, SourceLevel::Full));
+    let deep = s.export_job(id, w, w, OutputSpace::Srgb, OutputDepth::U16).unwrap();
+    assert!(matches!(&deep.source, SourceRef::File { compact: None, .. }), "not the cached half floats");
+    // and a preview's source stays in floats
+    let small = s.render_job(id, 800, 800, false, true).unwrap().run();
+    assert!(small.loaded.as_ref().is_some_and(|l| l.image.as_f32().is_some()));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// [`cr3_with_preview`] plus a full-size CRX raw track whose `CMP1` coding header is garbage:

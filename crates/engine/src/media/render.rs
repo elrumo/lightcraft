@@ -470,7 +470,7 @@ impl RenderJob {
 /// histogram shows its HDR range, as for an HDR edit's SDR previews. Also says why the GPU render fell
 /// back to the CPU, as [`develop_reporting`].
 pub fn develop_hdr(
-    src: &Arc<Rgb32f>,
+    src: impl Into<SourcePixels>,
     info: &SourceInfo,
     s: &DevelopSettings,
     req: &RenderRequest,
@@ -478,10 +478,11 @@ pub fn develop_hdr(
     gpu: bool,
 ) -> (Rendered, Option<String>, Option<Arc<crate::hdr_view::HdrPicture>>) {
     use crate::hdr_view::HdrPicture;
+    let src: SourcePixels = src.into();
     let peak = s.hdr.peak();
     let mut fallback = None;
     if gpu && gpu_renders(s, req) {
-        match lightcraft_gpu::try_render_hdr(src, info, s, req, stages) {
+        match lightcraft_gpu::try_render_hdr(&src, info, s, req, stages) {
             Ok((r, halves)) => match HdrPicture::from_halves(r.image.width, r.image.height, halves, peak) {
                 // (its histogram is the picture's HDR one)
                 Some(p) => return (r, None, Some(Arc::new(p))),
@@ -491,7 +492,7 @@ pub fn develop_hdr(
             Err(lightcraft_gpu::Fallback::NotTried) => {}
         }
     }
-    let (mut rendered, _) = develop_image(src, info, s, req, stages, false);
+    let (mut rendered, _) = develop_image(&src, info, s, req, stages, false);
     let deep = rendered.deep.take();
     if let Some(lightcraft_pipeline::DeepSamples::F32(v)) = deep.as_ref().map(|d| &d.samples) {
         rendered.histogram = Histogram::of_hdr(v.as_chunks::<3>().0, lightcraft_develop::Hdr::MAX_EV_LIMIT as f32);
@@ -513,7 +514,14 @@ fn gpu_renders(s: &DevelopSettings, req: &RenderRequest) -> bool {
 /// Render `src`: on the GPU when `gpu` is set and a GPU is available (`lightcraft_gpu`), else on
 /// the CPU, reusing `stages` either way. Both produce the same image within 1–3 LSB (see
 /// `docs/gpu-pipeline.md`); `LIGHTCRAFT_GPU=0` or [`lightcraft_gpu::set_enabled`] forces the CPU.
-pub fn develop(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, stages: Option<&StageCache>, gpu: bool) -> Rendered {
+pub fn develop(
+    src: impl Into<SourcePixels>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    req: &RenderRequest,
+    stages: Option<&StageCache>,
+    gpu: bool,
+) -> Rendered {
     develop_reporting(src, info, s, req, stages, gpu).0
 }
 
@@ -521,21 +529,22 @@ pub fn develop(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &
 /// it rendered on the GPU, or the GPU was not tried). The reason is this render's own, not the
 /// process-wide [`lightcraft_gpu::last_fallback`].
 pub fn develop_reporting(
-    src: &Arc<Rgb32f>,
+    src: impl Into<SourcePixels>,
     info: &SourceInfo,
     s: &DevelopSettings,
     req: &RenderRequest,
     stages: Option<&StageCache>,
     gpu: bool,
 ) -> (Rendered, Option<String>) {
-    develop_reporting_hdr(src, src, info, s, req, stages, gpu)
+    let src: SourcePixels = src.into();
+    develop_reporting_hdr(&src, &src, info, s, req, stages, gpu)
 }
 
 /// [`develop_reporting`] for a source that has an HDR picture of its own (`hdr_src`, see
 /// [`DecodedSource::hdr_input`]): the render is of `src`, the HDR histogram of an HDR edit's preview measures `hdr_src`.
 pub fn develop_reporting_hdr(
-    src: &Arc<Rgb32f>,
-    hdr_src: &Arc<Rgb32f>,
+    src: &SourcePixels,
+    hdr_src: &SourcePixels,
     info: &SourceInfo,
     s: &DevelopSettings,
     req: &RenderRequest,
@@ -586,7 +595,7 @@ pub(crate) fn bandable_at(s: &DevelopSettings, depth: lightcraft_pipeline::Outpu
 }
 
 fn develop_image(
-    src: &Arc<Rgb32f>,
+    src: &SourcePixels,
     info: &SourceInfo,
     s: &DevelopSettings,
     req: &RenderRequest,
@@ -603,7 +612,7 @@ fn develop_image(
         None
     };
     let rendered = match stages {
-        Some(st) => lightcraft_pipeline::render_cached(src, info, s, req, st),
+        Some(st) => lightcraft_pipeline::render_cached(src.clone(), info, s, req, st),
         None => lightcraft_pipeline::render(src, info, s, req),
     };
     (rendered, fallback)

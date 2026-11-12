@@ -368,7 +368,7 @@ fn original_only(source: crate::media::SourceRef) -> Option<crate::media::Source
     use crate::media::SourceRef;
     match source {
         SourceRef::File { path, max_edge, loader, denoise, catalogued, .. } => {
-            Some(SourceRef::File { path, max_edge, loader, fallback: None, denoise, reduced: None, catalogued })
+            Some(SourceRef::File { path, max_edge, loader, fallback: None, denoise, reduced: None, catalogued, compact: None })
         }
         SourceRef::Loaded(d) if d.info.is_some() && !d.from_proxy && !d.reduced => Some(SourceRef::Loaded(d)),
         _ => None,
@@ -429,9 +429,10 @@ fn smart_run(
                     Some(o) => crate::smart::encode_pair_video(o, crate::cloud_sync::MINI_EDGE).map(|(smart, _)| smart),
                     None => source.ok_or_else(|| "nothing to build from".to_string()).and_then(|s| s.load_source()).and_then(|src| {
                         let info = src.info_or(Default::default());
+                        let image = src.image.to_f32();
                         // (a raw decoded from its original: the frontend's development of it, when it has one; never a picture made from a proxy)
-                        let host = original.as_deref().filter(|_| !src.from_proxy).and_then(|o| crate::smart::host_picture(o, &src.image, &info));
-                        crate::smart::encode(host.as_ref().unwrap_or(&src.image), Some(&info))
+                        let host = original.as_deref().filter(|_| !src.from_proxy).and_then(|o| crate::smart::host_picture(o, &image, &info));
+                        crate::smart::encode(host.as_ref().unwrap_or(&image), Some(&info))
                     }),
                 }
                 .and_then(|b| {
@@ -873,6 +874,7 @@ mod tests {
             denoise: None,
             reduced: None,
             catalogued: None,
+            compact: None,
         };
         assert!(run_photo(jobs), "the thumbnail rendered from the view's decoded source");
     }

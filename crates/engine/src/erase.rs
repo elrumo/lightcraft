@@ -313,7 +313,7 @@ impl Session {
         // a small stroke on a big photo: the preview has too few pixels around it, read the original (where it fits in this
         // device's memory: else the preview's pixels paint it, a little softer)
         let full = self.catalog.photo(id).map_or(0, |p| p.width.max(p.height) as usize);
-        if input.native < lightcraft_erase::SIDE as f64 && full > src.width.max(src.height) && self.original_fits(id) {
+        if input.native < lightcraft_erase::SIDE as f64 && full > src.width().max(src.height()) && self.original_fits(id) {
             (src, info) = self.plain_source_now(id, d, SourceLevel::Full)?;
             input = lightcraft_pipeline::spots::erase_input(&src, &info, d, index).ok_or("the stroke is outside the photo")?;
         }

@@ -30,6 +30,9 @@
 //! - `host.libraries {recent?}` — the libraries to offer; `host.library.open {path} | new {name} | delete {path}` —
 //!   another library without a restart, a new one, one deleted ([`libraries`]).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
+//! - `host.prepareExports {on}` — the frontend prepares exports itself (draws their pictures, writes a format the engine
+//!   cannot): a script's or the control channel's `app.export` then goes to it as a `uiRequest` `ui.export` (its params), which
+//!   it runs as its own export.
 //!
 //! Between requests the thread drives what the egui app's frame loop drives: renders, saving, the
 //! activity stack and the self-hosted sync ([`crate::sync`]; a share link comes as a `copy` event,
@@ -89,12 +92,13 @@ const MAX_THUMBS: usize = 600;
 /// screen, this only bounds a frontend that never sends one (a frontend asks once: one dropped stays blank).
 const MAX_WANTED: usize = 20_000;
 
-/// Bytes a pixel of an original takes while it is decoded for a zoomed window: the linear source (12; a
-/// window uploads only the part it reads, never the whole source) and the decode's temporaries at their
-/// peak (12: the picture turned upright, or the highlight rebuild's pyramid with the samples). Measured
-/// with `drag_bench zoom` on a 48 MP ProRAW: 1.39 to 1.48 GB above the fit view at the peak, the window's
-/// render included; settled, 0.88 GB at 1:1 and 0.72 GB at 8x.
-const ORIGINAL_BYTES_PER_PX: f64 = 24.0;
+/// Bytes a pixel of an original takes while it is decoded for a zoomed window: at the decode's peak, a raw's floats
+/// and their temporaries (the picture turned upright, or the highlight rebuild's pyramid with the samples), then the
+/// floats and the half floats they are narrowed to; a picture file's samples and half floats. The original is then held
+/// in half floats (6; a window widens and uploads only the part it reads). Measured with `drag_bench zoom` on a 48 MP
+/// ProRAW (`BENCH_MEMORY_MB=3362`, 1206 × 2400): 1.47 GB above the fit view at the peak, the window's render included
+/// (1.69 GB with the original in floats); settled, 0.72 GB at 1:1 and 0.66 GB at 8x (1.02 and 0.95).
+const ORIGINAL_BYTES_PER_PX: f64 = 20.0;
 
 /// What is kept free beside a decoded original: the zoomed window's render (its GPU stages and
 /// buffers: up to ~0.9 GB above the source for a phone's 1:1 window) and the app's pictures.
@@ -336,6 +340,9 @@ struct Engine {
     sync_exec: Box<dyn Fn(Task, Sender<Done>)>,
     /// The app is in front (`host.lifecycle`): coming back pulls from the server at once.
     in_front: bool,
+    /// The frontend prepares exports itself before the engine runs them (`host.prepareExports`: a native frontend that draws their
+    /// pictures or writes formats the engine has no encoder for): a script's or the control channel's `app.export` goes to it.
+    prepares_exports: bool,
     /// A phone's or tablet's host (`Profile::Mobile`): the app is suspended out of sight, so the models' runs stop
     /// when it leaves the screen and start again when it is back.
     mobile: bool,
@@ -542,6 +549,7 @@ impl Engine {
             sync: crate::sync::Driver::default(),
             sync_exec,
             in_front: true,
+            prepares_exports: false,
             mobile: !desktop,
             last_request: Instant::now(),
             histogram_sent: None,
@@ -669,6 +677,14 @@ impl Engine {
             && req.params.get("command").or(req.params.get("id")).and_then(Value::as_str) == Some("app.export")
         {
             let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
+            // a script's or the control channel's, for a frontend that prepares its exports: it runs it as its own (`ui.export`, which
+            // comes back here as the frontend's request), so a script exports what the frontend's Share does
+            if let Some(reply) = call.filter(|_| self.prepares_exports) {
+                self.next_ui += 1;
+                self.ui_pending.insert(self.next_ui, (id, reply.clone()));
+                self.events.push(Event::UiRequest { id: self.next_ui, method: "ui.export".into(), params }.to_value());
+                return None;
+            }
             return lightcraft_engine::guard::catch("`app.export`", || self.start_export(id, call, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
@@ -864,6 +880,11 @@ impl Engine {
                 self.sched.set_display(display);
                 self.busy = true;
                 Ok(json!({}))
+            }
+            // `{on}`: the frontend prepares exports itself (see `prepares_exports`)
+            "host.prepareExports" => {
+                self.prepares_exports = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("missing `on`"))?;
+                Ok(json!({"on": self.prepares_exports}))
             }
             "host.lifecycle" => {
                 let event = p.get("event").and_then(Value::as_str).ok_or_else(|| bad("missing `event`"))?;
@@ -1504,7 +1525,7 @@ impl Engine {
             return;
         };
         // the original a window is cut from stays decoded while the view is zoomed (over the cache budget: a
-        // 48 MP one is 560 MB), or every pan would decode it again
+        // 48 MP one is 280 MB in half floats), or every pan would decode it again
         if job.level == lightcraft_engine::SourceLevel::Full {
             self.session.media.set_on_screen(Some(id));
         }

@@ -287,9 +287,11 @@ pub(crate) fn neutral_pairs(raw: &mut RawImage, reference: &[u8]) -> Option<Vec<
     spectral(raw).unwrap_or_else(|| lightcraft_raw::spectral::generic(raw.metadata.make.as_deref())).fill(&mut raw.color);
     let transform = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
     let edge = (2 * PROFILE_PROXY).max(384) as u32;
-    let decoded =
-        lightcraft_codecs::decode(reference, lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: FIT_PREVIEW_MAX_PIXELS })
-            .ok()?;
+    let decoded = lightcraft_codecs::decode(
+        reference,
+        lightcraft_codecs::DecodeOptions { max_size: Some((edge, edge)), max_pixels: FIT_PREVIEW_MAX_PIXELS, half: false },
+    )
+    .ok()?;
     let upright = decoded.to_working().into_oriented(lightcraft_geom::Orientation::from_exif(decoded.orientation));
     // back into the sensor's orientation, where the camera JPEG would be
     let (sensor, reference, clipped) = proxies_from(raw, upright.into_oriented(raw.orientation.inverse()), &transform, PROFILE_PROXY, None)?;
@@ -750,11 +752,14 @@ mod preview_match_tests {
         let white = m.matrix.apply([1.0; 3]);
         assert!(white.iter().all(|v| (v - 1.0).abs() < 1e-6), "neutrals stay neutral: {white:?}");
         // Camera Matching against Color, both against the camera's preview, in Oklab
-        let preview =
-            crate::files::decode_raw_preview(&bytes, lightcraft_codecs::DecodeOptions { max_size: Some((256, 256)), max_pixels: 1 << 27 }, None)
-                .unwrap()
-                .to_working()
-                .into_oriented(lightcraft_raw::decode(&bytes).unwrap().orientation);
+        let preview = crate::files::decode_raw_preview(
+            &bytes,
+            lightcraft_codecs::DecodeOptions { max_size: Some((256, 256)), max_pixels: 1 << 27, half: false },
+            None,
+        )
+        .unwrap()
+        .to_working()
+        .into_oriented(lightcraft_raw::decode(&bytes).unwrap().orientation);
         let req = lightcraft_pipeline::RenderRequest::fit(preview.width, preview.height);
         let to_2020 = lightcraft_color::REC2020.from_xyz().mul(&lightcraft_color::SRGB.to_xyz());
         let mut s = lightcraft_develop::DevelopSettings::default();

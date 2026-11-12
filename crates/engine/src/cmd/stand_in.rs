@@ -126,8 +126,8 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     meta.orientation = None;
 
     let tiff = std::fs::read(src).map_err(|e| bad(C, format!("{src}: {e}")))?;
-    let decoded =
-        lightcraft_codecs::decode(&tiff, DecodeOptions { max_size: None, max_pixels: MAX_PIXELS }).map_err(|e| bad(C, format!("{src}: {e}")))?;
+    let decoded = lightcraft_codecs::decode(&tiff, DecodeOptions { max_size: None, max_pixels: MAX_PIXELS, half: false })
+        .map_err(|e| bad(C, format!("{src}: {e}")))?;
     drop(tiff);
     let rgb = decoded.into_working();
     if rgb.width == 0 || rgb.height == 0 {

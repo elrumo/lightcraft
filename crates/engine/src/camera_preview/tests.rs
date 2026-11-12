@@ -916,7 +916,7 @@ fn camera_matched_pixels_are_the_fitted_looks() {
         colour.apply(&mut img);
         img
     };
-    let (got, want) = (camera_matched(&decode(&neutral, &starting), &m), decode(&fallback, &fitted));
+    let (got, want) = (camera_matched(&decode(&neutral, &starting).into(), &m).to_f32(), decode(&fallback, &fitted));
     for (g, w) in got.data.iter().zip(&want.data) {
         assert!((0..3).all(|i| (g[i] - w[i]).abs() <= 2e-4 * w[i].abs().max(0.05)), "{g:?} {w:?}");
     }
@@ -949,7 +949,7 @@ fn camera_matched_is_the_decode_paths_look_bit_for_bit() {
         }
         let hs = hue_sat.as_ref().and_then(HueSat::new);
         crate::files::CameraColourModel { wb: [1.0; 3], matrix, gain: 1.0, tables: None, hue_sat: hs.as_ref() }.apply(&mut old);
-        let new = camera_matched(&img, &m);
+        let new = camera_matched(&img.clone().into(), &m).to_f32();
         let look = m.look();
         for ((o, n), p) in old.data.iter().zip(&new.data).zip(&img.data) {
             assert_eq!(o.map(f32::to_bits), n.map(f32::to_bits), "{p:?}");

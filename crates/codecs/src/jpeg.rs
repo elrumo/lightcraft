@@ -464,7 +464,8 @@ mod tests {
         let rgb = vec![120u8; 16 * 16 * 3];
         let jpeg = encode_jpeg(&EncodeImage::new(16, 16, 3, Samples::U8(&rgb)), 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
         for max in [u32::MAX, u32::MAX / 2 + 1, 1 << 31, 0] {
-            let d = decode(&jpeg, &DecodeOptions { max_size: Some((max, max)), max_pixels: 1 << 20 }).unwrap_or_else(|e| panic!("max {max}: {e}"));
+            let d = decode(&jpeg, &DecodeOptions { max_size: Some((max, max)), max_pixels: 1 << 20, half: false })
+                .unwrap_or_else(|e| panic!("max {max}: {e}"));
             assert_eq!((d.width, d.height), (16, 16));
         }
     }

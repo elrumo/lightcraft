@@ -61,6 +61,7 @@ impl Default for MediaCache {
             preview_capacity: 0,
             budget,
             file_loader: None,
+            compact_loader: None,
             reduced_loader: None,
             file_probe: None,
             preview_loader: None,
@@ -185,7 +186,7 @@ impl MediaCache {
     }
 
     /// The photo the loupe shows (the frontend sets it every frame; `None` in other views). Its original stays
-    /// even over budget: a 64 MP original (797 MB as linear float) alone exceeds the default share, and evicting it
+    /// even over budget: a 64 MP original (400 MB in half floats, 797 MB as floats) is half the default share or more, and evicting it
     /// made every pan of a zoomed view decode the raw again. Showing another photo lets it go at once.
     pub fn set_on_screen(&mut self, id: Option<PhotoId>) {
         if self.on_screen != id {
@@ -252,8 +253,9 @@ impl MediaCache {
         }
     }
 
+    /// The decoded source of `id` at `level`, in floats (one held in half floats is widened: for small levels).
     pub fn get(&mut self, id: PhotoId, level: SourceLevel) -> Option<Arc<Rgb32f>> {
-        self.get_source(id, level).map(|s| s.image)
+        self.get_source(id, level).map(|s| s.image.to_f32())
     }
 
     pub(super) fn get_source(&mut self, id: PhotoId, level: SourceLevel) -> Option<DecodedSource> {
@@ -493,9 +495,12 @@ impl MediaCache {
                         denoise: None,
                         reduced: None,
                         catalogued,
+                        compact: None,
                     },
                 }
             }
+            // (the whole original, held in half floats where this host can load it so: a deep export reads floats,
+            // `Session::export_job`)
             Source::File { path } => SourceRef::File {
                 path: path.clone(),
                 max_edge,
@@ -504,6 +509,7 @@ impl MediaCache {
                 denoise: None,
                 reduced: None,
                 catalogued,
+                compact: self.compact_loader.clone().filter(|_| max_edge == usize::MAX),
             },
         }
     }

@@ -1501,8 +1501,8 @@ fn a_big_raw_on_a_phone_is_refused_with_advice_that_can_help() {
     let at = |edge: f32| ExportOptions { resize: Some(Resize::long_edge(edge as u32)), ..Default::default() };
     s.set_export_limit(Some(2 * gib));
     assert!(prepare_export(&mut s, id, &at(2048.0), 1).is_ok(), "read binned, it fits");
-    // 3000 px: binned it still needs more than 1 GiB, but a smaller size fits: say how big
-    s.set_export_limit(Some(gib));
+    // 3000 px: in bands it needs about 1 GB (the original in half floats), binned more, but a smaller size fits: say how big
+    s.set_export_limit(Some(900 << 20));
     let e = prepare_export(&mut s, id, &at(3000.0), 1).err().unwrap();
     assert!(e.contains("Export up to") && e.contains("px on the long edge") && e.contains("sync server"), "{e}");
     // 100 MB: even the sensor's samples do not fit, whatever the size: no advice that cannot help
@@ -1630,4 +1630,81 @@ fn border_params_are_checked_and_kept() {
     // a photo too big to grow is an error, not a crash
     assert!(add_border(Rgba8::new(1, 1), &Border { width: 0.25, color: [0; 3] }, OutputSpace::Srgb).is_ok());
     assert_eq!(Border { width: f32::NAN, color: [0; 3] }.px(100, 100), 0);
+}
+
+/// A gain map JPEG renders its SDR base and its HDR rendition from one read of the photo, not one each (#375: an HDR HEIC of an
+/// engine-drawn raw decoded it three times, two of them here).
+#[test]
+fn a_gain_map_jpeg_reads_its_photo_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut s = crate::Session::with_demo();
+    let id = s.active().unwrap();
+    s.execute("develop.hdr", &json!({"enabled": true, "maxEv": 3})).unwrap();
+    let o = ExportOptions { hdr: true, resize: Some(Resize::long_edge(64)), ..Default::default() };
+    let mut prepared = prepare_export(&mut s, id, &o, 1).unwrap();
+    let reads = std::sync::Arc::new(AtomicUsize::new(0));
+    let counting = |reads: std::sync::Arc<AtomicUsize>| crate::media::SourceRef::File {
+        path: "synthetic.arw".into(),
+        max_edge: 64,
+        loader: Some(std::sync::Arc::new(move |_, _, _| {
+            reads.fetch_add(1, Ordering::SeqCst);
+            let image = lightcraft_raster::Rgb32f::from_fn(64, 48, |x, _| [x as f32 / 16.0; 3]);
+            Ok((image, lightcraft_pipeline::SourceInfo::default()))
+        })),
+        fallback: None,
+        denoise: None,
+        reduced: None,
+        catalogued: None,
+        compact: None,
+    };
+    let sources = prepared.render_sources();
+    assert_eq!(sources.len(), 2, "a gain map JPEG has an SDR and an HDR render");
+    for source in sources {
+        *source = counting(reads.clone());
+    }
+    let out = prepared.run().unwrap();
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "one read for both renders");
+    assert!(lightcraft_codecs::gainmap::read_jpeg(&out.bytes).is_some(), "the JPEG carries its gain map");
+}
+
+/// `gainMapSidecar`: a TIFF of a photo edited in HDR gets its gain map beside it, an HDR JPEG of the same picture from the same read of the photo
+/// (#375: an HDR HEIC of an engine-drawn photo exported a TIFF, then an HDR JPEG, and read the photo three times); an SDR edit gets none.
+#[test]
+fn a_tiff_with_a_gain_map_sidecar_reads_its_photo_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut s = crate::Session::with_demo();
+    let id = s.active().unwrap();
+    let o = ExportOptions::from_json(&json!({"format": "tiff", "bitDepth": 16, "longEdge": 64, "gainMapSidecar": true}));
+    assert!(o.gain_map_sidecar && o.to_json()["gainMapSidecar"] == true, "the option round-trips");
+    assert!(ExportOptions::default().to_json().get("gainMapSidecar").is_none(), "off, it is not written");
+    let sdr = export_photo(&mut s, id, &o, 1).unwrap();
+    assert!(sdr.sidecars.is_empty(), "an SDR edit has no gain map");
+    s.execute("develop.hdr", &json!({"enabled": true, "maxEv": 3})).unwrap();
+    assert!(s.catalog.photo(id).unwrap().develop.hdr.enabled);
+    let mut prepared = prepare_export(&mut s, id, &o, 1).unwrap();
+    let reads = std::sync::Arc::new(AtomicUsize::new(0));
+    let counting = |reads: std::sync::Arc<AtomicUsize>| crate::media::SourceRef::File {
+        path: "synthetic.arw".into(),
+        max_edge: 64,
+        loader: Some(std::sync::Arc::new(move |_, _, _| {
+            reads.fetch_add(1, Ordering::SeqCst);
+            Ok((lightcraft_raster::Rgb32f::from_fn(64, 48, |x, _| [x as f32 / 16.0; 3]), lightcraft_pipeline::SourceInfo::default()))
+        })),
+        fallback: None,
+        denoise: None,
+        reduced: None,
+        catalogued: None,
+        compact: None,
+    };
+    let sources = prepared.render_sources();
+    assert_eq!(sources.len(), 2, "an HDR edit's TIFF with a gain map sidecar has an SDR and an HDR render");
+    for source in sources {
+        *source = counting(reads.clone());
+    }
+    let out = prepared.run().unwrap();
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "one read for the TIFF and its gain map");
+    assert!(out.bytes.starts_with(b"MM") || out.bytes.starts_with(b"II"), "a TIFF");
+    let [(ext, jpeg)] = out.sidecars.as_slice() else { panic!("one sidecar: {:?}", out.sidecars.iter().map(|s| s.0).collect::<Vec<_>>()) };
+    assert_eq!(*ext, "hdr.jpg");
+    assert!(lightcraft_codecs::gainmap::read_jpeg(jpeg).is_some(), "the sidecar carries the gain map");
 }

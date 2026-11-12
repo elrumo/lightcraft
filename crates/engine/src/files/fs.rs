@@ -1,5 +1,5 @@
 use super::colour::stream_bin_factor;
-use super::load::{load_vec_for, load_vec_pair_for, load_vec_reduced_for};
+use super::load::{load_vec_compact_for, load_vec_for, load_vec_pair_for, load_vec_reduced_for};
 use super::preview::{fit_box, fs_preview_loader, preview_orientation};
 #[cfg(not(target_arch = "wasm32"))]
 use super::probe::probe_video_path;
@@ -159,8 +159,9 @@ pub fn fs_pair_loader() -> PairLoader {
 /// rule of thumb for compressed images; for a picture file, what its decode passes through for the pixels its header
 /// declares (a 3 MB JPEG may be 268 MP: 15 bytes a pixel decoded whole, a progressive JPEG's coefficients when it is
 /// scaled while decoded); for a raw, what its decode allocates — the samples (16 bits each), some tiles in flight, and
-/// unless the load bins the mosaic ([`bin_factor`]) the full-size normalised and RGB float images.
-pub(super) fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
+/// unless the load bins the mosaic ([`bin_factor`]) the full-size normalised and RGB float images. `half`: the picture is
+/// loaded in half floats ([`load_vec_compact_for`]); a picture file is then decoded straight to them.
+pub(super) fn load_weight(bytes: &[u8], max_edge: usize, half: bool) -> usize {
     let factor = if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 3 } else { 6 };
     let by_size = bytes.len().saturating_mul(factor);
     let Ok(info) = lightcraft_raw::probe_info(bytes) else {
@@ -168,8 +169,9 @@ pub(super) fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
         let px = (h.width as usize).saturating_mul(h.height as usize);
         let long = h.width.max(h.height).max(1) as usize;
         if max_edge >= long {
-            // the decoder's samples and the float picture, or the picture and its copy turned upright
-            return by_size.max(px.saturating_mul(24));
+            // the decoder's samples and the float picture, or the picture and its copy turned upright (in half floats:
+            // 8-bit samples and the picture, 9 bytes a pixel, or the picture turned, 12)
+            return by_size.max(px.saturating_mul(if half { 12 } else { 24 }));
         }
         let fitted = ((px as f64) * (max_edge as f64 / long as f64).powi(2)).ceil() as usize;
         let pass = if h.format == lightcraft_codecs::Format::Jpeg {
@@ -201,7 +203,7 @@ pub(super) fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
 /// yields to them.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize, catalogued: Catalogued| {
-        fs_load(path, max_edge, |bytes| load_vec_for(bytes, max_edge, catalogued), |img, info| (img, info))
+        fs_load(path, max_edge, false, |bytes| load_vec_for(bytes, max_edge, catalogued), |img, info| (img, info))
     });
     let probe: FileProbe = Arc::new(|path: &str| {
         if let Some(r) = probe_video_path(path) {
@@ -237,7 +239,14 @@ const VIDEO_WEIGHT: usize = 192 << 20;
 /// The filesystem [`ReducedLoader`]: [`load_vec_reduced`] of the file, gated like [`fs_hooks`]' loader.
 pub fn fs_reduced_loader() -> ReducedLoader {
     Arc::new(|path: &str, max_edge: usize, catalogued: Catalogued| {
-        fs_load(path, max_edge, |bytes| load_vec_reduced_for(bytes, max_edge, catalogued), |img, info| (img, info, false))
+        fs_load(path, max_edge, false, |bytes| load_vec_reduced_for(bytes, max_edge, catalogued), |img, info| (img, info, false))
+    })
+}
+
+/// The filesystem [`CompactLoader`]: [`load_vec_compact_for`] of the file, gated like [`fs_hooks`]' loader.
+pub fn fs_compact_loader() -> CompactLoader {
+    Arc::new(|path: &str, catalogued: Catalogued| {
+        fs_load(path, usize::MAX, true, |bytes| load_vec_compact_for(bytes, catalogued), |img, info| (SourcePixels::from(img).compact(), info))
     })
 }
 
@@ -247,6 +256,7 @@ pub fn fs_reduced_loader() -> ReducedLoader {
 fn fs_load<T>(
     path: &str,
     max_edge: usize,
+    half: bool,
     load: impl FnOnce(Vec<u8>) -> Result<T, String>,
     from_video: impl FnOnce(Rgb32f, SourceInfo) -> T,
 ) -> Result<T, String> {
@@ -267,7 +277,7 @@ fn fs_load<T>(
         let _read = hold(len);
         std::fs::read(path).map_err(|e| format!("{path}: {e}"))?
     };
-    let _permit = hold(load_weight(&bytes, max_edge));
+    let _permit = hold(load_weight(&bytes, max_edge, half));
     let r = load(bytes);
     // the file, the samples and the intermediate images are gone: give their pages back
     crate::memory::release();
@@ -300,6 +310,7 @@ impl crate::Session {
     pub fn with_fs(mut self) -> Self {
         let (l, p) = fs_hooks();
         self.media.file_loader = Some(l);
+        self.media.compact_loader = Some(fs_compact_loader());
         self.media.reduced_loader = Some(fs_reduced_loader());
         self.media.file_probe = Some(p);
         self.media.preview_loader = Some(fs_preview_loader());

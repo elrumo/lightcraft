@@ -307,7 +307,7 @@ fn ifd_tiff(entries: &[(u16, u16, u32)], data: &[u8]) -> Vec<u8> {
 /// 32 bytes per allowed pixel. Fixtures from AlexChambers' review of #1989.
 #[test]
 fn tiff_small_pixel_budget_reads_headers_and_padded_tiles() {
-    let opts = |max_pixels| DecodeOptions { max_size: None, max_pixels };
+    let opts = |max_pixels| DecodeOptions { max_size: None, max_pixels, half: false };
 
     // 1 × 1 gray, one JPEG-compressed strip (~400 bytes for one pixel), with a one-pixel budget.
     let mut jpeg = Vec::new();
