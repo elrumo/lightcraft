@@ -214,6 +214,8 @@ pub fn filter_chips(f: &Filter, cat: &Catalog) -> Vec<FilterChip> {
         ("Place", "place", &f.place),
     ] {
         if let Some(x) = val {
+            // (a camera by its name, HB-366: the filter keeps the catalog's key)
+            let x = if key == "camera" { lightcraft_catalog::camera_name(x) } else { x.clone() };
             add(format!("{name}: {x}"), json!({key: Null}));
         }
     }

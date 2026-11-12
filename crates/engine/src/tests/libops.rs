@@ -123,6 +123,32 @@ fn facets_list_the_filter_choices() {
     assert!(s.execute("library.facets", &json!({"field": "colour"})).is_err());
 }
 
+/// HB-366: the camera filter shows a camera by its name ("Canon EOS R6") and still takes the catalog's key, so it
+/// chooses the same photos as before; the chip says the name.
+#[test]
+fn a_camera_choice_shows_its_name_and_filters_by_its_key() {
+    let mut s = Session::with_demo();
+    let mut ids: Vec<u64> = s.visible_shared().1.iter().take(2).map(|i| i.0).collect();
+    ids.sort_unstable();
+    for &id in &ids {
+        let mut meta = s.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().meta.clone();
+        meta.camera = "Canon Canon EOS R6".into();
+        s.commit("Camera", lightcraft_catalog::Op::SetMeta { id: lightcraft_catalog::PhotoId(id), meta: Box::new(meta) }).unwrap();
+    }
+    let cams = s.execute("library.facets", &json!({"field": "camera"})).unwrap();
+    let r6 = cams.as_array().unwrap().iter().find(|c| c["value"] == "Canon Canon EOS R6").expect("the R6 is a choice").clone();
+    assert_eq!((r6["name"].as_str(), r6["count"].as_u64()), (Some("Canon EOS R6"), Some(2)), "{r6}");
+    s.execute("library.filter", &json!({"camera": r6["value"]})).unwrap();
+    let mut shown: Vec<u64> = s.visible_shared().1.iter().map(|i| i.0).collect();
+    shown.sort_unstable();
+    assert_eq!(shown, ids);
+    let chips = s.execute("library.filterChips", &json!({})).unwrap();
+    assert_eq!(chips["chips"][0]["label"], "Camera: Canon EOS R6", "{chips}");
+    // other fields have no name
+    let fmts = s.execute("library.facets", &json!({"field": "format"})).unwrap();
+    assert!(fmts.as_array().unwrap().iter().all(|f| f.get("name").is_none()), "{fmts}");
+}
+
 /// A tool screen's Cancel: the stack's depth when it opened, then undo back to it in one call.
 #[test]
 fn undo_stack_lists_and_undoes_to_a_depth() {

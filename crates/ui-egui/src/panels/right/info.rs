@@ -263,7 +263,7 @@ fn camera_card(ui: &mut egui::Ui, p: &lightcraft_catalog::Photo) {
         ui.set_width(ui.available_width());
         let dim = |s: &str| egui::RichText::new(s.to_string()).size(12.0).color(t.text_label);
         if !m.camera.is_empty() {
-            ui.label(dim(&m.camera));
+            ui.label(dim(&lightcraft_catalog::camera_name(&m.camera)));
         }
         if !m.lens.is_empty() {
             ui.add(egui::Label::new(dim(&m.lens)).truncate());

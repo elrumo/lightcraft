@@ -402,10 +402,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "Filter Choices",
             [],
             None,
-            "{field: camera|format|person|place|keyword} → [{value, count}] the values the filter can pick for `field` (`format`: the file formats, which no filter picks), each with how many of the library's photos have it (most first; keywords by name)",
+            "{field: camera|format|person|place|keyword} → [{value, count, name?}] the values the filter can pick for `field` (`format`: the file formats, which no filter picks), each with how many of the library's photos have it (most first; keywords by name); a camera's `name` is the one to show (`Canon EOS R6` for the `value` `Canon Canon EOS R6`), `value` the one the filter takes",
             always,
             |s, p| {
-                let values = match str_param(p, "field") {
+                let field = str_param(p, "field");
+                let values = match field {
                     Some("camera") => s.catalog.cameras(),
                     Some("format") => s.catalog.formats(),
                     Some("person") => s.catalog.people().into_iter().map(|p| (p.name, p.count)).collect(),
@@ -413,7 +414,19 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some("keyword") => s.catalog.keywords(),
                     _ => return Err(bad("library.facets", "field must be camera|format|person|place|keyword")),
                 };
-                Ok(Value::Array(values.into_iter().map(|(value, count)| json!({"value": value, "count": count})).collect()))
+                let camera = field == Some("camera");
+                Ok(Value::Array(
+                    values
+                        .into_iter()
+                        .map(|(value, count)| {
+                            if camera {
+                                json!({"value": value, "count": count, "name": lightcraft_catalog::camera_name(&value)})
+                            } else {
+                                json!({"value": value, "count": count})
+                            }
+                        })
+                        .collect(),
+                ))
             }
         ),
         // ---- selection

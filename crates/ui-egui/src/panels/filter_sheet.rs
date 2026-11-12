@@ -219,7 +219,7 @@ fn main(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     for (id, icon, name) in LISTS {
         let value = match id {
             "type" => kind_name(&f).to_string(),
-            "camera" => f.camera.clone().unwrap_or_default(),
+            "camera" => f.camera.as_deref().map(lightcraft_catalog::camera_name).unwrap_or_default(),
             "people" => f.person.clone().unwrap_or_default(),
             "location" => f.place.clone().unwrap_or_default(),
             "keyword" => f.keyword.clone().unwrap_or_default(),
@@ -294,56 +294,57 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, at: &str) {
     let f = app.session.filter.clone();
     ui.spacing_mut().item_spacing.y = 0.0;
     // (label, the filter's patch, photos, chosen)
-    let mut rows: Vec<(String, Value, Option<usize>, bool)> =
-        match at {
-            "type" => [
-                ("Any", json!({"kind": null, "merged": null})),
-                ("Photos", json!({"kind": "image", "merged": null})),
-                ("Raw", json!({"kind": "raw", "merged": null})),
-                ("Videos", json!({"kind": "video", "merged": null})),
-                ("HDR", json!({"kind": null, "merged": "hdr"})),
-                ("Panoramas", json!({"kind": null, "merged": "panorama"})),
-                ("HDR Panoramas", json!({"kind": null, "merged": "hdrPanorama"})),
-            ]
+    let mut rows: Vec<(String, Value, Option<usize>, bool)> = match at {
+        "type" => [
+            ("Any", json!({"kind": null, "merged": null})),
+            ("Photos", json!({"kind": "image", "merged": null})),
+            ("Raw", json!({"kind": "raw", "merged": null})),
+            ("Videos", json!({"kind": "video", "merged": null})),
+            ("HDR", json!({"kind": null, "merged": "hdr"})),
+            ("Panoramas", json!({"kind": null, "merged": "panorama"})),
+            ("HDR Panoramas", json!({"kind": null, "merged": "hdrPanorama"})),
+        ]
+        .into_iter()
+        .map(|(label, patch)| {
+            let chosen = kind_name(&f) == label || (label == "Any" && kind_name(&f).is_empty());
+            (crate::i18n::tr(label).to_string(), patch, None, chosen)
+        })
+        .collect(),
+        "edited" => [("Any", Value::Null, None), ("Edited", json!(true), Some(true)), ("Unedited", json!(false), Some(false))]
             .into_iter()
-            .map(|(label, patch)| {
-                let chosen = kind_name(&f) == label || (label == "Any" && kind_name(&f).is_empty());
-                (crate::i18n::tr(label).to_string(), patch, None, chosen)
-            })
+            .map(|(label, v, e)| (crate::i18n::tr(label).to_string(), json!({"edited": v}), None, f.edited == e))
             .collect(),
-            "edited" => [("Any", Value::Null, None), ("Edited", json!(true), Some(true)), ("Unedited", json!(false), Some(false))]
-                .into_iter()
-                .map(|(label, v, e)| (crate::i18n::tr(label).to_string(), json!({"edited": v}), None, f.edited == e))
-                .collect(),
-            _ => {
-                let choices = app.caches.filter_choices(&app.session.catalog);
-                let (key, current, values) = match at {
-                    "camera" => ("camera", f.camera.clone(), &choices.cameras),
-                    "people" => ("person", f.person.clone(), &choices.people),
-                    "location" => ("place", f.place.clone(), &choices.places),
-                    _ => ("keyword", f.keyword.clone(), &choices.keywords),
+        _ => {
+            let choices = app.caches.filter_choices(&app.session.catalog);
+            let (key, current, values) = match at {
+                "camera" => ("camera", f.camera.clone(), &choices.cameras),
+                "people" => ("person", f.person.clone(), &choices.people),
+                "location" => ("place", f.place.clone(), &choices.places),
+                _ => ("keyword", f.keyword.clone(), &choices.keywords),
+            };
+            let mut rows = vec![(crate::i18n::tr("Any").to_string(), json!({key: null}), None, current.is_none())];
+            // a long list can be narrowed by typing
+            let query = if values.len() > SEARCH_FROM { search_field(ui, t, at) } else { String::new() };
+            let query = query.trim().to_lowercase();
+            rows.extend(values.iter().filter(|(name, _)| query.is_empty() || name.to_lowercase().contains(&query)).take(LIST_MAX).map(
+                |(name, n)| {
+                    // (a camera shows its name, HB-366; the filter takes the catalog's key)
+                    let shown = if key == "camera" { lightcraft_catalog::camera_name(name) } else { name.clone() };
+                    (shown, json!({key: name}), Some(*n), current.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(name)))
+                },
+            ));
+            if values.is_empty() {
+                let none = match at {
+                    "camera" => "No camera is named in these photos",
+                    "people" => "Nobody is named yet: name faces in People",
+                    "location" => "No place is named in these photos",
+                    _ => "No keywords yet",
                 };
-                let mut rows = vec![(crate::i18n::tr("Any").to_string(), json!({key: null}), None, current.is_none())];
-                // a long list can be narrowed by typing
-                let query = if values.len() > SEARCH_FROM { search_field(ui, t, at) } else { String::new() };
-                let query = query.trim().to_lowercase();
-                rows.extend(
-                    values.iter().filter(|(name, _)| query.is_empty() || name.to_lowercase().contains(&query)).take(LIST_MAX).map(|(name, n)| {
-                        (name.clone(), json!({key: name}), Some(*n), current.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(name)))
-                    }),
-                );
-                if values.is_empty() {
-                    let none = match at {
-                        "camera" => "No camera is named in these photos",
-                        "people" => "Nobody is named yet: name faces in People",
-                        "location" => "No place is named in these photos",
-                        _ => "No keywords yet",
-                    };
-                    rows.push((crate::i18n::tr(none).to_string(), Value::Null, None, false));
-                }
-                rows
+                rows.push((crate::i18n::tr(none).to_string(), Value::Null, None, false));
             }
-        };
+            rows
+        }
+    };
     for (i, (label, patch, n, chosen)) in rows.drain(..).enumerate() {
         if patch.is_null() {
             // (a note, not a choice)

@@ -253,9 +253,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ("lens", "lens", "Lens", f.lens.clone(), lenses),
         ("keyword", "keyword", "Keyword", f.keyword.clone(), keywords),
     ] {
+        // (a camera shows its name, HB-366, and the filter still takes the catalog's key)
+        let label = |v: &str| if key == "camera" { lightcraft_catalog::camera_name(v) } else { v.to_string() };
         let mut items = vec![(format!("Any {}", all_label.to_lowercase()), json!({key: Value::Null}), current.is_none())];
-        items.extend(values.into_iter().map(|v| (v.clone(), json!({key: v.clone()}), current.as_deref() == Some(v.as_str()))));
-        let shown = current.clone().unwrap_or_else(|| all_label.to_string());
+        items.extend(values.into_iter().map(|v| (label(&v), json!({key: v.clone()}), current.as_deref() == Some(v.as_str()))));
+        let shown = current.as_deref().map_or_else(|| all_label.to_string(), label);
         let shown = if shown.chars().count() > 22 { format!("{}…", shown.chars().take(21).collect::<String>()) } else { shown };
         picker(app, ui, id, &shown, current.is_some(), items);
     }

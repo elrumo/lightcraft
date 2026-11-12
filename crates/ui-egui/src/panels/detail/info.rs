@@ -243,9 +243,11 @@ fn info_line(field: crate::state::LoupeInfoField, photo: &lightcraft_catalog::Ph
             }
             if exp.is_empty() { "No exposure information".into() } else { exp.join("  ") }
         }
-        F::Camera => m.camera.clone(),
+        F::Camera => lightcraft_catalog::camera_name(&m.camera),
         F::Lens => m.lens.clone(),
-        F::CameraAndLens => [m.camera.as_str(), m.lens.as_str()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" · "),
+        F::CameraAndLens => {
+            [lightcraft_catalog::camera_name(&m.camera), m.lens.clone()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+        }
     };
     (!text.is_empty()).then_some(text)
 }

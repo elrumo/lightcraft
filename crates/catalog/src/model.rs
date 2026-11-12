@@ -402,7 +402,7 @@ pub fn relative_wb_camera(format: &str, camera: &str) -> bool {
 }
 
 /// Exif makes of more than one word whose models don't repeat them (a model that does, like `NIKON CORPORATION`'s
-/// `NIKON D850`, needs no entry), each with the brand a frontend shows it as. The makes of the brands the raw
+/// `NIKON D850`, needs no entry), each with the brand [`camera_name`] shows it as. The makes of the brands the raw
 /// readers know (`lightcraft_raw`'s vendor checks: Olympus / OM, Minolta, Epson, Kodak, Ricoh / Pentax, Samsung,
 /// Mamiya, Leica, Fujifilm, Phase One) as their cameras write them (checked against the Exif makes of the app's test raws,
 /// 2026-11-12), and a few phone and camera makers of rendered files. The longest one that starts the camera is its make.
@@ -465,6 +465,23 @@ pub fn camera_make_model(camera: &str) -> (&str, &str) {
         (None, Some(&(at, _))) => split(at),
         (None, None) => ("", camera),
     }
+}
+
+/// The camera as one name to show (Info, the camera filter's choices, the TV viewer), from a [`Meta::camera`] key, which
+/// stays what filters and per-camera lookups match on: the model when it starts with the make's brand (`"Canon Canon EOS
+/// R6"` is `Canon EOS R6`, `"NIKON CORPORATION NIKON D850"` is `NIKON D850`), else the brand and the model (`SONY
+/// ILCE-7M3`, `Apple iPhone 15 Pro`, `"OLYMPUS IMAGING CORP. E-M5"` is `OLYMPUS E-M5`), else whichever there is. The brand
+/// of a make of several words is [`LONG_MAKES`]'s, else the make's first word.
+pub fn camera_name(camera: &str) -> String {
+    let (make, model) = camera_make_model(camera);
+    if make.is_empty() || model.is_empty() {
+        return if make.is_empty() { model } else { make }.to_string();
+    }
+    let brand =
+        LONG_MAKES.iter().find(|(m, _)| m.eq_ignore_ascii_case(make)).map(|(_, b)| *b).or_else(|| make.split_whitespace().next()).unwrap_or(make);
+    let branded = model.get(..brand.len()).is_some_and(|p| p.eq_ignore_ascii_case(brand))
+        && model.get(brand.len()..).is_some_and(|rest| !rest.starts_with(char::is_alphanumeric));
+    if branded { model.to_string() } else { format!("{brand} {model}") }
 }
 
 /// This build's version: what a photo's [`Photo::preview_checked`] stamp is compared with. Every
@@ -886,6 +903,32 @@ mod edited_tests {
             assert_eq!(camera_make_model(&format!("{make} X1")), (*make, "X1"), "{make}");
             // in other cases too, as the make was written
             assert_eq!(camera_make_model(&format!("{} X1", make.to_lowercase())).1, "X1", "{make}");
+        }
+    }
+
+    /// HB-366: the name shown for a camera says its brand once.
+    #[test]
+    fn a_camera_is_shown_with_its_brand_once() {
+        for (camera, name) in [
+            ("Canon Canon EOS R6", "Canon EOS R6"),
+            ("NIKON CORPORATION NIKON D850", "NIKON D850"),
+            ("PENTAX Corporation PENTAX K-1", "PENTAX K-1"),
+            ("SONY ILCE-7M3", "SONY ILCE-7M3"),
+            ("Apple iPhone 15 Pro", "Apple iPhone 15 Pro"),
+            ("FUJIFILM X-T4", "FUJIFILM X-T4"),
+            ("OLYMPUS IMAGING CORP. E-M5", "OLYMPUS E-M5"),
+            ("OM Digital Solutions OM-3", "OM-3"),
+            ("Eastman Kodak Company DCS Pro 14N", "Kodak DCS Pro 14N"),
+            ("Arashi Vision Insta360 X5", "Insta360 X5"),
+            ("Leica Camera AG LEICA Q2", "LEICA Q2"),
+            ("Canon CanonX", "Canon CanonX"),
+            // a model without a make, a make alone, nothing
+            ("D850", "D850"),
+            ("iPhone 15 Pro", "iPhone 15 Pro"),
+            ("", ""),
+            ("  ", ""),
+        ] {
+            assert_eq!(camera_name(camera), name, "{camera:?}");
         }
     }
 
