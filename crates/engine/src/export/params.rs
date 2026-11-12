@@ -36,6 +36,7 @@ impl Default for ExportOptions {
             add_to_photos: false,
             photos_album: String::new(),
             hdr_transfer: HdrCurve::Pq,
+            gain_map_sidecar: false,
         }
     }
 }
@@ -83,6 +84,7 @@ pub const OPTION_PARAMS: &[&str] = &[
     "photosAlbum",
     "onServer",
     "hdrTransfer",
+    "gainMapSidecar",
 ];
 
 /// Why an export can't add its files to Apple Photos on this platform (`None`: it can, when the
@@ -291,7 +293,8 @@ impl ExportOptions {
                     }
                     serde_json::from_value::<Resize>(v.clone()).map_err(|e| bad(format!("`{k}`: {e}")))?;
                 }
-                "dontEnlarge" | "removeLocation" | "sidecar" | "background" | "hdr" | "jxlLossless" | "jxlProgressive" | "onServer" => {
+                "dontEnlarge" | "removeLocation" | "sidecar" | "background" | "hdr" | "jxlLossless" | "jxlProgressive" | "onServer"
+                | "gainMapSidecar" => {
                     boolean(k, v)?;
                 }
                 "addToPhotos" => {
@@ -494,6 +497,7 @@ impl ExportOptions {
             bit_depth: u("bitDepth").filter(|b| matches!(b, 8 | 10 | 16 | 32)).map(|b| b as u8),
             on_server: p.get("onServer").and_then(Value::as_bool).unwrap_or(d.on_server),
             hdr: p.get("hdr").and_then(Value::as_bool).unwrap_or(d.hdr),
+            gain_map_sidecar: p.get("gainMapSidecar").and_then(Value::as_bool).unwrap_or(d.gain_map_sidecar),
             jxl_lossless: p.get("jxlLossless").and_then(Value::as_bool).unwrap_or(d.jxl_lossless),
             jxl_effort: s("jxlEffort").and_then(JxlEffort::parse).unwrap_or(d.jxl_effort),
             jxl_progressive: p.get("jxlProgressive").and_then(Value::as_bool).unwrap_or(d.jxl_progressive),

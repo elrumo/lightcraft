@@ -287,7 +287,9 @@ fn prepare_guarded(
         let native_px = (nw.round().max(1.0) * nh.round().max(1.0)) as usize;
         let label = p.file_name.clone();
         let meta = export_metadata(p, &session.catalog, o);
-        let gain_map = o.hdr_output() && o.format == ExportFormat::Jpeg;
+        // (a gain map JPEG, or a TIFF of a photo edited in HDR with its gain map beside it: `gainMapSidecar`)
+        let gain_map = (o.hdr_output() && o.format == ExportFormat::Jpeg)
+            || (o.gain_map_sidecar && o.format == ExportFormat::Tiff && !o.hdr_output() && p.develop.hdr.enabled);
         let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
         let weight = if banded { need } else { render_weight(full_px, long, job.level, w.saturating_mul(h)) };
         if let Some(why) = too_big_for_memory((w, h), native_px, weight, crate::memory::total_ram()) {
@@ -481,7 +483,9 @@ impl PreparedExport {
     pub fn with_host_pixels(&mut self, host: HostPixels) -> bool {
         let Work::Render(w) = &mut self.work else { return false };
         let o = &w.opts;
-        let fits = w.hdr_job.is_none()
+        // (a TIFF's gain map sidecar is left to the host too: it has the picture)
+        let sidecar = o.format != ExportFormat::Jpeg;
+        let fits = (w.hdr_job.is_none() || sidecar)
             && !o.hdr_output()
             && host.space == o.effective_space()
             && matches!((o.effective_depth(), host.depth), (OutputDepth::U8, 8) | (OutputDepth::U16, 16))
@@ -489,6 +493,7 @@ impl PreparedExport {
             && host.height.abs_diff(w.size.1) <= 1;
         if fits {
             w.host = Some(host);
+            w.hdr_job = None;
         }
         fits
     }
@@ -503,6 +508,15 @@ impl PreparedExport {
             w.host_file = Some(host);
         }
         fits
+    }
+
+    /// The sources of this photo's render jobs, the SDR one first (tests: a source that counts its reads).
+    #[cfg(test)]
+    pub(super) fn render_sources(&mut self) -> Vec<&mut crate::media::SourceRef> {
+        match &mut self.work {
+            Work::Render(w) => std::iter::once(&mut w.job.source).chain(w.hdr_job.as_mut().map(|j| &mut j.source)).collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// Let `cancel` (the export's flag) end a wait for a busy sync server.
@@ -534,6 +548,17 @@ impl PreparedExport {
                 if let Some(r) = host.as_ref().and_then(HostPixels::read) {
                     return encode_render_export(file_name, r, None, &opts, meta.as_ref());
                 }
+                // A gain map JPEG's SDR base and HDR rendition develop one load of the source, not one each: the HDR job's
+                // (in floats), which the SDR base renders from too. Each job read and decoded the raw again before (#375).
+                let (job, hdr_job) = match hdr_job {
+                    Some(mut hj) => {
+                        let source = crate::guard::catch("reading the photo", || hj.source.load_source())??;
+                        let job = crate::media::RenderJob { source: crate::media::SourceRef::Loaded(Box::new(source.clone())), ..job };
+                        hj.source = crate::media::SourceRef::Loaded(Box::new(source));
+                        (job, Some(hj))
+                    }
+                    None => (job, None),
+                };
                 // (only the picture: the decoded source a render hands back for the cache goes now, not after the encode —
                 // a 267 MP JPEG's 3 GB of floats were still held while its export was sharpened and encoded)
                 let (r, gpu_fallback) = {
@@ -545,6 +570,16 @@ impl PreparedExport {
                     Some(hj) => Some(hj.run().rendered?),
                     None => None,
                 };
+                // a TIFF with its gain map beside it (`gainMapSidecar`): the HDR JPEG of the same picture, as the gain map JPEG export writes it
+                if opts.format != ExportFormat::Jpeg
+                    && let Some(hr) = hdr
+                {
+                    let deep = hr.deep.ok_or("the HDR render has no float samples")?;
+                    let jpeg = ExportOptions { format: ExportFormat::Jpeg, quality: 90, limit_kb: None, bit_depth: None, hdr: true, ..opts.clone() };
+                    let side = encode_gain_map_jpeg(&r.image, &deep, &jpeg, meta.as_ref())?;
+                    let e = encode_render_export(file_name, r, None, &opts, meta.as_ref())?;
+                    return Ok(Exported { gpu_fallback, sidecars: vec![("hdr.jpg", side)], ..e });
+                }
                 Ok(Exported { gpu_fallback, ..encode_render_export(file_name, r, hdr, &opts, meta.as_ref())? })
             }
             #[cfg(not(target_arch = "wasm32"))]

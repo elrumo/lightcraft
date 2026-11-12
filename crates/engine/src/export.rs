@@ -125,6 +125,10 @@ pub struct ExportOptions {
     pub photos_album: String,
     /// The curve of an HDR AVIF: PQ (default) or HLG.
     pub hdr_transfer: HdrCurve,
+    /// A TIFF of a photo edited in HDR also gets its gain map: an HDR JPEG of the same picture written beside it (sidecar `hdr.jpg`), from the
+    /// same render, for a frontend that writes a format the engine cannot (an HDR HEIC). Off: none, and nothing else changes.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub gain_map_sidecar: bool,
 }
 
 #[cfg(test)]
