@@ -276,3 +276,37 @@ fn a_server_and_the_hide_lists_never_hide_a_packs_presets() {
     assert!(!s.hidden_presets.presets.contains(&warm) && !s.hidden_presets.groups.contains(&"Test +".to_string()));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_retired_profile_keeps_rendering_through_its_alias() {
+    let dir = temp_dir("alias");
+    let lib = temp_dir("alias-lib");
+    let pack = dir.join("Test +");
+    std::fs::create_dir_all(&pack).unwrap();
+    write_cube(&pack.join("Red.cube"), "Red", 0.4);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, true).unwrap();
+
+    // "Old Red" left the pack; photos edited with it draw Red's table under the old id
+    let red = pack.join("Red.cube").to_string_lossy().to_string();
+    let r = s
+        .execute(
+            "pack.set",
+            &json!({"id": "testpack", "dir": pack.to_string_lossy(), "aliases": {"Old Red": red, "Red": red, "Gone": "/nowhere.cube"}}),
+        )
+        .unwrap();
+    assert_eq!((r["profiles"].as_u64(), r["aliases"].as_u64(), r["failed"].as_array().map(Vec::len)), (Some(1), Some(1), Some(1)), "{r}");
+    let old = super::cmd::packs::profile_id("testpack", "Old Red");
+    assert!(lightcraft_pipeline::lut::get(&old).is_some(), "the old id is registered with the renderer");
+    assert_eq!(s.profile_info(&old), Some(("Old Red", "Test +")), "the photo still names its look");
+    assert_eq!(s.execute("profile.lutFile", &json!({"id": old})).unwrap()["file"], json!(red), "a frontend reads the same table");
+    let menu = s.profile_menu().to_string();
+    assert!(!menu.contains("Old Red"), "a retired profile is not offered: {menu}");
+    assert!(s.execute("pack.set", &json!({"id": "testpack", "dir": pack.to_string_lossy(), "aliases": ["x"]})).is_err(), "aliases is an object");
+
+    // taking the pack out drops the alias too
+    s.execute("pack.set", &json!({"id": "testpack"})).unwrap();
+    assert!(lightcraft_pipeline::lut::get(&old).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&lib);
+}

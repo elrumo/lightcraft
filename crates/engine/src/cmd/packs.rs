@@ -43,6 +43,9 @@ pub struct Pack {
     pub id: String,
     pub profiles: Vec<LutProfile>,
     pub presets: Vec<Preset>,
+    /// Profiles the pack no longer offers, kept so photos edited with them still render: each draws another file's table.
+    /// Not listed (no browser entry, no preset), but `profile.lutFile` and the photo's profile name know them.
+    pub aliases: Vec<LutProfile>,
 }
 
 impl Session {
@@ -54,6 +57,11 @@ impl Session {
     /// Whether `group` is a group an app pack's presets are in.
     pub fn is_pack_group(&self, group: &str) -> bool {
         self.packs.iter().any(|p| p.presets.iter().any(|q| q.group == group))
+    }
+
+    /// Every pack's retired profiles (`pack.set` `aliases`).
+    pub fn pack_aliases(&self) -> impl Iterator<Item = &LutProfile> {
+        self.packs.iter().flat_map(|p| p.aliases.iter())
     }
 
     /// Every pack's profiles.
@@ -96,7 +104,7 @@ impl Session {
         let Some(i) = self.packs.iter().position(|p| p.id == id) else { return };
         self.fold_pack_favorites();
         let old = self.packs.remove(i);
-        for p in &old.profiles {
+        for p in old.profiles.iter().chain(&old.aliases) {
             lightcraft_pipeline::lut::unregister(&p.id);
         }
         let gone: HashSet<&str> = old.presets.iter().map(|p| p.id.as_str()).collect();
@@ -114,6 +122,9 @@ fn set_pack(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if p.get("files").is_some_and(|f| !f.is_null() && !f.as_array().is_some_and(|a| a.iter().all(Value::is_string))) {
         return Err(bad(C, "files must be a list of paths"));
+    }
+    if p.get("aliases").is_some_and(|a| !a.is_null() && !a.as_object().is_some_and(|o| o.values().all(Value::is_string))) {
+        return Err(bad(C, "aliases must map profile names to .cube paths"));
     }
     let dir = str_param(p, "dir").map(Path::new);
     let listed: Vec<std::path::PathBuf> = p
@@ -193,13 +204,29 @@ fn set_pack(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
 
+    // retired profiles: an old name drawn with another file's table, unless the pack still has a profile of that name
+    let mut aliases = Vec::<LutProfile>::new();
+    for (alias, file) in p.get("aliases").and_then(Value::as_object).into_iter().flatten().take(MAX_FILES) {
+        let Some(file) = file.as_str() else { continue };
+        let pid = profile_id(&id, alias);
+        let path = Path::new(file);
+        let usable =
+            path.extension().is_some_and(|e| e.eq_ignore_ascii_case("cube")) && path.metadata().is_ok_and(|m| m.is_file() && m.len() <= MAX_FILE);
+        if !usable {
+            failed.push(json!([alias, "the alias's table is not a readable .cube file"]));
+        } else if !profiles.iter().chain(&aliases).any(|x| x.id == pid) {
+            aliases.push(LutProfile { id: pid.clone(), name: alias.clone(), group: group.clone(), file: file.to_string() });
+            registered.push((pid, path.to_path_buf()));
+        }
+    }
+
     // swap the pack in: the old version's tables and presets out, the new ones registered
     s.remove_pack(&id);
     for (pid, file) in registered {
         lightcraft_pipeline::lut::register_file(&pid, file);
     }
-    let counts = json!({"id": id, "profiles": profiles.len(), "presets": presets.len(), "failed": failed});
-    s.packs.push(Pack { id, profiles, presets });
+    let counts = json!({"id": id, "profiles": profiles.len(), "presets": presets.len(), "aliases": aliases.len(), "failed": failed});
+    s.packs.push(Pack { id, profiles, presets, aliases });
     s.insert_pack_presets();
     Ok(counts)
 }
@@ -210,7 +237,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Set App Pack",
         [],
         None,
-        "{id: pack name, dir?: folder and/or files?: [paths] of .cube files (profiles `lut:pack-<id>-<name>`, named by their TITLE) and .lcpreset files (built-in presets), group?: the profiles' group (default the folder's name, else the pack's)} → {id, profiles, presets, failed} — sets the app's own looks, replacing the pack's earlier version; nothing is saved or synced, so call it each time the app starts. Without `dir` and `files` the pack is taken out.",
+        "{id: pack name, dir?: folder and/or files?: [paths] of .cube files (profiles `lut:pack-<id>-<name>`, named by their TITLE) and .lcpreset files (built-in presets), group?: the profiles' group (default the folder's name, else the pack's), aliases?: {old profile name: .cube path} (looks the pack no longer offers: photos edited with one keep rendering with that table; not listed)} → {id, profiles, presets, aliases, failed} — sets the app's own looks, replacing the pack's earlier version; nothing is saved or synced, so call it each time the app starts. Without `dir` and `files` the pack is taken out.",
         always,
         set_pack
     )]

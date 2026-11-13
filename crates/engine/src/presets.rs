@@ -774,7 +774,12 @@ impl Session {
         if let Some(p) = profile(id) {
             return Some((p.name, p.group));
         }
-        self.lut_profiles.iter().chain(self.pack_profiles()).find(|p| p.id == id).map(|p| (p.name.as_str(), p.group.as_str()))
+        self.lut_profiles
+            .iter()
+            .chain(self.pack_profiles())
+            .chain(self.pack_aliases())
+            .find(|p| p.id == id)
+            .map(|p| (p.name.as_str(), p.group.as_str()))
     }
 
     /// Remember `id` as the most recently applied profile.

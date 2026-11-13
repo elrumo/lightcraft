@@ -207,11 +207,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "Profile LUT File",
             [],
             None,
-            "{id: lut:…} → {file: path | null} the `.cube` file behind an imported profile or an app pack's profile: what a frontend that applies LUT profiles itself reads (the file is read-only to it). `null` for an id nothing is registered under, or a table with no file. Changes nothing",
+            "{id: lut:…} → {file: path | null} the `.cube` file behind an imported profile or an app pack's profile (a retired one's alias too): what a frontend that applies LUT profiles itself reads (the file is read-only to it). `null` for an id nothing is registered under, or a table with no file. Changes nothing",
             always,
             |s, p| {
                 let id = str_param(p, "id").ok_or_else(|| bad("profile.lutFile", "missing id"))?;
-                let file = s.lut_profiles.iter().chain(s.pack_profiles()).find(|x| x.id == id).map(|x| x.file.as_str()).filter(|f| !f.is_empty());
+                let file = s.lut_profiles.iter().chain(s.pack_profiles()).chain(s.pack_aliases()).find(|x| x.id == id).map(|x| x.file.as_str()).filter(|f| !f.is_empty());
                 Ok(json!({"file": file}))
             }
         ),
