@@ -126,7 +126,7 @@ use std::sync::Arc;
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use errors::{AiModel, ErrorKind};
 pub use fonts::{CRAFT_FONTS, CraftFont};
-use lightcraft_catalog::{Catalog, Filter, Op, PhotoId, Sort};
+use lightcraft_catalog::{AlbumId, Catalog, Filter, Op, PhotoId, Sort};
 use lightcraft_develop::DevelopSettings;
 pub use media::{RenderJob, SourceLevel};
 use serde_json::Value;
@@ -242,6 +242,19 @@ fn clock_minute(now: &str) -> &str {
 }
 
 /// Whether a query can change membership without a catalog edit, including the smart albums it tests.
+/// What [`Session::album_folder_view`] works out.
+#[derive(Default)]
+struct AlbumFolderView {
+    ids: Vec<PhotoId>,
+    stacked: std::collections::HashMap<PhotoId, usize>,
+    /// Each album's run of `ids`: album, first index, how many.
+    runs: Vec<(AlbumId, usize, usize)>,
+    /// The photos before stacks were folded.
+    photos: usize,
+    /// A smart album in it asks about "the last N days".
+    clocked: bool,
+}
+
 fn filter_depends_on_clock(filter: &Filter, catalog: &Catalog) -> bool {
     if filter.depends_on_now() {
         return true;
@@ -310,6 +323,8 @@ pub struct Session {
     visible_gen: u64,
     /// How many photos each collapsed stack's shown photo in `visible` stands for (two or more).
     visible_stacked: Arc<std::collections::HashMap<PhotoId, usize>>,
+    /// For a [`LibrarySource::AlbumFolder`] view: each album's run of `visible` (album, first index, how many).
+    visible_albums: Arc<Vec<(AlbumId, usize, usize)>>,
     /// Show every photo of a stack in the grid, none folded away (View > Stacks off).
     pub stacks_off: bool,
     /// Photos in the current source with no filter on (cached like `visible`).
@@ -596,6 +611,7 @@ impl Session {
             never_follow: false,
             visible_gen: 0,
             visible_stacked: Default::default(),
+            visible_albums: Default::default(),
             stacks_off: false,
             total: None,
             undo: Vec::new(),
@@ -1380,6 +1396,18 @@ impl Session {
             // Use this same value to evaluate relative rules ("in the last N days") and stamp the result.
             let now = current_now.unwrap_or_else(|| (self.clock)());
             lightcraft_catalog::rules::set_now(Some(now.clone()));
+            if let LibrarySource::AlbumFolder(folder) = self.source {
+                // (worked out whole each time: no edit is followed, no photo held)
+                let view = self.album_folder_view(folder, &self.filter);
+                self.base = None;
+                self.visible = view.ids.into();
+                self.visible_stacked = Arc::new(view.stacked);
+                self.visible_albums = Arc::new(view.runs);
+                self.visible_gen = VISIBLE_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.visible_key = Some(key);
+                self.visible_clock_minute = view.clocked.then(|| clock_minute(&now).to_owned());
+                return &self.visible;
+            }
             let mut f = self.view_filter(self.source, &self.filter);
             if self.source == LibrarySource::Sensitive {
                 // the flagged photos, most likely first (an empty list: none, not all of them)
@@ -1483,6 +1511,56 @@ impl Session {
         &self.visible
     }
 
+    /// What a [`LibrarySource::AlbumFolder`] view of `folder` shows through filter `base`: each album's photos in the
+    /// sort's order, album after album, each photo once (in the first album that has it), stacks arranged within an
+    /// album.
+    fn album_folder_view(&self, folder: AlbumId, base: &Filter) -> AlbumFolderView {
+        let mut view = AlbumFolderView::default();
+        let mut seen = std::collections::HashSet::new();
+        for album in self.catalog.albums_in_folder(folder) {
+            let f = self.view_filter(LibrarySource::Album(album), base);
+            view.clocked |= filter_depends_on_clock(&f, &self.catalog);
+            let ids: Vec<PhotoId> = self.catalog.query(&f, &self.sort).into_iter().filter(|id| seen.insert(*id)).collect();
+            view.photos += ids.len();
+            let (ids, stacked) = if self.stacks_off {
+                self.catalog.arrange_stacks_counted_if(&ids, |st| self.catalog.stack_holds_copy(st))
+            } else {
+                self.catalog.arrange_stacks_counted(&ids)
+            };
+            if !ids.is_empty() {
+                view.runs.push((album, view.ids.len(), ids.len()));
+                view.ids.extend(ids);
+                view.stacked.extend(stacked);
+            }
+        }
+        view
+    }
+
+    /// The album headers of a [`LibrarySource::AlbumFolder`] view (`library.groups`): one per album with photos
+    /// shown, keyed `album:<id>` and labelled with its name. Empty for any other source.
+    pub fn album_runs(&mut self) -> Vec<lightcraft_catalog::dates::DateRun> {
+        if !matches!(self.source, LibrarySource::AlbumFolder(_)) {
+            return Vec::new();
+        }
+        let _ = self.visible();
+        let (visible, stacked) = (&self.visible, &self.visible_stacked);
+        self.visible_albums
+            .iter()
+            .map(|&(album, start, count)| lightcraft_catalog::dates::DateRun {
+                key: format!("album:{}", album.0),
+                label: self.catalog.album(album).map(|a| a.name.clone()).unwrap_or_default(),
+                start,
+                count,
+                photos: visible
+                    .get(start..start.saturating_add(count))
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|id| stacked.get(id).copied().unwrap_or(1))
+                    .sum(),
+            })
+            .collect()
+    }
+
     /// `source` as a filter over `base` (the filter bar's, or none), with the folder it shows.
     fn view_filter(&self, source: LibrarySource, base: &Filter) -> Filter {
         let mut f = source.to_filter(base, &self.catalog);
@@ -1545,6 +1623,10 @@ impl Session {
         if self.source == LibrarySource::Missing {
             return None;
         }
+        if let LibrarySource::AlbumFolder(folder) = self.source {
+            // ponytail: worked out each time it is asked (one query per album), cache it like `total` if it shows
+            return Some(self.album_folder_view(folder, &Filter::default()).photos);
+        }
         if self.filter == Filter::default() && !self.hold_view {
             // nothing narrows the source: what the view lists is all of it, and is counted already (not a view
             // that holds photos that stopped matching: those are not of the source any more)
@@ -1601,6 +1683,7 @@ impl Session {
     fn source_reads_develop(&self) -> bool {
         match self.source {
             LibrarySource::Album(a) => self.catalog.album_reads_develop(a),
+            LibrarySource::AlbumFolder(f) => self.catalog.albums_in_folder(f).into_iter().any(|a| self.catalog.album_reads_develop(a)),
             _ => false,
         }
     }

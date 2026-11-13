@@ -12,6 +12,10 @@ pub enum LibrarySource {
     /// Imported in the last import session (we treat "recent" as the latest import date).
     RecentlyAdded,
     Album(AlbumId),
+    /// A folder of albums: the photos of every album in it (and in the folders inside it), album after album, each
+    /// photo once (in the first album that has it); `library.groups` heads each album's run with its name. Filled in
+    /// by the session.
+    AlbumFolder(AlbumId),
     RecentlyDeleted,
     /// Photos with picks.
     Picks,
@@ -60,7 +64,7 @@ impl LibrarySource {
             // (the photos themselves are filled in by the session)
             LibrarySource::Sensitive => {}
             // the folder itself is filled in by the session (it holds the path)
-            LibrarySource::Folder | LibrarySource::Missing | LibrarySource::LibraryFolder => {}
+            LibrarySource::Folder | LibrarySource::Missing | LibrarySource::LibraryFolder | LibrarySource::AlbumFolder(_) => {}
         }
         f
     }
@@ -70,6 +74,7 @@ impl LibrarySource {
             LibrarySource::All => "All Photos".into(),
             LibrarySource::RecentlyAdded => "Recently Added".into(),
             LibrarySource::Album(a) => cat.album(*a).map(|a| a.name.clone()).unwrap_or_else(|| "Album".into()),
+            LibrarySource::AlbumFolder(a) => cat.album(*a).map(|a| a.name.clone()).unwrap_or_else(|| "Folder".into()),
             LibrarySource::RecentlyDeleted => "Recently Deleted".into(),
             LibrarySource::Picks => "Picks".into(),
             LibrarySource::Folder => "Folder".into(),

@@ -34,7 +34,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Source",
             [],
             None,
-            "{kind: all|recentlyAdded|album|recentlyDeleted|picks|missing|libraryFolder|hidden|sensitive, id?: albumId, path?: a path from library.folders (for libraryFolder)} — hidden needs Hidden unlocked (hidden.unlock; error kind `locked` otherwise)",
+            "{kind: all|recentlyAdded|album|albumFolder|recentlyDeleted|picks|missing|libraryFolder|hidden|sensitive, id?: albumId (a folder's for albumFolder: its albums' photos, album after album, library.groups heading each), path?: a path from library.folders (for libraryFolder)} — hidden needs Hidden unlocked (hidden.unlock; error kind `locked` otherwise)",
             always,
             |s, p| {
                 let kind = str_param(p, "kind").unwrap_or("all");
@@ -56,6 +56,14 @@ pub fn specs() -> Vec<CommandSpec> {
                         // filter bar has no album chip, so a left-over one would narrow the next source unseen
                         s.filter.album = None;
                         LibrarySource::Album(a)
+                    }
+                    "albumFolder" => {
+                        let a = album_param(p, "id", "library.source")?;
+                        if !s.catalog.album(a).is_some_and(|a| a.folder) {
+                            return Err(bad("library.source", "no such folder"));
+                        }
+                        s.filter.album = None;
+                        LibrarySource::AlbumFolder(a)
                     }
                     "libraryFolder" => {
                         let path = str_param(p, "path").filter(|d| !d.trim().is_empty() && !lightcraft_catalog::query::folder_key(d).is_empty());
@@ -354,9 +362,12 @@ pub fn specs() -> Vec<CommandSpec> {
             "Date Groups",
             [],
             None,
-            "{by?: day|month|year (default: the sort's grouping; auto = day)} → [{key, label, start, count, photos}] date headers of the grid (`count` grid photos from `start`; `photos` with the ones in its collapsed stacks)",
+            "{by?: day|month|year (default: the sort's grouping; auto = day)} → [{key, label, start, count, photos}] date headers of the grid (`count` grid photos from `start`; `photos` with the ones in its collapsed stacks); a folder of albums (library.source albumFolder) has one per album instead, keyed `album:<id>`, whatever `by`",
             always,
             |s, p| {
+                if matches!(s.source, LibrarySource::AlbumFolder(_)) {
+                    return Ok(serde_json::to_value(s.album_runs()).unwrap_or_default());
+                }
                 let by = match str_param(p, "by") {
                     Some(g) => GroupBy::parse(g).ok_or_else(|| bad("library.groups", "by must be auto|none|day|month|year"))?,
                     None => s.sort.group,
@@ -1167,7 +1178,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 let ops = order.into_iter().rev().map(|id| Op::RemoveAlbum { id }).collect();
                 s.commit(if folder { "Delete Folder" } else { "Delete Album" }, Op::Batch { ops })?;
-                if matches!(s.source, LibrarySource::Album(current) if removed.contains(&current)) {
+                if matches!(s.source, LibrarySource::Album(current) | LibrarySource::AlbumFolder(current) if removed.contains(&current)) {
                     s.source = LibrarySource::All;
                 }
                 ok()

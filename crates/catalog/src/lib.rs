@@ -485,6 +485,23 @@ impl Catalog {
         kids.sort_by_cached_key(|a| album_order_key(a));
         kids
     }
+    /// The albums (not folders) inside folder `folder` and the folders in it, in the order the sidebar lists them
+    /// (depth first). Each once, however the folders are nested (a cycle in a damaged catalog ends there).
+    pub fn albums_in_folder(&self, folder: AlbumId) -> Vec<AlbumId> {
+        let by_parent = self.album_children_by_parent();
+        let mut seen = std::collections::HashSet::from([folder]);
+        let mut out = Vec::new();
+        // (a stack, not recursion: nesting depth comes from the catalog file)
+        let mut pending: Vec<AlbumId> = vec![folder];
+        while let Some(f) = pending.pop() {
+            if self.albums.get(&f).is_some_and(|a| !a.folder) {
+                out.push(f);
+            }
+            let kids = by_parent.get(&Some(f)).map(Vec::as_slice).unwrap_or_default();
+            pending.extend(kids.iter().rev().map(|a| a.id).filter(|id| seen.insert(*id)));
+        }
+        out
+    }
     /// [`Self::album_children`] of every folder (and of the top level, under `None`) in one pass:
     /// what a tree view that draws all of them wants each frame.
     pub fn album_children_by_parent(&self) -> std::collections::HashMap<Option<AlbumId>, Vec<&Album>> {
