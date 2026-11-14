@@ -1,6 +1,6 @@
 //! Dehaze from process V4 (issue #1237; upstream's "V3", ours is capture sharpening): haze is
-//! estimated from a patch-minimum dark channel, the response eases in, and no pixel is pushed to
-//! black; V1, V2 and V3 keep their rendering.
+//! estimated from a patch-minimum dark channel and no pixel is pushed to black; the response is in
+//! proportion to the slider since card #439; V1, V2 and V3 keep their rendering.
 
 use lightcraft_develop::{DevelopSettings, Process, controls};
 use lightcraft_raster::{Rgb32f, Rgba8};
@@ -100,17 +100,21 @@ fn v4_dehaze_still_clears_a_uniform_veil() {
 }
 
 #[test]
-fn v4_pixel_never_goes_black_and_eases_in() {
+fn v4_pixel_never_goes_black_and_acts_from_the_start() {
     // a shadow (0.05) whose blurred dark channel is the sky's: V1 clipped it to 0 at +10
     let air = 0.8;
     for dz in [0.1, 0.25, 0.5, 1.0] {
         let c = dehaze_v4_pixel([0.05, 0.06, 0.07], dz, 0.9, air);
         assert!(c.iter().all(|v| *v > 0.0), "{dz}: {c:?}");
     }
+    // card #439: Lightroom's +16 acts about three times as strongly as the ease-in of #1237 let it, so +10 now removes
+    // at least as much veil as V1 did (the ease-in removed less than 0.6 of it)
     let small = dehaze_v4_pixel([0.4; 3], 0.1, 0.5, air)[0];
     let v1_t = 1.0 - 0.95 * 0.1 * 0.5;
     let v1 = (0.4 - air * (1.0 - v1_t)) / v1_t;
-    assert!((0.4 - small) < 0.6 * (0.4 - v1), "eases in: {small} vs V1 {v1}");
+    assert!((0.4 - small) >= 0.95 * (0.4 - v1), "acts from the start: {small} vs V1 {v1}");
+    let double = dehaze_v4_pixel([0.4; 3], 0.2, 0.5, air)[0];
+    assert!((0.4 - double) > 1.8 * (0.4 - small), "in proportion: +10 {small}, +20 {double}");
     assert_eq!(dehaze_v4_pixel([0.3, 0.2, 0.1], 0.0, 0.7, air), [0.3, 0.2, 0.1]);
 }
 

@@ -2,6 +2,11 @@
 
 ## 2026-11-14
 
+### Positive Dehaze acts from the start
+- Dehaze above 0 now acts in proportion to the slider, as Lightroom's does: +16 clears about three times as much haze
+  as before, and deep shadows get deeper. Strong values (+100) are still gentler than Lightroom's on photos with no haze.
+- Photos already edited with a positive Dehaze look clearer and darker in their hazy parts than before.
+
 ### Negative Dehaze looks like Lightroom's
 - Dehaze below 0 now fogs a photo the way Lightroom's does on the six cameras it was measured on: the darks, mids and
   highlights rise by about the same amount and the colour fades a little. Before, the darks rose two to three times as

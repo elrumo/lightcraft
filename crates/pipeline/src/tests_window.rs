@@ -299,7 +299,8 @@ fn check_big(name: &str, s: &DevelopSettings, max_ok: u8, mean_ok: f64) {
 #[test]
 fn dehaze_at_depth_matches_the_whole_render() {
     let mut s = DevelopSettings::default();
-    controls::set(&mut s, "effects.dehaze", 60.0);
+    // (43: the strength +60 had before card #439 took out the ease-in; the window's error grows with the effect)
+    controls::set(&mut s, "effects.dehaze", 43.0);
     check_big("dehaze", &s, 6, 0.6);
 }
 

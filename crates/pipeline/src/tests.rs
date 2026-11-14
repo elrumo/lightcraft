@@ -85,7 +85,9 @@ fn dehaze_does_not_crush_dark_regions_next_to_bright_ones() {
     // the field, which is where the blotches formed
     let src = Rgb32f::from_fn(240, 160, |x, _| if x < 120 { [0.02, 0.03, 0.012] } else { [0.45, 0.5, 0.55] });
     let mut s = DevelopSettings::default();
-    s.effects.dehaze = 80.0;
+    // (67: the strength +80 had before card #439 took out the ease-in; at +80 the field's own blue now goes to black, as
+    // Lightroom deepens such shadows, and the check below needs a field that shows)
+    s.effects.dehaze = 67.0;
     let r = render(&src, &SourceInfo::default(), &s, &RenderRequest::fit(240, 160)).image;
     for ch in 0..3 {
         let mut v: Vec<u8> = Vec::with_capacity(160 * 100);

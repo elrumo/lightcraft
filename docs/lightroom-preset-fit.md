@@ -1,6 +1,6 @@
 # Matching a Lightroom preset: the Phoenix 200 "Orange You Glad" test
 
-> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-14 · **Change:** Calibration's Shadows Tint refitted; Colour Grading, HSL and Calibration checked against the exports there are
+> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-14 · **Change:** positive Dehaze refitted, negative Dehaze checked at -50 and -100 (card #439); Calibration's Shadows Tint refitted; Colour Grading, HSL and Calibration checked against the exports there are
 
 One preset, one raw, one Lightroom export. It measures where LightCraft's render of a whole look departs from
 Lightroom's, and what was changed because of it. It is **one scene** (a Sony ILCE-6000, E PZ 16-50mm at 16 mm, sunset
@@ -107,6 +107,7 @@ without it, against the same difference in our renders), so each camera's starti
 | The Phoenix 200 preset, whole render | 11.5 | 10.1 |
 
 Dehaze was untouched here; it was refitted on 2026-11-14 (below).
+The D70's Highlights probes moved from 0.6 to 0.8 and its S-curve point probe from 2.9 to 3.8; nothing else got worse.
 
 ## Negative Dehaze refitted on six cameras (2026-11-14, card #387)
 
@@ -128,9 +129,34 @@ desaturation towards the grey of the new luminance by `(1 - k)^0.56`. A first fi
 | D70, Rust (darks +L* ours against Lightroom's +5.5; chroma against -1.5) | 5.09 (+12.3; -5.1) | 1.36 (+5.7; -2.0) |
 
 The ILCE-6700 stays the worst: Lightroom takes 3.1 of chroma out of that photo and lifts it least (+2.0 L*). Positive
-Dehaze has no Lightroom reference among these exports, so it is not measured against Lightroom (the Apple renderer's
-positive Dehaze still matches the core's, `--selftest`).
-The D70's Highlights probes moved from 0.6 to 0.8 and its S-curve point probe from 2.9 to 3.8; nothing else got worse.
+Dehaze and the stronger negative values are in the next section.
+
+## Positive Dehaze, and negative beyond -16 (2026-11-14, card #439)
+
+Lightroom's exports of the same six raws at Dehaze +16, +50, +100, -50 and -100 (`test-raws/light/xcam5-lr`, made from
+APFS clones with one-line XMP sidecars in its Local tab). Effect ΔE against Lightroom, mean of the six, Apple renderer:
+
+| Dehaze | display before | display after | scene before | scene after |
+|---|---:|---:|---:|---:|
+| +16 | 2.07 | 1.56 | 1.89 | 1.43 |
+| +50 | 5.58 | 4.46 | 4.82 | 4.14 |
+| +100 | 10.84 | 11.40 | 9.83 | 10.22 |
+| -50 (not refitted) | 5.86 | | 4.98 | |
+| -100 (not refitted) | 12.06 | | 9.72 | |
+
+Positive: `finish::dehaze_v4_pixel` keeps its veil model with constants refitted on +16 / +50 / +100: the strength acts in
+proportion to the slider (the ease-in of #1237 made +16 act at a third of Lightroom's), the transmission floor is 0.12
+(was 0.15) and the veil cap stays at 0.9 of the darkest channel (0.95 fitted a hair better but took the #2504 test's dark
+field to black). +100 does not improve: Lightroom's positive Dehaze darkens and deepens even a haze-free photo (the
+EOS RP still life loses 6 to 15 L* in its mids at +100, ours under 4) while white stays white, and it turns a hazy sky
+an even deep blue where ours blows out near the sun (dividing by a small transmission brightens what is above the
+airlight). Tried and dropped: a haze-free share of the effect growing with the slider, a blend space and a brighter
+airlight with a saturation term (eight constants did not converge below the plain refit). A new model is card #439.
+
+Negative beyond -16: the shape holds, but Lightroom's lift grows about linearly with the slider (+3.5, +11, +21 L* at
+-16, -50, -100) while ours falls about a quarter short at -50 and -100, most in the darks (EOS RP at -100: +35 L*
+against +19). Refitting #387's constants on all three values, or adding a haze-free share that grows with the slider,
+moved the error by under 3 %, so -16's fit stays.
 
 ## Colour Grading, HSL and Calibration (2026-11-14, card #388)
 

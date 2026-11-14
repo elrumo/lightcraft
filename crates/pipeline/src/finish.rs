@@ -286,19 +286,27 @@ pub const MASK_SUMS: usize = 17;
 
 /// Positive dehaze from process V4 (#1237; upstream's "V3") of scene-linear `c`: `dz` the strength (0..1, with a
 /// local adjustment's added), `d` the dark channel over the airlight (0..1), `air` the airlight.
-/// The strength eases in (`dz·(0.4 + 0.6·dz)`: +10 acts at about half V1's), the transmission is
-/// floored at 0.15, and the veil removed never exceeds 90 % of the pixel's darkest channel, so no
-/// pixel is pushed to black (V1 clipped shadows next to bright sky from +10). The GPU mirrors it in
-/// `finish.wgsl`. Sources: He, Sun, Tang, "Single Image Haze Removal Using Dark Channel Prior"
-/// (CVPR 2009), with own easing and veil limit.
+/// The strength acts in proportion to the slider, the transmission is floored at [`POS_DEHAZE_FLOOR`], and the veil
+/// removed never exceeds [`POS_DEHAZE_VEIL`] of the pixel's darkest channel, so no pixel is pushed to black (V1 clipped
+/// shadows next to bright sky from +10). The constants are fitted to Lightroom's exports of six cameras' raws at
+/// Dehaze +16, +50 and +100 (rendered output only, card #439; the ease-in of #1237 made +16 act at a third of
+/// Lightroom's). Lightroom also darkens haze-free photos and keeps their white, which this veil model cannot do, so +100
+/// stays far from it (#439). The GPU mirrors it in `finish.wgsl`, the Apple renderer in `LocalToneKernel.swift`.
+/// Sources: He, Sun, Tang, "Single Image Haze Removal Using Dark Channel Prior" (CVPR 2009), with own veil limit.
 #[inline]
 pub fn dehaze_v4_pixel(c: [f32; 3], dz: f32, d: f32, air: f32) -> [f32; 3] {
     let k = dz.clamp(0.0, 1.0);
-    let k = k * (0.4 + 0.6 * k);
-    let t = (1.0 - 0.95 * k * d).max(0.15);
-    let veil = (air * (1.0 - t)).min(0.9 * c[0].min(c[1]).min(c[2]).max(0.0));
+    let t = (1.0 - POS_DEHAZE_STRENGTH * k * d).max(POS_DEHAZE_FLOOR);
+    let veil = (air * (1.0 - t)).min(POS_DEHAZE_VEIL * c[0].min(c[1]).min(c[2]).max(0.0));
     c.map(|v| ((v - veil) / t).max(0.0))
 }
+
+/// Strength of positive dehaze: the share of a fully hazy pixel's veil removed at Dehaze +100.
+pub const POS_DEHAZE_STRENGTH: f32 = 1.0;
+/// The lowest transmission positive dehaze assumes (the most it divides a pixel by is its inverse).
+pub const POS_DEHAZE_FLOOR: f32 = 0.12;
+/// The most of a pixel's darkest channel positive dehaze removes as veil.
+pub const POS_DEHAZE_VEIL: f32 = 0.9;
 
 /// Negative dehaze (haze added) of scene-linear Rec. 2020 `c`: `dz` the strength (-1..0, with a local adjustment's added),
 /// `d` the dark channel over the airlight (0..1), `air` the airlight. The pixel is pulled towards
