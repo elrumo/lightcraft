@@ -200,12 +200,6 @@ fn neutral_value(x: f32, e: f32, c: f32) -> f32 {
 /// The neutral tone at exposure `e` EV and contrast `c` with [`NEUTRAL_CHROMA`] and no table.
 pub(super) fn neutral_curve(e: f32, c: f32) -> Option<CameraLook> {
     use lightcraft_pipeline::tone::{GREY, channel_chroma};
-    let (mut e, mut c) = (e, c);
-    if let Ok(v) = std::env::var("LC_NEUTRAL_TONE") {
-        let mut it = v.split(',').filter_map(|x| x.parse::<f32>().ok());
-        e = it.next().unwrap_or(e);
-        c = it.next().unwrap_or(c);
-    }
     // 32 knots, evenly spaced in log luminance from 12 stops under grey to 5 over (beyond: the bounded shoulder)
     let knots = std::array::from_fn(|i| {
         let x = GREY * 2f32.powf(-12.0 + 17.0 * i as f32 / 31.0);
