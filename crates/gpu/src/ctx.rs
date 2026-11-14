@@ -286,6 +286,10 @@ fn constants() -> String {
     );
     s += &format!("const POINT_WORDS: u32 = {}u;\n", lightcraft_pipeline::colorops::POINT_WORDS);
     {
+        use lightcraft_pipeline::colorops::{DENSITY_CHROMA, DENSITY_DEPTH};
+        s += &format!("const DENSITY_DEPTH: f32 = {DENSITY_DEPTH:?};\nconst DENSITY_CHROMA: f32 = {DENSITY_CHROMA:?};\n");
+    }
+    {
         use lightcraft_pipeline::colorops::GRADING_BLEND_WIDTH;
         use lightcraft_pipeline::colorops::GRADING_SPLIT;
         use lightcraft_pipeline::finish::{

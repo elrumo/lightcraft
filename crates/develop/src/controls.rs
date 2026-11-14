@@ -369,6 +369,7 @@ controls! {
     "curve.refineSaturation" => curve.refine_saturation, "Refine Saturation", Curve, 0, 100, 100, 1, 0, Gradient { from: "#7a7a7a", to: "#d85a3a" };
     "color.vibrance" => color.vibrance, "Vibrance", Color, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#d8406a" };
     "color.saturation" => color.saturation, "Saturation", Color, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#e04a3a" };
+    "color.density" => color.density, "Density", Color, -100, 100, 0, 1, 0, Gradient { from: "#d89a90", to: "#6e1420" };
     "mixer.red.hue" => mixer.red.hue, "Red Hue", Mixer, -100, 100, 0, 1, 0, Hue { band: 0 };
     "mixer.red.sat" => mixer.red.sat, "Red Saturation", Mixer, -100, 100, 0, 1, 0, Sat { band: 0 };
     "mixer.red.lum" => mixer.red.lum, "Red Luminance", Mixer, -100, 100, 0, 1, 0, Lum { band: 0 };

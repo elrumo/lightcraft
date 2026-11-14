@@ -43,6 +43,7 @@ const FIELDS: &[(&str, usize)] = &[
     ("OPS_IDENTITY", 1),
     ("VIBRANCE", 1),
     ("SATURATION", 1),
+    ("DENSITY", 1),
     ("MIXER", 1),
     ("MIX_HUE", 8),
     ("MIX_SAT", 8),
@@ -241,6 +242,7 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     p.b("OPS_IDENTITY", ops.is_identity());
     p.f("VIBRANCE", ops.vibrance);
     p.f("SATURATION", ops.saturation);
+    p.f("DENSITY", ops.density);
     p.b("MIXER", ops.mixer);
     p.fs("MIX_HUE", &ops.hue);
     p.fs("MIX_SAT", &ops.sat);

@@ -454,6 +454,10 @@ impl ToneCurve {
 pub struct ColorAdj {
     pub vibrance: f64,
     pub saturation: f64,
+    /// Density −100..100: colour gets deeper (colourful pixels darker at their chroma, as a denser dye), or thinner below 0;
+    /// greys are untouched. Not written while 0, so settings from before it keep their JSON and `hash64`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub density: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

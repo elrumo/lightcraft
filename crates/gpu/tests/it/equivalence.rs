@@ -165,6 +165,15 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.color.vibrance = 40.0;
             s.color.saturation = -20.0;
         }),
+        ("density", |s| {
+            s.color.density = 70.0;
+        }),
+        // (the HDR case's histogram is touchy here: the scene's flat patches land on bin edges at some values, -50 moves 2.1 % of
+        // its samples to other bins and -100 0.9 %, with the pixels as close as everywhere else)
+        ("density thinner, with the mixer", |s| {
+            s.color.density = -100.0;
+            s.mixer.red.sat = 20.0;
+        }),
         ("colour mixer", |s| {
             s.mixer.blue.sat = -60.0;
             s.mixer.orange.hue = 30.0;

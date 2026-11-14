@@ -282,6 +282,17 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     if (sat != 0.0 || local_sat != 0.0) {
         c *= max(1.0 + sat + local_sat, 0.0);
     }
+    // `colorops::deepen`
+    let dens = pf(F_DENSITY);
+    if (dens != 0.0) {
+        let k = dens * min(c / DENSITY_CHROMA, 1.0);
+        if (k >= 0.0) {
+            l *= 1.0 - DENSITY_DEPTH * k;
+        } else {
+            l -= max(1.0 - l, 0.0) * DENSITY_DEPTH * k;
+            c *= 1.0 + DENSITY_DEPTH * k;
+        }
+    }
     h += local_hue;
     if (pu(F_BW) != 0u) {
         let w = band_weights(h);

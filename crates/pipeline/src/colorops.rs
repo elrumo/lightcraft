@@ -200,6 +200,8 @@ impl PointK {
 pub struct ColorOps {
     pub vibrance: f32,
     pub saturation: f32,
+    /// Density (−1..1), [`deepen`].
+    pub density: f32,
     pub hue: [f32; 8],
     pub sat: [f32; 8],
     pub lum: [f32; 8],
@@ -213,6 +215,21 @@ pub struct ColorOps {
     pub grading: Option<([WheelK; 4], f32, f32)>,
     /// OkLCh hue of skin tones (protected by vibrance).
     pub skin: f32,
+}
+
+/// How much darker Density at +100 makes a fully colourful pixel (OkLab lightness × `1 − DENSITY_DEPTH`), and how far
+/// toward white −100 lifts it.
+pub const DENSITY_DEPTH: f32 = 0.3;
+/// OkLab chroma at which Density acts in full; greys (chroma 0) are untouched.
+pub const DENSITY_CHROMA: f32 = 0.2;
+
+/// Density on OkLCh lightness and chroma: Saturation makes colour louder, Density deeper. Above 0 a colourful pixel gets
+/// darker at its chroma, as a denser dye would print it (the cloth's red sits deeper, a blue shadow keeps its blue);
+/// below 0 it gets lighter and paler, thinner. The weight grows with chroma, so greys and skin move least.
+#[inline]
+pub fn deepen(l: f32, c: f32, density: f32) -> (f32, f32) {
+    let k = density * (c / DENSITY_CHROMA).min(1.0);
+    if k >= 0.0 { (l * (1.0 - DENSITY_DEPTH * k), c) } else { (l - (1.0 - l).max(0.0) * DENSITY_DEPTH * k, c * (1.0 + DENSITY_DEPTH * k)) }
 }
 
 /// OkLab chroma a colour grading wheel adds at saturation 100.
@@ -238,6 +255,7 @@ impl ColorOps {
         ColorOps {
             vibrance: (s.color.vibrance / 100.0) as f32,
             saturation: (s.color.saturation / 100.0) as f32,
+            density: (s.color.density / 100.0) as f32,
             hue: std::array::from_fn(|i| (bands[i].hue / 100.0) as f32 * MIXER_HUE[i]),
             sat: bands.map(|b| (b.sat / 100.0) as f32),
             lum: std::array::from_fn(|i| (bands[i].lum / 100.0) as f32 * MIXER_LUM[i]),
@@ -261,7 +279,13 @@ impl ColorOps {
     }
 
     pub fn is_identity(&self) -> bool {
-        self.vibrance == 0.0 && self.saturation == 0.0 && !self.mixer && self.points.is_empty() && self.bw.is_none() && self.grading.is_none()
+        self.vibrance == 0.0
+            && self.saturation == 0.0
+            && self.density == 0.0
+            && !self.mixer
+            && self.points.is_empty()
+            && self.bw.is_none()
+            && self.grading.is_none()
     }
 
     /// `local_sat` (−1..1) and `local_hue` (radians) come from masks.
@@ -284,6 +308,9 @@ impl ColorOps {
             }
             if self.saturation != 0.0 || local_sat != 0.0 {
                 c *= (1.0 + self.saturation + local_sat).max(0.0);
+            }
+            if self.density != 0.0 {
+                (lab[0], c) = deepen(lab[0], c, self.density);
             }
             if c0 > 0.0 {
                 let k = c / c0;
@@ -319,6 +346,9 @@ impl ColorOps {
         }
         if self.saturation != 0.0 || local_sat != 0.0 {
             c *= (1.0 + self.saturation + local_sat).max(0.0);
+        }
+        if self.density != 0.0 {
+            (l, c) = deepen(l, c, self.density);
         }
         h += local_hue;
         if let Some(bw) = &self.bw {
@@ -468,6 +498,33 @@ mod tests {
         s.bw_mix.blue = 80.0;
         let b2 = ColorOps::new(&s).apply([0.05, 0.1, 0.5], 0.0, 0.0);
         assert!(b2[1] > b[1]);
+    }
+
+    #[test]
+    fn density_deepens_colour_and_leaves_grey() {
+        let lch = |rgb| lab_to_lch(oklab_from_2020(rgb));
+        let red = [0.4, 0.05, 0.04];
+        let grey = [0.2, 0.2, 0.2];
+        let mut s = DevelopSettings::default();
+        s.color.density = 100.0;
+        let ops = ColorOps::new(&s);
+        assert!(!ops.is_identity());
+        let (r0, r1) = (lch(red), lch(ops.apply(red, 0.0, 0.0)));
+        assert!(r1[0] < r0[0] * 0.8, "deeper: {r0:?} -> {r1:?}");
+        assert!((r1[1] - r0[1]).abs() < 1e-3 && (r1[2] - r0[2]).abs() < 1e-3, "chroma and hue kept: {r0:?} -> {r1:?}");
+        let g = ops.apply(grey, 0.0, 0.0);
+        assert!(g.iter().zip(grey).all(|(a, b)| (a - b).abs() < 1e-4), "{g:?}");
+        // (the mixer's path gives the same)
+        s.mixer.green.sat = 10.0;
+        let m = lch(ColorOps::new(&s).apply(red, 0.0, 0.0));
+        assert!((m[0] - r1[0]).abs() < 2e-3, "{m:?} {r1:?}");
+        // below 0, thinner: lighter and paler
+        s.mixer.green.sat = 0.0;
+        s.color.density = -100.0;
+        let t = lch(ColorOps::new(&s).apply(red, 0.0, 0.0));
+        assert!(t[0] > r0[0] && t[1] < r0[1], "{r0:?} -> {t:?}");
+        // and at 0 the JSON is as it was before Density
+        assert!(DevelopSettings::default().to_json()["color"].get("density").is_none());
     }
 
     #[test]

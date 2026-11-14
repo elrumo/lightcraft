@@ -58,6 +58,10 @@ impl DevelopSettings {
             if let Some(grain) = o.get_mut("grain").and_then(Value::as_object_mut) {
                 grain.entry("style").or_insert(Value::from("film"));
             }
+            // (and Density, left out while 0)
+            if let Some(color) = o.get_mut("color").and_then(Value::as_object_mut) {
+                color.entry("density").or_insert(Value::from(0.0));
+            }
         }
         v
     }

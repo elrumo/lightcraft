@@ -163,6 +163,10 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     if let Some(grain) = out.get_mut("grain").and_then(Value::as_object_mut) {
         grain.entry("style").or_insert(Value::from("film"));
     }
+    // (and the Color group's Density, left out while 0, takes the Density of the photo it lands on back to 0)
+    if let Some(color) = out.get_mut("color").and_then(Value::as_object_mut) {
+        color.entry("density").or_insert(Value::from(0.0));
+    }
     if let Some(Value::Array(spots)) = out.get_mut("spots") {
         // (a Tap to Remove spot is the shape of an object in this photo: nowhere else it means anything)
         spots.retain(|spot| spot.get("shape").is_none());
