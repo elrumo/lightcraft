@@ -366,9 +366,6 @@ pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
     if prim.iter().all(|(h, s)| *h == 0.0 && *s == 0.0) {
         return None;
     }
-    if let Ok(spec) = std::env::var("LC_CALIB_EXP") {
-        return calib_exp(&spec, &prim);
-    }
     let to_xyz = REC2020.to_xyz();
     let from_xyz = to_xyz.inverse()?;
     let w = REC2020.white;
@@ -398,67 +395,15 @@ pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
     Some(std::array::from_fn(|r| std::array::from_fn(|col| (p[r][col] * k[col]) as f32)))
 }
 
-/// EXPERIMENT (scratch worktree only): `basis,space,khr,khg,khb,ksr,ksg,ksb`.
-fn calib_exp(spec: &str, prim: &[(f64, f64); 3]) -> Option<[[f32; 3]; 3]> {
-    use lightcraft_color::PROPHOTO;
-    let parts: Vec<&str> = spec.split(',').collect();
-    let num = |i: usize| parts.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
-    let b2020 = match parts.first().copied().unwrap_or("2020") {
-        "prophoto" => PROPHOTO.to_space(&REC2020),
-        "srgb" => SRGB.to_space(&REC2020),
-        "p3" => lightcraft_color::DISPLAY_P3.to_space(&REC2020),
-        // EOS R6 ForwardMatrix2 (our spectral table): white-balanced camera -> XYZ D50
-        "r6" => {
-            let fm = Mat3([[0.829826, 0.011021, 0.123449], [0.329107, 0.920067, -0.249174], [0.037653, -0.307101, 1.09455]]);
-            REC2020.from_xyz().mul(&lightcraft_color::bradford(PROPHOTO.white, REC2020.white)).mul(&fm)
-        }
-        _ => REC2020.to_space(&REC2020),
-    };
-    let space = parts.get(1).copied().unwrap_or("xy");
-    let to_xyz = REC2020.to_xyz();
-    let from_xyz = to_xyz.inverse()?;
-    let w = REC2020.white;
-    let mut cols = [[0.0f64; 3]; 3];
-    for (i, (hue, sat)) in prim.iter().enumerate() {
-        let mut e = [0.0f64; 3];
-        e[i] = 1.0;
-        let q = b2020.apply(e); // primary in 2020
-        let (kh, ks) = (num(2 + i), num(5 + i));
-        let t = hue.clamp(-100.0, 100.0) / 100.0;
-        let s = sat.clamp(-100.0, 100.0) / 100.0;
-        let out = if space == "oklch" {
-            let qf = [q[0] as f32, q[1] as f32, q[2] as f32];
-            let [l, ch, h] = lab_to_lch(oklab_from_2020(qf));
-            let r = oklab_to_2020(lch_to_lab([l, ch * (1.0 + (s * ks) as f32), h + (t * kh) as f32]));
-            [r[0] as f64, r[1] as f64, r[2] as f64]
-        } else {
-            let xyz = to_xyz.apply(q);
-            let sum = xyz[0] + xyz[1] + xyz[2];
-            if sum.abs() < 1e-12 {
-                return None;
-            }
-            let (x, y) = (xyz[0] / sum, xyz[1] / sum);
-            let (dx, dy) = (x - w.x, y - w.y);
-            let (a, k) = (t * kh, 1.0 + s * ks);
-            let (nx, ny) = (w.x + k * (dx * a.cos() - dy * a.sin()), w.y + k * (dx * a.sin() + dy * a.cos()));
-            if ny.abs() < 1e-9 {
-                return None;
-            }
-            let yy = xyz[1];
-            from_xyz.apply([nx / ny * yy, yy, (1.0 - nx - ny) / ny * yy])
-        };
-        for r in 0..3 {
-            cols[r][i] = out[r];
-        }
-    }
-    let bp = Mat3(cols);
-    let m = bp.mul(&b2020.inverse()?);
-    let k = m.inverse()?.apply([1.0, 1.0, 1.0]);
-    Some(std::array::from_fn(|r| std::array::from_fn(|col| (m.0[r][col] * k[col]) as f32)))
-}
-
-/// Shadows-tint strength at ±100: the green channel's relative change in deep shadows.
-pub const SHADOW_TINT: f32 = 0.3;
+/// Shadows-tint strength at ±100: the green channel is scaled by `exp(∓SHADOW_TINT · w)` (luminance kept), `w` the
+/// weight of [`SHADOW_TINT_WINDOW`]. Fitted to Lightroom's exports of an EOS R6 raw with Shadows Tint alone at ±50
+/// (card #388, `docs/lightroom-preset-fit.md`): there it moves a* by 6 to 11 in every tone up to L* 70, both ways alike.
+/// The earlier linear `1 − 0.3 · t · w` over a window that ended half a stop below mid grey did a quarter of that
+/// (effect ΔE 7.0 against Lightroom's, now 3.2; the Apple renderer's display path, which applies it to Core Image's
+/// display-referred light, 8.0 → 3.6, which is why the window reaches two stops above mid grey).
+pub const SHADOW_TINT: f32 = 0.45;
+/// Where the shadows tint acts, in stops from scene mid grey (0.18): fully below the first, not at all above the second.
+pub const SHADOW_TINT_WINDOW: (f32, f32) = (-2.0, 2.0);
 
 /// Calibration in scene-linear light (before tone mapping): the primaries matrix, then the shadows
 /// tint (green ↔ magenta, weighted towards dark tones, luminance kept).
@@ -470,8 +415,8 @@ pub fn calibrate(c: [f32; 3], m: Option<&[[f32; 3]; 3]>, shadow_tint: f32) -> [f
     }
     if shadow_tint != 0.0 {
         let y0 = lightcraft_color::luminance_2020(c);
-        let w = 1.0 - smooth(-5.0, -0.5, (y0.max(1e-7) / 0.18).log2());
-        c[1] *= (1.0 - SHADOW_TINT * shadow_tint * w).max(0.0);
+        let w = 1.0 - smooth(SHADOW_TINT_WINDOW.0, SHADOW_TINT_WINDOW.1, (y0.max(1e-7) / 0.18).log2());
+        c[1] *= (-SHADOW_TINT * shadow_tint * w).exp();
         let y1 = lightcraft_color::luminance_2020(c).max(1e-9);
         c = c.map3(|v| v * y0 / y1);
     }
@@ -654,6 +599,23 @@ mod tests {
         assert!((y(dark) - 0.01).abs() < 1e-5);
         let green = calibrate([0.01, 0.01, 0.01], None, -1.0);
         assert!(green[1] > green[0]);
+    }
+
+    #[test]
+    fn shadow_tint_is_as_strong_as_lightroom_and_symmetric() {
+        // a grey almost two stops under mid grey: Lightroom's +-50 moves a* there by about 10 (card #388); the old
+        // linear tint changed green by 3 % here and pushed +50 further than -50
+        let ratio = |t: f32| {
+            let c = calibrate([0.05, 0.05, 0.05], None, t);
+            c[1] / c[0]
+        };
+        assert!(ratio(0.5) < 0.87, "magenta at +50: {}", ratio(0.5));
+        assert!((ratio(0.5) * ratio(-0.5) - 1.0).abs() < 1e-3, "{} {}", ratio(0.5), ratio(-0.5));
+        // mid tones are still tinted, bright ones not
+        let mid = calibrate([0.18, 0.18, 0.18], None, 0.5);
+        assert!(mid[1] / mid[0] < 0.98, "mid grey: {mid:?}");
+        let bright = calibrate([0.9, 0.9, 0.9], None, 1.0);
+        assert!((bright[1] / bright[0] - 1.0).abs() < 1e-3, "{bright:?}");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Matching a Lightroom preset: the Phoenix 200 "Orange You Glad" test
 
-> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-14 · **Change:** negative Dehaze refitted on six cameras' Lightroom exports
+> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-14 · **Change:** Calibration's Shadows Tint refitted; Colour Grading, HSL and Calibration checked against the exports there are
 
 One preset, one raw, one Lightroom export. It measures where LightCraft's render of a whole look departs from
 Lightroom's, and what was changed because of it. It is **one scene** (a Sony ILCE-6000, E PZ 16-50mm at 16 mm, sunset
@@ -131,6 +131,46 @@ The ILCE-6700 stays the worst: Lightroom takes 3.1 of chroma out of that photo a
 Dehaze has no Lightroom reference among these exports, so it is not measured against Lightroom (the Apple renderer's
 positive Dehaze still matches the core's, `--selftest`).
 The D70's Highlights probes moved from 0.6 to 0.8 and its S-curve point probe from 2.9 to 3.8; nothing else got worse.
+
+## Colour Grading, HSL and Calibration (2026-11-14, card #388)
+
+The Lightroom references there are for these tools: Calibration, each slider alone at ±50 on one EOS R6 raw
+(`test-raws/light/r6-xmp2/`, white balance 5050 K / +27, Camera Standard, cropped); the colour mixer, Orange, Blue and
+Green at Hue +50, Saturation −50 and Luminance −50 on two EOS R6 CR3s and an iPhone ProRAW (`temp-tests/`, Lightroom's base
+the per-pixel median of its exports); Colour Grading only inside the Phoenix preset above. None of the six cameras has
+an export of these tools yet. Effects measured as for the curves (each export minus its base, against the same difference
+of our renders, mean ΔE76 at 150 px inside 0.8 of the half diagonal). The Apple renderer's display path is the app's default
+for raws; its scene path draws from the core's camera curve.
+
+- **Shadows Tint** (`colorops::SHADOW_TINT`, `SHADOW_TINT_WINDOW`). Lightroom's ±50 moves a* by 6 to 11 in every tone of
+  the (dark) R6 photo up to L\* 70, the same amount both ways, and turns its hue by about 25°. Ours scaled the green channel
+  by `1 − 0.3 · t` below half a stop under mid grey and did a quarter of that (+50 also went further than −50). It is now
+  `exp(−0.45 · t · w)` with `w` falling from two stops below mid grey to two above. The window reaches higher than the
+  scene-path fit alone wants (−3 to +1 stops, 2.95) because the Apple display path applies it to Core Image's
+  display-referred light, where the same tones sit higher.
+- **The primaries** (Red / Green / Blue Hue and Saturation) keep their 2026-11-08 fit: a search over the primaries' basis
+  (Rec. 2020, sRGB, ProPhoto) and their strengths found nothing better than the current constants (mean 1.49 over the
+  twelve exports). What is left: Lightroom's Red and Green Hue also turn yellows and purples by 6 to 14° (ours by 1 to
+  2°), and its Saturation +50 adds about 3.7 of chroma where ours adds 2.2.
+- **The colour mixer** keeps its 2026-10-20 fit. On the scene path and in the core it answers alike (Orange Hue +50
+  turns skin 8 to 11°, Lightroom 17 to 18°: loosening the chroma weighting that damps hue shifts of weak colours matches
+  that angle but raises the error through chroma and lightness, 0.67 → 0.71). The Apple display path's Orange answers
+  a third as much on the R6 photos because Core Image's own look draws R6 skin 13 to 16° yellower than Lightroom and
+  the core (CIELAB hue 78 to 84° against 65 to 71°), so it falls half into the Yellow band: a base-look gap, not the mixer.
+- **Colour Grading**: no single-wheel reference. The one-change sidecars for all three tools on the six cameras are
+  ready in `test-raws/light/xcam4/` (base, six grading cases, eight mixer cases including the halves never exported
+  before, four calibration cases, each camera); their exports go in `xcam4-lr/` as `lr-<camera>-<case>.jpg`.
+- **The two renderers on the six cameras** (those sidecars, no Lightroom export needed): the Apple display path's effects
+  follow the core's within 0.9 to 1.3 ΔE on average for the grading wheels, the mixer and the calibration primaries (each
+  from its own base look; worst Yellow Hue −50 on the EOS RP, 3.3, and Green Saturation −50 on the ILCE-6700, 3.8). Its
+  Shadows Tint does about half the core's there (3.3 off an effect of 6.9), for the display-referred light above.
+
+| Calibration on the EOS R6, effect ΔE against Lightroom | Before | After |
+|---|---:|---:|
+| Shadows Tint +50 / −50, Rust renderer | 6.34 / 7.62 | 3.71 / 2.61 |
+| Shadows Tint +50 / −50, Apple display path | 7.37 / 8.65 | 3.40 / 3.74 |
+| All fourteen exports, Rust renderer | 2.23 | 1.68 |
+| All fourteen exports, Apple display / scene path | 2.54 / – | 1.91 / 1.72 |
 
 ## What is left (ΔE about 8 here)
 

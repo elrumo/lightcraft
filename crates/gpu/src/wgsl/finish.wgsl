@@ -324,8 +324,8 @@ fn calibrate(c0: vec3<f32>) -> vec3<f32> {
     let st = pf(F_SHADOW_TINT);
     if (st != 0.0) {
         let y0 = lum2020(c);
-        let w = 1.0 - sstep(-5.0, -0.5, log2(max(y0, 1e-7) / 0.18));
-        c.y *= max(1.0 - SHADOW_TINT_K * st * w, 0.0);
+        let w = 1.0 - sstep(SHADOW_TINT_LO, SHADOW_TINT_HI, log2(max(y0, 1e-7) / 0.18));
+        c.y *= exp(-SHADOW_TINT_K * st * w);
         let y1 = max(lum2020(c), 1e-9);
         c = c * y0 / y1;
     }
