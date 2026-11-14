@@ -42,9 +42,10 @@ const MAX_QUERY_CHARS: usize = 512;
 const MAX_PIXELS: usize = 64 << 20;
 
 /// The GPU, when there is one: Metal on macOS and iOS. The sensitive-content classifier's and the depth model's GPU
-/// weights run on it.
+/// weights run on it. None in the iOS Simulator: its Metal device has no GPU architecture, and candle's kernels panic
+/// asking for it.
 pub fn gpu_device() -> Option<Device> {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(any(target_os = "macos", all(target_os = "ios", not(target_abi = "sim"))))]
     if let Ok(d) = Device::new_metal(0) {
         return Some(d);
     }

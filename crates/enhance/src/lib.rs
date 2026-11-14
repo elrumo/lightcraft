@@ -53,9 +53,10 @@ impl From<candle_core::Error> for Error {
     }
 }
 
-/// The best device here: Metal on macOS and iOS when there is one, otherwise the CPU.
+/// The best device here: Metal on macOS and iOS when there is one, otherwise the CPU. Not in the iOS Simulator: its
+/// Metal device has no GPU architecture, and candle's kernels panic asking for it (HB-438).
 pub fn best_device() -> candle_core::Device {
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(any(target_os = "macos", all(target_os = "ios", not(target_abi = "sim"))))]
     if let Ok(d) = candle_core::Device::new_metal(0) {
         return d;
     }

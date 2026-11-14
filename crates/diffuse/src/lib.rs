@@ -95,7 +95,8 @@ impl Target {
     pub fn best() -> Target {
         static BEST: std::sync::OnceLock<Target> = std::sync::OnceLock::new();
         BEST.get_or_init(|| {
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            // (not in the iOS Simulator: its Metal device has no GPU architecture, and candle's kernels panic asking for it)
+            #[cfg(any(target_os = "macos", all(target_os = "ios", not(target_abi = "sim"))))]
             if let Ok(device) = candle_core::Device::new_metal(0) {
                 return Target { device, dtype: candle_core::DType::F16, sliced_attention: cfg!(target_os = "ios") };
             }
