@@ -591,12 +591,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             c = max((c - air * (1.0 - t)) / t, vec3<f32>(0.0));
         } else {
             // (`finish::add_haze`)
-            let k = min(-dz, 1.0) * NEG_DEHAZE_STRENGTH * (0.35 + 0.65 * d);
-            let ig = 1.0 / NEG_DEHAZE_GAMMA;
-            let tg = pow(max(air * 0.9, 0.0), ig);
             if (pu(F_FORK_REFINEMENTS) != 0u) {
-                c = pow(pow(max(c, vec3<f32>(0.0)), vec3<f32>(ig)) * (1.0 - k) + vec3<f32>(tg * k), vec3<f32>(NEG_DEHAZE_GAMMA));
+                let k = min(-dz, 1.0) * NEG_DEHAZE_STRENGTH * (NEG_DEHAZE_FLOOR + (1.0 - NEG_DEHAZE_FLOOR) * d);
+                let ig = 1.0 / NEG_DEHAZE_GAMMA;
+                let tg = pow(max(air * NEG_DEHAZE_TARGET, 0.0), ig);
+                let h = pow(pow(max(c, vec3<f32>(0.0)), vec3<f32>(ig)) * (1.0 - k) + vec3<f32>(tg * k), vec3<f32>(NEG_DEHAZE_GAMMA));
+                let y = lum2020(h);
+                c = max(vec3<f32>(y) + (h - vec3<f32>(y)) * pow(max(1.0 - k, 0.0), NEG_DEHAZE_DESATURATE), vec3<f32>(0.0));
             } else {
+                let k = min(-dz, 1.0) * 0.8 * (0.35 + 0.65 * d);
                 c = c + (vec3<f32>(air * 0.9) - c) * k;
             }
         }

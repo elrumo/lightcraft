@@ -1,6 +1,6 @@
 # Matching a Lightroom preset: the Phoenix 200 "Orange You Glad" test
 
-> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-11 · **Change:** tone curves fitted to Lightroom's exports of six cameras
+> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-14 · **Change:** negative Dehaze refitted on six cameras' Lightroom exports
 
 One preset, one raw, one Lightroom export. It measures where LightCraft's render of a whole look departs from
 Lightroom's, and what was changed because of it. It is **one scene** (a Sony ILCE-6000, E PZ 16-50mm at 16 mm, sunset
@@ -106,7 +106,30 @@ without it, against the same difference in our renders), so each camera's starti
 | Light sliders, parametric, point curve, six cameras | 2.5 | 1.4 |
 | The Phoenix 200 preset, whole render | 11.5 | 10.1 |
 
-Dehaze is untouched (negative Dehaze still lifts the darks more than Lightroom's on the D70: +6.5 L* against +3.9).
+Dehaze was untouched here; it was refitted on 2026-11-14 (below).
+
+## Negative Dehaze refitted on six cameras (2026-11-14, card #387)
+
+Lightroom's Dehaze -16 on the six cameras' raws (ILCE-6000, ILCE-6700, EOS RP, X-A5, D70, E-1) lifts the darks, the mids
+and, a little less, the highlights by about the same L* (+2 to +5.5) and takes out 1 to 3 of chroma. Ours (a blend in
+`c^(1/1.4)` towards 0.9 times the airlight) lifted the darks two to three times as much as the mids and the highlights
+hardly at all, and on the D70 took 5 of chroma out. `finish::add_haze` keeps its shape (a blend towards a multiple of the
+airlight, weighted by the pixel's dark channel) with five constants fitted on the Apple renderer's display and scene
+paths together (Nelder-Mead over the six cameras, rendered output only): gamma 8.4 (close to a blend in log light),
+strength 0.9, a floor of 0.37 for pixels with no haze of their own, a target of 1.52 times the airlight, and a
+desaturation towards the grey of the new luminance by `(1 - k)^0.56`. A first fit took colour out with a term that, at
+-100, pushed colours past grey into their complement; the desaturation factor cannot cross grey (a test holds that).
+
+| Dehaze -16, effect ΔE against Lightroom | Before | After |
+|---|---:|---:|
+| Apple renderer, display (mean of six; worst) | 2.89 (ILCE-6700 4.39) | 1.89 (ILCE-6700 3.09) |
+| Apple renderer, scene (mean of six; worst) | 3.20 (D70 4.58) | 1.81 (ILCE-6700 3.29) |
+| Rust renderer (mean of six; worst) | 3.29 (D70 5.09) | 1.80 (ILCE-6700 3.22) |
+| D70, Rust (darks +L* ours against Lightroom's +5.5; chroma against -1.5) | 5.09 (+12.3; -5.1) | 1.36 (+5.7; -2.0) |
+
+The ILCE-6700 stays the worst: Lightroom takes 3.1 of chroma out of that photo and lifts it least (+2.0 L*). Positive
+Dehaze has no Lightroom reference among these exports, so it is not measured against Lightroom (the Apple renderer's
+positive Dehaze still matches the core's, `--selftest`).
 The D70's Highlights probes moved from 0.6 to 0.8 and its S-curve point probe from 2.9 to 3.8; nothing else got worse.
 
 ## What is left (ΔE about 8 here)

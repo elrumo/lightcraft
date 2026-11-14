@@ -5,7 +5,11 @@
 use lightcraft_develop::{DevelopSettings, Process, controls};
 use lightcraft_raster::{Rgb32f, Rgba8};
 
-use crate::{RenderRequest, SourceInfo, finish::dehaze_v4_pixel, local, render};
+use crate::{
+    RenderRequest, SourceInfo,
+    finish::{add_haze, dehaze_v4_pixel},
+    local, render,
+};
 
 const W: usize = 600;
 const H: usize = 300;
@@ -143,4 +147,33 @@ fn min_filter_matches_brute_force() {
             }
         }
     }
+}
+
+#[test]
+fn negative_dehaze_lifts_the_darks_like_lightroom_and_never_turns_a_colour() {
+    // card #387: at Lightroom's Dehaze -16 its six cameras' darks rose about as much as their mids in L*; the old blend (gamma 1.4
+    // towards 0.9 x the airlight) lifted a dark of 0.005 by 2.4 EV, twice Lightroom's on the Nikon D70
+    let (air, d) = (0.6, 0.5);
+    let lift = |v: f32| (add_haze([v; 3], -0.16, d, air)[0] / v).log2();
+    let (dark, mid) = (lift(0.005), lift(0.18));
+    assert!(dark > 0.0 && dark < 1.5, "dark {dark} EV");
+    assert!(mid > 0.1 && mid < dark, "mid {mid} EV, dark {dark} EV");
+    // an orange keeps its channel order at every strength (a colour term that went past grey turned it blue at -100), and it loses colour
+    let orange = [0.9f32, 0.4, 0.1];
+    let mut last = f32::INFINITY;
+    for i in 0..=20 {
+        let dz = -(i as f32) / 20.0;
+        for d in [0.0, 0.5, 1.0] {
+            let c = add_haze(orange, dz, d, 0.3);
+            assert!(c.iter().all(|v| v.is_finite() && *v >= 0.0), "{dz} {d}: {c:?}");
+            assert!(c[0] >= c[1] && c[1] >= c[2], "{dz} {d}: {c:?}");
+        }
+        let c = add_haze(orange, dz, 1.0, 0.3);
+        let spread = (c[0] - c[2]) / (c[0] + c[1] + c[2]);
+        assert!(spread <= last + 1e-6, "{dz}: {spread} after {last}");
+        last = spread;
+    }
+    // no haze, no change; colours outside the gamut and an airlight of 0 stay finite
+    assert_eq!(add_haze([0.3, 0.2, 0.1], 0.0, 0.7, air), [0.3, 0.2, 0.1].map(|v: f32| v.powf(1.0 / 8.4).powf(8.4)));
+    assert!(add_haze([-0.5, 0.4, 0.3], -1.0, 1.0, 0.0).iter().all(|v| v.is_finite() && *v >= 0.0));
 }

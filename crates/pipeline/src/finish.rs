@@ -300,20 +300,36 @@ pub fn dehaze_v4_pixel(c: [f32; 3], dz: f32, d: f32, air: f32) -> [f32; 3] {
     c.map(|v| ((v - veil) / t).max(0.0))
 }
 
-/// Negative dehaze (haze added) pulls scene-linear `c` towards the airlight `target` by `k`, in the space of
-/// `c^(1 / NEG_DEHAZE_GAMMA)`: in linear light a few percent of airlight lifted the darks by tens of L\*, where
-/// Lightroom's -16 on the Phoenix 200 preset keeps its blacks and fogs the mids and highlights (measured on its export
-/// of an ILCE-6000 raw). The GPU mirrors it in `finish.wgsl`.
+/// Negative dehaze (haze added) of scene-linear Rec. 2020 `c`: `dz` the strength (-1..0, with a local adjustment's added),
+/// `d` the dark channel over the airlight (0..1), `air` the airlight. The pixel is pulled towards
+/// `NEG_DEHAZE_TARGET · air` by `k = -dz · NEG_DEHAZE_STRENGTH · (NEG_DEHAZE_FLOOR + (1 - NEG_DEHAZE_FLOOR) · d)` in the
+/// space of `c^(1 / NEG_DEHAZE_GAMMA)` (close to a blend in log light: the darks lift little more than the mids, and the
+/// highlights below the target lift too), then its colour is taken towards the grey of its new luminance by the factor
+/// `(1 - k)^NEG_DEHAZE_DESATURATE` (more than the blend alone takes out, and never past grey). The constants are
+/// fitted to Lightroom's exports of six cameras' raws at Dehaze -16 (ILCE-6000, ILCE-6700, EOS RP, X-A5, D70, E-1;
+/// rendered output only, card #387), on the Apple renderer's display and scene paths together. The GPU mirrors it in
+/// `finish.wgsl`, the Apple renderer in `LocalToneKernel.swift`.
 #[inline]
-pub fn add_haze(c: [f32; 3], target: f32, k: f32) -> [f32; 3] {
-    let t = target.max(0.0).powf(1.0 / NEG_DEHAZE_GAMMA);
-    c.map(|v| (v.max(0.0).powf(1.0 / NEG_DEHAZE_GAMMA) * (1.0 - k) + t * k).powf(NEG_DEHAZE_GAMMA))
+pub fn add_haze(c: [f32; 3], dz: f32, d: f32, air: f32) -> [f32; 3] {
+    let k = (-dz).clamp(0.0, 1.0) * NEG_DEHAZE_STRENGTH * (NEG_DEHAZE_FLOOR + (1.0 - NEG_DEHAZE_FLOOR) * d);
+    let ig = 1.0 / NEG_DEHAZE_GAMMA;
+    let t = (air * NEG_DEHAZE_TARGET).max(0.0).powf(ig);
+    let h = c.map(|v| (v.max(0.0).powf(ig) * (1.0 - k) + t * k).powf(NEG_DEHAZE_GAMMA));
+    let y = luminance_2020(h);
+    let s = (1.0 - k).max(0.0).powf(NEG_DEHAZE_DESATURATE);
+    h.map(|v| (y + (v - y) * s).max(0.0))
 }
 
 /// The gamma of [`add_haze`]'s blend.
-pub const NEG_DEHAZE_GAMMA: f32 = 1.4;
-/// Strength of negative dehaze: the share of the airlight blended in at Dehaze -100 over a fully hazy pixel.
-pub const NEG_DEHAZE_STRENGTH: f32 = 0.8;
+pub const NEG_DEHAZE_GAMMA: f32 = 8.4;
+/// Strength of negative dehaze: the share of the target blended in at Dehaze -100 over a fully hazy pixel.
+pub const NEG_DEHAZE_STRENGTH: f32 = 0.9;
+/// The share of [`NEG_DEHAZE_STRENGTH`] a pixel with no haze of its own (dark channel 0) still takes.
+pub const NEG_DEHAZE_FLOOR: f32 = 0.37;
+/// The haze [`add_haze`] blends towards, as a multiple of the airlight.
+pub const NEG_DEHAZE_TARGET: f32 = 1.52;
+/// The exponent of [`add_haze`]'s desaturation: a pixel keeps `(1 - k)^NEG_DEHAZE_DESATURATE` of its colour around grey.
+pub const NEG_DEHAZE_DESATURATE: f32 = 0.56;
 /// Positive Highlights gain (log2 luminance per unit of the slider; a negative one pulls by 0.6, Shadows lift by 1.07).
 /// Highlights weigh base luminance from −3.3 to +4.5 EV over grey and Shadows from +1.05 down to −2.15 EV: fitted to
 /// Lightroom's exports of one raw at ±54 and ±100 (its display luminance per tone band before and after each slider).
@@ -730,8 +746,12 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                     let t = (1.0 - 0.95 * dz.min(1.0) * d).max(0.12);
                     c = c.map3(|v| ((v - air * (1.0 - t)) / t).max(0.0));
                 } else {
-                    let k = (-dz).min(1.0) * NEG_DEHAZE_STRENGTH * (0.35 + 0.65 * d);
-                    c = if fork_refinements { add_haze(c, air * 0.9, k) } else { c.map3(|v| v + (air * 0.9 - v) * k) };
+                    c = if fork_refinements {
+                        add_haze(c, dz, d, air)
+                    } else {
+                        let k = (-dz).min(1.0) * 0.8 * (0.35 + 0.65 * d);
+                        c.map3(|v| v + (air * 0.9 - v) * k)
+                    };
                 }
             }
 

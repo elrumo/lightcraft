@@ -1,5 +1,14 @@
 # What's new in LightCraft
 
+## 2026-11-14
+
+### Negative Dehaze looks like Lightroom's
+- Dehaze below 0 now fogs a photo the way Lightroom's does on the six cameras it was measured on: the darks, mids and
+  highlights rise by about the same amount and the colour fades a little. Before, the darks rose two to three times as
+  much as the rest and the highlights hardly moved (worst on a Nikon D70).
+- Photos already edited with a negative Dehaze (a preset such as a film look, or a Lightroom edit) look different: lighter
+  highlights, darker shadows than before, and a little less colour.
+
 ## 2026-10-29
 
 ### Raws start with strong colour noise reduction

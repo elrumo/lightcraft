@@ -288,9 +288,11 @@ fn constants() -> String {
     {
         use lightcraft_pipeline::colorops::GRADING_BLEND_WIDTH;
         use lightcraft_pipeline::colorops::GRADING_SPLIT;
-        use lightcraft_pipeline::finish::{HIGHLIGHTS_UP, NEG_DEHAZE_GAMMA, NEG_DEHAZE_STRENGTH};
+        use lightcraft_pipeline::finish::{
+            HIGHLIGHTS_UP, NEG_DEHAZE_DESATURATE, NEG_DEHAZE_FLOOR, NEG_DEHAZE_GAMMA, NEG_DEHAZE_STRENGTH, NEG_DEHAZE_TARGET,
+        };
         s += &format!(
-            "const NEG_DEHAZE_GAMMA: f32 = {NEG_DEHAZE_GAMMA:?};\nconst NEG_DEHAZE_STRENGTH: f32 = {NEG_DEHAZE_STRENGTH:?};\nconst HIGHLIGHTS_UP: f32 = {HIGHLIGHTS_UP:?};\nconst GRADING_SPLIT: f32 = {GRADING_SPLIT:?};\nconst GRADING_BLEND_WIDTH: f32 = {GRADING_BLEND_WIDTH:?};\n"
+            "const NEG_DEHAZE_GAMMA: f32 = {NEG_DEHAZE_GAMMA:?};\nconst NEG_DEHAZE_STRENGTH: f32 = {NEG_DEHAZE_STRENGTH:?};\nconst NEG_DEHAZE_FLOOR: f32 = {NEG_DEHAZE_FLOOR:?};\nconst NEG_DEHAZE_TARGET: f32 = {NEG_DEHAZE_TARGET:?};\nconst NEG_DEHAZE_DESATURATE: f32 = {NEG_DEHAZE_DESATURATE:?};\nconst HIGHLIGHTS_UP: f32 = {HIGHLIGHTS_UP:?};\nconst GRADING_SPLIT: f32 = {GRADING_SPLIT:?};\nconst GRADING_BLEND_WIDTH: f32 = {GRADING_BLEND_WIDTH:?};\n"
         );
     }
     // an HDR histogram's bins (`lightcraft_raster::HdrBins`, as an HDR edit's histogram has them)
