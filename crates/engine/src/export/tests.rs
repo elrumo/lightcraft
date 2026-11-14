@@ -1511,6 +1511,40 @@ fn a_big_raw_on_a_phone_is_refused_with_advice_that_can_help() {
     assert!(e.contains("42 MP") && e.contains("at any size") && !e.contains("Export up to") && e.contains("sync server"), "{e}");
 }
 
+// A photo a frontend draws itself (`hostPixels`) is only encoded by the export: the memory check for this device's own render does not refuse it, and once
+// the frontend's picture is taken the photo is hosted; a check that would refuse it is still made for any photo the frontend does not draw (card #456: an
+// iPhone refused a 12 MP Lens Blur export its native renderer had drawn in a quarter of the memory)
+#[test]
+fn a_photo_a_frontend_draws_is_not_refused_for_this_devices_render() {
+    let mut s = crate::Session::new();
+    for (n, name) in [(1, "_DSC9466.ARW"), (2, "_DSC9467.ARW")] {
+        let p = lightcraft_catalog::Photo::new(
+            lightcraft_catalog::PhotoId(n),
+            lightcraft_catalog::Source::File { path: format!("/nowhere/{name}").into() },
+            name,
+            "ARW",
+            7952,
+            5304,
+            "",
+        );
+        s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    }
+    let (one, two) = (lightcraft_catalog::PhotoId(1), lightcraft_catalog::PhotoId(2));
+    let o = ExportOptions { resize: Some(Resize::long_edge(3000)), ..Default::default() };
+    s.set_export_limit(Some(900 << 20));
+    assert!(prepare_batch(&mut s, &[one], &o).is_err(), "the export's own render does not fit");
+    let e = prepare_batch_hosted(&mut s, &[one, two], &o, &[one]).err().unwrap();
+    assert!(e.contains("_DSC9467") && e.contains("Export up to"), "the photo the frontend does not draw is still refused: {e}");
+    let mut items = prepare_batch_hosted(&mut s, &[one], &o, &[one]).unwrap();
+    assert!(!items[0].is_hosted(), "not hosted before the frontend's picture is offered");
+    assert!(items[0].weight < 300 << 20, "weighs its encode, not a render ({} MB)", items[0].weight >> 20);
+    let (w, h) = output_size(s.catalog.photo(one).unwrap(), &o);
+    let space = o.effective_space();
+    assert!(!items[0].with_host_pixels(HostPixels { file: "/nowhere/p.rgba".into(), width: w + 9, height: h, depth: 8, space }), "another size is not taken");
+    assert!(items[0].with_host_pixels(HostPixels { file: "/nowhere/p.rgba".into(), width: w, height: h, depth: 8, space }));
+    assert!(items[0].is_hosted());
+}
+
 // `export.plan` tells a frontend with a renderer of its own what the export will write: the colour space and the bit depth the files are written with, and
 // each photo's size, all worked out by the export
 #[test]

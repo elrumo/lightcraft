@@ -1,6 +1,6 @@
 # Lightroom parity checklist
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-14 · **Change:** minor (LR-EDIT-EFFECTS-DEHAZE: positive Dehaze refitted to Lightroom's exports, ✅ → 🟡 for its strong values; LR-EDIT-CALIB: Shadows Tint refitted to Lightroom's exports; LR-EDIT-COLOR-MIXER-HSL, LR-EDIT-COLOR-GRADING: checked against the exports there are)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-14 · **Change:** minor (LR-PRE-AMOUNT: a preset's profile blends in by its amount; Amount drags shown live)
 
 The measured, row-by-row checklist: one row per Lightroom feature, menu item and shortcut, what we
 have and what is missing. It answers *does the feature exist?* (feature breadth). Whether it is good
@@ -328,7 +328,7 @@ differences and missing bindings are in [ui-parity.md](ui-parity.md#shortcuts).
 | LR-PRE-PANEL | Presets panel | P0 | ✅ | `cmd:panel.presets`, `cmd:preset.apply`, `crates/ui-egui/src/panels/presets.rs` | grouped list with amount; the preset applied to a photo stays marked on returning to it until the photo is edited further (issue #2392); resting on a preset previews it in the loupe (no history entry); optional live thumbnails (⋯ → Show Thumbnails) |
 | LR-PRE-CREATE | Create preset | P0 | ✅ | `cmd:dialog.createPreset`, `cmd:preset.create` (`groups`) | name, group and a checklist of settings groups (crop, masks, remove, red eye off by default; All / None) |
 | LR-PRE-MANAGE | Manage presets | P1 | ✅ | `cmd:preset.delete`, `cmd:preset.favorite`, `cmd:preset.import`, `cmd:preset.export`, `cmd:preset.rename`, `cmd:preset.update`, `cmd:preset.move`, `cmd:preset.moveGroup`, `cmd:preset.hide`, `cmd:preset.hideGroup`, `cmd:preset.renameGroup`, `cmd:preset.deleteGroup` | rename, update with current settings, move to a group (existing or new); starred presets are listed in a Favorites section on top, as in the Profile browser (issue #1999, `crates/ui-egui/src/tests/preset_favorites.rs`); drag a group's header to reorder the groups (desktop and web; synced between devices); hide any preset or group, built-in ones too (Show Hidden Presets lists them dimmed to show them again; synced); rename and delete groups of your own presets; a sync server's admin shares presets with all its users and hides built-in ones for everyone, drags a shared preset onto another group to move it and switches a shared preset or group off without deleting it (`/admin` → Presets, `docs/sync.md`) |
-| LR-PRE-AMOUNT | Preset amount | P1 | ✅ | `cmd:preset.apply` (`amount` 0–200) | |
+| LR-PRE-AMOUNT | Preset amount | P1 | ✅ | `cmd:preset.apply` (`amount` 0–200), `cmd:develop.beginInteraction` (`replacing`) | a preset's profile blends in by its own amount when the photo has none (and out when the preset sets Color); between two looks the profile still switches at 50 %; a drag shows each amount live and ends as one step |
 | LR-PRE-ADAPTIVE | Adaptive presets | P2 | ⬜ | | |
 | LR-PRE-PREMIUM | Built-in presets (own) | P2 | ✅ | `crates/engine/src/presets.rs` | 41 own-authored presets in 10 groups (Color, Film, B&W incl. toners, Portrait, Landscape, Urban, Food, Seasons, Vintage, Style) |
 | LR-PRE-RECOMMENDED | Community recommendations | OOS | 🚫 | | |
@@ -820,6 +820,7 @@ Latin stays upright. Advanced Japanese composition remains open. Regression cove
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-14 | minor | LR-PRE-AMOUNT: a preset's profile blends in by its own amount (it switched at 50 %, so a look preset's Amount was on or off); `develop.beginInteraction {replacing}` lets a preset's Amount drag show live and end as one step (card #445); status unchanged (✅) |
 | 2026-11-14 | minor | LR-EDIT-EFFECTS-DEHAZE: positive Dehaze refitted to Lightroom's +16 / +50 / +100 on six cameras (no ease-in, transmission floor 0.12; effect ΔE at +16 / +50 2.07 / 5.58 → 1.56 / 4.46, +100 unchanged at about 11; card #439); status ✅ → 🟡 (strong positive values and negative beyond -16 are well off Lightroom's) |
 | 2026-11-14 | minor | LR-EDIT-CALIB: Shadows Tint refitted to Lightroom's ±50 exports of an EOS R6 raw (both ways alike, effect ΔE 6.3 / 7.6 → 3.7 / 2.6); LR-EDIT-COLOR-MIXER-HSL and LR-EDIT-COLOR-GRADING: rechecked against the exports there are, six cameras' sidecars prepared (card #388) |
 | 2026-11-14 | minor | LR-EDIT-EFFECTS-DEHAZE: negative Dehaze refitted to Lightroom's -16 on six cameras (darks lift about as much as the mids, colour taken towards grey without crossing it; effect ΔE 3.29 → 1.80, D70 5.09 → 1.36; card #387); status unchanged (✅) |

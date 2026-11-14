@@ -256,6 +256,23 @@ pub fn specs() -> Vec<CommandSpec> {
             plan
         ),
         cmd!(
+            query "export.previous",
+            "Previous Export Options",
+            [],
+            None,
+            "{} → {params} — the options Export with Previous repeats (the last export's, without its photos), for a frontend that runs that export through app.export itself: with no `dir`, it picks the folder; fails when nothing has been exported yet",
+            always,
+            |s, _| {
+                let last = s.last_export.as_ref().ok_or_else(|| bad("export.previous", "nothing exported yet: use Export…"))?;
+                let mut params = crate::export::ExportOptions::known_keys_only(last);
+                if let Some(o) = params.as_object_mut() {
+                    o.remove("ids");
+                    o.remove("id");
+                }
+                Ok(json!({"params": params}))
+            }
+        ),
+        cmd!(
             query "export.checkTarget",
             "Check Output Path",
             [],

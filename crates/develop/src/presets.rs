@@ -275,7 +275,8 @@ fn scale_patch(base: &Value, patch: &Value, t: f64) -> Value {
             let mut out = Map::new();
             for (k, pv) in p {
                 let bv = b.get(k).unwrap_or(&Value::Null);
-                out.insert(k.clone(), scale_patch(bv, pv, t));
+                let v = if k == "profile" { scale_profile(bv, pv, t) } else { None };
+                out.insert(k.clone(), v.unwrap_or_else(|| scale_patch(bv, pv, t)));
             }
             Value::Object(out)
         }
@@ -293,6 +294,34 @@ fn scale_patch(base: &Value, patch: &Value, t: f64) -> Value {
             }
         }
     }
+}
+
+/// The profile at `t` when the preset's (`patch`) is another than the photo's (`base`) and one of the two is no look
+/// (Color, or an amount of 0): the look's own amount runs from 0, so the Amount slider blends it in gradually instead
+/// of switching profiles at 50 % (HB-445). `None`: the plain interpolation (the same profile: its amount; two looks:
+/// the id switches halfway).
+fn scale_profile(base: &Value, patch: &Value, t: f64) -> Option<Value> {
+    let id = |v: &Value| v.get("id").and_then(Value::as_str).map(str::to_owned);
+    let amount = |v: &Value| v.get("amount").and_then(Value::as_f64).unwrap_or(100.0);
+    let plain = |v: &Value| matches!(id(v).as_deref(), None | Some("" | "lc.color")) || amount(v) == 0.0;
+    let (bid, pid) = (id(base), id(patch));
+    if pid.is_none() || bid == pid || plain(base) == plain(patch) {
+        return None;
+    }
+    // (the look that is there: the preset's coming in, else the photo's going out)
+    let (look, k) = if plain(base) {
+        (patch, t)
+    } else if t < 1.0 {
+        (base, 1.0 - t)
+    } else {
+        return None;
+    };
+    let mut out = scale_patch(base, patch, t);
+    if let Some(o) = out.as_object_mut() {
+        o.insert("id".into(), look.get("id").cloned().unwrap_or(Value::Null));
+        o.insert("amount".into(), serde_json::Number::from_f64(amount(look) * k).map_or(Value::Null, Value::Number));
+    }
+    Some(out)
 }
 
 /// Apply a partial settings object with an amount (1.0 = 100 %). Out-of-range values are clamped
@@ -459,6 +488,30 @@ mod tests {
         // clamped through specs
         let lots = apply_partial(&base, &json!({"light": {"exposure": 4.0}}), 2.0);
         assert_eq!(lots.light.exposure, 5.0);
+    }
+
+    /// A look preset (a profile and grain, as the film packs are) at part of its amount used to switch the profile at
+    /// 50 %: the Amount slider made the look all or nothing (HB-445). The look's own amount runs from 0 instead.
+    #[test]
+    fn amount_blends_a_profile_in_and_out() {
+        let look = json!({"profile": {"id": "lut:pack-film-vivid", "amount": 100.0}, "grain": {"amount": 20.0}});
+        let base = DevelopSettings::default();
+        for t in [0.0, 0.3, 0.47, 0.5, 1.0, 1.5] {
+            let out = apply_partial(&base, &look, t);
+            assert_eq!(out.profile.id, "lut:pack-film-vivid", "{t}");
+            assert!((out.profile.amount - 100.0 * t).abs() < 1e-9, "{t}: {}", out.profile.amount);
+        }
+        // a preset that sets Color takes the photo's look out gradually too
+        let mut vivid = DevelopSettings::default();
+        vivid.profile.id = "lc.vivid".into();
+        vivid.profile.amount = 80.0;
+        let plain = json!({"profile": {"id": "lc.color", "amount": 100.0}});
+        let quarter = apply_partial(&vivid, &plain, 0.25);
+        assert_eq!((quarter.profile.id.as_str(), quarter.profile.amount), ("lc.vivid", 60.0));
+        assert_eq!(apply_partial(&vivid, &plain, 1.5).profile.id, "lc.color");
+        // two looks: no blend between them, the id switches halfway as before
+        assert_eq!(apply_partial(&vivid, &look, 0.4).profile.id, "lc.vivid");
+        assert_eq!(apply_partial(&vivid, &look, 0.6).profile.id, "lut:pack-film-vivid");
     }
 
     /// A preset with the Grain group (its seed is an integer) used to do nothing at any amount

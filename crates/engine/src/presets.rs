@@ -1088,6 +1088,42 @@ mod tests {
         assert_eq!(r["imported"][0]["id"].as_str(), Some(format!("{id}-2").as_str()), "{r}");
     }
 
+    /// A preset's Amount drag (HB-445): it begins from before the preset's step with the photo as shown, each step goes over
+    /// that photo (not over the last step), nothing is stored until the end, and the end is one step in the preset's place.
+    #[test]
+    fn preset_amount_drag_is_live_and_one_step() {
+        let mut s = Session::with_demo();
+        let id = s.active().unwrap();
+        s.presets.push(lightcraft_develop::Preset {
+            id: "t.look".into(),
+            name: "Look".into(),
+            group: "User".into(),
+            settings: json!({"light": {"exposure": 1.0}}),
+            favorite: false,
+            builtin: false,
+        });
+        let exposure = |s: &Session| s.develop_of(id).unwrap().light.exposure;
+        let start = exposure(&s);
+        s.execute("preset.apply", &json!({"id": "t.look"})).unwrap();
+        let steps = s.undo.len();
+        assert_eq!((exposure(&s), s.undo.last().unwrap().label.as_str()), (1.0, "Preset: Look"));
+        s.execute("develop.beginInteraction", &json!({"label": "Preset: Look", "replacing": true})).unwrap();
+        assert_eq!(exposure(&s), 1.0, "the photo stays as shown when the drag begins");
+        for amount in [50.0, 30.0] {
+            s.execute("preset.apply", &json!({"id": "t.look", "amount": amount})).unwrap();
+            assert!((exposure(&s) - start - (1.0 - start) * amount / 100.0).abs() < 1e-9, "{amount}: {}", exposure(&s));
+            assert_eq!(s.undo.len(), steps - 1, "no step during the drag");
+        }
+        s.execute("develop.endInteraction", &json!({})).unwrap();
+        assert_eq!((s.undo.len(), s.undo.last().unwrap().label.as_str()), (steps, "Preset: Look"));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(exposure(&s), start, "one undo takes the preset off");
+        // (another step on top: nothing is taken back)
+        s.execute("develop.beginInteraction", &json!({"label": "Preset: Look", "replacing": true})).unwrap();
+        s.execute("develop.endInteraction", &json!({})).unwrap();
+        assert_eq!(exposure(&s), start);
+    }
+
     #[test]
     fn xmp_preset_file_imports_and_applies() {
         let d = dir("xmp");

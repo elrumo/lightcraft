@@ -195,13 +195,26 @@ pub fn prepare_export(
     seq: usize,
 ) -> Result<PreparedExport, String> {
     let guard = std::sync::Arc::new(session.original_guard());
-    prepare_guarded(session, id, o, seq, guard)
+    prepare_guarded(session, id, o, seq, guard, false)
 }
 
 /// [`prepare_export`] for each of `ids` in order (`{seq}` = position, from 1).
 pub fn prepare_batch(session: &mut crate::Session, ids: &[lightcraft_catalog::PhotoId], o: &ExportOptions) -> Result<Vec<PreparedExport>, String> {
+    prepare_batch_hosted(session, ids, o, &[])
+}
+
+/// [`prepare_batch`] for a frontend that draws the pictures of `hosted` itself (`hostPixels`, `hostFiles`): the export only encodes and places those, so
+/// they are not refused, nor sent to the sync server, for the memory this device's own render of them would take (a frontend's renderer can need far
+/// less: a native one's Lens Blur holds about a quarter of the bytes a pixel). A hosted photo whose picture the export cannot use after all
+/// ([`PreparedExport::is_hosted`] is false once it is offered) must go through [`prepare_export`] again before it is run, which applies the check.
+pub fn prepare_batch_hosted(
+    session: &mut crate::Session,
+    ids: &[lightcraft_catalog::PhotoId],
+    o: &ExportOptions,
+    hosted: &[lightcraft_catalog::PhotoId],
+) -> Result<Vec<PreparedExport>, String> {
     let guard = std::sync::Arc::new(session.original_guard());
-    ids.iter().enumerate().map(|(i, id)| prepare_guarded(session, *id, o, i + 1, guard.clone())).collect()
+    ids.iter().enumerate().map(|(i, id)| prepare_guarded(session, *id, o, i + 1, guard.clone(), hosted.contains(id))).collect()
 }
 
 fn prepare_guarded(
@@ -210,6 +223,7 @@ fn prepare_guarded(
     o: &ExportOptions,
     seq: usize,
     guard: std::sync::Arc<crate::originals::OriginalGuard>,
+    hosted: bool,
 ) -> Result<PreparedExport, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
     let file_name = o.file_name_for(p, seq);
@@ -229,7 +243,8 @@ fn prepare_guarded(
         let bands_ok = crate::media::bandable_at(&p.develop, o.effective_depth());
         let whole = export_need_of(session, p, w, h, false);
         let need = if bands_ok { export_need_of(session, p, w, h, true) } else { whole };
-        let too_big = session.export_limit().is_some_and(|limit| need > limit);
+        // (a picture a frontend draws is only encoded here: see `prepare_batch_hosted`)
+        let too_big = !hosted && session.export_limit().is_some_and(|limit| need > limit);
         // (a picture that does not fit whole but does in bands is rendered in bands)
         let banded = bands_ok && !too_big && session.export_limit().is_some_and(|limit| whole > limit);
         if o.on_server || too_big {
@@ -291,8 +306,15 @@ fn prepare_guarded(
         let gain_map = (o.hdr_output() && o.format == ExportFormat::Jpeg)
             || (o.gain_map_sidecar && o.format == ExportFormat::Tiff && !o.hdr_output() && p.develop.hdr.enabled);
         let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
-        let weight = if banded { need } else { render_weight(full_px, long, job.level, w.saturating_mul(h)) };
-        if let Some(why) = too_big_for_memory((w, h), native_px, weight, crate::memory::total_ram()) {
+        // (a hosted picture weighs what its encode holds: the picture at up to 8 bytes a pixel and as much again for the encoder)
+        let weight = if hosted {
+            w.saturating_mul(h).saturating_mul(16)
+        } else if banded {
+            need
+        } else {
+            render_weight(full_px, long, job.level, w.saturating_mul(h))
+        };
+        if !hosted && let Some(why) = too_big_for_memory((w, h), native_px, weight, crate::memory::total_ram()) {
             return Err(format!("{label}: {why}"));
         }
         let hdr_job = if gain_map { Some(session.export_job(id, w, h, o.effective_space(), OutputDepth::F32Hdr)?) } else { None };
@@ -496,6 +518,11 @@ impl PreparedExport {
             w.hdr_job = None;
         }
         fits
+    }
+
+    /// Whether a frontend's picture or file stands in for this photo's render ([`Self::with_host_pixels`], [`Self::with_host_file`]).
+    pub fn is_hosted(&self) -> bool {
+        matches!(&self.work, Work::Render(w) if w.host.is_some() || w.host_file.is_some())
     }
 
     /// Write `host`'s file for this photo instead of rendering and encoding it, when it can stand in: a rendered format (not an HDR gain map) at the size

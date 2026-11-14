@@ -1336,12 +1336,26 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         // ---- presets
+        // (during an interaction on the active photo, e.g. an Amount drag that `develop.beginInteraction {replacing: true}` began,
+        // the preset goes over the photo as the interaction found it and the step is the interaction's)
         cmd!("preset.apply", "Apply Preset", [], None, "{id: presetId, amount?: 0..200 (percent), ids?}", has_selection, |s, p| {
             let pid = str_param(p, "id").ok_or_else(|| bad("preset.apply", "missing id"))?;
             let preset = s.presets.iter().find(|x| x.id == pid).cloned().ok_or_else(|| bad("preset.apply", format!("unknown preset `{pid}`")))?;
             let amount = f64_or(p, "amount", 100.0).clamp(0.0, 200.0) / 100.0;
             // `id` names the preset here: the photos are `ids`, else the selection
             let ids = s.targets(&json!({"ids": p.get("ids")}))?;
+            // an Amount drag (HB-445): each step from the settings the drag began with, shown at once, one undo step at its end
+            if let Some(i) = s.interaction.as_ref().filter(|i| ids == [i.photo]) {
+                let (id, before) = (i.photo, i.original.clone());
+                let mut preset = preset;
+                let Some(photo) = s.catalog.photo(id) else { return ok() };
+                crate::crs::lightroom_white_to_dial(&mut preset.settings, &photo.meta.camera);
+                s.lightroom_crop_to_frame(id, &mut preset.settings);
+                let Some(photo) = s.catalog.photo(id) else { return ok() };
+                let after = crate::upright_transfer::apply_preset(photo, &before, &preset, amount);
+                s.set_develop(id, after, &format!("Preset: {}", preset.name))?;
+                return ok();
+            }
             let ops = ids
                 .iter()
                 .filter_map(|id| s.develop_of(*id).map(|d| (*id, d)))
@@ -1661,10 +1675,30 @@ pub fn specs() -> Vec<CommandSpec> {
             go_to_history_step(s, c, id, i)
         }),
         // ---- interactions (slider drags, brush strokes)
-        cmd!("develop.beginInteraction", "Begin Interaction", [], None, "{label}", has_active, |s, p| {
-            s.begin_interaction(str_param(p, "label").unwrap_or("Edit"))?;
-            ok()
-        }),
+        cmd!(
+            "develop.beginInteraction",
+            "Begin Interaction",
+            [],
+            None,
+            "{label, replacing?: bool} (replacing: when the last step is `label`'s, the interaction starts from before it and its end takes its place, while the photo stays as it is shown: a preset's Amount drag)",
+            has_active,
+            |s, p| {
+                let label = str_param(p, "label").unwrap_or("Edit");
+                let id = active(s, "develop.beginInteraction")?;
+                let replacing = p.get("replacing").and_then(Value::as_bool) == Some(true)
+                    && s.interaction.is_none()
+                    && s.undo.last().is_some_and(|e| e.label == label);
+                let shown = s.develop_of(id);
+                if replacing {
+                    s.undo_step()?;
+                }
+                s.begin_interaction(label)?;
+                if let (true, Some(shown)) = (replacing, shown) {
+                    s.apply_silent(Op::SetDevelop { id, settings: shown, label: label.into(), edited: None })?;
+                }
+                ok()
+            }
+        ),
         cmd!("develop.endInteraction", "End Interaction", [], None, "{}", always, |s, _| {
             s.end_interaction()?;
             ok()

@@ -44,7 +44,7 @@ use place::Placer;
 pub use place::{write_file, write_file_durable, write_file_new};
 pub use prepare::{
     AfterExport, BatchPlacer, Destination, DngCompression, Exported, HostFile, HostPixels, ItemHead, PreparedExport, RenderParts,
-    encode_render_export, export_batch, export_photo, output_size, prepare_batch, prepare_export,
+    encode_render_export, export_batch, export_photo, output_size, prepare_batch, prepare_batch_hosted, prepare_export,
 };
 #[cfg(test)]
 use prepare::{render_weight, too_big_for_memory};

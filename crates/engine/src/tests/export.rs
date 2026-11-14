@@ -142,6 +142,16 @@ fn a_preset_saved_from_the_previous_export_drops_its_unfit_depth() {
     assert_eq!(ExportOptions::from_params(&p).unwrap().bit_depth, Some(16));
 }
 
+/// `export.previous`: the options Export with Previous repeats, for a frontend that runs it through
+/// app.export itself (its own renderer draws the pictures, its clips go out as clips).
+#[test]
+fn the_previous_export_options_are_read_without_their_photos() {
+    let mut s = Session::with_demo();
+    assert!(s.execute("export.previous", &json!({})).unwrap_err().to_string().contains("nothing exported yet"));
+    s.last_export = Some(json!({"format": "jpeg", "bitDepth": 16, "quality": 80, "ids": [1, 2], "id": 1, "stray": true}));
+    assert_eq!(s.execute("export.previous", &json!({})).unwrap(), json!({"params": {"format": "jpeg", "quality": 80}}));
+}
+
 #[test]
 fn presets_conflicts_and_subfolders() {
     use crate::export::{Destination, export_batch};

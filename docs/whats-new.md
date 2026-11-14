@@ -2,6 +2,13 @@
 
 ## 2026-11-14
 
+### A look preset's Amount blends it in
+- A preset that brings a profile (a film look, a creative profile) now blends that profile in gradually with its Amount, as
+  its sliders always did: 30 % is the look at 30 %. Before, the profile came in all at once past 50 % and was gone below,
+  so the Amount slider turned the look on or off.
+- A preset's Amount can be dragged with the photo following along: `develop.beginInteraction {replacing: true}` starts the
+  drag from before the preset's step, each `preset.apply` shows the preset at that amount, and the end is one undo step.
+
 ### Positive Dehaze acts from the start
 - Dehaze above 0 now acts in proportion to the slider, as Lightroom's does: +16 clears about three times as much haze
   as before, and deep shadows get deeper. Strong values (+100) are still gentler than Lightroom's on photos with no haze.
