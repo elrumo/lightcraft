@@ -1623,10 +1623,6 @@ impl Session {
         if self.source == LibrarySource::Missing {
             return None;
         }
-        if let LibrarySource::AlbumFolder(folder) = self.source {
-            // ponytail: worked out each time it is asked (one query per album), cache it like `total` if it shows
-            return Some(self.album_folder_view(folder, &Filter::default()).photos);
-        }
         if self.filter == Filter::default() && !self.hold_view {
             // nothing narrows the source: what the view lists is all of it, and is counted already (not a view
             // that holds photos that stopped matching: those are not of the source any more)
@@ -1649,6 +1645,12 @@ impl Session {
             // The source count can be requested before `visible`; bind it to the session's clock itself.
             let now = current_now.unwrap_or_else(|| (self.clock)());
             lightcraft_catalog::rules::set_now(Some(now.clone()));
+            if let LibrarySource::AlbumFolder(folder) = self.source {
+                // (a folder of albums: its albums' photos, each once, counted as its view lists them)
+                let view = self.album_folder_view(folder, &Filter::default());
+                self.total = Some((key, view.photos, view.clocked.then(|| clock_minute(&now).to_owned())));
+                return self.total.as_ref().map(|t| t.1);
+            }
             let mut f = self.source.to_filter(&Filter::default(), &self.catalog);
             if self.source == LibrarySource::Folder {
                 let b = self.browse.clone().unwrap_or_default();

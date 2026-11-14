@@ -24,8 +24,8 @@ fn add(s: &mut Session, album: u64, ids: &[u64]) {
 #[test]
 fn a_folder_shows_its_albums_photos_album_after_album() {
     let mut s = Session::with_demo();
-    let ids: Vec<u64> = s.visible_cloned().iter().map(|p| p.0).take(6).collect();
-    assert_eq!(ids.len(), 6, "the demo library has photos");
+    let ids: Vec<u64> = s.visible_cloned().iter().map(|p| p.0).take(7).collect();
+    assert_eq!(ids.len(), 7, "the demo library has photos");
     let folder = make(&mut s, "2022", None, true);
     let b = make(&mut s, "B", Some(folder), false);
     let a = make(&mut s, "A", Some(folder), false);
@@ -51,6 +51,23 @@ fn a_folder_shows_its_albums_photos_album_after_album() {
     s.execute("library.filter", &json!({"only": [ids[0], ids[5]]})).unwrap();
     assert_eq!(s.visible_cloned().len(), 2);
     s.execute("library.filter", &json!({"only": []})).unwrap();
+
+    // the folder's total is kept, and follows a photo put in one of its albums
+    assert_eq!(s.source_total(), Some(6));
+    add(&mut s, b, &ids[6..7]);
+    assert_eq!(s.source_total(), Some(7), "the kept total was for the albums as they were");
+
+    // saved as a smart album: the photos of the folder's albums, and with the filter bar's rules, those of both
+    let saved = s.execute("album.createSmart", &json!({"name": "From 2022"})).unwrap();
+    assert_eq!(saved["count"], 7, "not every photo of the library");
+    s.execute("library.filter", &json!({"ruleSet": {"match": "all", "rules": [{"field": "album", "op": "is", "value": a}]}})).unwrap();
+    let narrowed = s.execute("album.createSmart", &json!({"name": "A in 2022"})).unwrap();
+    assert_eq!(narrowed["count"], 2);
+    s.execute("library.filter", &json!({"ruleSet": null})).unwrap();
+    let empty = make(&mut s, "Empty Folder", None, true);
+    s.execute("library.source", &json!({"kind": "albumFolder", "id": empty})).unwrap();
+    assert_eq!(s.execute("album.createSmart", &json!({"name": "Nothing"})).unwrap()["count"], 0, "an empty folder saves no photos");
+    s.execute("library.source", &json!({"kind": "albumFolder", "id": folder})).unwrap();
 
     // an album is no folder, nor is an unknown id
     assert!(s.execute("library.source", &json!({"kind": "albumFolder", "id": a})).is_err());

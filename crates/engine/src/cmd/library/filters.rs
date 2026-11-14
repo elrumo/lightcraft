@@ -79,8 +79,26 @@ pub(super) fn view_rules(s: &Session) -> lightcraft_catalog::Filter {
             if s.source == LibrarySource::LibraryFolder {
                 f.library_folder = s.library_folder.clone();
             }
+            if let LibrarySource::AlbumFolder(folder) = s.source {
+                f.rule_set = Some(in_album_folder(s, folder, f.rule_set.take()));
+            }
             f
         }
+    }
+}
+
+/// A folder of albums as rules: in any of the albums in it now, and the filter bar's own rules (`own`) as well. An
+/// empty folder names the folder itself, which holds no photos, so the album matches none (a rule set with no rules
+/// would match every photo).
+fn in_album_folder(s: &Session, folder: AlbumId, own: Option<lightcraft_catalog::RuleSet>) -> lightcraft_catalog::RuleSet {
+    use lightcraft_catalog::{Match, Rule, RuleSet};
+    let album = |a: AlbumId| Rule::Field { field: "album".into(), op: "is".into(), value: json!(a.0) };
+    let albums = s.catalog.albums_in_folder(folder);
+    let rules = if albums.is_empty() { vec![album(folder)] } else { albums.into_iter().map(album).collect() };
+    let in_folder = RuleSet { mode: Match::Any, rules };
+    match own {
+        Some(own) if !own.rules.is_empty() => RuleSet { mode: Match::All, rules: vec![Rule::Group { group: own }, Rule::Group { group: in_folder }] },
+        _ => in_folder,
     }
 }
 
