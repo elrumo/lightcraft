@@ -1113,6 +1113,30 @@ impl Session {
         Ok(sc)
     }
 
+    /// A Lightroom preset's crop into photo `id`'s frame, as a sidecar's is read ([`Self::edit_from_xmp`]): Lightroom
+    /// writes a crop's edges on the stored image, so a preset imported from XMP marks its crop (`crop.lightroom`,
+    /// [`crate::crs::preset_from_xmp`]) and each photo it is applied to turns it by its file's orientation and its own
+    /// Rotate Left / Right. The marker is removed; a photo whose file can't be probed gets no crop from the preset,
+    /// rather than one on the wrong axis.
+    pub(crate) fn lightroom_crop_to_frame(&self, id: PhotoId, partial: &mut Value) {
+        let Some(crop) = partial.get_mut("crop").and_then(Value::as_object_mut) else { return };
+        if crop.remove("lightroom") != Some(serde_json::json!(true)) || !crop_needs_frame(partial) {
+            return;
+        }
+        let p = self.catalog.photo(id);
+        let frame = p.and_then(|p| file_path(p)).and_then(|orig| {
+            crate::import::probe_paths(self, &[orig.to_string()]).into_iter().next().and_then(std::result::Result::ok).and_then(|i| i.stored_frame())
+        });
+        match (frame, p) {
+            (Some(f), Some(p)) => crate::crs::crop_in_frame(partial, f.orientation.then(p.develop.orientation), f.width / f.height),
+            _ => {
+                if let Some(o) = partial.as_object_mut() {
+                    o.remove("crop");
+                }
+            }
+        }
+    }
+
     /// The op that applies what a sidecar says (already read and parsed, e.g. on a worker
     /// thread) to photo `id`: the sidecar wins. No file is read.
     pub fn sidecar_op(&self, id: PhotoId, sc: SidecarData) -> Result<Op> {

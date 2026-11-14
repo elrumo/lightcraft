@@ -1691,3 +1691,35 @@ fn a_failed_auto_write_waits_and_is_written_on_retry() {
     std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o755)).unwrap();
     let _ = std::fs::remove_dir_all(&src);
 }
+
+/// A Lightroom preset's crop is on the stored image, as a sidecar's is: applied to a photo the camera turned (EXIF 6), it
+/// lands on that photo's columns, not its rows (before, `lightcraft-cli render --settings` of an EOS R6 sidecar cropped
+/// the wrong axis of an upright shot, card #388).
+#[test]
+fn a_lightroom_presets_crop_turns_with_the_photo() {
+    use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
+    let src = temp_dir("preset-crop-turned");
+    // 60 x 40 stored, EXIF orientation 6: shown 40 x 60
+    let exif: &[u8] = b"II*\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0";
+    let px: Vec<u8> = (0..60 * 40).flat_map(|i| [(i % 251) as u8, 90, 200]).collect();
+    let meta = EncodeMeta { exif: Some(exif), ..EncodeMeta::default() };
+    let j = encode_jpeg(&EncodeImage::new(60, 40, 3, Samples::U8(&px)), 90, ChromaSubsampling::S444, &meta).unwrap();
+    std::fs::write(src.join("upright.jpg"), j).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.join("upright.jpg").to_string_lossy()]})).unwrap();
+    let id = r["imported"][0].as_u64().unwrap();
+    let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:PresetType="Normal" crs:Name="Cropped" crs:UUID="CROP1" crs:Exposure2012="+0.5" crs:HasCrop="True" crs:CropLeft="0" crs:CropTop="0.1" crs:CropRight="1" crs:CropBottom="0.9" crs:CropAngle="0"/></rdf:RDF></x:xmpmeta>"#;
+    let preset = crate::crs::preset_from_xmp(xmp, "Cropped").unwrap();
+    let pid = preset.id.clone();
+    s.presets.push(preset);
+    s.execute("library.select", &json!({"ids": [id], "active": id})).unwrap();
+    s.execute("preset.apply", &json!({"id": pid})).unwrap();
+    let d = s.catalog.photos().next().unwrap().develop.to_json();
+    let rect = &d["crop"]["geometry"]["rect"];
+    let at = |k: &str| rect[k].as_f64().unwrap();
+    assert!(at("y0").abs() < 1e-6 && (at("y1") - 1.0).abs() < 1e-6, "the shown photo's full height: {rect}");
+    assert!((at("x1") - at("x0") - 0.8).abs() < 1e-6, "Lightroom's rows are the shown columns: {rect}");
+    assert!(d["crop"].get("lightroom").is_none(), "the marker is not stored: {}", d["crop"]);
+    assert_eq!(d["light"]["exposure"], json!(0.5));
+    let _ = std::fs::remove_dir_all(&src);
+}

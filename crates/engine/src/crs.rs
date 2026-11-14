@@ -1174,9 +1174,14 @@ pub fn crop_in_frame(partial: &mut Value, orientation: Orientation, stored_aspec
 pub fn preset_from_xmp(xmp: &str, fallback_name: &str) -> Option<Preset> {
     let d = lightcraft_meta::parse_xmp(xmp).ok()?;
     let props = &d.properties;
-    let settings = to_partial(props, Target::Any);
+    let mut settings = to_partial(props, Target::Any);
     if settings.as_object().is_none_or(Map::is_empty) {
         return None;
+    }
+    // (the crop's edges are on the stored image: each photo the preset is applied to turns them into its own frame,
+    // `Session::lightroom_crop_to_frame`)
+    if let Some(crop) = settings.get_mut("crop").and_then(Value::as_object_mut).filter(|c| c.contains_key("geometry")) {
+        crop.insert("lightroom".into(), json!(true));
     }
     let name = first(props, "crs:Name").unwrap_or(fallback_name).to_string();
     let group = first(props, "crs:Group").unwrap_or("Imported Presets").to_string();

@@ -1353,6 +1353,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     if let Some(p) = s.catalog.photo(id) {
                         crate::crs::lightroom_white_to_dial(&mut preset.settings, &p.meta.camera);
                     }
+                    // and a Lightroom crop on this photo's stored image
+                    s.lightroom_crop_to_frame(id, &mut preset.settings);
                     let after = s.preset_look(id, &preset, amount).unwrap_or_else(|| preset.apply(&d, amount));
                     s.develop_op(id, after, &format!("Preset: {}", preset.name))
                 })
