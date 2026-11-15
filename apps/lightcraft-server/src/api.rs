@@ -9,7 +9,8 @@
 use std::cell::Cell;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::http::{Header, Method, Request, Response, StatusCode};
@@ -30,6 +31,9 @@ pub const BLOB_MAX: u64 = 16 << 30;
 const PREVIEW_MAX: u64 = 256 << 20;
 /// Ops per pull at most.
 const PULL_MAX: usize = 5000;
+/// The longest a pull with nothing to bring is held open for a change (`GET /api/ops?wait=S`), in seconds: well
+/// under the read timeouts of the usual reverse proxies (60 s and more) and of the devices (120 s).
+pub const WAIT_MAX: u64 = 25;
 /// A storage answer is reused this long: it walks every photo file the user has.
 const USAGE_TTL: Duration = Duration::from_secs(5);
 /// Smart and mini previews start with this.
@@ -99,7 +103,50 @@ pub struct UserLib {
     tally: Cell<Option<(u64, crate::stats::Tally)>>,
     /// The lighter copies of videos on disk and when they were listed.
     copies: Option<(Instant, Arc<Vec<(String, u64)>>)>,
+    /// Rung when something the user's devices pull changes: the log, the presets, a shared document.
+    pub(crate) bell: Arc<Bell>,
     _lock: LibraryLock,
+}
+
+/// What a pull held open waits on ([`WAIT_MAX`]). Rung while the library's lock is held, so a pull that saw
+/// nothing new under that lock never misses the change that follows.
+#[derive(Default)]
+pub(crate) struct Bell {
+    rung: Mutex<u64>,
+    cv: Condvar,
+}
+
+impl Bell {
+    pub(crate) fn ring(&self) {
+        let mut n = self.rung.lock().unwrap_or_else(PoisonError::into_inner);
+        *n = n.wrapping_add(1);
+        self.cv.notify_all();
+    }
+
+    fn rung(&self) -> u64 {
+        *self.rung.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Wait until it rings past `seen`, or `until`.
+    fn wait(&self, seen: u64, until: Instant) {
+        let mut n = self.rung.lock().unwrap_or_else(PoisonError::into_inner);
+        while *n == seen {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            n = self.cv.wait_timeout(n, left).unwrap_or_else(PoisonError::into_inner).0;
+        }
+    }
+}
+
+/// A pull being held open, counted against the most there may be ([`hold`]).
+struct Held<'a>(&'a AtomicUsize);
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl UserLib {
@@ -122,7 +169,7 @@ impl UserLib {
         };
         let docs = crate::docs::Docs::load(&dir).map_err(|e| format!("{user}'s documents: {e}"))?;
         let index = crate::folders::Index::load(&dir);
-        Ok(UserLib { core, presets, docs, dir, index, usage: None, tally: Cell::new(None), copies: None, _lock: lock })
+        Ok(UserLib { core, presets, docs, dir, index, usage: None, tally: Cell::new(None), copies: None, bell: Arc::default(), _lock: lock })
     }
 
     /// What the library holds by kind: photos, videos (neither counts Recently Deleted or virtual copies) and albums.
@@ -272,6 +319,8 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
     };
     let parts: Vec<&str> = path.trim_start_matches("/api/").split('/').collect();
     let (began, sent) = (Instant::now(), req.body_length().unwrap_or(0) as u64);
+    // (a pull held open waits, it doesn't work: that time isn't the device's busy time)
+    let mut held = Duration::ZERO;
     let resp = match (method, parts.as_slice()) {
         (Method::Post, ["logout"]) => match st.accounts.lock().unwrap_or_else(PoisonError::into_inner).logout(&who) {
             Ok(()) => json(200, &json!({})),
@@ -281,7 +330,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["snapshot"]) => snapshot(st, req, &l, &who, q),
         (Method::Get, ["usage"]) => usage(st, &l, &who),
         (Method::Get, ["activity"]) => activity(st, &l, &who),
-        (Method::Get, ["ops"]) => ops(st, req, &l, q),
+        (Method::Get, ["ops"]) => ops(st, req, &l, q, &mut held),
         (Method::Post, ["ops"]) => push(st, req, &l, &who),
         (Method::Get, ["presets"]) => {
             // (a preset collection imported whole is tens of MB: gzipped, a tenth of that)
@@ -356,7 +405,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         _ => error(404, format!("no route {method} {path}")),
     };
     // (what this device asks of the server: the admin page's Overview)
-    st.usage.note(&who.user, who.device, sent, resp.data_length().unwrap_or(0) as u64, began.elapsed());
+    st.usage.note(&who.user, who.device, sent, resp.data_length().unwrap_or(0) as u64, began.elapsed().saturating_sub(held));
     resp
 }
 
@@ -548,9 +597,18 @@ fn snapshot(st: &State, req: &Request, l: &Mutex<UserLib>, who: &Session, q: &st
     big_json(req, format!("{{\"library\":{lib},\"seq\":{seq},\"catalog\":{catalog}}}").into_bytes())
 }
 
-fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
+/// `GET /api/ops?since=N&limit=M&wait=S`: the ops after `N`. With `wait`, a pull that would bring nothing is held
+/// until the user's library changes or `S` seconds pass ([`hold`]); every answer says the longest wait (`wait`), so a
+/// device knows the server holds pulls (an older server answers at once and says nothing).
+fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str, held: &mut Duration) -> Resp {
     let since = query(q, "since").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
     let limit = query(q, "limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1000).clamp(1, PULL_MAX);
+    let wait = query(q, "wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(WAIT_MAX);
+    if wait > 0 {
+        let began = Instant::now();
+        hold(st, l, since, Duration::from_secs(wait));
+        *held = began.elapsed();
+    }
     let shared = st.presets.lock().unwrap_or_else(PoisonError::into_inner).version();
     let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
     let presets = l.presets.version;
@@ -560,7 +618,8 @@ fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
     }
     match l.core.since(since, limit) {
         Ok(Pull::Ops(ops)) => {
-            let body = serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs, format: lightcraft_catalog::journal::SYNC_VERSION });
+            let body =
+                serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs, format: lightcraft_catalog::journal::SYNC_VERSION, wait: WAIT_MAX });
             drop(l);
             match body {
                 Ok(body) => big_json(req, body),
@@ -575,6 +634,25 @@ fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
     }
 }
 
+/// Hold a pull while there is nothing after `since`, until the library's bell rings ([`Bell`]) or `wait` passes. At
+/// most half the requests the server answers at once are held (each holds a connection's thread and a place among
+/// those requests); past that a pull is answered at once and the device asks again on its timer.
+fn hold(st: &State, l: &Mutex<UserLib>, since: u64, wait: Duration) {
+    let (bell, seen, _held) = {
+        let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+        if l.core.head() > since {
+            return;
+        }
+        let max = st.limits.requests.load(Ordering::Relaxed) / 2;
+        if st.held.fetch_add(1, Ordering::SeqCst) >= max {
+            st.held.fetch_sub(1, Ordering::SeqCst);
+            return;
+        }
+        (l.bell.clone(), l.bell.rung(), Held(&st.held))
+    };
+    bell.wait(seen, Instant::now() + wait);
+}
+
 fn push(st: &State, req: &mut Request, l: &Mutex<UserLib>, who: &Session) -> Resp {
     let p: proto::Push = match read_json(req) {
         Ok(p) => p,
@@ -583,6 +661,7 @@ fn push(st: &State, req: &mut Request, l: &Mutex<UserLib>, who: &Session) -> Res
     let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
     match l.core.push(p.base, &p.ops) {
         Ok(head) => {
+            l.bell.ring();
             log::debug!("{} device {}: {} op(s), head {head}", who.user, who.device, p.ops.len());
             // (a library folder the server may write in gets the changed photos' sidecars)
             st.writer.photos_changed(&who.user, &crate::writeback::sidecar_photos(&p.ops));
@@ -619,6 +698,7 @@ fn put_presets(req: &mut Request, l: &Mutex<UserLib>) -> Resp {
         return error(500, format!("presets.json: {e}"));
     }
     l.presets = next;
+    l.bell.ring();
     json(200, &json!({"version": l.presets.version}))
 }
 
@@ -639,8 +719,12 @@ fn put_doc(req: &mut Request, l: &Mutex<UserLib>, name: &str) -> Resp {
         Ok(d) => d,
         Err(r) => return r,
     };
-    match l.lock().unwrap_or_else(PoisonError::into_inner).docs.put(name, doc) {
-        Ok(Ok(version)) => json(200, &json!({"version": version})),
+    let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
+    match l.docs.put(name, doc) {
+        Ok(Ok(version)) => {
+            l.bell.ring();
+            json(200, &json!({"version": version}))
+        }
         // another device wrote first: the answer is its document, to merge and put again
         Ok(Err(current)) => json(412, &serde_json::to_value(&current).unwrap_or(Value::Null)),
         Err(e) if e.starts_with("no document") => error(404, e),

@@ -195,10 +195,11 @@ impl Client {
 }
 
 impl Session {
-    /// The app is in front (or not): presence says nothing from the background.
+    /// The app is in front (or not): presence says nothing from the background, and no pull is held open there.
     pub fn sync_set_foreground(&mut self, on: bool) {
         if let Some(st) = self.sync.as_mut() {
             st.presence.set_foreground(on);
+            st.watch.set_foreground(on);
         }
     }
 

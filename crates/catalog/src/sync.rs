@@ -1234,7 +1234,9 @@ pub mod proto {
         }
     }
 
-    /// `GET /api/ops?since=N&limit=M`: the ops after `N` (`410 Gone`: reload the snapshot).
+    /// `GET /api/ops?since=N&limit=M[&wait=S]`: the ops after `N` (`410 Gone`: reload the snapshot). With `wait`, a
+    /// server that holds pulls ([`Ops::wait`]) answers when there are ops after `N`, something else the devices pull
+    /// changed, or `S` seconds passed.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     pub struct Ops {
         pub head: u64,
@@ -1249,6 +1251,10 @@ pub mod proto {
         /// older than this field). A device holds back changes a server of an older format would drop (hidden photos).
         #[serde(default)]
         pub format: u32,
+        /// The longest the server holds a pull that would bring nothing, waiting for a change (`&wait=S`, seconds;
+        /// 0: a server older than held pulls, which answers at once).
+        #[serde(default)]
+        pub wait: u64,
     }
 
     /// `POST /api/ops`: ops made on top of op `base`. `200` [`Head`]; `409` [`Head`] (behind:
