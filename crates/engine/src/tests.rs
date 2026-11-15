@@ -436,11 +436,7 @@ fn lens_blur_brush_strokes_and_reset() {
     assert_eq!((f.len(), b.len()), (1, 1));
     assert_eq!(f[0].points.len(), 2);
     assert!(f[0].size == 1.0 && f[0].density == 40.0 && f[0].feather == lightcraft_develop::BrushStroke::default().feather && f[0].auto_mask);
-    for bad in [
-        json!({"mode": "sideways", "points": [[0.5, 0.5]]}),
-        json!({"mode": "focus", "points": []}),
-        json!({"mode": "focus"}),
-    ] {
+    for bad in [json!({"mode": "sideways", "points": [[0.5, 0.5]]}), json!({"mode": "focus", "points": []}), json!({"mode": "focus"})] {
         assert!(s.execute("lensBlur.brushStroke", &bad).is_err(), "{bad}");
     }
     s.execute("edit.undo", &json!({})).unwrap();
