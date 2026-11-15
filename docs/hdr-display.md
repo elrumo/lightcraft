@@ -1,6 +1,6 @@
 # HDR display (LR-VIEW-HDR-DISPLAY)
 
-> **Last updated:** 2026-10-25 · **Change:** HDR sources: an iPhone HEIC's and an Ultra HDR JPEG's gain map give the HDR render its highlights (FB-HDR-6); before: the HDR picture renders on the GPU (half floats and the HDR histogram from the GPU pipeline), and the draft budget learns HDR drafts apart: HDR drags at or near full size
+> **Last reviewed:** 2026-10-25 · **Changes:** [revision history](#revision-history)
 
 When **Edit ▸ Light ▸ HDR** is on and the screen can show more than SDR white, the loupe draws the photo
 in HDR: highlights go past white, up to the edit's headroom limit (`hdr.maxEv`). Every other view, and a
@@ -118,3 +118,10 @@ shader writes what it samples), so a value above 1 reaches the surface as it is.
 - The window's own screenshot cannot read back a float surface, so `ui.screenshot` renders headlessly on a
   window that can draw HDR: it shows the 8-bit pictures.
 - Generative Expand stays SDR (its missing area is transparent in the 8-bit picture; an HDR one has no alpha).
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-10-25 | HDR sources: an iPhone HEIC's and an Ultra HDR JPEG's gain map give the HDR render its highlights (FB-HDR-6); before: the HDR picture renders on the GPU (half floats and the HDR histogram from the GPU pipeline), and the draft budget learns HDR drafts apart: HDR drags at or near full size |

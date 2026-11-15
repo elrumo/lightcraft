@@ -1,6 +1,6 @@
 # Glow
 
-> **Last updated:** 2026-11-09 · **Status:** built (Effects panel, under Grain; `ctl:glow.*`), not fitted to Lightroom
+> **Last reviewed:** 2026-11-09 · **Status:** built (Effects panel, under Grain; `ctl:glow.*`), not fitted to Lightroom · **Changes:** [revision history](#revision-history)
 
 Glow is light spread from a photo's bright parts, as a lens, a diffusion filter or film scatters it. Lightroom added
 it to the Effects panel in 2026 (Glow, a Style menu with Bloom, Diffusion and Halation on the desktop and also Motion
@@ -90,3 +90,10 @@ the picture at both ends, more the further it goes).
   it to the brightest lights. Keeping it to small lights (the bright pass less its own local mean) is not done.
 - **XMP.** Glow is not written to or read from Lightroom's `crs:` XMP (its names there are unknown to us); LightCraft's
   own settings carry it.
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-11-09 | Last change before the header rule (recorded in the old header, no note). |

@@ -1,6 +1,6 @@
 # Colorize
 
-> **Last updated:** 2026-11-12 · **Change:** minor (Colorize over the photo's colour or its black and white version; Neutral Highlights and Neutral Shadows; a developed photo reaches the model as it is)
+> **Last reviewed:** 2026-11-12 · **Changes:** [revision history](#revision-history)
 
 Colorize gives a black-and-white photo colours made by a model, as an edit: the colours are stored with the photo's
 settings, so rendering, exporting, the sync server and other devices never run the model, and every other control still
@@ -87,3 +87,10 @@ The large checkpoints, each as it is fed above with the two sliders at their def
 - Paste and presets do not make the colours again on another photo (no `ai_work` entry).
 - Old-photo repair beyond colour: scratches (a detector whose mask feeds AI Remove) and faces (no model passes the
   weights policy yet: GFPGAN and CodeFormer carry non-commercial terms).
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-11-12 | minor (Colorize over the photo's colour or its black and white version; Neutral Highlights and Neutral Shadows; a developed photo reaches the model as it is) |

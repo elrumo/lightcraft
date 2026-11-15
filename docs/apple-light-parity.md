@@ -1,6 +1,6 @@
 # Core Image against the engine's Light controls
 
-> **Last updated:** 2026-10-27 · **Status:** measured, nothing ships from it · **Tool:** [`tools/apple_light_parity.sh`](../tools/apple_light_parity.sh)
+> **Last reviewed:** 2026-10-27 · **Status:** measured, nothing ships from it · **Tool:** [`tools/apple_light_parity.sh`](../tools/apple_light_parity.sh) · **Changes:** [revision history](#revision-history)
 
 Question: if a native (non-Rust) frontend drew the Light section (Exposure, Contrast, Highlights, Shadows, Whites,
 Blacks) with Core Image instead of the engine, how close would it get? It follows [`apple-raw9.md`](apple-raw9.md),
@@ -90,3 +90,10 @@ and Shadows are not, and they are the controls people reach for most; matching t
 kernel (a guided-filter base layer in log luminance, as `crates/pipeline/src/local.rs` does), which is re-implementing the
 engine rather than calling Apple. The server and the other frontends render from the same settings, so any difference
 would show between devices.
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-10-27 | Last change before the header rule (recorded in the old header, no note). |

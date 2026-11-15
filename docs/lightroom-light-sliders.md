@@ -1,6 +1,6 @@
 # Light sliders fitted to Lightroom's single-slider exports
 
-> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** colour by tone of fitted looks; Camera Matching keeps the camera's own
+> **Last reviewed:** 2026-11-06 · **Changes:** [revision history](#revision-history)
 
 How Contrast, Highlights, Shadows, Whites and Blacks move a photo was tuned by eye. Here they are fitted to Lightroom's own
 response on one raw: a Sony ILCE-6000 with the E PZ 16-50mm at 16 mm (sunset over the sea, grass, white camper vans; the
@@ -137,6 +137,8 @@ port share the same constants; the port's goldens come from the core.
 
 | Date | Change |
 |---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-11-06 | colour by tone of fitted looks; Camera Matching keeps the camera's own |
 | 2026-11-06 | New: Contrast, Whites and Blacks as fitted shift tables, Highlights and Shadows windows and gains refitted. |
 | 2026-11-06 | Colour: Contrast, lifting Whites and crushing Blacks scale chroma by their curve's slope, as Lightroom's do. |
 | 2026-11-06 | Colour by tone: camera-JPEG fitted looks start with Lightroom's camera-profile chroma; Camera Matching keeps the fit. |

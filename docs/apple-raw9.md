@@ -1,6 +1,6 @@
 # Apple RAW 9 (Core Image) against the engine, and as a fallback for raws we can't decode
 
-> **Last updated:** 2026-10-25 · **Status:** measured; the linear stand-in is built for a native Apple frontend (below) · **Tool:** [`tools/apple_raw_compare.sh`](../tools/apple_raw_compare.sh)
+> **Last reviewed:** 2026-10-25 · **Status:** measured; the linear stand-in is built for a native Apple frontend (below) · **Tool:** [`tools/apple_raw_compare.sh`](../tools/apple_raw_compare.sh) · **Changes:** [revision history](#revision-history)
 
 Two questions: how does Apple's RAW decoder (`CIRAWFilter`, decoder versions 6 to 9) compare with ours on the raws we
 both open, and can it stand in for a decoder we don't have (compressed ORF, Nikon HE, CRW, old ARW) so that the photo
@@ -179,3 +179,10 @@ No comparison against Lightroom or the camera JPEG; no colour check of Apple's o
 high-ISO corpus beyond two files; decode timings were taken while another job ran for some passes; the linear source's latitude was shown with a
 half-float TIFF through the engine's image path, not a real LinearRaw DNG built from Apple's pixels, so how well the
 raw pipeline (white balance, look, highlight reconstruction) treats it is unmeasured.
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-10-25 | Last change before the header rule (recorded in the old header, no note). |

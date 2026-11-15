@@ -1,6 +1,6 @@
 # Video clips
 
-> **Last updated:** 2026-11-04 · **Change:** minor (Keeping a native frontend's editing and export fast: read ahead, draw on two threads, write in order; edits to a playing clip change its settings in place; trim handle pictures from the system's image generator; numbers; A native frontend may also play an edited clip live, its renderer drawing each picture as it plays; a native frontend may write a clip itself: its own cut of the original stream for a trim alone, or its own renderer and hardware encoder, with `video.export` left for what that renderer does not draw; Lighter copies: a sync server keeps a smaller copy of every video beside the original, set from the admin page, made by a Mac helper later or by the server's own pure-Rust encoder at the lowest priority; the helper and replacing originals remain; poster frames cost 3 to 6 times less CPU: profiled, the decoder was fed pictures past the key frame and every pixel paid three `powf`; Hardware video: VideoToolbox decode and encode measured against the pure-Rust ones on a Mac, with a go / no-go; the FilmCraft pin moves with `cargo xtask filmcraft`; library stats; Live Photos, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision)
+> **Last reviewed:** 2026-11-04 · **Changes:** [revision history](#revision-history)
 
 LightCraft lists video clips next to photos: MP4 / M4V / MOV files import as photos of kind **Video** with their length,
 size, recording date and place, and a **poster frame** stands for them in the grid, the filmstrip, the loupe and in the
@@ -421,3 +421,10 @@ probes each, makes its poster, reads its middle and its first second in order (`
 2026-10-22 it passed on clips made with ffmpeg: x264 1280 x 720 with AAC sound, a clip with a 90 degree display matrix (read
 as 720 x 1280), and VideoToolbox's HEVC at 960 x 540 (8-bit) and 1920 x 1080 (Main 10). iPhone clips (Dolby Vision HLG, Live
 Photo movies) have not been tried.
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-11-04 | minor (Keeping a native frontend's editing and export fast: read ahead, draw on two threads, write in order; edits to a playing clip change its settings in place; trim handle pictures from the system's image generator; numbers; A native frontend may also play an edited clip live, its renderer drawing each picture as it plays; a native frontend may write a clip itself: its own cut of the original stream for a trim alone, or its own renderer and hardware encoder, with `video.export` left for what that renderer does not draw; Lighter copies: a sync server keeps a smaller copy of every video beside the original, set from the admin page, made by a Mac helper later or by the server's own pure-Rust encoder at the lowest priority; the helper and replacing originals remain; poster frames cost 3 to 6 times less CPU: profiled, the decoder was fed pictures past the key frame and every pixel paid three `powf`; Hardware video: VideoToolbox decode and encode measured against the pure-Rust ones on a Mac, with a go / no-go; the FilmCraft pin moves with `cargo xtask filmcraft`; library stats; Live Photos, `live.*`; import, poster frames, `video.info` / `video.frame`; first revision) |
