@@ -16,7 +16,9 @@ const DENY_LINTS: &[&str] =
     &["clippy::unwrap_used", "clippy::expect_used", "clippy::panic", "clippy::unimplemented", "clippy::todo", "clippy::unreachable"];
 
 /// Crate roots exempt from `forbid(unsafe_code)` (they still need the deny list).
-const UNSAFE_EXCEPTION: &[&str] = &["lightcraft-sysmem", "lightcraft-wincolor"];
+/// The crates allowed `unsafe` (CLAUDE.md, Never crash): upstream's two, and this fork's iOS host (Objective-C
+/// through objc2), its ImageCaptureCore bridge and the iOS app's C entry point (`#[unsafe(no_mangle)]`).
+const UNSAFE_EXCEPTION: &[&str] = &["lightcraft-sysmem", "lightcraft-wincolor", "lightcraft-ios-host", "lightcraft-capture", "lightcraft-ios"];
 
 #[derive(Debug, Clone)]
 pub struct CrateRoot {
