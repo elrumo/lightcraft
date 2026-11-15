@@ -52,6 +52,10 @@ fn is_enum_pq(bytes: &[u8]) -> bool {
             return false;
         }
         if consumed == 0 {
+            // nothing taken although the decoder already had all that is left: it never will be (a cut-short header)
+            if window >= rest.len() {
+                return false;
+            }
             window = window.saturating_mul(2);
         }
     }

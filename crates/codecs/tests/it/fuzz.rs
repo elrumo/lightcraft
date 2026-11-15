@@ -49,6 +49,13 @@ fn gain_map_jpeg(meta: &EncodeMeta) -> Vec<u8> {
     encode_jpeg(&EncodeImage::new(24, 16, 3, Samples::U8(&base)), &g, &m, 80, ChromaSubsampling::S420, meta).unwrap()
 }
 
+/// A JPEG XL container cut short in its first box (found by `random_after_magic`): the HDR header probe fed the
+/// same 2 bytes to jxl-oxide forever, doubling its window, because the parser took none of them. It must give up.
+#[test]
+fn a_cut_short_jxl_container_ends_the_header_probe() {
+    try_all(b"\0\0\0\x0CJXL \x0D\x0A\x87\x0A\xA0\x17");
+}
+
 #[test]
 fn webp_truncated_metadata_cannot_allocate_declared_chunk_size() {
     let mut bytes = seeds()[5].clone();
