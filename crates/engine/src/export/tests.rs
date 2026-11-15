@@ -1520,7 +1520,7 @@ fn a_photo_a_frontend_draws_is_not_refused_for_this_devices_render() {
     for (n, name) in [(1, "_DSC9466.ARW"), (2, "_DSC9467.ARW")] {
         let p = lightcraft_catalog::Photo::new(
             lightcraft_catalog::PhotoId(n),
-            lightcraft_catalog::Source::File { path: format!("/nowhere/{name}").into() },
+            lightcraft_catalog::Source::File { path: format!("/nowhere/{name}") },
             name,
             "ARW",
             7952,
@@ -1540,7 +1540,10 @@ fn a_photo_a_frontend_draws_is_not_refused_for_this_devices_render() {
     assert!(items[0].weight < 300 << 20, "weighs its encode, not a render ({} MB)", items[0].weight >> 20);
     let (w, h) = output_size(s.catalog.photo(one).unwrap(), &o);
     let space = o.effective_space();
-    assert!(!items[0].with_host_pixels(HostPixels { file: "/nowhere/p.rgba".into(), width: w + 9, height: h, depth: 8, space }), "another size is not taken");
+    assert!(
+        !items[0].with_host_pixels(HostPixels { file: "/nowhere/p.rgba".into(), width: w + 9, height: h, depth: 8, space }),
+        "another size is not taken"
+    );
     assert!(items[0].with_host_pixels(HostPixels { file: "/nowhere/p.rgba".into(), width: w, height: h, depth: 8, space }));
     assert!(items[0].is_hosted());
 }

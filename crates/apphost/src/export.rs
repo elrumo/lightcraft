@@ -10,8 +10,8 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
 use lightcraft_engine::activity::{Cancel, TaskGuard, TaskHandle};
 use lightcraft_engine::export::{
-    AfterExport, Destination, ExportFormat, ExportOptions, HostFile, HostPixels, OutputSpace, PreparedExport, Resize, prepare_batch_hosted, prepare_export,
-    run_batch,
+    AfterExport, Destination, ExportFormat, ExportOptions, HostFile, HostPixels, OutputSpace, PreparedExport, Resize, prepare_batch_hosted,
+    prepare_export, run_batch,
 };
 use serde_json::{Value, json};
 
@@ -438,6 +438,42 @@ mod tests {
         let e = export_now(&mut s, &with(json!({"hostPixels": {ids[0].to_string(): {"file": "x"}}}), "bad"), &mut |_, _, _| true);
         assert!(e.unwrap_err().contains("hostPixels"));
         assert!(!dir.join("bad").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A photo whose picture the host drew is exported where this device's own render of it would not fit (card #456: an iPhone refused a 12 MP Lens Blur
+    // export its native renderer had drawn); a host picture the export cannot use leaves the photo to that check, which refuses it
+    #[test]
+    fn a_hosts_picture_is_not_refused_for_the_memory_of_the_exports_own_render() {
+        let dir = std::env::temp_dir().join(format!("lc-apphost-host-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::with_demo();
+        let id = s.visible_cloned()[0].0;
+        let base = json!({"ids": [id], "longEdge": 64, "format": "png"});
+        let plain =
+            export_now(&mut s, &json!({"ids": [id], "longEdge": 64, "format": "png", "dir": dir.join("plain").to_string_lossy()}), &mut |_, _, _| {
+                true
+            })
+            .unwrap();
+        let (w, h) = (plain["files"][0]["width"].as_u64().unwrap() as usize, plain["files"][0]["height"].as_u64().unwrap() as usize);
+        let solid = dir.join("solid.rgba");
+        std::fs::write(&solid, std::iter::repeat_n([10u8, 200, 90, 255], w * h).flatten().collect::<Vec<u8>>()).unwrap();
+        let with = |host_w: usize, sub: &str| {
+            let mut p = base.clone();
+            p["dir"] = json!(dir.join(sub).to_string_lossy());
+            p["hostPixels"] = json!({id.to_string(): {"file": solid.to_string_lossy(), "width": host_w, "height": h}});
+            p
+        };
+        s.set_export_limit(Some(1));
+        let own =
+            export_now(&mut s, &json!({"ids": [id], "longEdge": 64, "format": "png", "dir": dir.join("own").to_string_lossy()}), &mut |_, _, _| true);
+        assert!(own.unwrap_err().contains("more than this device can allow"), "the export's own render does not fit");
+        let out = export_now(&mut s, &with(w, "host"), &mut |_, _, _| true).unwrap();
+        assert_eq!(out["files"][0]["width"].as_u64(), Some(w as u64), "the host's picture is exported");
+        let e = export_now(&mut s, &with(w + 5, "size"), &mut |_, _, _| true).unwrap_err();
+        assert!(e.contains("more than this device can allow"), "a picture of another size leaves the photo to the check: {e}");
+        s.set_export_limit(None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
