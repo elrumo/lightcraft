@@ -310,13 +310,14 @@ pub(crate) fn gaussian(cx: &mut Cx<'_>, src: &Buf, w: usize, h: usize, nc: usize
     if last == 0 { a } else { b }
 }
 
-/// Resample taps of `lightcraft_raster::resample::resize`, packed for the `resize_*` kernels.
-fn taps(src: usize, dst: usize, filter: Filter) -> Vec<u32> {
-    let w = lightcraft_raster::resample::weights(src, dst, filter);
+/// Resample taps (`lightcraft_raster::resample::weights`: a first source index and weights per output pixel),
+/// packed for the `resize_*` kernels.
+fn taps(w: &[(usize, Vec<f32>)]) -> Vec<u32> {
+    let dst = w.len();
     let mut t = Vec::with_capacity(dst * 3);
     let mut weights = Vec::new();
     let base = dst * 3;
-    for (lo, ws) in &w {
+    for (lo, ws) in w {
         t.extend_from_slice(&[*lo as u32, ws.len() as u32, (base + weights.len()) as u32]);
         weights.extend(ws.iter().map(|v| v.to_bits()));
     }
@@ -330,10 +331,18 @@ pub(crate) fn resize(cx: &mut Cx<'_>, src: &Buf, (sw, sh): (usize, usize), (dw, 
     if (sw, sh) == (dw, dh) {
         return cx.copy(src);
     }
-    let tx = cx.gpu.upload(&taps(sw, dw, filter));
+    use lightcraft_raster::resample::weights;
+    resize_with(cx, src, (sw, sh), &weights(sw, dw, filter), &weights(sh, dh, filter), nc)
+}
+
+/// `lightcraft_raster::resample::resize_with` of an `nc`-channel image with the taps given: `wx` makes the columns of
+/// the result, `wy` its rows.
+fn resize_with(cx: &mut Cx<'_>, src: &Buf, (sw, sh): (usize, usize), wx: &[(usize, Vec<f32>)], wy: &[(usize, Vec<f32>)], nc: usize) -> Buf {
+    let (dw, dh) = (wx.len().max(1), wy.len().max(1));
+    let tx = cx.gpu.upload(&taps(wx));
     let tmp = cx.gpu.buffer(dw * sh * nc);
     cx.run("resize_h", &[sw as u32, sh as u32, dw as u32, nc as u32], &[Some(src), Some(&tx), Some(&tmp)], groups2(dw, sh, [16, 16]));
-    let ty = cx.gpu.upload(&taps(sh, dh, filter));
+    let ty = cx.gpu.upload(&taps(wy));
     let out = cx.gpu.buffer(dw * dh * nc);
     cx.run("resize_v", &[dw as u32, sh as u32, dh as u32, nc as u32], &[Some(&tmp), Some(&ty), Some(&out)], groups2(dw, dh, [16, 16]));
     out
@@ -394,27 +403,30 @@ fn min_hv(cx: &mut Cx<'_>, p: Buf, w: usize, h: usize, r: usize) -> Buf {
     out
 }
 
-/// The highlights/shadows base (`local::tone_base`; `detail` 0: V1, no detail removal).
-fn tone_base(cx: &mut Cx<'_>, l: &Buf, w: usize, h: usize, sigma: f32, detail: usize, keeps_gaps: bool) -> Buf {
+/// The highlights/shadows base (`local::tone_base`; `detail` 0: V1, no detail removal). `origin`: where the
+/// plane sits in the whole output.
+#[allow(clippy::too_many_arguments)]
+fn tone_base(cx: &mut Cx<'_>, l: &Buf, w: usize, h: usize, sigma: f32, detail: usize, keeps_gaps: bool, origin: [usize; 2]) -> Buf {
     if detail == 0 {
         return guided_fast(cx, l, w, h, sigma, local::BASE_EPS);
     }
-    let m = if keeps_gaps { detail_free(cx, l, w, h, detail) } else { median_hv(cx, l, w, h, detail) };
+    let m = if keeps_gaps { detail_free(cx, l, w, h, detail, origin) } else { median_hv(cx, l, w, h, detail) };
     guided_fast(cx, &m, w, h, sigma, local::BASE_EPS)
 }
 
 /// Log luminance without detail finer than `r` px (`local::detail_free`): clamped between its
-/// median at `r` and the median of a `local::BASE_COARSE_STEP`× downscaled copy, enlarged.
-fn detail_free(cx: &mut Cx<'_>, l: &Buf, w: usize, h: usize, r: usize) -> Buf {
+/// median at `r` and the median of a `local::BASE_COARSE_STEP`× downscaled copy, enlarged, on the
+/// whole frame's coarse grid (`local::coarse_taps`) from `origin`.
+fn detail_free(cx: &mut Cx<'_>, l: &Buf, w: usize, h: usize, r: usize, origin: [usize; 2]) -> Buf {
     if r == 0 || w * h == 0 {
         return cx.copy(l);
     }
     let fine = median_hv(cx, l, w, h, r);
-    let s = local::BASE_COARSE_STEP;
-    let (lw, lh) = (w.div_ceil(s).max(1), h.div_ceil(s).max(1));
-    let lo = resize(cx, l, (w, h), (lw, lh), 1, Filter::Box);
+    let ((dx, ux), (dy, uy)) = (local::coarse_taps(w, origin[0]), local::coarse_taps(h, origin[1]));
+    let (lw, lh) = (dx.len().max(1), dy.len().max(1));
+    let lo = resize_with(cx, l, (w, h), &dx, &dy, 1);
     let lo_median = median_hv(cx, &lo, lw, lh, r);
-    let coarse = resize(cx, &lo_median, (lw, lh), (w, h), 1, Filter::Bilinear);
+    let coarse = resize_with(cx, &lo_median, (lw, lh), &ux, &uy, 1);
     let out = cx.gpu.buffer(w * h);
     map(cx, "clamp_between_k", w * h, &[], [Some(l), Some(&fine), Some(&coarse)], &out);
     out
@@ -1111,7 +1123,7 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
     let base = match sig.base {
         Some(sg) => {
             let key = local::base_key(&plan.settings, sg, sig.base_detail);
-            plane_at(&mut planes.base, key, || tone_base(cx, &log_l, w, h, sg, sig.base_detail, local::base_keeps_gaps(&plan.settings)))
+            plane_at(&mut planes.base, key, || tone_base(cx, &log_l, w, h, sg, sig.base_detail, local::base_keeps_gaps(&plan.settings), plan.origin))
         }
         None => log_l.clone(),
     };

@@ -237,7 +237,7 @@ fn gaps_between_letters_keep_their_own_tone_in_the_base() {
     assert_eq!(r, 10);
     let (l, stroke) = lettering(r);
     let (w, h) = (l.width, l.height);
-    let base = local::tone_base(&l, 0.015 * ppl as f32, r, true);
+    let base = local::tone_base(&l, 0.015 * ppl as f32, r, true, [0, 0]);
     // panel pixels at least 3 px from a stroke (the guided filter's own edge softness aside)
     let panel = |x: usize, y: usize| !(x.saturating_sub(2)..(x + 3).min(w)).any(|a| (y.saturating_sub(2)..(y + 3).min(h)).any(|b| stroke(a, b)));
     let (mut worst, mut under) = (0.0f32, 0usize);
@@ -264,7 +264,7 @@ fn isolated_lines_up_to_the_detail_radius_stay_out_of_the_base() {
         let (i, off) = (x / 130, x % 130);
         if i < widths.len() && (60..60 + widths[i]).contains(&off) { -2.0 } else { -6.0 }
     });
-    let base = local::tone_base(&l, 0.015 * ppl as f32, r, true);
+    let base = local::tone_base(&l, 0.015 * ppl as f32, r, true, [0, 0]);
     for (i, wd) in widths.iter().enumerate() {
         let leak = (base.get(i * 130 + 60 + wd / 2, 100) + 6.0) / 4.0;
         assert!(leak.abs() < 0.05, "a {wd} px line is {leak} of the way into the base");
@@ -280,24 +280,24 @@ fn only_process_v9_on_takes_the_detail_free_base() {
     }
     let (l, _) = lettering(10);
     let plain = local::guided_fast(&local::median_hv(&l, 10), 100.0, local::BASE_EPS);
-    assert_eq!(local::tone_base(&l, 100.0, 10, false).data, plain.data);
-    assert_ne!(local::tone_base(&l, 100.0, 10, true).data, plain.data);
+    assert_eq!(local::tone_base(&l, 100.0, 10, false, [0, 0]).data, plain.data);
+    assert_ne!(local::tone_base(&l, 100.0, 10, true, [0, 0]).data, plain.data);
 }
 
 #[test]
 fn detail_free_keeps_steps_and_regions() {
     // a step between two flat regions, and a flat field, come out as they went in
     let step = Plane::from_fn(90, 60, |x, _| if x < 45 { -4.0 } else { 0.5 });
-    assert_eq!(local::detail_free(&step, 6).data, step.data);
+    assert_eq!(local::detail_free(&step, 6, [0, 0]).data, step.data);
     let flat = Plane::from_fn(31, 17, |_, _| -1.25);
-    assert_eq!(local::detail_free(&flat, 3).data, flat.data);
-    assert_eq!(local::detail_free(&step, 0).data, step.data);
+    assert_eq!(local::detail_free(&flat, 3, [0, 0]).data, flat.data);
+    assert_eq!(local::detail_free(&step, 0, [0, 0]).data, step.data);
     // tiny and empty planes, and NaNs, are not a panic
     for (w, h) in [(1, 1), (2, 3), (5, 1)] {
         let p = Plane::from_fn(w, h, |x, y| if (x + y) % 2 == 0 { f32::NAN } else { 1.0 });
-        assert_eq!(local::detail_free(&p, 4).data.len(), w * h);
+        assert_eq!(local::detail_free(&p, 4, [0, 0]).data.len(), w * h);
     }
-    assert!(local::detail_free(&Plane::new(0, 0), 4).data.is_empty());
+    assert!(local::detail_free(&Plane::new(0, 0), 4, [0, 0]).data.is_empty());
 }
 
 #[test]
@@ -317,7 +317,7 @@ fn v1_keeps_the_base_it_always_had() {
     let l =
         Plane::from_fn(301, 157, |x, y| (((x * 31 + y * 17) * 2_654_435_761usize) % 1000) as f32 / 250.0 - 2.0 + if x % 5 == 0 { 0.5 } else { 0.0 });
     for sg in [1.0f32, 4.5, 18.0] {
-        assert_eq!(local::tone_base(&l, sg, 0, true).data, local::guided_fast(&l, sg, local::BASE_EPS).data, "sigma {sg}");
+        assert_eq!(local::tone_base(&l, sg, 0, true, [0, 0]).data, local::guided_fast(&l, sg, local::BASE_EPS).data, "sigma {sg}");
     }
     // V2 takes the median wherever the image is big enough for one
     let v2 = with("light.highlights", -100.0);

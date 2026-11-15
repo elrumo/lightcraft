@@ -450,11 +450,11 @@ pub fn tone_base_detail(s: &DevelopSettings, px_per_long: f64) -> usize {
 /// The highlights/shadows base layer of log luminance `l`: the fast guided filter ([`BASE_EPS`])
 /// at `detail` px ([`tone_base_detail`]) of its [`detail_free`] plane when `keeps_gaps`
 /// ([`base_keeps_gaps`], V9 on), else of its [`median_hv`] (V2 to V8); at 0, of `l` itself (V1).
-pub fn tone_base(l: &Plane, sigma: f32, detail: usize, keeps_gaps: bool) -> Plane {
+pub fn tone_base(l: &Plane, sigma: f32, detail: usize, keeps_gaps: bool, origin: [usize; 2]) -> Plane {
     if detail == 0 {
         return guided_fast(l, sigma, BASE_EPS);
     }
-    let m = if keeps_gaps { detail_free(l, detail) } else { median_hv(l, detail) };
+    let m = if keeps_gaps { detail_free(l, detail, origin) } else { median_hv(l, detail) };
     guided_fast(&m, sigma, BASE_EPS)
 }
 
@@ -469,26 +469,24 @@ pub const BASE_COARSE_STEP: usize = 3;
 /// its tone, as #632 wants. The gap between two letter strokes, which a median at `r` fills with the
 /// strokes' tone, sits in a wider neighbourhood mostly of the panel's tone: the two medians
 /// disagree and the gap keeps its own. The coarse median is taken at `r` of a box-downscaled copy and
-/// enlarged bilinearly, like [`guided_fast`]'s coefficients.
-pub fn detail_free(l: &Plane, r: usize) -> Plane {
-    use lightcraft_raster::resample::{Filter, resize};
+/// enlarged bilinearly, like [`guided_fast`]'s coefficients, on the whole frame's grid
+/// ([`coarse_taps`]): `origin` is where `l` sits in the whole output (a window's or an export band's
+/// top-left corner), so a window takes the same coarse cells as the whole render.
+pub fn detail_free(l: &Plane, r: usize, origin: [usize; 2]) -> Plane {
+    use lightcraft_raster::resample::resize_with;
     if r == 0 || l.data.is_empty() {
         return l.clone();
     }
     let (w, h) = (l.width, l.height);
-    let (lw, lh) = (w.div_ceil(BASE_COARSE_STEP).max(1), h.div_ceil(BASE_COARSE_STEP).max(1));
-    if (lw, lh) == (w, h) {
-        // nothing to downscale: both medians are the same
-        return median_hv(l, r);
-    }
-    let lo = median_hv(&resize(l, lw, lh, Filter::Box), r);
-    // The bilinear enlargement of `lo` (`resize`'s horizontal pass, then its vertical pass taken
-    // row by row with the same sums) is clamped into `out` as it is made, not stored.
-    let wide = resize(&lo, w, lh, Filter::Bilinear);
-    let wy = lightcraft_raster::resample::weights(lh, h, Filter::Bilinear);
+    let ((dx, ux), (dy, uy)) = (coarse_taps(w, origin[0]), coarse_taps(h, origin[1]));
+    let lo = median_hv(&resize_with(l, 0..h, &dx, &dy), r);
+    // The bilinear enlargement of `lo` (its horizontal pass, then its vertical pass taken row by
+    // row with the same sums) is clamped into `out` as it is made, not stored.
+    let rows: Vec<(usize, Vec<f32>)> = (0..lo.height).map(|i| (i, vec![1.0])).collect();
+    let wide = resize_with(&lo, 0..lo.height, &ux, &rows);
     let mut out = median_hv(l, r);
     for_rows(&mut out.data, w, |y, row| {
-        let Some((y0, ws)) = wy.get(y) else { return };
+        let Some((y0, ws)) = uy.get(y) else { return };
         let mut coarse = vec![0.0f32; w];
         for (k, &wt) in ws.iter().enumerate() {
             let Some(t) = wide.data.get((y0 + k) * w..(y0 + k + 1) * w) else { continue };
@@ -501,6 +499,42 @@ pub fn detail_free(l: &Plane, r: usize) -> Plane {
         }
     });
     out
+}
+
+/// The taps of [`detail_free`]'s coarse grid along an axis of `n` pixels that starts `origin`
+/// pixels into the whole output: cell `J` of the whole frame is its pixels
+/// `[J·BASE_COARSE_STEP, (J+1)·BASE_COARSE_STEP)`. The first list is the box average down (one
+/// entry per cell the axis touches; a cell cut by the axis's ends averages the pixels it has), the
+/// second the bilinear enlargement back (one entry per pixel, the cells' centres where the whole
+/// frame has them; clamped at the ends). The GPU's copy uses the same taps.
+pub fn coarse_taps(n: usize, origin: usize) -> (Vec<(usize, Vec<f32>)>, Vec<(usize, Vec<f32>)>) {
+    let st = BASE_COARSE_STEP;
+    let end = origin.saturating_add(n);
+    let first = origin / st;
+    let down: Vec<(usize, Vec<f32>)> = (first..end.div_ceil(st))
+        .map(|j| {
+            let (a, b) = ((j * st).max(origin) - origin, ((j + 1) * st).min(end) - origin);
+            (a, vec![1.0 / (b - a).max(1) as f32; b - a])
+        })
+        .collect();
+    let last = down.len().saturating_sub(1);
+    let up = (0..n)
+        .map(|i| {
+            // the pixel's place on the whole frame's coarse grid (the same weights in every window),
+            // then counted from this axis's first cell
+            let u = ((origin + i) as f64 + 0.5) / st as f64 - 0.5;
+            let f = (u - u.floor()) as f32;
+            let j = u.floor() - first as f64;
+            if j < 0.0 {
+                (0, vec![1.0])
+            } else if j as usize >= last {
+                (last, vec![1.0])
+            } else {
+                (j as usize, vec![1.0 - f, f])
+            }
+        })
+        .collect();
+    (down, up)
 }
 
 /// `v` clamped between `a` and `b` (in either order); a NaN bound is ignored, not a panic.
@@ -941,8 +975,13 @@ pub(crate) fn prepare(
         }
     });
     let l = &log_l;
+    // (where these pixels sit in the whole output: the base's coarse grid is the whole frame's)
+    let origin = frame.view.map_or([0, 0], |v| [v.x as usize, v.y as usize]);
     let (base, (clarity_blur, ((texture_blur, sharpen), dark))) = par_join(
-        || base_sigma.map(|sg| plane_at(sb, base_key(s, sg, base_detail), || timed("base", || tone_base(l, sg, base_detail, base_keeps_gaps(s))))),
+        || {
+            base_sigma
+                .map(|sg| plane_at(sb, base_key(s, sg, base_detail), || timed("base", || tone_base(l, sg, base_detail, base_keeps_gaps(s), origin))))
+        },
         || {
             par_join(
                 || clarity_sigma.map(|sg| plane_at(sc, sg.to_bits(), || timed("clarity", || guided_fast(l, sg, CLARITY_EPS)))),
@@ -1472,20 +1511,46 @@ mod tests {
 mod fast_tests {
     use super::*;
 
-    /// [`detail_free`] enlarges the coarse median as it clamps; the result is the plain
-    /// composition of `resize` and [`median_hv`], bit for bit.
+    /// [`detail_free`] enlarges the coarse median as it clamps; on a frame of whole coarse cells the
+    /// result is the plain composition of `resize` and [`median_hv`] (up to the taps' rounding).
     #[test]
     fn detail_free_matches_its_reference() {
         use lightcraft_raster::resample::{Filter, resize};
-        for (w, h) in [(1, 1), (2, 1), (3, 3), (4, 7), (61, 47), (200, 31)] {
+        for (w, h) in [(3, 3), (6, 3), (3, 9), (60, 48), (201, 33)] {
             let p = Plane::from_fn(w, h, |x, y| ((x * 37 + y * 101) % 23) as f32 * 0.4 - 4.0 + if (x / 5 + y / 7) % 2 == 0 { 2.0 } else { 0.0 });
             for r in [1, 2, 5, 10] {
                 let fine = median_hv(&p, r);
-                let (lw, lh) = (w.div_ceil(BASE_COARSE_STEP), h.div_ceil(BASE_COARSE_STEP));
+                let (lw, lh) = (w / BASE_COARSE_STEP, h / BASE_COARSE_STEP);
                 let coarse = resize(&median_hv(&resize(&p, lw, lh, Filter::Box), r), w, h, Filter::Bilinear);
-                let want: Vec<u32> = (0..w * h).map(|i| clamp_between(p.data[i], fine.data[i], coarse.data[i]).to_bits()).collect();
-                let got: Vec<u32> = detail_free(&p, r).data.iter().map(|v| v.to_bits()).collect();
-                assert_eq!(got, want, "{w}×{h} r={r}");
+                let got = detail_free(&p, r, [0, 0]);
+                for i in 0..w * h {
+                    let want = clamp_between(p.data[i], fine.data[i], coarse.data[i]);
+                    assert!((got.data[i] - want).abs() < 1e-4, "{w}×{h} r={r} at {i}: {} vs {want}", got.data[i]);
+                }
+            }
+        }
+    }
+
+    /// A window of the plane (a zoomed view, an export band) takes the whole frame's coarse cells:
+    /// away from its edges by the coarse median's reach, it is the whole plane's [`detail_free`].
+    /// Before, the window's grid started at its own corner and the bands of an export disagreed by
+    /// up to 10 levels at Shadows +50.
+    #[test]
+    fn a_window_of_detail_free_is_the_whole_planes() {
+        let (w, h, r) = (95, 130, 4);
+        let p = Plane::from_fn(w, h, |x, y| ((x * 37 + y * 101) % 23) as f32 * 0.4 - 4.0 + if (x / 5 + y / 7) % 2 == 0 { 2.0 } else { 0.0 });
+        let whole = detail_free(&p, r, [0, 0]);
+        let reach = BASE_COARSE_STEP * (r + 2);
+        for (x0, y0, ww, wh) in [(0, 31, w, 50), (13, 0, 41, 67), (7, 44, 59, 86), (2, 1, 90, 128)] {
+            let win = Plane::from_fn(ww, wh, |x, y| p.get(x0 + x, y0 + y));
+            let got = detail_free(&win, r, [x0, y0]);
+            for y in 0..wh {
+                for x in 0..ww {
+                    let inside = |v: usize, at: usize, n: usize, all: usize| (at == 0 || v >= reach) && (at + n == all || v + reach < n);
+                    if inside(x, x0, ww, w) && inside(y, y0, wh, h) {
+                        assert_eq!(got.get(x, y).to_bits(), whole.get(x0 + x, y0 + y).to_bits(), "window at {x0},{y0}: {x},{y}");
+                    }
+                }
             }
         }
     }
@@ -1511,9 +1576,9 @@ mod fast_tests {
             eprintln!("{name:<20} min {:.1} ms  median {:.1} ms", ts[0], ts[2]);
         };
         time("median_hv", &|| median_hv(&p, r));
-        time("detail_free", &|| detail_free(&p, r));
+        time("detail_free", &|| detail_free(&p, r, [0, 0]));
         time("guided_fast", &|| guided_fast(&p, sigma, BASE_EPS));
-        time("tone_base", &|| tone_base(&p, sigma, r, true));
+        time("tone_base", &|| tone_base(&p, sigma, r, true, [0, 0]));
     }
 
     /// The previous fast path, including its two materialized coefficient resizes.
@@ -1564,8 +1629,8 @@ mod fast_tests {
         let p = Plane::from_fn(73, 51, |x, y| if x % 9 == 0 { 3.0 } else { -4.0 + ((x + y) % 7) as f32 * 0.03 });
         for sigma in [6.0, 24.0, 120.0] {
             for detail in [0, 1, 3, BASE_DETAIL_MAX] {
-                let free = detail_free(&p, detail);
-                assert_eq!(tone_base(&p, sigma, detail, true).data, resized_reference(&free, sigma, BASE_EPS).data, "{sigma}, {detail}");
+                let free = detail_free(&p, detail, [0, 0]);
+                assert_eq!(tone_base(&p, sigma, detail, true, [0, 0]).data, resized_reference(&free, sigma, BASE_EPS).data, "{sigma}, {detail}");
             }
         }
     }
