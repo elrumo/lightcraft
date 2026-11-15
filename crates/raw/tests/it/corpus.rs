@@ -85,6 +85,11 @@ fn corpus_raw_decodes() {
         let info = probe_info(&bytes);
         let di = t2.elapsed().as_secs_f64() * 1e3;
         match (&decoded, &info) {
+            // a full CR3 decode adds the white headroom it finds in the samples to `baseline_exposure`, which a
+            // header probe can't see
+            (Ok(img), Ok(info)) if fmt == RawFormat::Cr3 => {
+                assert_eq!(without_baseline(img.info()), without_baseline(info.clone()), "{name}: probe_info differs from decode")
+            }
             (Ok(img), Ok(info)) => assert_eq!(&img.info(), info, "{name}: probe_info differs from decode"),
             (Err(RawError::Unsupported(_)), Err(RawError::Unsupported(_))) => {}
             (d, i) => panic!("{name}: decode {:?} but probe_info {:?}", d.as_ref().err(), i.as_ref().err()),
@@ -402,6 +407,12 @@ fn corpus_sony_pre2017_colour_metadata() {
     eprintln!("pre-2017 Sony ARW colour metadata checked on {seen} files");
 }
 
+/// `info` without its `baseline_exposure`, which only a full CR3 decode adjusts (from the samples' white headroom).
+pub(crate) fn without_baseline(mut info: lightcraft_raw::RawInfo) -> lightcraft_raw::RawInfo {
+    info.color.baseline_exposure = 0.0;
+    info
+}
+
 /// FNV-1a over the samples (little-endian bytes): a regression fingerprint of a decode.
 fn fingerprint(img: &lightcraft_raw::RawImage) -> u64 {
     let lightcraft_raw::RawData::U16(d) = &img.data else { panic!("float data") };
@@ -435,7 +446,7 @@ fn corpus_cr3_lossless_decodes_exactly() {
         assert!((wb[0] - wb_r).abs() < 0.002 && wb[1] == 1.0 && (wb[2] - wb_b).abs() < 0.002, "{name}: wb {wb:?}");
         // the default crop is the size of the camera's own JPEG
         let jpeg = embedded_preview(&bytes).expect("preview");
-        let (jw, jh) = craft_image_codecs::probe_size(&jpeg).expect("JPEG header");
+        let (jw, jh, _) = craft_raw::preview::jpeg_frame(&jpeg).expect("JPEG header");
         assert_eq!((jw as usize, jh as usize), (img.crop.width, img.crop.height), "{name}: crop vs JPEG");
         let got = fingerprint(&img);
         assert_eq!(got, print, "{name}: fingerprint {got:#018x}");
@@ -735,7 +746,7 @@ fn corpus_sony_16x9_crops() {
         let c = img.crop;
         assert_eq!((c.x, c.y, c.width, c.height), (x, y, w, h), "{name}: crop");
         let jpeg = embedded_preview(&bytes).unwrap_or_else(|| panic!("{name}: no preview"));
-        let (jw, jh) = craft_image_codecs::probe_size(&jpeg).unwrap();
+        let (jw, jh, _) = craft_raw::preview::jpeg_frame(&jpeg).unwrap();
         let (aspect, preview) = (c.width as f64 / c.height as f64, jw as f64 / jh as f64);
         assert!((aspect / preview - 1.0).abs() < 0.02, "{name}: crop aspect {aspect} vs camera JPEG {preview}");
         seen += 1;
