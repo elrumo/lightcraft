@@ -502,6 +502,10 @@ impl Tokens {
                 cell: rgb(0xf3f3f3),
                 cell_selected: rgb(0xdfe7ff),
                 skeleton: rgb(0xd8d8d8),
+                // (a light grid: the rings are dark, as Silver's and Paper's)
+                ring_active: rgb(0x141414),
+                ring_inner: rgb(0xffffff),
+                ring_selected: rgb(0x4a4a4a),
                 divider: rgb(0xebebeb),
                 inset: rgb(0xf3f3f3),
                 field: rgb(0xffffff),

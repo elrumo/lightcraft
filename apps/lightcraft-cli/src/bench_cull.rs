@@ -10,7 +10,8 @@
 //!   app renders with;
 //! - camera preview at loupe sizes (1280, 2560) and at full size (the 100 % view), one at a time;
 //! - LightCraft's render of the loupe (2560 px) from a cold source;
-//! - rating: `photo.rate` on many photos in a row, journal included;
+//! - rating: `photo.rate` on many photos in a row, journal and XMP sidecar included (on copies of
+//!   the photos in the run's folder: a browsed photo's sidecar is written beside its file);
 //! - import: adding N files in place to a fresh library, and copying M of them into it (`--n 0`:
 //!   no import).
 //!
@@ -319,7 +320,20 @@ pub fn run(args: &[String]) -> Result<(), String> {
     out["loupeRender"] = st;
 
     // --- rating: a culling pass of keypresses ---------------------------------------------------
-    let ms: Vec<f64> = ids
+    // (this fork writes a browsed photo's XMP sidecar beside its file on every change, auto-write
+    // or not: a Local folder is edited in place. So the pass rates copies in the run's folder,
+    // browsed as the source was, and the photos measured are never written to.)
+    drop(s);
+    let copies = fresh_dir(&work, "rate-copies")?;
+    for p in paths.iter().take(50) {
+        let from = Path::new(p);
+        let Some(name) = from.file_name() else { continue };
+        std::fs::copy(from, copies.join(name)).map_err(|e| format!("{}: {e}", from.display()))?;
+    }
+    let mut s = library(&fresh_dir(&work, "lib-rate")?)?;
+    s.execute("library.browse", &json!({"path": copies.display().to_string()})).map_err(|e| e.to_string())?;
+    let ms: Vec<f64> = s
+        .visible_cloned()
         .iter()
         .take(50)
         .enumerate()
@@ -332,7 +346,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         })
         .collect();
     let st = stats(&ms);
-    line("rate one photo (journal written)", &st);
+    line("rate one photo (journal and sidecar written)", &st);
     out["rate"] = st;
     drop(s);
 

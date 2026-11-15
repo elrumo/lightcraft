@@ -118,6 +118,10 @@ pub(super) fn file_drop_target(ui: &egui::Ui, resp: &egui::Response, a: &Album) 
 }
 
 pub(super) fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
+    // (a right-click while photos are carried opens nothing, as `widgets::context_menu`)
+    if resp.secondary_clicked() && crate::widgets::carrying(&resp.ctx) {
+        return;
+    }
     row_popup(resp).show(|ui| {
         if a.folder {
             // the same commands as File ▸ New…, aimed at this folder

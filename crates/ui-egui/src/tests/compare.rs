@@ -550,6 +550,8 @@ fn a_photo_that_joins_renders_while_the_others_glide() {
 fn opening_another_library_forgets_the_survey_tiles() {
     let dir = std::env::temp_dir().join(format!("lc-ui-survey-switch-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    // (this fork makes a new library only in a folder that is there: `apphost::libraries::missing`)
+    std::fs::create_dir_all(&dir).unwrap();
     let mut h = demo();
     let ids = survey_of_three(&mut h);
     let tracked = |h: &Headless| ids.iter().filter(|id| h.app.survey_motion.tracks(lightcraft_catalog::PhotoId(**id))).count();

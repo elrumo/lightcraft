@@ -458,13 +458,19 @@ fn the_empty_view_names_the_import_shortcut_of_this_platform() {
 }
 
 /// A narrow grid wraps the empty view's way in (a long translation with its shortcut would run
-/// out of the window on one line) and keeps the shortcut visible.
+/// out of the window on one line) and keeps the shortcut visible. (Upstream's test used a 420 pt
+/// window; in this fork a window under `COMPACT_BELOW_PT` is the phone layout, which has no File
+/// menu or shortcut to name, so the narrowest desktop window is used, the panels beside the grid.)
 #[test]
 fn the_empty_views_way_in_wraps_in_a_narrow_grid_and_keeps_its_shortcut() {
-    let mut h = Headless::new(LightcraftApp::new(Session::with_demo(), Services::default()), [420.0, 700.0], 1.0);
+    const W: f32 = crate::COMPACT_BELOW_PT;
+    let mut h = Headless::new(LightcraftApp::new(Session::with_demo(), Services::default()), [W, 700.0], 1.0);
     let album = h.app.session.execute("album.create", &json!({"name": "Empty"})).unwrap()["id"].as_u64().unwrap();
     h.app.session.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
     h.app.ui.view = ViewMode::PhotoGrid;
+    // (both side panels open: the grid between them is the narrow one)
+    h.app.ui.left_panel = true;
+    h.app.ui.right = crate::state::RightPanel::Info;
     assert_eq!(h.request("ui.set", json!({"language": "de"}), T)["ok"], true);
     h.step();
     h.step();
@@ -481,7 +487,7 @@ fn the_empty_views_way_in_wraps_in_a_narrow_grid_and_keeps_its_shortcut() {
     let way = crate::i18n::Locale::De.tr("Import photos with File → Import Photos…, or drop them here");
     let g = texts.iter().find(|g| g.job.text == way).unwrap_or_else(|| panic!("the way in is painted: {:?}", h.painted_text()));
     assert!(g.rows.len() > 1, "wrapped on a narrow grid: {} row(s) of {:?}", g.rows.len(), g.size());
-    assert!(g.size().x < 420.0, "inside the window: {:?}", g.size());
+    assert!(g.size().x < W, "inside the window: {:?}", g.size());
     let key = crate::menubar::shortcut_text("Cmd+Shift+I", cfg!(target_os = "macos"));
     assert!(h.painted_text().iter().any(|t| t.contains(&key)), "the shortcut stays visible: {:?}", h.painted_text());
 }

@@ -107,11 +107,12 @@ pub(crate) fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens)
     {
         let id = egui::Id::unique(("settingsMeta", key));
         let mut text: String = ui.data(|m| m.get_temp(id)).unwrap_or(value.clone());
-        let r = text_row(ui, t, &format!("settings.{key}"), label, &mut text, hint_text, false, 240.0);
-        if r.lost_focus() && text.trim() != value {
+        let shown = text_row(ui, t, &format!("settings.{key}"), label, &mut text, hint_text, false, 240.0);
+        // (Esc gives the text back, so a cancelled edit has nothing to save)
+        if shown.committed() && text.trim() != value {
             let _ = app.run("library.preferences", json!({"import": {key: text.trim()}}));
         }
-        if r.has_focus() {
+        if shown.editing {
             ui.data_mut(|m| m.insert_temp(id, text));
         } else {
             ui.data_mut(|m| m.remove::<String>(id));

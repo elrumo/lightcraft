@@ -423,7 +423,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Apply Settings JSON",
             [],
             None,
-            "{settings: partial DevelopSettings JSON, label?} (a change of `orientation` turns the photo's Upright correction with it, also when `geometry.upright_transform` states the photo's own as it was read: before a turn or with its numbers rounded; a different one is taken as given; a change of `geometry.upright` drops it to be solved again)",
+            "{settings: partial DevelopSettings JSON, label?} (a change of `orientation` turns the photo's Perspective Correction with it, also when `geometry.upright_transform` states the photo's own as it was read: before a turn or with its numbers rounded; a different one is taken as given; a change of `geometry.upright` drops it to be solved again)",
             has_active,
             |s, p| {
                 let partial = p.get("settings").cloned().ok_or_else(|| bad("develop.merge", "missing settings"))?;

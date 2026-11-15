@@ -543,7 +543,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Photo Frame",
             [],
             None,
-            "{id?, applyCrop?: true} → {aspect, width, height, toNorm: [a,b,c,d,e,f], fromNorm, crop: {rect, angle, quad: [[x,y] ×4: top-left, top-right, bottom-right, bottom-left of the unflipped crop], toStraight: [6] (image → the straightened frame crop.drag takes), flipH, flipV}, guides: [[x0,y0,x1,y1]] (Guided Upright's, in image coordinates)} how the photo as shown (cropped, straightened, flipped) maps to the normalized image coordinates masks, spots, the crop and the pickers take: toNorm maps (u, v) in 0..1 across the shown image (top-left first) as (a·u + c·v + e, b·u + d·v + f); fromNorm is its inverse; width × height is the shown image at the photo's own resolution",
+            "{id?, applyCrop?: true} → {aspect, width, height, toNorm: [a,b,c,d,e,f], fromNorm, crop: {rect, angle, quad: [[x,y] ×4: top-left, top-right, bottom-right, bottom-left of the unflipped crop], toStraight: [6] (image → the straightened frame crop.drag takes), flipH, flipV}, guides: [[x0,y0,x1,y1]] (Guided Perspective's, in image coordinates)} how the photo as shown (cropped, straightened, flipped) maps to the normalized image coordinates masks, spots, the crop and the pickers take: toNorm maps (u, v) in 0..1 across the shown image (top-left first) as (a·u + c·v + e, b·u + d·v + f); fromNorm is its inverse; width × height is the shown image at the photo's own resolution",
             always,
             |s, p| {
                 let c = "view.frame";

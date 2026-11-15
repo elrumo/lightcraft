@@ -598,6 +598,10 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         } else if field.ending.is_some() || !field.editing || !enabled {
             // Esc (or the slider turning off) keeps the old value; Return or clicking away applies
             let cancelled = !enabled || field.cancelled();
+            // (that Esc is the field's: the dialog around the slider stays open)
+            if field.cancelled() {
+                take_escape(ui.ctx());
+            }
             if let Some(nv) = typed_value(spec, &text).filter(|nv| !cancelled && (nv - value).abs() > 1e-12) {
                 out.value = Some(nv);
                 out.drag_started = true;

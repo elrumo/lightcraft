@@ -571,6 +571,8 @@ pub(crate) fn action(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, enabl
 
 /// A one-line text field (`field:{id}`): beside its label on the desktop; on the phone the label
 /// on the left and the text right-aligned and frameless in the rest of the row, as iOS forms have it.
+/// It is the project's [`crate::text_field::TextField`]: Esc gives the text back and stays in
+/// Settings, and a right-click offers Cut / Copy / Paste / Select All.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn text_row(
     ui: &mut egui::Ui,
@@ -581,24 +583,18 @@ pub(crate) fn text_row(
     hint_text: &str,
     password: bool,
     width: f32,
-) -> egui::Response {
+) -> crate::text_field::TextFieldResponse {
     let compact = crate::is_compact(ui.ctx());
-    let r = row(ui, t, label, |ui| {
-        let edit = egui::TextEdit::singleline(value).hint_text(crate::i18n::tr(hint_text)).password(password);
-        if compact {
-            ui.add(
-                edit.frame(egui::Frame::NONE)
-                    .font(egui::FontId::proportional(17.0))
-                    .align(egui::Align2::RIGHT_CENTER)
-                    .min_size(vec2(0.0, ROW))
-                    .desired_width(ui.available_width()),
-            )
+    let widget = format!("field:{id}");
+    row(ui, t, label, |ui| {
+        let field = crate::text_field::TextField::singleline(&widget, value).hint(crate::i18n::tr(hint_text)).password(password);
+        let field = if compact {
+            field.frame(false).font(egui::FontId::proportional(17.0)).horizontal_align(egui::Align::Max).width(ui.available_width())
         } else {
-            ui.add(crate::widgets::text_box(ui, edit.desired_width(width.min(ui.available_width()))))
-        }
-    });
-    register(ui, format!("field:{id}"), r.rect);
-    r
+            field.width(width.min(ui.available_width()))
+        };
+        widgets::field(ui, field)
+    })
 }
 
 /// The share of the page's room the pinned slide preview of the Slideshow section takes.

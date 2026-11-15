@@ -1,5 +1,5 @@
 use super::widgets::{check, choices, field, heading, hint, path_label, row};
-use super::{LightcraftApp, RichText, StartupView, Tokens, json, register};
+use super::{LightcraftApp, StartupView, Tokens, json, register};
 use crate::panels::settings::IOS;
 use crate::panels::settings::action;
 use crate::panels::settings::option;
@@ -155,8 +155,9 @@ fn lens_profiles(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     } else {
         crate::i18n::tr_format!("The lens database is not installed (about {size} MB).", size = lensfun_download::download_megabytes())
     };
+    // (the status is a hint under the row: on a phone the row's controls sit right to left, and a
+    // sentence beside the button pushed it past the screen's edge)
     row(ui, t, crate::i18n::tr("Lens database"), |ui| {
-        ui.label(RichText::new(status).color(t.text));
         let r = ui.add_enabled(!own && !running && !installed, egui::Button::new(crate::i18n::tr("Download Lens Database")));
         register(ui, "button:settingsLensDatabase", r.rect);
         if r.clicked()
@@ -165,6 +166,7 @@ fn lens_profiles(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             app.toast(ui.ctx(), e);
         }
     });
+    hint(ui, t, &status);
     let mut offer = app.ui.settings.lens_database != Offer::Declined;
     if check(ui, "settings.lensDatabaseOffer", &mut offer, "Offer the lens database download when LightCraft starts") {
         app.ui.settings.lens_database = if offer { Offer::Ask } else { Offer::Declined };

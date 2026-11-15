@@ -450,12 +450,14 @@ fn a_drag_renders_no_thumbnail_of_the_photo_it_edits() {
     assert_eq!(app.renderer.thumb_jobs_built, 2, "the thumbnail catches up once the drag ends");
 }
 
-/// Issue #2682: the grid sent each video to the image decoder for a thumbnail, which failed with
-/// "unrecognised image format", and asked again on every pass. A video is known by its kind, by
-/// the format a Lightroom catalog gives it, or by its extension; none asks for a render, so none
-/// fails and its cell keeps the plain placeholder.
+/// Issue #2682 (upstream): the grid sent each video to the image decoder for a thumbnail, which
+/// failed with "unrecognised image format", and asked again on every pass; upstream asks for no
+/// thumbnail of a video. In this fork a clip's thumbnail is its poster frame: the source loader
+/// knows a clip by its bytes, whatever the catalog calls it, and `lightcraft-video` decodes the
+/// frame (engine `tests_video.rs`). So a video, known by its kind, by the format a Lightroom
+/// catalog gives it, or by its extension, asks for its thumbnail once, not on every pass.
 #[test]
-fn a_video_asks_the_decoders_for_no_thumbnail() {
+fn a_video_asks_for_its_poster_thumbnail_once() {
     use lightcraft_catalog::MediaKind;
     let clip = |name: &str, format: &str, kind: MediaKind| {
         let mut p = Photo::new(PhotoId(1), Source::File { path: name.into() }, name, format, 1920, 1080, "2022-11-25");
@@ -468,14 +470,12 @@ fn a_video_asks_the_decoders_for_no_thumbnail() {
         clip("20221223_100006.mp4", "", MediaKind::Image),
     ] {
         let name = video.file_name.clone();
-        let (mut app, work, ctx) = fixture_with(Session::new(), video);
+        let (mut app, _, ctx) = fixture_with(Session::new(), video);
         for _ in 0..30 {
             request(&mut app);
             app.renderer.poll(&ctx, &mut app.session);
         }
-        assert_eq!(app.renderer.thumb_jobs_built, 0, "{name}");
-        assert!(work.borrow().jobs.is_empty() && app.renderer.queued() == 0, "{name}: nothing is decoded");
-        assert_eq!(app.renderer.failure(Slot::Thumb(PhotoId(1))), None, "{name}: nothing failed, so the cell has no \"!\"");
+        assert_eq!(app.renderer.thumb_jobs_built, 1, "{name}: one job for its poster, not one per pass");
     }
     // a photo is still asked for
     let (mut app, _, _) = fixture();

@@ -5428,8 +5428,10 @@ fn app_wide_preparation_settings_are_saved_with_the_app_settings() {
     assert_eq!(h.app.session.prep.app.library.ahead, 10);
 }
 
-/// Note 48: the loupe prepares as many photos ahead as the settings say, a few at a time, and
-/// none when that is off.
+/// Note 48: the loupe prepares the photos ahead the settings allow, and none when that is off.
+/// (Upstream prepares `ahead` photos through 32 position slots; this fork keeps its two neighbour
+/// slots, next and previous, which the phone's slide between photos draws from, so any `ahead`
+/// above 0 prepares the next photo and the one behind it.)
 #[test]
 fn the_loupe_prepares_the_photos_ahead_the_settings_ask_for() {
     let mut h = demo([1000.0, 700.0]);
@@ -5443,8 +5445,8 @@ fn the_loupe_prepares_the_photos_ahead_the_settings_ask_for() {
         h.step();
     }
     h.settle(SETTLE);
-    // the first photo: three ahead (no photo behind it)
-    assert_eq!(h.app.renderer.prefetch_slots_asked(), 3.min(n - 1));
+    // the first photo: the next one (no photo behind it)
+    assert_eq!(h.app.renderer.prefetch_slots_asked(), 1.min(n - 1));
     h.app.renderer.forget_all();
     h.request("engine.execute", json!({"command": "prefs.setBackgroundPrep", "params": {"settings": {"library": {"ahead": 0}}}}), t);
     for _ in 0..40 {

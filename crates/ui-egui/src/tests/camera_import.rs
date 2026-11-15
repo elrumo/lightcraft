@@ -174,6 +174,10 @@ fn names(d: &crate::import::ImportDialog) -> Vec<&str> {
 fn camera_import_at(size: [f32; 2], tag: &str) {
     let root = base(tag);
     let (mut h, cam) = app_with_camera(&root, size);
+    // (the smallest thumbnails: with the Thumbnail size slider above it, the review's grid in a
+    // window this size has room for both days' headings only at that size)
+    let r = h.request("engine.execute", json!({"command": "view.importThumbSize", "params": {"size": crate::import::thumb_size(0.0)}}), T);
+    assert_eq!(r["ok"], true, "{r}");
     let camera = HostCamera { id: "cam1".into(), name: "Canon PowerShot V1".into(), kind: CameraKind::Camera };
     {
         let mut c = cam.borrow_mut();
