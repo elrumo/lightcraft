@@ -30,11 +30,18 @@ pub(super) fn prior(raw: &RawImage, t: &CameraTransform) -> Option<Mat3> {
 }
 
 /// The look fitted to the file's camera JPEG, and whether that JPEG is black and white ([`monochrome`]).
-pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransform, lens: Option<&LensGeometry>) -> (Option<CameraLook>, bool) {
+/// `embedded`: the file's embedded lens correction, whose vignetting the render applies ([`look_proxies`]).
+pub(crate) fn fit_preview(
+    raw: &RawImage,
+    bytes: &[u8],
+    transform: &CameraTransform,
+    lens: Option<&LensGeometry>,
+    embedded: Option<&lightcraft_develop::EmbeddedLens>,
+) -> (Option<CameraLook>, bool) {
     if !transform.matrix_is_fallback || !file_local_look(raw.format) {
         return (None, false);
     }
-    let Some((sensor, reference, clipped)) = proxies(raw, bytes, transform, PROXY, 0.0, lens) else {
+    let Some((sensor, reference, clipped)) = look_proxies(raw, bytes, transform, lens, embedded) else {
         if lightcraft_pipeline::profiling() {
             eprintln!("[profile] {:?} camera look: no proxies to fit (see above)", raw.format);
         }
@@ -411,7 +418,12 @@ pub(super) fn dro_off(own_tone: &CameraTone) -> CameraTone {
     // Past its last knot a curve goes on as a shoulder whose rate comes from its last two knots
     // (`CameraTone::apply`): lowering the second-last knot more than the last steepens it, and the
     // extended highlights would end up above the fitted curve. Raise the second-last knot (never
-    // above the fitted curve) until the rate is at most the fitted curve's.
+    // above the fitted curve) until the rate is at most the fitted curve's. Process V5's shoulder
+    // (`CameraTone::apply_rolloff`) is not part of this bound or of `at_most`: V1 to V4 read the
+    // same curve, and a V5 bound here would change their renders. It stays below the fitted
+    // curve's too when the last segment's slope over the squared gap to white is at most the fitted
+    // curve's; a lowered curve with a nearly flat last segment can end up above it far past the last
+    // knot under V5 (issue #1632).
     let ([a, b], last) = ([own[30], own[31]], knots[31]);
     let rate = ((b[1] - a[1]) / (b[0] - a[0])).clamp(0.1, 16.0) / (1.0 - b[1]).max(0.01);
     let floor = last[1] - rate * (1.0 - last[1]).max(0.01) * (b[0] - a[0]);
@@ -456,7 +468,9 @@ pub(super) fn fit_dng_tone(
         }
         None
     };
-    let Some((mut sensor, reference, clipped)) = proxies(raw, bytes, transform, PROXY, MIN_PREVIEW_FRACTION, None) else { return refuse("preview") };
+    let Some((mut sensor, reference, clipped)) = proxies(raw, bytes, transform, PROXY, MIN_PREVIEW_FRACTION, None, None) else {
+        return refuse("preview");
+    };
     // As the loader renders it: the profile's tables around the baseline exposure.
     let xy = lightcraft_raw::color::as_shot_white_xy(raw);
     if let Some(tables) = lightcraft_raw::profile::ProfileTables::new(&raw.color.profile, lightcraft_raw::color::illuminant_weight(&raw.color, xy)) {
@@ -506,6 +520,20 @@ pub(super) fn clips_more(sensor: &Rgb32f, reference: &Rgb32f, fitted: &ToneMap, 
     near_white(fitted) > near_white(plain).max(preview) + CLIP_TOLERANCE
 }
 
+/// The proxies a photo's look is fitted on ([`proxies`] at [`PROXY`]), the sensor's with the embedded vignetting
+/// correction the render applies. Without it the tone curve learns the camera JPEG's corrected
+/// brightness from the uncorrected sensor, and the render then corrects it again: 21 X-S10 RAFs rendered up to 0.3 EV
+/// brighter in their midtones and 0.6 EV in their shadows than their camera JPEGs, about 0.05 EV once corrected.
+pub(super) fn look_proxies(
+    raw: &RawImage,
+    bytes: &[u8],
+    transform: &CameraTransform,
+    lens: Option<&LensGeometry>,
+    embedded: Option<&lightcraft_develop::EmbeddedLens>,
+) -> Option<(Rgb32f, Rgb32f, Vec<bool>)> {
+    proxies(raw, bytes, transform, PROXY, 0.0, lens, embedded)
+}
+
 /// Multiply the sensor proxy (sensor orientation, default crop) by the embedded vignetting correction, the gain the
 /// pipeline applies to the render (`optics::embedded_vignette_gain`; `lens` is in the oriented, cropped frame): the
 /// camera JPEG has it applied, so a tone fitted without it brightens the render's corners twice.
@@ -545,7 +573,7 @@ pub(super) fn preview_colour_match(raw: &RawImage, bytes: &[u8], transform: &Cam
     if raw.format != lightcraft_raw::RawFormat::Dng || profile.gain_table_map.is_none() {
         return None;
     }
-    let (mut sensor, reference, clipped) = proxies(raw, bytes, transform, PROXY, MIN_PREVIEW_FRACTION, None)?;
+    let (mut sensor, reference, clipped) = proxies(raw, bytes, transform, PROXY, MIN_PREVIEW_FRACTION, None, None)?;
     // as the loader develops it: the profile's tables around the baseline exposure
     let xy = lightcraft_raw::color::as_shot_white_xy(raw);
     if let Some(tables) = lightcraft_raw::profile::ProfileTables::new(profile, lightcraft_raw::color::illuminant_weight(&raw.color, xy)) {

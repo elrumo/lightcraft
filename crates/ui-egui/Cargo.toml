@@ -28,6 +28,7 @@ lightcraft-preview = { workspace = true }
 egui = { workspace = true }
 # decoding the thumbnails a camera makes (the import review of a camera, `camera_import`)
 lightcraft-codecs = { workspace = true }
+egui_extras = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
@@ -50,6 +51,8 @@ lightcraft-enhance = { workspace = true }
 lightcraft-vision = { workspace = true, features = ["testing"] }
 lightcraft-faces = { workspace = true }
 lightcraft-merge = { workspace = true }
+# a device for the GPU-resident view test (`render.rs`)
+pollster = { workspace = true }
 
 [build-dependencies]
 serde_json = { workspace = true }

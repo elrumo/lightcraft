@@ -89,8 +89,8 @@ pub fn depth(bytes: &[u8]) -> Option<Disparity> {
 
 #[cfg(feature = "heif")]
 fn heif_depth(bytes: &[u8]) -> Option<Disparity> {
-    let opts = lightcraft_heif::Options { max_pixels: MAX_SAMPLES as u64, apply_transforms: true };
-    let d = lightcraft_heif::depth(bytes, &opts).ok()??;
+    let opts = craft_heif::Options { max_pixels: MAX_SAMPLES as u64, apply_transforms: true, ..craft_heif::Options::default() };
+    let d = craft_heif::depth(bytes, &opts).ok()??;
     let desc = d.xmp.as_deref().and_then(apdi);
     let (w, h) = (d.width as usize, d.height as usize);
     (d.data.len() == w * h && w > 0 && h > 0).then(|| Disparity { width: w, height: h, data: to_disparity(d.data.iter().copied(), d.max, desc) })
@@ -132,19 +132,22 @@ fn jpeg_depth(bytes: &[u8]) -> Option<Disparity> {
 }
 
 fn decode_grey(stream: &[u8], desc: Apdi) -> Option<Disparity> {
-    use zune_core::bytestream::ZCursor;
-    use zune_core::colorspace::ColorSpace;
-    use zune_core::options::DecoderOptions;
-    let opts =
-        DecoderOptions::default().set_max_width(1 << 14).set_max_height(1 << 14).set_strict_mode(false).jpeg_set_out_colorspace(ColorSpace::Luma);
-    let mut d = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(stream), opts);
-    let px = d.decode().ok()?;
-    let info = d.info()?;
-    let (w, h) = (info.width as usize, info.height as usize);
-    if w == 0 || h == 0 || w * h > MAX_SAMPLES || px.len() < w * h {
+    use craft_image_codecs::{ChannelLayout, DecodeOptions, Format, Limits};
+    let limits = Limits { max_width: 1 << 14, max_height: 1 << 14, max_pixels: MAX_SAMPLES as u64, max_alloc: (MAX_SAMPLES * 3) as u64 };
+    // the samples as stored: the map is oriented with its photo, later
+    let img = craft_image_codecs::decode_as_with(Format::Jpeg, stream, &DecodeOptions { limits, keep_orientation: true }).ok()?;
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    // a greyscale stream; an RGB one (not seen from Apple) reads its first channel
+    let step = match img.layout() {
+        ChannelLayout::Gray => 1,
+        ChannelLayout::Rgb => 3,
+        _ => return None,
+    };
+    let px = img.as_u8()?;
+    if w == 0 || h == 0 || w.saturating_mul(h) > MAX_SAMPLES || px.len() < w.saturating_mul(h).saturating_mul(step) {
         return None;
     }
-    Some(Disparity { width: w, height: h, data: to_disparity(px.iter().take(w * h).map(|&v| u16::from(v)), 255, Some(desc)) })
+    Some(Disparity { width: w, height: h, data: to_disparity(px.iter().step_by(step).take(w * h).map(|&v| u16::from(v)), 255, Some(desc)) })
 }
 
 #[cfg(test)]

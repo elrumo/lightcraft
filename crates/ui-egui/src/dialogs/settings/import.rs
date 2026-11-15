@@ -201,6 +201,15 @@ pub(crate) fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens)
                 let _ = app.run("library.autoImport", json!({"folder": null}));
             }
         });
+        // the last listing of the watched folder failed: say why (it reads "OS error: reason")
+        if let (Some(folder), Some((failed, e))) = (&d.auto_folder, &app.ui.auto_import_error)
+            && folder == failed
+        {
+            let reason = e.strip_prefix(folder.as_str()).and_then(|r| r.strip_prefix(": ")).unwrap_or(e);
+            row(ui, t, "", |ui| {
+                ui.label(RichText::new(crate::i18n::tr_format!("Can't read this folder: {}", reason)).size(11.0).color(t.caution));
+            });
+        }
         if d.auto_folder.is_some() {
             let mut sub = d.auto_subfolders;
             if check(ui, "settings.autoImportSubfolders", &mut sub, "Include subfolders") {
@@ -220,7 +229,8 @@ pub(crate) fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens)
                 }
             });
             row(ui, t, crate::i18n::tr("Album"), |ui| {
-                let id = egui::Id::unique("auto-album");
+                // (per library: a name left here by one library is not another's)
+                let id = egui::Id::unique(("auto-album", app.session.library.as_ref().map(|l| l.dir.clone())));
                 let mut name = ui.data(|m| m.get_temp::<String>(id)).unwrap_or_else(|| d.auto_album.clone().unwrap_or_default());
                 let r = ui
                     .add(crate::widgets::text_box(ui, egui::TextEdit::singleline(&mut name).hint_text(crate::i18n::tr("None")).desired_width(200.0)));

@@ -415,23 +415,25 @@ pub(crate) fn has_person(p: &Photo, name: &str) -> bool {
 fn field_matches(p: &Photo, t: &str) -> bool {
     let Some((field, quoted)) = t.split_once(':') else { return false };
     let val = unquote(quoted);
-    let num = |s: &str| -> Option<(char, f64)> {
-        let (op, rest) = match s.chars().next()? {
-            c @ ('>' | '<' | '=') => (c, &s[1..]),
-            _ => ('=', s),
-        };
-        rest.parse().ok().map(|v| (op, v))
+    // `>=` / `<=` before `>` / `<`: otherwise `rating:>=3` reads `=3` as the number and matches nothing
+    let num = |s: &str| -> Option<(&str, f64)> {
+        let op = [">=", "<=", ">", "<", "="].into_iter().find(|op| s.starts_with(op)).unwrap_or("");
+        s.get(op.len()..)?.parse().ok().map(|v| (op, v))
     };
     let cmp = |x: f64, s: &str| match num(s) {
-        Some(('>', v)) => x > v,
-        Some(('<', v)) => x < v,
+        Some((">", v)) => x > v,
+        Some(("<", v)) => x < v,
+        Some((">=", v)) => x >= v,
+        Some(("<=", v)) => x <= v,
         Some((_, v)) => (x - v).abs() < 1e-9,
         None => false,
     };
     // Fields stored as `f32` compare at f32 precision: 2.8f32 widened to f64 is not 2.8.
     let cmp32 = |x: f32, s: &str| match num(s) {
-        Some(('>', v)) => x > v as f32,
-        Some(('<', v)) => x < v as f32,
+        Some((">", v)) => x > v as f32,
+        Some(("<", v)) => x < v as f32,
+        Some((">=", v)) => x >= v as f32,
+        Some(("<=", v)) => x <= v as f32,
         Some((_, v)) => x == v as f32,
         None => false,
     };
@@ -449,7 +451,7 @@ fn field_matches(p: &Photo, t: &str) -> bool {
         "person" | "who" => has_person(p, val),
         "type" | "kind" => format!("{:?}", p.kind).eq_ignore_ascii_case(val),
         "edited" => yes(val) == p.is_edited(),
-        "date" => p.captured.as_deref().is_some_and(|c| c.starts_with(val)),
+        "date" => p.captured.as_deref().is_some_and(|c| c.get(..val.len()).is_some_and(|h| h.eq_ignore_ascii_case(val))),
         "copy" | "virtual" => yes(val) == p.copy_of.is_some(),
         "name" | "file" => p.file_name.to_lowercase().contains(val),
         "gps" | "geotagged" | "located" => yes(val) == p.meta.gps.is_some(),

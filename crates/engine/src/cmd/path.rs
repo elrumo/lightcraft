@@ -82,12 +82,12 @@ fn tracklog_of(points: &[Point]) -> Tracklog {
             if i > 0 && q.new_segment {
                 segment = segment.saturating_add(1);
             }
-            TrackPoint { time: q.time_ms as f64 / 1000.0, latitude: q.lat, longitude: q.lon, elevation: q.ele_m, segment }
+            TrackPoint { time: q.time_ms as f64 / 1000.0, latitude: q.lat, longitude: q.lon, elevation: q.ele_m, segment, track: 0 }
         })
         .collect();
     // (stored in time order; a hostile set of chunks may not be)
     out.sort_by(|a, b| a.time.total_cmp(&b.time));
-    Tracklog { points: out, tracks: 1, untimed: 0 }
+    Tracklog { points: out, tracks: 1, names: vec![String::new()], untimed: 0 }
 }
 
 /// Where each photo taken at `times` (UTC seconds) was, from the sessions (`spans`: first and last moment in ms, and

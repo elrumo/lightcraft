@@ -115,13 +115,31 @@ impl Pixel for [f32; 4] {
     }
 }
 
-/// Resize to `w × h` (separable; horizontal pass then vertical pass).
+/// Resize to `w × h` (separable; horizontal pass then vertical pass, or the other way round when
+/// that intermediate would be far larger: widening a tall, narrow strip kept every source row at
+/// the new width, gigabytes from a small source).
 pub fn resize<T: Pixel>(img: &Image<T>, w: usize, h: usize, filter: Filter) -> Image<T> {
     let (w, h) = (w.max(1), h.max(1));
     if img.width == w && img.height == h {
         return img.clone();
     }
+    if columns_first(img.width, img.height, w, h) {
+        // the columns first (taps that keep each column as it is across), then the rows
+        let tall = resize_with(img, 0..img.height, &identity_taps(img.width), &weights(img.height, h, filter));
+        return resize_with(&tall, 0..tall.height, &weights(img.width, w, filter), &identity_taps(h));
+    }
     resize_with(img, 0..img.height, &weights(img.width, w, filter), &weights(img.height, h, filter))
+}
+
+/// Whether resizing `sw × sh` to `w × h` resamples the columns first: when the horizontal pass's intermediate (`w`
+/// wide, every source row) would be far larger than the vertical pass's (`h` tall, every source column).
+fn columns_first(sw: usize, sh: usize, w: usize, h: usize) -> bool {
+    w.saturating_mul(sh) > sw.saturating_mul(h).saturating_mul(4)
+}
+
+/// Taps that copy each of `n` columns (or rows) as they are.
+fn identity_taps(n: usize) -> Vec<(usize, Vec<f32>)> {
+    (0..n).map(|i| (i, vec![1.0])).collect()
 }
 
 /// [`resize`] with the taps given, reading the image's `rows` only: one output column per entry of `wx` and one
@@ -166,6 +184,9 @@ pub fn resize_view(img: PixelView<'_>, w: usize, h: usize, filter: Filter) -> Rg
     let (w, h) = (w.max(1), h.max(1));
     if img.width() == w && img.height() == h {
         return img.to_f32().into_owned();
+    }
+    if columns_first(img.width(), img.height(), w, h) {
+        return resize(&*img.to_f32(), w, h, filter);
     }
     resize_view_with(img, 0..img.height(), &weights(img.width(), w, filter), &weights(img.height(), h, filter))
 }
@@ -227,6 +248,16 @@ pub fn half<T: Pixel>(img: &Image<T>) -> Image<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn widening_a_tall_strip_resamples_its_columns_first() {
+        // 1 × 400 000 to 4000 × 8: horizontal-first kept 400 000 rows of 4000 (25 GB of RGBA f32)
+        let mut strip = Image::<[f32; 4]>::new(1, 400_000);
+        strip.data.iter_mut().for_each(|p| *p = [0.25, 0.5, 0.75, 1.0]);
+        let out = resize(&strip, 4000, 8, Filter::Mitchell);
+        assert_eq!((out.width, out.height), (4000, 8));
+        assert!(out.data.iter().all(|p| (p[1] - 0.5).abs() < 1e-3), "a flat strip stays flat");
+    }
 
     #[test]
     fn constant_image_stays_constant() {

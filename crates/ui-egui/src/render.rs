@@ -4,13 +4,19 @@
 //!
 //! [`Renderer`] derefs to the scheduler, so the panels use one object for both.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 use std::sync::Arc;
 
-pub use lightcraft_apphost::render::{DraftBudget, MAX_VARIANT_TEXTURES, RenderOffload, Shown, Slot, VARIANT_TEXTURES, geometry_look};
-use lightcraft_apphost::render::{HdrPicture, Present, Scheduler};
+pub use lightcraft_apphost::render::{
+    AHEAD_SLOTS, DraftBudget, MAX_VARIANT_TEXTURES, RenderOffload, Requested, Shown, Slot, VARIANT_TEXTURES, abandoned_line, geometry_look,
+    render_failure_message, render_subject,
+};
+use lightcraft_apphost::render::{FrameShown, HdrPicture, Present, Scheduler};
 use lightcraft_engine::Session;
+use lightcraft_engine::media::ScreenFrame;
 
 use crate::hdr::{HdrSink, HdrTex};
 
@@ -22,12 +28,62 @@ pub struct TexView {
     /// The same render in HDR, drawn instead of `tex` ([`Self::paint_id`]) when the display can show
     /// it (an HDR edit's loupe, with an [`HdrSink`]).
     pub hdr: Option<HdrTex>,
+    /// Showing a render that stayed on the GPU ([`ScreenTextures`]): drawn by this texture instead of
+    /// `tex` ([`Self::id`]), which then holds a 1 × 1 placeholder.
+    pub native: Option<NativeTex>,
 }
 
 impl TexView {
+    /// The texture to draw: the GPU-resident render when the slot shows one, else `tex`. Views are
+    /// drawn with this (or [`Self::paint_id`]), never `tex.id()`: a draft that stayed on the GPU
+    /// leaves `tex` a 1 × 1 placeholder.
+    pub fn id(&self) -> egui::TextureId {
+        self.native.as_ref().map_or_else(|| self.tex.id(), |n| n.id)
+    }
+
     /// The texture to draw this picture with: its HDR rendition when it has one.
     pub fn paint_id(&self) -> egui::TextureId {
-        self.hdr.as_ref().map_or_else(|| self.tex.id(), |h| h.id)
+        self.hdr.as_ref().map_or_else(|| self.id(), |h| h.id)
+    }
+}
+
+/// Draws renders that stayed on the GPU ([`lightcraft_engine::media::ScreenFrame`]): the window's
+/// renderer registers their textures. Installed by a host whose GPU renderer runs on the window's
+/// device (the desktop app); without one, every render comes back as pixels.
+pub trait ScreenTextures {
+    /// Show `frame` under `id` (one this returned before, updated in place) or a new id; `None`
+    /// when it can't be shown.
+    fn show(&mut self, frame: &ScreenFrame, id: Option<egui::TextureId>) -> Option<egui::TextureId>;
+    /// Release `id` (and the texture it shows).
+    fn free(&mut self, id: egui::TextureId);
+    /// The pixels `frame` holds, read back from the GPU: only for a headless screenshot of a view
+    /// that shows it ([`Renderer::cpu_textures`]). `None` when they can't be read (the view is
+    /// then left out of the picture).
+    fn read(&self, frame: &ScreenFrame) -> Option<egui::ColorImage> {
+        let _ = frame;
+        None
+    }
+}
+
+/// The window's [`ScreenTextures`], shared by the renderer and the textures it registered.
+type Screen = Rc<RefCell<Box<dyn ScreenTextures>>>;
+
+/// A GPU-resident texture a slot shows: registered with the window until the view lets go of it
+/// (another picture, the slot released, everything forgotten), then freed.
+pub struct NativeTex {
+    pub id: egui::TextureId,
+    /// The render it shows, kept with [`Renderer::keep_pixels`]: a headless screenshot reads it back
+    /// ([`Renderer::cpu_textures`]) instead of finding no pixels.
+    frame: Option<ScreenFrame>,
+    screen: Screen,
+}
+
+impl Drop for NativeTex {
+    fn drop(&mut self) {
+        // (never re-entered: the screen is only borrowed for a call that drops no texture)
+        if let Ok(mut s) = self.screen.try_borrow_mut() {
+            s.free(self.id);
+        }
     }
 }
 
@@ -49,6 +105,9 @@ pub(crate) fn color_image(img: &lightcraft_raster::Rgba8) -> egui::ColorImage {
 /// The app's render queue: the shared [`Scheduler`] with egui textures.
 pub struct Renderer {
     sched: Scheduler<TexView>,
+    /// Draws GPU-resident renders ([`Self::set_screen_textures`]); with it, interactive drafts of
+    /// views stay on the GPU.
+    screen: Option<Screen>,
     /// Keep a CPU copy of every texture so the UI can be rasterized headlessly (set when the app
     /// is driven by the control channel).
     pub keep_pixels: bool,
@@ -59,9 +118,22 @@ pub struct Renderer {
     pub(crate) thumb_jobs_built: usize,
 }
 
+/// Render workers of an app built by this crate's own tests. Most of them build an app, several
+/// run at once, and a test needs a render or two at a time, not the machine's six (issue #3067:
+/// sixteen tests at once ran about 96 render threads on 16 cores). A test that needs more asks
+/// for them with [`Renderer::with_worker_threads`].
+#[cfg(test)]
+pub(crate) const TEST_WORKERS: usize = 2;
+
 impl Default for Renderer {
+    #[cfg(not(test))]
     fn default() -> Self {
         Self::from_scheduler(Scheduler::default())
+    }
+
+    #[cfg(test)]
+    fn default() -> Self {
+        Self::with_worker_threads(TEST_WORKERS)
     }
 }
 
@@ -83,19 +155,55 @@ struct Textures<'a> {
     ctx: &'a egui::Context,
     keep_pixels: bool,
     hdr: Option<&'a Arc<dyn HdrSink>>,
+    screen: Option<&'a Screen>,
 }
 
 impl Present<TexView> for Textures<'_> {
     fn make(&mut self, slot: Slot, image: lightcraft_raster::Rgba8) -> TexView {
         let color = Arc::new(color_image(&image));
         let pixels = self.keep_pixels.then(|| color.clone());
-        TexView { tex: self.ctx.load_texture(format!("{slot:?}"), color, egui::TextureOptions::LINEAR), pixels, hdr: None }
+        TexView { tex: self.ctx.load_texture(format!("{slot:?}"), color, egui::TextureOptions::LINEAR), pixels, hdr: None, native: None }
     }
 
     fn update(&mut self, _: Slot, image: lightcraft_raster::Rgba8, view: &mut TexView) {
         let color = Arc::new(color_image(&image));
         view.pixels = self.keep_pixels.then(|| color.clone());
         view.tex.set(color, egui::TextureOptions::LINEAR);
+        // pixels again: the slot's GPU-resident texture is let go
+        view.native = None;
+    }
+
+    fn show_frame(&mut self, slot: Slot, frame: &ScreenFrame, view: Option<&mut TexView>) -> FrameShown<TexView> {
+        let Some(screen) = self.screen else { return FrameShown::Refused };
+        let reuse = view.as_ref().and_then(|v| v.native.as_ref().map(|n| n.id));
+        let Some(id) = screen.try_borrow_mut().ok().and_then(|mut s| s.show(frame, reuse)) else { return FrameShown::Refused };
+        let kept = self.keep_pixels.then(|| frame.clone());
+        // (`tex` is never drawn while `native` is set)
+        let blank = || egui::ColorImage::filled([1, 1], egui::Color32::BLACK);
+        match view {
+            Some(v) => {
+                // on the switch from pixels the full-size image is dropped for a 1 × 1 placeholder, so a view on the
+                // GPU path doesn't keep a second copy of the picture
+                if v.native.is_none() {
+                    v.tex.set(blank(), egui::TextureOptions::LINEAR);
+                }
+                match v.native.as_mut() {
+                    Some(n) if n.id == id => n.frame = kept,
+                    _ => v.native = Some(NativeTex { id, frame: kept, screen: screen.clone() }),
+                }
+                v.pixels = None;
+                v.hdr = None;
+                FrameShown::Updated
+            }
+            None => {
+                let tex = self.ctx.load_texture(format!("{slot:?}"), blank(), egui::TextureOptions::LINEAR);
+                FrameShown::Made(TexView { tex, pixels: None, hdr: None, native: Some(NativeTex { id, frame: kept, screen: screen.clone() }) })
+            }
+        }
+    }
+
+    fn on_gpu(&self, view: &TexView) -> bool {
+        view.native.is_some()
     }
 
     fn set_hdr(&mut self, _: Slot, hdr: Option<Arc<HdrPicture>>, view: &mut TexView) {
@@ -113,9 +221,16 @@ impl Renderer {
         Self::from_scheduler(Scheduler::with_worker_threads(threads))
     }
 
-    fn from_scheduler(sched: Scheduler<TexView>) -> Self {
+    #[cfg_attr(not(test), allow(unused_mut))]
+    fn from_scheduler(mut sched: Scheduler<TexView>) -> Self {
+        // (this crate's tests read the render decisions the scheduler logs)
+        #[cfg(test)]
+        {
+            sched.record_decisions = true;
+        }
         Renderer {
             sched,
+            screen: None,
             keep_pixels: false,
             hdr_sink: None,
             #[cfg(test)]
@@ -128,6 +243,26 @@ impl Renderer {
     /// is on can change under a surface that can.
     pub fn set_hdr_sink(&mut self, sink: Option<Arc<dyn HdrSink>>) {
         self.hdr_sink = sink;
+    }
+
+    /// Show GPU-resident renders through `screen` from now on (the desktop app, once its GPU
+    /// renderer runs on the window's device).
+    pub fn set_screen_textures(&mut self, screen: Box<dyn ScreenTextures>) {
+        self.screen = Some(Rc::new(RefCell::new(screen)));
+        self.sched.set_screen_frames(true);
+    }
+
+    /// Whether GPU-resident renders can be shown.
+    pub fn has_screen_textures(&self) -> bool {
+        self.screen.is_some() && self.sched.screen_frames()
+    }
+
+    /// A GPU-resident render couldn't be shown (the scheduler stopped asking for them): let go of the
+    /// window's textures (the views drawn from them went with it).
+    fn follow_screen(&mut self) {
+        if !self.sched.screen_frames() {
+            self.screen = None;
+        }
     }
 
     /// Whether [`Self::set_hdr_sink`] gave the window a way to draw HDR.
@@ -143,7 +278,9 @@ impl Renderer {
     /// Collect finished jobs into textures, and ask for a repaint while renders are in flight (or
     /// the idle trim is due). Returns true if anything changed.
     pub fn poll(&mut self, ctx: &egui::Context, session: &mut Session) -> bool {
-        let polled = self.sched.poll(session, &mut Textures { ctx, keep_pixels: self.keep_pixels, hdr: self.hdr_sink.as_ref() });
+        let polled =
+            self.sched.poll(session, &mut Textures { ctx, keep_pixels: self.keep_pixels, hdr: self.hdr_sink.as_ref(), screen: self.screen.as_ref() });
+        self.follow_screen();
         if let Some(after) = polled.wake_after {
             ctx.request_repaint_after(after);
         }
@@ -154,7 +291,9 @@ impl Renderer {
     /// frame ([`Scheduler::wait_for_draft`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_draft(&mut self, ctx: &egui::Context, session: &mut Session, budget: std::time::Duration) {
-        self.sched.wait_for_draft(session, &mut Textures { ctx, keep_pixels: self.keep_pixels, hdr: self.hdr_sink.as_ref() }, budget);
+        let mut textures = Textures { ctx, keep_pixels: self.keep_pixels, hdr: self.hdr_sink.as_ref(), screen: self.screen.as_ref() };
+        self.sched.wait_for_draft(session, &mut textures, budget);
+        self.follow_screen();
     }
 
     /// What the renderer holds: per-view stage caches (CPU images and GPU buffers) and textures.
@@ -170,7 +309,7 @@ impl Renderer {
     pub fn put_image(&mut self, ctx: &egui::Context, slot: Slot, img: &lightcraft_raster::Rgba8) {
         let color = Arc::new(color_image(img));
         let pixels = self.keep_pixels.then(|| color.clone());
-        let view = TexView { tex: ctx.load_texture(format!("{slot:?}"), color, egui::TextureOptions::LINEAR), pixels, hdr: None };
+        let view = TexView { tex: ctx.load_texture(format!("{slot:?}"), color, egui::TextureOptions::LINEAR), pixels, hdr: None, native: None };
         let shown = Shown {
             look: None,
             key: 0,
@@ -186,10 +325,18 @@ impl Renderer {
         self.textures.insert(slot, shown);
     }
 
-    /// CPU copies of the current textures by id (see [`Self::keep_pixels`]).
+    /// CPU copies of the current textures by id (see [`Self::keep_pixels`]); a view drawn straight
+    /// from the GPU is read back from it (only here: drawing it never does).
     pub fn cpu_textures(&self) -> HashMap<egui::TextureId, crate::softpaint::CpuTexture> {
         let mut all = HashMap::new();
         for t in self.textures.values() {
+            if let Some(n) = &t.native {
+                let read = n.frame.as_ref().and_then(|f| n.screen.try_borrow().ok().and_then(|s| s.read(f)));
+                if let Some(image) = read {
+                    all.insert(n.id, crate::softpaint::CpuTexture::linear(Arc::new(image)));
+                }
+                continue;
+            }
             let Some(pixels) = t.pixels.clone() else { continue };
             // (the headless picture of an HDR texture is its 8-bit one)
             if let Some(h) = &t.hdr {
@@ -249,7 +396,7 @@ mod hdr_tests {
         let ctx = egui::Context::default();
         let rec = Arc::new(Recorder::default());
         let sink: Arc<dyn HdrSink> = rec.clone();
-        let mut t = Textures { ctx: &ctx, keep_pixels: true, hdr: Some(&sink) };
+        let mut t = Textures { ctx: &ctx, keep_pixels: true, hdr: Some(&sink), screen: None };
         let mut view = t.make(Slot::Main, lightcraft_raster::Rgba8::new(4, 2));
         assert_eq!(view.paint_id(), view.tex.id());
         t.set_hdr(Slot::Main, Some(picture()), &mut view);
@@ -262,7 +409,7 @@ mod hdr_tests {
         assert_eq!(view.paint_id(), view.tex.id());
         assert_eq!(rec.log.lock().unwrap().last().map(String::as_str), Some("free User(1)"));
         // a window with no way to draw HDR never has one
-        let mut none = Textures { ctx: &ctx, keep_pixels: false, hdr: None };
+        let mut none = Textures { ctx: &ctx, keep_pixels: false, hdr: None, screen: None };
         none.set_hdr(Slot::Main, Some(picture()), &mut view);
         assert!(view.hdr.is_none());
     }
@@ -276,7 +423,7 @@ mod hdr_tests {
         let mut r = Renderer { keep_pixels: true, ..Default::default() };
         r.set_hdr_sink(Some(sink.clone()));
         assert!(r.can_draw_hdr() && !r.shows_hdr());
-        let mut t = Textures { ctx: &ctx, keep_pixels: true, hdr: Some(&sink) };
+        let mut t = Textures { ctx: &ctx, keep_pixels: true, hdr: Some(&sink), screen: None };
         let mut view = t.make(Slot::Main, lightcraft_raster::Rgba8::new(4, 2));
         t.set_hdr(Slot::Main, Some(picture()), &mut view);
         let shown = Shown {

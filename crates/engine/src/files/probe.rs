@@ -1,19 +1,26 @@
 use super::load::WbScaleOf;
 use super::load::camera_crop_of;
 use super::preview::{default_crop_of, embedded_preview_size};
-use super::*;
+use super::{Filter, MediaKind, Meta, Orientation, ProbeInfo, Rgb32f, SourceInfo, fit};
 
 pub(super) fn meta_of(m: &lightcraft_meta::Metadata) -> (Meta, Option<String>) {
-    let shutter = m.exposure_time.map(|t| if t >= 1.0 { format!("{t:.0}") } else { format!("1/{:.0}", 1.0 / t) }).unwrap_or_default();
+    let exposure_time = m.exposure_time.filter(|t| t.is_finite() && *t > 0.0);
+    let shutter = exposure_time.and_then(lightcraft_meta::format_exposure_time).unwrap_or_default();
     let camera = [m.make.clone().unwrap_or_default(), m.model.clone().unwrap_or_default()].join(" ").trim().to_string();
     let meta = Meta {
         camera,
+        make: m.make.clone().unwrap_or_default(),
+        lens_make: m.lens_make.clone().unwrap_or_default(),
         // (a camera that writes no lens name, like Nikon's DSLRs, still says what range the lens covers)
         lens: m.lens_model.clone().or_else(|| m.lens_spec.and_then(lightcraft_meta::lens_spec_name)).unwrap_or_default(),
         focal_mm: m.focal_length.map(|f| f as f32),
         aperture: m.f_number.map(|f| f as f32),
         shutter,
+        exposure_time,
         iso: m.iso,
+        flash: m.flash.map(|f| f.fired),
+        exposure_bias: m.exposure_bias.map(|v| v as f32),
+        serial_number: m.serial_number.clone().unwrap_or_default(),
         location: m.sublocation.clone().unwrap_or_default(),
         city: m.city.clone().unwrap_or_default(),
         state: m.state.clone().unwrap_or_default(),
@@ -204,6 +211,13 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             }
             Err(Err(e)) => return Err(e),
         };
+        // what the Exif reader can't see, the decoder may have read from the raw's own records (a CRW keeps make,
+        // model and capture time in CIFF records, no Exif): it fills the gaps, so the catalog knows the camera
+        let (meta, captured) = {
+            let mut m = m.clone();
+            m.fill_missing(&raw.metadata);
+            meta_of(&m)
+        };
         let (w, h) = raw.developed_size();
         let (mut w, mut h) = (w.max(1) as u32, h.max(1) as u32);
         if raw.orientation.swaps_axes() {
@@ -253,6 +267,18 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     let (mut w, mut h) = (header.width, header.height);
     if o.swaps_axes() {
         std::mem::swap(&mut w, &mut h);
+    }
+    // regions another app drew on the photo as stored: `extract` could only tell by the size the metadata states, which
+    // can be missing or wrong; the header's is the size as stored, so the boxes as written are turned by it (#2674)
+    let mut meta = meta;
+    if o.swaps_axes()
+        && !meta.regions.is_empty()
+        && let Some(xmp) = lightcraft_meta::embedded(bytes).xmp.and_then(|x| lightcraft_meta::parse_xmp(&x).ok())
+        && let Some(drawn_on) = xmp.regions_drawn_on()
+        && !xmp.metadata.regions.is_empty()
+    {
+        meta.regions = xmp.metadata.regions;
+        lightcraft_meta::upright_regions(&mut meta.regions, drawn_on, o, (header.width, header.height));
     }
     let format = match ext_upper(name).as_str() {
         "JPG" | "JPEG" => "JPEG".to_string(),

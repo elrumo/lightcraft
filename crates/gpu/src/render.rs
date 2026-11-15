@@ -343,6 +343,9 @@ fn guided_coeffs(cx: &mut Cx<'_>, p: &Buf, w: usize, h: usize, sigma: f32, eps: 
     gaussian(cx, &ab, w, h, 2, sigma)
 }
 
+/// Pixels per thread along the pass of `median_h` / `median_v` (`MED_K` in `blur.wgsl`).
+const MEDIAN_K: usize = 4;
+
 /// Separable median of a plane (`local::median_hv`).
 fn median_hv(cx: &mut Cx<'_>, p: &Buf, w: usize, h: usize, r: usize) -> Buf {
     if r == 0 || w * h == 0 {
@@ -350,9 +353,9 @@ fn median_hv(cx: &mut Cx<'_>, p: &Buf, w: usize, h: usize, r: usize) -> Buf {
     }
     let pr = [w as u32, h as u32, 1, r.min(local::BASE_DETAIL_MAX) as u32];
     let tmp = cx.gpu.buffer(w * h);
-    cx.run("median_h", &pr, &[Some(p), Some(&tmp)], groups2(w, h, [16, 16]));
+    cx.run("median_h", &pr, &[Some(p), Some(&tmp)], groups2(w.div_ceil(MEDIAN_K), h, [16, 16]));
     let out = cx.gpu.buffer(w * h);
-    cx.run("median_v", &pr, &[Some(&tmp), Some(&out)], groups2(w, h, [16, 16]));
+    cx.run("median_v", &pr, &[Some(&tmp), Some(&out)], groups2(w, h.div_ceil(MEDIAN_K), [16, 16]));
     out
 }
 
@@ -369,14 +372,32 @@ fn min_hv(cx: &mut Cx<'_>, p: Buf, w: usize, h: usize, r: usize) -> Buf {
     out
 }
 
-/// The highlights/shadows base (`local::tone_base`; `detail` 0: V1, no median).
-fn tone_base(cx: &mut Cx<'_>, l: &Buf, w: usize, h: usize, sigma: f32, detail: usize) -> Buf {
+/// The highlights/shadows base (`local::tone_base`; `detail` 0: V1, no detail removal).
+fn tone_base(cx: &mut Cx<'_>, l: &Buf, w: usize, h: usize, sigma: f32, detail: usize, keeps_gaps: bool) -> Buf {
     if detail == 0 {
         return guided_fast(cx, l, w, h, sigma, local::BASE_EPS);
     }
-    let m = median_hv(cx, l, w, h, detail);
+    let m = if keeps_gaps { detail_free(cx, l, w, h, detail) } else { median_hv(cx, l, w, h, detail) };
     guided_fast(cx, &m, w, h, sigma, local::BASE_EPS)
 }
+
+/// Log luminance without detail finer than `r` px (`local::detail_free`): clamped between its
+/// median at `r` and the median of a `local::BASE_COARSE_STEP`× downscaled copy, enlarged.
+fn detail_free(cx: &mut Cx<'_>, l: &Buf, w: usize, h: usize, r: usize) -> Buf {
+    if r == 0 || w * h == 0 {
+        return cx.copy(l);
+    }
+    let fine = median_hv(cx, l, w, h, r);
+    let s = local::BASE_COARSE_STEP;
+    let (lw, lh) = (w.div_ceil(s).max(1), h.div_ceil(s).max(1));
+    let lo = resize(cx, l, (w, h), (lw, lh), 1, Filter::Box);
+    let lo_median = median_hv(cx, &lo, lw, lh, r);
+    let coarse = resize(cx, &lo_median, (lw, lh), (w, h), 1, Filter::Bilinear);
+    let out = cx.gpu.buffer(w * h);
+    map(cx, "clamp_between_k", w * h, &[], [Some(l), Some(&fine), Some(&coarse)], &out);
+    out
+}
+
 
 /// Fast guided filter (`local::guided_fast`): coefficients on a subsampled grid.
 fn guided_fast(cx: &mut Cx<'_>, p: &Buf, w: usize, h: usize, sigma: f32, eps: f32) -> Buf {
@@ -616,7 +637,10 @@ pub fn render(
     };
     let plan = lightcraft_pipeline::plan(src.view(), info, s, req);
     let (w, h) = (plan.w, plan.h);
-    let n = w * h;
+    let Some(n) = w.checked_mul(h).filter(|n| n.checked_mul(12).is_some()) else {
+        fail(FailKind::Limit, format!("{w}×{h} output is too large"));
+        return None;
+    };
     let _limit = match fault {
         Some(crate::Fault::Limit(bytes)) => Some(crate::ctx::LimitOverride::new(bytes)),
         _ => None,
@@ -684,7 +708,10 @@ pub fn render(
     // 2. white balance, defringe, spots, noise reduction
     let base = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == plan.base_key) {
         Some((_, b)) => b,
-        None => Arc::new(linear(&mut cx, &sampled, info, &plan, &mut host, req.quality == lightcraft_pipeline::Quality::Draft)),
+        None => {
+            let colour_noise = lightcraft_pipeline::colour_noise(src.view(), info, &plan);
+            Arc::new(linear(&mut cx, &sampled, info, &plan, &mut host, req.quality == lightcraft_pipeline::Quality::Draft, colour_noise.as_ref()))
+        }
     };
     lap("wb/nr", &mut t, &mut cx);
     // the glow, on the CPU (as Lens Blur), over the image the cache keeps without it
@@ -722,7 +749,25 @@ pub fn render(
     }
 
     // 5. per-pixel stage
-    let mut fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air, plan.shadow_key, req.space);
+    let mut fp = FinishParams::new(
+        s,
+        &plan.frame,
+        info,
+        w,
+        h,
+        plan.px_per_long,
+        prep.air,
+        plan.shadow_key,
+        req.space,
+        req.quality == lightcraft_pipeline::Quality::Draft,
+    );
+    // ponytail: crystal grain (process V8) renders on the CPU; upstream LightCraft has it in the finish kernel
+    // (its tables after `aux`, `Gpu::grain_tables`), to port when GPU renders with grain need it
+    if fp.crystal.is_some() {
+        // (this render only, as a buffer past the limits: the next one may have no grain)
+        fail(FailKind::Limit, "crystal film grain renders on the CPU".into());
+        return None;
+    }
     fp.capture = prep.sharpen.as_ref().map(|(c, _)| *c);
     // soft proofing as the CPU's `finish` sets it up (an output-device table never gets here: see `render`)
     fp.proof = req.proof.map(|pr| pr.params(req.space));
@@ -934,7 +979,16 @@ fn unwritten(data: &[[u8; 4]]) -> usize {
 
 /// The white-balanced, retouched, denoised image, with Depth Map, Relight and Lens Blur (on the CPU;
 /// `draft`: their interactive quality).
-fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, host: &mut Host, draft: bool) -> Buf {
+/// `colour_noise`: see `denoise`.
+fn linear(
+    cx: &mut Cx<'_>,
+    sampled: &Buf,
+    info: &SourceInfo,
+    plan: &Plan<'_>,
+    host: &mut Host,
+    draft: bool,
+    colour_noise: Option<&lightcraft_pipeline::nrc_joint::JointNoise>,
+) -> Buf {
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
     let s = &*plan.settings;
@@ -962,7 +1016,7 @@ fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, ho
             eyed
         }
     };
-    let img = denoise(cx, img, plan);
+    let img = denoise(cx, img, plan, colour_noise);
     // (Depth Map, Relight and Lens Blur: on the CPU)
     if lightcraft_pipeline::has_after_denoise(plan) {
         let mut cpu = cx.read_rgb(&img, w, h);
@@ -973,11 +1027,17 @@ fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, ho
     }
 }
 
-/// Noise reduction (`local::denoise`).
-fn denoise(cx: &mut Cx<'_>, img: Buf, plan: &Plan<'_>) -> Buf {
+/// Noise reduction (`local::denoise`). `colour_noise`: the whole frame's noise model for the joint colour NR of
+/// process V7 on (`lightcraft_pipeline::colour_noise`; `None`: measured on the image), which runs on the CPU.
+// ponytail: the joint colour NR reads the image back and runs on the CPU; upstream LightCraft has it on the GPU
+// (`nrcj.wgsl`, its `render::color_nr_joint`), to port when GPU drags with colour NR need it
+fn denoise(cx: &mut Cx<'_>, img: Buf, plan: &Plan<'_>, colour_noise: Option<&lightcraft_pipeline::nrc_joint::JointNoise>) -> Buf {
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
-    let (lum, col) = local::nr_params(&plan.settings, plan.detail_scale);
+    let s = &*plan.settings;
+    let (lum, col) = local::nr_params(s, plan.detail_scale);
+    let joint = col.is_some() && local::joint_colour_nr(s);
+    let col = if joint { None } else { col };
     let mut img = img;
     if let Some(nr) = lum {
         let l = cx.gpu.buffer(n);
@@ -994,6 +1054,12 @@ fn denoise(cx: &mut Cx<'_>, img: Buf, plan: &Plan<'_>) -> Buf {
         let out = cx.gpu.buffer(n * 3);
         map(cx, "nr_col", n, &[nr.t.to_bits()], [Some(&img), Some(&chroma), Some(&b)], &out);
         img = out;
+    }
+    if joint && let Some(p) = local::nrc_params(s, plan.detail_scale) {
+        let mut cpu = cx.read_rgb(&img, w, h);
+        let d = &s.detail;
+        lightcraft_pipeline::nrc_joint::denoise(&mut cpu, &p, (d.nr_color_detail / 100.0) as f32, (d.nr_color / 100.0) as f32, colour_noise);
+        img = cx.gpu.upload(rgb_words(&cpu));
     }
     img
 }
@@ -1030,7 +1096,7 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
     let base = match sig.base {
         Some(sg) => {
             let key = local::base_key(&plan.settings, sg, sig.base_detail);
-            plane_at(&mut planes.base, key, || tone_base(cx, &log_l, w, h, sg, sig.base_detail))
+            plane_at(&mut planes.base, key, || tone_base(cx, &log_l, w, h, sg, sig.base_detail, local::base_keeps_gaps(&plan.settings)))
         }
         None => log_l.clone(),
     };
@@ -1149,6 +1215,11 @@ fn masks(
             used.push((key, b.clone()));
             continue;
         }
+        // its coordinates on the photo before the warp (`masks::evaluate_one`): through a lens or
+        // perspective warp the kernels' affine positions don't hold, so its shapes run on the CPU
+        let mframe = plan.frame.for_mask(m.on_photo);
+        let frame = &*mframe;
+        let warped = frame.mask_warp().is_some();
         let mut first = true;
         for comp in &m.components {
             let op = match comp.op {
@@ -1164,6 +1235,7 @@ fn masks(
             let mut aux: Vec<f32> = Vec::new();
             let mut own: Option<Buf> = None;
             let kind = match &comp.shape {
+                _ if warped => None,
                 MaskShape::Linear { start, end } => {
                     let (a, b) = (frame.norm_to_long(*start), frame.norm_to_long(*end));
                     let d = b - a;
@@ -1189,7 +1261,18 @@ fn masks(
                     Some(3)
                 }
                 MaskShape::Brush { strokes } => {
-                    let dabs: Vec<_> = strokes.iter().map(|st| lightcraft_pipeline::masks::brush_dabs(st, frame, w, h)).collect();
+                    // The kernel takes at most MAX_DABS across the whole mask, so no more than that (plus one, to tell "at
+                    // it" from "past it") is ever built: each stroke may otherwise construct two million dabs before the sum
+                    // below rejects them all (#1520).
+                    let mut room = MAX_DABS + 1;
+                    let dabs: Vec<_> = strokes
+                        .iter()
+                        .map(|st| {
+                            let d = lightcraft_pipeline::masks::brush_dabs_within(st, frame, w, h, room);
+                            room -= d.dabs.len().min(room);
+                            d
+                        })
+                        .collect();
                     // pen pressure and tilt vary radius and flow per dab, which the kernel doesn't take: the CPU rasterizes it
                     if dabs.iter().map(|d| d.dabs.len()).sum::<usize>() > MAX_DABS
                         || dabs.iter().any(|d| !d.pressure.is_empty() || !d.tilt.is_empty())
@@ -1271,6 +1354,45 @@ fn masks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tiled median kernels select exactly what the CPU's sorted window does: edge tiles,
+    /// planes smaller than a tile or a window, every radius and many ties.
+    #[test]
+    fn median_matches_cpu_bit_for_bit() {
+        // (creating the device writes the crash sentinel another test swaps out)
+        let _serial = crate::DEVICE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(gpu) = crate::device() else { return lightcraft_testkit::skip!(Gpu, "no GPU adapter") };
+        let _scope = crate::ctx::RenderScope::new(gpu);
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for (w, h) in [(1, 1), (2, 3), (5, 70), (70, 5), (63, 65), (130, 67), (200, 129)] {
+            // a coarse level set gives ties; a smooth ramp and fine noise give distinct values
+            let mut p = Plane::new(w, h);
+            for (i, o) in p.data.iter_mut().enumerate() {
+                let (x, y) = (i % w, i / w);
+                *o = match (next() % 3, next()) {
+                    (0, v) => (v % 7) as f32 * 0.5 - 2.0,
+                    (1, v) => (x + 2 * y) as f32 * 0.01 + (v % 100) as f32 * 1e-4,
+                    (_, v) => (v % 10_000) as f32 * 1e-3 - 5.0,
+                };
+            }
+            let src = gpu.upload(&p.data);
+            for r in 1..=local::BASE_DETAIL_MAX {
+                let mut cx = Cx::new(gpu);
+                let out = median_hv(&mut cx, &src, w, h, r);
+                let got: Vec<f32> = cx.read(&out, w * h);
+                let want = local::median_hv(&p, r);
+                let bad = got.iter().zip(&want.data).position(|(g, c)| g.to_bits() != c.to_bits());
+                assert!(bad.is_none(), "{w}×{h} r={r}: pixel {bad:?}");
+            }
+        }
+    }
+
 
     #[test]
     fn coverage_mask_matches_per_pixel_decision() {

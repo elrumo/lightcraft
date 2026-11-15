@@ -24,3 +24,6 @@ dng-test.dng
 /crates/video/hw-bench/target
 /apps/lightbites-server
 /marketing
+
+# Python tools import their public operator family.
+__pycache__/

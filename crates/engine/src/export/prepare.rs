@@ -305,7 +305,10 @@ fn prepare_guarded(
         // (a gain map JPEG, or a TIFF of a photo edited in HDR with its gain map beside it: `gainMapSidecar`)
         let gain_map = (o.hdr_output() && o.format == ExportFormat::Jpeg)
             || (o.gain_map_sidecar && o.format == ExportFormat::Tiff && !o.hdr_output() && p.develop.hdr.enabled);
-        let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
+        // an export is drawn at its exact size, under a key of its own (never a cached picture of another size)
+        let mut job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
+        job.request.exact_size = true;
+        job.key ^= 0x86e2_fadc_0917_b435;
         // (a hosted picture weighs what its encode holds: the picture at up to 8 bytes a pixel and as much again for the encoder)
         let weight = if hosted {
             w.saturating_mul(h).saturating_mul(16)
@@ -317,7 +320,14 @@ fn prepare_guarded(
         if !hosted && let Some(why) = too_big_for_memory((w, h), native_px, weight, crate::memory::total_ram()) {
             return Err(format!("{label}: {why}"));
         }
-        let hdr_job = if gain_map { Some(session.export_job(id, w, h, o.effective_space(), OutputDepth::F32Hdr)?) } else { None };
+        let hdr_job = if gain_map {
+            let mut hdr = session.export_job(id, w, h, o.effective_space(), OutputDepth::F32Hdr)?;
+            hdr.request.exact_size = true;
+            hdr.key ^= 0x86e2_fadc_0917_b435;
+            Some(hdr)
+        } else {
+            None
+        };
         (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone(), size: (w, h), host: None, host_file: None, banded })), weight)
     } else {
         let lightcraft_catalog::Source::File { path } = &p.source else {
@@ -625,13 +635,26 @@ impl PreparedExport {
                     // the file is copied byte for byte: refuse rather than leak a location it embeds
                     if remove_location {
                         // a PSD or PSB whose metadata can't be read can't be shown to carry no location
-                        lightcraft_meta::try_extract(&bytes)
+                        let metadata = lightcraft_meta::try_extract(&bytes)
                             .map_err(|e| format!("{label}: can't verify location metadata in this original file: {e}"))?;
-                        if lightcraft_meta::embeds_location(&bytes) {
+                        if !bytes.starts_with(b"8BPS") {
+                            let embedded = lightcraft_meta::embedded(&bytes);
+                            if let Some(xmp) = embedded.xmp.as_deref() {
+                                lightcraft_meta::parse_xmp(xmp).map_err(|e| {
+                                    format!("{label}: can't verify location metadata in this original file: malformed embedded XMP: {e}")
+                                })?;
+                            }
+                        }
+                        let embeds_place_name =
+                            [metadata.sublocation.as_deref(), metadata.city.as_deref(), metadata.state.as_deref(), metadata.country.as_deref()]
+                                .into_iter()
+                                .flatten()
+                                .any(|value| !value.trim().is_empty());
+                        if lightcraft_meta::embeds_location(&bytes) || embeds_place_name {
                             // DNG only for what the DNG export below takes
                             let instead = if lightcraft_raw::probe(&bytes).is_some() { "JPEG, TIFF or DNG" } else { "JPEG or TIFF" };
                             return Err(format!(
-                                "{label}: can't remove the location from an original file that embeds GPS; export as {instead} instead"
+                                "{label}: can't remove the location from an original file that embeds GPS or place names; export as {instead} instead"
                             ));
                         }
                     }

@@ -2,7 +2,7 @@
 //! ISO tone-map HEIC, read from synthetic files.
 
 use lightcraft_codecs::gainmap::{self, GainMapMeta};
-use lightcraft_heif::testdata::{Spec, build};
+use craft_heif::testdata::{Spec, build};
 
 fn grey(x: u32, y: u32) -> [u16; 3] {
     [((x * 7 + y * 13) % 220 + 20) as u16, 128, 128]

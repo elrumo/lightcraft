@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (gain map JPEG and iPhone HEIC import read the gain map for the HDR render (FB-HDR-6), still 🟡: synthetic files only; gain map JPEG read downgraded to 🟡; PQ / HLG PNG and lossless PQ JPEG XL decode; lossy DNG export; Render to DNG as an export format; PSD write ✅: export and Edit In write flat 8/16-bit PSDs, and what an external editor saves, a Save As as a PSD included, comes back; Render to DNG as an export format) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 · **Changes:** [revision history](#revision-history)
 
 Every format Lightroom reads or writes, with our support, fidelity and tests. Camera raw formats are
 deep enough to have their own document: [raw-parity.md](raw-parity.md).
@@ -19,7 +19,7 @@ import and export formats. Ours come from `crates/codecs/src/sniff.rs`, `crates/
 | TIFF | ✅ 8/16/32-bit | ✅ 8/16-bit, LZW/ZIP | ✅ 1–64-bit integer, 16–64-bit float, bilevel, CCITT fax, WhiteIsZero | ✅ 8/16-bit, 32-bit float linear, none / LZW / ZIP | `crates/tiff`, `crates/codecs/src/tiff_codec.rs` |
 | PNG | ✅ | ✅ | ✅ | ✅ | |
 | PSD / PSB | ✅ (maximized-compatibility composite) | ✅ (Classic: PSD export, edit-in round trip) | ✅ merged composite | ✅ PSD, flat 8/16-bit with ICC (export, Edit In); ⬜ PSB. Edit In round trip: an editor's saves over the file come back, and so does its Save As beside it (e.g. a PSD of the TIFF copy, added to the stack) | `crates/codecs/src/psd.rs`, `crates/engine/src/tests_external_edit.rs` |
-| HEIC / HEIF | ✅ | ⬜ (Classic) / HDR only | ✅ in every release build (`crates/heif`, heic-rs) | ⬜ | `heif` feature on by packaging scripts; EXIF and XMP read from the container in every build (`crates/meta/src/heif.rs`, #693) |
+| HEIC / HEIF | ✅ | ⬜ (Classic) / HDR only | ✅ in every release build (`craft-heif` from craft-libs, heic-rs) | ⬜ | `heif` feature on by packaging scripts; EXIF and XMP read from the container in every build (`crates/meta/src/heif.rs`, #693) |
 | AVIF | ✅ | ✅ (HDR) | ⬜ recognised, not decoded (no permissive pure-Rust AV1 decoder) | ✅ 8/10-bit, PQ HDR | EXIF and XMP read from the container (`crates/meta/src/heif.rs`); exported EXIF reads back |
 | JPEG XL | ✅ | ✅ | ✅ (`jxl-oxide`) incl. DNG 1.7 JXL tiles | ✅ lossy / lossless, 8/16-bit, PQ HDR (`jixel`, native only; ⬜ web) | `crates/engine/src/tests/export.rs` |
 | WebP | not in its document types | ⬜ | ✅ | ✅ | beyond target |
@@ -27,7 +27,7 @@ import and export formats. Ours come from `crates/codecs/src/sniff.rs`, `crates/
 | DNG (from raw) | ✅ | ✅ incl. lossy, embedded original | ✅ | ✅ uncompressed, LJ92, Deflate or lossy (JPEG tiles, optional long edge); ⬜ embedded original | `crates/raw/src/dngwrite.rs` |
 | Render to DNG (15.5) | — | ✅ | — | ✅ Photo ▸ Render to DNG (stacked with the original) and the "Rendered DNG" export (linear float DNG, edit baked in) | `crates/raw/src/dngwrite.rs` (`write_rendered_dng`) |
 | Original + sidecar | — | ✅ | — | ✅ | |
-| HDR gain map JPEG (ISO 21496-1) | ✅ | ✅ | 🟡 import reads the gain map of an Ultra HDR / ISO 21496-1 JPEG and of a HEIC (an iPhone photo's Apple gain map sized by its maker note, or an ISO `tmap` item) and the HDR render starts from the picture it rebuilds (`gainmap::read`, `files::load_bytes_now`, `DecodedSource::hdr_input`); the SDR render stays the base's. Tested on synthetic files and a LightCraft round trip only: no iPhone, Pixel or Lightroom file, no HDR display; Apple's maker-note recipe and a HEIC whose primary image is the `tmap` item are unchecked against real files, a gain map in a smart preview is dropped, a three-channel HEIC map reads its luma | ✅ | `crates/codecs/src/gainmap.rs`, `crates/engine/src/tests_hdr_sources.rs` |
+| HDR gain map JPEG (ISO 21496-1) | ✅ | ✅ | 🟡 import reads the gain map of an Ultra HDR / ISO 21496-1 JPEG and of a HEIC (an iPhone photo's Apple gain map sized by its maker note, or an ISO `tmap` item) and the HDR render starts from the picture it rebuilds (`gainmap::read`, `files::load_bytes_now`, `DecodedSource::hdr_input`); the SDR render stays the base's. Tested on synthetic files and a LightCraft round trip only: no iPhone, Pixel or Lightroom file, no HDR display; Apple's maker-note recipe and a HEIC whose primary image is the `tmap` item are unchecked against real files, a gain map in a smart preview is dropped, a three-channel HEIC map reads its luma | ✅ | `crates/codecs/src/gainmap.rs`, `crates/engine/src/tests_hdr_sources.rs` (JPEG layout), `craft-gainmap` (metadata, compute, apply) |
 | PQ / HLG HDR | ✅ | ✅ AVIF, JXL, TIFF | 🟡 PQ / HLG PNG and HEIF `nclx` decode to linear light with SDR white at 203 cd/m² (they were read as sRGB); a lossy PQ JPEG XL is still tone mapped to 255 cd/m² by the decoder; PQ AVIF can't be opened | 🟡 PQ AVIF, HLG AVIF, PQ PNG, PQ JPEG XL, float TIFF | |
 | Contact sheet / print PDF | — | ✅ (Print module: PDF / JPEG / printer) | — | 🟡 paginated contact-sheet PDF (A4 / Letter, 150 dpi, sRGB) | `crates/engine/src/contact_sheet.rs` |
 | Video (MP4, MOV, AVCHD…) | ✅ playback, trim, edit | ✅ export | 🟡 catalogued (kind, duration) | ⬜ | see video gap |
@@ -48,14 +48,14 @@ import and export formats. Ours come from `crates/codecs/src/sniff.rs`, `crates/
 | EXIF / IPTC / XMP embedded on export | ✅ | ✅ with metadata filters | `crates/meta` |
 | Develop presets `.xmp` | ✅ | ✅ import (mapping of supported settings) | |
 | Legacy presets `.lrtemplate` | ✅ (converted) | ✅ import | |
-| Camera / creative profiles (`.dcp`, `.xmp` profiles) | ✅ | ⬜ deliberately (Adobe profile formats are never used); `.cube` LUT profiles ✅ | |
+| Camera / creative profiles (`.dcp`, `.xmp` profiles) | ✅ | 🟡 the user's own `.dcp` camera profiles import (`profile.import`) and replace a raw file's colour model; none ship with the app; `.xmp` profiles ⬜; `.cube` LUT profiles ✅ | |
 | Lens profiles `.lcp` | ✅ | ⬜ deliberately | |
 | Other apps' presets | — | ✅ Luminar `.lmp` / `.mplumpack`, `.zip` bundles | beyond target |
 | Lightroom Classic catalog `.lrcat` | native | 🟡 import (ratings, flags, labels, keywords, collections, virtual copies, supported develop settings; read-only pure-Rust SQLite incl. WAL) | [lightroom-catalog-import.md](lightroom-catalog-import.md) |
 | Lightroom (cloud) library `.lrlibrary` | native | ⬜ | cloud library format, local cache only |
 | Write back to `.lrcat` | native | ⬜ (one-way migration by design) | |
 | Keyword lists (text) | import / export | ✅ | |
-| GPX track logs | ✅ | ✅ | `crates/meta/src/gpx.rs` |
+| GPX track logs | ✅ | ✅ | `crates/meta/src/lib.rs` (re-exports shared `craft_metadata::parse_gpx`), `crates/engine/src/cmd/manage.rs` |
 | Export presets, metadata presets, filename templates | ✅ (`.lrtemplate`) | ✅ own JSON | not interchangeable |
 | Lightroom plug-ins (`.lrplugin`, `.lrdevplugin`) | ✅ | ⬜ | see ecosystem in [target-app-parity.md](target-app-parity.md) |
 
@@ -75,12 +75,14 @@ Remaining: **22–39 h** (AVIF decode 8–15 h if a permissive decoder is writte
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | minor | Upstream v0.21.1 merged: HEIC decode through `craft-heif` and gain map maths through `craft-gainmap` (craft-libs); statuses unchanged |
 | 2026-10-25 | minor | FB-HDR-6: import reads the gain map of an Ultra HDR / ISO 21496-1 JPEG and of an iPhone HEIC (Apple gain map and maker note, ISO `tmap` item); the HDR render starts from the highlights it holds and the SDR render is unchanged (row stays 🟡: no real sample file, no HDR display) |
 | 2026-10-25 | minor | HDR gain map JPEG read 🟡 (the reader and `apply` exist and are tested, import never calls them: a gain map JPEG or iPhone HEIC opens as its SDR base); PQ / HLG HDR read: PNG and HEIF `nclx` (cICP 16 / 18) and lossless PQ JPEG XL decode to linear light, SDR white at 203 cd/m² (they were read as sRGB, or tone mapped down to 255 cd/m²); PQ / HLG write row corrected (HLG AVIF and PQ PNG exist) |
 | 2026-10-13 | minor | PSD write ✅ (it landed with Edit in PhotoCraft, #953; the row still said the round trip wrote TIFF only); the Edit In round trip brings back an editor's Save As beside the file. Remaining hours without PSD write |
 | 2026-10-13 | patch | JPEG write (#1373): Huffman tables made for each image, 12–14 % smaller files at the same pixels; statuses unchanged |
 | 2026-10-12 | minor | Render to DNG: "Rendered DNG" export format (linear 16-bit float DNG of the rendered photo) |
 | 2026-10-12 | minor | Lossy DNG export (JPEG tiles, `dngCompression: "lossy"`); PSD write had already landed (#953), so it leaves the remaining hours |
+| 2026-10-12 | minor | LR-PROF-IMPORT: the user's own DNG camera profiles (`.dcp`) import as camera profiles; none ship |
 | 2026-10-10 | major | Created from the code and the installed Lightroom's document types |
 | 2026-10-10 | minor | JPEG XL export (#247): JXL write ✅ (native only), PQ JPEG XL HDR |
 | 2026-10-12 | minor | Render to DNG: "Rendered DNG" export format (linear 16-bit float DNG of the rendered photo) |

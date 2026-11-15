@@ -26,5 +26,10 @@ web-time = { workspace = true }
 # Generative Expand's limit (`shown_size`)
 lightcraft-geom = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+winapi-util = { workspace = true }
+
 [dev-dependencies]
+dhat = { workspace = true }
+lightcraft-testkit = { workspace = true }
 proptest = { workspace = true }

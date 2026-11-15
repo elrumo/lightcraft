@@ -24,6 +24,7 @@ use lightcraft_develop::DevelopSettings;
 use lightcraft_pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
 use lightcraft_preview::{DiskCache, Hash128, Hasher128, Lru, PreviewCache};
 use lightcraft_raster::{Histogram, Rgb32f, Rgba8, SourcePixels};
+pub use lightcraft_raw::dcp::DcpProfile;
 use serde::{Deserialize, Serialize};
 
 mod cache;
@@ -34,9 +35,13 @@ mod settings_hash;
 mod source;
 
 pub use cache::DenoiseIndex;
+#[cfg(test)]
+pub(crate) use cache::rendered_budget;
 pub(crate) use quick::shrink;
 pub use quick::{QuickJob, QuickSource, clip_cover, content_key, source_info};
-pub use render::{RenderJob, RenderResult, develop, develop_hdr, develop_reporting, develop_reporting_hdr, fit_for_display};
+pub use render::{
+    RenderJob, RenderResult, ScreenFrame, develop, develop_hdr, develop_reporting, develop_reporting_hdr, fit_cached, fit_for_display,
+};
 pub(crate) use render::{band_pixels, bandable_at};
 #[cfg(test)]
 pub(crate) use session::export_source_edge;
@@ -46,9 +51,9 @@ use settings_hash::SETTINGS_HASH_ENTRIES;
 use settings_hash::SettingsHashes;
 pub(crate) use source::per_pixel;
 pub use source::{
-    CameraCrop, Catalogued, CompactLoader, DISK_CACHE_BYTES, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe, MakeProduct,
-    PairLoader, PreviewLoader, ProbeInfo, ProxyBytes, RENDER_CACHE_VERSION, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES, ThumbAsk, Twin,
-    face_edge, hdr_from_gain, thumb_bucket,
+    CameraCrop, Catalogued, CompactLoader, DISK_CACHE_BYTES, DISK_CACHE_PER_PHOTO, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe,
+    MakeProduct, PairLoader, PreviewLoader, ProbeInfo, ProxyBytes, RENDER_CACHE_VERSION, RawDecode, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES,
+    ThumbAsk, Twin, default_disk_cache_bytes, face_edge, hdr_from_gain, thumb_bucket,
 };
 
 pub struct MediaCache {
@@ -116,10 +121,31 @@ pub struct MediaCache {
     /// What the decodes of recently asked photos found besides their pixels, kept when the pixels go
     /// ([`MediaCache::release_sources`]).
     kept: Lru<PhotoId, cache::KeptFacts>,
+    /// Imported camera profiles by id ([`crate::cmd::dcp_profiles`]), handed to the decoder of photos using them.
+    pub camera_profiles: std::collections::HashMap<String, LoadedCameraProfile>,
 }
 
 #[cfg(test)]
 mod embedded_frame_tests;
+
+/// An imported camera profile ready for the decoder, with a fingerprint of its file: decoded sources and cached renders
+/// made with it carry the fingerprint, so a profile deleted, or replaced by another under the same id, never has
+/// its old pictures stand in.
+#[derive(Clone, Debug)]
+pub struct LoadedCameraProfile {
+    pub profile: Arc<DcpProfile>,
+    /// Never 0 (0 is "no camera profile" in a render key).
+    pub fingerprint: u64,
+}
+
+impl LoadedCameraProfile {
+    /// Parse a `.dcp` file's bytes.
+    pub fn parse(bytes: &[u8]) -> Result<Self, lightcraft_raw::dcp::DcpError> {
+        let profile = lightcraft_raw::dcp::parse_dcp(bytes)?;
+        Ok(LoadedCameraProfile { profile: Arc::new(profile), fingerprint: Hasher128::new().update(bytes).finish().0 as u64 | 1 })
+    }
+}
+
 #[cfg(test)]
 mod thumbnail_hash_tests;
 

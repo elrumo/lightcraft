@@ -5,7 +5,7 @@
 
 use lightcraft_color::{D50, D65, Mat3, PROPHOTO, REC2020, bradford, luminance_2020};
 use lightcraft_raster::Rgb32f;
-use lightcraft_raw::profile::HsvTable;
+use lightcraft_raw::profile::{HsvTable, HsvTableApply};
 
 use crate::CameraMatch;
 

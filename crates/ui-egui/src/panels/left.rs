@@ -23,15 +23,16 @@ pub use albums::{album_drag_feedback, auto_scroll_speed};
 use albums::{albums_rows, drag_auto_scroll};
 pub(crate) use dates::browse_all_photos;
 use dates::date_rows;
-pub(crate) use folders::{folder_row_of, move_photos, moved_text};
+pub(crate) use folders::{created_text, folder_row_of, move_photos, moved_text};
 use folders::{folder_rows, reveal_chosen};
 use keywords::{keyword_rows, server_folders_section};
 pub(crate) use local::{fs_cached, fs_cached_running};
 use local::{local_now, local_rows};
 pub(crate) use rows::OPENED_AT;
+pub(crate) use rows::disclosure_name;
 #[cfg(test)]
 pub(crate) use rows::{INDENT_STEP, MIN_INDENT_STEP};
-use rows::{LIBFOLDER_REVEALED, SCROLL_TO_ROW, SCROLL_UNTIL, ask_scroll, row, set_tree_open};
+use rows::{LIBFOLDER_REVEALED, Row, SCROLL_TO_ROW, SCROLL_UNTIL, ask_scroll, set_tree_open};
 pub(crate) use rows::{content_width, indent_step, step_for};
 pub(crate) use sections::PlacedSection;
 pub use sections::section_drag_feedback;
@@ -123,37 +124,49 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ("all", Icon::Photos, "All Photos", Some(total), LibrarySource::All),
                 ("recentlyAdded", Icon::Clock, "Recently Added", None, LibrarySource::RecentlyAdded),
             ] {
-                if row(app, ui, id, icon, label, count, src == s && !people_shown, 0.0).clicked() {
+                if Row::new(id, icon, label).count(count).selected(src == s && !people_shown).show(app, ui).clicked() {
                     let _ = app.run("library.source", json!({"kind": id}));
                     leave_people(app);
                 }
             }
             // the people named in the photos (the People view; on a phone, a screen of its own)
             let people = app.caches.people(&app.session.catalog, &lightcraft_catalog::Filter::default()).len();
-            if row(app, ui, "people", Icon::Person, "People", Some(people), people_shown, 0.0).clicked() {
+            if Row::new("people", Icon::Person, "People").count(Some(people)).selected(people_shown).show(app, ui).clicked() {
                 let _ = app.run("view.people", json!({}));
                 if app.compact {
                     app.ui.left_panel = false;
                 }
             }
-            if row(app, ui, "picks", Icon::FlagPick, "Picks", Some(picks), src == LibrarySource::Picks && !people_shown, 0.0).clicked() {
+            if Row::new("picks", Icon::FlagPick, "Picks").count(Some(picks)).selected(src == LibrarySource::Picks && !people_shown).show(app, ui).clicked() {
                 let _ = app.run("library.source", json!({"kind": "picks"}));
                 leave_people(app);
             }
             // photos whose files can't be found (checked every few seconds, not every frame)
             let missing = missing_count(app, ui);
             if (missing > 0 || src == LibrarySource::Missing)
-                && row(app, ui, "missing", Icon::Folder, "Missing Photos", Some(missing), src == LibrarySource::Missing, 0.0).clicked()
+                && Row::new("missing", Icon::Folder, "Missing Photos")
+                    .count(Some(missing))
+                    .selected(src == LibrarySource::Missing)
+                    .show(app, ui)
+                    .clicked()
             {
                 let _ = app.run("library.source", json!({"kind": "missing"}));
             }
-            if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0).clicked() {
+            if Row::new("recentlyDeleted", Icon::Trash, "Recently Deleted")
+                .count(Some(deleted))
+                .selected(src == LibrarySource::RecentlyDeleted)
+                .show(app, ui)
+                .clicked()
+            {
                 let _ = app.run("library.source", json!({"kind": "recentlyDeleted"}));
             }
             // the photos the sensitive-content model flagged, to look through (once it flagged any)
             let flagged = app.session.sensitive_ids().len();
             if (flagged > 0 || src == LibrarySource::Sensitive)
-                && row(app, ui, "sensitive", Icon::EyeOff, "Possibly Sensitive", Some(flagged), src == LibrarySource::Sensitive && !people_shown, 0.0)
+                && Row::new("sensitive", Icon::EyeOff, "Possibly Sensitive")
+                    .count(Some(flagged))
+                    .selected(src == LibrarySource::Sensitive && !people_shown)
+                    .show(app, ui)
                     .clicked()
             {
                 let _ = app.run("library.source", json!({"kind": "sensitive"}));
@@ -162,7 +175,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             // the hidden photos: behind the password, so a padlock and no count while locked
             let unlocked = app.session.hidden.unlocked();
             let (icon, count) = if unlocked { (Icon::EyeOff, Some(counts.hidden)) } else { (Icon::Lock, None) };
-            if row(app, ui, "hidden", icon, "Hidden", count, src == LibrarySource::Hidden && !people_shown, 0.0).clicked()
+            if Row::new("hidden", icon, "Hidden").count(count).selected(src == LibrarySource::Hidden && !people_shown).show(app, ui).clicked()
                 && let Err(e) = crate::panels::dialogs::open_hidden(app, false)
             {
                 app.toast(ui.ctx(), e);

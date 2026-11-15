@@ -143,6 +143,7 @@ def main(root, out):
         tags.append((header["manufacturer"], [cm1, cm2], [fm1, fm2]))
         rows.append(
             f'    Camera {{\n        make: "{rust_lit(header["manufacturer"])}",\n        model: "{rust_lit(header["model"])}",\n'
+            "        illuminant: [17, 21],\n"
             f"        color_matrix: [{mat(cm1)}, {mat(cm2)}],\n        forward_matrix: [{mat(fm1)}, {mat(fm2)}],\n    }},"
         )
     aliases = json.load(open(os.path.join(root, "data/aliases.json")))["data"]["camera"]["model"]

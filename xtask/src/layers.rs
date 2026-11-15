@@ -3,7 +3,7 @@
 //! The rule engine works on a small, metadata-independent model so it can be
 //! unit-tested; `from_metadata` builds that model from `cargo metadata`.
 
-use super::*;
+use super::{Path, layers, metadata, root};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -33,19 +33,20 @@ impl Class {
 }
 
 /// The layering table. Names are package names without the `lightcraft-`
-/// prefix.
+/// prefix. The `craft-*` crates (craft-libs: tiff, heif, raw, metadata, codecs, ...) are external
+/// dependencies, not workspace members: the four this fork patches live in `third_party/craft-libs`,
+/// which the workspace excludes, so they are not listed here.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
     ("color", Class::Layer(0)),
     ("raster", Class::Layer(0)),
-    ("tiff", Class::Layer(0)),
     ("sysmem", Class::Layer(0)),
     // cameras and cards through ImageCaptureCore (iOS, macOS; objc2): `ui-egui`'s camera host there
     ("capture", Class::Layer(0)),
+    ("wincolor", Class::Layer(0)),
     ("fetch", Class::Layer(0)),
     ("denoise-core", Class::Layer(1)),
     ("denoise", Class::Layer(1)),
-    ("heif", Class::Layer(0)),
     // MP4 / MOV clips: probe and poster frames over FilmCraft's demuxer and decoders (the only crate that may use them)
     ("video", Class::Layer(1)),
     ("raw", Class::Layer(1)),
@@ -53,6 +54,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("meta", Class::Layer(1)),
     ("geo", Class::Layer(1)),
     ("develop", Class::Layer(1)),
+    ("film", Class::Layer(1)),
     ("lensdb", Class::Layer(2)),
     ("inpaint", Class::Layer(1)),
     ("faces", Class::Layer(1)),
@@ -101,7 +103,6 @@ pub const INTRA_LAYER_ORDER: &[&[&str]] = &[
     &["geom", "color", "raster"],
     &["vision", "erase", "diffuse", "enhance"],
     &["vision", "depth", "enhance"],
-    &["tiff", "raster"],
     &["denoise-core", "denoise"],
     &["meta", "raw"],
     &["meta", "codecs"],

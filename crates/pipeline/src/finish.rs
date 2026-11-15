@@ -223,6 +223,10 @@ fn grain_weights(t: f32) -> [f32; 4] {
 /// scaled to unit variance at every position.
 #[inline]
 fn grain_field(x: f32, y: f32, seed: u32) -> f32 {
+    // A degenerate frame (zero-width crop) maps pixels to NaN/inf coordinates: no grain there.
+    if !x.is_finite() || !y.is_finite() {
+        return 0.0;
+    }
     let (x0, y0) = (x.floor(), y.floor());
     let (wx, wy) = (grain_weights(x - x0), grain_weights(y - y0));
     let (i, j) = (x0 as i32, y0 as i32);
@@ -276,6 +280,21 @@ pub fn grain_apply(e: [f32; 3], x: f32, y: f32, amt: f32, coarse: f32, seed: u32
             std::array::from_fn(|k| e[k] + amt * (c[k] - mean) * 1.224_744_9 * noise_strength(e[k]))
         }
     }
+}
+
+/// The crystal grain of output row `y` (`w` pixels) when its pixels are axis-aligned; empty
+/// otherwise (and without crystal grain): the pixels then take it one by one.
+fn crystal_row(fp: &FinishParams, y: usize, w: usize) -> Vec<f32> {
+    let Some(g) = &fp.crystal else { return Vec::new() };
+    let long = fp.ow.max(fp.oh);
+    let (a, b) = (fp.out_to_norm.apply(Point::new(0.5, y as f64 + 0.5)), fp.out_to_norm.apply(Point::new(1.5, y as f64 + 0.5)));
+    let (gx, gy) = (a.x * fp.ow / long, a.y * fp.oh / long);
+    let (dx, dy) = ((b.x - a.x) * fp.ow / long, (b.y - a.y) * fp.oh / long);
+    let mut out = vec![0.0; w];
+    if !g.row(gx, gy, dx, dy, &mut out) {
+        out.clear();
+    }
+    out
 }
 
 /// Number of per-mask terms in [`mask_terms`].
@@ -409,7 +428,7 @@ pub struct FinishParams {
     pub to_out: [[f32; 3]; 3],
     pub out_luma: [f32; 3],
     pub out_trc: OutputTrc,
-    /// Soft proofing (CPU only; the GPU path declines proof renders).
+    /// Soft proofing (the GPU kernel reads the same parameters).
     pub proof: Option<crate::output::ProofParams>,
     pub hl: f32,
     pub sh: f32,
@@ -418,7 +437,7 @@ pub struct FinishParams {
     pub dehaze: f32,
     /// Dehaze's process-V4 response ([`dehaze_v4_pixel`]) instead of V1's.
     pub dehaze_v4: bool,
-    /// Refinements made while the fork had no process versions, pinned to V5.
+    /// Refinements made while the fork had no process versions, from V5 on.
     pub fork_refinements: bool,
     pub sharpen: f32,
     pub sharpen_mask: f32,
@@ -434,7 +453,10 @@ pub struct FinishParams {
     /// How far (EV) the Shadows window sits below where it sits for a photo of [`SHADOW_KEY_REF`]'s key ([`shadow_window_shift`]).
     pub sh_shift: f32,
     /// Grain: strength, lattice spacing (output px), coarse layer weight, seed (see [`grain_params`]), and what it is.
+    /// The grain of V1 to V7, and from V8 that of the digital and colour noise styles.
     pub grain: Option<(f32, f32, f32, u32, GrainStyle)>,
+    /// Film grain from crystal layers ([`crate::crystal`], process V8 on, the film style): in place of `grain`.
+    pub crystal: Option<crate::crystal::CrystalGrain>,
     /// Output px → normalized oriented coordinates.
     pub out_to_norm: lightcraft_geom::Affine,
     pub ow: f64,
@@ -470,7 +492,8 @@ pub fn shadow_window_shift(key: Option<f32>, ev: f32) -> f32 {
 }
 
 impl FinishParams {
-    /// Parameters for a `w × h` render into `space`; `ev`/`air_pre` as in [`crate::Prepared`].
+    /// Parameters for a `w × h` render into `space`; `ev`/`air_pre` as in [`crate::Prepared`]; `draft`: a render
+    /// for a drag ([`crate::Quality::Draft`], [`crate::crystal::CrystalGrain::draft`]).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         s: &DevelopSettings,
@@ -482,6 +505,7 @@ impl FinishParams {
         air_pre: f32,
         shadow_key: Option<f32>,
         space: OutputSpace,
+        draft: bool,
     ) -> FinishParams {
         let effects = s.section_enabled("effects");
         let (clar, tex, dehaze) = if effects {
@@ -491,7 +515,23 @@ impl FinishParams {
         };
         let ev = s.light.exposure as f32;
         let gain = 2f32.powf(ev);
-        let grain = (s.grain.amount > 0.0 && effects).then(|| {
+        // A degenerate frame (zero-width crop, zero scale) has no finite grain mapping: skip grain (CPU and GPU).
+        let out_to_norm = frame.out_to_norm(w, h);
+        let finite_frame = px_per_long.is_finite()
+            && px_per_long > 0.0
+            && frame.ow.is_finite()
+            && frame.oh.is_finite()
+            && frame.ow.max(frame.oh) > 0.0
+            && out_to_norm.0.iter().all(|v| v.is_finite());
+        let grain_on = s.grain.amount > 0.0 && effects && finite_frame;
+        // from V8 film grain is grown from crystal layers; the noise styles keep the lattice
+        let crystal_grain = s.process.process() >= Process::V8 && s.grain.style == GrainStyle::Film;
+        let crystal = if grain_on && crystal_grain {
+            if draft { crate::crystal::CrystalGrain::draft(&s.grain, px_per_long) } else { crate::crystal::CrystalGrain::new(&s.grain, px_per_long) }
+        } else {
+            None
+        };
+        let grain = (grain_on && !crystal_grain).then(|| {
             let (amt, cell, coarse) =
                 grain_params((s.grain.amount / 100.0) as f32, (s.grain.size / 100.0) as f32, (s.grain.roughness / 100.0) as f32, px_per_long as f32);
             (amt, cell, coarse, s.grain.seed, s.grain.style)
@@ -517,8 +557,9 @@ impl FinishParams {
             clar,
             tex,
             dehaze,
-            dehaze_v4: matches!(s.process.process(), Process::V4 | Process::V5),
-            fork_refinements: s.process.process() == Process::V5,
+            dehaze_v4: s.process.process() >= Process::V4,
+            // (and every process after V5 keeps them)
+            fork_refinements: s.process.process() >= Process::V5,
             sharpen: (s.detail.sharpen_amount / 150.0) as f32,
             sharpen_mask: (s.detail.sharpen_masking / 100.0) as f32,
             band_sharpen: !crate::local::capture_process(s),
@@ -529,7 +570,8 @@ impl FinishParams {
             ev,
             sh_shift: shadow_window_shift(shadow_key, ev),
             grain,
-            out_to_norm: frame.out_to_norm(w, h),
+            crystal,
+            out_to_norm,
             ow: frame.ow,
             oh: frame.oh,
             w,
@@ -565,6 +607,14 @@ pub fn base_tone(s: &DevelopSettings, info: &SourceInfo, peak: f32) -> ToneMap {
             None if info.raw => ToneMap::hdr(l.contrast, l.whites, l.blacks, peak),
             None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
         },
+        // V6 on: a raw's tone curve rolls off into white in stops, a camera curve past its last knot, the
+        // generic curve from half a stop below its white point instead of clipping (issue #1632); V7 to V9
+        // change noise reduction, grain and the Highlights/Shadows base, not the tone map
+        Process::V6 | Process::V7 | Process::V8 | Process::V9 => match info.camera_tone.as_ref().filter(|_| info.raw) {
+            Some(curve) => ToneMap::camera_rolloff_hdr(curve, l.contrast, l.whites, l.blacks, peak),
+            None if info.raw => ToneMap::rolloff_hdr(l.contrast, l.whites, l.blacks, peak),
+            None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
+        },
     }
 }
 
@@ -576,19 +626,23 @@ pub(crate) fn finish(
     space: OutputSpace,
     display: Option<&crate::DisplaySpace>,
     proof: Option<crate::Proof>,
+    draft: bool,
 ) -> Rgba8 {
     let (w, h) = (p.img.width, p.img.height);
-    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, p.key, space);
+    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, p.key, space, draft);
     fp.proof = proof.map(|pr| pr.params(space));
     if let Some(d) = display {
         fp.for_display(d, proof);
     }
     let trc = fp.out_trc;
-    let data = finish_with(p, &fp, false, |e| match trc {
-        OutputTrc::Srgb => [enc(e[0]), enc(e[1]), enc(e[2]), 255],
-        t => {
-            let x = e.map(|v| enc(t.encode(lightcraft_color::transfer::srgb_to_linear(v.clamp(0.0, 1.0)))));
-            [x[0], x[1], x[2], 255]
+    let data = finish_with(p, &fp, false, |x, y, e| {
+        let d = bayer_dither_offset(x, y);
+        match trc {
+            OutputTrc::Srgb => [enc(e[0], d), enc(e[1], d), enc(e[2], d), 255],
+            t => {
+                let c = e.map(|v| enc(t.encode(lightcraft_color::transfer::srgb_to_linear(v.clamp(0.0, 1.0))), d));
+                [c[0], c[1], c[2], 255]
+            }
         }
     });
     Rgba8 { width: w, height: h, data }
@@ -604,26 +658,27 @@ pub(crate) fn finish_deep(
     space: OutputSpace,
     depth: OutputDepth,
     proof: Option<crate::Proof>,
+    draft: bool,
 ) -> DeepImage {
     use lightcraft_color::transfer::srgb_to_linear;
     let (w, h) = (p.img.width, p.img.height);
-    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, p.key, space);
+    let mut fp = FinishParams::new(s, frame, info, w, h, p.px_per_long, p.air, p.key, space, draft);
     fp.proof = proof.map(|pr| pr.params(space));
     let trc = fp.out_trc;
     let samples = match depth {
         OutputDepth::F32Linear => {
-            let v = finish_with(p, &fp, true, |e| e.map3(|v| srgb_to_linear(v.clamp(0.0, 1.0))));
+            let v = finish_with(p, &fp, true, |_x, _y, e| e.map3(|v| srgb_to_linear(v.clamp(0.0, 1.0))));
             DeepSamples::F32(v.into_flattened())
         }
         OutputDepth::F32Hdr => {
             // the sRGB curve extended past 1 (it is unbounded), so values up to `peak` survive
             let peak = fp.peak;
-            let v = finish_with(p, &fp, true, |e| e.map3(|v| srgb_to_linear(v.max(0.0)).clamp(0.0, peak)));
+            let v = finish_with(p, &fp, true, |_x, _y, e| e.map3(|v| srgb_to_linear(v.max(0.0)).clamp(0.0, peak)));
             DeepSamples::F32(v.into_flattened())
         }
         _ => {
             let q = |v: f32| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
-            let v = finish_with(p, &fp, true, |e| match trc {
+            let v = finish_with(p, &fp, true, |_x, _y, e| match trc {
                 OutputTrc::Srgb => e.map(q),
                 t => e.map(|v| q(t.encode(srgb_to_linear(v.clamp(0.0, 1.0))))),
             });
@@ -634,13 +689,14 @@ pub(crate) fn finish_deep(
 }
 
 /// The per-pixel stage: every output pixel's colour in the output primaries, encoded with the sRGB
-/// curve (tone curves and grain applied; not clamped), handed to `store` for the final encoding.
+/// curve (tone curves and grain applied; not clamped), handed to `store` for the final encoding with its place in the
+/// whole output frame (a window's pixels are offset by the window's place, so dithering lines up across windows).
 /// `exact`: encode with the exact sRGB curve instead of the (8/10-bit accurate) table.
 pub(crate) fn finish_with<T: Copy + Default + Send>(
     p: &Prepared,
     fp: &FinishParams,
     exact: bool,
-    store: impl Fn([f32; 3]) -> T + Sync + Send,
+    store: impl Fn(usize, usize, [f32; 3]) -> T + Sync + Send,
 ) -> Vec<T> {
     let (w, h) = (p.img.width, p.img.height);
     let p_lut = fp.lut.clone();
@@ -679,6 +735,8 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
     let out_to_norm = fp.out_to_norm;
     let long = fp.ow.max(fp.oh);
     let [vx, vy, vw, vh] = fp.view;
+    let at = |v: f32| if v.is_finite() && v > 0.0 { v.round() as usize } else { 0 };
+    let (vx_u, vy_u) = (at(vx), at(vy));
     // the vignette belongs to the whole output frame, not to the window being drawn
     let aspect = vw / vh;
 
@@ -691,6 +749,8 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
     let out_curves = if hdr { curves.as_ref() } else { None };
     let mut out = vec![T::default(); w * h];
     for_rows(&mut out, w, |y, row| {
+        // the crystal grain of the whole row at once when its pixels are axis-aligned
+        let crystal_row = crystal_row(fp, y, row.len());
         for (x, px) in row.iter_mut().enumerate() {
             let i = y * w + x;
             let raw = p.img.data[i];
@@ -959,11 +1019,20 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 let sc = fp.px_per_long as f32 / cell;
                 e = grain_apply(e, gx * sc, gy * sc, amt, coarse, seed, style);
             }
+            if let Some(g) = &fp.crystal {
+                e = match crystal_row.get(x) {
+                    Some(&f) => g.apply_field(e, f),
+                    None => {
+                        let n = out_to_norm.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
+                        g.apply(e, (n.x * fp.ow / long) as f32, (n.y * fp.oh / long) as f32)
+                    }
+                };
+            }
             let e = match &p_lut {
                 Some((l, k)) => lut_pixel(l, *k, e, lut_sp.as_ref(), hdr),
                 None => e,
             };
-            *px = store(warn.unwrap_or(e));
+            *px = store(vx_u + x, vy_u + y, warn.unwrap_or(e));
         }
     });
     out
@@ -971,7 +1040,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
 
 /// A colour needing more desaturation than this (scale < `GAMUT_WARN`) to fit is out of gamut for
 /// the gamut warnings (tolerates rounding at the gamut boundary).
-const GAMUT_WARN: f32 = 0.995;
+pub const GAMUT_WARN: f32 = 0.995;
 
 /// For the gamut warnings: `r` needed desaturating by `t` to fit, and isn't simply a neutral
 /// beyond white or below black (that's clipping, which the clipping warnings show).
@@ -1062,22 +1131,112 @@ pub fn srgb_lut() -> &'static [f32; SRGB_LUT_N + 1] {
 /// Linear → sRGB-encoded (clamped to 0..1) by an interpolated table: within 2e-5 of the exact
 /// curve (≪ one 8-bit or 10-bit step), several times faster than `powf`.
 #[inline]
-fn encode_srgb(lut: &[f32; SRGB_LUT_N + 1], v: f32) -> f32 {
+pub(crate) fn encode_srgb(lut: &[f32; SRGB_LUT_N + 1], v: f32) -> f32 {
     let f = v.clamp(0.0, 1.0) * SRGB_LUT_N as f32;
     let i = (f as usize).min(SRGB_LUT_N - 1);
     let t = f - i as f32;
     lut[i] + (lut[i + 1] - lut[i]) * t
 }
 
+#[rustfmt::skip]
+const BAYER_8X8: [u8; 64] = [
+     0, 32,  8, 40,  2, 34, 10, 42,
+    48, 16, 56, 24, 50, 18, 58, 26,
+    12, 44,  4, 36, 14, 46,  6, 38,
+    60, 28, 52, 20, 62, 30, 54, 22,
+     3, 35, 11, 43,  1, 33,  9, 41,
+    51, 19, 59, 27, 49, 17, 57, 25,
+    15, 47,  7, 39, 13, 45,  5, 37,
+    63, 31, 55, 23, 61, 29, 53, 21,
+];
+
+/// Returns the ordered Bayer 8×8 dither threshold offset in `0..1` for pixel `(x, y)`.
 #[inline]
-fn enc(v: f32) -> u8 {
-    // `v` is already sRGB-encoded; round to 8 bits.
-    (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+fn bayer_dither_offset(x: usize, y: usize) -> f32 {
+    let idx = (y & 7) * 8 + (x & 7);
+    (BAYER_8X8[idx] as f32 + 0.5) / 64.0
+}
+
+/// Quantizes display-curve-encoded value `v` (0..1) to 8-bit integer with 8×8 ordered Bayer dithering.
+#[inline]
+fn enc(v: f32, dither: f32) -> u8 {
+    let y = v.clamp(0.0, 1.0) * 255.0;
+    // Guard against floating point rounding error (e.g. sRGB <-> Rec.2020 matrix conversion)
+    // where numerical white (1.0) evaluates to ~254.95.
+    if y >= 254.9 {
+        return 255;
+    }
+    (y + dither).clamp(0.0, 255.0) as u8
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verifies 8x8 Bayer dithering preserves endpoints, exact 8-bit quantization steps, and fractional levels.
+    #[test]
+    fn bayer_dithering_preserves_extremes_and_dithers_smoothly() {
+        for y in 0..8 {
+            for x in 0..8 {
+                let d = bayer_dither_offset(x, y);
+                // Zero is strictly 0 across all dither offsets
+                assert_eq!(enc(0.0, d), 0);
+                // One is strictly 255 across all dither offsets
+                assert_eq!(enc(1.0, d), 255);
+                // Exact 8-bit quantization steps have zero spatial noise
+                for k in 0..=255 {
+                    assert_eq!(enc(k as f32 / 255.0, d), k);
+                }
+            }
+        }
+
+        // Fractional level: 128.5 / 255.0 should dither equally between 128 and 129
+        let v = 128.5 / 255.0;
+        let mut sum = 0u32;
+        let mut count_128 = 0;
+        let mut count_129 = 0;
+        for y in 0..8 {
+            for x in 0..8 {
+                let val = enc(v, bayer_dither_offset(x, y));
+                sum += val as u32;
+                if val == 128 {
+                    count_128 += 1;
+                } else if val == 129 {
+                    count_129 += 1;
+                }
+            }
+        }
+        assert_eq!(count_128, 32);
+        assert_eq!(count_129, 32);
+        assert_eq!(sum, 32 * 128 + 32 * 129);
+
+        // Fractional highlight level: 254.5 / 255.0 should dither equally between 254 and 255
+        let v = 254.5 / 255.0;
+        let mut sum_hl = 0u32;
+        let mut count_254 = 0;
+        let mut count_255 = 0;
+        for y in 0..8 {
+            for x in 0..8 {
+                let val = enc(v, bayer_dither_offset(x, y));
+                sum_hl += val as u32;
+                if val == 254 {
+                    count_254 += 1;
+                } else if val == 255 {
+                    count_255 += 1;
+                }
+            }
+        }
+        assert_eq!(count_254, 32);
+        assert_eq!(count_255, 32);
+        assert_eq!(sum_hl, 32 * 254 + 32 * 255);
+    }
+
+    #[test]
+    fn grain_field_is_zero_at_degenerate_coordinates() {
+        for (x, y) in [(f32::NAN, 1.0), (1.0, f32::INFINITY), (f32::NEG_INFINITY, f32::NAN)] {
+            assert_eq!(grain_field(x, y, 7), 0.0);
+        }
+    }
 
     /// Lightroom's grain at 100 / 25 / 50 on a 6000 px export (measured on its export of the grain test raw):
     /// noise of unit variance whose neighbouring pixels correlate at 0.52 and whose pixels two apart don't.

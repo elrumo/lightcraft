@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-24 · **Change:** minor (`cargo xtask ci`: one integration-test binary per crate, doctests apart, one WASM check; the engine host is documented for any native frontend, [engine-host.md](engine-host.md); `cargo xtask ci` reports the machine and skipped tests; `testkit`; the `apphost` layer) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-13 · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 · **Changes:** [revision history](#revision-history)
 
 How LightCraft is built today. The longer design document (`plan/architecture.md`) is local-only
 (`plan/` is gitignored); this page is the committed, current summary. Sizes are Rust lines counted
@@ -13,7 +13,7 @@ L5 depends on egui, eframe, winit or rfd, and that each crate only uses lower la
 
 | Layer | Crates (lines) | Role |
 |---|---|---|
-| L0 | `geom` (1.4k), `color` (0.9k), `raster` (0.8k), `tiff` (2.0k), `fetch` (1.4k), `sysmem` (0.1k) | Matrices and warps, colour spaces and transfer functions, float image buffers, TIFF/IFD read and write, pinned HTTPS model downloads, the `unsafe` FFI calls (`malloc_zone_pressure_relief`, `fsync`) |
+| L0 | `geom` (1.4k), `color` (0.9k), `raster` (0.8k), `tiff` (2.0k), `fetch` (1.4k), `sysmem` (0.1k), `wincolor` (0.3k) | Matrices and warps, colour spaces and transfer functions, float image buffers, TIFF/IFD read and write, pinned HTTPS model downloads, and the crates with `unsafe` FFI: `sysmem` (`malloc_zone_pressure_relief`, `fsync`; macOS / iOS) and `wincolor` (the Win32 calls that read the window's monitor profile; Windows) |
 | L1 | `raw` (22.3k), `codecs` (7.3k), `meta` (4.3k), `develop` (2.5k), `denoise-core` (2.2k), `denoise` (2.7k), `faces` (5.3k), `scenes` (1.0k), `heif` (2.1k, optional) | Raw decoders and demosaic, DNG colour model; standard codecs and encoders; EXIF/XMP/IPTC; the non-destructive edit model and control specs; AI denoise; face detection and recognition; procedural demo photos; HEIC |
 | L2 | `pipeline` (9.8k) | The develop pipeline: scene-referred float, resolution independent; the CPU reference (oracle) for everything else |
 | L3 | `catalog` (11.0k), `gpu` (5.1k), `preview` (1.3k), `merge` (3.8k), `segment` (2.3k) | Library model and persistence; wgpu compute twin of the pipeline; thumbnail/preview cache and job pool; HDR and panorama merge; SAM 3 segmentation |
@@ -44,8 +44,8 @@ post-command policy into `apphost` (the extraction rule in `CLAUDE.md`).
   `cargo run --release -p lightcraft-apphost --example open_bench -- <library copy>` times the open and the
   first screen's requests the way a native frontend asks for them.
 - **Edits** are a `develop::Settings` value (every slider is a control spec with id, range and
-  default), normalized to image coordinates so previews and exports match. There is one rendering:
-  a retune changes how existing edits look (`docs/whats-new.md` says so).
+  default), normalized to image coordinates so previews and exports match. Process versions
+  (`docs/process-versions.md`) keep old edits rendering the same after a retune.
 - **Sidecars**: XMP read and write with Adobe `crs:` interop (`docs/xmp-interop.md`); Lightroom
   Classic `.lrcat` import through a pure-Rust SQLite reader (`docs/lightroom-catalog-import.md`).
 
@@ -101,6 +101,7 @@ the `lightcraft-gpu` tests once per backend with a hardware adapter (`LIGHTCRAFT
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | minor | Upstream v0.21.1 merged: `wincolor` (Windows monitor profile) in L0; process versions are back in the data model (restored 2026-10-26) |
 | 2026-10-23 | minor | Quality gates: one integration-test binary per crate, doctests apart, nextest on request, one WASM check |
 | 2026-10-19 | minor | The engine host is documented for any native frontend ([engine-host.md](engine-host.md)) |
 | 2026-10-13 | minor | `apphost` (L4, after `engine`); the extraction rule |

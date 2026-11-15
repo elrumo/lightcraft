@@ -82,20 +82,21 @@ impl Review {
     }
 }
 
-/// LUT files (`.cube`, `.3dl`, a Hald CLUT `.png`) and what can hold them (folders, zips) go to the profile importer too.
+/// LUT files (`.cube`, `.3dl`, a Hald CLUT `.png`), DNG camera profiles (`.dcp`) and what can hold them (folders,
+/// zips) go to the profile importer too.
 pub fn lut_paths(paths: &[String]) -> Vec<&String> {
     paths
         .iter()
         .filter(|p| {
             let l = p.to_ascii_lowercase();
-            crate::cmd::lut_profiles::is_lut_file(&l) || l.ends_with(".zip") || std::path::Path::new(p.as_str()).is_dir()
+            crate::cmd::lut_profiles::is_lut_file(&l) || l.ends_with(".dcp") || l.ends_with(".zip") || std::path::Path::new(p.as_str()).is_dir()
         })
         .collect()
 }
 
-/// What the preset importer is given (a LUT file alone is no preset).
+/// What the preset importer is given (a LUT file or a `.dcp` camera profile alone is no preset).
 pub fn preset_paths(paths: &[String]) -> Vec<&String> {
-    paths.iter().filter(|p| !crate::cmd::lut_profiles::is_lut_file(p)).collect()
+    paths.iter().filter(|p| !crate::cmd::lut_profiles::is_lut_file(p) && !p.to_ascii_lowercase().ends_with(".dcp")).collect()
 }
 
 fn is_cube(f: &Value) -> bool {

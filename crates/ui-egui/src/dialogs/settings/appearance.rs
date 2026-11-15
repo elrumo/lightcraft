@@ -23,9 +23,15 @@ pub(crate) fn appearance(ui: &mut egui::Ui, t: &Tokens, s: &mut crate::state::Ap
     let mut cards = |ui: &mut egui::Ui, width: f32| {
         ui.spacing_mut().item_spacing.x = 12.0;
         let light: Vec<_> = LightTheme::ALL.iter().map(|l| (*l, l.kind())).collect();
-        theme_card(ui, t, "Light Theme", light_active, &light, &mut s.light_theme, &mut s.favorite_themes, width);
+        theme_card(
+            ui,
+            t,
+            ThemeCard { title: "Light Theme", active: light_active, options: &light, width },
+            &mut s.light_theme,
+            &mut s.favorite_themes,
+        );
         let dark: Vec<_> = DarkTheme::ALL.iter().map(|d| (*d, d.kind())).collect();
-        theme_card(ui, t, "Dark Theme", !light_active, &dark, &mut s.dark_theme, &mut s.favorite_themes, width);
+        theme_card(ui, t, ThemeCard { title: "Dark Theme", active: !light_active, options: &dark, width }, &mut s.dark_theme, &mut s.favorite_themes);
     };
     ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
         if available < 440.0 {
@@ -37,18 +43,19 @@ pub(crate) fn appearance(ui: &mut egui::Ui, t: &Tokens, s: &mut crate::state::Ap
     ui.add_space(2.0);
 }
 
+/// What a theme family's card shows.
+pub(crate) struct ThemeCard<'a, V> {
+    title: &'a str,
+    /// the family in use
+    active: bool,
+    options: &'a [(V, crate::theme::ThemeKind)],
+    width: f32,
+}
+
 /// One family's card: its title (and "Active" when it is the one shown), a preview of the
 /// selected theme and a radio button per theme.
-pub(crate) fn theme_card<V: PartialEq + Copy>(
-    ui: &mut egui::Ui,
-    t: &Tokens,
-    title: &str,
-    active: bool,
-    options: &[(V, crate::theme::ThemeKind)],
-    value: &mut V,
-    favorites: &mut Vec<String>,
-    width: f32,
-) {
+pub(crate) fn theme_card<V: PartialEq + Copy>(ui: &mut egui::Ui, t: &Tokens, card: ThemeCard<V>, value: &mut V, favorites: &mut Vec<String>) {
+    let ThemeCard { title, active, options, width } = card;
     egui::Frame::new()
         .fill(t.inset)
         .stroke(egui::Stroke::new(if active { 1.5 } else { 1.0 }, if active { t.accent } else { t.field_border }))
@@ -251,7 +258,7 @@ pub(crate) fn theme_preview(ui: &mut egui::Ui, kind: crate::theme::ThemeKind, wi
         let thumb = cell.shrink(2.5);
         painter.rect_filled(thumb, 0.0, Color32::from_rgb(0x6f + 8 * i as u8, 0x80, 0x8f));
         if selected {
-            painter.rect_stroke(thumb, 0.0, Stroke::new(1.0, p.pick), StrokeKind::Outside);
+            crate::panels::grid::selection_ring(&painter, &p, thumb, lightcraft_engine::SelectionState::Active);
         }
     }
 }

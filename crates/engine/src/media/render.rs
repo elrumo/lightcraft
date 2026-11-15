@@ -1,6 +1,9 @@
 use super::quick::{QuickSource, shrink};
-use super::source::{DecodedSource, SourceLevel, SourceRef};
-use super::*;
+use super::source::{DecodedSource, SourceLevel, SourceRef, VIEW_REUSE_SLACK};
+use super::{
+    Arc, DevelopSettings, Hash128, Histogram, PhotoId, PreviewCache, Quality, RenderRequest, Rendered, Rgba8, Source, SourceInfo, StageCache,
+};
+use lightcraft_raster::SourcePixels;
 
 /// Everything needed to render one photo, detached from the session.
 #[derive(Clone)]
@@ -35,6 +38,9 @@ pub struct RenderJob {
     pub display: Option<Arc<crate::display::Display>>,
     /// Render the HDR picture beside the 8-bit one ([`Self::with_hdr_display`]).
     pub hdr_view: bool,
+    /// Shown on screen at once and not kept: the result may stay on the GPU as a texture
+    /// ([`Self::on_screen`]).
+    pub on_screen: bool,
     /// Compose the render into a slideshow slide ([`Self::with_slide`]).
     pub slide: Option<Arc<crate::slide::SlideCompose>>,
     /// A face tile that can be cut from the raw's embedded preview, tried before `source`
@@ -63,6 +69,15 @@ pub fn fit_for_display(img: &Rgba8, max_w: usize, max_h: usize) -> Rgba8 {
     Rgba8 { width: small.width, height: small.height, data: small.data.iter().map(|p| [c(p[0]), c(p[1]), c(p[2]), c(p[3])]).collect() }
 }
 
+/// A render left on the GPU for the window to draw ([`RenderResult::frame`]). Never made in this fork: upstream's
+/// window-device display path of `lightcraft-gpu` is not merged (the fork's GPU renderer reads back), so every
+/// render arrives as pixels.
+#[derive(Clone, Debug)]
+pub struct ScreenFrame {
+    pub width: usize,
+    pub height: usize,
+}
+
 pub struct RenderResult {
     pub request_id: u64,
     pub source_key: Option<Hash128>,
@@ -83,6 +98,9 @@ pub struct RenderResult {
     /// The HDR render, for a job asked with [`RenderJob::with_hdr_display`] (`image` is its 8-bit
     /// reduction).
     pub hdr: Option<Arc<crate::hdr_view::HdrPicture>>,
+    /// The result as a texture on the window's GPU device ([`RenderJob::on_screen`]); `rendered`
+    /// then holds its histogram and an empty image.
+    pub frame: Option<ScreenFrame>,
 }
 
 impl RenderJob {
@@ -171,6 +189,15 @@ impl RenderJob {
         self.view_cache = None;
         self.preview_cut = None;
         self.server_tile = None;
+        self
+    }
+
+    /// The result is only drawn (an interactive draft of a view): when the GPU renderer runs on the
+    /// window's device it may hand back a texture ([`RenderResult::frame`]) instead of reading the
+    /// pixels back. Ignored where pixels are needed: thumbnails (cached), a full-quality render
+    /// kept as the view preview, and a monitor profile (corrected on the CPU).
+    pub fn on_screen(mut self) -> Self {
+        self.on_screen = true;
         self
     }
 
@@ -288,7 +315,8 @@ impl RenderJob {
             loaded: None,
             quick: None,
             display: None,
-            hdr: None,
+                hdr: None,
+                frame: None,
         }
     }
 
@@ -327,8 +355,59 @@ impl RenderJob {
         r
     }
 
+    /// The view render kept for this job's photo and settings ([`Self::view_cache`]), fitted to the
+    /// size asked for, when it is at least that big, or unchanged when it covers the job's display
+    /// fit (else `None`: render). Only for what the cached
+    /// view is: a full-quality, 8-bit, whole-frame SDR render (the cache holds sRGB; a display
+    /// profile is applied to it like to any cached picture, [`crate::display::present`]).
+    pub fn cached_view(&self) -> Option<Rgba8> {
+        let (cache, key) = self.view_cache.as_ref()?;
+        if self.request.quality != Quality::Full
+            || self.request.depth != lightcraft_pipeline::OutputDepth::U8
+            || self.request.window.is_some()
+            || self.settings.hdr.enabled
+            || self.slide.is_some()
+        {
+            return None;
+        }
+        let img = cache.get_at(self.cache_generation, *key)?;
+        fit_cached(&img, self.request.max_w, self.request.max_h).or_else(|| {
+            // the loupe at rest asks for at least the preview level and shows the render shrunk to
+            // the drawn size (the display fit): a cached view that covers the drawn size is enough
+            let (fw, fh) = self.display_fit?;
+            let (w, h) = (img.width, img.height);
+            let s = (fw as f64 / w.max(1) as f64).min(fh as f64 / h.max(1) as f64);
+            (w > 0 && h > 0 && fw > 0 && fh > 0 && s <= 1.0 + VIEW_REUSE_SLACK).then(|| Arc::unwrap_or_clone(img))
+        })
+    }
+
     /// The photo's render (without slide composition).
     fn run_photo(self) -> RenderResult {
+        // the loupe: a cached view render of these settings at least this big is the render (built
+        // previews and the photos prepared ahead are used, not rendered again; PERF-PREVIEW-REUSE)
+        if let Some(mut image) = self.cached_view() {
+            // as for a render: the histogram of the full picture, then the display fit
+            let histogram = Histogram::of_srgb8(&image);
+            if let Some((fw, fh)) = self.display_fit
+                && (image.width > fw.max(1) || image.height > fh.max(1))
+            {
+                image = fit_for_display(&image, fw, fh);
+            }
+            return RenderResult {
+                request_id: self.request_id,
+                source_key: self.source_key,
+                photo: self.photo,
+                level: self.level,
+                key: self.key,
+                rendered: Ok(Rendered { image, histogram, deep: None }),
+                gpu_fallback: None,
+                loaded: None,
+                quick: Some(QuickSource::Cached),
+                display: None,
+                hdr: None,
+                frame: None,
+            };
+        }
         if let Some(image) = self.cached() {
             let histogram = Histogram::of_srgb8(&image);
             return RenderResult {
@@ -343,6 +422,7 @@ impl RenderJob {
                 quick: None,
                 display: None,
                 hdr: None,
+                frame: None,
             };
         }
         // a face tile of an unedited raw: cut from the camera's embedded preview when it is big enough
@@ -366,6 +446,7 @@ impl RenderJob {
                 quick: None,
                 display: None,
                 hdr: None,
+                frame: None,
             };
         }
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
@@ -386,21 +467,71 @@ impl RenderJob {
                 let wants_hdr = self.hdr_view || self.request.depth == lightcraft_pipeline::OutputDepth::F32Hdr;
                 let hdr_src = (wants_hdr || self.settings.hdr.enabled).then(|| source.hdr_input(&sdr_src, &info));
                 let src = if wants_hdr { hdr_src.as_ref().unwrap_or(&sdr_src) } else { &sdr_src };
-                // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
-                // the GPU when there is one.
-                let gpu = self.cache.is_none();
+                // Views and exports use the GPU when there is one (waiting for the device if it is
+                // still being created). Thumbnails (grid, filmstrip, preset and profile previews)
+                // use it once it is ready - ~20-30 % faster than the CPU at 256 px with six jobs
+                // side by side (`crates/gpu/tests/it/thumbs_bench.rs`), and the cores stay free for
+                // decoding - but never wait for it: at startup they render on the CPU.
+                let gpu = self.cache.is_none() || lightcraft_gpu::ready();
                 // a clipping preview tests sRGB values, like the histogram: rendered in sRGB, then
                 // converted for the display below (an HDR view is never a diagnostic overlay, see `with_hdr_display`);
                 // for a display whose histogram is of the picture shown, the display's values, as the histogram does
                 let clip_view = self.request.overlay.is_clipping() && !self.display.as_ref().is_some_and(|d| d.screen_histogram);
                 let request = if clip_view { RenderRequest { display: None, ..self.request } } else { self.request };
-                let (mut rendered, gpu_fallback, hdr) = if self.hdr_view {
-                    let request = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..request };
-                    develop_hdr(src, &info, &self.settings, &request, self.stages.as_deref(), gpu)
-                } else {
-                    let (r, f) =
-                        develop_reporting_hdr(src, hdr_src.as_ref().unwrap_or(src), &info, &self.settings, &request, self.stages.as_deref(), gpu);
-                    (r, f, None)
+                if let Err(e) = lightcraft_pipeline::check_brush_budget(src, &info, &self.settings, &request) {
+                    return RenderResult {
+                        request_id: self.request_id,
+                        source_key: self.source_key,
+                        photo: self.photo,
+                        level: self.level,
+                        key: self.key,
+                        rendered: Err(e),
+                        gpu_fallback: None,
+                        loaded: None,
+                        quick: None,
+                        display: None,
+                        hdr: None,
+                        frame: None,
+                    };
+                }
+                // (an HDR view needs its HDR picture's pixels)
+                let pixels_needed = self.hdr_view
+                    || self.cache.is_some()
+                    || self.display.is_some()
+                    || (self.view_cache.is_some() && self.request.quality == Quality::Full);
+                let hdr_or_src = hdr_src.as_ref().unwrap_or(src);
+                let frame = (self.on_screen && !pixels_needed && gpu && gpu_renders(&self.settings, &request))
+                    .then(|| develop_on_screen(src, hdr_or_src, &info, &self.settings, &request, self.stages.as_deref()));
+                let (mut rendered, gpu_fallback, hdr) = match frame {
+                    Some(OnScreen::Frame(frame, histogram)) => {
+                        return RenderResult {
+                            request_id: self.request_id,
+                            source_key: self.source_key,
+                            photo: self.photo,
+                            level: self.level,
+                            key: self.key,
+                            rendered: Ok(Rendered {
+                                image: lightcraft_raster::Rgba8 { width: 0, height: 0, data: Vec::new() },
+                                histogram,
+                                deep: None,
+                            }),
+                            gpu_fallback: None,
+                            loaded: (!was_loaded).then_some(source),
+                            quick: None,
+                            display: None,
+                            hdr: None,
+                            frame: Some(frame),
+                        };
+                    }
+                    Some(OnScreen::Pixels(r)) => (r, None, None),
+                    None if self.hdr_view => {
+                        let request = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..request };
+                        develop_hdr(src, &info, &self.settings, &request, self.stages.as_deref(), gpu)
+                    }
+                    None => {
+                        let (r, f) = develop_reporting_hdr(src, hdr_or_src, &info, &self.settings, &request, self.stages.as_deref(), gpu);
+                        (r, f, None)
+                    }
                 };
                 // for a display profile: the image goes to the display's values, the histogram
                 // and the cached view preview stay sRGB
@@ -457,6 +588,7 @@ impl RenderJob {
                     quick: None,
                     display,
                     hdr,
+                    frame: None,
                 }
             }
             Err(e) => self.failed(e),
@@ -500,15 +632,69 @@ pub fn develop_hdr(
     (rendered, fallback, deep.and_then(|d| HdrPicture::from_deep(&d, peak)).map(Arc::new))
 }
 
-/// Whether a render of `s` for `req` can go to the GPU: masks with Refine Edges, Shift Edge or Feather have no GPU
-/// stage, nor has soft proofing, nor a LUT profile bigger than the kernel takes
-/// ([`lightcraft_pipeline::lut::GPU_MAX_SIZE`]).
+/// Whether a render of `s` for `req` can go to the GPU: masks with Shift Edge or Feather have no GPU stage, nor has a
+/// LUT profile bigger than the kernel takes ([`lightcraft_pipeline::lut::GPU_MAX_SIZE`]). (LUT profiles, Refine Edges
+/// and soft proofs render on the GPU too; the GPU renderer declines by itself what it can't draw.)
 fn gpu_renders(s: &DevelopSettings, req: &RenderRequest) -> bool {
     lightcraft_pipeline::lut::get(&s.profile.id).is_none_or(|l| l.size <= lightcraft_pipeline::lut::GPU_MAX_SIZE)
-        && !s.masks.iter().any(|m| m.visible && m.edits_edges())
-        && req.proof.is_none()
+        && !s.masks.iter().any(|m| m.visible && (m.shift != 0.0 || m.feather > 0.0))
         // (the GPU renderer draws film effects onto its 8-bit picture only: a deep render with them is the CPU's)
         && (req.depth == lightcraft_pipeline::OutputDepth::U8 || s.film.is_default())
+}
+
+/// `img` fitted into `max_w × max_h` (its aspect kept), when it is big enough to need no
+/// enlarging (within [`VIEW_REUSE_SLACK`]): as it is, or shrunk by averaging.
+pub fn fit_cached(img: &Rgba8, max_w: usize, max_h: usize) -> Option<Rgba8> {
+    let (w, h) = (img.width, img.height);
+    if w == 0 || h == 0 || max_w == 0 || max_h == 0 {
+        return None;
+    }
+    let s = (max_w as f64 / w as f64).min(max_h as f64 / h as f64);
+    if !s.is_finite() || s > 1.0 + VIEW_REUSE_SLACK {
+        return None;
+    }
+    let (nw, nh) = (((w as f64 * s).round() as usize).clamp(1, w), ((h as f64 * s).round() as usize).clamp(1, h));
+    if nw == w && nh == h {
+        return Some(img.clone());
+    }
+    Some(shrink_rgba(img, nw, nh))
+}
+
+/// `img` shrunk to `nw × nh` (no larger than it), each pixel the average of the ones it covers.
+fn shrink_rgba(img: &Rgba8, nw: usize, nh: usize) -> Rgba8 {
+    let (w, h) = (img.width, img.height);
+    let (nw, nh) = (nw.clamp(1, w.max(1)), nh.clamp(1, h.max(1)));
+    // the source columns / rows each output column / row covers: [start, end)
+    let spans = |n: usize, of: usize| -> Vec<(usize, usize)> {
+        (0..n)
+            .map(|i| {
+                let a = i.saturating_mul(of) / n;
+                let b = (i.saturating_add(1).saturating_mul(of) / n).max(a.saturating_add(1)).min(of);
+                (a, b)
+            })
+            .collect()
+    };
+    let (xs, ys) = (spans(nw, w), spans(nh, h));
+    let mut data = Vec::with_capacity(nw.saturating_mul(nh));
+    let mut row = vec![[0u32; 4]; nw];
+    for &(y0, y1) in &ys {
+        row.iter_mut().for_each(|r| *r = [0; 4]);
+        for y in y0..y1 {
+            let Some(line) = img.data.get(y * w..(y + 1) * w) else { continue };
+            for (acc, &(x0, x1)) in row.iter_mut().zip(&xs) {
+                for px in line.get(x0..x1).unwrap_or(&[]) {
+                    for (a, v) in acc.iter_mut().zip(px) {
+                        *a += u32::from(*v);
+                    }
+                }
+            }
+        }
+        for (acc, &(x0, x1)) in row.iter().zip(&xs) {
+            let n = (x1.saturating_sub(x0).saturating_mul(y1.saturating_sub(y0))).max(1) as u32;
+            data.push(acc.map(|a| ((a + n / 2) / n).min(255) as u8));
+        }
+    }
+    Rgba8 { width: nw, height: nh, data }
 }
 
 /// Render `src`: on the GPU when `gpu` is set and a GPU is available (`lightcraft_gpu`), else on
@@ -616,4 +802,27 @@ fn develop_image(
         None => lightcraft_pipeline::render(src, info, s, req),
     };
     (rendered, fallback)
+}
+
+/// What [`develop_on_screen`] made.
+enum OnScreen {
+    /// A texture on the window's device, and the histogram (never in the browser build).
+    #[allow(dead_code)] // the GPU display path is not merged: see `ScreenFrame`
+    Frame(ScreenFrame, Histogram),
+    /// Pixels (GPU or CPU).
+    Pixels(Rendered),
+}
+
+/// [`develop`] for a render that is only drawn: a texture on the window's device when the GPU
+/// renderer can hand one over, else the pixels. `hdr_src` is what an HDR edit's histogram measures
+/// ([`develop_reporting_hdr`]).
+fn develop_on_screen(
+    src: &SourcePixels,
+    hdr_src: &SourcePixels,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    req: &RenderRequest,
+    stages: Option<&StageCache>,
+) -> OnScreen {
+    OnScreen::Pixels(develop_reporting_hdr(src, hdr_src, info, s, req, stages, false).0)
 }

@@ -332,6 +332,8 @@ fn keyboard_owned(app: &LightcraftApp, ctx: &egui::Context) -> bool {
 /// text field, name edit or shortcut recording owns input, then fires saved command bindings,
 /// aliases and fixed photo keys, respecting native menu ownership and open popups.
 pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
+    // Space held over a tool ends when the key is up, whoever has the keyboard by then
+    crate::space_hand::tick(app, ctx);
     if !matches!(app.ui.dialog, Some(crate::state::Dialog::Shortcuts)) {
         app.recording_shortcut = None;
     }
@@ -356,6 +358,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     // shortcuts the native menu bar handles (it consumes those key presses itself)
     let native = |sc: &str| app.native_shortcuts.contains(sc);
     let mut aliased: Vec<(&str, serde_json::Value)> = Vec::new();
+    let mut h_press = false;
     let keymap = &app.ui.settings.keymap;
     let grid = library_grid(app);
     // The grid navigation keys act on the photos in view, so they wait while the full-screen preview
@@ -379,6 +382,8 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
         {
             fire.push("view.detail".to_string());
         }
+        // a held Space repeats: it toggles the zoom (or takes the hand) once per press
+        let space_repeat = !i.events.iter().any(|e| matches!(e, egui::Event::Key { key: Key::Space, pressed: true, repeat: false, .. }));
         for b in bindable() {
             if let Some(sc) = binding(keymap, b.id, b.default)
                 && let Some((m, k)) = parse(sc)
@@ -387,12 +392,21 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 && matches(i, m, k)
                 && let Some(id) = grid_key_command(keymap, grid, app.ui.fullscreen, b.id, (m, k))
             {
-                fire.push(id.to_string());
+                if id == "view.zoomToggle" && k == Key::Space {
+                    // Toggle Zoom given Space in the keymap is the Space alias: the same hand and
+                    // the same once-per-press
+                    if !space_repeat {
+                        aliased.push(("view.zoomToggle", json!({})));
+                    }
+                } else {
+                    fire.push(id.to_string());
+                }
             }
         }
         for (sc, id, params) in ALIASES {
             if let Some((m, k)) = parse(sc).filter(|_| !native(sc))
                 && !(k == Key::Escape && popup_open)
+                && !(k == Key::Space && space_repeat)
                 && !taken.contains(&(m, k))
                 && matches(i, m, k)
             {
@@ -413,6 +427,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
             }
         }
+        h_press = matches(i, Modifiers::NONE, Key::H) && !native("H") && !taken.contains(&(Modifiers::NONE, Key::H));
     });
     // Shift+Tab is also egui's "focus the previous widget", decided when the pass began and without
     // consuming the key: with nothing focused it would put the keyboard in the last text field
@@ -440,6 +455,10 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             continue;
         }
+        // over a tool on the photo, held Space is the view's hand; a tap toggles on its release
+        if id == "view.zoomToggle" && crate::space_hand::begin(app, ctx) {
+            continue;
+        }
         // flag/rate aliases (Shift+X…) go through the culling path: active photo in Compare/Survey,
         // `advance` moves to the next candidate there
         if matches!(id, "photo.flag" | "photo.rate" | "photo.label") {
@@ -465,6 +484,18 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             app.toast(ctx, e);
         }
     }
+    // while the Masking panel is open, an unmodified H that no assignment has claimed toggles the
+    // mask pins (the View ▸ Show Mask Pins switch) instead of opening Remove; the full-screen
+    // preview shows no panels and a minimized window hides the panel, so there H keeps its own
+    // binding
+    if h_press
+        && app.ui.right == crate::state::RightPanel::Masking
+        && !app.ui.fullscreen
+        && crate::docking::exposed(app, crate::docking::Panel::Tools)
+    {
+        let _ = app.run("view.maskPins", json!({}));
+        fire.retain(|f| f != "panel.remove");
+    }
     let rotate_fires = fire.iter().any(|f| f == "crop.rotateAspect");
     for mut f in fire {
         // ⌫ in a grid takes the photos out of the album on screen (⌘⌫ deletes them, after asking);
@@ -480,7 +511,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             let _ = app.run(if f == "library.next" { "slideshow.next" } else { "slideshow.previous" }, json!({}));
             continue;
         }
-        if matches!(f.as_str(), "photo.decreaseRating" | "photo.increaseRating") {
+        if matches!(f.as_str(), "photo.decreaseRating" | "photo.increaseRating" | "photo.clearLabel") {
             cull(app, &f, json!({}), false);
         } else if f == "panel.presets" && library_grid(app) {
             // Classic's Shift+P picks and advances in Library; keep the Presets binding elsewhere.
@@ -582,8 +613,9 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             // B: the brush while editing; in the grids, add to the target album (Quick Collection)
             if f == "tool.brush" && matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid) {
-                if let Ok(r) = app.run("album.toggleTarget", json!({})) {
-                    let n = app.session.selected().len();
+                // `added` is null when nothing was left to toggle (the selected photos are gone): nothing to say
+                if let Some(r) = app.run("album.toggleTarget", json!({})).ok().filter(|r| r["added"].is_boolean()) {
+                    let n = r["toggled"].as_u64().unwrap_or(0);
                     let what = crate::i18n::tr_format!("{n} photo{}", if n == 1 { "" } else { "s" }, n = n);
                     let name = r["name"].as_str().unwrap_or("Quick Collection").to_string();
                     app.toast(
@@ -684,6 +716,10 @@ mod tests;
 #[cfg(test)]
 #[path = "shortcuts/tests_relative_ratings.rs"]
 mod relative_rating_tests;
+
+#[cfg(test)]
+#[path = "shortcuts/tests_clear_label.rs"]
+mod clear_label_tests;
 
 #[cfg(test)]
 #[path = "shortcuts/tests_flag_cycle.rs"]

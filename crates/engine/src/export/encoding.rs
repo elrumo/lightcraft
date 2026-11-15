@@ -1,7 +1,10 @@
 use super::border::{add_border, add_border_deep};
 use super::options::{ExportFormat, MetadataPolicy, SharpenAmount, SharpenFor};
 use super::watermark::{Watermark, draw_watermark, draw_watermark_deep};
-use super::*;
+use super::{
+    ChromaSubsampling, DateTime, DeepImage, DeepSamples, EncodeImage, EncodeMeta, ExportOptions, Gps, Metadata, NamedSpace, OutputDepth, OutputSpace,
+    Rgba8, Samples, encode, icc,
+};
 
 /// Unsharp mask on an 8-bit image (separable box-blur approximation of a small Gaussian).
 pub fn output_sharpen(img: &mut Rgba8, target: SharpenFor, amount: SharpenAmount) {
@@ -83,6 +86,9 @@ fn sharpen_kernel(target: SharpenFor, amount: SharpenAmount) -> Option<(usize, f
 /// [`output_sharpen`] on a high-bit-depth image (float images are sharpened in linear light).
 pub fn output_sharpen_deep(img: &mut DeepImage, target: SharpenFor, amount: SharpenAmount) {
     let (w, h) = (img.width, img.height);
+    if !sharpens(w, h, target) {
+        return;
+    }
     match &mut img.samples {
         DeepSamples::U16(v) => {
             let src: Vec<[f32; 3]> = v.as_chunks::<3>().0.iter().map(|c| [c[0] as f32, c[1] as f32, c[2] as f32]).collect();
@@ -103,6 +109,11 @@ pub fn output_sharpen_deep(img: &mut DeepImage, target: SharpenFor, amount: Shar
     }
 }
 
+/// Whether output sharpening for `target` changes a `w × h` image ([`unsharp`] returns `None` otherwise).
+fn sharpens(w: usize, h: usize, target: SharpenFor) -> bool {
+    target != SharpenFor::None && w >= 3 && h >= 3
+}
+
 /// The sharpened values of `src` (`w × h`), or `None` when nothing is to be done.
 fn unsharp(w: usize, h: usize, src: &[[f32; 3]], target: SharpenFor, amount: SharpenAmount) -> Option<Vec<[f32; 3]>> {
     let (radius, k) = sharpen_kernel(target, amount)?;
@@ -112,8 +123,9 @@ fn unsharp(w: usize, h: usize, src: &[[f32; 3]], target: SharpenFor, amount: Sha
     let r = radius as isize;
     let box_pass = |inp: &[[f32; 3]], horizontal: bool| -> Vec<[f32; 3]> {
         let mut out = vec![[0.0; 3]; inp.len()];
-        for y in 0..h {
-            for x in 0..w {
+        // rows in parallel: each output pixel is computed on its own, so the bits don't depend on the split
+        lightcraft_raster::par_rows(&mut out, w, |y, row| {
+            for (x, o) in row.iter_mut().enumerate() {
                 let mut acc = [0.0f32; 3];
                 for d in -r..=r {
                     let (sx, sy) = if horizontal {
@@ -125,9 +137,9 @@ fn unsharp(w: usize, h: usize, src: &[[f32; 3]], target: SharpenFor, amount: Sha
                     acc = [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]];
                 }
                 let n = (2 * r + 1) as f32;
-                out[y * w + x] = acc.map(|v| v / n);
+                *o = acc.map(|v| v / n);
             }
-        }
+        });
         out
     };
     let blur = box_pass(&box_pass(src, true), false);
@@ -384,14 +396,20 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, catalog: &lightcraft_c
         out.gps = m.gps.map(|(latitude, longitude)| Gps { latitude, longitude, altitude: None });
     }
     if o.metadata == MetadataPolicy::All {
-        // the catalog keeps make and model joined ("Canon Canon EOS R6"): Exif has a tag for each (HB-284)
-        let (make, model) = lightcraft_catalog::camera_make_model(&m.camera);
+        // `camera` is maker and model together ("Canon Canon EOS R6"): Exif keeps them apart. The maker as the file
+        // named it when it was read; for a photo from before that, split from `camera` (HB-284)
+        let (make, model) = if m.make.is_empty() {
+            lightcraft_catalog::camera_make_model(&m.camera)
+        } else {
+            (m.make.as_str(), m.camera.strip_prefix(m.make.as_str()).and_then(|rest| rest.strip_prefix(' ')).unwrap_or(&m.camera))
+        };
         out.make = text(make);
         out.model = text(model);
+        out.lens_make = text(&m.lens_make);
         out.lens_model = text(&m.lens);
         out.focal_length = m.focal_mm.map(f64::from);
         out.f_number = m.aperture.map(f64::from);
-        out.exposure_time = lightcraft_catalog::parse_shutter_seconds(&m.shutter);
+        out.exposure_time = m.shutter_seconds();
         out.iso = m.iso;
     }
     Some(out)

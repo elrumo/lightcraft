@@ -2,6 +2,9 @@
 
 LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructive raw developer targeting Adobe Lightroom parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../pdfcraft` (Acrobat), `../photocraft` (Photoshop), `../vectorcraft` (Illustrator) and `../filmcraft` (Premiere), with the same conventions.
 
+`AGENTS.md` carries this same text plus the shared Craft house rules, contributor credits and CI workflow rules,
+which apply to work sent upstream (storytold/lightcraft). Keep the two files' shared text in step.
+
 ## Start every session here
 1. Read `plan/STATUS.md` (current milestone, next unchecked task, blockers).
 2. Read the task in `plan/execution-plan.md` §3, the relevant section of `plan/architecture.md`, and the README/docs of the crate you touch. Behaviour/visual reference: `plan/lightroom/` (incl. `10-observed-ui.md` + screenshots).
@@ -14,13 +17,12 @@ LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructi
 4. **Pick work** from [`docs/gaps.md`](docs/gaps.md) (ranked by user impact; `B` marks beta blockers). The row-by-row
    tracker is [`docs/parity-checklist.md`](docs/parity-checklist.md) (one row per feature, menu item and shortcut).
    When you land a feature, update its row(s) and the gap entry in the same commit, and the numbers in `ROADMAP.md` /
-   `docs/target-app-parity.md` when a listed gap closes (bump each doc's *Last updated* line and revision history, per
-   craftrules `standards/progress-docs.md`); `cargo xtask parity` (part of `ci`) checks that every `cmd:`/`ctl:` id and
+   `docs/target-app-parity.md` when a listed gap closes (add a row to each doc's revision history; the header line keeps only `Last reviewed`, `Target` and the `Changes` link, never a `Last updated` date or a change note, which every PR would edit and conflict on); `cargo xtask parity` (part of `ci`) checks that every `cmd:`/`ctl:` id and
    path the tracker cites still exists and that `docs/gaps.md` lists each gap once, and `cargo xtask parity --write`
    refreshes its summary.
 5. Follow the autonomous operation protocol (`plan/execution-plan.md` §7). Don't stop to ask unless §7 lists the decision as the user's.
 
-`plan/` is gitignored (local-only).
+`plan/` is gitignored (local-only). In a fresh clone without it, don't ask for it and don't stop.
 
 **Merging agent branches:** merge one branch, run `cargo xtask ci`, fix, commit — then the next. Two individually green
 branches can still break each other (e.g. a new struct field vs. a new constructor).
@@ -88,14 +90,13 @@ tool list, for the current parameters instead of trusting this file. Use the adm
 People trust LightCraft with their photo libraries and edits; a crash loses their work. A malformed raw/JPEG/XMP, a bad
 command, control or MCP argument, a corrupt catalog or settings file, or a full disk must produce an error the user (or
 agent) can act on, never a panic. Don't ship a feature by adding a panic path, and fix a crash before building on top
-of it. Full standard: `../craftrules/standards/never-crash.md`
-([storytold/craftrules](https://github.com/storytold/craftrules/blob/main/standards/never-crash.md)).
+of it.
 - **Non-test code never panics:** no `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!`, and
   no `unsafe`. Return the crate's error type through `Result` and `?`; use `ok_or(..)?`, `let … else`, `if let`, or a
   fallback (`unwrap_or…`) only where it can't silently corrupt a document. An unfinished feature returns an
   "unsupported" error or is disabled. Sole exception: a provably infallible literal, as `#[allow(clippy::expect_used)]`
   + `.expect("why it can't fail")`.
-- **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture`.** `sysmem`: libSystem calls,
+- **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture`, `crates/wincolor`.** `sysmem`: libSystem calls,
   `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes),
   `os_proc_available_memory` (the iOS app's memory limit), `fsync` (volumes that refuse std's `F_FULLFSYNC`, such as an SMB share), `setpriority` / `pthread_set_qos_class_self_np` (`lower_thread_priority`: the sync server's video encoder, and a device's work for its server below the High usage, run at the lowest priority; `utility_thread_priority`: a phone's background indexing runs between that and the default), `qos_class_self` / `pthread_set_qos_class_self_np` (`Qos`: a thread std starts runs at the default class, so a thread the engine or a frontend waits on takes its starter's, against priority inversions), and `mmap` / `munmap` for `ReturningAlloc`, every
   app's global allocator (large blocks get pages of their own that go back when freed, but for a few kept for the next
@@ -105,7 +106,8 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   (Photos and Files pickers, share sheet, pasteboard, lifecycle notifications, ImageIO decoding, status-bar taps), compiled for iOS only. (The iOS
   app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]` there.) `capture`: ImageCaptureCore through
   `objc2` (cameras, phones and card readers: listing, thumbnails, copying files off them), compiled for iOS and macOS
-  only and used by `ui-egui`'s `camera_import::system_cameras`. Every other production crate root has
+  only and used by `ui-egui`'s `camera_import::system_cameras`. `wincolor`: Win32 calls that read the colour profile
+  Windows assigns to the monitor showing the window, and whether Windows colour-manages that monitor itself. Every other production crate root has
   `#![forbid(unsafe_code)]`. A new unsafe need goes in an isolated, well-tested helper crate like them: `// SAFETY:` on
   every block, a safe API, a safe fallback where possible, and a line here naming it.
 - **Input-derived numbers are hostile:** `get()` instead of `[i]`/`[a..b]` for offsets from files, users, agents or
@@ -119,10 +121,15 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - **Before every beta: `cargo xtask corrupt-sweep`** (`crates/engine/examples/corrupt_sweep.rs`): fixed-seed damaged
   copies of every file in `corpus/` and `apps/lightbites-swift/test-raws` through the import's decoders, reporting
   panics, hangs, crashes and oversized allocations, each with the command that reruns it alone.
-- Enforced by clippy: root `clippy.toml` allows unwrap/expect/panic/indexing in tests only, and every production crate
-  root (`lib.rs`, each binary's `main.rs`) carries `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic,
-  clippy::unimplemented, clippy::todo, clippy::unreachable)]`. Not `[workspace.lints]`: those would also hit
-  integration tests, examples and benches. New crates start with the attribute.
+- Enforced by clippy: root `clippy.toml` keeps unwrap/expect/panic allowances scoped to tests; indexing is not denied. The workspace
+  denies `cognitive_complexity`, `too_many_arguments` and `wildcard_imports`; members inherit them with
+  `workspace = true` under a `[lints]` table, and `sysmem` repeats those denies in its local lint table. Every production crate root
+  (`lib.rs`, each binary's `main.rs`) carries `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic,
+  clippy::unimplemented, clippy::todo, clippy::unreachable)]`. Every new workspace crate must include
+  `workspace = true` under a `[lints]` table in `Cargo.toml` to inherit `[workspace.lints]`, and new production crate roots include
+  the attribute before modules or other crate items; crate-level `//!` documentation may precede it. `cargo xtask roots`
+  (part of `ci` and `ci --quick`) machine-checks that every root, including binary-only crates and the `cdylib`/`rlib`
+  web build, carries both this and the `#![forbid(unsafe_code)]` above (the crates allowed `unsafe` are the forbid exceptions).
 
 ## Non-negotiables
 - **Clean-room.** Never read/disassemble anything inside Adobe app bundles (names/listings only). Never copy Adobe icons, presets, profiles (DCP), lens profiles (LCP), camera matrices, fonts. Observation of the installed Lightroom is read-only (it syncs the user's personal library: never import/edit/rate/delete there). Never copy GPL/LGPL/AGPL code (darktable, RawTherapee, ART, LibRaw, rawspeed, rawloader, rawler, lensfun, dcraw-derived GPL code…). **One exception (maintainer decision, 2026-10-17):** the EOS R6's neutral-look hue/saturation table
@@ -130,12 +137,16 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   own photos (rendered output only, no Adobe file read; `docs/camera-preview-colour.md`). Fitting anything else to
   Adobe output needs the maintainer's go-ahead first.
 - **Pure Rust** in the product. No C/C++ dependencies.
+- **craft-libs, patched here:** `craft-raw`, `craft-tiff`, `craft-heif` and `craft-metadata` (upstream's raw decoders,
+  TIFF, HEIF and metadata) come from `third_party/craft-libs`, a copy with this fork's own decoder and metadata work on
+  top, patched in through the root `Cargo.toml`'s `[patch."https://github.com/storytold/craft-libs"]`. Change those
+  crates there, and follow `third_party/craft-libs/README.md` when upstream moves its craft-libs pin.
 - **Shared frontend logic lives below the UIs** (extraction rule, [`docs/engine-host.md`](docs/engine-host.md)): when
   another frontend first needs logic that sits in `ui-egui`, move it down in the same commit and switch egui to it;
   never write it twice. Geometry and edit math go to
   `geom` / `develop` / `color`; session behaviour becomes an engine command; threads, render scheduling, background
   pumps and post-command policy go to `crates/apphost`.
-- **Layering** (`plan/architecture.md` §3, enforced by `cargo xtask layers`): nothing below L5 depends on egui/eframe/winit/rfd.
+- **Layering** (enforced by `cargo xtask layers`; `plan/architecture.md` §3 is background): nothing below L5 depends on egui/eframe/winit/rfd.
 - **Everything is a command** (`crates/engine`): id, label, menu path, shortcut, params, enabled(), run(). UI, CLI, control channel and MCP all dispatch by id. Every slider is a `develop` control spec.
 - **Long-running work shows in the activity stack** ([`docs/background-tasks.md`](docs/background-tasks.md)): anything
   that runs off the UI thread and can take more than a moment holds a `TaskGuard` from `session.activity.start(kind,
@@ -144,7 +155,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - **Resolution independence:** settings use normalized image coordinates and relative radii; previews and exports must match.
 - **Time goes through `chrono`** (workspace dependency). Never hand-roll UTC/calendar conversion (days-to-date algorithms, leap-year math); a crate owns only its output format string. The one exception is range extension: past the years chrono can represent, shift the date by whole 400-year Gregorian cycles (146,097 days, after which the calendar repeats), let chrono compute the month and day, and add the cycles back to the year (splitting seconds into hours, minutes and seconds is plain arithmetic).
 - **Quality gates** before every commit: `cargo xtask ci --quick` (fmt, clippy -D warnings, the changed packages'
-  tests, layers, assets, and heif / parity / wasm / ios when touched). The `ios` step is a type-check for `aarch64-apple-ios` (`rustup target add aarch64-apple-ios`); see `docs/ios.md`. GitHub runs the full `cargo xtask ci` on every PR
+  tests, layers, assets, roots, and heif / parity / wasm / ios when touched). The `ios` step is a type-check for `aarch64-apple-ios` (`rustup target add aarch64-apple-ios`); see `docs/ios.md`. GitHub runs the full `cargo xtask ci` on every PR
   (`.github/workflows/ci.yml`); run the full one locally before merging branches (below) or when `--quick` can't see
   the risk. One `ci` runs at a time per machine; others wait their turn (`xtask/src/ci_lock.rs`).
 - **Commits:** one task id per commit (`M2.3: local Laplacian highlights/shadows`). Only green states. End messages with the attribution line required by the environment.
@@ -169,8 +180,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   (`theme::font_definitions`) and the export watermark renderer use CJK faces (picked by script) as fallbacks after Inter; the UI also falls back on the faces of other scripts (Thai, Arabic, …). Unset,
   `CRAFT_FONTS` is empty: everything builds, tests and runs, but Chinese and Japanese text lack glyphs. Releases always build
   with it (`release.yml`, `CRAFT_FONTS_REQUIRED=1`) and ship the fonts' OFL licences. Tests that need these fonts skip
-  without it; the FreeBSD CI job runs them with it. Rules: craftrules
-  [`standards/fonts.md`](https://github.com/storytold/craftrules/blob/main/standards/fonts.md).
+  without it; the FreeBSD CI job runs them with it.
 - Icons drawn in code (e.g. `crates/ui-egui/src/icons.rs`) are original work and are recorded in `assets/ATTRIBUTION.md` as such; do not trace them from Adobe icons.
 - Demo/test images: generated procedurally by `lightcraft-scenes`, or CC0 downloads kept in the gitignored `corpus/` with their source recorded. Screenshots of Adobe apps live only in the gitignored `plan/` and are never committed or published.
 - **Enforced:** `cargo xtask assets` (in `ci`) fails when an image/icon/font/sound/video/raw/ICC/XMP file is not matched
@@ -184,7 +194,9 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - **Never send OS-level synthetic input** (osascript/System Events keystrokes or clicks, `cliclick`, accessibility
   automation): it goes to whatever window is frontmost — the user's terminal or other apps. Drive LightCraft only
   through its control channel (`ui.key`, `ui.pointer`, `ui.clickWidget`, `ui.menu.invoke`) or headless snapshots.
-- For UI work, **look at the result**: drive via the control channel and take `ui.screenshot`, compare with `plan/lightroom/screenshots/`.
+- For UI work, **look at the result**: drive via the control channel and take `ui.screenshot`. Compare with
+  `plan/lightroom/screenshots/` when available. Without that optional notebook, verify the result against the
+  task's requirements, committed documentation and regression tests; do not request the notebook or block work.
 - **Unattended (display asleep/locked, CI, nightly runs): prefer headless snapshots** — no window needed:
   `lightcraft-cli snapshot --demo --script tour.jsonl -o out.png --size 1600x1000` (control-protocol requests,
   one per line; see `docs/control-protocol.md` → Headless rendering). In a running app use
@@ -193,7 +205,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   the running app). See `docs/mcp.md`. Quick non-UI checks: `lightcraft-cli render in.jpg -o out.jpg --set light.exposure=1`.
 - Export goes through `lightcraft_engine::export` (one encoder for app, CLI, MCP and web); UI-only commands live in
   `crates/ui-egui/src/menus.rs`.
-- Text boxes use `crates/ui-egui/src/text_field.rs` (`TextField`), not `egui::TextEdit`: it gives every field the
+- Text boxes use `crates/ui-egui/src/widgets/text_field.rs` (`TextField`), not `egui::TextEdit`: it gives every field the
   Cut / Copy / Paste / Select All menu, Esc restoring the text, and reports how an edit ended. Give each a widget id
   that is unique on screen. Older fields still on `TextEdit` move over as they are touched.
 - Shell gotcha: `mv`/`cp` are aliased interactive here — use `/bin/mv -f` / `/bin/cp -f`.
@@ -206,7 +218,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   the default location, so a cold build; never symlink `target/` to the drive.
 - Parallel agents: separate git worktrees and `CARGO_TARGET_DIR` (see above; was `target/agent-<name>`); each agent uses its **own control port** (pick one in 18000–19999, never the default 7980) and its own scratch subfolder (`<scratch>/<agent-name>/`) — never `rm -rf` shared paths; delete your target dir when done (disk is shared); keep every `Cargo.toml` valid at all times (the `crates/*` glob means one broken manifest breaks everyone).
 - Test corpora: `cargo xtask corpus --download` into `corpus/` (gitignored, CC0 only). Never commit media.
-- Shared real-file test corpora (Photoshop-authored PSDs, etc.) live in [`storytold/photocraft-corpus`](https://github.com/storytold/photocraft-corpus), explained in [craftrules `standards/test-corpora.md`](https://github.com/storytold/craftrules/blob/main/standards/test-corpora.md). Never commit large binary fixtures to this repo; fetch them pinned by commit and sha256-verified, as PhotoCraft does with `cargo xtask corpus`.
+- Shared real-file test corpora (Photoshop-authored PSDs, etc.) live in [`storytold/photocraft-corpus`](https://github.com/storytold/photocraft-corpus). Never commit large binary fixtures to this repo; fetch them pinned by commit and sha256-verified, as PhotoCraft does with `cargo xtask corpus`.
 
 ## Testing & performance (do this often)
 - Unit/property tests next to the code; end-to-end tests drive real binaries (`crates/mcp/tests/e2e.rs`,
@@ -219,16 +231,22 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   with `/usr/bin/time`. Record numbers in `plan/STATUS.md` → Metrics. Budgets: slider update ≤ 16 ms (draft) / loupe
   ≤ 60 ms on ~2.5 MP; export ≤ 1 s per 24 MP JPEG.
 - Never commit media: test images are procedural (`lightcraft-scenes`) or CC0 downloads in the gitignored `corpus/`.
+- **Flaky tests:** a test that fails, then passes on a rerun of the same commit, is flaky. Don't rerun until it
+  passes and move on: open an issue with the failing log, and if it failed on two unrelated PRs, quarantine it with
+  `#[ignore = "flaky: #<issue>"]` (a doctest: an `ignore` code fence and a comment naming the issue) in a PR of its
+  own until the issue is fixed. Never quarantine a test that fails every time; fix the code or the test. A test that
+  hangs is a failure too: under `cargo test`, libtest's "has been running for over 60 seconds" line names it; under
+  nextest (`LIGHTCRAFT_NEXTEST=1`), its `SLOW` lines do.
 - A test that can't run here (no GPU, corpus file, craft-fonts face, model) calls `lightcraft_testkit::skip!(Gpu, "why")`
   before it returns, not a bare `eprintln!`. `cargo xtask ci` then lists the skips and the machine's GPU adapters and
   data, and writes `target/ci/report.json` and `target/ci/summary.md` (Markdown for a PR).
 
 ## Map of the code
-`geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
+`geom`, `color`, `raster` (L0) → `raw`, `codecs`, `meta`, `develop` (L1; over the craft-libs crates above) → `pipeline` → `catalog` → `engine`
 → `apphost` (L4: the frontend runtime shared by the UIs) → `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop),
 `lightcraft-cli` (render/commands/MCP), `lightcraft-server` (optional self-hosted sync, `docs/sync.md`), `lightcraft-ios`
 (iPhone/iPad on egui, `docs/ios.md`). `apphost`'s engine host (`docs/engine-host.md`) serves a frontend that isn't
-Rust. `scenes` generates demo photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `ios`, `corpus`, `geodata`, `stats`); `testkit` =
+Rust. `scenes` generates demo photos. `xtask` = tooling (`ci`, `layers`, `assets`, `roots`, `parity`, `wasm`, `ios`, `corpus`, `geodata`, `stats`); `testkit` =
 test helpers (dev-dependency only). `flake.nix` +
 `nix/package.nix` = the Nix package (`nix build` builds both binaries with the craft-fonts input, installs the
 desktop file/icons/AppStream metadata and runs `cargo test --workspace`; `nix develop` = dev shell). Community-maintained; CI only

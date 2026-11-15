@@ -446,8 +446,25 @@ fn finite_or_0(v: f32) -> f32 {
     return v;
 }
 
-fn enc8(v: f32) -> u32 {
-    return u32(clamp(v, 0.0, 1.0) * 255.0 + 0.5);
+// The 8×8 ordered Bayer pattern of the 8-bit output's dither (`finish::bayer_dither_offset`).
+const BAYER_8X8 = array<f32, 64>(
+     0.0, 32.0,  8.0, 40.0,  2.0, 34.0, 10.0, 42.0,
+    48.0, 16.0, 56.0, 24.0, 50.0, 18.0, 58.0, 26.0,
+    12.0, 44.0,  4.0, 36.0, 14.0, 46.0,  6.0, 38.0,
+    60.0, 28.0, 52.0, 20.0, 62.0, 30.0, 54.0, 22.0,
+     3.0, 35.0, 11.0, 43.0,  1.0, 33.0,  9.0, 41.0,
+    51.0, 19.0, 59.0, 27.0, 49.0, 17.0, 57.0, 25.0,
+    15.0, 47.0,  7.0, 39.0, 13.0, 45.0,  5.0, 37.0,
+    63.0, 31.0, 55.0, 23.0, 61.0, 29.0, 53.0, 21.0,
+);
+
+// An encoded value (0..1) to 8 bits with the dither offset `d` (0..1): `finish::enc`.
+fn enc8(v: f32, d: f32) -> u32 {
+    let y = clamp(v, 0.0, 1.0) * 255.0;
+    if (y >= 254.9) {
+        return 255u;
+    }
+    return u32(clamp(y + d, 0.0, 255.0));
 }
 
 // sRGB-curve-encoded value → the output space's own curve (`OutputTrc`: 0 sRGB, 1 gamma, 2 Rec.709).
@@ -850,5 +867,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         e = vec3<f32>(0.0, 0.25, 1.0);
     }
     let o8 = vec3<f32>(out_encode(e.x), out_encode(e.y), out_encode(e.z));
-    out[i] = enc8(o8.x) | (enc8(o8.y) << 8u) | (enc8(o8.z) << 16u) | (255u << 24u);
+    // dithered as the CPU's `finish` dithers, in the whole output's pixels; an HDR render's 8-bit picture is the
+    // reduction of its float one (`DeepImage::to_rgba8`), which is not dithered
+    var dither = 0.5;
+    if (pu(F_HDR_OUT) == 0u) {
+        let abs_x = u32(max(pf(F_VIG_VIEW), 0.0) + 0.5) + x;
+        let abs_y = u32(max(pf(F_VIG_VIEW + 1u), 0.0) + 0.5) + y;
+        dither = (BAYER_8X8[(abs_y & 7u) * 8u + (abs_x & 7u)] + 0.5) / 64.0;
+    }
+    out[i] = enc8(o8.x, dither) | (enc8(o8.y, dither) << 8u) | (enc8(o8.z, dither) << 16u) | (255u << 24u);
 }

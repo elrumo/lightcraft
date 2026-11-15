@@ -1,152 +1,121 @@
-//! JPEG XL decode via `jxl-oxide` (pure Rust). Enum-encoded images are rendered straight into linear
-//! Rec.2020; ICC-tagged ones are rendered in their own space and interpreted with our ICC path.
-//! XYB (lossy) images are rendered to linear sRGB primaries and converted to Rec.2020 here:
-//! jxl-oxide 0.12 desaturates colours outside sRGB when it renders XYB to wider primaries.
-//! jxl-oxide applies the codestream orientation itself, so `orientation` is reported as 1.
+//! JPEG XL adapter to the shared `craft-jxl` codec.
+//!
+//! A PQ file (our own HDR export, an HDR10 JPEG XL) is asked for in its own encoding and linearised here, SDR white
+//! at 203 cd/m²: asked for as linear, jxl-oxide tone maps anything declaring a peak above 255 cd/m² down to 255 (a
+//! Rec. 2408 SDR rendition), which dropped the whole range above SDR white. (Not for an XYB file, a lossy one: it is
+//! rendered through sRGB primaries, where a PQ target would need negative out-of-gamut samples encoded; those are
+//! still tone mapped to 255 cd/m².)
 
-use crate::convert::{Buf, Meta, Model, Raw, check_size, finish};
+use crate::convert::{Buf, Meta, Model, Raw, finish};
 use crate::space::{NamedSpace, SourceSpace, SpaceOrigin, Trc};
 use crate::{DecodeOptions, Decoded, Error, Format, Result};
-use jxl_oxide::color::{ColourSpace, EnumColourEncoding, Primaries, RenderingIntent, TransferFunction, WhitePoint};
-use jxl_oxide::{AllocTracker, AuxBoxData, InitializeResult, JxlImage};
 
 const F: Format = Format::Jxl;
 
-fn err(e: impl std::fmt::Display) -> Error {
-    Error::Malformed(F, e.to_string())
+fn error(e: craft_jxl::Error) -> Error {
+    match e {
+        craft_jxl::Error::PixelLimitExceeded { width, height, .. } => Error::TooLarge(u64::from(width), u64::from(height)),
+        craft_jxl::Error::Malformed(message) | craft_jxl::Error::LimitExceeded(message) | craft_jxl::Error::InvalidImage(message) => {
+            Error::Malformed(F, message)
+        }
+        craft_jxl::Error::Unsupported(message) | craft_jxl::Error::Encode(message) => Error::Malformed(F, message),
+    }
 }
 
-/// Tracked allocation budget per allowed pixel for frames, extra channels and modular trees.
-/// This bounds allocations covered by `AllocTracker`, not every allocation made by the decoder (#1517).
-const TRACKED_BYTES_PER_PIXEL: u64 = 4 * 4 * 8;
+/// Bytes handed to the header parser at a time, and the most it is given in all.
+const HEADER_CHUNK: usize = 4096;
+const MAX_HEADER: usize = 1 << 20;
 
-/// The allocation budget never drops below this, so small images keep the decoder's fixed
-/// overhead (group buffers, entropy tables) whatever `max_pixels` is.
-const MIN_TRACKED_BYTES: u64 = 64 << 20;
-
-/// Bytes handed to the decoder at a time (the size `JxlImageBuilder::read` reads in).
-const INPUT_CHUNK: usize = 4096;
-
-/// Initializes from bounded input, checks dimensions before rendering, then loads remaining frames
-/// within a tracked allocation budget.
-fn open(bytes: &[u8], opts: &DecodeOptions) -> Result<JxlImage> {
-    let budget = opts.max_pixels.saturating_mul(TRACKED_BYTES_PER_PIXEL).max(MIN_TRACKED_BYTES);
-    let tracker = AllocTracker::with_limit(usize::try_from(budget).unwrap_or(usize::MAX));
-    let mut uninit = JxlImage::builder().alloc_tracker(tracker).build_uninit();
-    // Initialization can load already-buffered frame data, so small feeds limit work before
-    // dimension checking.
-    let mut rest = bytes;
-    let mut window = INPUT_CHUNK;
-    let mut img = loop {
-        let consumed = uninit.feed_bytes(rest.get(..window).unwrap_or(rest)).map_err(err)?;
+/// Whether a JPEG XL declares Rec. 2100 PQ as the enum colour encoding of RGB samples, not XYB and with no ICC
+/// profile: from its headers alone (no frame is read).
+fn is_enum_pq(bytes: &[u8]) -> bool {
+    use jxl_oxide::color::{ColourEncoding, TransferFunction};
+    use jxl_oxide::{InitializeResult, JxlImage};
+    let mut uninit = JxlImage::builder().build_uninit();
+    let (mut rest, mut window, mut fed) = (bytes, HEADER_CHUNK, 0usize);
+    loop {
+        let Ok(consumed) = uninit.feed_bytes(rest.get(..window).unwrap_or(rest)) else { return false };
         rest = rest.get(consumed..).unwrap_or_default();
-        match uninit.try_init().map_err(err)? {
-            InitializeResult::Initialized(img) => break img,
-            InitializeResult::NeedMoreData(more) => uninit = more,
+        fed = fed.saturating_add(consumed);
+        match uninit.try_init() {
+            Ok(InitializeResult::Initialized(img)) => {
+                let m = &img.image_header().metadata;
+                return !m.xyb_encoded
+                    && !m.grayscale()
+                    && img.original_icc().is_none()
+                    && matches!(&m.colour_encoding, ColourEncoding::Enum(e) if matches!(e.tf, TransferFunction::Pq));
+            }
+            Ok(InitializeResult::NeedMoreData(more)) => uninit = more,
+            Err(_) => return false,
+        }
+        if fed > MAX_HEADER || rest.is_empty() {
+            return false;
         }
         if consumed == 0 {
-            // the parser wants more than the window holds at once
-            if window >= rest.len() {
-                return Err(err("truncated JPEG XL header"));
-            }
             window = window.saturating_mul(2);
         }
-    };
-    check_size(F, img.width() as u64, img.height() as u64, opts)?;
-    // Match `JxlImageBuilder::read`: bounded feeds until the final frame, not merely the first
-    // keyframe. `feed_bytes` copies codestream data into an untracked Vec, including any tail
-    // after the last frame; feeding the remaining file at once bypasses the allocation budget.
-    while !img.is_loading_done() && !rest.is_empty() {
-        let consumed = img.feed_bytes(rest.get(..INPUT_CHUNK).unwrap_or(rest)).map_err(err)?;
-        if consumed == 0 {
-            break;
-        }
-        rest = rest.get(consumed..).unwrap_or_default();
     }
-    img.finalize().map_err(err)?;
-    Ok(img)
+}
+
+/// A PQ file (see the module docs) decoded in its own encoding and linearised: `None` when it isn't one, or the
+/// decoder rendered it in anything but Rec. 2100 PQ RGB (the caller then decodes it to linear as usual).
+fn decode_pq(bytes: &[u8], limits: craft_jxl::DecodeLimits) -> Result<Option<craft_jxl::Decoded>> {
+    if !is_enum_pq(bytes) {
+        return Ok(None);
+    }
+    let mut d = craft_jxl::decode_with_color(bytes, limits, craft_jxl::OutputColor::DecoderDefault).map_err(error)?;
+    // CICP primaries 9 (BT.2020), transfer 16 (PQ); no alpha to unpremultiply
+    if !matches!(d.layout, craft_jxl::Layout::Rgb) || !matches!(d.rendered_cicp, Some([9, 16, ..])) {
+        return Ok(None);
+    }
+    for v in &mut d.pixels {
+        *v = Trc::Pq.to_linear(*v);
+    }
+    d.pixels_linear_rec2020 = true;
+    Ok(Some(d))
 }
 
 pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
-    let mut img = open(bytes, opts)?;
-    let (w, h) = (img.width(), img.height());
-    let header = img.image_header();
-    let bits = header.metadata.bit_depth.bits_per_sample() as u8;
-    let float = matches!(header.metadata.bit_depth, jxl_oxide::image::BitDepth::FloatSample { .. });
-    let gray = header.metadata.grayscale();
-    let icc = img.original_icc().map(|v| v.to_vec());
-    let mut meta = Meta { orientation: Some(1), ..Default::default() };
-    // linear sRGB primaries, unclamped, then our own matrix to Rec.2020 (see the module docs)
-    let via_srgb = icc.is_none() && !gray && header.metadata.xyb_encoded;
-    // A PQ file (our own HDR export, an HDR10 JPEG XL) is asked for as PQ: asked for as linear, jxl-oxide
-    // tone maps anything declaring a peak above 255 cd/m² down to 255 (a Rec. 2408 SDR rendition), which
-    // dropped the whole range above SDR white. Its PQ values are linearised here, SDR white at 203 cd/m².
-    // (Not for an XYB file, a lossy one: it is rendered through sRGB primaries, see `via_srgb`, where a PQ
-    // target would need negative out-of-gamut samples encoded; those are still tone mapped to 255 cd/m².)
-    let pq = icc.is_none()
-        && !gray
-        && !via_srgb
-        && matches!(&header.metadata.colour_encoding, jxl_oxide::color::ColourEncoding::Enum(e) if matches!(e.tf, TransferFunction::Pq));
-    if icc.is_none() {
-        img.request_color_encoding(EnumColourEncoding {
-            colour_space: if gray { ColourSpace::Grey } else { ColourSpace::Rgb },
-            white_point: WhitePoint::D65,
-            primaries: if via_srgb { Primaries::Srgb } else { Primaries::Bt2100 },
-            tf: if pq { TransferFunction::Pq } else { TransferFunction::Linear },
-            rendering_intent: RenderingIntent::Relative,
-        });
-        let mut s = SourceSpace::named(NamedSpace::Rec2020, SpaceOrigin::Container);
-        s.trc = Some([Trc::Linear, Trc::Linear, Trc::Linear]);
-        meta.already_linear = Some(s);
+    let limits = craft_jxl::DecodeLimits { max_pixels: opts.max_pixels, ..Default::default() };
+    let decoded = match decode_pq(bytes, limits)? {
+        Some(d) => d,
+        None => craft_jxl::decode_with_color(bytes, limits, craft_jxl::OutputColor::LinearRec2020).map_err(error)?,
+    };
+
+    let gray = matches!(decoded.layout, craft_jxl::Layout::Gray | craft_jxl::Layout::GrayAlpha);
+    let alpha = decoded.layout.has_alpha();
+    let pixels_linear_rec2020 = decoded.pixels_linear_rec2020;
+    let rendered_icc = if !pixels_linear_rec2020 && decoded.metadata.icc.is_none() && !decoded.rendered_icc.is_empty() {
+        Some(decoded.rendered_icc.clone())
     } else {
-        meta.icc = icc;
-    }
-    if let Ok(AuxBoxData::Data(ex)) = img.aux_boxes().first_exif() {
-        meta.exif = Some(ex.payload().to_vec());
-    }
-    if let AuxBoxData::Data(x) = img.aux_boxes().first_xml() {
-        meta.xmp = Some(String::from_utf8_lossy(x).trim_end_matches('\0').to_string());
-    }
-    let render = img.render_frame(0).map_err(err)?;
-    let fb = render.image_all_channels();
-    let (fw, fh, ch) = (fb.width(), fb.height(), fb.channels());
-    let n_color = if gray { 1 } else { 3 };
-    let has_alpha = img.pixel_format().has_alpha();
-    if ch < n_color {
-        return Err(err("too few channels"));
-    }
-    let keep = n_color + has_alpha as usize;
-    let src = fb.buf();
-    let mut v = Vec::with_capacity(fw * fh * keep);
-    let to_2020 = lightcraft_color::SRGB.to_space(&lightcraft_color::REC2020).to_f32();
-    for px in src.chunks_exact(ch) {
-        let start = v.len();
-        v.extend_from_slice(&px[..keep.min(ch)]);
-        if keep > ch {
-            v.push(1.0);
-        }
-        if pq && let Some(rgb) = v.get_mut(start..start + 3) {
-            for c in rgb {
-                *c = Trc::Pq.to_linear(*c);
-            }
-        }
-        if via_srgb && let Some(rgb) = v.get_mut(start..start + 3) {
-            let [r, g, b] = [rgb[0], rgb[1], rgb[2]];
-            for (o, m) in rgb.iter_mut().zip(&to_2020) {
-                *o = m[0] * r + m[1] * g + m[2] * b;
-            }
-        }
+        None
+    };
+    let mut meta = Meta {
+        orientation: Some(1),
+        icc: decoded.metadata.icc.or(rendered_icc),
+        exif: decoded.metadata.exif,
+        xmp: decoded.metadata.xmp.map(|packet| String::from_utf8_lossy(&packet).trim_end_matches('\0').to_owned()),
+        ..Default::default()
+    };
+    if pixels_linear_rec2020 {
+        let mut space = SourceSpace::named(NamedSpace::Rec2020, SpaceOrigin::Container);
+        space.trc = Some([Trc::Linear, Trc::Linear, Trc::Linear]);
+        meta.already_linear = Some(space);
+    } else if meta.icc.is_none() {
+        return Err(Error::Malformed(F, "shared decoder did not report the rendered JPEG XL color profile".into()));
     }
     let raw = Raw {
-        width: fw,
-        height: fh,
+        width: decoded.width as usize,
+        height: decoded.height as usize,
         model: if gray { Model::Gray } else { Model::Rgb },
-        alpha: has_alpha,
-        premultiplied: false,
-        buf: Buf::F32(v),
-        bit_depth: bits,
+        alpha,
+        premultiplied: decoded.pixels_premultiplied,
+        buf: Buf::F32(decoded.pixels),
+        bit_depth: decoded.bit_depth,
     };
-    let mut d = finish(F, raw, meta, (w, h), opts)?;
-    d.float = float;
-    Ok(d)
+    let (source_width, source_height) =
+        if (5..=8).contains(&decoded.source_orientation) { (decoded.height, decoded.width) } else { (decoded.width, decoded.height) };
+    let mut result = finish(F, raw, meta, (source_width, source_height), opts)?;
+    result.float = decoded.float_samples;
+    Ok(result)
 }

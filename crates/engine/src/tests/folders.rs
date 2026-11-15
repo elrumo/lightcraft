@@ -779,3 +779,18 @@ fn locating_a_folder_needs_a_folder_there_and_the_same_folder_is_nothing_to_do()
     assert_eq!(r["relinked"], 0);
     assert_eq!(path_of(&s, 0), "/gone/trip/a.jpg");
 }
+
+#[cfg(unix)]
+#[test]
+fn the_library_folder_is_protected_however_its_path_is_spelled() {
+    let dir = Scratch::new("library-link");
+    let lib = dir.0.join("library");
+    let mut s = Session::new();
+    s.open_library(&lib, true).unwrap();
+    // a link to the library's folder names the same folder on disk
+    std::os::unix::fs::symlink(&lib, dir.0.join("alias")).unwrap();
+    std::fs::create_dir_all(dir.0.join("elsewhere")).unwrap();
+    let err = s.execute("folder.move", &json!({"path": dir.path("alias"), "into": dir.path("elsewhere")})).unwrap_err().to_string();
+    assert!(err.contains("library's own folders"), "{err}");
+    assert!(lib.is_dir() && !dir.0.join("elsewhere/alias").exists());
+}

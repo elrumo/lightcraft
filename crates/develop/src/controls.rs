@@ -111,6 +111,10 @@ impl ControlSpec {
     }
     pub fn format(&self, v: f64) -> String {
         let s = format!("{:.*}", self.decimals as usize, v);
+        if v.is_finite() && !s.bytes().any(|b| matches!(b, b'1'..=b'9')) {
+            // Rounds to zero: no sign.
+            return s.trim_start_matches('-').to_string();
+        }
         if v > 0.0 && self.min < 0.0 { format!("+{s}") } else { s }
     }
     /// Where `v` sits on the slider track, from 0 (left end) to 1 (right end). Linear, except for the Kelvin
@@ -704,6 +708,9 @@ pub static INDEXED: &[ControlSpec] = &[
 fn split_indexed(id: &str) -> Option<(&str, usize, &str)> {
     let mut it = id.splitn(3, '.');
     let (fam, i, field) = (it.next()?, it.next()?, it.next()?);
+    if i.is_empty() || !i.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     Some((fam, i.parse().ok()?, field))
 }
 
@@ -751,14 +758,17 @@ fn indexed_field<'a>(s: &'a mut DevelopSettings, id: &str) -> Option<&'a mut f64
 }
 
 fn indexed_get(s: &DevelopSettings, id: &str) -> Option<f64> {
-    // (a clone keeps one accessor for get and set; these lists are tiny)
-    let mut c = DevelopSettings {
-        point_colors: s.point_colors.clone(),
-        red_eye: s.red_eye.clone(),
-        film: crate::settings::Film { layers: s.film.layers.clone(), ..Default::default() },
-        ..DevelopSettings::default()
-    };
-    indexed_field(&mut c, id).map(|v| *v)
+    // one accessor for get and set: a copy of the one element read (never of the lists, which a
+    // read of every indexed control would copy once per control)
+    let (fam, i, field) = split_indexed(id)?;
+    let mut c = DevelopSettings::default();
+    match fam {
+        "pointColor" => c.point_colors.push(*s.point_colors.get(i)?),
+        "redEye" => c.red_eye.push(*s.red_eye.get(i)?),
+        "filmLayer" => c.film.layers.push(s.film.layers.get(i)?.clone()),
+        _ => return None,
+    }
+    indexed_field(&mut c, &format!("{fam}.0.{field}")).map(|v| *v)
 }
 
 fn indexed_set(s: &mut DevelopSettings, id: &str, v: f64) -> bool {
@@ -934,6 +944,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn format_shows_no_sign_on_a_value_that_rounds_to_zero() {
+        let e = find("light.exposure").unwrap();
+        assert_eq!(e.format(0.004), "0.00");
+        assert_eq!(e.format(-0.004), "0.00");
+        assert_eq!(e.format(0.5), "+0.50");
+        assert_eq!(e.format(-0.5), "-0.50");
+        assert_eq!(e.format(f64::INFINITY), "+inf");
+        assert_eq!(e.format(f64::NEG_INFINITY), "-inf");
+    }
+
+    #[test]
     fn every_control_reads_its_default() {
         let s = DevelopSettings::default();
         for c in CONTROLS {
@@ -976,6 +997,18 @@ mod tests {
             assert!(get(&s, &id).is_some(), "{id}");
             assert!(spec.min <= spec.default && spec.default <= spec.max);
         }
+    }
+
+    #[test]
+    fn signed_indexes_are_unknown_ids() {
+        let mut s = DevelopSettings::default();
+        s.point_colors.push(Default::default());
+        let before = s.point_colors[0].hue_shift;
+        assert!(!set(&mut s, "pointColor.+0.hueShift", 10.0), "signed index");
+        assert_eq!(s.point_colors[0].hue_shift, before);
+        assert_eq!(get(&s, "pointColor.+0.hueShift"), None);
+        assert!(find("pointColor.+0.hueShift").is_none());
+        assert!(find("redEye.+0.darken").is_none());
     }
 
     #[test]

@@ -26,7 +26,7 @@ use std::time::Duration;
 use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
 pub use lightcraft_engine::hdr_view::HdrPicture;
-use lightcraft_engine::media::{QuickJob, QuickSource, RenderJob, RenderResult};
+use lightcraft_engine::media::{QuickJob, QuickSource, RenderJob, RenderResult, ScreenFrame};
 use lightcraft_engine::pipeline::StageCache;
 use lightcraft_engine::slideshow::{Item, Title};
 use lightcraft_preview::JobPool;
@@ -55,6 +55,13 @@ pub enum Slot {
     /// cached by the engine, and a texture is kept only for the phone loupe
     /// ([`Scheduler::keep_neighbours`]). 0 = next, 1 = previous.
     Prefetch(u8),
+    /// The loupe's stand-in for a photo the user is likely to step to next (the camera JPEG of an
+    /// unedited raw, or a cached render), made ahead in the direction of travel so a step shows it
+    /// at once: [`Scheduler::request_quick`] takes the texture over into [`Slot::Preview`].
+    QuickAhead(u8),
+    /// The loupe zoomed in on an unedited raw: its camera JPEG at full size, drawn under the window
+    /// render until that arrives (a focus check at 100 % without waiting for the raw).
+    QuickFull,
     /// A variant thumbnail (profile / preset browsers), by its job key ([`Session::variant_job`]).
     /// Kept in a bounded LRU ([`VARIANT_TEXTURES`]).
     Variant(u64),
@@ -141,6 +148,36 @@ pub trait Present<V> {
     /// render took its place). Only the loupe's slots ([`Scheduler::set_hdr_display`]) get one. A
     /// frontend that can't show HDR leaves this as it is.
     fn set_hdr(&mut self, _slot: Slot, _hdr: Option<Arc<HdrPicture>>, _view: &mut V) {}
+    /// A render that stayed on the GPU ([`RenderResult::frame`]) for `slot`: show it in `view` (what
+    /// the slot shows so far), or make a picture of it. [`FrameShown::Refused`] when it can't be shown:
+    /// the scheduler then asks for pixels from now on ([`Scheduler::set_screen_frames`]). A frontend
+    /// that never turned GPU-resident renders on gets none.
+    fn show_frame(&mut self, _slot: Slot, _frame: &ScreenFrame, _view: Option<&mut V>) -> FrameShown<V> {
+        FrameShown::Refused
+    }
+    /// Whether `view` is drawn from a GPU-resident render: dropped (and rendered again, as pixels)
+    /// when the frontend can no longer show those.
+    fn on_gpu(&self, _view: &V) -> bool {
+        false
+    }
+}
+
+/// What [`Present::show_frame`] did with a GPU-resident render.
+pub enum FrameShown<V> {
+    /// The slot's picture now shows it.
+    Updated,
+    /// A new picture for the slot, which had none.
+    Made(V),
+    /// It can't be shown.
+    Refused,
+}
+
+/// How many [`Slot::QuickAhead`] stand-ins the loupe keeps ready.
+pub const AHEAD_SLOTS: u8 = 6;
+
+/// The camera-preview edge a loupe stand-in is made at (0: one that doesn't depend on the size).
+fn quick_edge(job: &QuickJob) -> usize {
+    job.embedded.as_ref().map_or(0, |e| e.2)
 }
 
 /// What one [`Scheduler::poll`] did.
@@ -183,14 +220,43 @@ pub struct Requested {
 /// The most failure lines kept for [`Scheduler::failure_messages`].
 const FAILURE_MESSAGES_KEPT: usize = 32;
 
-/// Include the source identity in diagnostics for every catalog-backed render slot (#1890).
-/// Debug-format paths so whitespace/control characters cannot forge another log entry.
-pub fn render_failure_message(slot: Slot, photo: PhotoId, source: Option<&lightcraft_catalog::Source>, error: &str) -> String {
+/// How the log names a render: its slot, its photo and that photo's source, for every
+/// catalog-backed render slot (#1890). Debug-format paths so whitespace/control characters cannot
+/// forge another log entry.
+pub fn render_subject(slot: Slot, photo: PhotoId, source: Option<&lightcraft_catalog::Source>) -> String {
     match source {
-        Some(lightcraft_catalog::Source::File { path }) => format!("render {slot:?}, {photo:?}, file {path:?}: {error}"),
-        Some(lightcraft_catalog::Source::Demo { scene }) => format!("render {slot:?}, {photo:?}, demo scene {scene}: {error}"),
-        None => format!("render {slot:?}, {photo:?}, source unavailable: {error}"),
+        Some(lightcraft_catalog::Source::File { path }) => format!("render {slot:?}, {photo:?}, file {path:?}"),
+        Some(lightcraft_catalog::Source::Demo { scene }) => format!("render {slot:?}, {photo:?}, demo scene {scene}"),
+        None => format!("render {slot:?}, {photo:?}, source unavailable"),
     }
+}
+
+/// Include the source identity in diagnostics ([`render_subject`]).
+pub fn render_failure_message(slot: Slot, photo: PhotoId, source: Option<&lightcraft_catalog::Source>, error: &str) -> String {
+    format!("{}: {error}", render_subject(slot, photo, source))
+}
+
+/// The log line for a request dropped before its result came back, named by the source it was
+/// requested from. A grid slot names its photo; a view or slide slot shows whichever photo is open,
+/// so its file names it.
+pub fn abandoned_line(slot: Slot, request: Option<&Requested>, why: &str) -> String {
+    let source = request.and_then(|r| r.source.as_ref());
+    match (slot, source) {
+        (Slot::Thumb(id) | Slot::ThumbQuick(id), _) => format!("{}: abandoned, {why}", render_subject(slot, id, source)),
+        (_, Some(lightcraft_catalog::Source::File { path })) => format!("render {slot:?}, file {path:?}: abandoned, {why}"),
+        (_, Some(lightcraft_catalog::Source::Demo { scene })) => format!("render {slot:?}, demo scene {scene}: abandoned, {why}"),
+        (_, None) => format!("render {slot:?}: abandoned, {why}"),
+    }
+}
+
+/// Which library `session` has open, for [`Scheduler::thumbs_made`]: a hash of its folder (the same
+/// library opened again is the same), 0 with none.
+fn library_key(session: &Session) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let Some(lib) = session.library.as_ref() else { return 0 };
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    lib.dir.hash(&mut h);
+    h.finish()
 }
 
 struct Queued {
@@ -494,14 +560,35 @@ pub struct Scheduler<V> {
     pub keep_neighbours: bool,
     /// Per-view intermediate results (loupe and "before"), so slider drags redo only what changed.
     stages: HashMap<Slot, Arc<StageCache>>,
-    /// Slot → key of the last quick job requested for it (each is tried once).
-    quick_tried: HashMap<Slot, u64>,
+    /// Slot → key of the last quick job requested for it (each is tried once). Public for the frontends' tests.
+    pub quick_tried: HashMap<Slot, u64>,
+    /// The camera-preview edge each loupe stand-in ([`Slot::Preview`], [`Slot::QuickAhead`]) was
+    /// asked for (0: one that doesn't depend on the size): a stand-in made ahead for a smaller loupe
+    /// isn't taken over by a larger one.
+    quick_edge: HashMap<Slot, usize>,
+    /// Photos given a grid thumbnail since start (a render replacing a stand-in isn't counted again):
+    /// unlike [`Scheduler::thumb_textures`] it never goes down when old thumbnails are evicted (for
+    /// benchmarks).
+    pub thumbs_made: u64,
+    /// The photos [`Self::thumbs_made`] counted, by library (a hash of its folder) and id: a
+    /// thumbnail made again after eviction, or after going to another library and back, is the
+    /// same photo (photo ids are a library's own). Never cleared.
+    thumbs_counted: std::collections::HashSet<(u64, PhotoId)>,
+    /// Import review thumbnail jobs built ([`Self::import_preview`]; for tests).
+    pub import_jobs_built: usize,
+    /// Keep the render decisions logged ([`Self::decided`]) in [`Self::decisions`] (tests).
+    pub record_decisions: bool,
+    /// The render decisions logged while [`Self::record_decisions`] is set.
+    pub decisions: Vec<String>,
+    /// Interactive drafts of views may stay on the GPU: the frontend shows GPU-resident renders
+    /// ([`Self::set_screen_frames`]).
+    screen_frames: bool,
     /// Jobs that failed (unreadable or missing file…), by slot and job key, with the error and
     /// the photo: not requested again until the key changes (an edit, another size) — the grid
     /// asks every frame.
     pub failed: HashMap<Slot, (u64, String, u64, PhotoId)>,
     /// The catalog revision seen at the last poll: a failure is retried once the catalog changes
-    /// (a relinked or re-imported file).
+    /// its photo (a relinked or re-imported file), see [`Self::follow_catalog`].
     pub catalog_rev: u64,
     /// Prefetch slot → key of the last job submitted (each runs once).
     prefetched: HashMap<Slot, u64>,
@@ -549,6 +636,8 @@ impl Slot {
             Slot::Compare(i) => format!("compare:{i}"),
             Slot::CompareRegion(i) => format!("compareRegion:{i}"),
             Slot::Prefetch(i) => format!("prefetch:{i}"),
+            Slot::QuickAhead(i) => format!("quickAhead:{i}"),
+            Slot::QuickFull => "quickFull".into(),
             Slot::Variant(k) => format!("variant:{k}"),
             Slot::Hover => "hover".into(),
             Slot::Import(i) => format!("import:{i}"),
@@ -577,6 +666,8 @@ impl Slot {
             "compare" => Slot::Compare(small()?),
             "compareRegion" => Slot::CompareRegion(small()?),
             "prefetch" => Slot::Prefetch(small()?),
+            "quickAhead" => Slot::QuickAhead(small()?),
+            "quickFull" => Slot::QuickFull,
             "variant" => Slot::Variant(num()?),
             "hover" => Slot::Hover,
             "import" => Slot::Import(n.parse().ok()?),
@@ -637,6 +728,13 @@ impl<V> Scheduler<V> {
             keep_neighbours: false,
             stages: HashMap::new(),
             quick_tried: HashMap::new(),
+            quick_edge: HashMap::new(),
+            thumbs_made: 0,
+            thumbs_counted: Default::default(),
+            import_jobs_built: 0,
+            record_decisions: false,
+            decisions: Vec::new(),
+            screen_frames: false,
             failed: HashMap::new(),
             catalog_rev: 0,
             prefetched: HashMap::new(),
@@ -899,7 +997,25 @@ impl<V> Scheduler<V> {
     /// changes nothing.
     pub fn job_for(&self, slot: Slot, job: RenderJob) -> RenderJob {
         let job = if Self::renders_for_display(slot) { job.with_display(self.display.clone()) } else { job };
-        if self.hdr_display && Self::renders_hdr(slot) { job.with_hdr_display() } else { job }
+        let job = if self.hdr_display && Self::renders_hdr(slot) { job.with_hdr_display() } else { job };
+        // a drag's drafts are only drawn: they may stay on the GPU when the frontend can show them
+        // (`on_screen` changes no key)
+        if self.screen_frames && Self::renders_for_display(slot) && job.request.quality == lightcraft_engine::pipeline::Quality::Draft {
+            job.on_screen()
+        } else {
+            job
+        }
+    }
+
+    /// The frontend can (or no longer can) show renders that stayed on the GPU ([`Present::show_frame`]):
+    /// views' interactive drafts are then left there instead of read back as pixels.
+    pub fn set_screen_frames(&mut self, on: bool) {
+        self.screen_frames = on;
+    }
+
+    /// Whether views' drafts may stay on the GPU ([`Self::set_screen_frames`]).
+    pub fn screen_frames(&self) -> bool {
+        self.screen_frames
     }
 
     /// The display can (or no longer can) show the range above SDR white: the loupe of an HDR edit
@@ -933,7 +1049,7 @@ impl<V> Scheduler<V> {
         self.display = display;
     }
 
-    fn request_needed(&self, slot: Slot, key: u64, priority: u32) -> bool {
+    pub fn request_needed(&self, slot: Slot, key: u64, priority: u32) -> bool {
         // A matching old texture must not mask a different newer request (e.g. undo).
         if let Some(&(k, p)) = self.pending.get(&slot) {
             return k != key || (p != priority && self.is_queued(slot));
@@ -975,6 +1091,11 @@ impl<V> Scheduler<V> {
         self.offload = Some(offload);
     }
 
+    /// Run jobs on the job pool (or inline) again, not through an offload (tests).
+    pub fn clear_offload(&mut self) {
+        self.offload = None;
+    }
+
     fn is_queued(&self, slot: Slot) -> bool {
         self.queue.iter().any(|q| q.slot == slot) || self.pool.is_queued(slot)
     }
@@ -1012,6 +1133,7 @@ impl<V> Scheduler<V> {
         if !self.request_needed(slot, job.key, priority) {
             return;
         }
+        self.note_request(slot, job.key, priority, "requested", || render_subject(slot, job.photo, Some(&job.origin)));
         self.pending.insert(slot, (job.key, priority));
         job.request_id = lightcraft_preview::next_tick();
         let look = look_of(&job);
@@ -1064,6 +1186,7 @@ impl<V> Scheduler<V> {
         if !self.request_needed(slot, key, priority) {
             return;
         }
+        self.note_request(slot, key, priority, "title screen requested", || format!("render {slot:?}"));
         self.pending.insert(slot, (key, priority));
         let request_id = lightcraft_preview::next_tick();
         self.requests.insert(slot, Requested { look: None, id: request_id, source: None });
@@ -1079,6 +1202,7 @@ impl<V> Scheduler<V> {
             return;
         }
         let gone = |s: &Slot| matches!(s, Slot::Slide(id) if !keep.contains(id));
+        self.abandon_pending(gone, "no longer near the slide shown");
         self.textures.retain(|s, _| !gone(s));
         let _ = self.pool.reprioritize(|s, p| if gone(s) { None } else { Some(p) });
         self.queue.retain(|q| !gone(&q.slot));
@@ -1089,7 +1213,26 @@ impl<V> Scheduler<V> {
         self.slides_live = !keep.is_empty();
     }
 
-    /// Request a stand-in for `slot` (once per job key).
+    /// Prepare a visible import preview at its size bucket, retaining a sharper existing texture.
+    pub fn import_preview(&mut self, session: &mut Session, candidate: &lightcraft_engine::import::ImportCandidate, index: u32, edge: usize) {
+        let slot = Slot::Import(index);
+        let edge = edge.clamp(64, 1024);
+        if candidate.error.is_some() || self.textures.get(&slot).is_some_and(|tex| tex.size.into_iter().max().unwrap_or(0) >= edge) {
+            return;
+        }
+        let key = lightcraft_engine::import::candidate_thumb_key(candidate, edge);
+        if self.quick_tried.get(&slot) == Some(&key) {
+            return;
+        }
+        self.import_jobs_built += 1;
+        if let Some(job) = session.candidate_thumb_job(candidate, edge, u64::from(index)) {
+            self.request_quick(slot, job, 4);
+        }
+    }
+
+    /// Request a stand-in for `slot` (once per job key). The loupe's [`Slot::Preview`] takes over
+    /// a stand-in already made ahead for the same photo ([`Slot::QuickAhead`]) instead of making it
+    /// again: shown in this frame when it is ready, or as soon as that job finishes.
     pub fn request_quick(&mut self, slot: Slot, mut job: QuickJob, priority: u32) {
         if self.quick_tried.get(&slot) == Some(&job.key) {
             if self.pending.get(&slot).is_some_and(|p| p.0 == job.key && p.1 != priority) {
@@ -1106,18 +1249,32 @@ impl<V> Scheduler<V> {
                 });
                 if queued && let Some(p) = self.pending.get_mut(&slot) {
                     p.1 = priority;
+                    if self.logs_decisions() {
+                        let source = self.requests.get(&slot).and_then(|r| r.source.as_ref());
+                        let line = format!("{}: still waiting, moved to priority {priority}", render_subject(slot, job.photo, source));
+                        self.decided(|| line);
+                    }
                 }
             }
             return;
         }
         self.quick_tried.insert(slot, job.key);
-        self.pending.insert(slot, (job.key, priority));
-        job.request_id = lightcraft_preview::next_tick();
+        if matches!(slot, Slot::Preview | Slot::QuickAhead(_)) {
+            self.quick_edge.insert(slot, quick_edge(&job));
+        }
+        if slot == Slot::Preview && self.take_ahead(job.photo, job.key, quick_edge(&job)) {
+            self.pending.remove(&slot);
+            self.requests.remove(&slot);
+            return;
+        }
         let source = job
             .small
             .as_ref()
             .map(|job| job.origin.clone())
             .or_else(|| job.embedded.as_ref().map(|(path, _, _)| lightcraft_catalog::Source::File { path: path.clone() }));
+        self.note_request(slot, job.key, priority, "stand-in requested", || render_subject(slot, job.photo, source.as_ref()));
+        self.pending.insert(slot, (job.key, priority));
+        job.request_id = lightcraft_preview::next_tick();
         let look = job.small.as_ref().map(|j| look_of(j));
         if let Some(look) = look {
             self.note_look(job.request_id, look);
@@ -1127,7 +1284,84 @@ impl<V> Scheduler<V> {
         let display = self.display.clone();
         let failed =
             Failed { request_id: job.request_id, source_key: None, photo: job.photo, level: lightcraft_engine::media::SourceLevel::Thumb, key };
-        self.pool.submit(slot, key, priority, Box::new(move || run_for(failed, || job.run(), &display)));
+        let background = matches!(slot, Slot::QuickAhead(_));
+        self.pool.submit(
+            slot,
+            key,
+            priority,
+            Box::new(move || {
+                let run = || if background { lightcraft_engine::memory::in_background(|| job.run()) } else { job.run() };
+                run_for(failed, run, &display)
+            }),
+        );
+    }
+
+    /// Whether the stand-in asked for in `slot` is at least `edge` pixels (see `quick_edge`).
+    fn ahead_covers(&self, slot: Slot, edge: usize) -> bool {
+        self.quick_edge.get(&slot).copied().unwrap_or(0) >= edge
+    }
+
+    /// Move a [`Slot::QuickAhead`] texture of `photo` made for `key`, at least `edge` pixels, into
+    /// [`Slot::Preview`].
+    fn take_ahead(&mut self, photo: PhotoId, key: u64, edge: usize) -> bool {
+        let Some(slot) = self
+            .textures
+            .iter()
+            .find(|(s, t)| matches!(s, Slot::QuickAhead(_)) && t.photo == photo && t.key == key && self.ahead_covers(**s, edge))
+            .map(|(s, _)| *s)
+        else {
+            return false;
+        };
+        let Some(tex) = self.textures.remove(&slot) else { return false };
+        self.quick_tried.remove(&slot);
+        self.textures.insert(Slot::Preview, tex);
+        true
+    }
+
+    /// Make the loupe's stand-ins for the photos it is likely to be stepped to next (see
+    /// [`Slot::QuickAhead`]), most likely first: `jobs[0]` gets `priority`, each next one less.
+    /// A slot keeps a photo for as long as the photo stays wanted (made or being made, it is not
+    /// made again when the user steps and the photos shift places); slots holding photos not
+    /// wanted any more are freed for the new ones, and their queued jobs dropped.
+    pub fn look_ahead(&mut self, jobs: Vec<QuickJob>, priority: u32) {
+        let slots: Vec<Slot> = (0..AHEAD_SLOTS).map(Slot::QuickAhead).collect();
+        let held = |r: &Self, s: Slot| r.textures.get(&s).map(|t| t.key).or_else(|| r.quick_tried.get(&s).copied());
+        // (a stand-in asked for at a smaller loupe size isn't kept for a larger one)
+        let wanted: HashMap<u64, usize> = jobs.iter().map(|j| (j.key, quick_edge(j))).collect();
+        let mut free = Vec::new();
+        for &s in &slots {
+            let key = held(self, s);
+            if key.is_none_or(|k| wanted.get(&k).is_none_or(|&edge| !self.ahead_covers(s, edge))) {
+                self.textures.remove(&s);
+                // a job already running: its result is thrown away when it arrives (not left as a
+                // hidden stand-in), unless the loupe is waiting for just that one (a step to the
+                // photo): then the slot stays reserved for it until it arrives
+                let preview_edge = self.quick_edge.get(&Slot::Preview).copied().unwrap_or(0);
+                let loupe_waits =
+                    key.is_some_and(|k| self.pending.get(&Slot::Preview).is_some_and(|p| p.0 == k)) && self.ahead_covers(s, preview_edge);
+                if !self.drop_queued(s) && loupe_waits {
+                    continue;
+                }
+                self.quick_tried.remove(&s);
+                self.pending.remove(&s);
+                self.requests.remove(&s);
+                free.push(s);
+            }
+        }
+        let have: HashMap<u64, Slot> = slots.iter().filter_map(|&s| held(self, s).map(|k| (k, s))).collect();
+        let mut free = free.into_iter();
+        for (rank, job) in jobs.into_iter().enumerate() {
+            let priority = priority.saturating_sub(u32::try_from(rank).unwrap_or(u32::MAX));
+            if let Some(&s) = have.get(&job.key) {
+                // kept: a job still queued moves to its new place in the order
+                if self.quick_tried.get(&s) == Some(&job.key) {
+                    self.request_quick(s, job, priority);
+                }
+                continue;
+            }
+            let Some(slot) = free.next() else { break };
+            self.request_quick(slot, job, priority);
+        }
     }
 
     /// Prepare a photo in the background (a [`Slot::Prefetch`] job runs once per key; a newer one
@@ -1146,6 +1380,7 @@ impl<V> Scheduler<V> {
             return;
         }
         self.prefetched.insert(slot, job.key);
+        self.note_request(slot, job.key, priority, "prefetch requested", || render_subject(slot, job.photo, Some(&job.origin)));
         self.pending.insert(slot, (job.key, priority));
         job.request_id = lightcraft_preview::next_tick();
         let look = look_of(&job);
@@ -1165,6 +1400,21 @@ impl<V> Scheduler<V> {
                 run_for(failed, || lightcraft_engine::memory::in_background(|| job.run()), &None)
             }),
         );
+    }
+
+    /// Prepared-ahead jobs ([`Slot::Prefetch`]) queued or running.
+    pub fn prefetches_pending(&self) -> usize {
+        self.pending.keys().filter(|s| matches!(s, Slot::Prefetch(_))).count()
+    }
+
+    /// Prepared-ahead slots asked for since the renderer last forgot everything.
+    pub fn prefetch_slots_asked(&self) -> usize {
+        self.prefetched.keys().filter(|s| matches!(s, Slot::Prefetch(_))).count()
+    }
+
+    /// Whether `slot` was last asked for the job of `key` (queued, running or done).
+    pub fn prefetch_asked(&self, slot: Slot, key: u64) -> bool {
+        self.prefetched.get(&slot) == Some(&key)
     }
 
     /// The prefetches put off while the loupe's render was under way, once it has ended.
@@ -1189,6 +1439,7 @@ impl<V> Scheduler<V> {
 
     /// Drop every texture and cached stage (another library was opened: photo ids changed meaning).
     pub fn forget_all(&mut self) {
+        self.abandon_pending(|_| true, "the renderer started over (another library, or the previews were cleared)");
         self.requests.clear();
         self.request_looks.clear();
         self.shown_ids.clear();
@@ -1204,6 +1455,11 @@ impl<V> Scheduler<V> {
         self.deferred_prefetch.clear();
         self.pending.clear();
         self.queue.clear();
+    }
+
+    /// Changes when [`Self::forget_all`] drops every texture and request: what was asked for before is gone.
+    pub fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub fn is_pending(&self, slot: Slot) -> bool {
@@ -1285,9 +1541,32 @@ impl<V> Scheduler<V> {
     }
 
     /// Whether `slot`'s pending render asks again for the key that last failed (a library change
-    /// retries failures): what is on screen stays what the failure left until it answers.
+    /// to its photo retries it): what is on screen stays what the failure left until it answers.
     pub fn retrying(&self, slot: Slot) -> bool {
         self.pending.get(&slot).zip(self.failed.get(&slot)).is_some_and(|(p, f)| p.0 == f.0)
+    }
+
+    /// Follow the library to `catalog`'s revision. A failure stands while its photo is unchanged:
+    /// only the photos the ops since the last poll touched are tried again, and every photo when
+    /// the catalog can't say which. So faces found or metadata written for other photos don't
+    /// send each undecodable file back to the decoder (issue #2682: 37 tries each in 154 s idle).
+    /// A file `files` knows to be missing (its drive unplugged) is still tried at every change, so
+    /// its photo comes back with the drive, as before.
+    pub fn follow_catalog(&mut self, catalog: &lightcraft_catalog::Catalog, files: &lightcraft_engine::availability::Availability) {
+        let rev = catalog.revision;
+        if rev == self.catalog_rev {
+            return;
+        }
+        if let Some(touched) = catalog.touched_since(self.catalog_rev) {
+            let missing =
+                |id| matches!(catalog.photo(id).map(|p| &p.source), Some(lightcraft_catalog::Source::File { path }) if files.is_offline(path));
+            for f in self.failed.values_mut() {
+                if f.2 == self.catalog_rev && touched.binary_search(&f.3).is_err() && !missing(f.3) {
+                    f.2 = rev;
+                }
+            }
+        }
+        self.catalog_rev = rev;
     }
 
     /// The slots with a render pending (diagnostics: `ui.inspect`).
@@ -1417,7 +1696,7 @@ impl<V> Scheduler<V> {
             self.forget_all();
         }
         self.preview_generation = Some((Arc::downgrade(cache), generation));
-        self.catalog_rev = session.catalog.revision;
+        self.follow_catalog(&session.catalog, &session.media.availability);
         self.preview_arrived(session);
         self.frame += 1;
         self.trim_stages();
@@ -1477,6 +1756,10 @@ impl<V> Scheduler<V> {
             let completed_look = self.request_looks.remove(&r.request_id);
             // made for another display profile than the one in use: obsolete
             if r.display.is_some_and(|id| Some(id) != self.display_id()) {
+                self.decided(|| {
+                    let source = session.catalog.photo(r.photo).map(|p| &p.source);
+                    format!("{}: abandoned, made for another display profile", render_subject(slot, r.photo, source))
+                });
                 continue;
             }
             // Ignore obsolete pixels, failures and decoded sources, even for the same render key;
@@ -1491,6 +1774,12 @@ impl<V> Scheduler<V> {
                     && r.rendered.is_ok();
                 if !newer_draft {
                     self.discarded += 1;
+                    let replaced = self.requests.contains_key(&slot);
+                    self.decided(|| {
+                        let why = if replaced { "a newer request replaced it" } else { "no longer wanted when it finished" };
+                        let source = session.catalog.photo(r.photo).map(|p| &p.source);
+                        format!("{}: abandoned, {why}", render_subject(slot, r.photo, source))
+                    });
                     continue;
                 }
                 session.accept(&r);
@@ -1513,15 +1802,33 @@ impl<V> Scheduler<V> {
             if self.pending.get(&slot).is_some_and(|p| p.0 == r.key) {
                 self.pending.remove(&slot);
             }
+            slot = self.stand_in_slot(slot, &r);
             let hdr = r.hdr.take();
             let is_hdr = hdr.is_some();
+            // a render that stayed on the GPU: drawn from its texture
+            if let (Some(frame), Ok(rendered)) = (r.frame.as_ref(), r.rendered.as_ref()) {
+                if self.show_frame(present, slot, frame, rendered, &r, look, ms) {
+                    polled.shown.push(slot);
+                }
+                continue;
+            }
             let rendered = match r.rendered {
                 Ok(x) => {
                     self.failed.remove(&slot);
+                    // (a stand-in that comes back after the thumbnail itself is thrown away below)
+                    let unused = matches!(slot, Slot::ThumbQuick(id) if self.textures.contains_key(&Slot::Thumb(id)));
+                    self.decided(|| {
+                        let source = source.as_ref().or_else(|| session.catalog.photo(r.photo).map(|p| &p.source));
+                        let subject = render_subject(slot, r.photo, source);
+                        if unused { format!("{subject}: abandoned, the thumbnail itself came first") } else { format!("{subject}: produced in {ms:.0} ms") }
+                    });
                     x
                 }
                 Err(e) => {
-                    if !matches!(slot, Slot::Prefetch(_)) {
+                    if matches!(slot, Slot::Prefetch(_) | Slot::QuickAhead(_)) {
+                        // (a prefetch only prepares: its failure is no warning, but the trace says how it ended)
+                        self.decided(|| format!("{}: prefetch failed: {e}", render_subject(slot, r.photo, source.as_ref())));
+                    } else {
                         let message = render_failure_message(slot, r.photo, source.as_ref(), &e);
                         log::warn!("{message}");
                         if self.failure_messages.len() >= FAILURE_MESSAGES_KEPT {
@@ -1552,6 +1859,12 @@ impl<V> Scheduler<V> {
                     // the photo's own cached thumbnail: final
                     slot = Slot::Thumb(id);
                 }
+            }
+            // (a photo's first thumbnail: not a render replacing its stand-in, nor one made again)
+            if let Slot::Thumb(id) | Slot::ThumbQuick(id) = slot
+                && self.thumbs_counted.insert((library_key(session), id))
+            {
+                self.thumbs_made += 1;
             }
             if let Slot::Thumb(id) = slot {
                 self.textures.remove(&Slot::ThumbQuick(id));
@@ -1595,7 +1908,10 @@ impl<V> Scheduler<V> {
                 }
             }
             if slot == Slot::Main {
-                self.last_main_ms = ms;
+                // (a preview taken from the cache says nothing about how long a render takes)
+                if r.quick.is_none() {
+                    self.last_main_ms = ms;
+                }
                 self.main_hdr = is_hdr;
                 if let Some(i) = self.draft_ids.iter().position(|id| *id == r.request_id) {
                     self.draft_ids.swap_remove(i);
@@ -1606,6 +1922,173 @@ impl<V> Scheduler<V> {
         }
         self.start_deferred_prefetch();
         polled
+    }
+
+    /// The slot a finished job goes to. Made ahead for the photo the loupe is now waiting for, it is
+    /// the loupe's stand-in (the loupe's own request for it, if one was started, is dropped when it
+    /// arrives); also when the loupe's own request failed and it still wants that photo: the
+    /// stand-in made ahead still shows, but never over another photo's request.
+    fn stand_in_slot(&mut self, slot: Slot, r: &RenderResult) -> Slot {
+        let waiting = self.pending.get(&Slot::Preview).is_some_and(|p| p.0 == r.key);
+        let failed = !self.pending.contains_key(&Slot::Preview)
+            && self.quick_tried.get(&Slot::Preview) == Some(&r.key)
+            && self.failed.get(&Slot::Preview).is_some_and(|f| f.0 == r.key && f.3 == r.photo);
+        if !matches!(slot, Slot::QuickAhead(_))
+            || r.rendered.is_err()
+            || !(waiting || failed)
+            || !self.ahead_covers(slot, self.quick_edge.get(&Slot::Preview).copied().unwrap_or(0))
+        {
+            return slot;
+        }
+        self.pending.remove(&Slot::Preview);
+        self.requests.remove(&Slot::Preview);
+        self.quick_tried.remove(&slot);
+        Slot::Preview
+    }
+
+    /// Show a render that stayed on the GPU in `slot` (through `present`); whether it could be. When
+    /// it can't, views come back as pixels from then on, and the pictures drawn from the GPU go.
+    #[allow(clippy::too_many_arguments)]
+    fn show_frame(
+        &mut self,
+        present: &mut dyn Present<V>,
+        slot: Slot,
+        frame: &ScreenFrame,
+        rendered: &lightcraft_engine::pipeline::Rendered,
+        r: &RenderResult,
+        look: Option<(u64, bool)>,
+        ms: f64,
+    ) -> bool {
+        self.failed.remove(&slot);
+        let size = [frame.width, frame.height];
+        let draft = self.drafted.contains(&r.request_id);
+        match present.show_frame(slot, frame, self.textures.get_mut(&slot).map(|t| &mut t.view)) {
+            FrameShown::Updated => {
+                if let Some(t) = self.textures.get_mut(&slot) {
+                    t.look = look;
+                    t.key = r.key;
+                    t.photo = r.photo;
+                    t.size = size;
+                    t.histogram = Some(rendered.histogram.clone());
+                    t.ms = ms;
+                    t.quick = None;
+                    t.request_id = r.request_id;
+                    t.draft = draft;
+                }
+            }
+            FrameShown::Made(view) => {
+                let shown = Shown {
+                    look,
+                    key: r.key,
+                    photo: r.photo,
+                    size,
+                    histogram: Some(rendered.histogram.clone()),
+                    ms,
+                    quick: None,
+                    request_id: r.request_id,
+                    draft,
+                    view,
+                };
+                self.textures.insert(slot, shown);
+            }
+            FrameShown::Refused => {
+                log::warn!("render {slot:?}: a GPU-resident render can't be shown; rendering pixels");
+                self.screen_frames = false;
+                // a view drawn from a texture the frontend let go would show nothing: it is rendered again, as pixels
+                self.textures.retain(|_, t| !present.on_gpu(&t.view));
+                return false;
+            }
+        }
+        if slot == Slot::Main {
+            self.last_main_ms = ms;
+            if let Some(i) = self.draft_ids.iter().position(|id| *id == r.request_id) {
+                self.draft_ids.swap_remove(i);
+                self.draft.note(size, ms, false);
+            }
+        }
+        true
+    }
+
+    /// Forget everything about `slot`: its texture, its queued job, and that its stand-in was asked
+    /// for (so asking again makes it again).
+    pub fn forget(&mut self, slot: Slot) {
+        self.drop_queued(slot);
+        self.pending.remove(&slot);
+        self.requests.remove(&slot);
+        self.quick_tried.remove(&slot);
+        self.release(slot);
+    }
+
+    /// Drop `slot`'s job if it is still queued (a running one finishes). Returns whether one was.
+    pub fn drop_queued(&mut self, slot: Slot) -> bool {
+        let dropped = self.pool.reprioritize(|s, p| if *s == slot { None } else { Some(p) });
+        let before = self.queue.len();
+        self.queue.retain(|q| q.slot != slot);
+        let any = !dropped.is_empty() || self.queue.len() != before;
+        if any {
+            self.pending.remove(&slot);
+            self.requests.remove(&slot);
+        }
+        any
+    }
+
+    /// Log a render decision at debug level: each request, and how it ended when it ended without
+    /// a picture or a failure (failures stay warnings). One "requested" line per request tells a
+    /// file asked for 37 times from one asked once and failing inside (issue #2682). `line` is only
+    /// built when the log takes debug lines (`LIGHTCRAFT_LOG=debug`, or
+    /// `RUST_LOG=lightcraft_apphost::render=debug`) or [`Self::record_decisions`] is set, so the
+    /// grid's requests cost nothing more otherwise.
+    fn decided(&mut self, line: impl FnOnce() -> String) {
+        if !self.logs_decisions() {
+            return;
+        }
+        let line = line();
+        log::debug!("{line}");
+        if self.record_decisions {
+            self.decisions.push(line);
+        }
+    }
+
+    /// Whether render decisions are logged ([`Self::decided`]): the log takes debug lines from this
+    /// module, or a test is looking.
+    fn logs_decisions(&self) -> bool {
+        self.record_decisions || log::log_enabled!(log::Level::Debug)
+    }
+
+    /// Log a new request for `slot`, and first what becomes of the one it replaces while that one
+    /// still waits: a queue holds one job per slot, so a newer render drops it, and the same render
+    /// is only moved to the new priority. One already running says so when its result comes back.
+    fn note_request(&mut self, slot: Slot, key: u64, priority: u32, what: &str, subject: impl FnOnce() -> String) {
+        if !self.logs_decisions() {
+            return;
+        }
+        let waiting = self.pending.get(&slot).map(|p| p.0).filter(|_| self.is_queued(slot));
+        if waiting == Some(key) {
+            let line = format!("{}: still waiting, moved to priority {priority}", subject());
+            self.decided(|| line);
+            return;
+        }
+        if waiting.is_some() {
+            let line = abandoned_line(slot, self.requests.get(&slot), "a newer request replaced it before it started");
+            self.decided(|| line);
+        }
+        let again = if self.failed.get(&slot).is_some_and(|f| f.0 == key) { " again after a failure" } else { "" };
+        let line = format!("{}: {what}{again}", subject());
+        self.decided(|| line);
+    }
+
+    /// Log each request in `which` that still waits in a queue as abandoned (`why`), before they are
+    /// dropped. One already running says so once, when its result comes back unclaimed.
+    fn abandon_pending(&mut self, which: impl Fn(&Slot) -> bool, why: &str) {
+        if !self.logs_decisions() {
+            return;
+        }
+        let mut slots: Vec<Slot> = self.pending.keys().copied().filter(|s| which(s) && self.is_queued(*s)).collect();
+        slots.sort_by_key(|s| format!("{s:?}"));
+        for s in slots {
+            let line = abandoned_line(s, self.requests.get(&s), why);
+            self.decided(|| line);
+        }
     }
 
     /// Free the GPU renderer's recycled buffers once nothing has rendered for [`IDLE_TRIM`] (they
@@ -1667,15 +2150,25 @@ impl<V> Scheduler<V> {
         })
     }
 
-    /// Drop the import review thumbnails (a new review, or the dialog closed).
+    /// Drop the import review thumbnails (a new review, or the dialog closed), a camera's included.
     pub fn forget_imports(&mut self) {
-        let review = |s: &Slot| matches!(s, Slot::Import(_) | Slot::Camera(_));
-        self.pool.reprioritize(|s, p| if review(s) { None } else { Some(p) });
-        self.queue.retain(|q| !review(&q.slot));
-        self.pending.retain(|s, _| !review(s));
-        self.requests.retain(|s, _| !review(s));
-        self.textures.retain(|s, _| !review(s));
-        self.quick_tried.retain(|s, _| !review(s));
+        self.retain_imports(&Default::default());
+        let camera = |s: &Slot| matches!(s, Slot::Camera(_));
+        self.textures.retain(|s, _| !camera(s));
+        self.quick_tried.retain(|s, _| !camera(s));
+    }
+
+    /// Keep only the import tiles near the viewport, including queued work. Large thumbnails
+    /// must not accumulate for every candidate while scrolling through a whole card.
+    pub fn retain_imports(&mut self, keep: &std::collections::HashSet<u32>) {
+        let retained = |s: &Slot| !matches!(s, Slot::Import(i) if !keep.contains(i));
+        self.pool.reprioritize(|s, p| retained(s).then_some(p));
+        self.queue.retain(|q| retained(&q.slot));
+        self.pending.retain(|s, _| retained(s));
+        self.requests.retain(|s, _| retained(s));
+        self.textures.retain(|s, _| retained(s));
+        self.quick_tried.retain(|s, _| retained(s));
+        self.failed.retain(|s, _| retained(s));
     }
 
     /// Drop thumbnails that aren't in `keep` (bounded memory for huge libraries), and queued
@@ -1688,19 +2181,24 @@ impl<V> Scheduler<V> {
         });
         for s in dropped {
             self.pending.remove(&s);
-            self.requests.remove(&s);
+            let request = self.requests.remove(&s);
             self.quick_tried.remove(&s);
+            self.decided(|| abandoned_line(s, request.as_ref(), "scrolled out of view before it started"));
         }
+        let mut gone = Vec::new();
         let requests = &mut self.requests;
         let pending = &mut self.pending;
         self.queue.retain(|q| match q.slot {
             Slot::Thumb(id) if !keep.contains(&id) && q.priority <= 10 => {
                 pending.remove(&q.slot);
-                requests.remove(&q.slot);
+                gone.push((q.slot, requests.remove(&q.slot)));
                 false
             }
             _ => true,
         });
+        for (s, request) in gone {
+            self.decided(|| abandoned_line(s, request.as_ref(), "scrolled out of view before it started"));
+        }
         let thumbs = self.thumb_textures();
         if thumbs <= max {
             return;
@@ -1738,6 +2236,7 @@ impl Failed {
             quick: None,
             display: None,
             hdr: None,
+            frame: None,
         }
     }
 }

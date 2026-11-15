@@ -51,7 +51,7 @@ candle-nn = { workspace = true, features = ["metal"], optional = true }
 ab_glyph = { workspace = true }
 # tests record why they skip (the real models aren't here)
 lightcraft-testkit = { workspace = true }
-image = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] } # tests and the probe example read reference photos
 
 [[example]]
 name = "siglip_probe"

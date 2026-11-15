@@ -71,6 +71,7 @@ guard.detail(&file_name);
 | Cloud-folder sync pass | `crates/apphost/src/sync.rs` (`FolderPoll`) | the pass runs on a thread of its own (`lightcraft_engine::icloud::folder::run`); the row, `Cancel::No`, is made only once a pass has run for a second, so the 30 s polls that find nothing never flicker one; English label only so far |
 | Work a native frontend does itself (a platform model download) | `crates/engine/src/cmd/activity.rs` (`activity.external`) | the frontend starts a `download` row, reports `done` of 100, watches `cancelling` for its id and ends the row |
 | Reload from Disk | `crates/ui-egui/src/reload.rs`, `crates/engine/src/cmd/reload.rs` | a command split into plan / probe / apply so the app reads the files on a worker thread (`tasks::spawn_tracked`: progress and `Cancel::Flag`); the result is committed through `Session::execute_fn` (undo step, save, XMP auto-write), and dropped for a photo a later-started reload has already updated; `wait: true` runs it in place |
+| Find Similar Photos | `crates/ui-egui/src/find_similar.rs`, `crates/engine/src/cmd/similar.rs` | a command split into plan / measure / apply, whose reads are kept when it is stopped; a control request is answered when it ends (`Outcome::Later`) |
 | Reading focus points | `crates/engine/src/focus_scan.rs` | a worker paced by the UI's per-frame pump (`focus.pump {pace}`); `Cancel::Flag`; commits in batches without undo steps |
 
 ## Testing

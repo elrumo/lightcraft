@@ -24,6 +24,9 @@ struct Imports {
     /// Local adjustment (brush) presets found in the files: they become mask effects.
     effects: Vec<mef::Found>,
     effect_failed: Vec<(String, String)>,
+    /// Every file's presets with their entries, added in one go by [`Imports::finish`] (adding one at a time indexed the
+    /// library each time).
+    pending: Vec<(lightcraft_develop::Preset, Value)>,
 }
 
 impl Imports {
@@ -45,23 +48,36 @@ impl Imports {
             }
             let (name, grp) = (it.preset.name.clone(), it.preset.group.clone());
             let shown = settings.then(|| it.preset.settings.clone());
-            let id = if dry {
-                let repeat = s.has_identical_preset(&it.preset)
-                    || self.counted.iter().any(|q| q.name == it.preset.name && q.group == it.preset.group && q.settings == it.preset.settings);
-                let id = imported_preset_id(&it.preset);
-                if !repeat {
-                    self.counted.push(it.preset);
-                }
-                (!repeat).then_some(id)
-            } else {
-                s.add_presets(vec![it.preset]).pop()
-            };
+            let mut entry = json!({"name": name, "group": grp, "file": file, "unmapped": it.unmapped, "profile": profile});
+            if let (Some(settings), Some(o)) = (shown, entry.as_object_mut()) {
+                o.insert("settings".into(), settings);
+            }
+            if !dry {
+                self.pending.push((it.preset, entry));
+                continue;
+            }
+            let repeat = s.has_identical_preset(&it.preset)
+                || self.counted.iter().any(|q| q.name == it.preset.name && q.group == it.preset.group && q.settings == it.preset.settings);
+            if repeat {
+                self.skipped += 1;
+                continue;
+            }
+            entry["id"] = json!(imported_preset_id(&it.preset));
+            self.counted.push(it.preset);
+            self.imported.push(entry);
+        }
+    }
+
+    /// Add the presets [`Imports::take`] kept for the end, in one go: each entry gets its id, or counts as skipped when
+    /// the library (or an earlier file of this import) already has the preset.
+    fn finish(&mut self, s: &mut Session) {
+        // split, not cloned: a large import holds one copy of the parsed presets
+        let (presets, entries): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending).into_iter().unzip();
+        let ids = s.add_presets_each(presets);
+        for (mut entry, id) in entries.into_iter().zip(ids) {
             match id {
                 Some(id) => {
-                    let mut entry = json!({"id": id, "name": name, "group": grp, "file": file, "unmapped": it.unmapped, "profile": profile});
-                    if let (Some(settings), Some(o)) = (shown, entry.as_object_mut()) {
-                        o.insert("settings".into(), settings);
-                    }
+                    entry["id"] = json!(id);
                     self.imported.push(entry);
                 }
                 None => self.skipped += 1,
@@ -149,6 +165,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             Err((name, e)) => out.failed.push(json!([name, e])),
         }
     }
+    out.finish(s);
     out.failed.extend(std::mem::take(&mut out.effect_failed).into_iter().map(|(f, e)| json!([f, e])));
     let (effects, dividers) = mef::add_found(s, std::mem::take(&mut out.effects), group.as_deref(), dry)?;
     Ok(json!({"imported": out.imported, "skipped": out.skipped, "failed": out.failed, "effects": effects, "effectDividers": dividers}))

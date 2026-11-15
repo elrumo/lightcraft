@@ -1,6 +1,6 @@
 # Roadmap: milestones, current focus and what's next
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-19 · **Change:** minor (fork track C4 removed; current focus re-ranked after merging upstream up to 0da998f2: full-resolution zoom closed, 26 CR3 bodies and 545 models verified, Slideshow and Print started; Next actions added) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 · **Changes:** [revision history](#revision-history)
 
 Forward-looking plan. The summary with the headline numbers is [ROADMAP.md](../ROADMAP.md); the
 ranked shortfalls are [gaps.md](gaps.md); the numbers come from [target-app-parity.md](target-app-parity.md).
@@ -12,10 +12,11 @@ LightCraft has no `cargo xtask scorecard`; the measured checklist is
 Toward **beta** (~340–600 Opus 5.5 agent hours; ranked by photographers unlocked or users unblocked per hour,
 each a gap in [gaps.md](gaps.md); the step-by-step list is [Next actions](#next-actions)):
 
-1. **Compressed ORF** (gap 6, 8–15 h): +2.6 points of photographers, the best ratio of any raw gap.
+1. **Compressed ORF** (gap 6 reopened: upstream withdrew its decoder in #3775; estimate pending provenance review): +2.6
+   points of photographers, the best ratio of any raw gap.
 2. **Per-body decode fixes and verification** (gap 10, 25–45 h): 545 of 1,446 models verified; the cheap
    fixes (#769, #535, #702) are left.
-3. **Tests in CI on macOS, Windows and Linux** (gap 9, 6–12 h).
+3. **Tests in CI on macOS and Windows, and the GPU tests in CI** (gap 9, 6–12 h).
 4. **Render-fidelity suite** (gap 3, 30–60 h): score our output against Lightroom's on the same CC0
    raws (references local in `plan/`), then tune; a retune changes existing edits and goes in `docs/whats-new.md`.
 5. **Camera colour of our own** (gap 1, 50–90 h): chart-based calibration for the most-used models,
@@ -41,12 +42,14 @@ Concrete, in the order to take them. Hours are the gap's estimate from [gaps.md]
 - A2. Re-read this file's Current focus and Alpha gate against [gaps.md](gaps.md): strike what closed.
 
 **B. Beta track**
-1. Compressed ORF (gap 6): decode from the two Olympus patents cited in [raw-parity.md](raw-parity.md), in
-   `crates/raw/src/orf.rs`. Done when the 66 preview-only Olympus / OM models decode and one pinned CC0
-   file per body passes the camera-JPEG check.
+1. Compressed ORF (gap 6; upstream withdrew its decoder in #3775 pending a provenance review): decode from the
+   two Olympus patents cited in [raw-parity.md](raw-parity.md), in craft-raw's ORF decoder
+   (`third_party/craft-libs/crates/raw`), with a clean-room provenance record first. Done when the 66 preview-only
+   Olympus / OM models decode and one pinned CC0 file per body passes the camera-JPEG check.
 2. Cheap per-body fixes (gap 10): land PR #671 (Z 6II packed 14-bit, #769), Sony A200 to A390 / A850 12-bit
    ARW (#535), the Sony A100 / F828 regression (#702) and pre-X FinePix RAF, each with a pinned sample test.
-3. CI on macOS, Windows and Linux (gap 9): a matrix job running `cargo test --workspace` with the
+3. CI on macOS and Windows, and the GPU tests in CI (gap 9; Linux has run the tests in the CI gate since #2667,
+   and `ci-windows.yml` runs the Windows-only code's tests): a matrix job running `cargo test --workspace` with the
    craft-fonts input; keep FreeBSD. Fix the load-sensitive tests first so the new jobs don't flake.
 4. Render-fidelity suite (gap 3): an xtask that renders CC0 raws and scores them against local-only
    Lightroom references in `plan/` (never committed); then tune per control.
@@ -125,7 +128,7 @@ calibration: M0–M13 took ≈ 25 active hours against an estimate of ≈ 110–
 - **AI features** (subject / sky / people masks, generative remove) need model weights with
   licences we can ship; classical fallbacks first. No permissively licensed sky-segmentation or
   raw-denoise model was found; we may need to train our own.
-- **Camera colour and lens data** is a data problem: we never use Adobe's matrices, DCPs or LCPs.
+- **Camera colour and lens data** is a data problem: we never use Adobe's matrices, DCPs or LCPs (users may import their own `.dcp` camera profiles).
   DNG-embedded data first, then our own calibration; long-tail coverage grows over time and needs
   people with cameras, lenses and charts.
 - **Raw-format sources:** decoders are written from prose format descriptions (even ones published
@@ -148,8 +151,11 @@ calibration: M0–M13 took ≈ 25 active hours against an estimate of ≈ 110–
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | minor | Upstream v0.21.1 merged: Next actions B1 (compressed ORF withdrawn upstream, #3775) and B3 (gap 9: Linux tests in CI since #2667, the Windows leg) updated; numbers unchanged |
+| 2026-10-24 | patch | Item 8 (gap 9): Linux dropped from "Tests in CI" and "the GPU tests in CI" added, because the CI gate has run the tests there since #2667; hours unchanged |
 | 2026-10-19 | minor | Fork track: C4 removed (that work no longer lives in this repository), C5 became C4; the AI masks item no longer counts a platform selection model |
 | 2026-10-15 | minor | Merged upstream up to 0da998f2: Current focus re-ranked (full-resolution zoom and CR3 plan struck, compressed ORF first), Next actions added, alpha-gate rows 2 and 3 and milestones M7, M8, M11, M12, M15, M16 refreshed; numbers unchanged |
+| 2026-10-12 | minor | LR-PROF-IMPORT: the user's own DNG camera profiles (`.dcp`) import as camera profiles; none ship |
 | 2026-10-10 | minor | Beta hours 340–600; full ready ~59% in the gate note |
 | 2026-10-10 | minor | Added the Alpha gate table (core-workflow gate from the revised standard): passes, stays alpha |
 | 2026-10-10 | major | Created: milestones moved from ROADMAP.md (statuses refreshed: M3 ✅, M11 / M12 / M15 detail), current focus re-ranked toward beta, risks and design notes kept |

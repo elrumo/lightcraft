@@ -1,10 +1,13 @@
 use super::colour::stream_bin_factor;
-use super::load::{load_vec_compact_for, load_vec_for, load_vec_pair_for, load_vec_reduced_for};
+use super::load::{load_vec, load_vec_compact, load_vec_pair, load_vec_reduced};
 use super::preview::{fit_box, fs_preview_loader, preview_orientation};
 #[cfg(not(target_arch = "wasm32"))]
-use super::probe::probe_video_path;
-use super::probe::{head_of, probe_bytes};
-use super::*;
+use super::probe::{load_video, probe_video_path};
+use super::probe::{head_of, probe_bytes, split_time};
+use super::{Arc, DenoiseSpec, FileLoader, FileProbe, Filter, PairLoader, ReducedLoader, fit};
+use crate::media::{CompactLoader, ProbeInfo, RawDecode};
+use lightcraft_pipeline::SourceInfo;
+use lightcraft_raster::{Rgb32f, SourcePixels};
 
 /// A file at least this long is read in part when it is a TIFF ([`read_file`]).
 const READ_IN_PART_FROM: u64 = 256 << 20;
@@ -34,8 +37,12 @@ pub fn read_file(path: &std::path::Path) -> Result<Vec<u8>, String> {
 pub(super) fn read_file_from(path: &std::path::Path, in_part_from: u64) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let at = |e: std::io::Error| format!("{}: {e}", path.display());
-    let mut file = std::fs::File::open(path).map_err(at)?;
-    let total = file.metadata().map_err(at)?.len();
+    let mut file = crate::read_file::open_for_read(path).map_err(at)?;
+    let meta = file.metadata().map_err(at)?;
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
+    let total = meta.len();
     // (the buffer's length is address space, but a machine that can't back half of it with memory
     // and swap may refuse it, and a refused allocation ends the process)
     let fits = ram().is_none_or(|r| total <= r / 2);
@@ -126,6 +133,12 @@ pub(super) fn raf_preview_extent(prefix: &[u8]) -> Option<u64> {
 /// `adobe_rgb`: the container declares the preview Adobe RGB ([`PreviewRead::adobe_rgb`]), applied
 /// as [`decode_raw_preview`] applies it. `None` when the bytes are not a decodable image.
 pub(super) fn quick_image_srgb(header: &[u8], window: &[u8], adobe_rgb: bool, max_edge: usize) -> Option<lightcraft_raster::Rgba8> {
+    // a plain sRGB camera JPEG (nearly all of them) straight to 8-bit (PERF-CULL-3: 45 MP preview
+    // of an EOS R5 C fitted to 2560 px, 194 → ~110 ms); anything else takes the general decode
+    let edge = u32::try_from(max_edge).unwrap_or(u32::MAX);
+    if !adobe_rgb && let Ok(Some((image, orientation))) = lightcraft_codecs::decode_jpeg_srgb8_fit(window, edge, edge) {
+        return Some(image.oriented(preview_orientation(header, orientation)));
+    }
     let decoded = if adobe_rgb && window.starts_with(&[0xff, 0xd8]) {
         lightcraft_codecs::decode_jpeg_with_fallback(window, fit_box(max_edge), lightcraft_codecs::NamedSpace::AdobeRgb)
     } else {
@@ -143,13 +156,13 @@ pub(super) fn quick_image_srgb(header: &[u8], window: &[u8], adobe_rgb: bool, ma
 /// The filesystem-backed [`PairLoader`]: the file is read and decoded once, and developed as usual and from the photo's
 /// denoised picture. It holds two pictures at once, so it counts for more at the memory gate than a plain load.
 pub fn fs_pair_loader() -> PairLoader {
-    Arc::new(|path: &str, max_edge: usize, spec: &DenoiseSpec, catalogued: Catalogued| {
+    Arc::new(|path: &str, max_edge: usize, spec: &DenoiseSpec, with: RawDecode<'_>| {
         let len = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
         let weight = len * if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 4 } else { 10 };
         let gate = crate::memory::work_gate();
         let _permit = if crate::memory::is_background() { gate.acquire(weight) } else { gate.acquire_urgent(weight) };
-        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-        let r = load_vec_pair_for(bytes, max_edge, spec, catalogued);
+        let bytes = crate::read_file::read_regular(path, crate::read_file::MAX_MEDIA_BYTES).map_err(|e| format!("{path}: {e}"))?;
+        let r = load_vec_pair(bytes, max_edge, spec, with);
         crate::memory::release();
         r
     })
@@ -160,7 +173,7 @@ pub fn fs_pair_loader() -> PairLoader {
 /// declares (a 3 MB JPEG may be 268 MP: 15 bytes a pixel decoded whole, a progressive JPEG's coefficients when it is
 /// scaled while decoded); for a raw, what its decode allocates — the samples (16 bits each), some tiles in flight, and
 /// unless the load bins the mosaic ([`bin_factor`]) the full-size normalised and RGB float images. `half`: the picture is
-/// loaded in half floats ([`load_vec_compact_for`]); a picture file is then decoded straight to them.
+/// loaded in half floats ([`load_vec_compact`]); a picture file is then decoded straight to them.
 pub(super) fn load_weight(bytes: &[u8], max_edge: usize, half: bool) -> usize {
     let factor = if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 3 } else { 6 };
     let by_size = bytes.len().saturating_mul(factor);
@@ -202,22 +215,27 @@ pub(super) fn load_weight(bytes: &[u8], max_edge: usize, half: bool) -> usize {
 /// interactive loads (the loupe, exports) never wait — they are counted, so background work
 /// yields to them.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
-    let loader: FileLoader = Arc::new(|path: &str, max_edge: usize, catalogued: Catalogued| {
-        fs_load(path, max_edge, false, |bytes| load_vec_for(bytes, max_edge, catalogued), |img, info| (img, info))
+    let loader: FileLoader = Arc::new(|path: &str, max_edge: usize, with: RawDecode<'_>| {
+        fs_load(path, max_edge, false, |bytes| load_vec(bytes, max_edge, with), |img, info| (img, info))
     });
     let probe: FileProbe = Arc::new(|path: &str| {
         if let Some(r) = probe_video_path(path) {
             let mut info = r?;
-            info.file_modified = file_modified(path);
-            info.locked = file_locked(path);
+            let meta = std::fs::metadata(path).ok();
+            info.file_modified = meta.as_ref().and_then(modified_iso);
+            info.locked = meta.as_ref().is_some_and(file_locked);
             return Ok(info);
         }
-        let len = std::fs::metadata(path).map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX)).unwrap_or(0);
+        // one open, then everything from the open file: its size and modification time are not
+        // round trips of their own (on a network share each of them is one)
+        let file = crate::read_file::open_for_read(path).map_err(|e| format!("{path}: {e}"))?;
+        let meta = file.metadata().ok();
+        let len = meta.as_ref().map_or(0, |m| usize::try_from(m.len()).unwrap_or(usize::MAX));
         let _permit = crate::memory::work_gate().acquire(len);
-        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let bytes = crate::read_file::read_open(file, crate::read_file::MAX_MEDIA_BYTES).map_err(|e| format!("{path}: {e}"))?;
         let mut info = probe_bytes(path, &bytes)?;
-        info.file_modified = file_modified(path);
-        info.locked = file_locked(path);
+        info.file_modified = meta.as_ref().and_then(modified_iso);
+        info.locked = meta.as_ref().is_some_and(file_locked);
         Ok(info)
     });
     (loader, probe)
@@ -238,15 +256,15 @@ const VIDEO_WEIGHT: usize = 192 << 20;
 
 /// The filesystem [`ReducedLoader`]: [`load_vec_reduced`] of the file, gated like [`fs_hooks`]' loader.
 pub fn fs_reduced_loader() -> ReducedLoader {
-    Arc::new(|path: &str, max_edge: usize, catalogued: Catalogued| {
-        fs_load(path, max_edge, false, |bytes| load_vec_reduced_for(bytes, max_edge, catalogued), |img, info| (img, info, false))
+    Arc::new(|path: &str, max_edge: usize, with: RawDecode<'_>| {
+        fs_load(path, max_edge, false, |bytes| load_vec_reduced(bytes, max_edge, with), |img, info| (img, info, false))
     })
 }
 
-/// The filesystem [`CompactLoader`]: [`load_vec_compact_for`] of the file, gated like [`fs_hooks`]' loader.
+/// The filesystem [`CompactLoader`]: [`load_vec_compact`] of the file, gated like [`fs_hooks`]' loader.
 pub fn fs_compact_loader() -> CompactLoader {
-    Arc::new(|path: &str, catalogued: Catalogued| {
-        fs_load(path, usize::MAX, true, |bytes| load_vec_compact_for(bytes, catalogued), |img, info| (SourcePixels::from(img).compact(), info))
+    Arc::new(|path: &str, with: RawDecode<'_>| {
+        fs_load(path, usize::MAX, true, |bytes| load_vec_compact(bytes, with), |img, info| (SourcePixels::from(img).compact(), info))
     })
 }
 
@@ -275,7 +293,7 @@ fn fs_load<T>(
     // waiting for another, which could deadlock two loads
     let bytes = {
         let _read = hold(len);
-        std::fs::read(path).map_err(|e| format!("{path}: {e}"))?
+        crate::read_file::read_regular(path, crate::read_file::MAX_MEDIA_BYTES).map_err(|e| format!("{path}: {e}"))?
     };
     let _permit = hold(load_weight(&bytes, max_edge, half));
     let r = load(bytes);
@@ -284,18 +302,18 @@ fn fs_load<T>(
     r
 }
 
-/// `path`'s modification time as ISO 8601 (see [`ProbeInfo::file_modified`]); `None` when the
+/// The modification time in `meta` as ISO 8601 (see [`ProbeInfo::file_modified`]); `None` when the
 /// filesystem doesn't say or the time is before 1970.
-fn file_modified(path: &str) -> Option<String> {
-    let t = std::fs::metadata(path).ok()?.modified().ok()?;
+fn modified_iso(meta: &std::fs::Metadata) -> Option<String> {
+    let t = meta.modified().ok()?;
     let secs = i64::try_from(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs()).ok()?;
     Some(crate::import::civil(secs))
 }
 
-/// Whether `path` has the Read-Only attribute (cameras set it on the files they protect; cards keep it, and copies of
-/// the file keep it as well). `false` when the filesystem doesn't say.
-fn file_locked(path: &str) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly())
+/// Whether a file with metadata `meta` has the Read-Only attribute (cameras set it on the files they protect; cards keep
+/// it, and copies of the file keep it as well).
+fn file_locked(meta: &std::fs::Metadata) -> bool {
+    meta.permissions().readonly()
 }
 
 /// Whether the process runs in the macOS App Sandbox (it names its container in the environment).

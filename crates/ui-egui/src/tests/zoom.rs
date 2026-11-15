@@ -80,7 +80,7 @@ fn a_pending_crop_or_rotation_does_not_reuse_the_old_textures_aspect() {
             quick: None,
             request_id: 0,
             draft: false,
-            view: crate::render::TexView { tex, pixels: None, hdr: None },
+            view: crate::render::TexView { tex, pixels: None, hdr: None, native: None },
         },
     );
     edit(&mut h, |d| d.crop.geometry.rect = lightcraft_geom::Rect::new(0.25, 0.2, 0.75, 0.2 + 1.0 / 3.0));

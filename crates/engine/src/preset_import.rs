@@ -68,8 +68,14 @@ pub fn read_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
     read_zip_limited(bytes, MAX_ZIP_ENTRY, MAX_ZIP_TOTAL)
 }
 
-fn read_zip_limited(bytes: &[u8], max_entry: usize, max_total: usize) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let z = scan_zip(bytes, |_| true, ZipLimits { file: max_entry, total: max_total })?;
+pub(crate) fn read_zip_limited(bytes: &[u8], max_entry: usize, max_total: usize) -> Result<Vec<(String, Vec<u8>)>, String> {
+    read_zip_spending(bytes, max_entry, max_total, &mut 0)
+}
+
+/// [`read_zip_limited`] that adds to `spent` the bytes of each entry as it is unpacked, so they
+/// are counted when a later entry fails; an entry that fails for size spends its whole limit.
+pub(crate) fn read_zip_spending(bytes: &[u8], max_entry: usize, max_total: usize, spent: &mut usize) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let z = scan_zip_spending(bytes, |_| true, ZipLimits { file: max_entry, total: max_total }, spent)?;
     match z.failed.into_iter().next() {
         Some((name, why)) => Err(format!("{name}: {why}")),
         None => Ok(z.files),
@@ -84,6 +90,13 @@ pub fn read_zip_where(bytes: &[u8], wanted: impl Fn(&str) -> bool) -> Result<Zip
 }
 
 pub(crate) fn scan_zip(bytes: &[u8], wanted: impl Fn(&str) -> bool, limits: ZipLimits) -> Result<Zipped, String> {
+    scan_zip_spending(bytes, wanted, limits, &mut 0)
+}
+
+/// [`scan_zip`] with `spent` bytes of `limits.total` already used, adding what this archive unpacks (what a
+/// failed entry unpacked too, and the whole room of one that failed for its size): archives inside one archive
+/// share its budget.
+pub(crate) fn scan_zip_spending(bytes: &[u8], wanted: impl Fn(&str) -> bool, limits: ZipLimits, spent: &mut usize) -> Result<Zipped, String> {
     const BAD: &str = "bad zip";
     let u16_at = |o: usize| le::<2>(bytes, o).map(|b| usize::from(u16::from_le_bytes(b)));
     let u32_at = |o: usize| le::<4>(bytes, o).and_then(|b| usize::try_from(u32::from_le_bytes(b)).ok());
@@ -97,7 +110,7 @@ pub(crate) fn scan_zip(bytes: &[u8], wanted: impl Fn(&str) -> bool, limits: ZipL
     let count = u16_at(sum(&[eocd, 10])?).ok_or(BAD)?;
     let mut at = u32_at(sum(&[eocd, 16])?).ok_or(BAD)?;
     let mut out = Zipped::default();
-    let mut total = 0usize;
+    let total = spent;
     for _ in 0..count {
         if !bytes.get(at..).is_some_and(|b| b.starts_with(b"PK\x01\x02")) {
             return Err("bad zip central directory".into());
@@ -105,7 +118,7 @@ pub(crate) fn scan_zip(bytes: &[u8], wanted: impl Fn(&str) -> bool, limits: ZipL
         let field16 = |o: usize| u16_at(sum(&[at, o])?).ok_or(BAD);
         let field32 = |o: usize| u32_at(sum(&[at, o])?).ok_or(BAD);
         let (flags, method) = (field16(8)?, field16(10)?);
-        let csize = field32(20)?;
+        let (csize, size) = (field32(20)?, field32(24)?);
         let (nlen, xlen, clen) = (field16(28)?, field16(30)?, field16(32)?);
         let local = field32(42)?;
         let name_at = sum(&[at, 46])?;
@@ -116,13 +129,16 @@ pub(crate) fn scan_zip(bytes: &[u8], wanted: impl Fn(&str) -> bool, limits: ZipL
         if skip || !wanted(&name) {
             continue;
         }
-        let entry = ZipEntry { flags, method, csize, local };
-        match unpack(bytes, &entry, limits.file.min(limits.total.saturating_sub(total))) {
+        let entry = ZipEntry { flags, method, csize, size, local };
+        match unpack(bytes, &entry, limits.file.min(limits.total.saturating_sub(*total))) {
             Ok(content) => {
-                total = total.saturating_add(content.len());
+                *total = total.saturating_add(content.len());
                 out.files.push((name, content));
             }
-            Err(why) => out.failed.push((name, why)),
+            Err((why, used)) => {
+                *total = total.saturating_add(used);
+                out.failed.push((name, why));
+            }
         }
     }
     Ok(out)
@@ -133,39 +149,53 @@ struct ZipEntry {
     flags: usize,
     method: usize,
     csize: usize,
+    /// The size the entry says it unpacks to (its own claim).
+    size: usize,
     local: usize,
 }
 
-/// The unpacked bytes of one entry, at most `room` of them.
-fn unpack(bytes: &[u8], e: &ZipEntry, room: usize) -> Result<Vec<u8>, String> {
+/// The unpacked bytes of one entry, at most `room` of them; else why not, and the bytes that count as spent (what
+/// was unpacked before it failed, or the whole `room` for an entry too large for it).
+fn unpack(bytes: &[u8], e: &ZipEntry, room: usize) -> Result<Vec<u8>, (String, usize)> {
     const BAD: &str = "bad zip";
+    let bad = |why: &str| (why.to_string(), 0);
     if e.flags & 1 != 0 {
-        return Err("password-protected".into());
+        return Err(bad("password-protected"));
     }
     // (the sizes are the file's own claims: what is unpacked is bounded by `room`, whatever they say)
     let too_big = || {
         let limit = if room >= 1 << 20 { format!("{} MB", room >> 20) } else { format!("{} KB", room >> 10) };
-        format!("too large to unpack (more than {limit})")
+        (format!("too large to unpack (more than {limit}), too much for a preset"), room)
     };
     if e.method == 0 && e.csize > room {
         return Err(too_big());
     }
     if !bytes.get(e.local..).is_some_and(|b| b.starts_with(b"PK\x03\x04")) {
-        return Err("bad local header".into());
+        return Err(bad("bad local header"));
     }
-    let name_len = le::<2>(bytes, e.local.saturating_add(26)).map(|b| usize::from(u16::from_le_bytes(b))).ok_or(BAD)?;
-    let extra_len = le::<2>(bytes, e.local.saturating_add(28)).map(|b| usize::from(u16::from_le_bytes(b))).ok_or(BAD)?;
-    let data_at = [e.local, 30, name_len, extra_len].iter().try_fold(0usize, |a, &b| a.checked_add(b)).ok_or(BAD)?;
-    let data = bytes.get(data_at..data_at.checked_add(e.csize).ok_or(BAD)?).ok_or("truncated")?;
+    let name_len = le::<2>(bytes, e.local.saturating_add(26)).map(|b| usize::from(u16::from_le_bytes(b))).ok_or_else(|| bad(BAD))?;
+    let extra_len = le::<2>(bytes, e.local.saturating_add(28)).map(|b| usize::from(u16::from_le_bytes(b))).ok_or_else(|| bad(BAD))?;
+    let data_at = [e.local, 30, name_len, extra_len].iter().try_fold(0usize, |a, &b| a.checked_add(b)).ok_or_else(|| bad(BAD))?;
+    let data = bytes.get(data_at..data_at.checked_add(e.csize).ok_or_else(|| bad(BAD))?).ok_or_else(|| bad("truncated"))?;
     match e.method {
         0 => Ok(data.to_vec()),
-        8 => miniz_oxide::inflate::decompress_to_vec_with_limit(data, room.saturating_add(1))
-            .map_err(|err| match err.status {
-                miniz_oxide::inflate::TINFLStatus::HasMoreOutput => too_big(),
-                status => format!("can't be unpacked ({status:?})"),
-            })
-            .and_then(|v| if v.len() > room { Err(too_big()) } else { Ok(v) }),
-        m => Err(format!("unsupported compression method {m}")),
+        8 => {
+            // the entry's own stated size, with slack, caps the inflate below `room`
+            let cap = e.size.max(1).saturating_mul(2).saturating_add(1024);
+            match miniz_oxide::inflate::decompress_to_vec_with_limit(data, cap.min(room).saturating_add(1)) {
+                Ok(v) if v.len() > room => Err(too_big()),
+                Ok(v) if v.len() > cap => Err(("unpacks to more than its stated size".into(), v.len())),
+                Ok(v) => Ok(v),
+                // not over the budget: only what was unpacked is spent
+                Err(err) if matches!(err.status, miniz_oxide::inflate::TINFLStatus::HasMoreOutput) && cap < room => {
+                    Err(("unpacks to more than its stated size".into(), err.output.len()))
+                }
+                Err(err) if matches!(err.status, miniz_oxide::inflate::TINFLStatus::HasMoreOutput) => Err(too_big()),
+                // what a corrupt stream unpacked before failing was still unpacked: charged
+                Err(err) => Err((format!("can't be unpacked ({:?})", err.status), err.output.len())),
+            }
+        }
+        m => Err((format!("unsupported compression method {m}"), 0)),
     }
 }
 
@@ -215,7 +245,11 @@ impl LuaParser<'_> {
             if self.s[self.i..].starts_with(b"--") {
                 self.i += 2;
                 if let Some(level) = self.long_bracket_level() {
-                    let _ = self.long_string(level);
+                    // an unterminated long comment runs to the end (as in Lua): going on past its
+                    // opening would search the rest of the file again for every such opening
+                    if self.long_string(level).is_err() {
+                        self.i = self.s.len();
+                    }
                 } else {
                     while self.i < self.s.len() && self.s[self.i] != b'\n' {
                         self.i += 1;
@@ -578,12 +612,16 @@ pub fn group_from_dir(dir: &str) -> Option<String> {
 }
 
 pub(crate) fn build(props: &Props, values: &crate::crs_masks::Values, name: String, group: Option<String>, from_photo: bool) -> Option<Imported> {
-    let (mut settings, unmapped) = crate::crs::to_partial_report(props, Some(values), crate::crs::Target::Any, crate::crs_masks::DEFAULT_ASPECT);
+    let (mut settings, mut unmapped) = crate::crs::to_partial_report(props, Some(values), crate::crs::Target::Any, crate::crs_masks::DEFAULT_ASPECT);
     if from_photo && let Some(o) = settings.as_object_mut() {
         // a photo's own framing and absolute white balance don't belong in a look
         o.remove("crop");
         o.remove("geometry");
-        if o.get("wb").and_then(|w| w.get("mode")).and_then(Value::as_str).is_none_or(|m| m == "custom" || m == "asShot") {
+        let mode = o.get("wb").and_then(|w| w.get("mode")).and_then(Value::as_str);
+        if mode == Some("custom") {
+            unmapped.push("Temperature, Tint (custom white balance of a photo: not kept in a look)".into());
+        }
+        if mode.is_none_or(|m| m == "custom" || m == "asShot") {
             o.remove("wb");
         }
     }
@@ -667,11 +705,21 @@ fn read_into(name: &str, bytes: &[u8], group: Option<String>, in_archive: bool, 
             };
             let (had_presets, had_failures) = (out.presets.len(), out.failed.len());
             out.failed.extend(z.failed.into_iter().map(|(inner, why)| (format!("{name}/{inner}"), why)));
+            // what the archive's entries left of the unpack budget: the Luminar packs inside it
+            // (archives themselves) unpack within it, not each with a budget of its own
+            let mut budget = MAX_ZIP_TOTAL.saturating_sub(z.files.iter().fold(0usize, |n, (_, d)| n.saturating_add(d.len())));
             for (inner, data) in z.files {
                 let dir_group =
                     inner.rsplit_once('/').and_then(|(d, _)| group_from_dir(d)).or_else(|| group_from_dir(&stem)).or_else(|| group.clone());
                 let mut inside = Read::default();
-                read_into(&inner, &data, dir_group, true, &mut inside);
+                if inner.to_ascii_lowercase().ends_with(".mplumpack") {
+                    match crate::preset_luminar::read_mplumpack_within(&inner, &data, &mut budget) {
+                        Ok(v) => inside.presets.extend(v),
+                        Err(e) => inside.failed.push((inner.clone(), e)),
+                    }
+                } else {
+                    read_into(&inner, &data, dir_group, true, &mut inside);
+                }
                 out.presets.extend(inside.presets);
                 out.failed.extend(inside.failed.into_iter().map(|(f, why)| (format!("{name}/{f}"), why)));
             }
@@ -908,6 +956,85 @@ text]], z = ZSTR "loc" }"#,
         // another editor's own look or profile is still reported
         let v = read_presets("Pack Look.xmp", pack_preset("Warm Film", true, Some("Camera Faithful")).as_bytes(), None).unwrap();
         assert_eq!(v[0].unmapped, ["CameraProfile", "Look"]);
+    }
+
+    #[test]
+    fn photo_custom_white_balance_left_out_is_reported() {
+        // issue #2938: a photo's custom Kelvin that the look leaves out is reported
+        let photo = |wb: &str| {
+            let mut file = b"\xff\xd8\xff\xe1 http://ns.adobe.com/xap/1.0/\0".to_vec();
+            file.extend_from_slice(XMP.replace(r#"crs:WhiteBalance="As Shot" crs:Temperature="5600""#, wb).as_bytes());
+            read_presets("/x/repro.jpg", &file, None).unwrap().remove(0)
+        };
+        let custom = photo(r#"crs:WhiteBalance="Custom" crs:Temperature="8000" crs:Tint="+16""#);
+        assert!(custom.unmapped.iter().any(|u| u.starts_with("Temperature, Tint (")), "{:?}", custom.unmapped);
+        // a named white balance stays, unreported; As Shot is no loss
+        let daylight = photo(r#"crs:WhiteBalance="Daylight""#);
+        assert_eq!(daylight.preset.settings["wb"]["mode"], json!("daylight"));
+        assert!(daylight.unmapped.is_empty(), "{:?}", daylight.unmapped);
+        assert!(photo(r#"crs:WhiteBalance="As Shot""#).unmapped.is_empty());
+    }
+
+    #[test]
+    fn packs_inside_a_zip_share_its_unpack_budget() {
+        // two packs unpacking to 2 MB each on a 3 MB budget: the first spends it, the second is refused
+        let pad = vec![b' '; 2 << 20];
+        let pack = zip(&[("a.lmp", b"<plist/>"), ("pad.txt", &pad)], true);
+        let mut budget = 3 << 20;
+        let first = crate::preset_luminar::read_mplumpack_within("one.mplumpack", &pack, &mut budget).unwrap_err();
+        assert!(!first.contains("too much"), "{first}");
+        assert_eq!(budget, (1 << 20) - 8);
+        let second = crate::preset_luminar::read_mplumpack_within("two.mplumpack", &pack, &mut budget).unwrap_err();
+        assert!(second.contains("too much"), "{second}");
+    }
+
+    #[test]
+    fn a_pack_that_fails_part_way_still_spends_what_it_unpacked() {
+        // 2 MB unpacks, then an entry that does not fit the 3 MB budget: the next pack gets nothing
+        let pad = vec![b' '; 2 << 20];
+        let pack = zip(&[("a.txt", &pad), ("b.txt", &pad)], true);
+        let mut budget = 3 << 20;
+        let first = crate::preset_luminar::read_mplumpack_within("one.mplumpack", &pack, &mut budget).unwrap_err();
+        assert!(first.contains("too much"), "{first}");
+        assert_eq!(budget, 0);
+    }
+
+    #[test]
+    fn a_corrupt_deflate_entry_spends_what_it_unpacked() {
+        // 2 MB declared, the stream cut in half: it unpacks a part, then fails; the budget keeps the part
+        let pad = vec![b' '; 2 << 20];
+        let deflated = miniz_oxide::deflate::compress_to_vec(&pad, 6);
+        let mut pack = zip(&[("a.txt", &deflated[..deflated.len() / 2])], false);
+        let central = 30 + "a.txt".len() + deflated.len() / 2;
+        pack[8] = 8; // local header: method deflate
+        pack[central + 10] = 8; // central header: method deflate
+        pack[central + 24..central + 28].copy_from_slice(&(pad.len() as u32).to_le_bytes());
+        let mut budget = 3 << 20;
+        let err = crate::preset_luminar::read_mplumpack_within("one.mplumpack", &pack, &mut budget).unwrap_err();
+        assert!(!err.contains("too much"), "{err}");
+        assert!(budget < 3 << 20, "{budget}");
+    }
+
+    #[test]
+    fn an_unterminated_long_comment_ends_the_template() {
+        // 20 000 openings of a long comment that never closes: each used to search the rest of
+        // the file for its close (seconds to minutes); now the first ends the file
+        let text = format!("s = {{ a = 1 }} {}", "--[==[ ".repeat(20_000));
+        let t = std::time::Instant::now();
+        let _ = parse_lua(&text);
+        assert!(t.elapsed().as_secs() < 5, "took {:?}", t.elapsed());
+    }
+
+    #[test]
+    fn an_entry_past_its_stated_size_spends_only_what_it_unpacked() {
+        // the stated size (1 byte) caps the inflate at 1026 bytes, far below the 1 MB limit
+        let mut lying = zip(&[("a.xmp", &vec![b' '; 10_000])], true);
+        let cd = lying.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+        lying[cd + 24..cd + 28].copy_from_slice(&1u32.to_le_bytes());
+        let mut spent = 0;
+        let e = read_zip_spending(&lying, 1 << 20, 1 << 20, &mut spent).unwrap_err();
+        assert!(e.contains("stated size"), "{e}");
+        assert!(spent > 0 && spent <= 2048, "{spent}");
     }
 
     #[test]

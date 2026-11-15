@@ -120,6 +120,95 @@ fn v13_library_loads_with_no_origins_and_is_upgraded() {
     assert_eq!(snapshot_version(&m), u64::from(VERSION));
 }
 
+/// Every older format number opens and is rewritten in this one: this fork's line (formats 10 to 14: server paths,
+/// Hidden, video clips, compact snapshots, origins) and upstream's (formats 10 to 13: masks on the photo, lens
+/// database profiles, shared grids, Lens Blur) use the same numbers for different fields, and a library of either
+/// line loads, since every field either one added is `#[serde(default)]`.
+#[test]
+fn every_older_format_number_loads_and_is_upgraded() {
+    for v in 1..VERSION {
+        let (base, log, full) = legacy_parts();
+        let m = MemStore::new();
+        m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":{v},\"seq\":2,\"catalog\":{}}}\n", base.to_snapshot()).into_bytes());
+        m.set(LOG, log.into_bytes());
+        let (_, c, r) = Journal::open(Box::new(m.clone())).unwrap_or_else(|e| panic!("v{v}: {e}"));
+        assert_eq!(c.to_snapshot(), full.to_snapshot(), "v{v}");
+        assert_eq!((r.replayed, r.upgraded_from), (1, Some(v)), "v{v}");
+        assert_eq!(snapshot_version(&m), u64::from(VERSION), "v{v}");
+    }
+}
+
+/// A library of upstream's formats 10 to 13 opens with its masks on the photo, its lens database profile and its
+/// Lens Blur fields, and is rewritten in this format.
+#[test]
+fn upstream_v10_to_v13_library_keeps_its_fields_and_is_upgraded() {
+    let mut c = Catalog::new();
+    let op = photo(&mut c);
+    let Op::AddPhoto { photo: mut p } = op else { panic!("photo() adds a photo") };
+    let id = p.id;
+    let mut s = lightcraft_develop::DevelopSettings::default();
+    s.masks.push(lightcraft_develop::Mask { id: 1, on_photo: true, ..Default::default() });
+    s.lens_blur.transition = 0.25;
+    s.lens_blur.focus_mask = Some(1);
+    p.develop = std::sync::Arc::new(s);
+    p.embedded_lens =
+        Some(Box::new(lightcraft_develop::EmbeddedLens { source: lightcraft_develop::LensSource::Database, ..Default::default() }));
+    c.apply(Op::AddPhoto { photo: p }).unwrap();
+    let snap = c.to_snapshot();
+    for v in 10..=13 {
+        let m = MemStore::new();
+        m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":{v},\"seq\":1,\"catalog\":{snap}}}\n").into_bytes());
+        let (_, loaded, r) = Journal::open(Box::new(m.clone())).unwrap_or_else(|e| panic!("v{v}: {e}"));
+        let p = loaded.photo(id).unwrap();
+        assert!(p.develop.masks.first().is_some_and(|m| m.on_photo), "v{v}: the mask stays on the photo");
+        assert_eq!((p.develop.lens_blur.transition, p.develop.lens_blur.focus_mask), (0.25, Some(1)), "v{v}");
+        assert_eq!(p.embedded_lens.as_ref().map(|l| l.source), Some(lightcraft_develop::LensSource::Database), "v{v}");
+        assert_eq!(r.upgraded_from, Some(v));
+        assert_eq!(snapshot_version(&m), u64::from(VERSION));
+        assert_eq!(loaded.to_snapshot(), c.to_snapshot(), "v{v}");
+    }
+}
+
+/// A library of this fork's formats 13 and 14 (compact snapshots: the settings as what differs from the header's
+/// `defaults`) opens as it was and is rewritten in this format.
+#[test]
+fn fork_v13_and_v14_compact_library_loads_and_is_upgraded() {
+    let m = MemStore::new();
+    let (mut j, mut c, _) = Journal::open(Box::new(m.clone())).unwrap();
+    let op = photo(&mut c);
+    c.apply(op.clone()).unwrap();
+    let id = c.photos().next().unwrap().id;
+    let rate = Op::SetRating { id, rating: 5 };
+    c.apply(rate.clone()).unwrap();
+    j.append(&[op, rate]).unwrap();
+    j.snapshot(&c).unwrap();
+    let written = String::from_utf8(m.get(SNAPSHOT).unwrap()).unwrap();
+    assert!(written.contains("\"defaults\":"), "this build writes compact snapshots");
+    let current = format!("\"version\":{VERSION},");
+    for v in [13, 14] {
+        let older = MemStore::new();
+        older.set(SNAPSHOT, written.replacen(&current, &format!("\"version\":{v},"), 1).into_bytes());
+        let (_, loaded, r) = Journal::open(Box::new(older.clone())).unwrap_or_else(|e| panic!("v{v}: {e}"));
+        assert_eq!(loaded.to_snapshot(), c.to_snapshot(), "v{v}");
+        assert_eq!(r.upgraded_from, Some(v));
+        assert_eq!(snapshot_version(&older), u64::from(VERSION));
+    }
+}
+
+/// A format 11 library (the Hidden album, this fork) opens with its hidden photos still hidden.
+#[test]
+fn fork_v11_library_keeps_hidden_photos() {
+    let (mut base, _, _) = legacy_parts();
+    let id = base.photos().next().unwrap().id;
+    base.apply(Op::SetHidden { id, hidden: true }).unwrap();
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":11,\"seq\":3,\"catalog\":{}}}\n", base.to_snapshot()).into_bytes());
+    let (_, c, r) = Journal::open(Box::new(m.clone())).unwrap();
+    assert_eq!(r.upgraded_from, Some(11));
+    assert!(c.photo(id).is_some_and(|p| p.hidden));
+    assert_eq!(snapshot_version(&m), u64::from(VERSION));
+}
+
 /// A photo's origin is kept through the snapshot and the log, and travels in `AddPhoto`.
 #[test]
 fn origin_round_trips() {
@@ -354,14 +443,16 @@ fn op_variants_are_versioned() {
             Op::SetHidden { .. } => 11,
         }
     }
-    /// v12 carries `DevelopSettings.video`, a clip's trim and poster frame, v13 writes the snapshot's settings as
-    /// what differs from its `defaults` (`crate::compact`) and v14 carries `Photo.origin`: none has an op of its own
-    /// (v9 was upstream's `Photo.preview_checked`).
-    const NEWEST_FIELDS: u32 = 14;
+    /// v15 merged upstream's formats 10 to 13 into this fork, fields only: `Mask.on_photo`, `EmbeddedLens.source`,
+    /// `Catalog.grids` / `SegMask.grid` and upstream's Lens Blur fields. Before it, v12 carried `DevelopSettings.video`,
+    /// a clip's trim and poster frame, v13 wrote the snapshot's settings as what differs from its `defaults`
+    /// (`crate::compact`) and v14 carried `Photo.origin`: none has an op of its own (v9 was upstream's
+    /// `Photo.preview_checked`).
+    const NEWEST_FIELDS: u32 = 15;
     let newest = since(&Op::SetHidden { id: PhotoId(1), hidden: true });
     assert_eq!(newest.max(NEWEST_FIELDS), VERSION, "the newest op's or fields' version must be the current format version");
-    /// The newest version whose ops or fields go over the sync protocol (v14's `Photo.origin`; v13 is only how
-    /// `catalog.snap` is written).
-    const NEWEST_SYNCED_FIELDS: u32 = 14;
+    /// The newest version whose ops or fields go over the sync protocol (v15's mask, lens and Lens Blur fields; v13 is
+    /// only how `catalog.snap` is written, and so is v15's shared grid table).
+    const NEWEST_SYNCED_FIELDS: u32 = 15;
     assert_eq!(newest.max(NEWEST_SYNCED_FIELDS), crate::journal::SYNC_VERSION, "a new op or synced field raises SYNC_VERSION");
 }

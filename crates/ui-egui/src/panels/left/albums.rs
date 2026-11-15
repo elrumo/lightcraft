@@ -1,5 +1,5 @@
 use super::folders::{file_drop_target, folder_menu, is_within};
-use super::rows::{INDENT_STEP, PHONE_TRAIL, indent_x, more_button, open_row_menu, row_sensed, set_tree_open, tree_open, tree_toggle};
+use super::rows::{INDENT_STEP, PHONE_TRAIL, Row, indent_x, more_button, open_row_menu, set_tree_open, tree_open, tree_toggle};
 use super::*;
 
 /// Albums: the tree of albums and the folders they are sorted into. `reveal`: an album just made,
@@ -40,7 +40,7 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             let has_children = all.get(&Some(a.id)).is_some_and(|v| !v.is_empty());
             // (a phone says how many albums it holds; it folds by a tap on the row)
             let items = phone.then(|| all.get(&Some(a.id)).map_or(0, Vec::len));
-            let resp = row_sensed(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, items, false, indent, sense, None);
+            let resp = Row::new(&format!("folder:{}", a.id.0), Icon::Folder, &a.name).count(items).indent(indent).sense(sense).show(app, ui);
             // a folder is no source, so its row folds it too; the triangle is the same click, aimed
             if resp.drag_started() {
                 app.ui.dragging_album = Some(a.id.0);
@@ -55,7 +55,7 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             let draw_open = open;
             let mut toggled = false;
             if has_children && !phone {
-                let tri = tree_toggle(ui, &resp, indent, open_id, &mut open, format!("albumToggle:{}", a.id.0));
+                let tri = tree_toggle(ui, &resp, indent, open_id, &mut open, format!("albumToggle:{}", a.id.0), &a.name);
                 toggled = tri.clicked();
                 // the triangle sits on the row and takes its clicks: the menu opens from it too
                 folder_menu(app, &tri, a);
@@ -79,7 +79,7 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             // a smart album whose rules no longer check (an album they test was deleted) says so
             let problems = app.caches.smart_album_problems(&app.session.catalog).get(&a.id).cloned().unwrap_or_default();
             let label = if problems.is_empty() { label } else { format!("⚠ {label}") };
-            let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, sense, None);
+            let mut resp = Row::new(&format!("album:{}", a.id.0), icon, &label).count(Some(n)).selected(sel).indent(indent).sense(sense).show(app, ui);
             if !problems.is_empty() {
                 crate::widgets::register(ui, format!("albumProblem:{}", a.id.0), resp.rect);
             }
@@ -461,7 +461,7 @@ fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response
     if !over {
         return;
     }
-    let released = ui.input(|i| i.pointer.any_released());
+    let released = ui.input(|i| i.pointer.primary_released());
     // albums hold library photos (issue #684): Local ones can't be dropped in; the row doesn't
     // light up, and a release says why
     let photos: Vec<lightcraft_catalog::PhotoId> = ids.iter().map(|id| lightcraft_catalog::PhotoId(*id)).collect();
@@ -476,23 +476,38 @@ fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_stroke(resp.rect.shrink2(vec2(8.0, 1.0)), 4.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
     if released {
-        match app.run("album.addPhotos", json!({"id": a.id.0, "ids": ids})) {
-            Ok(r) => {
-                let n = r.get("added").and_then(serde_json::Value::as_u64).unwrap_or(0);
-                let skipped = r.get("skipped").and_then(serde_json::Value::as_u64).unwrap_or(0);
-                let mut msg = crate::i18n::tr_format!("Added {n} photo{} to “{}”", if n == 1 { "" } else { "s" }, a.name, n = n);
-                if skipped > 0 {
-                    msg.push_str(" · ");
-                    msg.push_str(&crate::i18n::tr_format!(
-                        "{n} Local photo{} skipped: albums hold library photos (Add to My Photos first)",
-                        if skipped == 1 { "" } else { "s" },
-                        n = skipped
-                    ));
-                }
-                app.toast(ui.ctx(), msg);
-            }
-            Err(e) => app.toast(ui.ctx(), e),
-        }
+        drop_photos_on_album(app, ui, a, ids);
         app.ui.dragging_photos = None;
     }
+}
+
+/// Adds the dragged photos to the album and toasts how many went in (and how many Local ones were skipped).
+fn drop_photos_on_album(app: &mut LightcraftApp, ui: &egui::Ui, a: &Album, ids: Vec<u64>) {
+    match app.run("album.addPhotos", json!({"id": a.id.0, "ids": ids})) {
+        Ok(r) => {
+            let name = crate::destination::album(&app.session.catalog, a);
+            app.toast(ui.ctx(), added_message(&name, &r));
+        }
+        Err(e) => app.toast(ui.ctx(), e),
+    }
+}
+
+/// "Added N photos to “album”", plus a note when Local photos were skipped.
+fn added_message(name: &str, r: &serde_json::Value) -> String {
+    let n = r.get("added").and_then(serde_json::Value::as_u64).unwrap_or(0);
+    let skipped = r.get("skipped").and_then(serde_json::Value::as_u64).unwrap_or(0);
+    let mut msg = crate::i18n::tr_format!("Added {n} photo{} to “{}”", if n == 1 { "" } else { "s" }, name, n = n);
+    if skipped > 0 {
+        msg.push_str(" · ");
+        msg.push_str(&skipped_note(skipped));
+    }
+    msg
+}
+
+fn skipped_note(skipped: u64) -> String {
+    crate::i18n::tr_format!(
+        "{n} Local photo{} skipped: albums hold library photos (Add to My Photos first)",
+        if skipped == 1 { "" } else { "s" },
+        n = skipped
+    )
 }

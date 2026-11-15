@@ -283,7 +283,10 @@ impl Session {
         self.library_identity = std::sync::Arc::new(());
         // (rendered pictures are keyed by content and stay on disk; what is shown from them is dropped, in every host)
         match self.thumb_cache_dir() {
-            Some(dir) => self.media.attach_disk_cache(&dir, self.cache_bytes(), self.thumbs_dir.is_some()),
+            Some(dir) => {
+                let gate = self.library.as_ref().and_then(|l| crate::library::disk_gate(l.folder.as_ref()));
+                self.media.attach_disk_cache(&dir, self.cache_bytes(), self.thumbs_dir.is_some(), gate)
+            }
             None => self.media.rendered.clear(),
         }
         self.purge_synced_files();

@@ -46,6 +46,30 @@ fn psd_probe_reads_embedded_capture_time_gps_and_title() {
 use super::*;
 use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, Samples, encode_jpeg};
 
+#[test]
+fn crw_probes_name_their_camera_from_the_ciff_records() {
+    // no Exif in a CRW: the camera and capture time come from the decoder's records, and the catalog's camera
+    // string decides the white-balance scale (the D60 has chart-measured matrices, the 10D none)
+    let dir = std::env::var_os("LIGHTCRAFT_CORPUS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus"))
+        .join("raw");
+    for (name, camera, kelvin) in [("crw-canon-eos-d60.crw", "Canon Canon EOS D60", true), ("crw-canon-eos-10d-a.crw", "Canon Canon EOS 10D", false)]
+    {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            lightcraft_testkit::skip!(Corpus, "{name} absent");
+            continue;
+        };
+        assert!(lightcraft_meta::extract(&bytes).model.is_none(), "{name}: no Exif to read");
+        let info = probe_bytes(name, &bytes).unwrap();
+        assert_eq!(info.meta.camera, camera, "{name}");
+        assert!(info.captured.is_some(), "{name}");
+        assert_eq!(lightcraft_catalog::relative_wb_camera(&info.format, &info.meta.camera), !kelvin, "{name}");
+        let (t, _) = info.as_shot_wb.unwrap();
+        assert_eq!(t != 6500.0, kelvin, "{name}: {t}");
+    }
+}
+
 /// Which white-balance scale a raw gets (issue #730): a file with matrices of its own is absolute from them; a
 /// fitted-look file is absolute through its camera's measured matrices, which only read the as-shot
 /// multipliers as Kelvin; any other raw stays relative (6500 / 0 = as shot). The catalog's decision from the
@@ -114,6 +138,17 @@ fn white_balance_scale_follows_the_files_matrices_then_the_cameras() {
     assert!(other.relative && other.scale_white.is_none());
     let unknown = WbScaleOf::new(RawFormat::Nef, &ColorData::default(), mul, &lightcraft_meta::Metadata::default());
     assert!(unknown.relative && unknown.as_shot(d65) == (6500.0, 0.0));
+    // CRW: no matrices in the file. The EOS D60 has chart-measured matrices: Kelvin through them, its multipliers
+    // for the sun its D50 matrix was measured under reading as D50; another body stays relative, so its
+    // JPEG-fitted look applies
+    let d60 = WbScaleOf::new(RawFormat::Crw, &ColorData::default(), Some([2.362, 1.0, 1.298]), &meta("Canon", "Canon EOS D60"));
+    assert!(!d60.own_matrix && !d60.relative && d60.legacy_relative && d60.scale_white.is_some());
+    let ((t, tint), (t50, tint50)) = (d60.as_shot(d65), xy_to_temp_tint(lightcraft_color::D50));
+    assert!((t - t50).abs() < 50.0 && (tint - tint50).abs() < 2.0, "{t} {tint} vs D50 {t50} {tint50}");
+    assert!(!lightcraft_catalog::relative_wb_camera("CRW", "Canon Canon EOS D60"));
+    let crw = WbScaleOf::new(RawFormat::Crw, &ColorData::default(), mul, &meta("Canon", "Canon EOS 10D"));
+    assert!(crw.relative && !crw.legacy_relative && crw.scale_white.is_none());
+    assert!(lightcraft_catalog::relative_wb_camera("CRW", "Canon Canon EOS 10D"));
     // a file with matrices of its own (DNG): absolute from them, no matter whose camera
     let own = ColorData { illuminant: [21, 0], color_matrix: [Some(lightcraft_color::Mat3::IDENTITY), None], ..Default::default() };
     let dng = WbScaleOf::new(RawFormat::Dng, &own, mul, &meta("SONY", "ILCE-7M3"));
@@ -250,7 +285,7 @@ fn tiff_with_preview_strip(strip: &[u8], tail: usize, what: Fixture) -> Vec<u8> 
 /// [`tiff_with_preview_strip`] that also keeps the `smaller` JPEGs in sub-IFDs of IFD0, as an ARW keeps its
 /// 1616 px preview beside the full-size one.
 fn tiff_with_preview_strips(strip: &[u8], smaller: &[&[u8]], tail: usize, what: Fixture) -> Vec<u8> {
-    use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+    use craft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
     let mut preview = IfdBuilder::new();
     if what.dng {
         preview.set(t::DNG_VERSION, Value::Byte(vec![1, 4, 0, 0]));
@@ -451,6 +486,27 @@ fn undated_files_take_the_file_date() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The probe opens the file once and says the same thing as before about one that can't be read:
+/// its path, then the system's words (a missing file, a folder).
+#[test]
+fn a_probe_of_a_file_that_cannot_be_read_names_the_path_and_the_cause() {
+    let dir = std::env::temp_dir().join(format!("lightcraft-probe-errors-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (_, probe) = fs_hooks();
+    for path in [dir.join("no-such-file.jpg"), dir.clone()] {
+        let path = path.to_string_lossy().to_string();
+        let e = probe(&path).unwrap_err();
+        // a folder is refused as "not a regular file" before any read, so only the path and a cause are pinned
+        assert!(e.starts_with(&format!("{path}: ")), "{e}");
+    }
+    // the system's own words for it, whatever the platform says
+    let missing = dir.join("no-such-file.jpg");
+    let want = std::fs::read(&missing).unwrap_err().to_string();
+    let got = probe(&missing.to_string_lossy()).unwrap_err();
+    assert_eq!(got.strip_prefix(&format!("{}: ", missing.to_string_lossy())), Some(want.as_str()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Issue #367: probes read headers, not pixels, and report what the decode-based probe did:
 /// oriented dimensions (EXIF orientation 6 swaps them), metadata, the error for a truncated
 /// file or one that isn't an image.
@@ -487,7 +543,7 @@ fn image_probe_reads_headers_like_the_decode_did() {
 /// stays zero). A file nothing can read in part is read whole.
 #[test]
 fn a_layered_tiff_is_read_in_part() {
-    use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+    use craft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
     let strip: Vec<u8> = (0..64u8).map(|i| i * 3).collect();
     let mut ifd = IfdBuilder::new();
     ifd.set(t::IMAGE_WIDTH, Value::Long(vec![8]));
@@ -605,7 +661,7 @@ fn cached_denoise_uses_the_same_white_balance_profile_and_orientation_as_plain_r
     product::write(&path, &camera_rgb, key).unwrap();
     let spec = DenoiseSpec { product: path, key: key.into(), make: None };
     let (ordinary, _) = load_bytes(&bytes, 2048).unwrap();
-    let (plain, cached, _) = load_vec_pair(bytes, 2048, &spec).unwrap();
+    let (plain, cached, _) = load_vec_pair(bytes, 2048, &spec, Default::default()).unwrap();
     assert_eq!(plain.data, ordinary.data, "requesting a twin must not change the ordinary path");
     let cached = cached.unwrap();
     assert_eq!((plain.width, plain.height), (24, 32));
@@ -670,7 +726,7 @@ fn corpus_a7cr_warp_keeps_coordinates_after_orientation_and_resizing() {
         let Ok(mut bytes) = std::fs::read(root.join("raw").join(name)) else { continue };
         let off = lightcraft_raw::probe_info(&bytes).unwrap();
         assert!(embedded_lens(&off).is_none());
-        let tiff = lightcraft_tiff::Tiff::parse(&bytes).unwrap();
+        let tiff = craft_tiff::Tiff::parse(&bytes).unwrap();
         let at = tiff.find(0x7036).unwrap().offset as usize;
         let mut enabled = Vec::new();
         tiff.order.put_u16(&mut enabled, 17);
@@ -882,7 +938,7 @@ fn picture_load_weight_follows_the_declared_pixels() {
     assert!(scaled >= w * h * 3 && scaled < full / 4, "{scaled} {full}");
 }
 
-/// A full-size load in half floats ([`load_vec_compact_for`]) is a picture file's working floats rounded once, counted
+/// A full-size load in half floats ([`load_vec_compact`]) is a picture file's working floats rounded once, counted
 /// at the gate as half the floats' decode: the samples and the half floats, never the float picture.
 #[test]
 fn a_compact_load_is_the_floats_rounded_once_and_weighs_half() {
@@ -890,8 +946,8 @@ fn a_compact_load_is_the_floats_rounded_once_and_weighs_half() {
     let img =
         lightcraft_raster::Rgba8 { width: w, height: h, data: (0..w * h).map(|i| [(i * 7) as u8, (i / 3) as u8, (i * 13) as u8, 255]).collect() };
     let jpeg = encode_jpeg(&EncodeImage::rgba8(&img), 90, ChromaSubsampling::S420, &EncodeMeta::default()).unwrap();
-    let (floats, _) = load_vec_for(jpeg.clone(), usize::MAX, None).unwrap();
-    let (half, _) = load_vec_compact_for(jpeg.clone(), None).unwrap();
+    let (floats, _) = load_vec(jpeg.clone(), usize::MAX, Default::default()).unwrap();
+    let (half, _) = load_vec_compact(jpeg.clone(), Default::default()).unwrap();
     assert!(half.as_f32().is_none(), "held in half floats");
     assert_eq!(half.to_f32().data, lightcraft_raster::Rgb16f::from_f32(&floats).widen().data);
     assert_eq!(load_weight(&jpeg, usize::MAX, true), (w * h * 12).max(jpeg.len() * 6));
@@ -1386,8 +1442,8 @@ fn corpus_clipped_sky_beside_a_tree_has_no_coloured_halo() {
 /// copy's samples are much brighter than the image's here, so a picture says which one it came from.
 #[test]
 fn exports_never_develop_a_dngs_reduced_copy() {
-    use lightcraft_tiff::tags::{self as t, photometric};
-    use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
+    use craft_tiff::tags::{self as t, photometric};
+    use craft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
     use serde_json::json;
     let linear = |subfile: u32, w: u32, h: u32, sample: u16| {
         let mut ifd = IfdBuilder::new();
@@ -1427,10 +1483,10 @@ fn exports_never_develop_a_dngs_reduced_copy() {
     let mean = |img: &lightcraft_raster::Rgba8| img.data.iter().map(|p| p[1] as f64).sum::<f64>() / img.data.len().max(1) as f64;
 
     // the loaders: only the thumbnail's develops the copy, and only when it covers the size
-    let (copy, _, used) = load_vec_reduced(bytes.clone(), 512).unwrap();
+    let (copy, _, used) = load_vec_reduced(bytes.clone(), 512, Default::default()).unwrap();
     assert!(used, "a thumbnail develops the copy");
-    assert!(!load_vec_reduced(bytes.clone(), 1024).unwrap().2, "no copy covers 1024 px");
-    let (full, _) = load_vec(bytes.clone(), 512).unwrap();
+    assert!(!load_vec_reduced(bytes.clone(), 1024, Default::default()).unwrap().2, "no copy covers 1024 px");
+    let (full, _) = load_vec(bytes.clone(), 512, Default::default()).unwrap();
     assert!(g(&copy) > 4.0 * g(&full), "the fixture's copy is much brighter: {} vs {}", g(&copy), g(&full));
 
     let dir = std::env::temp_dir().join(format!("lc-reduced-export-{}", std::process::id()));
@@ -1464,10 +1520,10 @@ fn exports_never_develop_a_dngs_reduced_copy() {
 /// heuristic would never look) is used; a matte with an unknown name is ignored.
 #[test]
 fn dng_sky_matte_drives_the_sky_mask() {
+    use craft_tiff::tags::{self as t, photometric};
+    use craft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
     use lightcraft_develop::{DevelopSettings, LocalAdjustments, Mask, MaskComponent, MaskOp, MaskShape};
     use lightcraft_pipeline::{RenderRequest, render};
-    use lightcraft_tiff::tags::{self as t, photometric};
-    use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
     let (w, h) = (16u32, 8u32);
     let image = |ifd: &mut IfdBuilder, w: u32, h: u32, cpp: u16, bits: u16, data: Vec<u8>| {
         ifd.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
@@ -1777,7 +1833,7 @@ fn a_raw_that_only_gives_its_preview_is_flagged_when_rendered() {
 /// A raw whose TIFF shell holds only a small RGB image (IFD0) next to a private block, as Exif
 /// declares a picture 25x its size.
 fn tiff_shell(w: u32, h: u32, shell: bool) -> Vec<u8> {
-    use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+    use craft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
     let mut ifd0 = IfdBuilder::new();
     ifd0.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
     ifd0.set(t::IMAGE_LENGTH, Value::Long(vec![h]));
@@ -1818,7 +1874,7 @@ fn thumbnail_only_tiff_raw_is_preview_only_not_a_plain_image() {
 
     // TIFFs preserving camera Make tags (SONY, NIKON, etc.) are ordinary images, not raws (#281)
     for make in ["SONY", "NIKON CORPORATION", "PENTAX", "RICOH", "SAMSUNG"] {
-        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+        use craft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
         let mut ifd0 = IfdBuilder::new();
         ifd0.set(t::IMAGE_WIDTH, Value::Long(vec![24]));
         ifd0.set(t::IMAGE_LENGTH, Value::Long(vec![16]));
@@ -1862,7 +1918,7 @@ fn undecodable_container_with_a_preview_imports_as_preview_only() {
 /// holds the preview) imports as a raw shown from its preview, not as a greyscale image of the mosaic.
 #[test]
 fn uncompressed_leaf_mos_imports_as_a_preview_only_raw() {
-    use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+    use craft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
     let px: Vec<u8> = (0..40 * 30).flat_map(|i| [(i % 251) as u8, 128, 200]).collect();
     let jpeg = encode_jpeg(&EncodeImage::new(40, 30, 3, Samples::U8(&px)), 90, ChromaSubsampling::S444, &EncodeMeta::default()).unwrap();
     let mos = |leaf_data: bool| {
@@ -1893,7 +1949,7 @@ fn uncompressed_leaf_mos_imports_as_a_preview_only_raw() {
 /// develops from its sensor data.
 #[test]
 fn gopro_vc5_dng_imports_and_loads() {
-    use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+    use craft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
     let mut ifd = IfdBuilder::new();
     ifd.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![0]));
     ifd.set(t::IMAGE_WIDTH, Value::Long(vec![64]));
@@ -1925,7 +1981,7 @@ fn decode_failures_of_recognised_raws_may_fall_back_to_the_preview() {
     assert_eq!(preview_reason(b"x", RawError::Unsupported("x".into())), Ok("x".to_string()));
     assert!(preview_reason(b"x", RawError::Corrupt("bad strip".into())).is_ok_and(|w| w.contains("bad strip")));
     assert!(preview_reason(b"x", RawError::Limit("too big")).is_ok());
-    assert!(preview_reason(b"x", RawError::Tiff(lightcraft_tiff::TiffError::MissingTag(256))).is_ok());
+    assert!(preview_reason(b"x", RawError::Tiff(craft_tiff::TiffError::MissingTag(256))).is_ok());
     assert!(preview_reason(b"x", RawError::NotRaw).is_err());
     assert!(preview_reason(cr3, RawError::Corrupt("bad".into())).is_ok_and(|w| w.starts_with("CR3 ")));
 }
@@ -2018,8 +2074,8 @@ fn a_quick_thumbnail_without_an_embedded_preview_renders_the_raw() {
 /// A Sony ARW of `model`: a 64 × 48 uncompressed 14-bit CFA strip in a SubIFD (as `crates/raw/tests/it/vendor_robust.rs`
 /// lays it out) whose IFD carries the full-frame 16–35 mm distortion table (tag 0x7037).
 fn sony_arw(model: &str) -> Vec<u8> {
-    use lightcraft_tiff::tags::{self as t, photometric};
-    use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
+    use craft_tiff::tags::{self as t, photometric};
+    use craft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
     // 3:2, the aspect Sony's lens opcodes are limited to
     let (w, h) = (72u32, 48u32);
     let mut raw = IfdBuilder::new();
@@ -2211,4 +2267,74 @@ fn photo_camera_tone_gives_the_base_curve_a_file_gives_it() {
     let e = s.execute("photo.cameraTone", &serde_json::json!({"id": 9999})).unwrap_err().to_string();
     assert!(e.contains("no such photo 9999"), "{e}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn imported_shutter_times_survive_catalog_and_export_metadata() {
+    use lightcraft_catalog::{Catalog, Photo, PhotoId};
+    for (t, shown) in [
+        (0.3, "0.3"),
+        (0.4, "0.4"),
+        (0.6, "0.6"),
+        (0.8, "0.8"),
+        (1.3, "1.3"),
+        (1.6, "1.6"),
+        (2.5, "2.5"),
+        (3.2, "3.2"),
+        (30.0, "30"),
+        (0.625, "0.625"),
+        (1.0 / 2.8, "0.3571"),
+        (1.0 / 3.0, "1/3"),
+        (0.003, "0.003"),
+        (1.0 / 250.0, "1/250"),
+        (1.0 / 8000.0, "1/8000"),
+    ] {
+        let original = lightcraft_meta::Metadata { exposure_time: Some(t), ..Default::default() };
+        let (meta, _) = meta_of(&original);
+        // the catalog shows a short shutter speed, never the raw f64 (`0.35714285714285715`)
+        assert_eq!(meta.shutter, shown, "{t}");
+        // Exercise the persisted catalog JSON, not a value kept alongside it in memory.
+        let meta: Meta = serde_json::from_str(&serde_json::to_string(&meta).unwrap()).unwrap();
+        let mut photo = Photo::new(PhotoId(1), lightcraft_catalog::Source::Demo { scene: 0 }, "capture.jpg", "JPEG", 2, 2, "");
+        photo.meta = meta;
+        let exported = crate::export::export_metadata(&photo, &Catalog::new(), &crate::export::ExportOptions::default()).unwrap();
+        assert_eq!(exported.exposure_time, Some(t));
+        let bytes =
+            crate::export::encode_with_metadata(&lightcraft_raster::Rgba8::new(2, 2), &crate::export::ExportOptions::default(), Some(&exported))
+                .unwrap();
+        let back = lightcraft_meta::extract(&bytes);
+        assert!((back.exposure_time.unwrap() - t).abs() < 0.000001, "{t}: {:?}", back.exposure_time);
+    }
+}
+
+/// Issue #1632: a DNG's `ProfileToneCurve` is the finish stage's camera curve, so process V6 (upstream's V5) extends
+/// it past its last point (the sensor's white, scene 1.0) with the stop roll-off as well. A curve
+/// that reaches white there renders as under V5 up to it and white past it; one that ends below
+/// white (here 0.9) keeps what Exposure lifts past the sensor's white apart instead of reaching
+/// 8-bit 255 within a stop.
+#[test]
+fn v6_extends_a_dng_tone_curve_past_white_in_stops() {
+    use lightcraft_color::transfer::linear_to_srgb;
+    use lightcraft_develop::{DevelopSettings, Process};
+    use lightcraft_pipeline::SourceInfo;
+    let code = |curve: &[f64], process: Process, y: f32| {
+        let tone = lightcraft_raw::profile::ToneCurve::from_tag(curve).and_then(|c| super::dng_tone_curve(&c));
+        let info = SourceInfo { raw: true, camera_tone: Some(tone.expect("a valid curve")), ..SourceInfo::default() };
+        let s = DevelopSettings { process: process.version(), ..DevelopSettings::default() };
+        let o = lightcraft_pipeline::finish::base_tone(&s, &info, 1.0).apply(y);
+        (linear_to_srgb(o.clamp(0.0, 1.0)) * 255.0).round()
+    };
+    let to_white = [0.0, 0.0, 0.03, 0.09, 0.18, 0.4, 0.5, 0.78, 1.0, 1.0];
+    for y in [0.01, 0.05, 0.18, 0.5, 0.9] {
+        assert_eq!(code(&to_white, Process::V6, y), code(&to_white, Process::V5, y), "{y}");
+    }
+    for y in [1.0, 2.0, 4.0] {
+        assert_eq!((code(&to_white, Process::V5, y), code(&to_white, Process::V6, y)), (255.0, 255.0), "{y}");
+    }
+    let below_white = [0.0, 0.0, 0.03, 0.09, 0.18, 0.4, 0.5, 0.72, 1.0, 0.9];
+    let at = |process, ev: f32| code(&below_white, process, ev.exp2());
+    assert_eq!(at(Process::V6, 0.0), at(Process::V5, 0.0));
+    assert_eq!(at(Process::V5, 1.0), 255.0, "V5 is frozen");
+    let (white, beyond) = (at(Process::V6, 0.0), at(Process::V6, 1.0));
+    assert!(beyond < 254.0 && beyond - white >= 3.0, "{white} then {beyond} a stop past the sensor's white");
 }

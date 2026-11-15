@@ -1,3 +1,4 @@
+use egui::Align2;
 use super::scan::{busy_synchronizing, running};
 use super::*;
 
@@ -11,7 +12,7 @@ pub struct ImportTask {
     queue: Vec<String>,
     pub total: usize,
     pub done: usize,
-    params: Value,
+    pub(super) params: Value,
     /// What the batches added so far (shared with the engine host).
     pub tally: lightcraft_apphost::import::Tally,
     undo0: usize,
@@ -41,6 +42,11 @@ pub struct ImportTask {
 }
 
 impl ImportTask {
+    /// Whether it has its row in the activity list yet (it gets one on its first tick).
+    pub fn listed(&self) -> bool {
+        self.guard.is_some()
+    }
+
     /// An import of `paths` (files or folders) with `library.import` params (without `paths`).
     pub fn new(paths: Vec<String>, params: Value, undo0: usize, browse: bool) -> Self {
         ImportTask { total: paths.len(), queue: paths, params, undo0, browse, ..Default::default() }
@@ -138,6 +144,9 @@ pub(crate) fn import_params(app: &mut LightcraftApp, d: &ImportDialog) -> Result
         (true, true) => "move",
     };
     let mut params = json!({"mode": mode, "keywords": d.keywords()});
+    if !d.recipe.is_empty() {
+        params["recipe"] = recipe_items(&d.recipe);
+    }
     if !d.on_deleted.is_empty() {
         params["onDeleted"] = json!(d.on_deleted);
     }
@@ -380,7 +389,6 @@ fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
         }
         let _ = app.run("library.select", json!({"ids": [f]}));
     }
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
     // nothing new, only files the library already has: show where they are (Recently Deleted is
     // easy to miss, and the side panel that lists it starts collapsed)
     if task.tally.imported == 0

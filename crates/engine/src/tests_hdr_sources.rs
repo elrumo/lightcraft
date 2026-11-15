@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::Session;
 use crate::export::{ExportOptions, export_photo};
 use crate::tests_xmp::temp_dir;
-use lightcraft_heif::testdata::{Spec, build};
+use craft_heif::testdata::{Spec, build};
 
 const Y: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
