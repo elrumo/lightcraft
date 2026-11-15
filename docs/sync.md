@@ -403,8 +403,8 @@ that site's browser storage, so each site is a separate device. The admin page i
   device ([below](#signing-out)); signing in again as the same user brings the library back from the server, and another
   user starts from an empty library of their own.
 - **File ▸ Pause Syncing** stops talking to the server until resumed; **File ▸ Sync Now** pulls at once. With the app
-  in front and a server that [holds pulls](#held-pulls), another device's change arrives the moment it lands, and an
-  idle app asks about twice a minute. Otherwise (an older server, the app in the background, a held pull that failed)
+  in front and a server that [holds pulls](#held-pulls), another device's change arrives the moment it lands, and the
+  device asks about every 26 to 30 seconds whatever happens. Otherwise (an older server, the app in the background, a held pull that failed)
   it pulls every 5 seconds while changes come or go, less and less often once nothing has moved for half a minute, down
   to every 30 seconds after three quiet minutes; and in both cases at once whenever the window comes back to the front,
   a change is sent, or a photo shown on two devices is edited on the other (a request every few seconds kept a phone's
@@ -1066,8 +1066,12 @@ instead of asking every few seconds. The server answers it at once when it has o
 holds it until the user's library changes for their devices (a push, the presets, a shared document, a library folder
 scan or a write from a shared album) or 25 seconds pass. The answer only says that the server moved: the device then
 pulls the change with its ordinary pull, the one request that orders the library, so nothing about the order in which
-changes are applied is different. Two devices showing different photos see each other's edits within a second, and an
-idle app makes about two requests a minute (a phone's radio can sleep between them).
+changes are applied is different. Two devices showing different photos see each other's edits within a second.
+
+Held pulls keep the timer's rhythm: the next one goes when the timed pull would have, so a device asks about every 26
+seconds right after a change (instead of every 5) and every 30 seconds once it has been quiet for three minutes (as
+before). In that last case a held pull covers 25 of every 30 seconds, and a change that lands in the other 5 waits at
+most those 5 seconds (the next held pull is answered at once).
 
 - **Never in the way.** The held pull is a side request: a push, a sign-in, reading the library or presence never waits
   for it, and the host doesn't count it as work (it comes back on its usual timer, not every half second). Nothing is
@@ -1079,8 +1083,8 @@ idle app makes about two requests a minute (a phone's radio can sleep between th
   timer. 25 seconds stays under the read timeouts of the usual reverse proxies (60 s and more) and of the devices (120 s).
   The time a pull is held doesn't count as the device's busy time on the admin page.
 - **Failures.** A held pull that fails waits 30 s before the next (the timer pulls meanwhile); one answered early with
-  nothing new (this device's own push, or a server that doesn't really hold) doubles the gap from 1 s up to 30 s. An answer
-  that can't be read counts as a failure.
+  nothing new (this device's own push, or a server that doesn't really hold) doubles the gap up to 30 s; one that
+  brought news is followed after 1 s. An answer that can't be read counts as a failure.
 - Not a new op or synced field: the catalog format (`format`, `SYNC_VERSION`) is unchanged.
 
 Code: `crates/engine/src/cloud_sync/watch.rs` (device), `hold` and `Bell` in `apps/lightcraft-server/src/api.rs`

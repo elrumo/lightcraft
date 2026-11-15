@@ -2,8 +2,11 @@
 //! is in front, the device leaves one request waiting at the server, which answers the moment another device's change
 //! lands (or after `S` seconds). The answer only says that something moved: the library's own pull (the one control
 //! request) then brings it, so nothing here changes the order in which the library is synced. While a held pull
-//! waits, the timed pull ([`super::pull_gap`]) isn't sent: an idle app asks about twice a minute instead of every 5 to
-//! 30 seconds, and another device's change arrives at once instead of at the next poll.
+//! waits, the timed pull ([`super::pull_gap`]) isn't sent, and another device's change arrives at once instead of at
+//! the next poll. Held pulls keep the timer's rhythm: the next one goes when the timed pull would have
+//! ([`super::pull_gap`] after the last one went, at least [`GAP`]), so a device that just saw a change asks about
+//! every 26 s instead of every 5, and one quiet for minutes still asks every 30 s (with a 25 s wait, a change waits
+//! at most 5 s then).
 //!
 //! - It is a side request (like presence): a push, a sign-in or a reload never waits for it.
 //! - Only a server that says it holds pulls (`wait` in its answers to a pull) is asked; an older one answers at
@@ -59,6 +62,20 @@ impl Watch {
     #[cfg(test)]
     pub(super) fn expedite(&mut self) {
         self.hold_until = None;
+    }
+
+    /// (tests) How long until the next held pull may go.
+    #[cfg(test)]
+    pub(super) fn due_in(&self) -> Option<Duration> {
+        self.hold_until.map(|t| t.saturating_duration_since(Instant::now()))
+    }
+
+    /// (tests) As if the held pull in flight had been sent `ago`.
+    #[cfg(test)]
+    pub(super) fn sent_ago(&mut self, ago: Duration) {
+        if let Some((_, sent)) = self.task.as_mut() {
+            *sent = Instant::now().checked_sub(ago).unwrap_or(*sent);
+        }
     }
 
     fn pause(&mut self, now: Instant, gap: Duration) {
@@ -135,8 +152,16 @@ impl SyncState {
             self.pull_at = Some(t.max(now + pull_gap(now.saturating_duration_since(self.lively))));
         }
         // back so soon with nothing new: a server that doesn't really hold, or this device's own push; wait longer
-        let early = !news && now.saturating_duration_since(sent) < Duration::from_secs(ops.wait.min(WAIT_MAX) / 2);
-        let gap = if early { self.watch.gap * 2 } else { GAP };
+        let held = now.saturating_duration_since(sent);
+        let early = !news && held < Duration::from_secs(ops.wait.min(WAIT_MAX) / 2);
+        let gap = if news {
+            GAP
+        } else if early {
+            self.watch.gap * 2
+        } else {
+            // (the wait ran out: the next goes when the timed pull would have)
+            pull_gap(now.saturating_duration_since(self.lively)).saturating_sub(held)
+        };
         self.watch.pause(now, gap);
     }
 }

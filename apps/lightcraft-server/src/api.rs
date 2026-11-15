@@ -618,8 +618,14 @@ fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str, held: &mut Durati
     }
     match l.core.since(since, limit) {
         Ok(Pull::Ops(ops)) => {
-            let body =
-                serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs, format: lightcraft_catalog::journal::SYNC_VERSION, wait: WAIT_MAX });
+            let body = serde_json::to_vec(&proto::Ops {
+                head: l.core.head(),
+                ops,
+                presets,
+                docs,
+                format: lightcraft_catalog::journal::SYNC_VERSION,
+                wait: WAIT_MAX,
+            });
             drop(l);
             match body {
                 Ok(body) => big_json(req, body),

@@ -43,10 +43,10 @@ mod docs;
 mod evict;
 mod leave;
 mod presence;
-mod watch;
 #[cfg(not(target_arch = "wasm32"))]
 mod rebuild;
 mod shares;
+mod watch;
 
 pub(crate) use docs::{shared_doc_key, shared_doc_names};
 pub use shares::{SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, ShareOptions};
@@ -3093,6 +3093,21 @@ impl Session {
     pub(crate) fn sync_watch_now(&mut self) {
         if let Some(st) = self.sync.as_mut() {
             st.watch.expedite();
+        }
+    }
+
+    /// (tests) How long until the next held pull may go.
+    #[cfg(test)]
+    pub(crate) fn sync_watch_due_in(&self) -> Option<Duration> {
+        self.sync.as_ref()?.watch.due_in()
+    }
+
+    /// (tests) As if the held pull in flight had been sent `ago`, and the last sign of life were `quiet` ago.
+    #[cfg(test)]
+    pub(crate) fn sync_watch_held_for(&mut self, ago: Duration, quiet: Duration) {
+        if let Some(st) = self.sync.as_mut() {
+            st.watch.sent_ago(ago);
+            st.lively = Instant::now().checked_sub(quiet).unwrap_or(st.lively);
         }
     }
 

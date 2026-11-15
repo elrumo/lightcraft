@@ -179,7 +179,8 @@ impl Fake {
             }
             ("GET", p) if p.starts_with("/api/ops?") => {
                 let q = p.trim_start_matches("/api/ops?");
-                let arg = |k: &str| q.split('&').filter_map(|kv| kv.split_once('=')).find(|(key, _)| *key == k).map(|(_, v)| v.parse::<u64>().unwrap());
+                let arg =
+                    |k: &str| q.split('&').filter_map(|kv| kv.split_once('=')).find(|(key, _)| *key == k).map(|(_, v)| v.parse::<u64>().unwrap());
                 // (it can't wait: a test holds the task and has it answered when it likes)
                 match self.core.since(arg("since").unwrap(), arg("limit").unwrap() as usize).unwrap() {
                     lightcraft_catalog::sync::Pull::Ops(ops) => {
@@ -3146,6 +3147,51 @@ fn nothing_is_held_at_an_older_server_from_the_background_or_right_after_a_failu
     a.sync_pull_overdue();
     presence::step(&mut a, &mut f);
     assert_eq!(pulls(&f), before + 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn held_pulls_keep_the_timers_rhythm() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("held-rhythm", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    a.sync_set_foreground(true);
+    let secs = |d: Option<Duration>| d.unwrap().as_secs_f64();
+    // quiet for ten minutes, and the wait ran out with nothing new: the next goes 30 s after this one went (5 s on)
+    let held = a.sync_watch().unwrap();
+    a.sync_watch_held_for(Duration::from_secs(25), Duration::from_secs(600));
+    let d = f.handle(&held);
+    a.sync_done(d);
+    let due = secs(a.sync_watch_due_in());
+    assert!((4.0..=5.0).contains(&due), "{due}");
+    // something moved a moment ago: the next goes a second after the wait ran out (not 5 s after the last went)
+    a.sync_watch_now();
+    let held = a.sync_watch().unwrap();
+    a.sync_watch_held_for(Duration::from_secs(25), Duration::ZERO);
+    let d = f.handle(&held);
+    a.sync_done(d);
+    assert!(secs(a.sync_watch_due_in()) <= 1.0);
+    // back at once with nothing new, twice: the gap doubles
+    for want in [2.0, 4.0] {
+        a.sync_watch_now();
+        let held = a.sync_watch().unwrap();
+        let d = f.handle(&held);
+        a.sync_done(d);
+        let due = secs(a.sync_watch_due_in());
+        assert!(due > want - 0.5 && due <= want, "{due} {want}");
+    }
+    // news: a second, and a pull now
+    b.selection = crate::Selection::single(ids[0]);
+    b.execute("photo.rate", &json!({"rating": 5})).unwrap();
+    sync(&mut b, &mut f);
+    a.sync_watch_now();
+    let held = a.sync_watch().unwrap();
+    let d = f.handle(&held);
+    a.sync_done(d);
+    assert!(secs(a.sync_watch_due_in()) <= 1.0);
+    assert_eq!(a.sync_pull_due_in(), None, "pull now");
     let _ = std::fs::remove_dir_all(&root);
 }
 
