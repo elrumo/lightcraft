@@ -351,8 +351,16 @@ impl DeepImage {
     pub fn crop(&self, x: usize, y: usize, w: usize, h: usize) -> DeepImage {
         let x = x.min(self.width.saturating_sub(1));
         let y = y.min(self.height.saturating_sub(1));
-        let w = w.min(self.width.saturating_sub(x)).max(usize::from(self.width > 0));
-        let h = h.min(self.height.saturating_sub(y)).max(usize::from(self.height > 0));
+        let w = w.max(1);
+        let h = h.max(1);
+        self.cropped(x, y, w, h)
+    }
+
+    /// The `w × h` part of the image at `(x, y)`, clamped into it (what a windowed render keeps of the
+    /// larger area it worked on): empty when the window starts past the image.
+    pub fn cropped(&self, x: usize, y: usize, w: usize, h: usize) -> DeepImage {
+        let (x, y) = (x.min(self.width), y.min(self.height));
+        let (w, h) = (w.min(self.width - x), h.min(self.height - y));
         fn cut<T: Copy>(v: &[T], width: usize, x: usize, y: usize, w: usize, h: usize) -> Vec<T> {
             let mut out = Vec::with_capacity(w.saturating_mul(h).saturating_mul(3));
             for row in y..y + h {
@@ -370,10 +378,6 @@ impl DeepImage {
         DeepImage { width: w, height: h, space: self.space, samples }
     }
 
-    /// [`DeepImage::crop`] (the name the fork's callers use).
-    pub fn cropped(&self, x: usize, y: usize, w: usize, h: usize) -> DeepImage {
-        self.crop(x, y, w, h)
-    }
     /// The same image reduced to 8 bits, display-encoded with the space's curve.
     pub fn to_rgba8(&self) -> lightcraft_raster::Rgba8 {
         let mut out = lightcraft_raster::Rgba8::new(self.width, self.height);

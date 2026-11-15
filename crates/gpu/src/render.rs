@@ -151,6 +151,10 @@ pub(crate) struct Cx<'a> {
     enc: Option<wgpu::CommandEncoder>,
     /// Kernel invocations recorded since the last submit.
     pending: u64,
+    /// Buffers shared with other renders that recorded commands read from (the resident grain
+    /// tables): kept until those commands are submitted. Declared after `enc`, so an unsubmitted
+    /// encoder is dropped before them.
+    held: Vec<Arc<Buf>>,
 }
 
 /// Kernel invocations recorded before a render submits them (under one full-size pass over a
@@ -162,7 +166,21 @@ const BAND_PIXELS: usize = 4 << 20;
 
 impl<'a> Cx<'a> {
     pub fn new(gpu: &'a Gpu) -> Cx<'a> {
-        Cx { gpu, enc: Some(gpu.encoder()), pending: 0 }
+        Cx { gpu, enc: Some(gpu.encoder()), pending: 0, held: Vec::new() }
+    }
+
+    /// The finish kernel's `aux` buffer: `aux`, then the crystal grain's tables when it has them
+    /// (copied on the GPU from the resident ones, see [`Gpu::grain_tables`]).
+    pub fn finish_aux(&mut self, aux: &[f32], crystal: Option<&lightcraft_pipeline::crystal::CrystalGrain>) -> Buf {
+        let Some(g) = crystal else { return self.gpu.upload(aux) };
+        let tables: usize = g.tile.sats.iter().map(Vec::len).sum();
+        let out = self.gpu.buffer(aux.len().saturating_add(tables));
+        if !aux.is_empty() && out.raw().size() >= (aux.len() as u64) * 4 {
+            self.gpu.queue.write_buffer(out.raw(), 0, bytemuck::cast_slice(aux));
+        }
+        let enc = self.enc.get_or_insert_with(|| self.gpu.encoder());
+        self.held.extend(self.gpu.grain_tables(enc, &g.tile, &out, aux.len()));
+        out
     }
 
     /// Record kernel `name` (see [`Gpu::run`]).
@@ -185,7 +203,9 @@ impl<'a> Cx<'a> {
     pub fn read_at<T: bytemuck::Pod>(&mut self, b: &Buf, offset: usize, len: usize) -> Vec<T> {
         self.pending = 0;
         let enc = self.enc.take().unwrap_or_else(|| self.gpu.encoder());
-        self.gpu.finish_and_read(enc, b, offset, len)
+        let out = self.gpu.finish_and_read(enc, b, offset, len);
+        self.held.clear();
+        out
     }
 
     /// Submit what is recorded so far without waiting. Renders submit stage by stage and every
@@ -197,6 +217,7 @@ impl<'a> Cx<'a> {
         if let Some(enc) = self.enc.take() {
             self.gpu.submit([enc.finish()]);
         }
+        self.held.clear();
     }
 
     /// Submit what is recorded and wait for it (profiling only: stage timings).
@@ -205,6 +226,7 @@ impl<'a> Cx<'a> {
         if let Some(enc) = self.enc.take() {
             self.gpu.submit([enc.finish()]);
         }
+        self.held.clear();
         let _ = self.gpu.poll(wgpu::PollType::wait_indefinitely());
     }
 
@@ -761,13 +783,6 @@ pub fn render(
         req.space,
         req.quality == lightcraft_pipeline::Quality::Draft,
     );
-    // ponytail: crystal grain (process V8) renders on the CPU; upstream LightCraft has it in the finish kernel
-    // (its tables after `aux`, `Gpu::grain_tables`), to port when GPU renders with grain need it
-    if fp.crystal.is_some() {
-        // (this render only, as a buffer past the limits: the next one may have no grain)
-        fail(FailKind::Limit, "crystal film grain renders on the CPU".into());
-        return None;
-    }
     fp.capture = prep.sharpen.as_ref().map(|(c, _)| *c);
     // soft proofing as the CPU's `finish` sets it up (an output-device table never gets here: see `render`)
     fp.proof = req.proof.map(|pr| pr.params(req.space));
@@ -781,7 +796,7 @@ pub fn render(
         chroma: masks.is_some() && prep.chroma.is_some(),
     };
     let (p, aux) = finish_block(&fp, &terms, &present);
-    let aux = gpu.upload(&aux);
+    let aux = cx.finish_aux(&aux, fp.crystal.as_ref());
     // capture sharpening's plane follows the texture plane in its binding (the kernel has no binding to spare)
     let tex = match &prep.sharpen {
         Some((_, sharp)) => {
@@ -1159,8 +1174,18 @@ fn brush_aux(dabs: &[&lightcraft_pipeline::masks::BrushDabs], erase: bool) -> Ve
     aux
 }
 
-/// Cross guided filter (`masks::guided_cross`) of `p` steered by `guide`, max-combined with `p`.
-fn guided_cross_max(cx: &mut Cx<'_>, guide: &Buf, p: &Buf, w: usize, h: usize, sigma: f32, eps: f32) -> Buf {
+/// How [`guided_cross`] combines the filtered plane with its input.
+#[derive(Clone, Copy)]
+enum Combine {
+    /// The larger of the two (Auto Mask strokes).
+    Max,
+    /// The input moved towards the filtered plane by this much (Refine Edges).
+    Mix(f32),
+}
+
+/// Cross guided filter (`masks::guided_cross`) of `p` steered by `guide`, combined with `p`.
+#[allow(clippy::too_many_arguments)]
+fn guided_cross(cx: &mut Cx<'_>, guide: &Buf, p: &Buf, w: usize, h: usize, sigma: f32, eps: f32, how: Combine) -> Buf {
     let n = w * h;
     let (m0, m1) = (cx.gpu.buffer(2 * n), cx.gpu.buffer(2 * n));
     map(cx, "xguided_pre", n, &[0], [Some(guide), Some(p), None], &m0);
@@ -1170,7 +1195,11 @@ fn guided_cross_max(cx: &mut Cx<'_>, guide: &Buf, p: &Buf, w: usize, h: usize, s
     map(cx, "xguided_ab", n, &[eps.to_bits()], [Some(&b0), Some(&b1), None], &ab);
     let ab = gaussian(cx, &ab, w, h, 2, sigma);
     let q = cx.gpu.buffer(n);
-    map(cx, "xguided_apply", n, &[], [Some(guide), Some(&ab), Some(p)], &q);
+    let mode = match how {
+        Combine::Max => [0, 0],
+        Combine::Mix(k) => [1, k.to_bits()],
+    };
+    map(cx, "xguided_apply", n, &mode, [Some(guide), Some(&ab), Some(p)], &q);
     q
 }
 
@@ -1223,7 +1252,7 @@ fn masks(
         let mut first = true;
         for comp in &m.components {
             let op = match comp.op {
-                _ if first && comp.op != MaskOp::Intersect => 0u32,
+                _ if first => 0u32,
                 MaskOp::Add => 1,
                 MaskOp::Subtract => 2,
                 MaskOp::Intersect => 3,
@@ -1291,7 +1320,7 @@ fn masks(
                             cx.run("shape", &q, &[Some(lin), Some(&prep.log_l), Some(&aux), Some(&stroke), Some(&brush)], groups2(w, h, [16, 16]));
                             let refined = d.auto.then(|| {
                                 let (sigma, eps) = lightcraft_pipeline::masks::auto_refine(d.r);
-                                guided_cross_max(cx, &prep.log_l, &stroke, w, h, sigma, eps)
+                                guided_cross(cx, &prep.log_l, &stroke, w, h, sigma, eps, Combine::Max)
                             });
                             let op = if d.erase { 2 } else { 1 };
                             cx.run(
@@ -1336,6 +1365,15 @@ fn masks(
             let cbuf = plane.as_ref().unwrap_or(&comp_plane);
             let k = [n as u32, 0, mi as u32, op];
             cx.run("combine", &k, &[None, None, None, Some(cbuf), Some(&alpha)], groups1(n));
+        }
+        if m.refine > 0.0 {
+            // Refine Edges (`masks::evaluate_one`): the combined alpha follows the photo's edges,
+            // before the mask's invert and amount
+            let k = (m.refine / 100.0).clamp(0.0, 1.0) as f32;
+            let sigma = (0.04 * frame.output_long(w, h) as f32 * k).max(1.0);
+            let plane = cx.slice(&alpha, mi * n, n);
+            let refined = guided_cross(cx, &prep.log_l, &plane, w, h, sigma, 0.02, Combine::Mix(k.sqrt()));
+            cx.copy_into(&refined, &alpha, mi * n);
         }
         let amt = (m.adjust.amount / 100.0) as f32;
         cx.run(

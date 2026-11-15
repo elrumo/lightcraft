@@ -201,8 +201,10 @@ fn a_preview_and_an_export_of_the_same_size_agree_for_every_control() {
         controls::set(&mut base, c.id, c.default);
         s.execute("develop.merge", &json!({"settings": base.to_json()})).unwrap();
         s.execute("develop.set", &json!({"control": c.id, "value": target(c)})).unwrap();
-        let preview = s.render_now(a, 240, 240).unwrap().image;
-        let export = s.render_export(a, 240, 240, OutputSpace::Srgb, OutputDepth::U8).unwrap().image;
+        // (small enough that the export's source, at least twice the size the bounded crop needs, is still the
+        // preview's: Straighten's crop at its end needs about twice the pixels, and a bigger source is another picture)
+        let preview = s.render_now(a, 120, 120).unwrap().image;
+        let export = s.render_export(a, 120, 120, OutputSpace::Srgb, OutputDepth::U8).unwrap().image;
         if preview != export {
             failures.push(format!("{}: the preview and the export differ", c.id));
         }

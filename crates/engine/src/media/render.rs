@@ -359,7 +359,10 @@ impl RenderJob {
     /// size asked for, when it is at least that big, or unchanged when it covers the job's display
     /// fit (else `None`: render). Only for what the cached
     /// view is: a full-quality, 8-bit, whole-frame SDR render (the cache holds sRGB; a display
-    /// profile is applied to it like to any cached picture, [`crate::display::present`]).
+    /// profile is applied to it like to any cached picture, [`crate::display::present`]). Not for a display whose
+    /// histogram counts the picture as shown ([`crate::display::Display::screen_histogram`], a Display P3 screen): its
+    /// pictures are rendered into its primaries, where the sRGB cache would clip the colours outside sRGB and give the
+    /// sRGB picture's histogram.
     pub fn cached_view(&self) -> Option<Rgba8> {
         let (cache, key) = self.view_cache.as_ref()?;
         if self.request.quality != Quality::Full
@@ -367,6 +370,7 @@ impl RenderJob {
             || self.request.window.is_some()
             || self.settings.hdr.enabled
             || self.slide.is_some()
+            || self.display.as_ref().is_some_and(|d| d.screen_histogram)
         {
             return None;
         }

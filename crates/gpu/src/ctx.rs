@@ -442,6 +442,13 @@ fn constants() -> String {
     for (i, c) in GRAIN_CHANNEL.iter().enumerate() {
         s += &format!("const GRAIN_C{i}: u32 = {c}u;\n");
     }
+    {
+        use lightcraft_pipeline::crystal::{TILE_PER_LONG, TORI};
+        s += &format!(
+            "const CRYSTAL_T0: u32 = {}u;\nconst CRYSTAL_T1: u32 = {}u;\nconst CRYSTAL_TPL: f32 = {:?};\n",
+            TORI[0], TORI[1], TILE_PER_LONG as f32
+        );
+    }
     for (name, idx) in crate::params::finish_fields() {
         s += &format!("const F_{name}: u32 = {idx}u;\n");
     }
@@ -751,8 +758,6 @@ impl Gpu {
     /// Returns the buffer copied from, which the caller keeps until it has submitted `enc` (another
     /// render may replace the resident tables meanwhile). None when `dst` can't hold them (an
     /// over-limit placeholder: the render has failed already).
-    // (upstream LightCraft's crystal grain on the GPU; this fork renders crystal grain on the CPU for now)
-    #[allow(dead_code)]
     pub fn grain_tables(
         &self,
         enc: &mut wgpu::CommandEncoder,

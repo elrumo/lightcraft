@@ -601,6 +601,10 @@ fn attempt(
         if !enabled() {
             return Err(Fallback::NotTried);
         }
+        // Shift Edge and Feather work on a mask's whole alpha plane, a pass only the CPU has
+        if s.masks.iter().any(|m| m.visible && (m.shift != 0.0 || m.feather > 0.0)) {
+            return Err(Fallback::NotTried);
+        }
         if PAUSED.load(Ordering::Relaxed) {
             record_fallback("the app is in the background (GPU paused)".into());
             return Err(Fallback::NotTried);
