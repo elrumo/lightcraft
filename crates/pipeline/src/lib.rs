@@ -525,7 +525,7 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
     let px_per_long = frame.px_per_long(full_w);
     let mattes = lensblur::mattes_for(s, info.mattes.as_ref());
     let blur = lensblur::Setup::new(s, mattes.as_deref(), px_per_long);
-    let glow = glow::Setup::new(s, px_per_long);
+    let glow = glow::Setup::new(s, px_per_long).map(|g| g.with_white(glow::source_white(info)));
     let depth_look = relight::Look::new(s, mattes.as_deref());
     let relight = relight::Setup::new(s, mattes.as_deref(), s.orientation);
     let colorize = colorize::Setup::new(s);
