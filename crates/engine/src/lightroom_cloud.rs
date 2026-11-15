@@ -166,7 +166,13 @@ pub fn read_staged(
         match kind {
             Kind::Album | Kind::Folder => {
                 let parent = Some(str_at(&doc, "/parent/id")).filter(|p| !p.is_empty()).map(str::to_string);
-                out.albums.push(SourceAlbum { key: id, name: str_at(&doc, "/name").to_string(), parent, folder: kind == Kind::Folder, smart: None });
+                out.albums.push(SourceAlbum {
+                    key: id,
+                    name: str_at(&doc, "/name").to_string(),
+                    parent,
+                    folder: kind == Kind::Folder,
+                    ..Default::default()
+                });
             }
             Kind::Member => {
                 let (album, photo) = (str_at(&doc, "/album/id"), str_at(&doc, "/asset/id"));
@@ -424,7 +430,7 @@ pub(crate) mod tests {
         let dir = temp_dir("read");
         let source = read_all(&mcat(&dir));
         let album = |key: &str| source.albums.iter().find(|a| a.key == key).cloned();
-        assert_eq!(album("fold"), Some(SourceAlbum { key: "fold".into(), name: "Trips".into(), parent: None, folder: true, smart: None }));
+        assert_eq!(album("fold"), Some(SourceAlbum { key: "fold".into(), name: "Trips".into(), folder: true, ..Default::default() }));
         assert_eq!(album("japan").and_then(|a| a.parent), Some("fold".into()));
         assert!(album("gone").is_none(), "deleted documents are left out");
         assert_eq!(source.albums.len(), 4);

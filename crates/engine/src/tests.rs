@@ -419,14 +419,15 @@ fn permanently_deleting_explicit_targets_keeps_the_surviving_selection() {
 }
 
 /// `lensBlur.brushStroke` adds a stroke to the Focus or the Blur brush (clamped, undoable); hostile
-/// input is an error; `lensBlur.brushReset` clears one brush or both.
+/// input is an error; `lensBlur.brushReset` clears one brush or both. (The fork's command: `density`
+/// and a size up to the whole long edge; a value that is not a number takes the default.)
 #[test]
 fn lens_blur_brush_strokes_and_reset() {
     let mut s = demo();
     let id = s.active().unwrap();
     s.execute(
         "lensBlur.brushStroke",
-        &json!({"mode": "focus", "points": [[0.2, 0.3], [0.25, 0.3]], "size": 9.0, "amount": 40, "feather": f64::NAN, "autoMask": true}),
+        &json!({"mode": "focus", "points": [[0.2, 0.3], [0.25, 0.3]], "size": 9.0, "density": 40, "feather": f64::NAN, "autoMask": true}),
     )
     .unwrap();
     s.execute("lensBlur.brushStroke", &json!({"mode": "blur", "points": [[0.7, 0.6]]})).unwrap();
@@ -434,12 +435,11 @@ fn lens_blur_brush_strokes_and_reset() {
     let (f, b) = (&d.lens_blur.focus, &d.lens_blur.blur);
     assert_eq!((f.len(), b.len()), (1, 1));
     assert_eq!(f[0].points.len(), 2);
-    assert!(f[0].size == 0.5 && f[0].density == 40.0 && f[0].feather == lightcraft_develop::BrushStroke::default().feather && f[0].auto_mask);
+    assert!(f[0].size == 1.0 && f[0].density == 40.0 && f[0].feather == lightcraft_develop::BrushStroke::default().feather && f[0].auto_mask);
     for bad in [
         json!({"mode": "sideways", "points": [[0.5, 0.5]]}),
         json!({"mode": "focus", "points": []}),
         json!({"mode": "focus"}),
-        json!({"mode": "blur", "points": [[0.5, 0.5]], "pressure": [0.5, 0.5]}),
     ] {
         assert!(s.execute("lensBlur.brushStroke", &bad).is_err(), "{bad}");
     }
@@ -491,8 +491,8 @@ fn deleting_the_focus_mask_clears_the_lens_blur_focus() {
     s.execute("edit.undo", &json!({})).unwrap();
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.develop_of(id).unwrap().lens_blur.focus_mask, Some(mid));
-    // other mask edits keep it
-    s.execute("mask.adjust", &json!({"values": {"exposure": 0.5}})).unwrap();
+    // other mask edits keep it (the fork's `mask.adjust` names its mask when none is selected)
+    s.execute("mask.adjust", &json!({"id": mid, "values": {"exposure": 0.5}})).unwrap();
     assert_eq!(s.develop_of(id).unwrap().lens_blur.focus_mask, Some(mid));
 }
 

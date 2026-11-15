@@ -55,7 +55,7 @@ pub(crate) use proxy::LensGeometry;
 use proxy::{
     Cr3Framing, MIN_PREVIEW_FRACTION, alignment, estimate_cr3_framing, into_lens_geometry, proxies, reference_at, sensor_proxy, structure_agrees,
 };
-pub(crate) use proxy::{decode_fits, fit_profile, forget_fits, lens_geometry, profile_pairs};
+pub(crate) use proxy::{colour_key, decode_fits, fit_profile, forget_fits, lens_geometry, profile_pairs};
 #[cfg(test)]
 pub(crate) use proxy::{jpeg_vignetting, sharing_proxies};
 #[cfg(test)]

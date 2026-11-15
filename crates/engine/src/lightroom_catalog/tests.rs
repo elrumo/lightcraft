@@ -297,7 +297,10 @@ fn a_content_duplicate_raw_starts_from_its_camera_defaults() {
     .unwrap()
     .report;
     let new = s.catalog.photo(PhotoId(r["mapping"]["1"].as_u64().unwrap())).unwrap();
-    assert_eq!(*new.develop, new.camera_defaults(), "{r}");
+    // (the look a file import of it gives: in this fork a raw also starts from the import's Color noise reduction)
+    let mut look = new.camera_defaults();
+    look.detail.nr_color = s.import_defaults.color_noise_reduction();
+    assert_eq!(*new.develop, look, "{r}");
     assert_eq!((new.develop.wb.temp, new.develop.wb.tint), (5200.0, 4.0), "the file's as-shot white balance");
     assert!(new.develop.optics.lens_profile, "the file's embedded lens corrections are on");
 }
@@ -585,6 +588,8 @@ fn sets_nested_under_a_plain_collection_keep_their_own_nesting() {
 #[test]
 fn an_exhausted_album_counter_stops_the_import_naming_the_collection() {
     let mut s = crate::Session::new();
+    // (this fork's counters run in id spaces: an album only raises the counter of its own, so the last space is used)
+    s.catalog.set_id_space(u32::MAX);
     s.commit("New Album", Op::AddAlbum { album: Album::new(lightcraft_catalog::AlbumId(u64::MAX - 1), "Last") }).unwrap();
     let err = apply(&mut s, sample(), false).unwrap_err().to_string();
     assert!(err.contains("“Keepers”") && err.contains("no unused album id"), "{err}");

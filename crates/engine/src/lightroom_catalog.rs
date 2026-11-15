@@ -1008,7 +1008,12 @@ pub fn import(s: &mut crate::Session, path: &Path, update_existing: bool, albums
 /// Lightroom's order, and what the catalog knows of those photos' files. A smart collection
 /// carries its rules ([`crate::lightroom_smart::smart_rules`]) or why they can't be read.
 pub(crate) fn album_source(data: &CatalogImport) -> AlbumSource {
-    let mut out = AlbumSource { source: data.source.clone(), ..AlbumSource::default() };
+    let mut out = AlbumSource {
+        source: data.source.clone(),
+        catalog_path: data.catalog_path.clone(),
+        catalog_id: data.catalog_id.clone(),
+        ..AlbumSource::default()
+    };
     // each collection id once (#1588), and each album in its nearest collection set (#2165): an album nests only in a
     // folder, but Lightroom also keeps collections inside plain or smart ones, or under a parent that isn't imported
     let rows = first_of_each_collection(data, &mut out.warnings);
@@ -1024,15 +1029,9 @@ pub(crate) fn album_source(data: &CatalogImport) -> AlbumSource {
     for c in rows.iter().copied().filter(|c| number(c, "systemOnly") == 0) {
         let creation = text(c, "creationId");
         let (set, moved) = collection_parent(c, &collections, &sets);
-        if moved {
-            // the Lightroom id tells apart collections that share a name
-            let to = set.and_then(|p| collections.get(&p)).map_or_else(|| "at the top level".to_string(), |r| format!("into “{}”", text(r, "name")));
-            out.warnings.push(format!(
-                "{}: its Lightroom parent isn't a collection set that is imported; imported {to} (Lightroom collection {})",
-                text(c, "name"),
-                number(c, "id_local")
-            ));
-        }
+        // (the album says it where it is made: `album_ops`, which knows the library's names)
+        let inside =
+            moved.then(|| crate::lightroom_albums::Inside { name: collections.get(&number(c, "parent")).map(|r| text(r, "name").to_string()) });
         let smart = creation.contains("smart").then(|| match smart_content.get(&number(c, "id_local")) {
             Some(content) => crate::lightroom_smart::smart_rules(content),
             None => Err("smart rules missing".into()),
@@ -1043,6 +1042,7 @@ pub(crate) fn album_source(data: &CatalogImport) -> AlbumSource {
             parent: set.map(|p| p.to_string()),
             folder: creation.contains("group"),
             smart,
+            inside,
         });
     }
     let kept: HashSet<String> = out.albums.iter().map(|a| a.key.clone()).collect();
@@ -1411,10 +1411,14 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, mut data: CatalogImport, co
         .iter()
         .map(|(album, photos)| (album.clone(), photos.iter().filter_map(|p| p.parse::<i64>().ok().and_then(|p| ids.get(&p).copied())).collect()))
         .collect();
-    // (a backup's albums are keyed on the catalog it was made from, so importing the live catalog or another of its
-    // backups finds them again)
-    let (album_ops, made) =
-        crate::lightroom_albums::album_ops(s, data.catalog_path.as_deref().unwrap_or(&data.source), &albums.albums, &members, index);
+    // (a backup's albums are keyed on the catalog's id and the catalog it was made from, so importing the live catalog
+    // or another of its backups finds them again)
+    let keys = crate::lightroom_albums::CatalogKeys {
+        source: &data.source,
+        catalog_path: data.catalog_path.as_deref(),
+        catalog_id: data.catalog_id.as_deref(),
+    };
+    let (album_ops, made) = crate::lightroom_albums::album_ops(s, keys, &albums.albums, &members, index)?;
     ops.extend(album_ops);
     warnings.extend(made.warnings.iter().cloned());
     let stacks = stack_ops(s, &data, &ids, &mut ops, &mut warnings);

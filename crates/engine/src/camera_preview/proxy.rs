@@ -428,7 +428,7 @@ const FITS_KEPT: usize = 64;
 
 /// Keyed by the file, the decoded size, the profile database generation (its camera and lens profiles feed the fits) and
 /// the lens inputs of the decode ([`lens_key`]).
-type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize, u64, u64), std::sync::Arc<Fits>>;
+type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize, u64, u64, u64), std::sync::Arc<Fits>>;
 
 /// The lens inputs [`decode_fits`] depends on beyond the file: the warp its camera applied to the JPEG and the lens
 /// correction it is given. Without them a decode given a database profile kept fits a decode without one then read
@@ -444,6 +444,13 @@ pub(super) fn lens_key(geometry: Option<&LensGeometry>, lens: Option<&lightcraft
         h.update(&serde_json::to_vec(l).unwrap_or_default());
     }
     h.finish().0 as u64
+}
+
+/// The [`decode_fits`] key of an imported camera profile's colour model (never 0, the file's own colour).
+pub(crate) fn colour_key(color: &lightcraft_raw::ColorData) -> u64 {
+    let mut h = lightcraft_preview::Hasher128::new();
+    h.update(&serde_json::to_vec(color).unwrap_or_default());
+    (h.finish().0 as u64).max(1)
 }
 
 pub(super) fn fits_cache() -> &'static std::sync::Mutex<FitsCache> {
@@ -477,15 +484,17 @@ pub(super) fn fingerprint(bytes: &[u8]) -> lightcraft_preview::Hash128 {
 /// preview, full size for zoom and export, and after its decoded source is evicted), and these fits were ~45 % of a
 /// CR3's preview decode. They depend only on the file, the decoded raw, the camera and lens profiles (read once per
 /// process, and again when the profile database changes) and the lens inputs given here, all of which the key follows,
-/// so a kept result is what fitting again gives. Returns the as-shot white, the camera transform, the
+/// so a kept result is what fitting again gives. `colour` tells an imported camera profile that replaced the file's
+/// colour model in `raw` apart ([`colour_key`]; 0: the file's own). Returns the as-shot white, the camera transform, the
 /// look, the Camera Matching profile and the lens correction.
 pub(crate) fn decode_fits(
     raw: &mut RawImage,
     bytes: &[u8],
     lens_geometry: Option<&LensGeometry>,
     lens: Option<lightcraft_develop::EmbeddedLens>,
+    colour: u64,
 ) -> (Xy, CameraTransform, Option<CameraLook>, Option<CameraMatch>, Option<lightcraft_develop::EmbeddedLens>) {
-    let key = (fingerprint(bytes), raw.width, raw.height, crate::profile_db::generation(), lens_key(lens_geometry, lens.as_ref()));
+    let key = (fingerprint(bytes), raw.width, raw.height, crate::profile_db::generation(), lens_key(lens_geometry, lens.as_ref()), colour);
     let kept = fits_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key).cloned();
     let fits = match kept {
         Some(fits) => {

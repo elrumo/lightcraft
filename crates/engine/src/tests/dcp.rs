@@ -439,7 +439,8 @@ fn a_profile_that_cannot_be_copied_fails_on_its_own() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A file that is neither a `.cube`, a `.dcp` nor a `.zip` is reported as failed instead of being passed over.
+/// A file that is neither a LUT (`.cube`, `.3dl`, a Hald CLUT `.png`), a `.dcp` nor a `.zip` is reported as failed
+/// instead of being passed over.
 #[test]
 fn importing_an_unsupported_profile_file_reports_it() {
     let dir = temp_dir("unsupported");
@@ -448,7 +449,7 @@ fn importing_an_unsupported_profile_file_reports_it() {
     let mut s = Session::new();
     let r = s.execute("profile.import", &json!({"paths": [notes.to_string_lossy()]})).unwrap();
     assert_eq!(r["imported"].as_array().map(Vec::len), Some(0), "{r}");
-    assert_eq!(r["failed"], json!([["notes", "not a .cube, .dcp or .zip file"]]), "{r}");
+    assert_eq!(r["failed"], json!([["notes", "not a .cube, .3dl, Hald CLUT .png, .dcp or .zip file"]]), "{r}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

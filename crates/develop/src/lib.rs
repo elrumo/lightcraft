@@ -550,12 +550,13 @@ mod tests {
     }
 
     #[test]
-    fn resetting_the_profile_section_clears_the_camera_local_tone() {
-        // the camera's local tone mapping is not a control either: a Profile reset switches it off
+    fn resetting_the_profile_section_restores_the_camera_local_tone() {
+        // the camera's local tone mapping is not a control either: a Profile reset puts it back to
+        // its default (on in this fork, where a ProRAW without it renders too dark)
         let mut s = DevelopSettings::default();
-        s.profile.camera_local_tone = true;
+        s.profile.camera_local_tone = false;
         s.reset_section(Section::Profile);
-        assert!(!s.profile.camera_local_tone);
+        assert!(s.profile.camera_local_tone);
     }
 
     #[test]

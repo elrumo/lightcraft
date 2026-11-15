@@ -239,10 +239,12 @@ fn load_bytes_now(
         // the source's segmentation mattes (DNG semantic masks), read while the starting colour is fitted
         // (a raw without lens data of its own gets the vignetting its camera corrected in its JPEG)
         let dng_lens_kept = dng_lens_ops.is_some();
+        // (the fits kept for the file are told apart by the camera profile that replaced its colour model)
+        let colour = dcp.map_or(0, |p| crate::camera_preview::colour_key(&p.color));
         let ((xy, t, camera_look, camera_match, fitted_lens), mattes) = rayon::join(
             || {
                 with_dng_lens_ops(&mut raw, dng_lens_ops.as_ref(), lens.as_ref(), list3, |raw, embedded| {
-                    crate::camera_preview::decode_fits(raw, &bytes, lens_geometry.as_ref(), embedded.copied())
+                    crate::camera_preview::decode_fits(raw, &bytes, lens_geometry.as_ref(), embedded.copied(), colour)
                 })
             },
             || dng_mattes(&bytes, &info),

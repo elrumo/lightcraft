@@ -11,6 +11,9 @@ use super::{CommandSpec, always, bad, bool_or, cmd, f64_or, has_active, str_para
 use crate::{Result, Session};
 
 /// Change the active photo's Lens Blur with `f` as one undo step labelled `label`.
+/// The most strokes one Refine brush keeps: every stroke is painted again at each render.
+const MAX_STROKES: usize = 2000;
+
 fn edit(s: &mut Session, c: &str, label: &str, f: impl FnOnce(&mut LensBlur) -> Result<()>) -> Result<Value> {
     let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
     let mut d = (*s.develop_of(id).unwrap_or_default()).clone();
@@ -206,12 +209,17 @@ pub fn specs() -> Vec<CommandSpec> {
                     return Err(bad(C, "the stroke has no points"));
                 }
                 let d = BrushStroke::default();
+                // (a value that is not a finite number, as an agent can send, takes the default)
+                let num = |key: &str, def: f64, lo: f64, hi: f64| {
+                    let v = f64_or(p, key, def);
+                    if v.is_finite() { v.clamp(lo, hi) } else { def }
+                };
                 let stroke = BrushStroke {
                     points,
-                    size: f64_or(p, "size", d.size).clamp(1e-4, 1.0),
-                    feather: f64_or(p, "feather", d.feather).clamp(0.0, 100.0),
-                    flow: f64_or(p, "flow", d.flow).clamp(0.0, 100.0),
-                    density: f64_or(p, "density", d.density).clamp(0.0, 100.0),
+                    size: num("size", d.size, 1e-4, 1.0),
+                    feather: num("feather", d.feather, 0.0, 100.0),
+                    flow: num("flow", d.flow, 0.0, 100.0),
+                    density: num("density", d.density, 0.0, 100.0),
                     erase: mode == "erase",
                     auto_mask: bool_or(p, "autoMask", false),
                     // (Lens Blur's Refine brush records no pen pressure)
@@ -225,6 +233,14 @@ pub fn specs() -> Vec<CommandSpec> {
                     other => return Err(bad(C, format!("unknown mode `{other}` (focus|blur|erase)"))),
                 };
                 edit(s, C, label, |lb| {
+                    let full = match mode.as_str() {
+                        "focus" => lb.focus.len(),
+                        "blur" => lb.blur.len(),
+                        _ => lb.focus.len().max(lb.blur.len()),
+                    } >= MAX_STROKES;
+                    if full {
+                        return Err(bad(C, format!("at most {MAX_STROKES} strokes per brush: clear the brush first")));
+                    }
                     match mode.as_str() {
                         "focus" => lb.focus.push(stroke),
                         "blur" => lb.blur.push(stroke),

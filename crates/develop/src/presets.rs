@@ -353,7 +353,8 @@ fn compose_named(current: &DevelopSettings, original: &DevelopSettings, settings
         return current.merged(settings).unwrap_or_else(|_| current.clone());
     }
     let cur = current.to_json();
-    let mut base = original.to_json();
+    // every leaf: a group left out while it is the default (Glow, Film...) still scales from its value
+    let mut base = original.to_json_full();
     if let (Some(b), Some(c)) = (base.as_object_mut(), cur.as_object()) {
         for k in REPAIR_KEYS {
             if let Some(v) = c.get(k) {
@@ -663,7 +664,8 @@ mod tests {
         }
         let mut film = DevelopSettings::default();
         assert!(film.to_json().pointer("/grain/style").is_none());
-        assert_eq!(film.hash64(), DevelopSettings::from_json(&json!({})).unwrap().hash64());
+        // (the process is stated: JSON without one is read as an old photo's)
+        assert_eq!(film.hash64(), DevelopSettings::from_json(&json!({"process": film.process})).unwrap().hash64());
         film.grain.amount = 30.0;
         let mut noisy = film.clone();
         noisy.grain.style = Digital;

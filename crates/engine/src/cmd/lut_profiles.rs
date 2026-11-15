@@ -123,12 +123,15 @@ fn cube_files(paths: &[String]) -> (Vec<(String, String, Option<String>)>, Vec<V
                     Err(e) => failed.push(json!([name, e])),
                 }
             }
-        } else if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("dcp")) {
-            // (a .dcp is a camera profile: `dcp_profiles::import_files` takes it)
+        } else if path.extension().is_some_and(|x| ["cube", "3dl", "png"].iter().any(|e| x.eq_ignore_ascii_case(e))) {
+            // (a picture chosen on its own is taken for a Hald CLUT whatever its name)
             match read(path).and_then(|b| cube_text(p, &b)) {
                 Ok(t) => out.push((stem(path), t, None)),
                 Err(e) => failed.push(json!([stem(path), e])),
             }
+        } else if !path.extension().is_some_and(|x| x.eq_ignore_ascii_case("dcp")) {
+            // (a .dcp is a camera profile: `dcp_profiles::import_files` takes it)
+            failed.push(json!([stem(path), "not a .cube, .3dl, Hald CLUT .png, .dcp or .zip file"]));
         }
     }
     (out, failed)

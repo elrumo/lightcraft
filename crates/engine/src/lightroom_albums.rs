@@ -27,6 +27,10 @@ use crate::sidecar::{SidecarNaming, StoredFrame};
 pub struct AlbumSource {
     /// The catalog file.
     pub source: String,
+    /// A backup's: the catalog it was made from (Classic catalogs).
+    pub catalog_path: Option<String>,
+    /// The catalog's own id (Classic `Adobe_storeProviderID`, the same in its backups).
+    pub catalog_id: Option<String>,
     /// Albums and folders, in any order.
     pub albums: Vec<SourceAlbum>,
     /// Each album's photos (catalog keys), in the catalog's order.
@@ -48,7 +52,7 @@ pub enum DevelopSource {
 }
 
 /// An album or a folder of albums, as the catalog names it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SourceAlbum {
     pub key: String,
     pub name: String,
@@ -58,6 +62,37 @@ pub struct SourceAlbum {
     /// A Classic smart collection: its rules, or why they can't be carried over (the album then
     /// holds the photos the collection has now).
     pub smart: Option<Result<RuleSet, String>>,
+    /// Where Lightroom keeps it when that can't hold an album (a plain or smart collection, or a
+    /// parent that isn't imported): `parent` is then the nearest collection set above that.
+    pub inside: Option<Inside>,
+}
+
+/// The Lightroom parent of an album that can't go in it ([`SourceAlbum::inside`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Inside {
+    /// Its name; `None` when it isn't in the catalog.
+    pub name: Option<String>,
+}
+
+/// Which catalog albums come from, as the import index keys them: albums are found again by the catalog's own id
+/// (the same in its backups), else by the catalog's path (imports made before the id was read), and a key recorded
+/// for one catalog id never matches another catalog that later sits at the same path.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CatalogKeys<'a> {
+    /// The catalog file read.
+    pub(crate) source: &'a str,
+    /// A backup's: the catalog it was made from.
+    pub(crate) catalog_path: Option<&'a str>,
+    /// The catalog's own id.
+    pub(crate) catalog_id: Option<&'a str>,
+}
+
+#[cfg(test)]
+impl<'a> CatalogKeys<'a> {
+    /// The keys of a catalog file with no id and no other path (a cloud catalog).
+    pub(crate) fn of(source: &'a str) -> Self {
+        CatalogKeys { source, catalog_path: None, catalog_id: None }
+    }
 }
 
 /// What a catalog knows of a photo's original file.
@@ -258,18 +293,35 @@ pub(crate) struct AlbumCounts {
 }
 
 /// Catalog operations making `albums` (folders before what they hold) with `members` as their
-/// photos. An album imported before (`index`, keyed by the catalog's path and the album's key), or
-/// else one with the same name and kind in the same folder, keeps its name, place and photos and
-/// only gains the photos it lacks; a smart album also keeps its rules (the user may have edited
-/// them). A smart collection becomes a smart album, or a static one when its rules can't be read.
+/// photos. An album imported before (`index`, keyed by the catalog's id or path and the album's
+/// key, [`CatalogKeys`]), or else one with the same name and kind in the same folder that no other
+/// catalog's import made, keeps its name, place and photos and only gains the photos it lacks; a
+/// smart album also keeps its rules (the user may have edited them). A smart collection becomes a
+/// smart album, or a static one when its rules can't be read. A new album goes in the nearest
+/// folder above it, with a warning when that isn't where Lightroom keeps it.
+///
+/// An error when a catalog without an id sits at a path an import recorded for a catalog with
+/// one (its albums can't be told apart safely), and when the library has no album id left.
 pub(crate) fn album_ops(
     s: &mut crate::Session,
-    source: &str,
+    catalog: CatalogKeys<'_>,
     albums: &[SourceAlbum],
     members: &HashMap<String, Vec<PhotoId>>,
     index: &mut ImportIndex,
-) -> (Vec<Op>, AlbumCounts) {
+) -> crate::Result<(Vec<Op>, AlbumCounts)> {
+    let error = |why: String| crate::EngineError::BadParams { cmd: "library.importLightroom".into(), msg: why };
+    let by_key: HashMap<&str, &SourceAlbum> = albums.iter().map(|a| (a.key.as_str(), a)).collect();
     let parents: HashMap<&str, Option<&str>> = albums.iter().map(|a| (a.key.as_str(), a.parent.as_deref())).collect();
+    // the albums an import of another catalog (by its id) made: never found by name for this one
+    let foreign: HashSet<AlbumId> = match catalog.catalog_id {
+        Some(mine) => index
+            .collections
+            .iter()
+            .filter(|(k, _)| index.collection_owners.get(*k).is_some_and(|owner| owner != mine))
+            .map(|(_, id)| AlbumId(*id))
+            .collect(),
+        None => HashSet::new(),
+    };
     let depth = |album: &SourceAlbum| {
         let mut depth = 0;
         let mut at = album.parent.as_deref();
@@ -287,12 +339,57 @@ pub(crate) fn album_ops(
     let mut planned: HashSet<AlbumId> = HashSet::new();
     // what may hold albums: a damaged catalog's album "in" an album goes to the top instead
     let mut folders: HashSet<AlbumId> = HashSet::new();
+    // the names of the new albums, for the warnings
+    let mut new_names: HashMap<AlbumId, &str> = HashMap::new();
     let mut ops = Vec::new();
     let mut counts = AlbumCounts::default();
     for album in ordered {
-        let parent = album.parent.as_deref().and_then(|p| ids.get(p)).copied().filter(|p| folders.contains(p));
-        let index_key = format!("{}:{}", path_key(source), album.key);
-        let known = index.collections.get(&index_key).copied().map(AlbumId).filter(|id| s.catalog.album(*id).is_some() && !planned.contains(id));
+        // its parent's album when that is a folder; a set whose album isn't a folder (any more) passes it on to the
+        // nearest set above it that is one, and anything else puts the album at the top (its parents come first)
+        let direct = album.parent.as_deref().and_then(|p| ids.get(p)).copied();
+        let parent = {
+            let mut at = album.parent.as_deref();
+            let mut found = None;
+            for _ in 0..64 {
+                let Some(key) = at else { break };
+                if let Some(id) = ids.get(key).filter(|id| folders.contains(id)) {
+                    found = Some(*id);
+                    break;
+                }
+                if !by_key.get(key).is_some_and(|a| a.folder) {
+                    break;
+                }
+                at = parents.get(key).copied().flatten();
+            }
+            found
+        };
+        // keyed on the catalog's own id; imports made before that was read are keyed on the catalog's path, and are
+        // still found by it, also from a backup (the path of the catalog it was backed up from)
+        let path_key = format!("{}:{}", path_key(catalog.source), album.key);
+        let original_key = catalog.catalog_path.map(|p| format!("{}:{}", crate::lightroom_catalog::path_key(p), album.key));
+        let collection_key = catalog.catalog_id.map_or_else(|| path_key.clone(), |c| format!("lrcat:{c}:{}", album.key));
+        // A path can be reused by a different catalog. Without an id this one can't be proved to own an owned path
+        // key, so the import is refused instead of mixing albums.
+        if catalog.catalog_id.is_none()
+            && [Some(&path_key), original_key.as_ref()].into_iter().flatten().any(|k| index.collection_owners.contains_key(k))
+        {
+            return Err(error(
+                "the Lightroom catalog has no stable identity and its path was previously associated with a catalog; cannot safely match collections"
+                    .into(),
+            ));
+        }
+        // a key recorded for another catalog (by its id) is not this one, whatever its path
+        let mine = |k: &String| match (catalog.catalog_id, index.collection_owners.get(k)) {
+            (Some(c), Some(owner)) => owner == c,
+            _ => true,
+        };
+        let known = [Some(&collection_key), Some(&path_key), original_key.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(|k| mine(k))
+            .filter_map(|k| index.collections.get(k).copied())
+            .map(AlbumId)
+            .find(|id| s.catalog.album(*id).is_some() && !planned.contains(id));
         let smart_rules = album.smart.as_ref().and_then(|rules| rules.as_ref().ok());
         let same_name = || {
             s.catalog
@@ -304,16 +401,38 @@ pub(crate) fn album_ops(
                         && a.is_smart() == smart_rules.is_some()
                         && !a.quick
                         && !planned.contains(&a.id)
+                        && !foreign.contains(&a.id)
                 })
                 .map(|a| a.id)
         };
-        let existing = known.or_else(same_name);
-        let id = existing.unwrap_or_else(|| s.catalog.alloc_album_id());
+        let id = match known.or_else(same_name) {
+            Some(id) => id,
+            None => {
+                // the counter saturates: a damaged one hands out an id that's taken, and that stops the import
+                let id = s.catalog.alloc_album_id();
+                if s.catalog.album(id).is_some() || planned.contains(&id) {
+                    return Err(error(format!(
+                        "collection “{}”: the library has no unused album id left for it (its album numbering is exhausted or damaged)",
+                        album.name
+                    )));
+                }
+                id
+            }
+        };
         planned.insert(id);
         if s.catalog.album(id).map_or(album.folder, |a| a.folder) {
             folders.insert(id);
         }
-        index.collections.insert(index_key, id.0);
+        // recorded under its id and the live catalog's path (a backup's: the catalog it was made from), so a later
+        // import of the same catalog finds it in either order; a backup's own path is not kept when the catalog's is
+        // known (every dated backup has a new one)
+        let path_kept = if catalog.catalog_path.is_some() { None } else { Some(path_key) };
+        for k in [Some(collection_key), path_kept, original_key].into_iter().flatten() {
+            if let Some(c) = catalog.catalog_id {
+                index.collection_owners.insert(k.clone(), c.to_string());
+            }
+            index.collections.insert(k, id.0);
+        }
         ids.insert(&album.key, id);
         let mut seen = HashSet::new();
         let photos: Vec<PhotoId> =
@@ -347,6 +466,27 @@ pub(crate) fn album_ops(
             }
             Some(_) => {}
             None => {
+                // not where Lightroom keeps it: say why, and where it went (the folder's name in this library)
+                if album.inside.is_some() || (album.parent.is_some() && parent != direct) {
+                    let why = match (&album.inside, album.parent.as_deref().and_then(|p| by_key.get(p))) {
+                        (Some(Inside { name: None }), _) => "its parent collection isn't in the catalog".to_string(),
+                        (Some(Inside { name: Some(name) }), _) => format!("Lightroom keeps it inside “{name}”, which isn't a collection set"),
+                        // a set imported earlier whose album is no longer a folder
+                        (None, Some(set)) if set.folder => match direct.and_then(|d| s.catalog.album(d)) {
+                            Some(a) => format!("its collection set “{}” is the album “{}” in this library, which isn't a folder", set.name, a.name),
+                            None => format!("its collection set “{}” could not be created first", set.name),
+                        },
+                        (None, Some(other)) => format!("Lightroom keeps it inside “{}”, which isn't a collection set", other.name),
+                        (None, None) => "its parent collection isn't in the catalog".to_string(),
+                    };
+                    let to = match parent.and_then(|p| s.catalog.album(p).map(|a| a.name.as_str()).or_else(|| new_names.get(&p).copied())) {
+                        Some(name) => format!("into “{name}”"),
+                        None => "at the top level".to_string(),
+                    };
+                    // the Lightroom id tells apart collections that share a name (#2165)
+                    counts.warnings.push(format!("{}: {why}; imported {to} (Lightroom collection {})", album.name, album.key));
+                }
+                new_names.insert(id, &album.name);
                 let mut new = Album::new(id, album.name.clone());
                 new.parent = parent;
                 new.folder = album.folder;
@@ -374,7 +514,7 @@ pub(crate) fn album_ops(
             }
         }
     }
-    (ops, counts)
+    Ok((ops, counts))
 }
 
 /// What goes with the photos besides the albums: where the catalog keeps develop settings, the edit files
@@ -390,6 +530,8 @@ pub(crate) struct Extras<'a> {
 #[derive(Clone, Debug)]
 pub struct AlbumPlan {
     pub(crate) source: String,
+    pub(crate) catalog_path: Option<String>,
+    pub(crate) catalog_id: Option<String>,
     pub(crate) albums: Vec<SourceAlbum>,
     pub(crate) members: HashMap<String, Vec<PhotoId>>,
     pub(crate) counts: MatchCounts,
@@ -636,7 +778,18 @@ impl AlbumPlan {
             .map(|(album, photos)| (album.clone(), photos.iter().filter_map(|key| matches.get(key).copied()).collect()))
             .collect();
         let missing = missing_photos(&source, &matches, library);
-        AlbumPlan { source: source.source, albums: source.albums, members, counts, warnings: source.warnings, missing, develop, edits }
+        AlbumPlan {
+            source: source.source,
+            catalog_path: source.catalog_path,
+            catalog_id: source.catalog_id,
+            albums: source.albums,
+            members,
+            counts,
+            warnings: source.warnings,
+            missing,
+            develop,
+            edits,
+        }
     }
 
     /// Make the albums in one undo step and report what was done.
@@ -645,7 +798,8 @@ impl AlbumPlan {
         for photos in self.members.values_mut() {
             photos.retain(|id| s.catalog.photo(*id).is_some_and(|p| p.in_library()));
         }
-        let (mut ops, made) = album_ops(s, &self.source, &self.albums, &self.members, index);
+        let keys = CatalogKeys { source: &self.source, catalog_path: self.catalog_path.as_deref(), catalog_id: self.catalog_id.as_deref() };
+        let (mut ops, made) = album_ops(s, keys, &self.albums, &self.members, index)?;
         self.warnings.extend(made.warnings.iter().cloned());
         // the settings only go to photos still without edits, and only what is left of the plan
         let mut edits = self.edits;
@@ -773,19 +927,19 @@ mod tests {
             name: key.to_uppercase(),
             parent: parent.map(str::to_string),
             folder,
-            smart: None,
+            ..Default::default()
         };
         let albums =
             vec![album("inner", Some("mid"), false), album("mid", Some("top"), true), album("top", None, true), album("odd", Some("inner"), false)];
         let mut index = ImportIndex::default();
-        let (ops, counts) = album_ops(&mut s, "x.mcat", &albums, &HashMap::new(), &mut index);
+        let (ops, counts) = album_ops(&mut s, CatalogKeys::of("x.mcat"), &albums, &HashMap::new(), &mut index).unwrap();
         assert_eq!((counts.albums, counts.folders), (2, 2));
         s.commit("albums", Op::Batch { ops }).unwrap();
         let named = |name: &str| s.catalog.albums().find(|a| a.name == name).cloned().unwrap();
         assert_eq!(named("INNER").parent, Some(named("MID").id));
         assert_eq!(named("MID").parent, Some(named("TOP").id));
         assert_eq!(named("ODD").parent, None);
-        let (again, counts) = album_ops(&mut s, "x.mcat", &albums, &HashMap::new(), &mut ImportIndex::default());
+        let (again, counts) = album_ops(&mut s, CatalogKeys::of("x.mcat"), &albums, &HashMap::new(), &mut ImportIndex::default()).unwrap();
         assert!(again.is_empty());
         assert_eq!(counts, AlbumCounts::default());
     }
@@ -797,16 +951,18 @@ mod tests {
         let mut s = crate::Session::new();
         let rules =
             crate::lightroom_smart::smart_rules("s = { { criteria = \"rating\", operation = \">=\", value = 4 }, combine = \"intersect\" }").unwrap();
-        let album = |smart| SourceAlbum { key: "k".into(), name: "Best".into(), parent: None, folder: false, smart: Some(smart) };
+        let album = |smart| SourceAlbum { key: "k".into(), name: "Best".into(), smart: Some(smart), ..Default::default() };
         let smart = [album(Ok(rules))];
-        let (ops, counts) = album_ops(&mut s, "x.lrcat", &smart, &HashMap::new(), &mut ImportIndex::default());
+        let (ops, counts) = album_ops(&mut s, CatalogKeys::of("x.lrcat"), &smart, &HashMap::new(), &mut ImportIndex::default()).unwrap();
         assert_eq!((counts.albums, counts.smart, counts.smart_kept, counts.smart_as_static), (1, 1, 0, 0));
         s.commit("albums", Op::Batch { ops }).unwrap();
         assert!(s.catalog.albums().all(|a| a.is_smart()));
-        let (again, counts) = album_ops(&mut s, "x.lrcat", &smart, &HashMap::new(), &mut ImportIndex::default());
+        let (again, counts) = album_ops(&mut s, CatalogKeys::of("x.lrcat"), &smart, &HashMap::new(), &mut ImportIndex::default()).unwrap();
         assert!(again.is_empty());
         assert_eq!((counts.albums, counts.smart, counts.smart_kept), (0, 1, 1));
-        let (ops, counts) = album_ops(&mut s, "y.lrcat", &[album(Err("collection rules".into()))], &HashMap::new(), &mut ImportIndex::default());
+        let (ops, counts) =
+            album_ops(&mut s, CatalogKeys::of("y.lrcat"), &[album(Err("collection rules".into()))], &HashMap::new(), &mut ImportIndex::default())
+                .unwrap();
         assert_eq!((counts.albums, counts.smart, counts.smart_as_static), (1, 0, 1));
         assert!(counts.warnings.iter().any(|w| w.starts_with("Best: collection rules")), "{:?}", counts.warnings);
         s.commit("albums", Op::Batch { ops }).unwrap();

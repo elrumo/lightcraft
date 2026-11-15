@@ -915,7 +915,9 @@ mod tests {
 
     #[cfg(feature = "sam")]
     #[test]
-    fn stale_prompt_result_does_not_add_a_mask_after_geometry_changes() {
+    // (geometry no longer makes a result stale: the models see the photo before the warp and masks stay on it,
+    // `Mask::on_photo`; a look change still does)
+    fn stale_prompt_result_does_not_add_a_mask_after_the_look_changes() {
         let mut s = Session::with_demo();
         let photo = s.active().unwrap();
         let source_key = s.segment_key(photo).unwrap().0;
@@ -927,11 +929,11 @@ mod tests {
             notice: None,
         };
         let mut d = (*s.develop_of(photo).unwrap()).clone();
-        d.geometry.horizontal = 30.0;
-        s.set_develop(photo, d, "Perspective").unwrap();
+        d.light.exposure = 2.0;
+        s.set_develop(photo, d, "Exposure").unwrap();
         let mut polled = Polled::default();
         s.apply_outcome(outcome, &mut polled);
-        assert!(s.develop_of(photo).unwrap().masks.is_empty(), "a mask computed in the old photo frame must not be applied");
+        assert!(s.develop_of(photo).unwrap().masks.is_empty(), "a mask computed on the old look must not be applied");
         assert!(!polled.changed);
         assert!(polled.messages.iter().any(|m| m.contains("changed")));
     }

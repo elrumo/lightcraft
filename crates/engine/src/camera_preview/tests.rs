@@ -1093,8 +1093,8 @@ fn corpus_cr3_kept_fits_are_the_fits() {
     };
     let kept = || {
         let mut raw = lightcraft_raw::decode(&bytes).unwrap();
-        let (xy, t, look, matched, lens) = decode_fits(&mut raw, &bytes, None, None);
-        let key = (fingerprint(&bytes), raw.width, raw.height, crate::profile_db::generation(), lens_key(None, None));
+        let (xy, t, look, matched, lens) = decode_fits(&mut raw, &bytes, None, None, 0);
+        let key = (fingerprint(&bytes), raw.width, raw.height, crate::profile_db::generation(), lens_key(None, None), 0);
         assert!(fits_cache().lock().unwrap().contains(&key));
         format!("{xy:?} {t:?} {look:?} {matched:?} {lens:?} {:?}", raw.color)
     };
@@ -1107,7 +1107,7 @@ fn corpus_cr3_kept_fits_are_the_fits() {
         ..Default::default()
     };
     let mut raw = lightcraft_raw::decode(&bytes).unwrap();
-    assert_eq!(decode_fits(&mut raw, &bytes, None, Some(profile)).4, Some(profile));
+    assert_eq!(decode_fits(&mut raw, &bytes, None, Some(profile), 0).4, Some(profile));
     // (the first may already be kept: other tests decode this file too)
     assert_eq!(kept(), fresh);
     assert_eq!(kept(), fresh);
