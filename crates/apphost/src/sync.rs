@@ -107,12 +107,15 @@ impl Driver {
         self.focused = focused;
         // (presence says nothing from the background)
         session.sync_set_foreground(focused);
-        for t in session.sync_tasks() {
+        // (and, with the app in front, a pull held open at the server: it answers the moment another device's change lands)
+        let watch = if focused { session.sync_watch() } else { None };
+        for t in session.sync_tasks().into_iter().chain(watch) {
             self.in_flight += 1;
             exec(t, self.tx.clone());
         }
-        // (signing out waits for the sending to end: it is as busy as syncing)
-        let busy = self.in_flight > 0 || session.sync_state().is_some_and(|st| matches!(st.state(), "syncing" | "signingOut"));
+        // (signing out waits for the sending to end: it is as busy as syncing; a held pull only waits)
+        let held = usize::from(session.sync_watching());
+        let busy = self.in_flight > held || session.sync_state().is_some_and(|st| matches!(st.state(), "syncing" | "signingOut"));
         let wait = if busy { Duration::from_millis(500) } else { POLL };
         // (a photo shown on two devices is said every few seconds: come back by then)
         out.again = Some(session.sync_presence_due_in().map_or(wait, |d| wait.min(d.max(Duration::from_millis(250)))));

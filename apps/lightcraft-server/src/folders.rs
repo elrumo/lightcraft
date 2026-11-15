@@ -664,7 +664,10 @@ pub(crate) fn push(l: &mut UserLib, ops: &[(Op, usize)], name: &dyn Fn(usize) ->
         }
         let head = l.core.head();
         match l.core.push(head, &list) {
-            Ok(_) => return Some(refused),
+            Ok(_) => {
+                l.bell.ring();
+                return Some(refused);
+            }
             Err(lightcraft_engine::catalog::sync::PushError::Rejected { index, error }) => {
                 let (_, i) = ops.iter().filter(|(_, i)| !refused.contains(i)).nth(index)?;
                 log::warn!("library folders: {}: {error}", name(*i));

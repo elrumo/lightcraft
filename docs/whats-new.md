@@ -2,6 +2,14 @@
 
 ## 2026-11-15
 
+### Glow looks like Lightroom's
+- The five Glow styles were measured against Lightroom's own renders of a photo and redrawn to match. Bloom is a soft
+  halo round the brightest lights, Diffusion a fine haze, Halation a tight red rim, Motion a trail running one way from
+  each light and Streak a streak running both ways. Before, Bloom and Streak at high values turned the whole photo white.
+- The glow now brightens the dark parts beside a light most and never takes anything past white.
+- Photos already edited with a Glow look different: Bloom and Halation stay closer to the lights, Motion and Streak
+  reach further into the picture.
+
 ### Flatpak updates
 - Help ▸ Check for Updates can now reach the release service and update standalone Flatpak bundles.
   This permissions repair must first arrive through your existing host-side update method. Flatpaks

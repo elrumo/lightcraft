@@ -70,6 +70,8 @@ struct Fake {
     presence: HashMap<String, Option<String>>,
     no_presence: bool,
     presence_status: Option<u16>,
+    /// A server from before held pulls (`GET /api/ops?wait=`): its answers don't say `wait`.
+    no_wait: bool,
 }
 
 mod keep_in_place;
@@ -111,6 +113,7 @@ impl Fake {
             presence: HashMap::new(),
             no_presence: false,
             presence_status: None,
+            no_wait: false,
         }
     }
 
@@ -175,10 +178,12 @@ impl Fake {
                     }
                 }
             }
-            ("GET", p) if p.starts_with("/api/ops?since=") => {
-                let q = p.trim_start_matches("/api/ops?since=");
-                let (since, limit) = q.split_once("&limit=").unwrap();
-                match self.core.since(since.parse().unwrap(), limit.parse().unwrap()).unwrap() {
+            ("GET", p) if p.starts_with("/api/ops?") => {
+                let q = p.trim_start_matches("/api/ops?");
+                let arg =
+                    |k: &str| q.split('&').filter_map(|kv| kv.split_once('=')).find(|(key, _)| *key == k).map(|(_, v)| v.parse::<u64>().unwrap());
+                // (it can't wait: a test holds the task and has it answered when it likes)
+                match self.core.since(arg("since").unwrap(), arg("limit").unwrap() as usize).unwrap() {
                     lightcraft_catalog::sync::Pull::Ops(ops) => {
                         let docs = self.docs.iter().map(|(n, d)| (n.clone(), d.version)).collect();
                         ok(serde_json::to_value(proto::Ops {
@@ -187,6 +192,7 @@ impl Fake {
                             presets: self.presets.version,
                             docs,
                             format: self.format.unwrap_or(lightcraft_catalog::journal::SYNC_VERSION),
+                            wait: if self.no_wait { 0 } else { 25 },
                         })
                         .unwrap())
                     }
@@ -3069,5 +3075,145 @@ fn a_quiet_device_asks_the_server_less_often_until_something_moves() {
     a.sync_soon();
     presence::step(&mut a, &mut f);
     assert!(a.sync_pull_due_in().unwrap() <= poll);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn pulls(f: &Fake) -> usize {
+    f.requests.iter().filter(|r| r.starts_with("GET /api/ops?") && !r.contains("wait=")).count()
+}
+
+#[test]
+fn a_pull_held_at_the_server_brings_the_other_devices_change_at_once_and_replaces_the_timer() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("held", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    a.sync_set_foreground(true);
+    sync(&mut a, &mut f);
+    assert!(f.requests.iter().all(|r| !r.contains("wait=")), "sync_now waits for each answer: it never holds a pull");
+    // the server said it holds pulls: A leaves one waiting there
+    let held = a.sync_watch().expect("a held pull");
+    assert!(matches!(&held, Task::Http { url, .. } if url.ends_with("&limit=1&wait=25")), "{held:?}");
+    assert!(a.sync_watching() && a.sync_watch().is_none(), "one at a time");
+    // and sends no timed pull while it waits, however overdue
+    let before = pulls(&f);
+    a.sync_pull_overdue();
+    presence::step(&mut a, &mut f);
+    assert_eq!(pulls(&f), before, "{:?}", f.requests);
+    // B changes a photo: the held pull is answered (the server rings), and A pulls the change at once
+    b.selection = crate::Selection::single(ids[1]);
+    b.execute("photo.rate", &json!({"rating": 2})).unwrap();
+    sync(&mut b, &mut f);
+    let before = pulls(&f);
+    let d = f.handle(&held);
+    a.sync_done(d);
+    assert!(!a.sync_watching());
+    presence::step(&mut a, &mut f);
+    assert_eq!(pulls(&f), before + 1, "one pull, right after the answer: {:?}", f.requests);
+    assert_eq!(a.catalog.photo(ids[1]).unwrap().rating, 2);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn nothing_is_held_at_an_older_server_from_the_background_or_right_after_a_failure_and_the_timer_pulls() {
+    let mut f = Fake::new();
+    f.no_wait = true;
+    let (mut a, root, ids) = first_device("unheld", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    a.sync_set_foreground(true);
+    assert!(a.sync_watch().is_none(), "a server that doesn't say it holds pulls is pulled on the timer");
+    b.selection = crate::Selection::single(ids[1]);
+    b.execute("photo.rate", &json!({"rating": 3})).unwrap();
+    sync(&mut b, &mut f);
+    a.sync_pull_overdue();
+    presence::step(&mut a, &mut f);
+    assert_eq!(a.catalog.photo(ids[1]).unwrap().rating, 3, "the old server still syncs");
+    // the server is updated: the next pull says so
+    f.no_wait = false;
+    a.sync_pull_overdue();
+    presence::step(&mut a, &mut f);
+    a.sync_set_foreground(false);
+    assert!(a.sync_watch().is_none(), "nothing is held from the background");
+    a.sync_set_foreground(true);
+    let held = a.sync_watch().expect("a held pull");
+    // the network drops it: no held pull for a while, and the timer pulls meanwhile
+    f.down = true;
+    let d = f.handle(&held);
+    a.sync_done(d);
+    f.down = false;
+    assert!(!a.sync_watching() && a.sync_watch().is_none());
+    let before = pulls(&f);
+    a.sync_pull_overdue();
+    presence::step(&mut a, &mut f);
+    assert_eq!(pulls(&f), before + 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn held_pulls_keep_the_timers_rhythm() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("held-rhythm", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    a.sync_set_foreground(true);
+    let secs = |d: Option<Duration>| d.unwrap().as_secs_f64();
+    // quiet for ten minutes, and the wait ran out with nothing new: the next goes 30 s after this one went (5 s on)
+    let held = a.sync_watch().unwrap();
+    a.sync_watch_held_for(Duration::from_secs(25), Duration::from_secs(600));
+    let d = f.handle(&held);
+    a.sync_done(d);
+    let due = secs(a.sync_watch_due_in());
+    assert!((4.0..=5.0).contains(&due), "{due}");
+    // something moved a moment ago: the next goes a second after the wait ran out (not 5 s after the last went)
+    a.sync_watch_now();
+    let held = a.sync_watch().unwrap();
+    a.sync_watch_held_for(Duration::from_secs(25), Duration::ZERO);
+    let d = f.handle(&held);
+    a.sync_done(d);
+    assert!(secs(a.sync_watch_due_in()) <= 1.0);
+    // back at once with nothing new, twice: the gap doubles
+    for want in [2.0, 4.0] {
+        a.sync_watch_now();
+        let held = a.sync_watch().unwrap();
+        let d = f.handle(&held);
+        a.sync_done(d);
+        let due = secs(a.sync_watch_due_in());
+        assert!(due > want - 0.5 && due <= want, "{due} {want}");
+    }
+    // news: a second, and a pull now
+    b.selection = crate::Selection::single(ids[0]);
+    b.execute("photo.rate", &json!({"rating": 5})).unwrap();
+    sync(&mut b, &mut f);
+    a.sync_watch_now();
+    let held = a.sync_watch().unwrap();
+    let d = f.handle(&held);
+    a.sync_done(d);
+    assert!(secs(a.sync_watch_due_in()) <= 1.0);
+    assert_eq!(a.sync_pull_due_in(), None, "pull now");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_hostile_answer_to_a_held_pull_is_a_failure() {
+    let mut f = Fake::new();
+    let (mut a, root, _) = first_device("held-junk", &mut f);
+    a.sync_set_foreground(true);
+    for body in ["", "{", "null", r#"{"head": -1}"#, r#"{"head": 1e400, "ops": []}"#] {
+        let held = a.sync_watch().expect("a held pull");
+        a.sync_done(Done { id: held.id(), status: 200, body: body.into() });
+        assert!(!a.sync_watching(), "{body}");
+        a.sync_watch_now();
+    }
+    // a server that says it holds pulls for ever is asked for the longest wait this device asks for
+    let held = a.sync_watch().unwrap();
+    a.sync_done(Done { id: held.id(), status: 200, body: format!(r#"{{"head": 0, "ops": [], "wait": {}}}"#, u64::MAX) });
+    assert!(a.sync_state().is_some_and(|st| st.signed_in()), "still signed in");
+    a.sync_watch_now();
+    let held = a.sync_watch().unwrap();
+    assert!(matches!(&held, Task::Http { url, .. } if url.ends_with("&wait=25")), "{held:?}");
     let _ = std::fs::remove_dir_all(&root);
 }

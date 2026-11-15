@@ -2,7 +2,7 @@
 //! it with the engine's own transport, and the API's refusals.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use lightcraft_engine::Session;
 use lightcraft_engine::catalog::{PhotoId, Source};
@@ -26,6 +26,10 @@ fn write_png(path: &Path, seed: u8) {
 }
 
 fn start(root: &Path) -> Server {
+    start_with(root, |_| {})
+}
+
+fn start_with(root: &Path, set: impl FnOnce(&mut Config)) -> Server {
     let data = root.join("data");
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     let web = root.join("web");
@@ -35,6 +39,7 @@ fn start(root: &Path) -> Server {
     cfg.web = Some(web);
     cfg.scan_interval = None;
     cfg.preview_threads = Some(1);
+    set(&mut cfg);
     Server::start(cfg).unwrap()
 }
 
@@ -1193,6 +1198,116 @@ fn signing_out_logs_the_device_out_and_leaves_an_empty_library_for_another_user(
     c.execute("sync.now", &json!({"wait": true})).unwrap();
     assert_eq!(c.catalog.len(), 3, "ann's library didn't change");
     assert!(root.join("data/users/bob/blobs/original").exists());
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A photo added from device space `space`, pushed on top of op `base`.
+fn push_photo(base_url: &str, token: &str, space: u32, base: u64) {
+    let mut c = lightcraft_engine::catalog::Catalog::new();
+    c.set_id_space(space);
+    let photo = lightcraft_engine::catalog::Photo::new(c.alloc_photo_id(), Source::Demo { scene: 1 }, "p.jpg", "JPEG", 60, 40, "2026-01-01T00:00:00");
+    let body = json!({"base": base, "ops": [lightcraft_engine::catalog::Op::AddPhoto { photo: Box::new(photo) }]}).to_string();
+    assert_eq!(call("POST", &format!("{base_url}/api/ops"), token, Some(body.as_bytes()), &[]).0, 200);
+}
+
+/// `GET /api/ops?<q>` on a thread of its own: its status, answer and how long it took.
+fn pull_on_thread(base: &str, token: &str, q: &str) -> std::thread::JoinHandle<(u16, Value, Duration)> {
+    let (url, token) = (format!("{base}/api/ops?{q}"), token.to_string());
+    std::thread::spawn(move || {
+        let at = Instant::now();
+        let (s, b, _) = call("GET", &url, &token, None, &[]);
+        (s, json_of(&b), at.elapsed())
+    })
+}
+
+#[test]
+fn a_held_pull_is_answered_when_a_change_lands_and_held_pulls_are_bounded() {
+    let root = temp("held");
+    // two requests at once: one of them may be a held pull
+    let server = start_with(&root, |c| c.max_requests = Some(2));
+    let base = format!("http://{}", server.addr());
+    let (ann, bob) = (sign_in_raw(&base), sign_in_raw(&base));
+    let pull = |token: &str, q: &str| {
+        let at = Instant::now();
+        let (s, b, _) = call("GET", &format!("{base}/api/ops?{q}"), token, None, &[]);
+        (s, json_of(&b), at.elapsed())
+    };
+    let soon = Duration::from_secs(10);
+    // every answer says the server holds pulls, and for how long at most
+    let (s, v, _) = pull(&ann, "since=0");
+    assert_eq!((s, v["wait"].clone(), v["head"].clone()), (200, json!(25), json!(0)));
+    // nothing new: held
+    let held = pull_on_thread(&base, &ann, "since=0&limit=1&wait=20");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!held.is_finished(), "held while nothing is new");
+    // (one held pull at a time at this limit: another is answered at once, and a push still gets through)
+    let (s, v, took) = pull(&bob, "since=0&limit=1&wait=20");
+    assert!(s == 200 && v["ops"] == json!([]) && took < soon, "{s} {v} {took:?}");
+    // the other device's change lands: the held pull is answered with it, long before its wait is over
+    push_photo(&base, &bob, 2, 0);
+    let (s, v, took) = held.join().unwrap();
+    assert_eq!((s, v["head"].clone(), v["ops"].as_array().map(Vec::len)), (200, json!(1), Some(1)), "{v}");
+    assert!(took < soon, "answered as the change landed, not at the end of the wait: {took:?}");
+    // behind the head: answered at once; a wait that isn't a number: not held
+    for q in ["since=0&limit=1&wait=20", "since=1&wait=nope", "since=1&wait=-3", "since=1&wait=99999999999999999999999"] {
+        let (s, _, took) = pull(&ann, q);
+        assert!(s == 200 && took < soon, "{q}: {s} {took:?}");
+    }
+    // nothing comes: answered empty once the wait is over (a wait past the longest is cut to it)
+    let (s, v, took) = pull(&ann, "since=1&wait=1");
+    assert!(s == 200 && v["ops"] == json!([]) && took >= Duration::from_millis(900), "{v} {took:?}");
+    // the presets changing answers a held pull too
+    let held = pull_on_thread(&base, &ann, "since=1&limit=1&wait=20");
+    std::thread::sleep(Duration::from_millis(500));
+    let put = json!({"version": 0, "presets": [{"id": "p1"}]}).to_string();
+    assert_eq!(call("PUT", &format!("{base}/api/presets"), &bob, Some(put.as_bytes()), &[]).0, 200);
+    let (s, v, took) = held.join().unwrap();
+    assert!(s == 200 && v["presets"] == json!(1) && took < soon, "{v} {took:?}");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_device_holding_a_pull_sees_the_other_devices_change_at_once() {
+    let root = temp("held-sync");
+    let server = start(&root);
+    let url = format!("http://{}", server.addr());
+    write_png(&root.join("in/a.png"), 1);
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    let id = a.catalog.photos().next().unwrap().id;
+    sign_in(&mut a, &url);
+    a.execute("sync.now", &json!({"wait": true})).unwrap();
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b, &url);
+    b.execute("sync.now", &json!({"wait": true})).unwrap();
+    // A is in front: it leaves a pull waiting at the server (the host runs it beside everything else)
+    a.sync_set_foreground(true);
+    let held = a.sync_watch().expect("the server holds pulls");
+    let wait = std::thread::spawn(move || {
+        let at = Instant::now();
+        (lightcraft_engine::cloud_sync::run(&held), at.elapsed())
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    b.selection = lightcraft_engine::Selection::single(id);
+    b.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    b.execute("sync.now", &json!({"wait": true})).unwrap();
+    let (done, took) = wait.join().unwrap();
+    assert!(done.status == 200 && took < Duration::from_secs(10), "{done:?} {took:?}");
+    a.sync_done(done);
+    // the answer says the server moved on: A's next step pulls it
+    for _ in 0..20 {
+        let tasks = a.sync_tasks();
+        if tasks.is_empty() {
+            break;
+        }
+        for t in tasks {
+            let d = lightcraft_engine::cloud_sync::run(&t);
+            a.sync_done(d);
+        }
+    }
+    assert_eq!(a.catalog.photo(id).unwrap().rating, 4);
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }

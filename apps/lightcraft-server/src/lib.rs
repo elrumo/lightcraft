@@ -70,7 +70,7 @@ pub mod zip;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicUsize};
 use std::sync::{Arc, Mutex};
 
 /// The largest id space (ids stay below 2^53: exact in JavaScript). Devices get the ones below
@@ -164,6 +164,8 @@ pub struct State {
     /// What the admin page shows of each user's photo files ([`admin::Sizes`]).
     pub(crate) sizes: admin::Sizes,
     pub(crate) libs: Mutex<HashMap<String, Arc<Mutex<api::UserLib>>>>,
+    /// Pulls being held open for a change (`GET /api/ops?wait=`), bounded by half of [`limits::Limits::requests`].
+    pub(crate) held: AtomicUsize,
     /// Library folder scans and preview building.
     pub(crate) folders: folders::Scanner,
     /// Search by description: the model and each user's index.
@@ -243,6 +245,7 @@ impl Server {
             data: cfg.data,
             web: cfg.web,
             libs: Mutex::new(HashMap::new()),
+            held: AtomicUsize::new(0),
             folders: folders::Scanner::new(cfg.scan_interval),
             render: render::Slots::new(now.renders, cfg.render_wait.unwrap_or(std::time::Duration::from_secs(45))),
             limits: lim,

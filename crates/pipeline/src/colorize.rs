@@ -19,7 +19,8 @@ use lightcraft_raster::{Plane, Rgb32f};
 
 use crate::for_rows;
 use crate::geometry::Frame;
-use crate::masks::source_to_out;
+use crate::masks::source_pair_to_out;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// The largest factor a channel is multiplied by (deep shadows of a saturated colour ask for more).
 pub const MAX_GAIN: f32 = 8.0;
@@ -49,8 +50,8 @@ pub fn active(s: &DevelopSettings) -> bool {
 /// What a render's Colorize does: the model's a and b over the stored source, and how much of them.
 #[derive(Clone, Debug)]
 pub struct Setup {
-    a: Plane,
-    b: Plane,
+    /// The map's a and b planes, decoded once per map ([`decoded`]).
+    ab: Arc<(Plane, Plane)>,
     amount: f32,
     /// Neutral Highlights and Neutral Shadows, 0..1 ([`tone_keep`]).
     highlights: f32,
@@ -68,15 +69,30 @@ impl Setup {
             return None;
         }
         let m = s.colorize.map.as_ref()?;
-        let ab = m.ab()?;
-        let (w, h) = (m.w as usize, m.h as usize);
-        let plane = |k: usize| Plane { width: w, height: h, data: ab.iter().map(|p| p[k]).collect() };
+        let ab = decoded(crate::hash_of((&m.data, m.w, m.h)), m)?;
         let unit = |v: f64| if v.is_finite() { (v / 100.0).clamp(0.0, 1.0) as f32 } else { 0.0 };
         let (amount, highlights, shadows) = (unit(s.colorize.amount), unit(s.colorize.highlights), unit(s.colorize.shadows));
         let mono = s.colorize.base == lightcraft_develop::ColorizeBase::Bw;
         let key = crate::hash_of((&m.data, m.w, m.h, [amount, highlights, shadows].map(f32::to_bits), mono));
-        Some(Setup { a: plane(0), b: plane(1), amount, highlights, shadows, mono, key })
+        Some(Setup { ab, amount, highlights, shadows, mono, key })
     }
+}
+
+/// The a and b planes of map `m` (hash `key`): decoded (base64, inflate, the row differences) once and kept, the last few, as every
+/// render of the photo, draft or not, asks for them again. `None` for a map that does not read.
+fn decoded(key: u64, m: &lightcraft_develop::ChromaMap) -> Option<Arc<(Plane, Plane)>> {
+    static KEPT: Mutex<Vec<(u64, Arc<(Plane, Plane)>)>> = Mutex::new(Vec::new());
+    if let Some((_, hit)) = KEPT.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|(k, _)| *k == key) {
+        return Some(Arc::clone(hit));
+    }
+    let ab = m.ab()?;
+    let (w, h) = (m.w as usize, m.h as usize);
+    let plane = |k: usize| Plane { width: w, height: h, data: ab.iter().map(|p| p[k]).collect() };
+    let made = Arc::new((plane(0), plane(1)));
+    let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+    kept.insert(0, (key, Arc::clone(&made)));
+    kept.truncate(3);
+    Some(made)
 }
 
 /// Colour `img` (scene-linear, white-balanced, the output of `frame`) as `setup` says, in place.
@@ -85,20 +101,22 @@ pub fn apply(img: &mut Rgb32f, setup: &Setup, frame: &Frame) {
     if w == 0 || h == 0 {
         return;
     }
-    let (a, b) = (source_to_out(&setup.a, frame, w, h), source_to_out(&setup.b, frame, w, h));
+    // (a and b read together: each pixel's place in the source, through any warp, is found once)
+    let ab = source_pair_to_out(&setup.ab.0, &setup.ab.1, frame, w, h);
     let conv = Conv::new();
     let k = setup.amount;
     for_rows(&mut img.data, w, |y, row| {
         for (x, c) in row.iter_mut().enumerate() {
-            let i = y * w + x;
-            let (pa, pb) = (a.data.get(i).copied().unwrap_or(0.0), b.data.get(i).copied().unwrap_or(0.0));
+            let [pa, pb] = ab.get(y * w + x).copied().unwrap_or([0.0; 2]);
             let lum = conv.luminance(*c);
             if setup.mono && lum.is_finite() {
                 // (a scan's tint comes off, by Amount, before the model's colours go on)
                 *c = c.map(|v| v + (lum - v) * k);
             }
-            let keep = tone_keep(lightness(lum), setup.highlights, setup.shadows);
-            let g = conv.gain(lum, pa * keep, pb * keep);
+            // (one cube root a pixel: the lightness and the colour's XYZ are both made from f(Y))
+            let fy = (lum.is_finite() && lum > 0.0).then(|| lab_f(lum.min(1.0)));
+            let keep = tone_keep(fy.map_or(0.0, |f| 116.0 * f - 16.0), setup.highlights, setup.shadows);
+            let g = conv.gain_at(lum, fy, pa * keep, pb * keep);
             *c = std::array::from_fn(|n| c[n] * (1.0 + (g[n] - 1.0) * k));
         }
     });
@@ -133,11 +151,16 @@ impl Conv {
     /// luminance, out-of-gamut parts at 0, each at most [`MAX_GAIN`]. No colour (1, 1, 1) for a black, an unknown
     /// luminance, or a colour with no light left.
     pub fn gain(&self, y: f32, a: f32, b: f32) -> [f32; 3] {
-        if !(y.is_finite() && y > 0.0 && a.is_finite() && b.is_finite()) {
+        let fy = (y.is_finite() && y > 0.0).then(|| lab_f(y.min(1.0)));
+        self.gain_at(y, fy, a, b)
+    }
+
+    /// [`Self::gain`] with `fy`, `lab_f` of `y` (at most 1), made already: `None` where `y` is not a positive number.
+    fn gain_at(&self, y: f32, fy: Option<f32>, a: f32, b: f32) -> [f32; 3] {
+        let Some(fy) = fy.filter(|_| y.is_finite() && y > 0.0 && a.is_finite() && b.is_finite()) else {
             return [1.0; 3];
-        }
+        };
         let y = y.min(1.0);
-        let fy = lab_f(y);
         let xyz = [self.white[0] * lab_f_inv(fy + a / 500.0), y, self.white[2] * lab_f_inv(fy - b / 200.0)];
         let m = &self.xyz_to_working;
         let rgb: [f32; 3] = std::array::from_fn(|r| (m[r][0] * xyz[0] + m[r][1] * xyz[1] + m[r][2] * xyz[2]).max(0.0));
@@ -159,7 +182,22 @@ pub fn lightness(y: f32) -> f32 {
 
 /// CIE Lab's f(t) for a ratio to white `t`.
 fn lab_f(t: f32) -> f32 {
-    if t > EPSILON { t.cbrt() } else { (KAPPA * t + 16.0) / 116.0 }
+    if t > EPSILON { cbrt(t) } else { (KAPPA * t + 16.0) / 116.0 }
+}
+
+/// The cube root of `t` (`EPSILON` < `t` ≤ 1, where [`lab_f`] takes it): a first guess from the bits, then two Halley steps, to within
+/// a few parts in 10⁷ of `f32::cbrt` at a third of its cost (the root a pixel is most of Colorize's time).
+fn cbrt(t: f32) -> f32 {
+    // (white, the most common value of all, exactly: L 100)
+    if t >= 1.0 {
+        return 1.0;
+    }
+    let mut y = f32::from_bits(t.to_bits() / 3 + 0x2a51_4067);
+    for _ in 0..2 {
+        let y3 = y * y * y;
+        y *= (y3 + 2.0 * t) / (2.0 * y3 + t);
+    }
+    y
 }
 
 fn lab_f_inv(f: f32) -> f32 {
@@ -180,6 +218,17 @@ mod tests {
         s.colorize.shadows = 0.0;
         s.colorize.map = map;
         s
+    }
+
+    #[test]
+    fn the_fast_cube_root_is_the_cube_root_where_lab_f_takes_it() {
+        let mut t = EPSILON * 1.0001;
+        while t <= 1.0 {
+            let (fast, exact) = (cbrt(t), t.cbrt());
+            assert!((fast - exact).abs() <= 2e-6 * exact, "{t}: {fast} against {exact}");
+            t *= 1.003;
+        }
+        assert!((cbrt(1.0) - 1.0).abs() < 1e-6 && (cbrt(0.125) - 0.5).abs() < 1e-6);
     }
 
     #[test]

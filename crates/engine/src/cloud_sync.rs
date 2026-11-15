@@ -46,6 +46,7 @@ mod presence;
 #[cfg(not(target_arch = "wasm32"))]
 mod rebuild;
 mod shares;
+mod watch;
 
 pub(crate) use docs::{shared_doc_key, shared_doc_names};
 pub use shares::{SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, ShareOptions};
@@ -547,6 +548,8 @@ pub struct SyncState {
     signout_paused: bool,
     /// Which of the account's other devices show the same photo ([`presence`]).
     presence: presence::Client,
+    /// The pull held open at the server ([`watch`]).
+    watch: watch::Watch,
 }
 
 /// The catalog format that added the Hidden album (`Op::SetHidden`, `Photo.hidden`).
@@ -663,6 +666,7 @@ impl SyncState {
             signout_peak: 0,
             signout_paused: false,
             presence: presence::Client::default(),
+            watch: watch::Watch::default(),
         }
     }
 
@@ -798,6 +802,7 @@ impl SyncState {
         self.usage_task = None;
         self.activity_task = None;
         self.presence.reset();
+        self.watch.reset();
         self.conflict = None;
         self.reading = None;
         self.transfer_error = None;
@@ -1704,7 +1709,8 @@ impl Session {
                     let t = st.http("GET", &path, Body::Empty, None);
                     st.control = Some((t.id(), Control::Snapshot));
                     tasks.push(t);
-                } else if st.pull_at.is_none_or(|t| now >= t) {
+                } else if st.pull_at.is_none_or(|t| now >= t && !st.watch.waiting()) {
+                    // (while a pull is held open at the server it answers the moment something moves: no timed pull)
                     let path = format!("/api/ops?since={}&limit={PULL_LIMIT}", st.config.cursor);
                     let t = st.http("GET", &path, Body::Empty, None);
                     st.control = Some((t.id(), Control::Pull));
@@ -2210,6 +2216,8 @@ impl Session {
             st.activity_done(&done);
         } else if st.is_presence(done.id) {
             st.presence_done(&done);
+        } else if st.is_watch(done.id) {
+            st.watch_done(&done);
         } else if let Some(job) = st.jobs.remove(&done.id) {
             self.job_done(&mut st, job, &done);
         }
@@ -2269,6 +2277,7 @@ impl Session {
                     Ok(ops) => {
                         let (more, any) = (ops.ops.len() >= PULL_LIMIT, !ops.ops.is_empty());
                         st.server_format = Some(ops.format);
+                        st.watch.wait = ops.wait;
                         st.presets_remote = ops.presets;
                         st.note_docs(&ops.docs);
                         if self.interaction.is_some() {
@@ -3069,6 +3078,37 @@ impl Session {
         if let Some(st) = self.sync.as_mut() {
             st.lively = Instant::now().checked_sub(ago).unwrap_or_else(Instant::now);
             st.pull_at = None;
+        }
+    }
+
+    /// (tests) As if the timed pull were long overdue (`sync_quiet_for` asks for a pull now instead).
+    #[cfg(test)]
+    pub(crate) fn sync_pull_overdue(&mut self) {
+        if let Some(st) = self.sync.as_mut() {
+            st.pull_at = Instant::now().checked_sub(Duration::from_secs(60));
+        }
+    }
+
+    /// (tests) The next held pull may go now.
+    #[cfg(test)]
+    pub(crate) fn sync_watch_now(&mut self) {
+        if let Some(st) = self.sync.as_mut() {
+            st.watch.expedite();
+        }
+    }
+
+    /// (tests) How long until the next held pull may go.
+    #[cfg(test)]
+    pub(crate) fn sync_watch_due_in(&self) -> Option<Duration> {
+        self.sync.as_ref()?.watch.due_in()
+    }
+
+    /// (tests) As if the held pull in flight had been sent `ago`, and the last sign of life were `quiet` ago.
+    #[cfg(test)]
+    pub(crate) fn sync_watch_held_for(&mut self, ago: Duration, quiet: Duration) {
+        if let Some(st) = self.sync.as_mut() {
+            st.watch.sent_ago(ago);
+            st.lively = Instant::now().checked_sub(quiet).unwrap_or(st.lively);
         }
     }
 

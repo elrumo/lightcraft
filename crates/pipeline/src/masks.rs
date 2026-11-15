@@ -8,7 +8,7 @@
 //! Range uses the depth [`Mattes`] carries (the photo's own, or Lens Blur's estimate).
 
 use lightcraft_develop::{BrushStroke, LocalAdjustments, Mask, MaskOp, MaskShape, SegMask};
-use lightcraft_geom::{Orientation, Point};
+use lightcraft_geom::{Affine, Orientation, Point};
 use lightcraft_raster::{Image, Plane, Rgb32f};
 use std::sync::Arc;
 
@@ -731,16 +731,68 @@ pub(crate) fn source_to_out(p: &Plane, frame: &Frame, w: usize, h: usize) -> Pla
     let expands = frame.expands();
     for_rows(&mut out.data, w, |y, row| {
         for (x, v) in row.iter_mut().enumerate() {
-            let flat = || o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
-            let s = match &frame.warp {
-                Some(wp) => match wp.frame(&o2t, x, y) {
-                    Some((_, s)) => s,
-                    None if expands => Some(wp.source_pos(&o2t, x, y)).filter(|s| s.x.is_finite() && s.y.is_finite()).unwrap_or_else(flat),
-                    None => continue,
-                },
-                None => flat(),
-            };
+            let Some(s) = out_place(frame, &o2t, expands, x, y) else { continue };
             *v = bilinear(&base, s.x as f32 * sx, s.y as f32 * sy);
+        }
+    });
+    out
+}
+
+/// Where output pixel (`x`, `y`) is in the oriented source: through the warp when there is one; `None` outside the warp's frame
+/// (with Generative Expand, the warp's own place there, or the flat one).
+fn out_place(frame: &Frame, o2t: &Affine, expands: bool, x: usize, y: usize) -> Option<Point> {
+    let flat = || o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
+    match &frame.warp {
+        Some(wp) => match wp.frame(o2t, x, y) {
+            Some((_, s)) => Some(s),
+            None if expands => Some(Some(wp.source_pos(o2t, x, y)).filter(|s| s.x.is_finite() && s.y.is_finite()).unwrap_or_else(flat)),
+            None => None,
+        },
+        None => Some(flat()),
+    }
+}
+
+/// Two planes of one size over the EXIF-oriented source at output resolution, as [`source_to_out`] samples one, read together
+/// (Colorize's a and b): each output pixel's place, the warp's costly part, is found once, and the pair is written side by side.
+/// Outside the source the pair is 0.
+pub(crate) fn source_pair_to_out(a: &Plane, b: &Plane, frame: &Frame, w: usize, h: usize) -> Vec<[f32; 2]> {
+    let mut out = vec![[0.0f32; 2]; w * h];
+    if a.width != b.width || a.height != b.height {
+        return out;
+    }
+    let o2t = frame.out_to_oriented(w, h);
+    let ppl = frame.px_per_long(w).max(1e-9);
+    let orient = |p: &Plane| if frame.orient == Orientation::Normal { p.clone() } else { p.oriented(frame.orient) };
+    let (oa, ob) = (orient(a), orient(b));
+    // plane px per output px
+    let k = oa.width as f64 / frame.ow * frame.ow.max(frame.oh) / ppl;
+    let f = if k >= 2.0 { (k.floor() as usize).min(64) } else { 1 };
+    let (ba, bb) = if f == 1 { (oa, ob) } else { (box_down(&oa, f), box_down(&ob, f)) };
+    let (pw, ph) = (ba.width, ba.height);
+    let (sx, sy) = ((pw as f64 / frame.ow) as f32, (ph as f64 / frame.oh) as f32);
+    // (side by side, so one place reads both: one set of weights and indices a pixel)
+    let pair: Vec<[f32; 2]> = ba.data.iter().zip(&bb.data).map(|(&a, &b)| [a, b]).collect();
+    if pw == 0 || ph == 0 || pair.len() != pw * ph {
+        return out;
+    }
+    let at =
+        |x: isize, y: isize| pair.get(y.clamp(0, ph as isize - 1) as usize * pw + x.clamp(0, pw as isize - 1) as usize).copied().unwrap_or([0.0; 2]);
+    let expands = frame.expands();
+    for_rows(&mut out, w, |y, row| {
+        for (x, v) in row.iter_mut().enumerate() {
+            let Some(s) = out_place(frame, &o2t, expands, x, y) else { continue };
+            // (as `bilinear`: held a pixel outside, so an infinite place reads the edge)
+            let fx = (s.x as f32 * sx).clamp(-1.0, pw as f32 + 1.0) - 0.5;
+            let fy = (s.y as f32 * sy).clamp(-1.0, ph as f32 + 1.0) - 0.5;
+            let (x0, y0) = (fx.floor(), fy.floor());
+            let (tx, ty) = (fx - x0, fy - y0);
+            let (x0, y0) = (x0 as isize, y0 as isize);
+            let (p00, p10, p01, p11) = (at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1));
+            *v = std::array::from_fn(|c| {
+                let top = p00[c] + (p10[c] - p00[c]) * tx;
+                let bottom = p01[c] + (p11[c] - p01[c]) * tx;
+                top + (bottom - top) * ty
+            });
         }
     });
     out

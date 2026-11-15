@@ -402,11 +402,13 @@ that site's browser storage, so each site is a separate device. The admin page i
 - **Signing out** sends what is left, signs the device out on the server and removes the account's library from this
   device ([below](#signing-out)); signing in again as the same user brings the library back from the server, and another
   user starts from an empty library of their own.
-- **File ▸ Pause Syncing** stops talking to the server until resumed; **File ▸ Sync Now** pulls at once (it also pulls
-  every 5 seconds while changes come or go, less and less often once nothing has moved for half a minute, down to every
-  30 seconds after three quiet minutes, and at once whenever the window comes back to the front, a change is sent, or a
-  photo shown on two devices is edited on the other; a request every few seconds kept a phone's radio awake for as
-  long as the app was open).
+- **File ▸ Pause Syncing** stops talking to the server until resumed; **File ▸ Sync Now** pulls at once. With the app
+  in front and a server that [holds pulls](#held-pulls), another device's change arrives the moment it lands, and the
+  device asks about every 26 to 30 seconds whatever happens. Otherwise (an older server, the app in the background, a held pull that failed)
+  it pulls every 5 seconds while changes come or go, less and less often once nothing has moved for half a minute, down
+  to every 30 seconds after three quiet minutes; and in both cases at once whenever the window comes back to the front,
+  a change is sent, or a photo shown on two devices is edited on the other (a request every few seconds kept a phone's
+  radio awake for as long as the app was open).
 
 ### When this library and the server's both have photos
 
@@ -1032,7 +1034,7 @@ Big JSON answers (the library, pulled changes, the presets; 16 KiB and up) come 
 | `GET /api/snapshot?limit=N[&compact=1][&cursor=C]` | `{defaults, library, seq, catalog, next, total}`: the library after change `seq`, in pages of at most `N` photos (and about 8 MiB), like a cloud photo service's asset listing. With `compact=1` each photo's develop settings (edit, import look, versions) are a JSON merge patch (RFC 7396) against the page's `defaults` (the server's default settings, written first), so an unedited photo takes a few hundred bytes, not ~4 KB, and a default changed in a later version changes no photo. The first page (no `cursor`) also has the albums, stacks and the rest; each page's `next` is the next page's `cursor`, absent on the last; `total` is the library's photo count. Every page comes from the copy taken at the first page, however the library changes meanwhile; the device adopts it after the last page, then pulls the changes since `seq`. `410`: that copy is gone (the server keeps four, and a restart keeps none unless nothing changed): start again. Without `limit` (devices from before paging): the whole library in one answer |
 | `GET /api/usage` | what this user takes on the server ([`proto::Usage`](../crates/catalog/src/sync.rs)): `{photos, videos, albums, devices, original, smart, mini, folders: {files, bytes}, foldersOnDisk, disk: {total, free}, quota, video: {originals, encoded, saved}}`; a few seconds old at most. `photos` and `videos` count the library's photos and its videos apart, leaving out Recently Deleted and virtual copies (worked out once per library revision, not per request; a server from before videos counted every record as a photo and says no `videos`, which reads as 0). `video` is what the videos take: `originals` their own files by the sizes the library knows (wherever they are kept), `encoded` the lighter copies the server keeps of them (`blobs/video/<xx>/<content hash>`, none until the server makes them), `saved` the bytes those copies are smaller than the originals they stand for. `original`, `smart` and `mini` are the files the server keeps; `folders` the photos it reads in place from the user's library folders, and `foldersOnDisk` how many of their bytes are on the same disk as its data. What the library takes in all is `original + smart + mini + folders`; `foldersOnDisk` is for the disk's bar (a server that doesn't say it has none on its disk). `quota` is their [storage limit](#storage-limits) in bytes (`null`: none); it counts `original + smart + mini` and the lighter video copies (`video.encoded`) only. A server older than the route answers `404` |
 | `GET /api/activity` | what the server is doing for this user now ([`proto::Activity`](../crates/catalog/src/sync.rs)): `{scan: {scanning, phase, done, todo, files, etaSecs, lastScan, problems} \| null, previews: {done, total, etaSecs}, search, text, faces, video: {done, total, etaSecs} \| null}`; `scan` is null for a user without library folders, the others null when not installed / not turned on. `video` is making lighter copies of the user's videos: `done` counts the videos that have a copy or need none, `total` those plus the ones still to do (a failed video is left out), `null` when an admin has it off or there are no videos; a server from before it sends none, which reads as `null`. A server older than the route answers `404` |
-| `GET /api/ops?since=N&limit=M` | `{head, ops: [[seq, op]…], presets}` (presets = the presets document's version) · `410`: reload the snapshot |
+| `GET /api/ops?since=N&limit=M[&wait=S]` | `{head, ops: [[seq, op]…], presets, docs, format, wait}` (presets = the presets document's version, `docs` the other shared documents' versions, `format` the catalog format it keeps, `wait` the longest it [holds a pull](#held-pulls), 25 s; a server older than a field leaves it out) · with `wait`, a pull that would bring nothing is held until something the devices pull changes or `S` seconds pass · `410`: reload the snapshot |
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
 | `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini\|video}/{hash}` | photo files by 128-bit content hash (`video`: a clip's lighter copy, an MP4 named by the *original's* hash, served as `video/mp4`; see below); `GET` takes `Range`; `GET` of a preview the server hasn't built yet (and has the original of) puts its build first in line and answers `404` `{"error": …, "previews": "queued" \| "failed"}` with `Retry-After: 3`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole; a `PUT` over the user's [storage limit](#storage-limits) is `507`. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range`. **`video`:** a `PUT` needs the digest of the copy's own bytes (128-bit, the same hash as a content hash) in `X-LightCraft-Digest` (`400` without), because a copy does not hash to the original's name; the server hashes what it receives and refuses a mismatch (`422`), a file that is not an MP4 or MOV it can read (`422`), one whose length differs from the video's by more than 1% (and half a second; `422`), a hash that names no video in the user's library (`404`), and any copy while lighter videos are off (`409`). It resumes like an original (`tmp/video-<hash>.part`, `HEAD` `Upload-Offset`, `Content-Range`) and may carry `X-LightCraft-Video: {"hardware": true}` (at most 1 KiB) to say a hardware encoder made it. With *Keep only copies at least 15% smaller* on, a copy that is not is dropped, the clip is marked "already efficient" and the answer is `200 {"kept": false, "efficient": true, "srcBytes", "dstBytes"}` (a kept copy answers `200 {}`). A `GET` of a copy that is not there is a plain `404` (no preview is built for it). The copy counts in `Usage.video.encoded` and in the storage limit |
 | `GET`/`PUT /api/presets` | `{version, presets}` (`GET` gzipped, see above: a whole collection is tens of MB); `PUT` with a stale `version` → `412` with the current document |
@@ -1057,6 +1059,39 @@ or nothing, so it never stores a change that doesn't apply. Device-local ops (fi
 refused. The server adds ops of its own for library folders (`AddPhoto`, `SetServerPath`, `SetContent`), in an id
 space no device is given. An original kept in a library folder is served from there (`HEAD`/`GET`).
 
+### Held pulls
+
+A device with the app in front leaves one pull waiting at the server (`GET /api/ops?since=<its position>&limit=1&wait=25`)
+instead of asking every few seconds. The server answers it at once when it has ops past that position, and otherwise
+holds it until the user's library changes for their devices (a push, the presets, a shared document, a library folder
+scan or a write from a shared album) or 25 seconds pass. The answer only says that the server moved: the device then
+pulls the change with its ordinary pull, the one request that orders the library, so nothing about the order in which
+changes are applied is different. Two devices showing different photos see each other's edits within a second.
+
+Held pulls keep the timer's rhythm: the next one goes when the timed pull would have, so a device asks about every 26
+seconds right after a change (instead of every 5) and every 30 seconds once it has been quiet for three minutes (as
+before). In that last case a held pull covers 25 of every 30 seconds, and a change that lands in the other 5 waits at
+most those 5 seconds (the next held pull is answered at once).
+
+- **Never in the way.** The held pull is a side request: a push, a sign-in, reading the library or presence never waits
+  for it, and the host doesn't count it as work (it comes back on its usual timer, not every half second). Nothing is
+  held from the background, and `sync.now` (which waits for each answer) never holds one.
+- **Older servers.** A server says it holds pulls with `wait` in every answer to a pull. One from before leaves it out,
+  and its devices keep pulling on the timer, so old and new servers and apps all still sync.
+- **Bounded.** A held pull keeps a connection's thread and one of the server's request places, so at most half of
+  `--max-requests` are held at once (32 by default); past that a pull is answered at once and the device pulls on its
+  timer. 25 seconds stays under the read timeouts of the usual reverse proxies (60 s and more) and of the devices (120 s).
+  The time a pull is held doesn't count as the device's busy time on the admin page.
+- **Failures.** A held pull that fails waits 30 s before the next (the timer pulls meanwhile); one answered early with
+  nothing new (this device's own push, or a server that doesn't really hold) doubles the gap up to 30 s; one that
+  brought news is followed after 1 s. An answer that can't be read counts as a failure.
+- Not a new op or synced field: the catalog format (`format`, `SYNC_VERSION`) is unchanged.
+
+Code: `crates/engine/src/cloud_sync/watch.rs` (device), `hold` and `Bell` in `apps/lightcraft-server/src/api.rs`
+(server), `Driver::poll` in `crates/apphost/src/sync.rs` (host). Tests: `tests_cloud_sync.rs` (`a_pull_held_at_the_server_…`,
+`nothing_is_held_at_an_older_server_…`, `a_hostile_answer_to_a_held_pull_…`) and `apps/lightcraft-server/tests/e2e.rs`
+(`a_held_pull_is_answered_when_a_change_lands_…`, `a_device_holding_a_pull_…`).
+
 ## Security
 
 - Passwords are argon2id hashes; device and admin tokens are 256-bit random, stored as SHA-256 hashes. The account
@@ -1072,7 +1107,7 @@ space no device is given. An original kept in a library folder is served from th
 - **A client that stalls is cut off.** The server's own HTTP layer closes a connection whose request head doesn't
   arrive within 10 s, whose body pauses for 60 s, or that is idle for 30 s; it caps a request's head at 32 KiB and
   64 headers, takes at most 512 connections (128 per address) and answers 64 requests at once (`--max-requests`;
-  `/api/health` never waits for a place). Request bodies must say their length: `Transfer-Encoding: chunked` gets `411`.
+  `/api/health` never waits for a place; at most half of them may be [held pulls](#held-pulls)). Request bodies must say their length: `Transfer-Encoding: chunked` gets `411`.
 - **Other sites** can call the API from a browser only if listed with `--cors-origin`; nothing is added otherwise. Devices
   authenticate with a bearer token in a header, never a cookie, so a listed site can call the API only as a user who
   signed in to it. `/api/admin/…` never answers cross-origin calls.
