@@ -674,6 +674,19 @@ fn boxed_lens_and_focus_are_written_as_the_values_themselves() {
     assert_eq!(v["meta"]["focus"], serde_json::to_value(&focus).unwrap());
     let back: Photo = serde_json::from_value(v).unwrap();
     assert_eq!((back.embedded_lens.as_deref(), back.meta.focus.as_deref()), (Some(&lens), Some(&focus)));
+    // the camera details are written as fields of the metadata, and a file that gave none holds no box
+    assert!(back.meta.details.is_none());
+    p.meta.edit_details(|d| {
+        d.make = "Canon".into();
+        d.exposure_bias = Some(-0.5);
+    });
+    let v = serde_json::to_value(&p).unwrap();
+    assert_eq!((&v["meta"]["make"], &v["meta"]["exposure_bias"]), (&serde_json::json!("Canon"), &serde_json::json!(-0.5)));
+    assert!(v["meta"].get("details").is_none() && v["meta"].get("serial_number").is_none(), "{v}");
+    let back: Photo = serde_json::from_value(v).unwrap();
+    assert_eq!(back.meta, p.meta);
+    p.meta.edit_details(|d| *d = Default::default());
+    assert!(p.meta.details.is_none(), "emptied: no box kept");
 }
 
 /// Reload stores the lens data a file carries; the inverse (through the journal's JSON) takes it back.

@@ -398,14 +398,15 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, catalog: &lightcraft_c
     if o.metadata == MetadataPolicy::All {
         // `camera` is maker and model together ("Canon Canon EOS R6"): Exif keeps them apart. The maker as the file
         // named it when it was read; for a photo from before that, split from `camera` (HB-284)
-        let (make, model) = if m.make.is_empty() {
+        let maker = m.details().make.as_str();
+        let (make, model) = if maker.is_empty() {
             lightcraft_catalog::camera_make_model(&m.camera)
         } else {
-            (m.make.as_str(), m.camera.strip_prefix(m.make.as_str()).and_then(|rest| rest.strip_prefix(' ')).unwrap_or(&m.camera))
+            (maker, m.camera.strip_prefix(maker).and_then(|rest| rest.strip_prefix(' ')).unwrap_or(&m.camera))
         };
         out.make = text(make);
         out.model = text(model);
-        out.lens_make = text(&m.lens_make);
+        out.lens_make = text(&m.details().lens_make);
         out.lens_model = text(&m.lens);
         out.focal_length = m.focal_mm.map(f64::from);
         out.f_number = m.aperture.map(f64::from);

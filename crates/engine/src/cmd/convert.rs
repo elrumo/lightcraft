@@ -556,26 +556,32 @@ fn fill_missing_meta(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::P
     if m.lens.is_empty() {
         m.lens = src.lens.clone();
     }
-    if m.make.is_empty() {
-        m.make = src.make.clone();
-    }
-    if m.lens_make.is_empty() {
-        m.lens_make = src.lens_make.clone();
-    }
-    if m.shutter.is_empty() {
+    let shutter_empty = m.shutter.is_empty();
+    if shutter_empty {
         m.shutter = src.shutter.clone();
-        m.exposure_time = src.exposure_time;
     } else {
         repair_legacy_shutter(&mut m, src);
     }
+    let from = src.details();
+    m.edit_details(|d| {
+        if d.make.is_empty() {
+            d.make = from.make.clone();
+        }
+        if d.lens_make.is_empty() {
+            d.lens_make = from.lens_make.clone();
+        }
+        if shutter_empty {
+            d.exposure_time = from.exposure_time;
+        }
+        d.flash = d.flash.or(from.flash);
+        d.exposure_bias = d.exposure_bias.or(from.exposure_bias);
+        if d.serial_number.is_empty() {
+            d.serial_number = from.serial_number.clone();
+        }
+    });
     m.focal_mm = m.focal_mm.or(src.focal_mm);
     m.aperture = m.aperture.or(src.aperture);
     m.iso = m.iso.or(src.iso);
-    m.flash = m.flash.or(src.flash);
-    m.exposure_bias = m.exposure_bias.or(src.exposure_bias);
-    if m.serial_number.is_empty() {
-        m.serial_number = src.serial_number.clone();
-    }
     m.gps = m.gps.or(src.gps);
     // the camera's focus point: photos imported before it was read get it here
     if m.focus.is_none() {
@@ -593,12 +599,12 @@ fn fill_missing_meta(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::P
 
 /// Repair only the shutter data an old import wrote, keeping independently edited metadata.
 fn repair_legacy_shutter(m: &mut lightcraft_catalog::Meta, src: &lightcraft_catalog::Meta) -> bool {
-    if m.exposure_time.is_none()
-        && let Some(t) = src.exposure_time
+    if m.details().exposure_time.is_none()
+        && let Some(t) = src.details().exposure_time
         && (m.shutter.trim() == src.shutter || legacy_shutter_text(t).is_some_and(|old| m.shutter.trim() == old))
     {
         m.shutter = src.shutter.clone();
-        m.exposure_time = Some(t);
+        m.edit_details(|d| d.exposure_time = Some(t));
         true
     } else {
         false
@@ -906,27 +912,27 @@ mod tests {
         ph.captured = Some("2026-10-04T08:16:11".into());
         let mut info = crate::media::ProbeInfo { captured: ph.captured.clone(), ..Default::default() };
         for (t, legacy, shown) in [(0.4, "1/2", "0.4"), (2.5, "2", "2.5"), (1.0 / 2.8, "1/3", "0.3571"), (1.0 / 250.0, "1/250", "1/250")] {
-            info.meta.exposure_time = Some(t);
+            info.meta.edit_details(|d| d.exposure_time = Some(t));
             info.meta.shutter = lightcraft_meta::format_exposure_time(t).unwrap();
             ph.meta.shutter = legacy.into();
-            ph.meta.exposure_time = None;
+            ph.meta.edit_details(|d| d.exposure_time = None);
             let ops = fill_missing_meta(PhotoId(1), &ph, &info);
             let Some(Op::SetMeta { meta, .. }) = ops.first() else { panic!("{t}: {ops:?}") };
-            assert_eq!((meta.shutter.as_str(), meta.exposure_time), (shown, Some(t)), "{t}");
+            assert_eq!((meta.shutter.as_str(), meta.details().exposure_time), (shown, Some(t)), "{t}");
             assert_eq!(meta.shutter_seconds(), Some(t), "{t}");
             // repaired → nothing more to do
             ph.meta = (**meta).clone();
             assert!(fill_missing_meta(PhotoId(1), &ph, &info).is_empty(), "{t}");
         }
         // typed by hand, not what any import wrote for this file
-        info.meta.exposure_time = Some(0.4);
+        info.meta.edit_details(|d| d.exposure_time = Some(0.4));
         info.meta.shutter = "0.4".into();
         ph.meta.shutter = "1/8".into();
-        ph.meta.exposure_time = None;
+        ph.meta.edit_details(|d| d.exposure_time = None);
         assert!(fill_missing_meta(PhotoId(1), &ph, &info).is_empty(), "a hand-set shutter speed is kept");
         // already has an exact time (the text was edited afterwards): kept
         ph.meta.shutter = "1/2".into();
-        ph.meta.exposure_time = Some(0.4);
+        ph.meta.edit_details(|d| d.exposure_time = Some(0.4));
         assert!(fill_missing_meta(PhotoId(1), &ph, &info).is_empty(), "a photo with an exact time is left alone");
     }
 
@@ -941,13 +947,13 @@ mod tests {
             copy.id = PhotoId(id);
             copy.copy_of = Some(source.id);
             copy.meta.shutter = text.into();
-            copy.meta.exposure_time = exact;
+            copy.meta.edit_details(|d| d.exposure_time = exact);
             copy.meta.title = "My copy".into();
             cat.apply(Op::AddPhoto { photo: Box::new(copy) }).unwrap();
         }
         let mut info = crate::media::ProbeInfo::default();
         info.meta.shutter = "0.4".into();
-        info.meta.exposure_time = Some(0.4);
+        info.meta.edit_details(|d| d.exposure_time = Some(0.4));
         info.meta.title = "File title".into();
         let mut ops = Vec::new();
         let mut changed = Vec::new();
@@ -957,12 +963,12 @@ mod tests {
         }
         for id in [1, 2, 3] {
             let m = &cat.photo(PhotoId(id)).unwrap().meta;
-            assert_eq!((m.shutter.as_str(), m.exposure_time), ("0.4", Some(0.4)));
+            assert_eq!((m.shutter.as_str(), m.details().exposure_time), ("0.4", Some(0.4)));
             assert_eq!(m.shutter_seconds(), Some(0.4));
         }
         for (id, text, exact) in [(4, "1/8", None), (5, "1/2", Some(0.4))] {
             let m = &cat.photo(PhotoId(id)).unwrap().meta;
-            assert_eq!((m.shutter.as_str(), m.exposure_time), (text, exact));
+            assert_eq!((m.shutter.as_str(), m.details().exposure_time), (text, exact));
         }
         for id in [2, 3, 4, 5] {
             assert_eq!(cat.photo(PhotoId(id)).unwrap().meta.title, "My copy");

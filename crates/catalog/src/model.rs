@@ -173,32 +173,18 @@ pub fn parse_shutter_seconds(s: &str) -> Option<f64> {
 #[serde(default)]
 pub struct Meta {
     pub camera: String,
-    /// The camera's maker, from Exif `Make` (`camera` is maker and model together).
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub make: String,
+    /// The maker, the lens's maker, the exact exposure time, the flash, the exposure compensation and the serial
+    /// number ([`CameraDetails`]), read through [`Meta::details`] and changed through [`Meta::edit_details`]. Boxed
+    /// (`None` when the file says none of them): about 100 B inline in every photo of a library otherwise, which took
+    /// the record past its small allocation. Written as the fields themselves, as when they were inline.
+    #[serde(flatten, deserialize_with = "details_or_none")]
+    pub details: Option<Box<CameraDetails>>,
     pub lens: String,
-    /// The lens's maker, from Exif `LensMake`.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub lens_make: String,
     pub focal_mm: Option<f32>,
     pub aperture: Option<f32>,
     /// Shutter speed for display, from [`lightcraft_meta::format_exposure_time`] (`1/3`, `0.3571`, `2.5`).
     pub shutter: String,
-    /// The file's exact exposure time in seconds, kept beside the rounded `shutter` text so export
-    /// writes the original duration; read through [`Meta::shutter_seconds`]. Left out of the catalog
-    /// JSON when unknown, so older catalogs read unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exposure_time: Option<f64>,
     pub iso: Option<u32>,
-    /// Whether the flash fired, from Exif `Flash`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flash: Option<bool>,
-    /// Exposure compensation in EV, from Exif `ExposureBiasValue`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exposure_bias: Option<f32>,
-    /// The camera body's serial number.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub serial_number: String,
     /// Place (sublocation, e.g. a landmark).
     pub location: String,
     pub city: String,
@@ -233,11 +219,64 @@ pub struct Meta {
     pub focus: Option<Box<lightcraft_meta::FocusPoint>>,
 }
 
+/// The camera details of a photo's file beyond those every photo shows ([`Meta::details`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CameraDetails {
+    /// The camera's maker, from Exif `Make` (`camera` is maker and model together).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub make: String,
+    /// The lens's maker, from Exif `LensMake`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub lens_make: String,
+    /// The file's exact exposure time in seconds, kept beside the rounded `shutter` text so export
+    /// writes the original duration; read through [`Meta::shutter_seconds`]. Left out of the catalog
+    /// JSON when unknown, so older catalogs read unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_time: Option<f64>,
+    /// Whether the flash fired, from Exif `Flash`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flash: Option<bool>,
+    /// Exposure compensation in EV, from Exif `ExposureBiasValue`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_bias: Option<f32>,
+    /// The camera body's serial number.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub serial_number: String,
+}
+
+/// [`Meta::details`] as the catalog JSON has them: none at all when the file gave none.
+fn details_or_none<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Box<CameraDetails>>, D::Error> {
+    let details = CameraDetails::deserialize(d)?;
+    Ok((details != CameraDetails::default()).then(|| Box::new(details)))
+}
+
+/// The details of a photo whose file gave none.
+static NO_DETAILS: CameraDetails = CameraDetails {
+    make: String::new(),
+    lens_make: String::new(),
+    exposure_time: None,
+    flash: None,
+    exposure_bias: None,
+    serial_number: String::new(),
+};
+
 impl Meta {
-    /// Shutter speed in seconds: the exact [`Meta::exposure_time`] while `shutter` still shows it,
+    /// The file's camera details ([`CameraDetails`]; all empty when it gave none).
+    pub fn details(&self) -> &CameraDetails {
+        self.details.as_deref().unwrap_or(&NO_DETAILS)
+    }
+    /// Change the camera details; none are kept when they end up empty.
+    pub fn edit_details(&mut self, f: impl FnOnce(&mut CameraDetails)) {
+        let mut details = self.details.take().map(|d| *d).unwrap_or_default();
+        f(&mut details);
+        self.details = (details != CameraDetails::default()).then(|| Box::new(details));
+    }
+    /// Shutter speed in seconds: the exact [`CameraDetails::exposure_time`] while `shutter` still shows it,
     /// otherwise whatever `shutter` says (set by hand, or a catalog from before the exact time was kept).
     pub fn shutter_seconds(&self) -> Option<f64> {
-        self.exposure_time
+        self.details()
+            .exposure_time
             .filter(|t| lightcraft_meta::format_exposure_time(*t).is_some_and(|text| text == self.shutter.trim()))
             .or_else(|| parse_shutter_seconds(&self.shutter))
     }
@@ -1115,23 +1154,24 @@ mod shutter_tests {
 
     #[test]
     fn shutter_seconds_prefers_the_exact_time_while_the_text_still_shows_it() {
-        let mut m = Meta { shutter: "0.3571".into(), exposure_time: Some(1.0 / 2.8), ..Default::default() };
+        let mut m = Meta { shutter: "0.3571".into(), ..Default::default() };
+        m.edit_details(|d| d.exposure_time = Some(1.0 / 2.8));
         assert_eq!(m.shutter_seconds(), Some(1.0 / 2.8));
         m.shutter = "1/3".into();
-        m.exposure_time = Some(1.0 / 3.0);
+        m.edit_details(|d| d.exposure_time = Some(1.0 / 3.0));
         assert_eq!(m.shutter_seconds(), Some(1.0 / 3.0));
         // the text no longer matches the stored time (edited elsewhere): the text wins
         m.shutter = "1/250".into();
         assert_eq!(m.shutter_seconds(), Some(1.0 / 250.0));
         // an older catalog without the exact time
-        m.exposure_time = None;
+        m.edit_details(|d| d.exposure_time = None);
         m.shutter = "2.5".into();
         assert_eq!(m.shutter_seconds(), Some(2.5));
         // the exact time stays out of the JSON when unknown, and round-trips when known
         assert!(!serde_json::to_string(&m).unwrap().contains("exposure_time"));
-        m.exposure_time = Some(2.5);
+        m.edit_details(|d| d.exposure_time = Some(2.5));
         let back: Meta = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
-        assert_eq!(back.exposure_time, Some(2.5));
+        assert_eq!(back.details().exposure_time, Some(2.5));
     }
 
     #[test]

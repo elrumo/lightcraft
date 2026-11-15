@@ -1147,9 +1147,9 @@ impl Rule {
             // photo shows, `1/3` or `0.3571`, at every op, including `is` and the edges of a range)
             "shutterSpeed" => num_op(op, crate::parse_shutter_seconds(&m.shutter), &shutter_value(value)),
             "iso" => num_op(op, m.iso.map(|v| v as f64), value),
-            "flash" => yes(m.flash.unwrap_or(false)),
-            "exposureBias" => num_op(op, m.exposure_bias.map(f32_as_decimal), value),
-            "cameraSerial" => text(&m.serial_number),
+            "flash" => yes(m.details().flash.unwrap_or(false)),
+            "exposureBias" => num_op(op, m.details().exposure_bias.map(f32_as_decimal), value),
+            "cameraSerial" => text(&m.details().serial_number),
             "aperture" => num_op(op, m.aperture.map(f32_as_decimal), value),
             "focalLength" => num_op(op, m.focal_mm.map(f32_as_decimal), value),
             "longEdge" | "shortEdge" => {
