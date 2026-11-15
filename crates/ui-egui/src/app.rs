@@ -1,7 +1,3 @@
-use crate::erase::EraseState;
-use crate::haptics;
-use crate::lensblur::DepthFetch;
-use crate::superres::SuperResState;
 use super::clock::{AppClock, monotonic_ms};
 use super::services::Services;
 use super::state::{GestureFrame, InjectedDrop, InjectedPress};
@@ -12,6 +8,7 @@ use super::{
     TOAST_SECONDS, UiState, Value, docking, drop_overlay, export_task, focus_scan, frame_rate, headless, i18n, import, lightroom_import, menus,
     merge, panels, pick, recheck, render, shortcuts, slideshow_export, state, sync, tasks, theme, updates_ui, widgets,
 };
+use crate::haptics;
 
 mod control;
 mod frame;

@@ -258,7 +258,8 @@ fn main() -> eframe::Result {
         prefs.as_ref().map_or_else(|| lightcraft_ui_egui::state::AppSettings::default().compose_window, |ui| ui.settings.compose_window)
             && std::env::var_os("WGPU_BACKEND").is_none();
     let win_files = std::sync::Arc::new(window_files(in_memory));
-    let window_gpu::Chosen { renderer, mut wgpu_options, which: window_renderer, notice: window_notice } = window_gpu::choose(&win_files, compose_window);
+    let window_gpu::Chosen { renderer, mut wgpu_options, which: window_renderer, notice: window_notice } =
+        window_gpu::choose(&win_files, compose_window);
     // a surface that can show HDR where some screen has headroom (the window draws as before until a photo does)
     wgpu_options.surface.hdr_surface = hdr_display::surface_wanted();
     win_files.arm(window_renderer);

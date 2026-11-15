@@ -731,6 +731,7 @@ impl Session {
 
     /// Open `stores`; the new library takes `lock` once nothing can fail any more. `folder` is the
     /// folder they write to, when they write to one: the thumbnail cache asks it too.
+    #[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
     fn open_stores(&mut self, stores: LibraryStores, seed_demo: bool, lock: &mut Option<LibraryLock>, folder: Option<OpenedFolder>) -> Result<()> {
         let LibraryStores { dir, catalog, mut files, on_disk } = stores;
         // the current library may be these same files: let its background snapshot land first, and

@@ -170,6 +170,7 @@ fn names(d: &crate::import::ImportDialog) -> Vec<&str> {
 /// The whole flow, at a size: the camera's files arrive while the review is open and are listed
 /// newest day first under a heading per day; a day's box unchecks it; Import copies the checked
 /// files off the camera and imports them; opened again, those are greyed out in the library.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn camera_import_at(size: [f32; 2], tag: &str) {
     let root = base(tag);
     let (mut h, cam) = app_with_camera(&root, size);

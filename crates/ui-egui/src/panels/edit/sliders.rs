@@ -1,6 +1,6 @@
 use super::{
-    Align2, ControlSpec, DevelopSettings, Icon, LightcraftApp, PhotoId, Sense, SliderOut, Tokens, Value, controls, divider, json,
-    pos2, register, section_header, slider, vec2,
+    Align2, ControlSpec, DevelopSettings, Icon, LightcraftApp, PhotoId, Sense, SliderOut, Tokens, Value, controls, divider, json, pos2, register,
+    section_header, slider, vec2,
 };
 
 /// Commit a slider interaction: begin → live updates → end, so a drag is one undo step.

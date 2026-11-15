@@ -1,6 +1,8 @@
 use super::render::{RenderJob, RenderResult};
 use super::source::{PreviewLoader, SourceLevel};
-use super::{Arc, Deserialize, Hash128, Hasher128, Histogram, MediaKind, Photo, PhotoId, PreviewCache, Rendered, Rgba8, Serialize, Source, SourceInfo};
+use super::{
+    Arc, Deserialize, Hash128, Hasher128, Histogram, MediaKind, Photo, PhotoId, PreviewCache, Rendered, Rgba8, Serialize, Source, SourceInfo,
+};
 
 /// Where a [`QuickJob`]'s stand-in image came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

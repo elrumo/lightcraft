@@ -1,3 +1,4 @@
+use super::{LABEL_W, RichText, Tokens, register};
 use crate::icons::Icon;
 use crate::panels::settings::Card;
 use crate::panels::settings::TABS;
@@ -6,7 +7,6 @@ use crate::panels::settings::card_id;
 use crate::panels::settings::card_row;
 use crate::panels::settings::column;
 use egui::{Align, Color32, Layout, Margin, Rect, Sense, pos2, vec2};
-use super::{LABEL_W, RichText, Tokens, register};
 
 /// `path` shortened to fit `max` (as `width` measures it) by dropping leading folders, after
 /// either kind of separator, so that its end stays (`…/Pictures/Library`,

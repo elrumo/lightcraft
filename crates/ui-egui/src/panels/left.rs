@@ -137,7 +137,12 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     app.ui.left_panel = false;
                 }
             }
-            if Row::new("picks", Icon::FlagPick, "Picks").count(Some(picks)).selected(src == LibrarySource::Picks && !people_shown).show(app, ui).clicked() {
+            if Row::new("picks", Icon::FlagPick, "Picks")
+                .count(Some(picks))
+                .selected(src == LibrarySource::Picks && !people_shown)
+                .show(app, ui)
+                .clicked()
+            {
                 let _ = app.run("library.source", json!({"kind": "picks"}));
                 leave_people(app);
             }

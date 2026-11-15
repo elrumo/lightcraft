@@ -1,6 +1,6 @@
 use super::mono::to_prophoto;
 use super::pairs::{displayed, luma};
-use super::*;
+use super::{CameraLook, CameraTone, HsvTable, Mat3, ToneMap};
 pub(crate) use lightcraft_pipeline::camera_look::HueSat;
 #[cfg(test)]
 pub(super) use lightcraft_pipeline::camera_look::{MIN_LUMINANCE_KEPT, NO_LUMINANCE_KEPT, restore_weight};

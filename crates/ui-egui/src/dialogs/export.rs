@@ -1,6 +1,6 @@
 //! The pieces of the Export dialog that are shared: the fork's Export dialog itself is `panels/export.rs`.
 
-use super::*;
+use super::SettingsGroup;
 
 /// Two columns of settings-group checkboxes (Copy Settings, Create Preset) plus All / None.
 pub(super) fn group_checklist(ui: &mut egui::Ui, tag: &str, groups: &mut Vec<String>) {

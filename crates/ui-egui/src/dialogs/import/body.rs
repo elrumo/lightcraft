@@ -1,7 +1,7 @@
-use lightcraft_engine::import::ImportCandidate;
-use egui::Align2;
 use crate::import::DayGroup;
 use crate::import::is_raw;
+use egui::Align2;
+use lightcraft_engine::import::ImportCandidate;
 use serde_json::json;
 
 use super::tags::{tag_field_width, tag_help, tag_toggle, unknown_tags_warning};

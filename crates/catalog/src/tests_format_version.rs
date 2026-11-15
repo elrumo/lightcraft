@@ -151,8 +151,7 @@ fn upstream_v10_to_v13_library_keeps_its_fields_and_is_upgraded() {
     s.lens_blur.transition = 0.25;
     s.lens_blur.focus_mask = Some(1);
     p.develop = std::sync::Arc::new(s);
-    p.embedded_lens =
-        Some(Box::new(lightcraft_develop::EmbeddedLens { source: lightcraft_develop::LensSource::Database, ..Default::default() }));
+    p.embedded_lens = Some(Box::new(lightcraft_develop::EmbeddedLens { source: lightcraft_develop::LensSource::Database, ..Default::default() }));
     c.apply(Op::AddPhoto { photo: p }).unwrap();
     let snap = c.to_snapshot();
     for v in 10..=13 {

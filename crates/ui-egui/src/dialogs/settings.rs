@@ -12,13 +12,13 @@
 //!   `slideshow.playback` commands into the library's `prefs.json`,
 //!   so they travel with the library.
 
-use egui::{Align, Color32, Layout, Margin, Rect, RichText, Sense, Stroke, pos2, vec2};
+use egui::{Align, Color32, Margin, Rect, RichText, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
 use crate::icons::Icon;
 use crate::panels::mobile;
-use crate::state::{Appearance, GridBadges, HOT_PIXEL_LIMIT_DEFAULT, HOT_PIXEL_LIMITS, PREVIEW_LIMITS, StartupView};
+use crate::state::{GridBadges, HOT_PIXEL_LIMIT_DEFAULT, HOT_PIXEL_LIMITS, PREVIEW_LIMITS, StartupView};
 use crate::sync_ui::SignOutHow;
 use crate::theme::Tokens;
 use crate::widgets::register;

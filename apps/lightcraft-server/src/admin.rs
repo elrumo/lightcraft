@@ -363,6 +363,7 @@ struct Gc {
 }
 
 /// `/api/admin/…`.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
     let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
     // without a session

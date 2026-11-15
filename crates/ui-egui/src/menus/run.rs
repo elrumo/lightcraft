@@ -1,6 +1,6 @@
 use super::files::{edit_in, open_log_folder, open_original_in, show_in_finder, show_in_folders};
 use super::ui_commands::{UI_COMMANDS, language_from_command};
-use super::*;
+use super::{BeforeAfter, Dialog, LightcraftApp, PickRequest, Picked, RightPanel, Value, ViewMode, Zoom, bool_param, json, thumb_size_view};
 
 /// A tool panel going away ends its gesture, as closing it from its own key does.
 fn end_panel_tool(app: &mut LightcraftApp) {
@@ -1439,8 +1439,7 @@ fn ui_commands_10(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, p: &Va
                 None => {
                     let title = if albums_only { "Import Lightroom Albums" } else { "Import Lightroom Catalog" };
                     // (a catalog sent as a .zip is read from inside it)
-                    let req =
-                        PickRequest::file(crate::i18n::tr(title), crate::i18n::tr("Lightroom Catalog"), &["lrcat", "mcat", "lrlibrary", "zip"]);
+                    let req = PickRequest::file(crate::i18n::tr(title), crate::i18n::tr("Lightroom Catalog"), &["lrcat", "mcat", "lrlibrary", "zip"]);
                     match crate::pick::ask(app, id, p, "path", req, |s| s.pick_lightroom_catalog.as_mut().and_then(|f| f()).map(|x| vec![x])) {
                         Picked::Now(v) => v.into_iter().next(),
                         Picked::Later | Picked::Unavailable => None,
@@ -1460,6 +1459,7 @@ fn ui_commands_10(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, p: &Va
 }
 
 /// Part 11 of 12 of the UI commands; `None` means the id is not one of this part's.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn ui_commands_11(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, p: &Value) -> Option<Result<Value, String>> {
     let r: Result<Value, String> = match id {
         "app.quit" => {
@@ -1701,9 +1701,9 @@ fn ui_commands_11(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, p: &Va
                 } else {
                     msg += &crate::i18n::tr_format!(" · {} failed: {}", problems.len(), detail);
                 }
-                app.toast_error(&ctx, msg);
+                app.toast_error(ctx, msg);
             } else if !msg.is_empty() {
-                app.toast(&ctx, msg);
+                app.toast(ctx, msg);
             }
             let r = r.map(|mut v| {
                 if !lut_paths.is_empty()

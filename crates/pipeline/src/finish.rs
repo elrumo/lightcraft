@@ -618,6 +618,7 @@ pub fn base_tone(s: &DevelopSettings, info: &SourceInfo, peak: f32) -> ToneMap {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // fork code that predates the lint; split it when it is next reworked
 pub(crate) fn finish(
     p: &Prepared,
     s: &DevelopSettings,
@@ -692,6 +693,7 @@ pub(crate) fn finish_deep(
 /// curve (tone curves and grain applied; not clamped), handed to `store` for the final encoding with its place in the
 /// whole output frame (a window's pixels are offset by the window's place, so dithering lines up across windows).
 /// `exact`: encode with the exact sRGB curve instead of the (8/10-bit accurate) table.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub(crate) fn finish_with<T: Copy + Default + Send>(
     p: &Prepared,
     fp: &FinishParams,

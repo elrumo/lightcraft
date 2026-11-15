@@ -132,6 +132,7 @@ fn a_finger_that_moves_is_not_a_long_press() {
 /// at the top with the number of photos shown, then the lists (Type, Camera, People, Location,
 /// Keyword, Edited), each a page of choices that comes back once one is picked; Clear resets.
 #[test]
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn the_filter_button_opens_the_filter_page_and_its_lists() {
     let mut h = grid([390.0, 844.0]);
     let all = h.app.session.visible().len();

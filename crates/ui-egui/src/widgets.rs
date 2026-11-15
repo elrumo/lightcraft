@@ -406,6 +406,7 @@ const THUMB_RING: f32 = 7.0;
 /// Scroll sideways over it to nudge it. Click the value to type one: Return or clicking away applies it,
 /// Esc keeps the old one. Drag the value sideways to scrub it, as if dragging the thumb (Shift: a tenth
 /// as far).
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_override: Option<&str>) -> SliderOut {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
@@ -802,6 +803,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
 /// control's default is to the handle (an edited slider shows how far it went; a centred one fills
 /// outward from its middle), and a solid round handle ringed in the panel's colour, which grows a
 /// little under the pointer. Gradient tracks (temperature, hue…) keep their colours and no fill.
+#[allow(clippy::too_many_arguments)] // fork code that predates the lint; split it when it is next reworked
 fn paint_filled_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool, hovered: bool) {
     let p = ui.painter();
     let y = rect.center().y;
@@ -848,6 +850,7 @@ fn paint_filled_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: 
 /// centred one fills outward from its middle), and a white capsule thumb with a soft shadow that
 /// swells into a lens of glass while it is held (`lens`, 0–1). Gradient tracks (temperature,
 /// hue…) keep their colours.
+#[allow(clippy::too_many_arguments)] // fork code that predates the lint; split it when it is next reworked
 fn paint_ios_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool, lens: f32) {
     let p = ui.painter();
     let y = rect.center().y;

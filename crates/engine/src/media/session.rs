@@ -386,6 +386,7 @@ impl crate::Session {
     /// denoised picture, camera profile and lens profile in use are part of it (as of the render's own
     /// key, [`Self::variant_key`]): a view rendered before the photo's AI Denoise result was there is
     /// not shown as the denoised one.
+    #[cfg_attr(not(test), allow(dead_code))] // the tests key views through it; the engine calls view_key_with
     pub(crate) fn view_key(&self, p: &Photo, apply_crop: bool) -> Hash128 {
         self.view_key_with(p, p.develop.hash64() ^ crate::files::hot_pixel_key(&p.develop), apply_crop)
     }
@@ -395,11 +396,7 @@ impl crate::Session {
         let salt = self.media.denoise_salt(p.id, &p.develop);
         let profile_salt = self.media.camera_profile_salt(&p.develop.profile.id);
         let mut k = Hasher128::new();
-        k.str(&content_key(p))
-            .str("view")
-            .u64(settings_hash)
-            .u64(apply_crop as u64)
-            .u64(RENDER_CACHE_VERSION);
+        k.str(&content_key(p)).str("view").u64(settings_hash).u64(apply_crop as u64).u64(RENDER_CACHE_VERSION);
         with_process(&mut k, &p.develop).u64(crate::camera_profiles::cache_key());
         if salt != 0 {
             k.u64(salt);
@@ -547,14 +544,7 @@ impl crate::Session {
         let profile_salt = self.media.camera_profile_salt(&p.develop.profile.id);
         let cached = vec![(self.media.rendered.clone(), self.view_key_with(&p, settings_hash, apply_crop))];
         // (the photo too: a virtual copy shares the file and, unedited, the settings)
-        let h = Hasher128::new()
-            .str(&content_key(&p))
-            .str("quick")
-            .u64(settings_hash)
-            .u64(apply_crop as u64)
-            .u64(id.0)
-            .u64(profile_salt)
-            .finish();
+        let h = Hasher128::new().str(&content_key(&p)).str("quick").u64(settings_hash).u64(apply_crop as u64).u64(id.0).u64(profile_salt).finish();
         let key = h.0 as u64 ^ super::quick::decoder_key(&p).rotate_left(43);
         let embedded = self.embedded_of(&p).map(|(path, l)| (path, l, max_edge.clamp(1, SourceLevel::Preview.max_edge())));
         let embedded_cache = embedded.as_ref().map(|(_, _, edge)| {

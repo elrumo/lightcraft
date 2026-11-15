@@ -84,7 +84,7 @@ pub fn apply(s: &mut Session, results: Vec<(Missing, std::result::Result<ProbeIn
             // nothing found for a photo without a database profile: a file's own correction is Reload's business
             let from_database = p.embedded_lens.as_ref().is_some_and(|l| l.source == LensSource::Database);
             if info.embedded_lens.is_some() || from_database {
-                let mine = crate::cmd::convert::lens_ops(id, p, info.embedded_lens.clone());
+                let mine = crate::cmd::convert::lens_ops(id, p, info.embedded_lens);
                 if !mine.is_empty() {
                     ops.extend(mine);
                     changed.push(id);

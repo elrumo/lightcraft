@@ -4,7 +4,9 @@ use super::mono::{fit_tone_only_with, monochrome};
 use super::pairs::{Attempt, EDGE_CONTRAST, TONE_FITS, collect_pairs, fit_attempt, fit_partial, luma, search_ordered};
 use super::proxy::{CLIP_TOLERANCE, LensGeometry, MIN_PREVIEW_FRACTION, alignment, proxies, proxies_from, structure_agrees, with_jpeg_vignetting};
 use super::tone::{HighlightCheck, highlights, median};
-use super::*;
+use super::{
+    CameraLook, CameraMatch, CameraTone, CameraTransform, ColorData, HsvTable, Mat3, REC2020, RawFormat, RawImage, Rgb32f, ToneMap, luminance_2020,
+};
 
 /// The colour a raw's camera most likely has when its file has no colour matrices, as the matrix that takes what the
 /// fallback transform `t` gives (white-balanced camera RGB read as sRGB) to what the camera's measured matrices give,

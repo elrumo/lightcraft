@@ -611,7 +611,7 @@ pub use fetch::update;
 mod fetch {
     use std::sync::atomic::AtomicBool;
 
-    use super::*;
+    use super::{MAX_INDEX, Manifest, Outcome, Store, feed_base, read_capped};
 
     /// Check the feed at `base` ([`feed_base`]) and install what is new into `store`: `index.json` first, then each
     /// file it lists that `store` lacks, checked against its size and SHA-256, then the new set in one step

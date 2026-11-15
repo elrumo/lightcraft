@@ -1,11 +1,11 @@
 use super::colour::stream_bin_factor;
 use super::load::{load_vec, load_vec_compact, load_vec_pair, load_vec_reduced};
 use super::preview::{fit_box, fs_preview_loader, preview_orientation};
+use super::probe::{head_of, probe_bytes, split_time};
 #[cfg(not(target_arch = "wasm32"))]
 use super::probe::{load_video, probe_video_path};
-use super::probe::{head_of, probe_bytes, split_time};
 use super::{Arc, DenoiseSpec, FileLoader, FileProbe, Filter, PairLoader, ReducedLoader, fit};
-use crate::media::{CompactLoader, ProbeInfo, RawDecode};
+use crate::media::{CompactLoader, RawDecode};
 use lightcraft_pipeline::SourceInfo;
 use lightcraft_raster::{Rgb32f, SourcePixels};
 

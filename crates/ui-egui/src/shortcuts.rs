@@ -331,6 +331,7 @@ fn keyboard_owned(app: &LightcraftApp, ctx: &egui::Context) -> bool {
 /// Dispatch the global shortcut pass. It yields while a dialog, prompt, blocking library window,
 /// text field, name edit or shortcut recording owns input, then fires saved command bindings,
 /// aliases and fixed photo keys, respecting native menu ownership and open popups.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
     // Space held over a tool ends when the key is up, whoever has the keyboard by then
     crate::space_hand::tick(app, ctx);

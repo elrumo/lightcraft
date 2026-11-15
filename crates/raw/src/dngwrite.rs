@@ -182,6 +182,7 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
 
 /// [`write_dng`] with a JPEG preview (a rendering of the same picture, any size, sRGB) in a reduced-resolution sub-IFD,
 /// where converters and [`crate::embedded_preview`] look for it.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn write_dng_with_preview(raw: &RawImage, opts: &DngWriteOptions, preview: Option<&[u8]>) -> Result<Vec<u8>> {
     raw.validate()?;
     let lossy;

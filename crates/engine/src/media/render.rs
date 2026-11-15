@@ -315,8 +315,8 @@ impl RenderJob {
             loaded: None,
             quick: None,
             display: None,
-                hdr: None,
-                frame: None,
+            hdr: None,
+            frame: None,
         }
     }
 

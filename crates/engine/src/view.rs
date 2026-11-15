@@ -157,6 +157,7 @@ pub struct FilterChip {
 }
 
 /// The chips for every constraint in the filter bar / search / sidebar (not the source itself).
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn filter_chips(f: &Filter, cat: &Catalog) -> Vec<FilterChip> {
     use lightcraft_catalog::{MediaKind, RatingOp};
     use serde_json::{Value::Null, json};

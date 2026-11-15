@@ -1,6 +1,8 @@
-use super::settings_hash::SettingsHashes;
 use super::quick::clip_cover;
-use super::source::{ARRIVED_MAX, Catalogued, DecodedSource, DenoiseSpec, PairLoader, RENDERED_MEM_BYTES, SourceLevel, SourceRef, THUMB_SOURCE_BYTES};
+use super::settings_hash::SettingsHashes;
+use super::source::{
+    ARRIVED_MAX, Catalogued, DecodedSource, DenoiseSpec, PairLoader, RENDERED_MEM_BYTES, SourceLevel, SourceRef, THUMB_SOURCE_BYTES,
+};
 use super::{Arc, DcpProfile, DevelopSettings, HashMap, Hasher128, Lru, MediaCache, Photo, PhotoId, PreviewCache, Rgb32f, Source, SourceInfo};
 use lightcraft_preview::{DiskCache, WriteGate};
 

@@ -214,13 +214,7 @@ fn request_thumb(app: &mut LightcraftApp, id: PhotoId) {
 
 /// The photo's frame as shown: cropped, rotated and lens-corrected.
 fn frame_of(photo: &lightcraft_catalog::Photo, lens: Option<&lightcraft_develop::EmbeddedLens>) -> lightcraft_pipeline::geometry::Frame {
-    lightcraft_pipeline::geometry::Frame::with_lens(
-        photo.width.max(1) as usize,
-        photo.height.max(1) as usize,
-        &photo.develop,
-        true,
-        lens,
-    )
+    lightcraft_pipeline::geometry::Frame::with_lens(photo.width.max(1) as usize, photo.height.max(1) as usize, &photo.develop, true, lens)
 }
 
 /// Draw one photo fitted into `area` (rendered at its display size into `slot`), with its caption
@@ -570,7 +564,10 @@ pub fn show_survey(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         return;
     }
     let area = canvas.shrink(14.0);
-    let aspects: Vec<f32> = photos.iter().map(|id| app.session.catalog.photo(*id).map_or(1.5, |p| frame_of(p, app.session.embedded_lens(*id).as_ref()).aspect() as f32)).collect();
+    let aspects: Vec<f32> = photos
+        .iter()
+        .map(|id| app.session.catalog.photo(*id).map_or(1.5, |p| frame_of(p, app.session.embedded_lens(*id).as_ref()).aspect() as f32))
+        .collect();
     let cells = survey::cells(&aspects, area);
     let now = ui.input(|i| i.time);
     let placed = app.survey_motion.place(&photos, &cells, area, ui.ctx().cumulative_frame_nr(), now);

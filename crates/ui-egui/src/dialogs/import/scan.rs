@@ -1,8 +1,8 @@
-use egui::Align2;
-use crate::import::sort_by_day;
-use crate::theme::Tokens;
 use super::task::ImportTask;
 use super::{ImportDialog, LightcraftApp, Ordering, ScanInput, ScanOutput, ScanProgress, Value, json, scan_with};
+use crate::import::sort_by_day;
+use crate::theme::Tokens;
+use egui::Align2;
 
 /// A folder scan running on a worker thread (a network share can take minutes to read; the
 /// window must keep answering meanwhile).
@@ -178,7 +178,8 @@ fn scan(app: &mut LightcraftApp, paths: Vec<String>, staged: bool) -> Result<Val
     #[cfg(target_arch = "wasm32")]
     job();
     let guard = scan_guard(app, &progress, false);
-    app.scan = Some(ScanTask { progress, rx, copy: staged, device: String::new(), staged, album: None, browse: false, sources, guard, resolved: None });
+    app.scan =
+        Some(ScanTask { progress, rx, copy: staged, device: String::new(), staged, album: None, browse: false, sources, guard, resolved: None });
     Ok(json!({"scanning": true}))
 }
 

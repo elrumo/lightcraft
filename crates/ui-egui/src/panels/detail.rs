@@ -6,7 +6,7 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_develop::{DevelopSettings, MaskShape, mask_handles};
 use lightcraft_geom::{Affine, Point};
 use lightcraft_pipeline::geometry::Frame;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::LightcraftApp;
 use crate::haptics::{self, Haptic};
@@ -43,12 +43,12 @@ use geometry::{LOUPE_ZOOM_S, animated_rect, loupe_from, middle_pan};
 pub(crate) use geometry::{fit_rect, fit_texture_rect, focus_pan, navigate_gesture, output_px, pan_image, snap_fit_rect, texture_side};
 #[cfg(test)]
 use info::RENDERING_AFTER_SECS;
+use info::camera_preview_badge;
 use info::{
     FILTER_PILL_HEIGHT, FILTER_PILL_INSET, brief_info, filter_pill, filter_pill_shown, info_overlay, info_overlay_extent, label_badge_rect,
     preview_only_pill, quick_name,
 };
 pub(crate) use info::{draw_focus_point, failed_pill, loupe_pill, rendering_overdue};
-use info::camera_preview_badge;
 pub use look_ahead::LookAhead;
 pub(crate) use look_ahead::{Prepare, look_ahead};
 use masks::{RegionContext, RegionEdit, color_range_pick, lens_brush, long_edge_points, mask_overlay, region_overlay};
@@ -134,6 +134,7 @@ pub enum Gesture {
 /// full-screen aware), crop overlays and the render requests for the current view, or, when no
 /// photo is active, the empty-library message if the library is empty and "No photo selected"
 /// otherwise.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let full = ui.max_rect();
@@ -1335,6 +1336,7 @@ fn has_neighbours(app: &mut LightcraftApp, id: PhotoId) -> (bool, bool) {
 /// finger: sideways across a fitted photo carries it, with its neighbours alongside, and letting go
 /// settles on the next / previous photo (far or fast enough) or back; up / down, in review mode,
 /// rates (left half) or flags (right half). Returns the photo's offset from rest, in points.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn swipe(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, canvas: Rect, id: PhotoId, live: bool) -> Moved {
     let key = egui::Id::unique("loupe-swipe");
     let mut s: Swipe = ui.data(|d| d.get_temp(key)).unwrap_or_default();
@@ -1588,6 +1590,7 @@ pub(crate) fn click_zoom_and_pan(app: &mut LightcraftApp, resp: &egui::Response,
     }
 }
 
+#[allow(clippy::too_many_arguments)] // fork code that predates the lint; split it when it is next reworked
 fn general_interaction(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,

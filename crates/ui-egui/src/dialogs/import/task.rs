@@ -1,6 +1,6 @@
-use egui::Align2;
 use super::scan::{busy_synchronizing, running};
-use super::*;
+use super::{ImportDialog, ImportUprightMode, ImportWarning, ImportWarningCode, LightcraftApp, Ordering, Tokens, Value, json, recipe_items};
+use egui::Align2;
 
 /// A running import (see the module docs). The file-system work — expanding folders, probing,
 /// reading sidecars, copying or placing files — runs on a worker thread
@@ -346,6 +346,7 @@ fn xmp_warnings_text(warnings: &[ImportWarning]) -> String {
 
 /// The import is done (or cancelled): one undo step, show and select the first photo (unless the
 /// user chose another meanwhile), say what happened.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
     if let Some(dir) = &task.cleanup
         && let Err(e) = std::fs::remove_dir_all(dir)

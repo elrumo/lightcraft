@@ -330,6 +330,7 @@ fn photos_ok_label(verb: &str, n: usize) -> String {
 /// Recently Deleted is restored, not moved (its files stay where they are), so Move counts those apart:
 /// "Move 2 Photos · Restore 1 Photo", or "Restore 1 Photo" when nothing is left to move. (The host's temporary
 /// copies, a camera's included, are moved too: the originals stay, so it says Import.)
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn import_ok_label(opts: &crate::import::ImportDialog) -> String {
     let n = opts.selected_paths().len();
     if !(opts.copy && opts.move_files && !opts.staged) {
@@ -350,6 +351,7 @@ fn import_ok_label(opts: &crate::import::ImportDialog) -> String {
 /// blocking library-problem/launch-list window gets the same raw-input treatment while it is
 /// actually on screen over this dialog; ordinary dialogs without that window keep their normal
 /// Escape and outside-click behaviour.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context, blocked: bool) {
     // a phone's page slides away after the dialog closes, drawn from the dialog as it was
     if app.ui.dialog.is_some() {

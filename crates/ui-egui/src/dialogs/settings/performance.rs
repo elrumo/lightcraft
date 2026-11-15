@@ -1,5 +1,8 @@
 use super::widgets::{check, choices, heading, hint, row};
-use super::*;
+use super::{
+    CACHE_SIZES, HOT_PIXEL_LIMIT_DEFAULT, HOT_PIXEL_LIMITS, IOS, LightcraftApp, PREVIEW_LIMITS, RichText, Tokens, Value, action, hint_line, info,
+    json, path_label_beside, pick, register,
+};
 
 // --------------------------------------------------------------------------------- Performance
 
@@ -291,6 +294,7 @@ pub(crate) fn background_prep(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &To
 /// Where this library keeps its smart previews (the offline-editing proxies, which can be large):
 /// the effective folder, what is in it, and choosing another one.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub(crate) fn smart_previews(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     // listing a big folder every frame would be slow: refresh every 2 s and after a change
     let cache = egui::Id::unique("smart-location");

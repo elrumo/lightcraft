@@ -83,6 +83,7 @@ fn clean_name(name: &str) -> String {
 }
 
 /// `POST /s/<token>/upload`.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn upload(st: &State, req: &mut Request, token: &str, user: &str, link: &Link) -> crate::api::Resp {
     let share = &link.share;
     if !share.upload {

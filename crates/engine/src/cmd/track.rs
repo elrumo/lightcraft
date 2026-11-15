@@ -324,7 +324,14 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             if i > 0 && q.new_segment {
                 segment = segment.saturating_add(1);
             }
-            out.push(lightcraft_meta::TrackPoint { time: q.time_ms as f64 / 1000.0, latitude: q.lat, longitude: q.lon, elevation: q.ele_m, segment, track: 0 });
+            out.push(lightcraft_meta::TrackPoint {
+                time: q.time_ms as f64 / 1000.0,
+                latitude: q.lat,
+                longitude: q.lon,
+                elevation: q.ele_m,
+                segment,
+                track: 0,
+            });
         }
         segment = segment.saturating_add(1);
     }

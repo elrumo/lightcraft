@@ -1,16 +1,16 @@
+use super::{
+    LightcraftApp, docking, drop_overlay, export_task, focus_scan, import, lightroom_import, merge, monotonic_ms, panels, pick, recheck, shortcuts,
+    slideshow_export, state, sync, tasks, theme, updates_ui, widgets,
+};
 use crate::COMPACT_BELOW_PT;
 use crate::camera_import;
 use crate::erase;
 use crate::expand;
 use crate::lensblur;
 use crate::render_dng_task;
+use crate::startup;
 use crate::superres;
 use crate::sync_ui;
-use super::{
-    LightcraftApp, docking, drop_overlay, export_task, focus_scan, import, lightroom_import, merge, monotonic_ms, panels, pick, recheck, shortcuts,
-    slideshow_export, state, sync, tasks, theme, updates_ui, widgets,
-};
-use crate::startup;
 
 impl LightcraftApp {
     /// Install/refresh fonts once and watch the device and availability caches. Setup, not input.

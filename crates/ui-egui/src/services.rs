@@ -1,9 +1,8 @@
+use super::{Session, Value, pick};
 use crate::CameraHost;
 use crate::erase;
 use crate::haptics;
-use crate::panels::map;
 use crate::sync_ui;
-use super::{Session, Value, pick};
 
 pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
 

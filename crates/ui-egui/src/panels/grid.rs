@@ -315,6 +315,7 @@ pub fn rows_between(rows: &[GridRow], top: f32, bottom: f32) -> &[GridRow] {
     rest.get(..n).unwrap_or(&[])
 }
 
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     if matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
@@ -388,7 +389,11 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let (way, key) = import_way_in(&app.ui.settings.keymap, mac);
                 super::empty_state(ui, ui.max_rect(), "No photos", way, &[], key.as_deref());
             } else {
-                let how = if app.services.host_pick.is_some() { "Tap + to add photos from Photos or Files" } else { "Import photos with … → Import Photos…" };
+                let how = if app.services.host_pick.is_some() {
+                    "Tap + to add photos from Photos or Files"
+                } else {
+                    "Import photos with … → Import Photos…"
+                };
                 super::empty_message(ui, ui.max_rect(), "No photos", how);
             }
         }
@@ -1256,6 +1261,7 @@ pub(crate) fn paint_obscured(p: &egui::Painter, tex: egui::TextureId, r: Rect, u
     paint(p, Rect::from_center_size(r.center(), vec2(s, s)), Icon::EyeOff, Color32::WHITE.gamma_multiply(fade));
 }
 
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
@@ -1429,7 +1435,14 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
 
 /// A cell's selection ring: none while choosing by touch (`check_badge` frames it), inside a phone's
 /// tiles in `rings` (active, selected), else the theme's [`selection_ring`].
-fn tile_ring(p: &egui::Painter, t: &Tokens, photo: Rect, state: lightcraft_engine::SelectionState, (tiles, choosing): (bool, bool), rings: (Color32, Color32)) {
+fn tile_ring(
+    p: &egui::Painter,
+    t: &Tokens,
+    photo: Rect,
+    state: lightcraft_engine::SelectionState,
+    (tiles, choosing): (bool, bool),
+    rings: (Color32, Color32),
+) {
     use lightcraft_engine::SelectionState;
     match state {
         _ if choosing => {}

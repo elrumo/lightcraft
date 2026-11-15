@@ -1013,11 +1013,8 @@ pub(crate) fn album_source(data: &CatalogImport) -> AlbumSource {
     // folder, but Lightroom also keeps collections inside plain or smart ones, or under a parent that isn't imported
     let rows = first_of_each_collection(data, &mut out.warnings);
     let collections: HashMap<i64, &Row> = rows.iter().map(|r| (number(r, "id_local"), *r)).collect();
-    let sets: HashSet<i64> = rows
-        .iter()
-        .filter(|r| number(r, "systemOnly") == 0 && text(r, "creationId").contains("group"))
-        .map(|r| number(r, "id_local"))
-        .collect();
+    let sets: HashSet<i64> =
+        rows.iter().filter(|r| number(r, "systemOnly") == 0 && text(r, "creationId").contains("group")).map(|r| number(r, "id_local")).collect();
     let smart_content: HashMap<i64, &str> = data
         .collection_content
         .iter()
@@ -1416,7 +1413,8 @@ pub(crate) fn apply_prepared(s: &mut crate::Session, mut data: CatalogImport, co
         .collect();
     // (a backup's albums are keyed on the catalog it was made from, so importing the live catalog or another of its
     // backups finds them again)
-    let (album_ops, made) = crate::lightroom_albums::album_ops(s, data.catalog_path.as_deref().unwrap_or(&data.source), &albums.albums, &members, index);
+    let (album_ops, made) =
+        crate::lightroom_albums::album_ops(s, data.catalog_path.as_deref().unwrap_or(&data.source), &albums.albums, &members, index);
     ops.extend(album_ops);
     warnings.extend(made.warnings.iter().cloned());
     let stacks = stack_ops(s, &data, &ids, &mut ops, &mut warnings);

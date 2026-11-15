@@ -3,7 +3,7 @@ use super::encoding::{encode_gain_map_jpeg, encode_rendered, export_metadata, re
 use super::options::ExportFormat;
 use super::params::apple_photos_unsupported;
 use super::place::Placer;
-use super::*;
+use super::{ExportOptions, Metadata, OutputDepth, OutputSpace, Rgba8};
 
 /// One exported file.
 pub struct Exported {

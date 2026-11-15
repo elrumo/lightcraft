@@ -397,6 +397,7 @@ mod tests {
 
     const COUNTRIES: &str = "# comment\nES\tESP\t724\tSP\tSpain\tMadrid\nFR\tFRA\t250\tFR\tFrance\tParis\n";
     const ADMIN1: &str = "ES.29\tMadrid\tMadrid\t3117732\nFR.11\tÎle-de-France\tIle-de-France\t3012874\n";
+    #[allow(clippy::too_many_arguments)] // fork code that predates the lint; split it when it is next reworked
     fn city(id: u32, name: &str, ascii: &str, alts: &str, lat: f64, lon: f64, cc: &str, a1: &str, pop: u32) -> String {
         format!("{id}\t{name}\t{ascii}\t{alts}\t{lat}\t{lon}\tP\tPPL\t{cc}\t\t{a1}\t\t\t\t{pop}\t\t\tEurope/Madrid\t2020-01-01")
     }

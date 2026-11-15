@@ -1,6 +1,6 @@
 use super::folders::{file_drop_target, folder_menu, is_within};
 use super::rows::{INDENT_STEP, PHONE_TRAIL, Row, indent_x, more_button, open_row_menu, set_tree_open, tree_open, tree_toggle};
-use super::*;
+use super::{Album, AlbumId, Align2, Icon, LibrarySource, LightcraftApp, Rect, Sense, Tokens, json, paint, pos2, register, vec2, visible_right};
 
 /// Albums: the tree of albums and the folders they are sorted into. `reveal`: an album just made,
 /// whose folders open down to it.
@@ -79,7 +79,8 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             // a smart album whose rules no longer check (an album they test was deleted) says so
             let problems = app.caches.smart_album_problems(&app.session.catalog).get(&a.id).cloned().unwrap_or_default();
             let label = if problems.is_empty() { label } else { format!("⚠ {label}") };
-            let mut resp = Row::new(&format!("album:{}", a.id.0), icon, &label).count(Some(n)).selected(sel).indent(indent).sense(sense).show(app, ui);
+            let mut resp =
+                Row::new(&format!("album:{}", a.id.0), icon, &label).count(Some(n)).selected(sel).indent(indent).sense(sense).show(app, ui);
             if !problems.is_empty() {
                 crate::widgets::register(ui, format!("albumProblem:{}", a.id.0), resp.rect);
             }

@@ -1413,6 +1413,7 @@ fn albums(e: &mut Engine) -> Vec<String> {
 /// it had, the list says which is open and which syncs with a server (a synced library and a local one, mixed),
 /// and the paths in the app's home folder are `~/…`.
 #[test]
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn libraries_are_switched_made_and_listed_without_a_restart() {
     let root = std::env::temp_dir().join(format!("lc-host-libraries-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

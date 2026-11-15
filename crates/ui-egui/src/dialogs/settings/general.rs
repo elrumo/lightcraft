@@ -1,10 +1,10 @@
+use super::widgets::{check, choices, field, heading, hint, path_label, row};
+use super::{LightcraftApp, RichText, StartupView, Tokens, json, register};
 use crate::panels::settings::IOS;
 use crate::panels::settings::action;
 use crate::panels::settings::option;
 use crate::panels::settings::pick;
 use crate::panels::settings::select;
-use super::widgets::{check, choices, field, heading, hint, path_label, row};
-use super::{LightcraftApp, RichText, StartupView, Tokens, json, register};
 
 // ------------------------------------------------------------------------------------- General
 

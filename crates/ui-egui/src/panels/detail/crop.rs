@@ -1,14 +1,15 @@
-use crate::haptics;
-use crate::panels::detail::Haptic;
-use crate::panels::detail::TOUCH_HANDLE_REACH;
-use crate::panels::detail::touch_input;
 use super::geometry::CanvasMap;
 use super::{
     Affine, Color32, DevelopSettings, Frame, Gesture, LightcraftApp, PhotoId, Point, Pos2, Rect, Stroke, Tokens, json, pos2, register, vec2,
 };
+use crate::haptics;
+use crate::panels::detail::Haptic;
+use crate::panels::detail::TOUCH_HANDLE_REACH;
+use crate::panels::detail::touch_input;
 
 // ------------------------------------------------------------------------ crop
 
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub(super) fn crop_overlay(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,

@@ -128,7 +128,8 @@ fn small_render_is_the_downscaled_reference() {
 #[test]
 fn strength_matches_the_target_at_mid_grey() {
     for (a, s, r) in [(50.0, 25.0, 50.0), (25.0, 25.0, 50.0), (50.0, 0.0, 50.0), (50.0, 100.0, 50.0), (50.0, 25.0, 0.0)] {
-        let g = CrystalGrain::new(&Grain { amount: a, size: s, roughness: r, seed: 3, style: lightcraft_develop::GrainStyle::Film }, REF_LONG).expect("grain");
+        let g = CrystalGrain::new(&Grain { amount: a, size: s, roughness: r, seed: 3, style: lightcraft_develop::GrainStyle::Film }, REF_LONG)
+            .expect("grain");
         let n = 500;
         let lum: Vec<f32> = (0..n * n)
             .map(|k| {
@@ -151,7 +152,8 @@ fn tones_keep_their_mean() {
         (50.0, 25.0, &[20.0, 128.0, 245.0, 255.0][..]),
     ];
     for (amount, size, levels) in cases {
-        let g = CrystalGrain::new(&Grain { amount, size, roughness: 50.0, seed: 3, style: lightcraft_develop::GrainStyle::Film }, REF_LONG).expect("grain");
+        let g = CrystalGrain::new(&Grain { amount, size, roughness: 50.0, seed: 3, style: lightcraft_develop::GrainStyle::Film }, REF_LONG)
+            .expect("grain");
         for &level in levels {
             let n = 400;
             let mut sum = 0.0f64;
@@ -172,7 +174,13 @@ fn hostile_settings_render_finite_or_no_grain() {
     for &a in &bad {
         for &s in &bad {
             for &ppl in &[f64::NAN, 0.0, -5.0, 1.0, 24.0, 1e12, 6000.0] {
-                let g = Grain { amount: if a == 0.0 { 50.0 } else { a }, size: s, roughness: s, seed: u32::MAX, style: lightcraft_develop::GrainStyle::Film };
+                let g = Grain {
+                    amount: if a == 0.0 { 50.0 } else { a },
+                    size: s,
+                    roughness: s,
+                    seed: u32::MAX,
+                    style: lightcraft_develop::GrainStyle::Film,
+                };
                 if let Some(c) = CrystalGrain::new(&g, ppl) {
                     for (x, y) in [(0.0, 0.0), (-3.5, 1e7), (f32::NAN, 0.2), (0.5, f32::INFINITY), (1.0, 0.6667)] {
                         let e = c.apply([0.5, 0.2, 0.9], x, y);
@@ -627,7 +635,8 @@ fn row_field_matches_per_pixel_field() {
 #[test]
 #[ignore]
 fn pixel_cost_report() {
-    let g = CrystalGrain::new(&Grain { amount: 50.0, size: 25.0, roughness: 50.0, seed: 1, style: lightcraft_develop::GrainStyle::Film }, REF_LONG).expect("grain");
+    let g = CrystalGrain::new(&Grain { amount: 50.0, size: 25.0, roughness: 50.0, seed: 1, style: lightcraft_develop::GrainStyle::Film }, REF_LONG)
+        .expect("grain");
     let (w, h) = (4000usize, 600usize);
     let mut sink = 0.0f32;
     let t0 = std::time::Instant::now();

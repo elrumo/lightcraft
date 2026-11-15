@@ -3,7 +3,10 @@ use super::hue_sat::fit_hue_sat;
 use super::look_fit::{FIT_PREVIEW_MAX_PIXELS, SENSOR_CLIP, clip_mask, correct_vignetting, without_clipped};
 use super::pairs::{EDGE_CONTRAST, collect_pairs, fit_matrix, local_contrast};
 use super::tone::median;
-use super::*;
+use super::{
+    CameraLook, CameraMatch, CameraTransform, ColorData, Filter, HsvTable, Mat3, RawFormat, RawImage, Rgb32f, Xy, fit, luminance_2020, resize,
+    starting_colour,
+};
 
 /// Long edge of the proxies the camera's vignetting correction is estimated on ([`jpeg_vignetting`]).
 const VIGNETTE_PROXY: usize = 96;

@@ -1741,6 +1741,7 @@ impl<V> Scheduler<V> {
     }
 
     /// Turn finished jobs into what the slots show.
+    #[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
     fn collect(&mut self, session: &mut Session, present: &mut dyn Present<V>, inline_ms: f64) -> Polled {
         let mut finished = Vec::new();
         while let Some(done) = self.pool.try_recv() {
@@ -1820,7 +1821,11 @@ impl<V> Scheduler<V> {
                     self.decided(|| {
                         let source = source.as_ref().or_else(|| session.catalog.photo(r.photo).map(|p| &p.source));
                         let subject = render_subject(slot, r.photo, source);
-                        if unused { format!("{subject}: abandoned, the thumbnail itself came first") } else { format!("{subject}: produced in {ms:.0} ms") }
+                        if unused {
+                            format!("{subject}: abandoned, the thumbnail itself came first")
+                        } else {
+                            format!("{subject}: produced in {ms:.0} ms")
+                        }
                     });
                     x
                 }

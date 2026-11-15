@@ -4,7 +4,7 @@
 use egui::epaint::{Mesh, Vertex};
 use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, pos2, vec2};
 use lightcraft_catalog::PhotoId;
-use lightcraft_develop::{ControlSpec, DevelopSettings, WbMode, controls, curve_edit};
+use lightcraft_develop::{ControlSpec, DevelopSettings, WbMode, controls};
 use lightcraft_pipeline::{PARAM_AMOUNTS, ParametricCurve};
 use lightcraft_raster::Histogram;
 use serde_json::{Value, json};

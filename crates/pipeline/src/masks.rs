@@ -523,7 +523,8 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
         MaskShape::ColorRange { samples, refine } => {
             let tol = color_range_tolerance(*refine);
             // (a settings value built in code can skip the deserializer's cap: cost is pixels x samples)
-            let samples: Vec<[f32; 3]> = samples.iter().take(lightcraft_develop::MAX_COLOR_RANGE_SAMPLES).map(|s| [s[0] as f32, s[1] as f32, s[2] as f32]).collect();
+            let samples: Vec<[f32; 3]> =
+                samples.iter().take(lightcraft_develop::MAX_COLOR_RANGE_SAMPLES).map(|s| [s[0] as f32, s[1] as f32, s[2] as f32]).collect();
             for_rows(&mut out.data, w, |y, row| {
                 let Some(src) = img.data.get(y * w..y * w + row.len()) else { return };
                 for (v, c) in row.iter_mut().zip(src) {

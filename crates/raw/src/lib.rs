@@ -386,7 +386,8 @@ impl RawImage {
         let dng = matches!(self.format, RawFormat::Dng | RawFormat::CfaTiff);
         (0..self.cpp)
             .map(|s| {
-                let black = if dng { black_maximum(&self.black, self.active_area.width, self.active_area.height, s, self.cpp) } else { self.black.mean() };
+                let black =
+                    if dng { black_maximum(&self.black, self.active_area.width, self.active_area.height, s, self.cpp) } else { self.black.mean() };
                 let range = self.white_at(s) - black;
                 if range.is_finite() && range > 0.0 && range.recip().is_finite() { range.recip() } else { 1.0 }
             })

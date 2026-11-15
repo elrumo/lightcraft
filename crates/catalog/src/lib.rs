@@ -1687,11 +1687,11 @@ mod tests_lock;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests_log_thread;
 #[cfg(test)]
-mod tests_opened_folder;
-#[cfg(test)]
 mod tests_merge;
 #[cfg(test)]
 mod tests_motion;
+#[cfg(test)]
+mod tests_opened_folder;
 #[cfg(test)]
 mod tests_repair;
 #[cfg(test)]

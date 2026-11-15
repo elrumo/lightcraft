@@ -1,5 +1,8 @@
 use super::geometry::CanvasMap;
-use super::*;
+use super::{
+    Color32, DevelopSettings, Gesture, LightcraftApp, MaskShape, Point, Pos2, Rect, Sense, Stroke, StrokeKind, TOUCH_HANDLE_REACH, Tokens,
+    ToolOverlay, json, mask_handles, pos2, register, vec2,
+};
 
 /// What the user did to a face box this frame.
 pub(super) enum RegionEdit {
@@ -252,6 +255,7 @@ pub(super) fn color_range_pick(app: &mut LightcraftApp, ui: &egui::Ui, resp: &eg
 /// The Masking tool on the photo: outlines and handles of the selected mask, a pin per mask
 /// component (click selects its mask, drag moves the component), and brush painting. The mask
 /// itself shows as a rendered overlay ([`view_overlay`]).
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub(super) fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, d: &DevelopSettings) {
     let active = app.session.active_mask;
     let clip = app.canvas_rect.unwrap_or(map.rect);
@@ -699,7 +703,9 @@ fn grip_under(
             let map = map.for_mask(on);
             mask_handles::grip_at(&space, active, map.norm(q), reach, l).map(|g| (g, map.screen(g.at)))
         })
-        .min_by(|a, b| (Some(a.0.mask) != active, a.1.distance(q)).partial_cmp(&(Some(b.0.mask) != active, b.1.distance(q))).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| {
+            (Some(a.0.mask) != active, a.1.distance(q)).partial_cmp(&(Some(b.0.mask) != active, b.1.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
+        })
 }
 
 /// Lens Blur's Refine brush on the photo: the stroke is drawn live as it is painted (as a mask

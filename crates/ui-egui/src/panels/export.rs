@@ -75,6 +75,7 @@ const WM_POSITIONS: [(P, &str); 9] = [
 ];
 
 /// The export settings: the desktop dialog's body, and a phone's "More Options" page.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part) {
     let Form { opts, full_size, resize, preset_name, limit_kb, dir } = f;
     let t = Tokens::get(ui.ctx());

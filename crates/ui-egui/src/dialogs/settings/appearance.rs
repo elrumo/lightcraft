@@ -1,5 +1,8 @@
 use super::widgets::{choices, heading};
-use super::*;
+use super::{
+    CARD_PAD, LightcraftApp, Rect, RichText, Sense, SignOutHow, Tokens, Value, action, card_end, check, column, hint, info, json, pick, pos2,
+    register, row, tap_row, text_row, vec2,
+};
 
 /// Appearance Mode (`button:settingsAppearance-{0,1,2}`: Auto, Dark, Light) above the light and
 /// dark theme cards (`radio:theme-{id}`), each with a preview of the chosen theme. The card in

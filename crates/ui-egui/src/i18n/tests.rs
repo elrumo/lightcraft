@@ -1235,6 +1235,7 @@ fn a_dropped_photos_notice_names_every_outcome_of_the_import_and_is_silent_for_d
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn assert_polish_counts() {
     for n in [0, 1, 2, 3, 4, 5, 12, 21, 22, 25, 111] {
         let s = if n == 1 { "" } else { "s" };

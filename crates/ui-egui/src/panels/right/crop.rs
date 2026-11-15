@@ -1,5 +1,5 @@
-use crate::panels::right::tool_header;
 use super::{LightcraftApp, PhotoId, Tokens, divider, header, json, padded, register, slider, text_button};
+use crate::panels::right::tool_header;
 
 /// The aspect presets of the Crop panel: (menu label, `crop.aspect` value).
 const ASPECT_PRESETS: [(&str, &str); 10] = [

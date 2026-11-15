@@ -169,6 +169,7 @@ fn mode_note(f: &accounts::LibraryFolder) -> &'static str {
     }
 }
 
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn run(args: &[String]) -> Result<(), String> {
     let data = PathBuf::from(option(args, "--data").or_else(|| env_var("LIGHTCRAFT_DATA")).unwrap_or_else(|| "lightcraft-data".into()));
     let pos = positional(args);

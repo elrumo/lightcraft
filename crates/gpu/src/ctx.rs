@@ -316,6 +316,7 @@ static ALLOCATED: AtomicU64 = AtomicU64::new(0);
 static PEAK: AtomicU64 = AtomicU64::new(0);
 
 /// The most bytes allocated since the last call; starts over from what is allocated now.
+#[allow(dead_code)] // upstream's VRAM report, not merged in this fork
 pub(crate) fn take_peak() -> (u64, u64) {
     let now = ALLOCATED.load(Ordering::Relaxed);
     (PEAK.swap(now, Ordering::Relaxed), now)
@@ -367,6 +368,7 @@ pub struct Gpu {
     /// while another thread's copy is unsubmitted must not hand the buffer back to the pool.
     grain: std::sync::Mutex<Option<(std::sync::Arc<lightcraft_pipeline::crystal::CrystalTile>, std::sync::Arc<Buf>)>>,
     /// The device is the window's (eframe's): renders can hand it textures to draw directly.
+    #[allow(dead_code)] // upstream's window-device display path is not merged in this fork
     pub window: bool,
 }
 
@@ -554,7 +556,18 @@ impl Gpu {
             max_buffer >> 20,
             if window { ", the window's device" } else { "" }
         );
-        Ok(Gpu { device, queue, info, kernels, dummy, free: Default::default(), staging: Default::default(), max_buffer, window, grain: Default::default() })
+        Ok(Gpu {
+            device,
+            queue,
+            info,
+            kernels,
+            dummy,
+            free: Default::default(),
+            staging: Default::default(),
+            max_buffer,
+            window,
+            grain: Default::default(),
+        })
     }
 
     /// A buffer of `len` 32-bit values with undefined contents (a recycled one when possible).
@@ -976,6 +989,7 @@ fn poll_device(device: &wgpu::Device, t: wgpu::PollType) -> Result<wgpu::PollSta
 }
 
 /// See [`crate::read_texture`].
+#[allow(dead_code)] // upstream's window-device display path is not merged in this fork
 pub(crate) fn read_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

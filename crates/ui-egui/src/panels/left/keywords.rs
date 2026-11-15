@@ -1,7 +1,7 @@
 use super::dates::browse_all_photos;
 use super::rows::{INDENT_STEP, Row, out_of_sight, tree_open, tree_toggle};
 use super::sections::header_h;
-use super::*;
+use super::{Icon, KeywordNode, LibrarySource, LightcraftApp, SECTION_GAP, Sense, Tokens, heading, json, pos2, vec2};
 
 /// The user's library folders on the sync server, as folders (photos found there in place): a
 /// click shows a folder's photos (and those below it), the triangle opens it. Under My Photos'

@@ -2871,6 +2871,7 @@ impl Session {
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
     fn job_done(&mut self, st: &mut SyncState, job: Job, d: &Done) {
         // (planned again once the wait is over, see `blob_tasks`: not now, for a server that hasn't built
         // the previews of thousands of photos yet answers each of them at once)

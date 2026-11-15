@@ -1,5 +1,5 @@
-use crate::file_drop;
 use super::{GESTURE_TIMEOUT_MS, InjectedDrop, InjectedPress, LightcraftApp, drop_overlay, import, panels};
+use crate::file_drop;
 
 impl LightcraftApp {
     /// Preserve the currently queued handles while a prompt or blocking library window owns

@@ -500,11 +500,8 @@ fn lens_blur_block(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &lightcraft_de
 }
 
 /// The sliders of a mask's Lens Blur block (key = `LocalAdjustments` field name).
-const LENS_BLUR: &[ControlSpec] = &[
-    lens_blur_spec("lens_blur", "Amount"),
-    lens_blur_spec("lens_blur_boost", "Boost"),
-    lens_blur_spec("lens_blur_transition", "Transition"),
-];
+const LENS_BLUR: &[ControlSpec] =
+    &[lens_blur_spec("lens_blur", "Amount"), lens_blur_spec("lens_blur_boost", "Boost"), lens_blur_spec("lens_blur_transition", "Transition")];
 
 /// A 0 to 100 slider of a mask's Lens Blur block.
 const fn lens_blur_spec(id: &'static str, label: &'static str) -> ControlSpec {

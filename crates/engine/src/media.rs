@@ -22,8 +22,8 @@ use std::sync::{Arc, Weak};
 use lightcraft_catalog::{MediaKind, Op, Photo, PhotoId, Source};
 use lightcraft_develop::DevelopSettings;
 use lightcraft_pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
-use lightcraft_preview::{DiskCache, Hash128, Hasher128, Lru, PreviewCache};
-use lightcraft_raster::{Histogram, Rgb32f, Rgba8, SourcePixels};
+use lightcraft_preview::{Hash128, Hasher128, Lru, PreviewCache};
+use lightcraft_raster::{Histogram, Rgb32f, Rgba8};
 pub use lightcraft_raw::dcp::DcpProfile;
 use serde::{Deserialize, Serialize};
 
@@ -39,9 +39,7 @@ pub use cache::DenoiseIndex;
 pub(crate) use cache::rendered_budget;
 pub(crate) use quick::shrink;
 pub use quick::{QuickJob, QuickSource, clip_cover, content_key, source_info};
-pub use render::{
-    RenderJob, RenderResult, ScreenFrame, develop, develop_hdr, develop_reporting, develop_reporting_hdr, fit_cached, fit_for_display,
-};
+pub use render::{RenderJob, RenderResult, ScreenFrame, develop, develop_hdr, develop_reporting, develop_reporting_hdr, fit_cached, fit_for_display};
 pub(crate) use render::{band_pixels, bandable_at};
 #[cfg(test)]
 pub(crate) use session::export_source_edge;
@@ -52,8 +50,8 @@ use settings_hash::SettingsHashes;
 pub(crate) use source::per_pixel;
 pub use source::{
     CameraCrop, Catalogued, CompactLoader, DISK_CACHE_BYTES, DISK_CACHE_PER_PHOTO, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe,
-    MakeProduct, PairLoader, PreviewLoader, ProbeInfo, ProxyBytes, RENDER_CACHE_VERSION, RawDecode, ReducedLoader, SourceLevel, SourceRef, THUMB_SIZES,
-    ThumbAsk, Twin, default_disk_cache_bytes, face_edge, hdr_from_gain, thumb_bucket,
+    MakeProduct, PairLoader, PreviewLoader, ProbeInfo, ProxyBytes, RENDER_CACHE_VERSION, RawDecode, ReducedLoader, SourceLevel, SourceRef,
+    THUMB_SIZES, ThumbAsk, Twin, default_disk_cache_bytes, face_edge, hdr_from_gain, thumb_bucket,
 };
 
 pub struct MediaCache {

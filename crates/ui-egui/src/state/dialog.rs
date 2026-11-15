@@ -1,5 +1,5 @@
-use crate::state::EditInMode;
 use super::{Deserialize, Serialize};
+use crate::state::EditInMode;
 
 /// Settings group ids (`SettingsGroup` serde names) a new preset includes by default: everything
 /// but crop, masks, spots and red eye.

@@ -398,7 +398,6 @@ fn detail_free(cx: &mut Cx<'_>, l: &Buf, w: usize, h: usize, r: usize) -> Buf {
     out
 }
 
-
 /// Fast guided filter (`local::guided_fast`): coefficients on a subsampled grid.
 fn guided_fast(cx: &mut Cx<'_>, p: &Buf, w: usize, h: usize, sigma: f32, eps: f32) -> Buf {
     let s = local::guided_fast_step(sigma);
@@ -615,6 +614,7 @@ pub(crate) fn profiling() -> bool {
 /// render failed: the reason is recorded with [`crate::ctx::fail`]. A float HDR request
 /// ([`OutputDepth::F32Hdr`](lightcraft_pipeline::OutputDepth::F32Hdr)) also comes with its HDR
 /// picture (see [`crate::try_render_hdr`]); the 8-bit image is its reduction.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn render(
     gpu: &Gpu,
     src: &SourcePixels,
@@ -1392,7 +1392,6 @@ mod tests {
             }
         }
     }
-
 
     #[test]
     fn coverage_mask_matches_per_pixel_decision() {

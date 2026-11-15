@@ -1,6 +1,6 @@
 use super::display::duration_slider;
 use super::widgets::{check, heading, hint, row};
-use super::*;
+use super::{LightcraftApp, Tokens, Value, action, json, pick, register};
 
 /// `with_preview` the composed slide is left out: [`pin_slide_preview`] has pinned it above the page.
 pub(crate) fn slideshow_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, with_preview: bool) {

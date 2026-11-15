@@ -2,7 +2,10 @@ use super::hue_sat::lightroom_chroma;
 use super::look_fit::{fit_dng_tone, fit_preview, look_proxies, neutral_look_for, typical_look};
 use super::mono::{fit_dark_tone, monochrome_look};
 use super::proxy::{LensGeometry, jpeg_vignetting, sharing_proxies, with_jpeg_vignetting};
-use super::*;
+use super::{
+    CHROMA_N, CameraLook, CameraMatch, CameraTone, CameraTransform, ColorData, D50, D65, Mat3, ProfileLook, REC2020, RawFormat, RawImage, ToneCurve,
+    Xy, bradford,
+};
 use lightcraft_raw::profile::ToneCurveEval;
 
 /// Long edge of the sensor/JPEG proxy a single photo's look is fitted on (the acceptance gates

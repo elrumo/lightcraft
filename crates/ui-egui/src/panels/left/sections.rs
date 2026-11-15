@@ -1,6 +1,6 @@
 use super::albums::top_level_drop_target;
 use super::rows::{ROW_HEIGHT, entrance, note_width};
-use super::*;
+use super::{Align2, Icon, LightcraftApp, Rect, Sense, SidebarSection, Tokens, icon_button, json, pos2, register, vec2};
 
 /// Space above a section's header.
 pub(super) const SECTION_GAP: f32 = 10.0;
