@@ -15,14 +15,12 @@ pub fn photo_summary(p: &Photo) -> Value {
         "fileName": p.file_name,
         "format": p.format,
         "kind": p.kind,
-        "fileSize": p.file_size,
         // a video clip's length in seconds (null for a picture)
         "duration": p.duration,
         "width": p.width,
         "height": p.height,
         "fileSize": p.file_size,
         "captured": p.captured,
-        "imported": p.imported,
         "imported": p.imported,
         "rating": p.rating,
         "flag": p.flag,
@@ -738,6 +736,23 @@ pub fn specs() -> Vec<CommandSpec> {
 #[cfg(test)]
 mod pagination_tests {
     use super::*;
+
+    #[test]
+    fn photo_summaries_include_import_date_and_file_size() {
+        let mut photo = Photo::new(
+            PhotoId(1),
+            lightcraft_catalog::Source::File { path: "photo.jpg".into() },
+            "photo.jpg",
+            "JPEG",
+            10,
+            10,
+            "2026-11-16T10:00:00Z",
+        );
+        photo.file_size = 2048;
+        let summary = photo_summary(&photo);
+        assert_eq!(summary["fileSize"], 2048);
+        assert_eq!(summary["imported"], "2026-11-16T10:00:00Z");
+    }
 
     #[test]
     fn offsets_and_limits_saturate_instead_of_wrapping_on_wasm() {
