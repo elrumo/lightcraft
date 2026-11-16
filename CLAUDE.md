@@ -2,6 +2,8 @@
 
 LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructive raw developer targeting Adobe Lightroom parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../pdfcraft` (Acrobat), `../photocraft` (Photoshop), `../vectorcraft` (Illustrator) and `../filmcraft` (Premiere), with the same conventions.
 
+**UI target default:** when the user asks for a UI change without naming the app or frontend, make it in the native LightBites SwiftUI app at `apps/lightbites-swift/`. Use LightCraft's Rust/egui UI only when they explicitly ask for LightCraft or the Rust frontend.
+
 ## Start every session here
 1. Read `plan/STATUS.md` (current milestone, next unchecked task, blockers).
 2. Read the task in `plan/execution-plan.md` §3, the relevant section of `plan/architecture.md`, and the README/docs of the crate you touch. Behaviour/visual reference: `plan/lightroom/` (incl. `10-observed-ui.md` + screenshots).
