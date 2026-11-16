@@ -85,6 +85,12 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
         None => d.remove::<f32>(egui::Id::unique(OFFSET)),
     });
+    // the Edit panel's histogram stays above its sliders as they scroll (#2679); the phone's sheet
+    // is short, so there the sliders come first and it has none
+    if app.ui.right == RightPanel::Edit && app.ui.histogram && !app.compact {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        super::edit::histogram(app, ui, id);
+    }
     let out = area.show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         if app.compact {

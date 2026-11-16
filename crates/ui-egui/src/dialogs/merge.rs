@@ -68,6 +68,7 @@ pub fn open(app: &mut LightcraftApp, command: &str) -> Result<Value, String> {
     app.merge.preview_pixels = None;
     app.merge.zoom = None;
     app.merge.runner.cancel_preview();
+    // a preview that failed before is tried again, or the dialog would show neither a preview nor its error (#2708)
     app.merge.runner.failed = None;
     app.ui.dialog = Some(crate::state::Dialog::Merge { opts: last_options(app, command) });
     Ok(json!({"photos": app.merge.ids.len()}))
@@ -124,7 +125,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         Some(crate::state::Dialog::Merge { opts }) => {
             let opts = opts.clone();
             let shown = app.merge.preview.as_ref().map(|p| &p.2) == Some(&opts);
-            if !shown && app.merge.runner.wants_preview(&opts) {
+            if !shown && app.merge.runner.wants_preview(&opts, &app.merge.ids) {
                 let ids = app.merge.ids.clone();
                 match app.merge.runner.preview(&app.session, &opts, &ids) {
                     Ok(()) => app.merge.error = None,

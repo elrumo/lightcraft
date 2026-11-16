@@ -1,4 +1,12 @@
-use super::*;
+use super::{LABEL_W, RichText, Tokens, register};
+use crate::icons::Icon;
+use crate::panels::settings::Card;
+use crate::panels::settings::TABS;
+use crate::panels::settings::card_end;
+use crate::panels::settings::card_id;
+use crate::panels::settings::card_row;
+use crate::panels::settings::column;
+use egui::{Align, Color32, Layout, Margin, Rect, Sense, pos2, vec2};
 
 /// `path` shortened to fit `max` (as `width` measures it) by dropping leading folders, after
 /// either kind of separator, so that its end stays (`…/Pictures/Library`,
@@ -96,6 +104,16 @@ pub fn phone_title(tab: &str) -> (&'static str, Option<&'static str>) {
 /// to a comfortable height (in a short window the sidebar scrolls too).
 pub fn desktop_height(max: f32) -> f32 {
     if max.is_nan() { 620.0 } else { max.clamp(1.0, 620.0) }
+}
+
+/// A text box of the Settings window, shown: Esc in it gives its text back and is used up by
+/// that, so Settings stays open (a second Esc, with nothing being edited, closes it).
+pub(super) fn field(ui: &mut egui::Ui, field: crate::text_field::TextField<'_>) -> crate::text_field::TextFieldResponse {
+    let shown = field.show(ui);
+    if shown.cancelled() {
+        crate::widgets::take_escape(ui.ctx());
+    }
+    shown
 }
 
 pub(crate) fn heading(ui: &mut egui::Ui, t: &Tokens, text: &str) {

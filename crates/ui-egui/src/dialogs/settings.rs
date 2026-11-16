@@ -12,13 +12,13 @@
 //!   `slideshow.playback` commands into the library's `prefs.json`,
 //!   so they travel with the library.
 
-use egui::{Align, Color32, Layout, Margin, Rect, RichText, Sense, Stroke, pos2, vec2};
+use egui::{Align, Color32, Margin, Rect, RichText, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
 use crate::icons::Icon;
 use crate::panels::mobile;
-use crate::state::{Appearance, GridBadges, PREVIEW_LIMITS, StartupView};
+use crate::state::{GridBadges, HOT_PIXEL_LIMIT_DEFAULT, HOT_PIXEL_LIMITS, PREVIEW_LIMITS, StartupView};
 use crate::sync_ui::SignOutHow;
 use crate::theme::Tokens;
 use crate::widgets::register;
@@ -64,8 +64,8 @@ pub const TABS: &[(&str, &str)] = &[
     ("models", "AI Models"),
 ];
 
-/// Thumbnail cache sizes offered (MB).
-const CACHE_SIZES: [u32; 5] = [512, 1024, 2048, 4096, 8192];
+/// Preview cache sizes offered (MB; 0 = automatic: room for every photo of the library).
+const CACHE_SIZES: [u32; 8] = [512, 1024, 2048, 4096, 8192, 51_200, 204_800, 0];
 
 const LABEL_W: f32 = 150.0;
 
@@ -77,6 +77,10 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_he
         return;
     }
     let t = Tokens::get(ui.ctx());
+    // The page drawn is the one that was open when the frame began: a section clicked now opens on
+    // the next frame, so a text box on the page being left is drawn once more and saves what was
+    // typed in it (the click took the focus from it).
+    let shown = tab.clone();
     let width = (ui.ctx().content_rect().width() - 80.0).clamp(560.0, 860.0);
     let (outer, _) = ui.allocate_exact_size(vec2(width, desktop_height(max_height)), Sense::hover());
     let side = Rect::from_min_size(outer.min, vec2(SIDEBAR_W, outer.height()));
@@ -87,13 +91,13 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_he
     ui.painter().vline(line_x, outer.y_range(), Stroke::new(1.0, t.divider));
     let page = Rect::from_min_max(pos2(line_x + 1.0, outer.top()), outer.max);
     ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
-        let pinned = pin_slide_preview(app, ui, &t, tab.as_str(), page.height());
+        let pinned = pin_slide_preview(app, ui, &t, shown.as_str(), page.height());
         // (each section starts at its top)
-        let scrolled = egui::ScrollArea::vertical().id_salt(("settings-page", tab.clone())).auto_shrink([false, false]).show(ui, |ui| {
+        let scrolled = egui::ScrollArea::vertical().id_salt(("settings-page", shown.clone())).auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::NONE.inner_margin(Margin { left: 20 + CARD_PAD as i8, right: 10 + CARD_PAD as i8, top: 0, bottom: 12 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 if !pinned {
-                    page_header(ui, &t, tab.as_str());
+                    page_header(ui, &t, shown.as_str());
                 }
                 let column = Column { left: ui.max_rect().left(), right: ui.max_rect().right(), top: ui.cursor().top() };
                 ui.data_mut(|d| {
@@ -101,7 +105,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_he
                     d.insert_temp(column_id(), column);
                 });
                 ui.spacing_mut().item_spacing.y = 4.0;
-                match tab.as_str() {
+                match shown.as_str() {
                     "import" => import_tab(app, ui, &t),
                     "performance" => performance_tab(app, ui, &t),
                     "display" => display_tab(app, ui, &t),
@@ -192,6 +196,7 @@ pub(crate) fn sidebar(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, tab: &
             ui.painter().galley(pos2(r.right() - 8.0 - value.size().x, r.center().y - value.size().y / 2.0), value, t.text_dim);
             if resp.clicked() {
                 *tab = id.to_string();
+                ui.ctx().request_repaint();
             }
         }
     }
@@ -566,6 +571,8 @@ pub(crate) fn action(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, enabl
 
 /// A one-line text field (`field:{id}`): beside its label on the desktop; on the phone the label
 /// on the left and the text right-aligned and frameless in the rest of the row, as iOS forms have it.
+/// It is the project's [`crate::text_field::TextField`]: Esc gives the text back and stays in
+/// Settings, and a right-click offers Cut / Copy / Paste / Select All.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn text_row(
     ui: &mut egui::Ui,
@@ -576,24 +583,18 @@ pub(crate) fn text_row(
     hint_text: &str,
     password: bool,
     width: f32,
-) -> egui::Response {
+) -> crate::text_field::TextFieldResponse {
     let compact = crate::is_compact(ui.ctx());
-    let r = row(ui, t, label, |ui| {
-        let edit = egui::TextEdit::singleline(value).hint_text(crate::i18n::tr(hint_text)).password(password);
-        if compact {
-            ui.add(
-                edit.frame(egui::Frame::NONE)
-                    .font(egui::FontId::proportional(17.0))
-                    .align(egui::Align2::RIGHT_CENTER)
-                    .min_size(vec2(0.0, ROW))
-                    .desired_width(ui.available_width()),
-            )
+    let widget = format!("field:{id}");
+    row(ui, t, label, |ui| {
+        let field = crate::text_field::TextField::singleline(&widget, value).hint(crate::i18n::tr(hint_text)).password(password);
+        let field = if compact {
+            field.frame(false).font(egui::FontId::proportional(17.0)).horizontal_align(egui::Align::Max).width(ui.available_width())
         } else {
-            ui.add(crate::widgets::text_box(ui, edit.desired_width(width.min(ui.available_width()))))
-        }
-    });
-    register(ui, format!("field:{id}"), r.rect);
-    r
+            field.width(width.min(ui.available_width()))
+        };
+        widgets::field(ui, field)
+    })
 }
 
 /// The share of the page's room the pinned slide preview of the Slideshow section takes.

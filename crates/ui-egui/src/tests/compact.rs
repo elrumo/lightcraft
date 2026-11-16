@@ -592,7 +592,7 @@ fn a_zoomed_photo_is_not_covered_by_its_neighbour() {
             quick: None,
             request_id: 0,
             draft: false,
-            view: TexView { tex, pixels: None, hdr: None },
+            view: TexView { tex, pixels: None, hdr: None, native: None },
         },
     );
     h.step();

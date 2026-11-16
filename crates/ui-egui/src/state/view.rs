@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize};
 
 /// How the phone's grid spans the library: every photo, a few of each month, or one card a year
 /// (as iOS's Photos offers them, `view.gridSpan`).

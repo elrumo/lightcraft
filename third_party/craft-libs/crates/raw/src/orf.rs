@@ -1,0 +1,1323 @@
+//! Olympus ORF — uncompressed variants; compressed sensor data is unsupported.
+//!
+//! Sources: TIFF 6.0 (the `IIRO`/`MMOR` container is a TIFF with a different magic number), Exif 2.3 (`CFAPattern`,
+//! tag `0xa302`), the ExifTool Olympus tag-name documentation (maker-note sub-directories `0x2020` CameraSettings —
+//! `0x0101/0x0102` PreviewImageStart/Length — and `0x2040` ImageProcessing — `0x0100` WB_RBLevels, `0x0600`
+//! BlackLevel2, `0x0612–0x0615` CropLeft/Top/Width/Height) and black-box analysis of CC0 samples from
+//! raw.pixls.us (E-1, E-400, XZ-2):
+//!
+//! - 16 bits per sample: little-endian words; some bodies (E-1, E-400) store 12-bit values in the top bits (the low
+//!   four bits zero in more than 99% of samples), which we shift down.
+//! - 12-bit packed (XZ-2): each row is a sequence of little-endian 32-bit words read MSB-first (found by testing
+//!   candidate bit orders for the smoothest image).
+//! - 12-bit packed in two fields (a few old compacts): IFD0 says uncompressed, 12 bits, many strips, and the strip
+//!   byte counts add up to exactly width × height × 1.5. Samples are packed MSB-first, two per three bytes
+//!   (`b0 << 4 | b1 >> 4`, `(b1 & 15) << 8 | b2`), rows are `width × 1.5` bytes with no padding. Stored rows
+//!   `0..h0` are the even output rows and the rows from `h0` on the odd ones (`h0 = (height + 1) / 2`, height
+//!   odd); the strip table has one gap where the second field starts (follow the offsets) and omits the last row
+//!   of the second field, which sits in the bytes right after the last strip. Derived by black-box analysis of
+//!   six CC0 files (C5060WZ, C7070WZ, SP-510UZ, SP-550UZ, SP-565UZ, SP-570UZ). Their Exif `CFAPattern` states the
+//!   layout (it matches the embedded thumbnails), the maker note's entries `0x1017`/`0x1018` hold the red and
+//!   blue gain (first value, 256 = 1.0; checked against neutral areas of the thumbnail), and nothing states a
+//!   black level or an active area.
+//! - 12-bit blocks (E-300, E-500, E-330; the E-M5 Mark II and PEN-F high-resolution files): one strip of 12.8 bits
+//!   per pixel, `width * 8 / 5` bytes per row, made of 16-byte blocks. A block is 15 sample bytes followed by one
+//!   pad byte that is always zero; the 15 bytes are a little-endian 120-bit string holding ten 12-bit samples, sample
+//!   `i` at bits `[12 i, 12 i + 12)`, i.e. per byte triple `s0 = b0 | (b1 & 15) << 8`, `s1 = b1 >> 4 | b2 << 4`, left
+//!   to right. The layout was first recalled only roughly ("ten pixels, then a skipped byte"); the pad position
+//!   (last), the bit order and the pixel order were fixed by measurement on the CC0 files 2878 (E-300), 3540 (E-500)
+//!   and 3624 (E-330), as was the sensor-origin RGGB anchoring (the maker-note crop offsets are odd). The E-M5 Mark II
+//!   and PEN-F files were only checked for smoothness, not for CFA anchoring or black level.
+//! - Compressed ORF sensor data is unsupported. The previous decoder was removed pending provenance
+//!   resolution; embedded previews remain available. See `docs/orf-compression.md`.
+//! - White balance in Kelvin. ImageProcessing holds, next to the as-shot gains, twelve more `WB_RBLevels<K>` entries
+//!   (`0x0102` to `0x010d`: 3000, 3300, 3600, 3900, 4000, 4300, 4500, 4800, 5300, 6000, 6600 and 7500 K; tag numbers and
+//!   names from `exiftool -H` run as a black-box tool on the CC0 files, no ExifTool source read, which also gave the
+//!   camera's own stated `WhiteBalanceTemperature` for the shots set to one). Each is a red and a blue gain against
+//!   green (the `WB_GLevel`, 256 when absent), the gains the body applies at that temperature. Read on 58 files from 58
+//!   bodies (E-1 of 2003 to OM-3 of 2025; the compacts with a two-field layout, the E-10, E-20 and the C-series have no
+//!   table): the as-shot gains of the 10 files whose camera states a temperature, and of the E-1 file shot on its 5300 K
+//!   preset, are the table's entry (5300, 6000, 7500 K) or lie between two entries where mired (1e6 / K) is linear (5000,
+//!   5600, 6400 K, within 1.2 mired of what the camera states). Three slots, 4000, 4500 and 6600 K, sit off the curve
+//!   the other nine make on most bodies (51 of 58 files for all three; white of fluorescent lights is off the daylight
+//!   locus, as these are), so they are left out; the nine others are monotone (red rising, blue falling with the
+//!   temperature) on every body but the four TG cameras, whose 4300 K entry is off the curve too and is dropped by
+//!   [`KelvinPresets::from_unordered`]. [`kelvin_presets`] builds the scale from them; `decode` carries it as
+//!   [`ColorData::kelvin_presets`], and [`as_shot_white_balance`] reads it and the as-shot gains from the maker note
+//!   alone, so a file whose sensor data is not decoded (every compressed ORF) has the same white to show.
+//! - The colour-filter layout is the file's Exif `CFAPattern`: GRBG on the E-1 and E-400, RGGB on the XZ-2, where
+//!   the colours of the decoded mosaic follow the embedded JPEG best with exactly that layout
+//!   (`corpus_orf_cfa_patterns`). The samples' active areas start at even offsets, so they can't tell whether the
+//!   pattern is anchored at the sensor origin (assumed) or at the active area. Files without a usable tag fall back
+//!   to the green diagonal found from the data, which can't tell red from blue (GRBG or RGGB is assumed).
+
+use crate::PreviewColorSpace;
+use crate::kelvin::KelvinPresets;
+use crate::shared::{cfa_from_exif, white_from_data_sourced};
+use crate::tiffraw::{Packing, read_image};
+use crate::unpack::unpack_msb;
+use crate::{BlackLevel, Camera, Cfa, ColorData, Limits, Mode, OpcodeLists, Orientation, RawData, RawError, RawFormat, RawImage, Rect, Result};
+use craft_tiff::image::chunk_bytes;
+use craft_tiff::makernote::MakerNote;
+use craft_tiff::{Ifd, Tiff, Value, makernote, tags as t};
+use rayon::prelude::*;
+
+const CAMERA_SETTINGS: u16 = 0x2020;
+const IMAGE_PROCESSING: u16 = 0x2040;
+/// CameraSettings `ColorSpace`: the colour space the camera encodes its JPEGs in (0 sRGB, 1 Adobe RGB, 2 Pro Photo RGB).
+const COLOR_SPACE: u16 = 0x0507;
+const PREVIEW_START: u16 = 0x0101;
+const PREVIEW_LENGTH: u16 = 0x0102;
+const WB_RB: u16 = 0x0100;
+/// ImageProcessing WB_GLevel: the green level the red and blue levels are relative to (256 when absent).
+const WB_G: u16 = 0x011f;
+const BLACK: u16 = 0x0600;
+const MN_WB_RED: u16 = 0x1017;
+const MN_WB_BLUE: u16 = 0x1018;
+const MN_BLACK: u16 = 0x1012;
+const MN_VALID_BITS: u16 = 0x102c;
+const CROP: [u16; 4] = [0x0612, 0x0613, 0x0614, 0x0615];
+/// ImageProcessing `AspectFrame`: left, top, right and bottom (inclusive) of the frame of the camera's aspect-ratio setting.
+const ASPECT_FRAME: u16 = 0x1113;
+/// ImageProcessing `WB_RBLevels<K>` entries the Kelvin scale is made of, as (tag, K). The slots `0x0106` (4000 K),
+/// `0x0108` (4500 K) and `0x010c` (6600 K) are off the curve the others make and left out (see the module docs).
+const WB_PRESETS: [(u16, f32); 9] = [
+    (0x0102, 3000.0),
+    (0x0103, 3300.0),
+    (0x0104, 3600.0),
+    (0x0105, 3900.0),
+    (0x0107, 4300.0),
+    (0x0109, 4800.0),
+    (0x010a, 5300.0),
+    (0x010b, 6000.0),
+    (0x010d, 7500.0),
+];
+
+/// The Olympus maker note.
+pub(crate) fn maker_note(bytes: &[u8], tiff: &Tiff) -> Option<MakerNote> {
+    let make = tiff.find(t::MAKE).and_then(|e| e.value.as_str()).unwrap_or_default().to_string();
+    let e = tiff.exif().and_then(|e| e.get(t::MAKER_NOTE))?;
+    makernote::parse_makernote(bytes, e.offset, e.count() as u64, tiff.order, &make)
+}
+
+/// A maker-note sub-directory: an IFD pointer (offset relative to the note's base) in new-style notes, or the
+/// IFD stored inline as an undefined blob (offsets relative to the base) in old-style ones.
+pub(crate) fn sub_ifd(bytes: &[u8], mn: &MakerNote, tag: u16) -> Option<Ifd> {
+    let e = mn.ifd.get(tag)?;
+    let at = match &e.value {
+        Value::Undefined(_) | Value::Byte(_) => e.offset,
+        _ => mn.base.checked_add(mn.ifd.u64(tag)?)?,
+    };
+    let opts = craft_tiff::ParseOptions { max_ifds: 4, max_depth: 1, follow_children: false, ..Default::default() };
+    craft_tiff::parse_ifd_at(bytes, at, mn.order, mn.base, false, &opts).ok().map(|(i, _)| i)
+}
+
+/// Black level of a body without ImageProcessing: the main note's `0x1012` BlackLevel (the mean of its four values)
+/// in `0x102c` ValidBits units, scaled to the decoded `bits`. The E-10 states 32 at 10 bits, and its 12-bit samples
+/// bottom out at 124 to 132; the two-field compacts state 0 at 12 bits.
+fn maker_note_black(m: &MakerNote, bits: u32) -> Option<f32> {
+    let bits = bits.min(16);
+    let v = m.ifd.f64s(MN_BLACK).filter(|v| v.len() == 4)?;
+    let valid = m.ifd.u64(MN_VALID_BITS).and_then(|b| u32::try_from(b).ok()).filter(|b| (8..=bits).contains(b))?;
+    let level = v.iter().sum::<f64>() / 4.0 * f64::from(1u32 << (bits - valid));
+    (level >= 0.0 && level < f64::from(1u32 << bits) / 4.0).then_some(level as f32)
+}
+
+/// Unpack one row of 12-bit samples stored as little-endian 32-bit words read MSB-first.
+pub(crate) fn unpack_row_le32_msb(src: &[u8], bits: u32, out: &mut [u16]) {
+    let swapped: Vec<u8> = src
+        .chunks(4)
+        .flat_map(|c| {
+            let mut w = [0u8; 4];
+            w[..c.len()].copy_from_slice(c);
+            [w[3], w[2], w[1], w[0]]
+        })
+        .collect();
+    unpack_msb(&swapped, bits, out);
+}
+
+/// Unpack one row of 12-bit samples stored as 16-byte blocks: ten little-endian 12-bit fields in bytes 0..15, byte 15
+/// a pad. `src` must hold exactly `out.len() / 10` blocks (`out.len()` a multiple of 10).
+pub(crate) fn unpack_row_blocks16(src: &[u8], out: &mut [u16]) -> Result<()> {
+    if !out.len().is_multiple_of(10) || src.len() != out.len() / 10 * 16 {
+        return Err(RawError::Corrupt("ORF 12-bit block row has the wrong size".into()));
+    }
+    let (blocks, _) = src.as_chunks::<16>();
+    let (pixels, _) = out.as_chunks_mut::<10>();
+    for (block, px) in blocks.iter().zip(pixels) {
+        for k in 0..5 {
+            let (b0, b1, b2) = (block[3 * k] as u16, block[3 * k + 1] as u16, block[3 * k + 2] as u16);
+            px[2 * k] = b0 | (b1 & 15) << 8;
+            px[2 * k + 1] = b1 >> 4 | b2 << 4;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the strip is the 12.8 bits per pixel block layout: a single strip, rows a whole number of 16-byte
+/// blocks of ten pixels.
+fn is_block16(w: usize, n: usize, total: u64, chunks: usize) -> bool {
+    chunks == 1 && w.is_multiple_of(10) && total.checked_mul(10) == (n as u64).checked_mul(16)
+}
+
+/// The layout found from the samples, for files without the Exif tag: GRBG when the greens sit on the main
+/// diagonal of the 2×2 cell at the sensor origin, else RGGB. Over 32×32-pixel blocks of `a` (every fourth in both
+/// directions) it compares the block totals of the two sites on each diagonal: the two greens of a block see the
+/// same light, red and blue rarely do. Totals rather than single pixels, so that fine texture, which makes
+/// neighbouring greens differ, doesn't outweigh a small difference between red and blue.
+pub(crate) fn cfa_from_data(d: &[u16], w: usize, a: Rect) -> Cfa {
+    const BLOCK: usize = 32;
+    let (x0, y0) = (a.x.saturating_add(1) & !1, a.y.saturating_add(1) & !1);
+    let across = a.x.saturating_add(a.width).min(w).saturating_sub(x0) / BLOCK;
+    let down = a.y.saturating_add(a.height).saturating_sub(y0) / BLOCK;
+    let (mut main, mut anti) = (0u64, 0u64);
+    for by in (0..down).step_by(4) {
+        for bx in (0..across).step_by(4) {
+            let mut sums = [0i64; 4];
+            for y in 0..BLOCK {
+                let row = (y0 + by * BLOCK + y).checked_mul(w).and_then(|r| r.checked_add(x0 + bx * BLOCK));
+                // rows past the end of the samples: nothing more to read
+                let Some(row) = row.and_then(|start| d.get(start..start.checked_add(BLOCK)?)) else { break };
+                for (x, &v) in row.iter().enumerate() {
+                    sums[(y & 1) * 2 + (x & 1)] += v as i64;
+                }
+            }
+            let [s0, s1, s2, s3] = sums;
+            main += (s0 - s3).unsigned_abs();
+            anti += (s1 - s2).unsigned_abs();
+        }
+    }
+    Cfa::bayer_static(if main < anti { "GRBG" } else { "RGGB" })
+}
+
+/// Byte offsets of the stored rows of the two-field 12-bit layout, or `None` unless every condition holds
+/// exactly: odd height, even width, `strips` (offset, byte count; the whole table, not just the strips that fit the
+/// rows-per-strip grid, since the field seam leaves a short strip) that are whole rows summing to
+/// `width × height × 1.5` bytes, exactly one gap between consecutive strips (the second field starts right after
+/// it, at row `(height + 1) / 2`), and a last row, right after the final strip, inside the file. Returns
+/// `height + 1` offsets.
+fn field_rows(strips: &[(u64, u64)], w: usize, h: usize, file_len: usize) -> Option<Vec<usize>> {
+    let rb = w.checked_mul(3)? / 2;
+    if rb == 0 || !w.is_multiple_of(2) || h.is_multiple_of(2) || h < 3 || strips.len() < 2 {
+        return None;
+    }
+    let h0 = h.div_ceil(2);
+    let total = strips.iter().try_fold(0u64, |a, s| a.checked_add(s.1))?;
+    if total != (rb as u64).checked_mul(h as u64)? {
+        return None;
+    }
+    let mut rows = Vec::with_capacity(h + 1);
+    let mut gaps = 0;
+    let mut end = None;
+    for &(offset, len) in strips {
+        let next_end = offset.checked_add(len).filter(|e| len > 0 && len % rb as u64 == 0 && *e <= file_len as u64)?;
+        match end {
+            Some(e) if offset < e => return None,
+            // the gap must be the field seam
+            Some(e) if offset > e => {
+                if rows.len() != h0 {
+                    return None;
+                }
+                gaps += 1;
+            }
+            _ => {}
+        }
+        end = Some(next_end);
+        let (offset, rb) = (usize::try_from(offset).ok()?, rb);
+        rows.extend((0..usize::try_from(len).ok()? / rb).map(|r| offset + r * rb));
+    }
+    let tail = usize::try_from(end?).ok()?;
+    if gaps != 1 || rows.len() != h || tail.checked_add(rb)? > file_len {
+        return None;
+    }
+    rows.push(tail);
+    Some(rows)
+}
+
+/// The valid area of a `w × h` sensor from ImageProcessing's `CropLeft`, `CropTop`, `CropWidth` and `CropHeight`
+/// ([`CROP`]); `None` unless all four are there and the area is not empty and inside the sensor. Checked: the tags are
+/// file data, and `x + width` on a hostile value would wrap past the bounds.
+fn valid_area(ip: &Ifd, w: usize, h: usize) -> Option<Rect> {
+    let [x, y, cw, ch] = CROP.map(|tag| ip.u64(tag).and_then(|v| usize::try_from(v).ok()));
+    let (x, y, cw, ch) = (x?, y?, cw?, ch?);
+    (cw > 0 && ch > 0 && x.checked_add(cw)? <= w && y.checked_add(ch)? <= h).then(|| Rect::new(x, y, cw, ch))
+}
+
+/// ImageProcessing `WB_GLevel`: the green level the red and blue levels are relative to (256 when absent).
+fn green_level(ip: &Ifd) -> f64 {
+    ip.f64(WB_G).filter(|g| *g > 0.0 && g.is_finite()).unwrap_or(256.0)
+}
+
+/// White-balance multipliers `[red, 1, blue]` from a `WB_RBLevels` value (red and blue gain against the green level
+/// `g`); `None` unless both are positive and finite.
+fn rb_gains(v: &[f64], g: f64) -> Option<[f32; 3]> {
+    match *v {
+        [red, blue, ..] if red > 0.0 && blue > 0.0 && red.is_finite() && blue.is_finite() => Some([(red / g) as f32, 1.0, (blue / g) as f32]),
+        _ => None,
+    }
+}
+
+/// The camera's own white balance at its stated temperatures, ImageProcessing `WB_RBLevels<K>` ([`WB_PRESETS`]): a Kelvin
+/// scale for the as-shot gains. `None` without three usable entries that make a curve; an entry that turns the curve back
+/// is left out ([`KelvinPresets::from_unordered`]).
+fn kelvin_presets(ip: &Ifd) -> Option<KelvinPresets> {
+    let g = green_level(ip);
+    KelvinPresets::from_unordered(WB_PRESETS.iter().filter_map(|&(tag, kelvin)| Some((kelvin, rb_gains(&ip.f64s(tag)?, g)?))))
+}
+
+/// The body's white-balance presets ([`kelvin_presets`]) and the as-shot gains `[red, 1, blue]`, read from the maker
+/// note alone: works on every ORF, decodable or not (every compressed one). `None` for a file without both. Placing
+/// the gains on the curve through the presets (temperature and tint) is the developer's arithmetic.
+pub fn as_shot_white_balance(bytes: &[u8]) -> Option<(KelvinPresets, [f32; 3])> {
+    let tiff = Tiff::parse(bytes).ok()?;
+    let ip = sub_ifd(bytes, &maker_note(bytes, &tiff)?, IMAGE_PROCESSING)?;
+    let gains = rb_gains(&ip.f64s(WB_RB)?, green_level(&ip))?;
+    Some((kelvin_presets(&ip)?, gains))
+}
+
+/// Decode the supported uncompressed Olympus ORF layouts into a mosaic raw image.
+pub(crate) fn decode(bytes: &[u8], mode: Mode, limits: &Limits) -> Result<RawImage> {
+    let tiff = Tiff::parse(bytes)?;
+    let ifd0 = tiff.ifds.first().ok_or_else(|| RawError::Corrupt("TIFF without IFDs".into()))?;
+    let info = ifd0.image()?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    let n = w.checked_mul(h).filter(|n| *n > 0 && *n <= limits.samples()).ok_or(RawError::Limit("image too large"))?;
+    // A partial TIFF directory is damage, not evidence of an unsupported compressed layout.
+    // Do not infer packing from an absent strip table or from clipped sensor bytes.
+    if info.compression == 1
+        && (info.offsets.is_empty()
+            || info.offsets.len() != info.byte_counts.len()
+            || info
+                .offsets
+                .iter()
+                .zip(&info.byte_counts)
+                .any(|(&at, &len)| len == 0 || at.checked_add(len).is_none_or(|end| end > bytes.len() as u64)))
+    {
+        return Err(RawError::Corrupt("ORF strip table is missing or outside file".into()));
+    }
+    let chunks = info.chunks(bytes.len() as u64);
+    let total = chunks.iter().fold(0u64, |a, c| a.saturating_add(c.len));
+    let stated = cfa_from_exif(&tiff);
+    let mut two_field = false;
+    let mn = maker_note(bytes, &tiff);
+    let ip = mn.as_ref().and_then(|m| sub_ifd(bytes, m, IMAGE_PROCESSING));
+    let (mut data, bits, from_word16) = if info.compression != 1 {
+        return Err(RawError::Unsupported(format!("ORF compression {}", info.compression)));
+    } else if total >= (n as u64) * 2 {
+        let d = read_image(bytes, &info, tiff.order, Packing::Word16, limits)?;
+        (d, 16, true)
+    } else if is_block16(w, n, total, chunks.len()) {
+        let src = chunk_bytes(bytes, &chunks[0]).ok_or_else(|| RawError::Corrupt("ORF strip outside file".into()))?;
+        let stride = w / 10 * 16;
+        if src.len() as u64 != total || src.len() / stride != h {
+            return Err(RawError::Corrupt("ORF strip shorter than its rows".into()));
+        }
+        let d = if mode == Mode::Full || stated.is_none() {
+            let mut d = vec![0u16; n];
+            d.par_chunks_mut(w).enumerate().try_for_each(|(y, row)| unpack_row_blocks16(&src[y * stride..(y + 1) * stride], row))?;
+            d
+        } else {
+            Vec::new()
+        };
+        (RawData::U16(d), 12, false)
+    } else if info.bits() == 12 && total * 8 >= (n as u64) * 12 && total * 8 < (n as u64) * 13 && chunks.len() == 1 {
+        let src = chunk_bytes(bytes, &chunks[0]).ok_or_else(|| RawError::Corrupt("ORF strip outside file".into()))?;
+        // Only the declared 12-bit layout is supported here. A compressed stream in a 16-bit
+        // ORF container must not fall through to packed decoding just because its length fits.
+        // the strip as it is in the file (clipped at its end), not as its tag states it: one too short
+        // for the samples is a truncated file, refused before they are allocated
+        if (src.len() as u64).saturating_mul(8) < (n as u64).saturating_mul(12) {
+            return Err(RawError::Corrupt("ORF strip shorter than its samples".into()));
+        }
+        // the depth is fixed here, so a header-only probe needs the samples only when the file doesn't state its
+        // colour-filter layout
+        let d = if mode == Mode::Full || stated.is_none() {
+            let stride = src.len() / h;
+            let mut d = vec![0u16; n];
+            d.par_chunks_mut(w).enumerate().for_each(|(y, row)| unpack_row_le32_msb(&src[y * stride..(y + 1) * stride], 12, row));
+            d
+        } else {
+            Vec::new()
+        };
+        (RawData::U16(d), 12, false)
+    } else if let Some(rows) = (info.bits() == 12 && info.samples_per_pixel == 1 && info.planar != 2 && info.offsets.len() == info.byte_counts.len())
+        .then(|| field_rows(&info.offsets.iter().copied().zip(info.byte_counts.iter().copied()).collect::<Vec<_>>(), w, h, bytes.len()))
+        .flatten()
+    {
+        two_field = true;
+        let d = if mode == Mode::Full || stated.is_none() {
+            let (rb, h0) = (w * 3 / 2, h.div_ceil(2));
+            let mut d = vec![0u16; n];
+            d.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+                let stored = if y % 2 == 0 { y / 2 } else { h0 + y / 2 };
+                // every offset was checked against the file by `field_rows`
+                if let Some(src) = rows.get(stored).and_then(|&at| bytes.get(at..at + rb)) {
+                    unpack_msb(src, 12, row);
+                }
+            });
+            d
+        } else {
+            Vec::new()
+        };
+        (RawData::U16(d), 12, false)
+    } else {
+        return Err(RawError::Unsupported("Olympus compressed ORF".into()));
+    };
+    let RawData::U16(ref mut samples) = data else { return Err(RawError::Unsupported("float ORF".into())) };
+    let bits = if from_word16 && bits == 16 && samples.iter().step_by(7).filter(|v| *v & 15 != 0).count() * 700 <= n {
+        // 12-bit values stored in the top bits
+        samples.par_iter_mut().for_each(|v| *v >>= 4);
+        12
+    } else if from_word16 && bits == 16 {
+        let mx = samples.iter().step_by(31).max().copied().unwrap_or(0);
+        if mx < 4096 {
+            12
+        } else if mx < 16384 {
+            14
+        } else {
+            16
+        }
+    } else {
+        bits
+    };
+
+    let active = ip.as_ref().and_then(|i| valid_area(i, w, h)).unwrap_or(Rect::new(0, 0, w, h));
+    let assumed_cfa = stated.is_none();
+    let cfa = stated.unwrap_or_else(|| cfa_from_data(samples, w, active));
+    let (black, black_source) = match ip.as_ref().and_then(|i| i.f64s(BLACK)).as_deref() {
+        Some(v @ [_, _, _, _]) => {
+            let a = cfa.shifted(active.x, active.y);
+            let values = a.pattern.iter().map(|&c| [v[0], (v[1] + v[2]) / 2.0, v[3]][c as usize] as f32).collect();
+            (BlackLevel { repeat_rows: 2, repeat_cols: 2, values, ..Default::default() }, crate::LevelSource::Metadata)
+        }
+        _ => match mn.as_ref().filter(|_| ip.is_none()).and_then(|m| maker_note_black(m, bits)) {
+            Some(b) => (BlackLevel::uniform(b), crate::LevelSource::Metadata),
+            None => (BlackLevel::uniform(0.0), crate::LevelSource::Fallback),
+        },
+    };
+    let wb = ip.as_ref().and_then(|i| rb_gains(&i.f64s(WB_RB)?, green_level(i))).or_else(|| {
+        // the red and blue gains lead the main note's entries 0x1017/0x1018 on the two-field compacts and on
+        // the E-10 (16-bit words, no ImageProcessing; 384 and 406 on its CC0 file 5424)
+        let m = mn.as_ref().filter(|_| two_field || ip.is_none())?;
+        let g = |tag| m.ifd.f64s(tag).and_then(|v| v.first().copied()).filter(|g| *g > 25.6 && *g < 2560.0);
+        Some([(g(MN_WB_RED)? / 256.0) as f32, 1.0, (g(MN_WB_BLUE)? / 256.0) as f32])
+    });
+    let (white, white_source) = white_from_data_sourced(samples, bits);
+    let img = RawImage {
+        format: RawFormat::Orf,
+        width: w,
+        height: h,
+        cpp: 1,
+        data,
+        cfa: Some(cfa),
+        bits,
+        black,
+        white: vec![white],
+        active_area: active,
+        crop: Rect::new(0, 0, active.width, active.height),
+        orientation: Orientation::from_exif(ifd0.u16(t::ORIENTATION).unwrap_or(1)),
+        color: ColorData { kelvin_presets: ip.as_ref().and_then(kelvin_presets), ..Default::default() },
+        wb_multipliers: wb,
+        linearized: false,
+        linearization_table: None,
+        pixel_aspect: 1.0,
+        opcodes: OpcodeLists::default(),
+        camera: tiff.ifds.first().map(Camera::from_ifd0).unwrap_or_default(),
+        cinema: Default::default(),
+        lens_metadata: Default::default(),
+        notices: crate::RawNotices { assumed_cfa, ..Default::default() },
+        level_sources: crate::LevelSources { black: black_source, white: white_source },
+    };
+    img.validate_for(mode)?;
+    Ok(img)
+}
+
+/// The colour space of the camera's JPEGs, the embedded preview among them, from the maker note's CameraSettings `ColorSpace`
+/// (0 sRGB, 1 Adobe RGB). A body set to Adobe RGB writes Exif `ColorSpace` 0xFFFF ("uncalibrated") without the DCF's
+/// Interoperability "R03" that says which, and no ICC profile in the preview, so this is the only place the file says. The
+/// third value, Pro Photo RGB, has no [`PreviewColorSpace`]: `None`, as for a note that doesn't say.
+pub(crate) fn color_space(bytes: &[u8], tiff: &Tiff) -> Option<PreviewColorSpace> {
+    let mn = maker_note(bytes, tiff)?;
+    match sub_ifd(bytes, &mn, CAMERA_SETTINGS)?.u64(COLOR_SPACE)? {
+        0 => Some(PreviewColorSpace::Srgb),
+        1 => Some(PreviewColorSpace::AdobeRgb),
+        _ => None,
+    }
+}
+
+/// The large preview JPEG referenced by CameraSettings `PreviewImageStart/Length` (relative to the note base).
+pub(crate) fn preview(bytes: &[u8]) -> Option<&[u8]> {
+    let tiff = Tiff::parse(bytes).ok()?;
+    let mn = maker_note(bytes, &tiff)?;
+    let cs = sub_ifd(bytes, &mn, CAMERA_SETTINGS)?;
+    let start = mn.base.checked_add(cs.u64(PREVIEW_START)?)? as usize;
+    let len = cs.u64(PREVIEW_LENGTH)? as usize;
+    bytes.get(start..start.checked_add(len)?.min(bytes.len()))
+}
+
+/// The frame the camera's aspect-ratio setting (3:2, 16:9, 1:1, …) cuts from its 4:3 valid area, as `[x0, y0, x1, y1]`
+/// fractions of that area: ImageProcessing `AspectFrame` (`0x1113`: left, top, right and bottom pixel, inclusive) over the
+/// area the decoder crops to ([`CROP`], whose width and height it needs). The sensor data and the camera's preview JPEG
+/// show the whole area whatever the setting; the camera's own JPEG is cut to this frame.
+///
+/// `None` for a file without the tags, for a frame that is empty or reaches outside the area (a damaged note), and for
+/// the whole area itself (4:3). The area is the one [`decode`] crops to (all four [`CROP`] tags, inside the sensor), so
+/// the frame is in the picture the decoder develops. Never reads outside `bytes`: every number is checked.
+pub fn aspect_frame(bytes: &[u8]) -> Option<[f64; 4]> {
+    let tiff = Tiff::parse(bytes).ok()?;
+    let info = tiff.ifds.first()?.image().ok()?;
+    let mn = maker_note(bytes, &tiff)?;
+    let ip = sub_ifd(bytes, &mn, IMAGE_PROCESSING)?;
+    // the area the decoder crops to, by the same rule
+    let area = valid_area(&ip, usize::try_from(info.width).ok()?, usize::try_from(info.height).ok()?)?;
+    let [left, top, right, bottom] = ip.f64s(ASPECT_FRAME)?.as_slice().try_into().ok()?;
+    let whole_pixel = |v: f64| v.is_finite() && v >= 0.0 && v.fract() == 0.0;
+    if ![left, top, right, bottom].into_iter().all(whole_pixel) {
+        return None;
+    }
+    let (width, height) = (area.width as f64, area.height as f64);
+    if left >= right || top >= bottom || right >= width || bottom >= height {
+        return None;
+    }
+    let frame = [left / width, top / height, (right + 1.0) / width, (bottom + 1.0) / height];
+    (frame != [0.0, 0.0, 1.0, 1.0]).then_some(frame)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::EXIF_CFA_PATTERN;
+    use craft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter};
+
+    fn orf(w: u32, h: u32, bits: u16, strip: Vec<u8>) -> Vec<u8> {
+        orf_with(w, h, bits, strip, None)
+    }
+
+    /// A minimal ORF with one strip in IFD0 and, optionally, an Exif `CFAPattern`.
+    fn orf_with(w: u32, h: u32, bits: u16, strip: Vec<u8>, cfa_pattern: Option<&[u8]>) -> Vec<u8> {
+        orf_with_note(w, h, bits, strip, cfa_pattern, None)
+    }
+
+    /// [`orf_with`] plus an optional maker note blob in the Exif IFD.
+    fn orf_with_note(w: u32, h: u32, bits: u16, strip: Vec<u8>, cfa_pattern: Option<&[u8]>, note: Option<Vec<u8>>) -> Vec<u8> {
+        let mut ifd = IfdBuilder::new();
+        ifd.set(t::IMAGE_WIDTH, Value::Long(vec![w]));
+        ifd.set(t::IMAGE_LENGTH, Value::Long(vec![h]));
+        ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![bits]));
+        ifd.set(t::COMPRESSION, Value::Short(vec![1]));
+        ifd.set(t::PHOTOMETRIC, Value::Short(vec![1]));
+        ifd.set(t::MAKE, Value::Ascii("OLYMPUS IMAGING CORP.".into()));
+        ifd.set_image(ImageData::Strips { rows_per_strip: h, strips: vec![strip] });
+        if cfa_pattern.is_some() || note.is_some() {
+            let mut exif = IfdBuilder::new();
+            if let Some(p) = cfa_pattern {
+                exif.set(EXIF_CFA_PATTERN, Value::Undefined(p.to_vec()));
+            }
+            if let Some(n) = note {
+                exif.set(t::MAKER_NOTE, Value::Undefined(n));
+            }
+            ifd.set_child(t::EXIF_IFD, exif);
+        }
+        let mut b = TiffWriter::new(ByteOrder::Little, false).write(&[ifd]).unwrap();
+        b[2] = b'R';
+        b[3] = b'O';
+        b
+    }
+
+    /// A 16-bit container with a short sensor stream is not the supported 12-bit packed layout.
+    /// Both entry points must report unsupported rather than returning fabricated sensor pixels.
+    #[test]
+    fn compressed_sensor_data_is_unsupported_in_probe_and_decode() {
+        for strip_len in [8, 24, 25] {
+            let bytes = orf_with(4, 4, 16, vec![0; strip_len], Some(&[2, 0, 2, 0, 0, 1, 1, 2]));
+            assert!(matches!(crate::decode(&bytes), Err(RawError::Unsupported(why)) if why == "Olympus compressed ORF"));
+            assert!(matches!(crate::probe_info(&bytes), Err(RawError::Unsupported(why)) if why == "Olympus compressed ORF"));
+        }
+    }
+
+    #[test]
+    fn truncated_uncompressed_directory_and_strip_are_corrupt_not_compressed() {
+        let mut bytes = orf_with(4, 4, 16, vec![0; 32], Some(&[2, 0, 2, 0, 0, 1, 1, 2]));
+        // TiffWriter puts image chunks before its directory/metadata, so EOF is not a
+        // required sensor byte. Relocate the declared strip to EOF without changing it.
+        let directory = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+        let count = u16::from_le_bytes(bytes[directory..directory + 2].try_into().unwrap()) as usize;
+        let entry = (0..count)
+            .map(|i| directory + 2 + i * 12)
+            .find(|&at| u16::from_le_bytes(bytes[at..at + 2].try_into().unwrap()) == t::STRIP_OFFSETS)
+            .unwrap();
+        let old_offset = u32::from_le_bytes(bytes[entry + 8..entry + 12].try_into().unwrap()) as usize;
+        let pixels = bytes[old_offset..old_offset + 32].to_vec();
+        let offset = bytes.len();
+        bytes.extend(pixels);
+        bytes[entry + 8..entry + 12].copy_from_slice(&(offset as u32).to_le_bytes());
+        assert!(crate::decode(&bytes).is_ok());
+        for cut in 0..bytes.len() {
+            for result in [crate::decode(&bytes[..cut]).map(|_| ()), crate::probe_info(&bytes[..cut]).map(|_| ())] {
+                assert!(!matches!(result, Err(RawError::Unsupported(ref why)) if why.contains("compressed")), "cut {cut}: {result:?}");
+            }
+        }
+        let result = crate::decode(&bytes[..bytes.len() - 1]);
+        assert!(matches!(result, Err(RawError::Corrupt(_))), "required final strip byte missing: {result:?}");
+        let result = crate::probe_info(&bytes[..bytes.len() - 1]);
+        assert!(matches!(result, Err(RawError::Corrupt(_))), "required final strip byte missing during probe: {result:?}");
+    }
+
+    /// Strip byte counts that add up past `u64::MAX` (LONG8 `[u64::MAX, 1]`) are an error or a picture, not an overflow.
+    #[test]
+    fn strip_byte_counts_past_u64_max_do_not_overflow() {
+        let file = crate::shared::tests::huge_strip_counts(orf(4, 2, 16, vec![0; 16]));
+        for mode in [Mode::Header, Mode::Full] {
+            let _ = super::decode(&file, mode, &Limits::default());
+        }
+    }
+
+    /// An old-style little-endian Olympus maker note (`OLYMP\0`, version 1, then the IFD) of SHORT (type 3) or
+    /// UNDEFINED (type 7) entries. Values longer than four bytes follow the IFD; their offsets count from the TIFF
+    /// header, so `at` is where the note sits in the file.
+    fn olymp_note(at: usize, entries: &[(u16, u16, Vec<u8>)]) -> Vec<u8> {
+        let ifd_end = 8 + 2 + 12 * entries.len() + 4;
+        let (mut b, mut extra) = (b"OLYMP\0\x01\0".to_vec(), Vec::new());
+        b.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        for (tag, typ, value) in entries {
+            b.extend_from_slice(&tag.to_le_bytes());
+            b.extend_from_slice(&typ.to_le_bytes());
+            b.extend_from_slice(&(if *typ == 3 { value.len() / 2 } else { value.len() } as u32).to_le_bytes());
+            if value.len() <= 4 {
+                let mut v = value.clone();
+                v.resize(4, 0);
+                b.extend_from_slice(&v);
+            } else {
+                b.extend_from_slice(&((at + ifd_end + extra.len()) as u32).to_le_bytes());
+                extra.extend_from_slice(value);
+            }
+        }
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&extra);
+        b
+    }
+
+    /// SHORT values, little-endian.
+    fn shorts(v: &[u16]) -> Vec<u8> {
+        v.iter().flat_map(|x| x.to_le_bytes()).collect()
+    }
+
+    /// A 16 × 4 ORF of 12-bit samples in 16-bit words with an [`olymp_note`] of `entries`, decoded.
+    fn decode_noted(entries: &[(u16, u16, Vec<u8>)]) -> RawImage {
+        let (w, h) = (16u32, 4u32);
+        let words: Vec<u8> = (0..w * h).flat_map(|i| (((200 + i * 37) % 4096) as u16).to_le_bytes()).collect();
+        let file = |at| orf_with_note(w, h, 16, words.clone(), Some(RGGB), Some(olymp_note(at, entries)));
+        let at = file(0).windows(6).position(|b| b == b"OLYMP\0").unwrap();
+        let bytes = file(at);
+        assert_eq!(bytes.windows(6).position(|b| b == b"OLYMP\0"), Some(at));
+        crate::decode(&bytes).unwrap()
+    }
+
+    /// An ImageProcessing sub-directory stored inline (old-style note) with one unrelated entry and no levels.
+    fn bare_image_processing() -> (u16, u16, Vec<u8>) {
+        let mut ifd = 1u16.to_le_bytes().to_vec();
+        ifd.extend_from_slice(&[0, 0, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+        ifd.extend_from_slice(&0u32.to_le_bytes());
+        (IMAGE_PROCESSING, 7, ifd)
+    }
+
+    /// An ImageProcessing sub-directory stored inline (old-style note) of SHORT entries of at most two values.
+    fn image_processing(entries: &[(u16, &[u16])]) -> (u16, u16, Vec<u8>) {
+        let mut ifd = (entries.len() as u16).to_le_bytes().to_vec();
+        for (tag, v) in entries {
+            let mut value = shorts(v);
+            value.resize(4, 0);
+            ifd.extend([&tag.to_le_bytes()[..], &3u16.to_le_bytes(), &(v.len() as u32).to_le_bytes(), &value].concat());
+        }
+        ifd.extend_from_slice(&0u32.to_le_bytes());
+        (IMAGE_PROCESSING, 7, ifd)
+    }
+
+    /// The red and blue levels are relative to WB_GLevel (`0x011f`), 256 when it is absent or zero (as in
+    /// PhotoCraft's reader).
+    #[test]
+    fn as_shot_white_balance_is_relative_to_the_green_level() {
+        let wb = |g: Option<u16>| {
+            let mut e = vec![(WB_RB, &[512u16, 384][..])];
+            let g = g.map(|g| [g]);
+            e.extend(g.as_ref().map(|g| (WB_G, &g[..])));
+            decode_noted(&[image_processing(&e)]).wb_multipliers
+        };
+        assert_eq!(wb(None), Some([2.0, 1.0, 1.5]));
+        assert_eq!(wb(Some(256)), Some([2.0, 1.0, 1.5]));
+        assert_eq!(wb(Some(512)), Some([1.0, 1.0, 0.75]));
+        assert_eq!(wb(Some(0)), Some([2.0, 1.0, 1.5]));
+    }
+
+    /// The CameraSettings preview (`0x0101` start, relative to the note's base, and `0x0102` length) is the file's
+    /// embedded preview; a length past the end is clamped to the file.
+    #[test]
+    fn camera_settings_preview_is_the_embedded_preview() {
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 8, 0, 1, 0, 1, 1, 1, 0x11, 0];
+        jpeg.extend([0x55; 40]);
+        jpeg.extend([0xff, 0xd9]);
+        let long = |v: u32| v.to_le_bytes().to_vec();
+        // the note holds CameraSettings (30 bytes, inline) and the JPEG, both after its 38-byte IFD
+        let file = |at: usize, len: u32| {
+            let mut cs = 2u16.to_le_bytes().to_vec();
+            cs.extend([&PREVIEW_START.to_le_bytes()[..], &4u16.to_le_bytes(), &1u32.to_le_bytes(), &long((at + 38 + 30) as u32)].concat());
+            cs.extend([&PREVIEW_LENGTH.to_le_bytes()[..], &4u16.to_le_bytes(), &1u32.to_le_bytes(), &long(len)].concat());
+            cs.extend(0u32.to_le_bytes());
+            let note = olymp_note(at, &[(CAMERA_SETTINGS, 7, cs), (0xfff0, 7, jpeg.clone())]);
+            orf_with_note(16, 4, 16, vec![0; 128], Some(RGGB), Some(note))
+        };
+        let at = file(0, 0).windows(6).position(|b| b == b"OLYMP\0").unwrap();
+        let bytes = file(at, jpeg.len() as u32);
+        assert_eq!(preview(&bytes), Some(&jpeg[..]));
+        assert_eq!(crate::embedded_preview(&bytes), Some(jpeg.clone()));
+        let past = file(at, u32::MAX);
+        assert!(preview(&past).is_some_and(|p| p.starts_with(&jpeg) && p.len() < past.len()));
+    }
+
+    /// storytold/lightcraft#1273: the E-10 (16-bit words, no ImageProcessing sub-directory) keeps its red and blue gains in
+    /// maker-note entries `0x1017`/`0x1018`, as the two-field compacts do.
+    #[test]
+    fn as_shot_white_balance_from_the_main_maker_note() {
+        let wb = |red: u16, blue: Option<u16>| {
+            let mut e = vec![(MN_WB_RED, 3, shorts(&[red, 64]))];
+            e.extend(blue.map(|b| (MN_WB_BLUE, 3, shorts(&[b, 64]))));
+            decode_noted(&e).wb_multipliers
+        };
+        assert_eq!(wb(384, Some(406)), Some([1.5, 1.0, 406.0 / 256.0]));
+        // both gains are needed, within 0.1 to 10 (25.6 to 2560 in 256 units)
+        assert_eq!(wb(384, None), None);
+        assert_eq!(wb(0, Some(406)), None);
+        assert_eq!(wb(25, Some(406)), None);
+        assert_eq!(wb(384, Some(2560)), None);
+        assert_eq!(wb(27, Some(2559)), Some([27.0 / 256.0, 1.0, 2559.0 / 256.0]));
+        assert_eq!(decode_noted(&[]).wb_multipliers, None);
+        // a body with ImageProcessing but without its levels doesn't fall back to these entries
+        let e = [bare_image_processing(), (MN_WB_RED, 3, shorts(&[384, 64])), (MN_WB_BLUE, 3, shorts(&[406, 64]))];
+        assert_eq!(decode_noted(&e).wb_multipliers, None);
+    }
+
+    /// storytold/lightcraft#1273: a body without ImageProcessing states its black level in the main note, `0x1012` (four
+    /// values) in `0x102c` ValidBits units: the E-10's 32 at 10 bits is 128 on its 12-bit samples. The two-field
+    /// compacts state 0 at 12 bits.
+    #[test]
+    fn black_level_from_the_main_maker_note() {
+        let black = |level: u16, valid: Option<u16>| {
+            let mut e = vec![(MN_BLACK, 3, shorts(&[level; 4]))];
+            e.extend(valid.map(|v| (MN_VALID_BITS, 3, shorts(&[v, 0]))));
+            let r = decode_noted(&e);
+            assert_eq!(r.bits, 12);
+            r.black.values
+        };
+        assert_eq!(black(32, Some(10)), vec![128.0]);
+        assert_eq!(black(0, Some(12)), vec![0.0]);
+        assert_eq!(black(32, Some(12)), vec![32.0]);
+        // the four values are averaged
+        let e = [(MN_BLACK, 3, shorts(&[30, 32, 32, 34])), (MN_VALID_BITS, 3, shorts(&[10, 0]))];
+        assert_eq!(decode_noted(&e).black.values, vec![128.0]);
+        // no ValidBits, ValidBits above the samples' depth, a level of a quarter of the range or more: no black
+        assert_eq!(black(32, None), vec![0.0]);
+        assert_eq!(black(32, Some(14)), vec![0.0]);
+        assert_eq!(black(256, Some(10)), vec![0.0]);
+        // ImageProcessing present (without BlackLevel2): the main note isn't read
+        let e = [bare_image_processing(), (MN_BLACK, 3, shorts(&[32; 4])), (MN_VALID_BITS, 3, shorts(&[10, 0]))];
+        assert_eq!(decode_noted(&e).black.values, vec![0.0]);
+    }
+
+    /// A 12-bit mosaic stored as 16-bit words: `site(cx, cy)` gives the four values of the 2×2 cell at (cx, cy).
+    fn mosaic(w: usize, h: usize, site: impl Fn(usize, usize) -> [u16; 4]) -> Vec<u8> {
+        (0..w * h).flat_map(|i| site(i % w / 2, i / w / 2)[((i / w) & 1) * 2 + ((i % w) & 1)].to_le_bytes()).collect()
+    }
+
+    /// Smooth scene texture shared by the four sites of a cell.
+    fn shade(cx: usize, cy: usize) -> u16 {
+        ((cx * 7 + cy * 13) % 23) as u16
+    }
+
+    const BGGR: &[u8] = &[2, 0, 2, 0, 2, 1, 1, 0];
+    const GRBG: &[u8] = &[2, 0, 2, 0, 1, 0, 2, 1];
+    // repeat counts in the other byte order
+    const RGGB: &[u8] = &[0, 2, 0, 2, 0, 1, 1, 2];
+    const GBRG: &[u8] = &[0, 2, 0, 2, 1, 2, 0, 1];
+
+    fn layout(bytes: &[u8]) -> String {
+        let r = crate::decode(bytes).unwrap();
+        assert_eq!(crate::probe_info(bytes).unwrap(), r.info());
+        r.cfa.unwrap().name()
+    }
+
+    #[test]
+    fn exif_cfa_pattern_states_the_layout() {
+        let (w, h) = (160usize, 144usize);
+        // samples whose green diagonal alone would say RGGB
+        let px = mosaic(w, h, |cx, cy| [600, 1000, 1000, 300].map(|v| v + shade(cx, cy)));
+        for (tag, name) in [(BGGR, "BGGR"), (GRBG, "GRBG"), (RGGB, "RGGB"), (GBRG, "GBRG")] {
+            assert_eq!(layout(&orf_with(w as u32, h as u32, 16, px.clone(), Some(tag))), name);
+        }
+        // not a 2×2 Bayer cell (four greens, greens side by side, a fourth colour), other repeat counts, wrong
+        // lengths: the samples decide
+        let unusable: [&[u8]; 8] = [
+            &[2, 0, 2, 0, 1, 1, 1, 1],
+            &[2, 0, 2, 0, 1, 1, 0, 2],
+            &[2, 0, 2, 0, 0, 1, 1, 3],
+            &[3, 0, 3, 0, 0, 1, 1, 2],
+            &[2, 2, 2, 0, 0, 1, 1, 2],
+            &[2, 0, 2, 0, 1, 0],
+            &[2, 0, 2, 0, 2, 1, 1, 0, 0],
+            &[],
+        ];
+        for (site, name) in [([600, 1000, 1000, 300], "RGGB"), ([1000, 600, 300, 1000], "GRBG")] {
+            let px = mosaic(w, h, |cx, cy| site.map(|v| v + shade(cx, cy)));
+            assert_eq!(layout(&orf(w as u32, h as u32, 16, px.clone())), name);
+            for tag in unusable {
+                assert_eq!(layout(&orf_with(w as u32, h as u32, 16, px.clone(), Some(tag))), name, "{tag:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn cfa_notice_distinguishes_missing_and_unusable_exif_from_stated_patterns() {
+        let (w, h) = (160usize, 144usize);
+        let strip = mosaic(w, h, |cx, cy| [600, 1000, 1000, 300].map(|value| value + shade(cx, cy)));
+        let expected: Vec<u16> = strip.as_chunks::<2>().0.iter().map(|word| u16::from_le_bytes(*word)).collect();
+        for (tag, assumed, pattern) in [
+            (None, true, "RGGB"),
+            (Some(&[2, 0, 2, 0, 0, 1][..]), true, "RGGB"),
+            (Some(&[2, 0, 2, 0, 0, 1, 1, 3][..]), true, "RGGB"),
+            (Some(BGGR), false, "BGGR"),
+            (Some(GRBG), false, "GRBG"),
+        ] {
+            let bytes = orf_with(w as u32, h as u32, 16, strip.clone(), tag);
+            for mode in [Mode::Header, Mode::Full] {
+                let image = decode(&bytes, mode, &Limits::default()).unwrap();
+                assert_eq!(image.cfa, Some(Cfa::bayer_static(pattern)));
+                assert_eq!(image.data, RawData::U16(expected.clone()), "word16 samples remain unchanged");
+                assert_eq!(image.notices, crate::RawNotices { assumed_cfa: assumed, ..Default::default() });
+            }
+        }
+    }
+
+    #[test]
+    fn packed_12_bit_probe_agrees_with_decode() {
+        let (w, h) = (16usize, 4usize);
+        let strip: Vec<u8> = (0..w * h * 3 / 2).map(|i| (i * 37 % 251) as u8).collect();
+        for tag in [Some(BGGR), None] {
+            let bytes = orf_with(w as u32, h as u32, 12, strip.clone(), tag);
+            let r = crate::decode(&bytes).unwrap();
+            assert_eq!((r.bits, r.data.len()), (12, w * h));
+            assert_eq!(r.cfa.as_ref().unwrap().name(), if tag.is_some() { "BGGR" } else { "RGGB" });
+            assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
+        }
+    }
+
+    #[test]
+    fn data_fallback_looks_past_fine_texture() {
+        let (w, h) = (160usize, 144usize);
+        // greens on the main diagonal, red and blue close; a checkerboard of detail makes the two greens of a cell
+        // differ by far more than red differs from blue
+        let detail = |cx: usize, cy: usize| if (cx + cy) & 1 == 0 { 150 } else { -150i32 };
+        let site = |cx: usize, cy: usize| {
+            let (g, d) = (1000 + shade(cx, cy) as i32, detail(cx, cy));
+            [(g + d) as u16, 500, 520, (g - d) as u16]
+        };
+        assert_eq!(layout(&orf(w as u32, h as u32, 16, mosaic(w, h, site))), "GRBG");
+        // the same scene with the greens on the other diagonal
+        let px = mosaic(w, h, |cx, cy| {
+            let [g0, r, b, g1] = site(cx, cy);
+            [r, g0, g1, b]
+        });
+        assert_eq!(layout(&orf(w as u32, h as u32, 16, px)), "RGGB");
+    }
+
+    #[test]
+    fn data_fallback_survives_any_area() {
+        let d = vec![100u16; 64 * 64];
+        let big = usize::MAX;
+        for a in [
+            Rect::new(0, 0, 64, 64),
+            Rect::new(0, 0, 0, 0),
+            Rect::new(0, 0, 31, 31),
+            Rect::new(63, 63, 1, 1),
+            Rect::new(0, 0, 4096, 4096),
+            Rect::new(big, big, big, big),
+            Rect::new(0, big - 40, 64, 40),
+        ] {
+            for w in [64, 0, 1, big] {
+                assert_eq!(cfa_from_data(&d, w, a).name(), "RGGB", "{a:?} width {w}");
+                assert_eq!(cfa_from_data(&[], w, a).name(), "RGGB", "{a:?} width {w}");
+            }
+        }
+    }
+
+    /// Output sample (x, y) of the two-field tests: distinct per site, all below 4096.
+    fn field_px(x: usize, y: usize) -> u16 {
+        ((y * 331 + x * 17 + 5) % 4096) as u16
+    }
+
+    /// 12 bits MSB-first, two samples per three bytes, for output row `y`.
+    fn packed_row(w: usize, y: usize) -> Vec<u8> {
+        (0..w)
+            .step_by(2)
+            .flat_map(|x| {
+                let (a, b) = (field_px(x, y), field_px(x + 1, y));
+                [(a >> 4) as u8, ((a & 15) << 4 | b >> 8) as u8, b as u8]
+            })
+            .collect()
+    }
+
+    /// A two-field file: strips A1 (two rows), A2 (one row), a gap, B (all but the last row of the second field),
+    /// with the last row of the second field right after B, as the strip table of the old compacts has it (width 8,
+    /// height 5). `table_gap` keeps the gap in the table (else the strips are contiguous and the table is wrong).
+    fn two_field(table_gap: bool) -> Vec<u8> {
+        let (w, h) = (8usize, 5usize);
+        let h0 = h.div_ceil(2);
+        // stored rows: the even output rows, then the odd ones (the last of them is past the picture)
+        let stored: Vec<Vec<u8>> = (0..h0).map(|k| packed_row(w, 2 * k)).chain((0..h0).map(|k| packed_row(w, 2 * k + 1))).collect();
+        let a1 = stored[..2].concat();
+        let a2 = stored[2].clone();
+        let gap = vec![0xffu8; 20];
+        let b = stored[3].clone();
+        let b2 = stored[4].clone();
+        let last = stored[5].clone();
+        let mut ifd = IfdBuilder::new();
+        ifd.set(t::IMAGE_WIDTH, Value::Long(vec![w as u32]));
+        ifd.set(t::IMAGE_LENGTH, Value::Long(vec![h as u32]));
+        ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![12]));
+        ifd.set(t::COMPRESSION, Value::Short(vec![1]));
+        ifd.set(t::PHOTOMETRIC, Value::Short(vec![2]));
+        ifd.set(t::MAKE, Value::Ascii("OLYMPUS OPTICAL CO.,LTD".into()));
+        ifd.set_image(ImageData::Strips { rows_per_strip: 2, strips: vec![a1, a2, gap, b, b2, last] });
+        let mut exif = IfdBuilder::new();
+        exif.set(EXIF_CFA_PATTERN, Value::Undefined(BGGR.to_vec()));
+        ifd.set_child(t::EXIF_IFD, exif);
+        let mut b = TiffWriter::new(ByteOrder::Little, false).write(&[ifd]).unwrap();
+        b[2] = b'R';
+        b[3] = b'S';
+        // keep strips A1, A2, B1 and B2 in the table (drop the gap and the last row): four strips for a grid of three
+        let le = |b: &[u8], at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+        let at0 = le(&b, 4) as usize;
+        let n = u16::from_le_bytes([b[at0], b[at0 + 1]]) as usize;
+        for e in (0..n).map(|i| at0 + 2 + 12 * i) {
+            let tag = u16::from_le_bytes([b[e], b[e + 1]]);
+            if tag != t::STRIP_OFFSETS && tag != t::STRIP_BYTE_COUNTS {
+                continue;
+            }
+            let at = le(&b, e + 8) as usize;
+            let all: Vec<u32> = (0..6).map(|i| le(&b, at + 4 * i)).collect();
+            let keep: Vec<u32> = if table_gap { vec![all[0], all[1], all[3], all[4]] } else { vec![all[0], all[1], all[2], all[3]] };
+            b[e + 4..e + 8].copy_from_slice(&(keep.len() as u32).to_le_bytes());
+            for (i, v) in keep.iter().enumerate() {
+                b[at + 4 * i..at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
+            }
+        }
+        b
+    }
+
+    #[test]
+    fn two_field_12_bit_layout() {
+        let bytes = two_field(true);
+        let r = crate::decode(&bytes).unwrap();
+        let want: Vec<u16> = (0..5).flat_map(|y| (0..8).map(move |x| field_px(x, y))).collect();
+        assert_eq!((r.data.clone(), r.bits, r.width, r.height), (RawData::U16(want), 12, 8, 5));
+        assert_eq!(r.cfa.as_ref().unwrap().name(), "BGGR");
+        assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
+        // the table without the gap: sizes no longer add up
+        let e = crate::decode(&two_field(false)).map(|_| ());
+        assert!(matches!(e, Err(RawError::Unsupported(_))), "{e:?}");
+    }
+
+    #[test]
+    fn two_field_layout_needs_every_condition() {
+        let chunk = |_index: usize, offset: u64, rows: u64| (offset, rows * 12);
+        // width 8, height 5: rows 0..3 are the first field, the gap, rows 3..5, the last row after them
+        let good = [chunk(0, 100, 2), chunk(1, 124, 1), chunk(2, 200, 2)];
+        let rows = field_rows(&good, 8, 5, 236).unwrap();
+        assert_eq!(rows, [100, 112, 124, 200, 212, 224]);
+        // the last row must be inside the file
+        assert!(field_rows(&good, 8, 5, 235).is_none());
+        // the gap is the field seam: not after two rows, not absent, not twice
+        assert!(field_rows(&[chunk(0, 100, 2), chunk(1, 140, 1), chunk(2, 164, 2)], 8, 5, 300).is_none());
+        assert!(field_rows(&[chunk(0, 100, 2), chunk(1, 124, 1), chunk(2, 136, 2)], 8, 5, 300).is_none());
+        assert!(field_rows(&[chunk(0, 100, 2), chunk(1, 124, 1), chunk(2, 200, 1), chunk(3, 300, 1)], 8, 5, 400).is_none());
+        // overlapping strips, sizes that don't add up, even height, odd width, a single strip
+        assert!(field_rows(&[chunk(0, 100, 2), chunk(1, 120, 1), chunk(2, 200, 2)], 8, 5, 300).is_none());
+        assert!(field_rows(&[chunk(0, 100, 2), chunk(1, 124, 1), chunk(2, 200, 1)], 8, 5, 300).is_none());
+        assert!(field_rows(&good, 8, 4, 300).is_none());
+        assert!(field_rows(&good, 7, 5, 300).is_none());
+        assert!(field_rows(&good[..1], 8, 5, 300).is_none());
+    }
+
+    #[test]
+    fn word16_shifted_and_packed12() {
+        let (w, h) = (16usize, 4usize);
+        let px: Vec<u16> = (0..w * h).map(|i| ((i * 211) % 4096) as u16).collect();
+        let words: Vec<u8> = px.iter().flat_map(|v| (v << 4).to_le_bytes()).collect();
+        let bytes = orf(w as u32, h as u32, 16, words);
+        assert_eq!(crate::probe(&bytes), Some(RawFormat::Orf));
+        let r = crate::decode(&bytes).unwrap();
+        assert_eq!((r.data.clone(), r.bits), (RawData::U16(px.clone()), 12));
+        // 12-bit: MSB-first stream, every 32-bit word byte-swapped
+        let mut be = Vec::new();
+        for p in px.chunks(2) {
+            let v = (p[0] as u32) << 12 | p[1] as u32;
+            be.extend_from_slice(&[(v >> 16) as u8, (v >> 8) as u8, v as u8]);
+        }
+        let le: Vec<u8> = be.chunks(4).flat_map(|c| [c[3], c[2], c[1], c[0]]).collect();
+        let bytes = orf(w as u32, h as u32, 12, le);
+        assert_eq!(crate::decode(&bytes).unwrap().data, RawData::U16(px));
+        let bytes = orf(w as u32, h as u32, 16, vec![0; 40]);
+        assert!(matches!(crate::decode(&bytes), Err(RawError::Unsupported(_))));
+    }
+
+    /// Pack samples into 16-byte blocks: ten little-endian 12-bit fields, then a zero pad byte.
+    fn pack_blocks(samples: &[u16]) -> Vec<u8> {
+        samples
+            .chunks(10)
+            .flat_map(|c| {
+                let mut v = 0u128;
+                for (i, s) in c.iter().enumerate() {
+                    v |= (*s as u128 & 0xfff) << (12 * i);
+                }
+                let mut b = v.to_le_bytes();
+                b[15] = 0;
+                b
+            })
+            .collect()
+    }
+
+    #[test]
+    fn block16_round_trip() {
+        let (w, h) = (20usize, 4usize);
+        let samples: Vec<u16> = (0..w * h).map(|i| ((i * 509 + 17) % 4096) as u16).collect();
+        let strip = pack_blocks(&samples);
+        assert_eq!(strip.len(), w * h * 16 / 10);
+        let mut out = vec![0u16; w * h];
+        for (y, row) in out.chunks_mut(w).enumerate() {
+            unpack_row_blocks16(&strip[y * 32..(y + 1) * 32], row).unwrap();
+        }
+        assert_eq!(out, samples);
+        // a known block: s0 = b0 | (b1 & 15) << 8, s1 = b1 >> 4 | b2 << 4
+        let mut px = [0u16; 10];
+        let mut blk = [0u8; 16];
+        blk[..3].copy_from_slice(&[0x21, 0x43, 0x65]);
+        unpack_row_blocks16(&blk, &mut px).unwrap();
+        assert_eq!(&px[..2], &[0x321, 0x654]);
+        // the whole file through the decoder
+        let bytes = orf_with(w as u32, h as u32, 16, strip, Some(RGGB));
+        let r = crate::decode(&bytes).unwrap();
+        assert_eq!(r.bits, 12);
+        let RawData::U16(d) = &r.data else { panic!() };
+        assert_eq!(d, &samples);
+    }
+
+    #[test]
+    fn block16_routing() {
+        assert!(is_block16(3360, 3360 * 2504, 13461504, 1));
+        assert!(!is_block16(3360, 3360 * 2504, 3360 * 2504 * 12 / 8, 1)); // XZ-2: exactly 12.0 bpp
+        assert!(!is_block16(3360, 3360 * 2504, 13461504, 2));
+        assert!(!is_block16(3365, 3365 * 100, 3365 * 100 * 16 / 10, 1));
+        // the 12.0 bpp layout still decodes through its own branch
+        let bytes = orf_with(8, 2, 12, vec![0u8; 8 * 2 * 12 / 8], Some(RGGB));
+        assert!(crate::decode(&bytes).is_ok());
+    }
+
+    #[test]
+    fn block16_short_input_is_an_error() {
+        let mut px = [0u16; 10];
+        assert!(unpack_row_blocks16(&[0u8; 15], &mut px).is_err());
+        assert!(unpack_row_blocks16(&[0u8; 32], &mut px).is_err());
+        assert!(unpack_row_blocks16(&[], &mut px).is_err());
+        let mut odd = [0u16; 7];
+        assert!(unpack_row_blocks16(&[0u8; 16], &mut odd).is_err());
+        // a truncated file never panics
+        let bytes = orf_with(20, 4, 16, pack_blocks(&[5u16; 80]), Some(RGGB));
+        for cut in [bytes.len() - 1, bytes.len() - 40, bytes.len() / 2, 100] {
+            let _ = crate::decode(&bytes[..cut]);
+        }
+    }
+
+    /// A new-style Olympus maker note (`OLYMPUS\0II\x03\0`, offsets counted from the note's start) whose ImageProcessing
+    /// directory (0x2040) holds `entries`, SHORT values each.
+    fn note_with_image_processing(entries: &[(u16, &[u16])]) -> Vec<u8> {
+        note_with_directory(IMAGE_PROCESSING, entries)
+    }
+
+    /// [`note_with_image_processing`] for the sub-directory `directory` (CameraSettings is 0x2020).
+    fn note_with_directory(directory: u16, entries: &[(u16, &[u16])]) -> Vec<u8> {
+        let ip_at = 12 + 2 + 12 + 4;
+        let mut values_at = ip_at + 2 + 12 * entries.len() + 4;
+        let (mut ifd, mut values) = (Vec::new(), Vec::new());
+        for (tag, v) in entries {
+            let bytes: Vec<u8> = v.iter().flat_map(|x| x.to_le_bytes()).collect();
+            ifd.extend(tag.to_le_bytes());
+            ifd.extend(3u16.to_le_bytes());
+            ifd.extend((v.len() as u32).to_le_bytes());
+            if bytes.len() <= 4 {
+                ifd.extend(&bytes);
+                ifd.extend(vec![0u8; 4 - bytes.len()]);
+            } else {
+                ifd.extend((values_at as u32).to_le_bytes());
+                values_at += bytes.len();
+                values.extend(bytes);
+            }
+        }
+        let mut note = b"OLYMPUS\0II\x03\0".to_vec();
+        note.extend(1u16.to_le_bytes());
+        for x in [directory.to_le_bytes().to_vec(), 13u16.to_le_bytes().to_vec(), 1u32.to_le_bytes().to_vec(), (ip_at as u32).to_le_bytes().to_vec()]
+        {
+            note.extend(x);
+        }
+        note.extend(0u32.to_le_bytes());
+        note.extend((entries.len() as u16).to_le_bytes());
+        note.extend(ifd);
+        note.extend(0u32.to_le_bytes());
+        note.extend(values);
+        note
+    }
+
+    /// An ORF whose ImageProcessing directory holds `entries`; its sensor is 5200 × 3900 (the compressed strip is short, the
+    /// note is all the tests read).
+    fn orf_with_image_processing(entries: &[(u16, &[u16])]) -> Vec<u8> {
+        orf_with_note(5200, 3900, 16, vec![0; 64], Some(RGGB), Some(note_with_image_processing(entries)))
+    }
+
+    /// The valid area (`CROP` tags: left, top, width, height) of a 16:9-shot E-M10 Mark IV and its frame.
+    const AREA: [(u16, &[u16]); 4] = [(0x0612, &[8, 0]), (0x0613, &[8, 0]), (0x0614, &[5184]), (0x0615, &[3888])];
+
+    fn frame_of(area: &[(u16, &[u16])], frame: Option<&[u16]>) -> Option<[f64; 4]> {
+        let mut entries = area.to_vec();
+        entries.extend(frame.map(|f| (ASPECT_FRAME, f)));
+        aspect_frame(&orf_with_image_processing(&entries))
+    }
+
+    /// The frame of a 3:2 / 16:9 / 1:1 setting, as fractions of the valid area; 4:3 (the whole area) and files that say
+    /// nothing give none.
+    #[test]
+    fn aspect_frame_is_the_setting_inside_the_valid_area() {
+        let f = frame_of(&AREA, Some(&[0, 484, 5183, 3403])).unwrap();
+        assert_eq!(f, [0.0, 484.0 / 3888.0, 1.0, 3404.0 / 3888.0]);
+        // 1:1: the centre 3888 columns
+        let f = frame_of(&AREA, Some(&[648, 0, 4535, 3887])).unwrap();
+        assert_eq!(f, [648.0 / 5184.0, 0.0, 4536.0 / 5184.0, 1.0]);
+        assert_eq!(frame_of(&AREA, Some(&[0, 0, 5183, 3887])), None, "4:3");
+        assert_eq!(frame_of(&AREA, None), None, "no frame");
+        assert_eq!(frame_of(&AREA[..3], Some(&[0, 484, 5183, 3403])), None, "no height of the valid area");
+        assert_eq!(aspect_frame(&orf(16, 4, 16, vec![0; 128])), None, "no maker note");
+        assert_eq!(aspect_frame(b"not an ORF"), None);
+    }
+
+    /// A damaged note gives no frame (and never a panic): an empty or inverted frame, one past the valid area, a wrong
+    /// number of values, a zero-sized area.
+    #[test]
+    fn aspect_frame_refuses_numbers_that_do_not_fit() {
+        for frame in [
+            &[0u16, 484, 5184, 3403][..], // right edge is the area's width: one pixel out
+            &[0, 484, 5183, 3888],        // bottom edge is the area's height
+            &[0, 484, u16::MAX, 3403],    // far outside
+            &[u16::MAX, u16::MAX, u16::MAX, u16::MAX],
+            &[100, 484, 100, 3403], // empty
+            &[200, 484, 100, 3403], // inverted
+            &[0, 3000, 5183, 100],
+            &[0, 484, 5183],          // short
+            &[0, 484, 5183, 3403, 7], // long
+            &[],
+        ] {
+            assert_eq!(frame_of(&AREA, Some(frame)), None, "{frame:?}");
+        }
+        for (w, h) in [(0u16, 3888u16), (5184, 0), (0, 0)] {
+            let (cw, ch) = ([w], [h]);
+            let area: [(u16, &[u16]); 4] = [(0x0612, &[8, 0]), (0x0613, &[8, 0]), (0x0614, &cw), (0x0615, &ch)];
+            assert_eq!(frame_of(&area, Some(&[0, 484, 5183, 3403])), None, "area {w}x{h}");
+        }
+        let mut entries = AREA.to_vec();
+        entries.push((ASPECT_FRAME, &[0, 484, 5183, 3403][..]));
+        let good = orf_with_image_processing(&entries);
+        assert!(aspect_frame(&good).is_some());
+        // the directory pointer past the file, onto itself, or into the header; and every truncation
+        let at = good.windows(8).position(|w| w == b"OLYMPUS\0").unwrap();
+        for ptr in [0u32, 1, 12, 30, u32::MAX, u32::MAX - 1, 0x8000_0000, good.len() as u32] {
+            let mut bad = good.clone();
+            bad[at + 12 + 2 + 8..at + 12 + 2 + 12].copy_from_slice(&ptr.to_le_bytes());
+            let _ = aspect_frame(&bad);
+        }
+        for len in 0..good.len() {
+            let _ = aspect_frame(&good[..len]);
+        }
+    }
+
+    /// The E-1 corpus file's twelve `WB_RBLevels<K>` (red and blue gain against green at 256), at [`SLOTS_K`]: the file was shot on
+    /// the 5300 K preset, so its as-shot gains are the ninth entry.
+    const E1_TABLE: [[u16; 2]; 12] = [
+        [254, 491],
+        [278, 446],
+        [302, 411],
+        [322, 384],
+        [531, 414],
+        [368, 338],
+        [470, 330],
+        [402, 308],
+        [432, 286],
+        [468, 262],
+        [538, 270],
+        [522, 228],
+    ];
+    /// The TG-6's: its 4300 K entry is off the curve the daylight ones make (blue rises from 3900 K).
+    const TG6_TABLE: [[u16; 2]; 12] = [
+        [290, 772],
+        [342, 614],
+        [364, 564],
+        [386, 526],
+        [452, 618],
+        [414, 540],
+        [444, 518],
+        [444, 494],
+        [468, 458],
+        [504, 412],
+        [510, 416],
+        [550, 346],
+    ];
+    const SLOTS_K: [u16; 12] = [3000, 3300, 3600, 3900, 4000, 4300, 4500, 4800, 5300, 6000, 6600, 7500];
+
+    /// An ORF whose ImageProcessing directory holds the as-shot gains (when given) and the twelve `WB_RBLevels<K>` entries (when
+    /// given); a 16 x 4 sensor of uncompressed 12-bit words, or the compressed kind (a short strip, nothing decodes).
+    fn kelvin_file(as_shot: Option<[u16; 2]>, table: Option<[[u16; 2]; 12]>, uncompressed: bool) -> Vec<u8> {
+        let mut entries: Vec<(u16, Vec<u16>)> = Vec::new();
+        entries.extend(as_shot.map(|[red, blue]| (WB_RB, vec![red, blue, 256, 256])));
+        for (slot, [red, blue]) in table.iter().flatten().enumerate() {
+            entries.push((0x0102 + slot as u16, vec![*red, *blue, 256, 256]));
+        }
+        let refs: Vec<(u16, &[u16])> = entries.iter().map(|(tag, v)| (*tag, v.as_slice())).collect();
+        if uncompressed {
+            let words: Vec<u8> = (0..16u32 * 4).flat_map(|i| (((200 + i * 37) % 4096) as u16).to_le_bytes()).collect();
+            orf_with_note(16, 4, 16, words, Some(RGGB), Some(note_with_image_processing(&refs)))
+        } else {
+            orf_with_image_processing(&refs)
+        }
+    }
+
+    fn gains([red, blue]: [u16; 2]) -> [f32; 3] {
+        [f32::from(red) / 256.0, 1.0, f32::from(blue) / 256.0]
+    }
+
+    /// The nine daylight entries of a table, as `(K, gains)` points: what [`kelvin_presets`] keeps when every one fits.
+    fn daylight_points(table: [[u16; 2]; 12], skip: &[u16]) -> Vec<(f32, [f32; 3])> {
+        table
+            .iter()
+            .zip(SLOTS_K)
+            .filter(|(_, k)| ![4000, 4500, 6600].contains(k) && !skip.contains(k))
+            .map(|(entry, k)| (f32::from(k), gains(*entry)))
+            .collect()
+    }
+
+    /// The table becomes the decoded raw's Kelvin scale: the nine daylight entries, the three fluorescent ones (4000,
+    /// 4500 and 6600 K) left out; the header probe carries the same scale, and the maker note alone gives it with the
+    /// as-shot gains.
+    #[test]
+    fn the_preset_table_is_the_decoded_raws_kelvin_scale() {
+        let bytes = kelvin_file(Some(E1_TABLE[8]), Some(E1_TABLE), true);
+        let r = crate::decode(&bytes).unwrap();
+        assert_eq!(crate::probe_info(&bytes).unwrap(), r.info());
+        assert_eq!(r.wb_multipliers, Some(gains(E1_TABLE[8])));
+        let presets = r.color.kelvin_presets.as_ref().unwrap();
+        assert_eq!(presets.points(), daylight_points(E1_TABLE, &[]).as_slice());
+        // the maker note alone gives the same scale and the as-shot gains
+        assert_eq!(as_shot_white_balance(&bytes), Some((presets.clone(), gains(E1_TABLE[8]))));
+        assert_eq!(crate::olympus_as_shot_white_balance(&bytes), as_shot_white_balance(&bytes));
+    }
+
+    /// A compressed ORF decodes no sensor data, but its maker note has the table and the gains: the same reading.
+    #[test]
+    fn the_maker_note_alone_gives_a_compressed_orf_its_white_balance() {
+        let bytes = kelvin_file(Some(E1_TABLE[3]), Some(E1_TABLE), false);
+        assert!(matches!(crate::decode(&bytes), Err(RawError::Unsupported(_))));
+        let (presets, as_shot) = as_shot_white_balance(&bytes).unwrap();
+        assert_eq!(presets.points(), daylight_points(E1_TABLE, &[]).as_slice());
+        assert_eq!(as_shot, gains(E1_TABLE[3]));
+    }
+
+    /// An entry that turns the curve back is left out, not the whole scale (the TG cameras' 4300 K entry); a table without
+    /// three usable entries, or without as-shot gains, gives no reading.
+    #[test]
+    fn a_scale_needs_a_curve_and_gains() {
+        let bytes = kelvin_file(Some([480, 438]), Some(TG6_TABLE), true);
+        let r = crate::decode(&bytes).unwrap();
+        assert_eq!(r.color.kelvin_presets.as_ref().unwrap().points(), daylight_points(TG6_TABLE, &[4300]).as_slice());
+        // entries of zeros (a body that states none), two usable entries, no table: no scale, the gains stay
+        let mut two = [[0u16; 2]; 12];
+        two[0] = E1_TABLE[0];
+        two[8] = E1_TABLE[8];
+        for table in [Some([[0u16; 2]; 12]), Some(two), None] {
+            let bytes = kelvin_file(Some([432, 286]), table, true);
+            let r = crate::decode(&bytes).unwrap();
+            assert!(r.color.kelvin_presets.is_none() && r.wb_multipliers == Some(gains([432, 286])), "{table:?}");
+            assert_eq!(as_shot_white_balance(&bytes), None, "{table:?}");
+        }
+        // no as-shot gains (or one value): the scale is there, nothing to read
+        let r = crate::decode(&kelvin_file(None, Some(E1_TABLE), true)).unwrap();
+        assert!(r.color.kelvin_presets.is_some() && r.wb_multipliers.is_none());
+        assert_eq!(as_shot_white_balance(&kelvin_file(None, Some(E1_TABLE), false)), None);
+        // an entry of one value, or an entry of zero gains, is skipped
+        let mut entries: Vec<(u16, Vec<u16>)> = vec![(WB_RB, vec![432, 286, 256, 256]), (0x0102, vec![254]), (0x0103, vec![0, 446, 256, 256])];
+        for (slot, entry) in E1_TABLE.iter().enumerate().skip(2) {
+            entries.push((0x0102 + slot as u16, vec![entry[0], entry[1], 256, 256]));
+        }
+        let refs: Vec<(u16, &[u16])> = entries.iter().map(|(tag, v)| (*tag, v.as_slice())).collect();
+        let (presets, _) = as_shot_white_balance(&orf_with_image_processing(&refs)).unwrap();
+        assert_eq!(presets.points(), daylight_points(E1_TABLE, &[3000, 3300]).as_slice());
+    }
+
+    /// Every truncation of a file with a table, and a directory pointer anywhere, reads without a panic.
+    #[test]
+    fn hostile_tables_do_not_panic() {
+        let bytes = kelvin_file(Some(E1_TABLE[8]), Some(E1_TABLE), true);
+        for len in 0..bytes.len() {
+            let _ = as_shot_white_balance(&bytes[..len]);
+            let _ = crate::decode(&bytes[..len]);
+        }
+        let at = bytes.windows(8).position(|w| w == b"OLYMPUS\0").unwrap();
+        for ptr in [0u32, 1, 12, 30, u32::MAX, u32::MAX - 1, 0x8000_0000, bytes.len() as u32] {
+            let mut bad = bytes.clone();
+            bad[at + 12 + 2 + 8..at + 12 + 2 + 12].copy_from_slice(&ptr.to_le_bytes());
+            let _ = as_shot_white_balance(&bad);
+            let _ = crate::decode(&bad);
+        }
+    }
+
+    /// The colour space the camera says its JPEGs are in is CameraSettings `ColorSpace`: 0 sRGB, 1 Adobe RGB. Pro Photo RGB
+    /// (2), a value no one knows, an empty entry and a note without the directory say nothing; so does a file of another
+    /// maker whose note happens to be laid out the same, and no damaged note panics.
+    #[test]
+    fn the_maker_note_says_which_colour_space_the_jpeg_is_in() {
+        use crate::PreviewColorSpace::{AdobeRgb, Srgb};
+        let file =
+            |entries: &[(u16, &[u16])]| orf_with_note(5200, 3900, 16, vec![0; 64], Some(RGGB), Some(note_with_directory(CAMERA_SETTINGS, entries)));
+        let space = |entries: &[(u16, &[u16])]| {
+            let bytes = file(entries);
+            let tiff = Tiff::parse(&bytes).unwrap();
+            let own = color_space(&bytes, &tiff);
+            // what the library asks, which also looks at the maker (Olympus, OM System) and the Exif declaration
+            assert_eq!(crate::embedded_preview_color_space(&bytes), own, "{entries:?}");
+            own
+        };
+        assert_eq!(space(&[(COLOR_SPACE, &[0])]), Some(Srgb));
+        assert_eq!(space(&[(PREVIEW_START, &[40]), (COLOR_SPACE, &[1])]), Some(AdobeRgb));
+        for says_nothing in [&[(COLOR_SPACE, &[2u16][..])][..], &[(COLOR_SPACE, &[7])], &[(COLOR_SPACE, &[])], &[(PREVIEW_START, &[40])], &[]] {
+            assert_eq!(space(says_nothing), None, "{says_nothing:?}");
+        }
+        // another maker's note laid out the same is not read; OM Digital Solutions' is
+        let adobe = file(&[(COLOR_SPACE, &[1])]);
+        let with_make = |make: &[u8]| {
+            let mut b = adobe.clone();
+            let at = b.windows(21).position(|w| w == b"OLYMPUS IMAGING CORP.").unwrap();
+            b[at..at + 21].fill(b' ');
+            b[at..at + make.len()].copy_from_slice(make);
+            crate::embedded_preview_color_space(&b)
+        };
+        assert_eq!(with_make(b"OM Digital Solutions"), Some(AdobeRgb));
+        assert_eq!(with_make(b"OLYMPUS OPTICAL CO."), Some(AdobeRgb));
+        assert_eq!(with_make(b"FUJIFILM"), None);
+        // every truncation reads without a panic
+        for len in 0..adobe.len() {
+            let _ = crate::embedded_preview_color_space(&adobe[..len]);
+        }
+    }
+}

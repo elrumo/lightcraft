@@ -67,8 +67,24 @@ pub fn menu_button<'a, R>(ui: &mut Ui, atoms: impl egui::IntoAtoms<'a>, contents
 /// that by the menu's id: a right-click elsewhere on the same widget while its menu is open
 /// reopened the menu at the pointer and closed it again on the same frame, a one-frame flash.
 /// The click that opens (or moves) the menu is not the one that closes it.
+///
+/// While photos are carried (dragged from the grid, the primary button still held) a right-click
+/// opens nothing here: a menu is not what the person is doing with the pointer.
 pub fn context_menu(response: &Response, add_contents: impl FnOnce(&mut Ui)) -> Option<egui::InnerResponse<()>> {
+    if response.secondary_clicked() && carrying(&response.ctx) {
+        return None;
+    }
     egui::Popup::context_menu(response).close_behavior(context_menu_close(response, egui::PopupCloseBehavior::CloseOnClick)).show(add_contents)
+}
+
+/// Record whether photos are being carried as the frame starts, for the menus to read. A drag left
+/// over without its button (full screen skips the code that ends it) is not carrying.
+pub fn set_carrying(ctx: &egui::Context, carrying: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("lc-carrying"), carrying));
+}
+
+pub(crate) fn carrying(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique("lc-carrying"))).unwrap_or(false)
 }
 
 /// How a context menu on `response` closes this frame: `default`, except on the frame of the
@@ -160,6 +176,18 @@ pub fn register_response(id: impl Into<String>, rect: Rect, response: &egui::Res
 pub fn register_geometry(ctx: &egui::Context, id: impl Into<String>, rect: Rect) {
     let id = id.into();
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Registry>(egui::Id::unique("lc-registry")).rects.push((id, rect)));
+}
+
+/// The keyboard-focus ring, drawn on top of whatever the control paints so a focused control reads
+/// as focused whether it is idle, hovered or selected. It is drawn inside `rect`, so it survives a
+/// painter clipped to the control. [`crate::check`] draws the same stroke around its box.
+pub fn focus_ring(p: &egui::Painter, rect: Rect, t: &Tokens) {
+    p.rect_stroke(rect, CornerRadius::same(4), focus_stroke(t), StrokeKind::Inside);
+}
+
+/// The stroke of every focus ring: 2 px in the accent colour.
+pub fn focus_stroke(t: &Tokens) -> Stroke {
+    Stroke::new(2.0, t.accent)
 }
 
 /// Esc was handled this frame by something nested (an open popup closed on it): containers such
@@ -378,6 +406,7 @@ const THUMB_RING: f32 = 7.0;
 /// Scroll sideways over it to nudge it. Click the value to type one: Return or clicking away applies it,
 /// Esc keeps the old one. Drag the value sideways to scrub it, as if dragging the thumb (Shift: a tenth
 /// as far).
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_override: Option<&str>) -> SliderOut {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
@@ -463,7 +492,8 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     // takes the click)
     let value_rect = Rect::from_min_max(pos2(label_rect.right() - 64.0, label_rect.top()), label_rect.max);
     let value_resp = ui.interact(value_rect, id.with("value"), if enabled { Sense::click_and_drag() } else { Sense::hover() });
-    crate::widgets::announce(&value_resp, format!("{label_text}: {}", crate::i18n::tr("Click to type a value, drag to change it")));
+    // the name is short ("Exposure value"); how to use it is the description the hover text below gives
+    crate::widgets::announce(&value_resp, crate::i18n::tr_format!("{name} value", name = label_text.clone()));
     register(ui, format!("sliderValue:{}", spec.id), value_rect);
     // say that an exact value can be typed here (issue #534: an exact crop angle was hard to find)
     let value_resp = if enabled { value_resp.on_hover_text(crate::i18n::tr("Click to type a value, drag to change it")) } else { value_resp };
@@ -568,6 +598,10 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         } else if field.ending.is_some() || !field.editing || !enabled {
             // Esc (or the slider turning off) keeps the old value; Return or clicking away applies
             let cancelled = !enabled || field.cancelled();
+            // (that Esc is the field's: the dialog around the slider stays open)
+            if field.cancelled() {
+                take_escape(ui.ctx());
+            }
             if let Some(nv) = typed_value(spec, &text).filter(|nv| !cancelled && (nv - value).abs() > 1e-12) {
                 out.value = Some(nv);
                 out.drag_started = true;
@@ -655,14 +689,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             out.drag_stopped = true;
         }
         // a screen reader's increment / decrement (VoiceOver: Ctrl-Option-Up / Down)
-        let (inc, dec) = ui.input(|i| {
-            i.events.iter().fold((false, false), |(inc, dec), e| match e {
-                egui::Event::AccessKitActionRequest(r) if r.target_node == resp.id.accesskit_id() => {
-                    (inc || r.action == egui::accesskit::Action::Increment, dec || r.action == egui::accesskit::Action::Decrement)
-                }
-                _ => (inc, dec),
-            })
-        });
+        let (inc, dec) = accessibility_nudge(ui, &resp);
         // Arrow keys work with either a hovered or a focused slider.
         if enabled && out.value.is_none() && typing.is_none() && (pointer_in_row || resp.has_focus() || inc || dec) {
             let (up, down, shift) = ui.input_mut(|i| {
@@ -780,6 +807,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
 /// control's default is to the handle (an edited slider shows how far it went; a centred one fills
 /// outward from its middle), and a solid round handle ringed in the panel's colour, which grows a
 /// little under the pointer. Gradient tracks (temperature, hue…) keep their colours and no fill.
+#[allow(clippy::too_many_arguments)] // fork code that predates the lint; split it when it is next reworked
 fn paint_filled_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool, hovered: bool) {
     let p = ui.painter();
     let y = rect.center().y;
@@ -826,6 +854,7 @@ fn paint_filled_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: 
 /// centred one fills outward from its middle), and a white capsule thumb with a soft shadow that
 /// swells into a lens of glass while it is held (`lens`, 0–1). Gradient tracks (temperature,
 /// hue…) keep their colours.
+#[allow(clippy::too_many_arguments)] // fork code that predates the lint; split it when it is next reworked
 fn paint_ios_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool, lens: f32) {
     let p = ui.painter();
     let y = rect.center().y;
@@ -1127,7 +1156,7 @@ fn chip(ui: &mut Ui, id: &str, label: &str, active: bool, choice: bool) -> Respo
     let font = t.semibold(if touch { 13.5 } else { 11.5 });
     // (white on the accent colour, the theme's text colour otherwise)
     let galley = ui.painter().layout_no_wrap(label.to_string(), font, if touch && active { Color32::WHITE } else { t.text });
-    let size = if touch { vec2((galley.size().x + 28.0).max(56.0), 36.0) } else { vec2((galley.size().x + 18.0).max(37.0), 24.0) };
+    let size = if touch { vec2((galley.size().x + 28.0).max(56.0), 36.0) } else { vec2(text_button_width(galley.size().x), 24.0) };
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     let kind = if choice { egui::Role::RadioButton } else { egui::Role::Button };
     resp.widget_info(|| egui::WidgetInfo::selected(kind, true, active, label));
@@ -1155,7 +1184,7 @@ fn chip(ui: &mut Ui, id: &str, label: &str, active: bool, choice: bool) -> Respo
     let border = if active && choice { t.text_label } else { t.button_border };
     p.rect(r, CornerRadius::same(t.button_radius), fill, Stroke::new(1.0, border), StrokeKind::Inside);
     p.galley(r.center() - galley.size() / 2.0, galley, t.text);
-    focus_ring(ui, &t, &resp, r, t.button_radius);
+    button_focus_ring(ui, &t, &resp, r, t.button_radius);
     resp
 }
 
@@ -1164,7 +1193,7 @@ fn chip(ui: &mut Ui, id: &str, label: &str, active: bool, choice: bool) -> Respo
 /// that a neighbour or the edge of a scrolled list never cuts them. The inner line sets the ring
 /// off from the button's fill, and makes it a double line: a chosen [`choice_button`] has a
 /// single thin one, so "has the focus" and "is chosen" are told apart by shape, not thickness.
-fn focus_ring(ui: &Ui, t: &Tokens, resp: &Response, r: Rect, radius: u8) {
+fn button_focus_ring(ui: &Ui, t: &Tokens, resp: &Response, r: Rect, radius: u8) {
     if resp.has_focus() {
         let p = ui.painter();
         p.rect_stroke(r, CornerRadius::same(radius), Stroke::new(2.0, t.text), StrokeKind::Inside);
@@ -1201,8 +1230,20 @@ pub fn tab_button(ui: &mut Ui, id: &str, label: &str, open: bool) -> Response {
     if open {
         p.rect_filled(Rect::from_min_max(pos2(r.left(), r.bottom() - 2.0), r.max), CornerRadius::ZERO, t.text);
     }
-    focus_ring(ui, &t, &resp, r, 4);
+    button_focus_ring(ui, &t, &resp, r, 4);
     resp
+}
+
+/// The width of a [`text_button`] whose label is `text_width` wide.
+fn text_button_width(text_width: f32) -> f32 {
+    (text_width + 18.0).max(37.0)
+}
+
+/// The width [`text_button`] takes for `label` (translated as it would be), to plan a row before drawing it.
+pub fn text_button_size(ui: &Ui, label: &str) -> f32 {
+    let t = Tokens::get(ui.ctx());
+    let galley = ui.painter().layout_no_wrap(crate::i18n::tr(label).to_string(), t.semibold(11.5), t.text);
+    text_button_width(galley.size().x)
 }
 
 /// A segmented control: `labels` share the available width equally, `per_row` per row. Each segment is
@@ -1308,13 +1349,50 @@ fn ios_segments(ui: &mut Ui, id: &str, items: Vec<(&str, String)>, active: Optio
 }
 
 /// An icon-only button. `active` draws the selected background (tool strip).
+/// Splits a tooltip that ends in its key hint ("Edit (E)", "Import Photos… (⌘⇧I)") into the label
+/// and the hint: `("Edit", Some("E"))`. A tooltip without one is all label. The Japanese and
+/// Traditional Chinese catalogs write the hint in full-width brackets without a space ("編集（E）").
+fn split_key_hint(tip: &str) -> (&str, Option<&str>) {
+    let split =
+        tip.strip_suffix(')').and_then(|body| body.rsplit_once(" (")).or_else(|| tip.strip_suffix('）').and_then(|body| body.rsplit_once('（')));
+    let Some((label, hint)) = split else { return (tip, None) };
+    let label = label.trim_end();
+    if label.is_empty() || hint.is_empty() { (tip, None) } else { (label, Some(hint)) }
+}
+
+/// The accessible name for an icon-only control whose tooltip is `tip`, and the one place the key
+/// hint leaves it. The name is the bare label, because a screen reader reads it every time it
+/// lands on the control; the hint goes into the description (macOS `AXHelp`, read after a pause).
+/// Sighted users keep the whole tooltip. Call it before `on_hover_text`, which would otherwise make
+/// the description the whole tooltip.
+pub(crate) fn accessible_label<'a>(resp: &egui::Response, tip: &'a str) -> &'a str {
+    let (label, hint) = split_key_hint(tip);
+    if let Some(hint) = hint {
+        resp.ctx.accesskit_node_builder(resp.id, |node| node.set_description(hint.to_string()));
+    }
+    label
+}
+
+/// A screen reader's increment / decrement (VoiceOver: Ctrl-Option-Up / Down) as `(increment, decrement)`.
+pub(crate) fn accessibility_nudge(ui: &Ui, resp: &Response) -> (bool, bool) {
+    ui.input(|i| {
+        i.events.iter().fold((false, false), |(inc, dec), e| match e {
+            egui::Event::AccessKitActionRequest(r) if r.target_node == resp.id.accesskit_id() => {
+                (inc || r.action == egui::accesskit::Action::Increment, dec || r.action == egui::accesskit::Action::Decrement)
+            }
+            _ => (inc, dec),
+        })
+    })
+}
+
 pub fn icon_button(ui: &mut Ui, id: &str, icon: Icon, size: egui::Vec2, active: bool, enabled: bool, tooltip: &str) -> Response {
     let tooltip = crate::i18n::tr(tooltip);
     let t = Tokens::get(ui.ctx());
     // a finger needs 40 pt or so
     let size = if crate::is_compact(ui.ctx()) { size.max(vec2(40.0, 40.0)) } else { size };
     let (r, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, active, tooltip));
+    let name = accessible_label(&resp, tooltip);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, active, name));
     register(ui, format!("icon:{id}"), r);
     let p = ui.painter();
     let sq = Rect::from_center_size(r.center(), vec2(32.0f32.min(size.x), 32.0f32.min(size.y)));
@@ -1384,6 +1462,34 @@ mod tests {
         assert_eq!(strip_key_hint("Resize (long edge)"), "Resize (long edge)");
         assert_eq!(strip_key_hint("Exposure"), "Exposure");
         assert_eq!(strip_key_hint("(X)"), "(X)", "a label that is only a hint keeps it");
+    }
+
+    #[test]
+    fn a_trailing_key_hint_leaves_the_name() {
+        assert_eq!(split_key_hint("Edit (E)"), ("Edit", Some("E")));
+        assert_eq!(split_key_hint("Presets (Shift+P)"), ("Presets", Some("Shift+P")));
+        assert_eq!(split_key_hint("Import Photos… (⌘⇧I)"), ("Import Photos…", Some("⌘⇧I")));
+        assert_eq!(split_key_hint("Filmstrip (/)"), ("Filmstrip", Some("/")));
+        assert_eq!(split_key_hint("Square Grid (G toggles)"), ("Square Grid", Some("G toggles")));
+        // nothing to split: no hint, an empty hint, no label before it, the hint not at the end
+        for tip in ["Export", "Edit ()", "(E)", " (E)", "Edit (E) now", "Edit(E)", ""] {
+            assert_eq!(split_key_hint(tip), (tip, None), "{tip:?}");
+        }
+    }
+
+    /// Every language's tooltip for an icon-only button splits into the bare label and its hint,
+    /// whatever brackets the catalog writes it in (Japanese and Traditional Chinese use full-width ones).
+    #[test]
+    fn every_language_names_an_icon_button_by_its_label() {
+        assert_eq!(split_key_hint("編集（E）"), ("編集", Some("E")));
+        for locale in crate::i18n::Locale::ALL {
+            for tip in ["Edit (E)", "Presets (Shift+P)", "Photo Grid (G)", "Filmstrip (/)"] {
+                let translated = locale.tr(tip);
+                let (label, hint) = split_key_hint(translated);
+                assert!(hint.is_some_and(|h| !h.is_empty()), "{locale:?}: {translated:?} keeps its hint in the name");
+                assert!(!label.contains(['(', ')', '（', '）']), "{locale:?}: {label:?} is the bare label");
+            }
+        }
     }
 
     #[test]
@@ -1528,10 +1634,57 @@ pub(crate) fn screen_reader_name(ctx: &egui::Context, id: egui::Id, name: &str) 
     ctx.accesskit_node_builder(id, |node| node.set_label(name.to_string()));
 }
 
+/// Names the part of the window `ui` draws for screen readers: a toolbar, or a landmark (VoiceOver's
+/// rotor lists the landmarks and jumps to one). Set on the node the `Ui` already has, so nothing is
+/// laid out differently. The node gets the `Ui`'s area as its bounds, so a screen reader's cursor
+/// lands on the part and not on an empty spot.
+pub(crate) fn announce_region(ui: &Ui, role: egui::accesskit::Role, name: impl Into<String>) {
+    let name = name.into();
+    let r = ui.max_rect();
+    ui.ctx().accesskit_node_builder(ui.unique_id(), |node| {
+        node.set_role(role);
+        node.set_label(name);
+        node.set_bounds(egui::accesskit::Rect { x0: f64::from(r.min.x), y0: f64::from(r.min.y), x1: f64::from(r.max.x), y1: f64::from(r.max.y) });
+    });
+}
+
 /// A hand-drawn clickable area (an icon, a tile, a row) announced as a button named `name`.
 pub(crate) fn announce(resp: &egui::Response, name: impl Into<String>) {
     let name = name.into();
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, resp.enabled(), name.clone()));
+}
+
+/// What a window with its own title and buttons is, to a screen reader.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Modal {
+    /// A dialog with a task (Export, Settings, a name prompt) that stops the rest of the application.
+    Dialog,
+    /// One that interrupts to say something that needs an answer (the quit prompt, a library that
+    /// couldn't be opened) and stops the rest of the application: an alert dialog (AT-SPI and
+    /// Windows tell it from a dialog; macOS reads both alike).
+    Alert,
+    /// A dialog that leaves the rest of the application reachable (the update check's answer).
+    Window,
+}
+
+/// Announces the window `response` drew as a dialog (an alert dialog for [`Modal::Alert`]), and for
+/// [`Modal::Dialog`] and [`Modal::Alert`] as modal, instead of as a group that carries the title:
+/// the platform's accessibility layer then sees a dialog and that the rest of the application is
+/// blocked while it is open.
+pub(crate) fn announce_dialog(ctx: &egui::Context, response: &Response, kind: Modal) {
+    ctx.accesskit_node_builder(response.id, |node| {
+        node.set_role(if kind == Modal::Alert { egui::accesskit::Role::AlertDialog } else { egui::accesskit::Role::Dialog });
+        if kind != Modal::Window {
+            node.set_modal();
+        }
+    });
+}
+
+/// Gives the dialog `response` drew the words it says as its accessible description, for an alert
+/// whose content (the task names, the error) is drawn as separate labels: a screen reader then
+/// has what the alert is about when it announces the alert, not only its title.
+pub(crate) fn describe_dialog(ctx: &egui::Context, response: &Response, text: &str) {
+    ctx.accesskit_node_builder(response.id, |node| node.set_description(text));
 }
 
 /// The same for one that is on or off (a toggle, a selected row or swatch).

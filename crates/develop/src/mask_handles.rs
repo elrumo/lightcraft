@@ -52,8 +52,28 @@ pub fn pin(shape: &MaskShape) -> Option<Point> {
         MaskShape::Radial { center, .. } => Some(*center),
         MaskShape::Linear { start, end } => Some(Point::new((start.x + end.x) / 2.0, (start.y + end.y) / 2.0)),
         MaskShape::Brush { strokes } => strokes.iter().find(|s| !s.erase).and_then(|s| s.points.first()).copied(),
+        // an Object at its first click, a Describe mask on what its segmentation found (issue #3049)
+        MaskShape::Object { hint, seg, .. } => hint.first().copied().or_else(|| seg.as_ref().and_then(seg_center)),
+        MaskShape::Prompt { seg, .. } => seg.as_ref().and_then(seg_center),
         _ => None,
     }
+}
+
+/// The middle of what a segmentation selects (the mean of its cells inside the mask), else of the
+/// part of the image it covers; `None` when it is damaged.
+fn seg_center(seg: &crate::SegMask) -> Option<Point> {
+    let [x0, y0, x1, y1] = seg.bounds()?;
+    let logits = seg.logits()?;
+    let side = seg.side as usize;
+    let (mut sx, mut sy, mut n) = (0.0, 0.0, 0usize);
+    for (i, _) in logits.iter().enumerate().filter(|(_, l)| **l > 0.0) {
+        sx += (i % side.max(1)) as f64 + 0.5;
+        sy += (i / side.max(1)) as f64 + 0.5;
+        n += 1;
+    }
+    let cells = n as f64 * side as f64;
+    let (u, v) = if n == 0 || cells <= 0.0 { (0.5, 0.5) } else { (sx / cells, sy / cells) };
+    Some(Point::new(x0 + u * (x1 - x0), y0 + v * (y1 - y0)))
 }
 
 /// Whether `at` is inside a radial's ellipse (whatever its feather or inversion).

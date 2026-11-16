@@ -55,7 +55,7 @@ pub(crate) use proxy::LensGeometry;
 use proxy::{
     Cr3Framing, MIN_PREVIEW_FRACTION, alignment, estimate_cr3_framing, into_lens_geometry, proxies, reference_at, sensor_proxy, structure_agrees,
 };
-pub(crate) use proxy::{decode_fits, fit_profile, forget_fits, lens_geometry, profile_pairs};
+pub(crate) use proxy::{colour_key, decode_fits, fit_profile, forget_fits, lens_geometry, profile_pairs};
 #[cfg(test)]
 pub(crate) use proxy::{jpeg_vignetting, sharing_proxies};
 #[cfg(test)]
@@ -102,7 +102,11 @@ use tone::{HighlightCheck, ToneFit, fit_tone, fit_tone_conditional, highlights};
 /// (`look_fit::preview_colour_match`).
 /// 23: the chroma curve fitted to the camera JPEG by least squares through its own interpolation, on pixels chosen and
 /// weighed by the JPEG's chroma as well as the prediction's, down to display luminance 0.004 (`hue_sat::fit_chroma`).
-pub const LOOK_VERSION: u32 = 23;
+/// 24: upstream's look version 13: tone curves no steeper than a log-log slope of 4 between knots (#1904); the Canon
+/// CR3/CR2 camera JPEG read in the colour space of the Canon maker note (#2654); the sensor proxy of every per-file fit
+/// gets the embedded vignetting correction the render applies (Fujifilm RAF; other makes with a lens database), at the
+/// position a lens warp samples; the warped candidate's alignment leaves out the pixels outside the sensor.
+pub const LOOK_VERSION: u32 = 24;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {

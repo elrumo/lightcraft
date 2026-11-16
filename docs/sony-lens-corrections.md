@@ -10,9 +10,10 @@ up to 1.43 px at 1440 px while fitting the 100 mm and 200–600 better, and no s
 convention; that page's *Two conventions* section has the comparison and what would settle it.
 Sony ARWs record three lens corrections per shot in the raw image IFD: shading (vignetting), lateral chromatic
 aberration (CA) and distortion, each as a camera setting and a radial table, with copies in the encrypted
-`SR2SubIFD`. LightCraft **decodes all three** wherever a file carries them and applies distortion here on two validated
-bodies: **ILCE-7RM4A (A7R IVA)** and **ILCE-7CR (A7CR)** (and the ILCE-6000's 11-sample tables, distortion and shading, below). The A7R IVA keeps its existing Bayer 3:2 conversion,
-validated with the FE 24-105mm F4 G OSS and FE 200-600mm F5.6-6.3 G OSS. The A7CR uses a separate conversion,
+`SR2SubIFD`. LightCraft **decodes all three** wherever a file carries them and applies distortion here on three validated
+bodies: **ILCE-7RM4A (A7R IVA)**, **ILCE-7M3 (A7 III)** and **ILCE-7CR (A7CR)** (and the ILCE-6000's 11-sample tables, distortion and shading, below). The A7R IVA keeps its existing Bayer 3:2 conversion,
+validated with the FE 24-105mm F4 G OSS and FE 200-600mm F5.6-6.3 G OSS; the A7 III uses the same conversion, validated
+with the FE 16-35mm F4 ZA OSS, FE 28-70mm F3.5-5.6 OSS and FE 50mm F1.8 ([ILCE-7M3 validation](#ilce-7m3-validation)). The A7CR uses a separate conversion,
 limited to full-frame Bayer 3:2 files with distortion Auto or forced Auto. Apart from the separate ILCE-7RM6 converter, other models and shading and CA on every model are
 decoded only: no warp, vignetting or CA correction is added for them. The decoded record stays with the image
 (`RawInfo::lens_metadata` / `RawImage::lens_metadata`, types in `crates/raw/src/lens_metadata.rs`, decoder in
@@ -288,8 +289,8 @@ decoded. No private photographs or reference TIFFs are committed.
 ## ILCE-7M3 validation
 
 Checked on 2026-10-12 against the camera's own JPEG of the same exposure, which is an independent renderer
-that applied the correction (RAW+JPEG, Lens Comp. ▸ Distortion Comp.: Auto). 27 RAW+JPEG pairs from one
-ILCE-7M3: a checkerboard filling the frame on a TV (handheld) and on a desktop monitor (tripod), compressed and
+that applied the correction (RAW+JPEG, Lens Comp. ▸ Distortion Comp.: Auto). RAW+JPEG pairs from one
+ILCE-7M3 (26 in the table below, plus two left out as explained under it): a checkerboard filling the frame on a TV (handheld) and on a desktop monitor (tripod), compressed and
 uncompressed raws, apertures from wide open to f/8, plus one textured wall. Tables covered strong barrel (16 mm,
 −690 at the corner), strong pincushion (70 mm, +1161) and the sign change between them.
 
@@ -390,7 +391,8 @@ measured it against the camera's own JPEGs and enabled the body. The lossless M/
 These are **model-boundary regression checks, not new geometric validation of those models**.
 `sony_lens_records_of_the_public_samples` also checks the exact tables, settings, provenance and framing evidence of
 the three A7CR codings and the A7R IVA sample, and that across the Sony corpus only the A7R IVA's distortion is ever
-applied. In particular,
+applied, besides the A7 III's. The A7 III tables were refused at first because their corner warp was unverified;
+the [ILCE-7M3 validation](#ilce-7m3-validation) measured it against the camera's own JPEGs and enabled the body. The lossless M/S
 files are linear YCbCr and remain excluded independently of the model check. Header and full decode
 must agree for every sample. Synthetic tests also verify both TIFF byte orders, exact model matching,
 that the warp is centred on the standard default crop while the image keeps Sony's crop, and that DNG export preserves an accepted warp without adding one to rejected

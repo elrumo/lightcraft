@@ -117,6 +117,7 @@ impl Fake {
         }
     }
 
+    #[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
     fn handle(&mut self, t: &Task) -> Done {
         let (id, method, url, body, save_to, token) = match t {
             Task::Proxies { .. } => return crate::cloud_sync::run(t),
@@ -2682,6 +2683,7 @@ fn what_is_being_sent_is_listed_with_its_progress() {
 }
 
 #[test]
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn the_sync_queue_lists_the_photos_behind_each_count() {
     let mut f = Fake::new();
     let (mut a, root, ids) = first_device("queue", &mut f);

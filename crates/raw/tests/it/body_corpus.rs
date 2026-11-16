@@ -16,12 +16,9 @@ fn corpus() -> PathBuf {
 
 /// Green of the decoded mosaic against the camera's embedded JPEG on a `gw × gh` grid of the active area.
 fn green_vs_camera_jpeg(raw: &lightcraft_raw::RawImage, jpeg: &[u8], gw: usize, gh: usize) -> f64 {
-    use zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
-    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
-    let mut d = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(jpeg), opts);
-    let px = d.decode().unwrap();
-    let info = d.info().unwrap();
-    let (jw, jh) = (info.width as usize, info.height as usize);
+    let img = craft_image_codecs::decode_as_with(craft_image_codecs::Format::Jpeg, jpeg, &craft_image_codecs::DecodeOptions::default()).unwrap();
+    let (jw, jh) = (img.width() as usize, img.height() as usize);
+    let px = img.as_u8().unwrap();
     let mean = |sum: Vec<f64>, n: Vec<f64>| sum.iter().zip(&n).map(|(s, n)| s / n.max(1.0)).collect::<Vec<f64>>();
     let (mut js, mut jn) = (vec![0f64; gw * gh], vec![0f64; gw * gh]);
     for y in 0..jh {
@@ -238,7 +235,8 @@ fn pearson(a: &[f64], b: &[f64]) -> f64 {
 
 /// One CC0 file per SuperCCD body from raw.pixls.us: pre-X FinePix RAFs without a raw IFD, whose sites the decoder
 /// turns into linear RGB on the picture grid itself (`vendor::raf_legacy`). AHD's choices may differ in the last bits
-/// between platforms' maths libraries, so instead of a hash the active area's channel means are pinned (to 0.5 %).
+/// between platforms' maths libraries, so instead of a hash the active area's channel means are pinned (to 0.5 %), as AHD
+/// gives them since it blends its two candidates where their homogeneity is close (the noisy S6000fd moved most).
 /// Against the camera's embedded JPEG, on a 24 × 16 grid: green must follow it (gamma-encoded Pearson r), better than
 /// it follows the JPEG mirrored, and the red / green balance must too (log ratios), which a red–blue swap breaks.
 #[test]
@@ -250,7 +248,7 @@ fn superccd_bodies_decode_like_the_camera_jpeg() {
         ("raf-fujifilm-finepix-s5pro.raf", (4352, 2888), (4256, 2848), [0.07372, 0.12047, 0.06083]),
         ("raf-fujifilm-finepix-s5000.raf", (2944, 2160), (2816, 2120), [0.07239, 0.13105, 0.08194]),
         ("raf-fujifilm-finepix-s5200.raf", (3808, 2776), (3648, 2736), [0.18310, 0.30873, 0.27133]),
-        ("raf-fujifilm-finepix-s6000fd.raf", (4224, 3088), (4048, 3036), [0.12325, 0.14518, 0.08257]),
+        ("raf-fujifilm-finepix-s6000fd.raf", (4224, 3088), (4048, 3036), [0.12407, 0.14534, 0.08192]),
         ("raf-fujifilm-finepix-s6500fd.raf", (4224, 3088), (4048, 3036), [0.10745, 0.16284, 0.11599]),
         ("raf-fujifilm-finepix-s7000.raf", (4096, 3080), (4048, 3040), [0.05749, 0.15920, 0.16447]),
         ("raf-fujifilm-finepix-s9500.raf", (5024, 3688), (4864, 3648), [0.12601, 0.22129, 0.19175]),

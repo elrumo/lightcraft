@@ -915,6 +915,7 @@ impl SyncState {
     /// What `sync.status` reports.
     pub fn status(&self) -> Value {
         let (uploads, downloads) = self.transfers();
+        #[allow(unused_mut)]
         let mut v = self.status_fields(uploads, downloads);
         // the photos whose previews this device is building again: {ids (next in line), count, done, failed, error}
         #[cfg(not(target_arch = "wasm32"))]
@@ -1054,6 +1055,7 @@ pub fn blob_key(p: &Photo) -> Option<String> {
 /// `p`'s file extension with its dot (`.CR3`), for a scratch copy of its original fetched from the server: what reads it by
 /// its name (a frontend's raw developer, the clip check of [`build_proxies`]) then reads it as what it is. Empty for a name
 /// without one, or with an odd one.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn scratch_ext(p: &Photo) -> String {
     let ext = p.extension();
     if (1..=8).contains(&ext.len()) && ext.bytes().all(|b| b.is_ascii_alphanumeric()) { format!(".{ext}") } else { String::new() }
@@ -2880,6 +2882,7 @@ impl Session {
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
     fn job_done(&mut self, st: &mut SyncState, job: Job, d: &Done) {
         // (planned again once the wait is over, see `blob_tasks`: not now, for a server that hasn't built
         // the previews of thousands of photos yet answers each of them at once)

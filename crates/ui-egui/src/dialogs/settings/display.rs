@@ -1,6 +1,9 @@
 use super::appearance::appearance;
 use super::widgets::{check, choices, heading, hint, path_label, row};
-use super::*;
+use super::{GridBadges, LightcraftApp, RichText, Tokens, Value, json, register};
+use crate::panels::settings::pick;
+use crate::panels::settings::text_row;
+use crate::state::Appearance;
 
 // ---------------------------------------------------------------------------------- Interface
 

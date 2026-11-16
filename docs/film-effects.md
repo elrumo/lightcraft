@@ -1,6 +1,6 @@
 # Film effects
 
-> **Last updated:** 2026-11-11 · **Status:** built (core settings, commands and renderer; `ctl:film.border`, `filmLayer.<i>.*`, `cmd:film.add`; grain styles; Film Effects presets); the editing UI is a native frontend's, not egui's
+> **Last reviewed:** 2026-11-11 · **Status:** built (core settings, commands and renderer; `ctl:film.border`, `filmLayer.<i>.*`, `cmd:film.add`; grain styles; Film Effects presets); the editing UI is a native frontend's, not egui's · **Changes:** [revision history](#revision-history)
 
 Film effects put a photo on film and mark it as film gets marked: a **frame** the photo sits in (a 35mm strip with its
 sprocket holes, a filed-out negative carrier's black edge, an instant print's frame) and a **stack of marks** drawn over
@@ -194,3 +194,10 @@ Paste carrying or clearing the group).
 - No egui panel (the core renders the settings any frontend makes).
 - A zoomed engine render with a frame renders the whole output; a banded export with a frame is not banded.
 - The marks are static on a video clip.
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-11-11 | Last change before the header rule (recorded in the old header, no note). |

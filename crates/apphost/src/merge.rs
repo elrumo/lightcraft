@@ -21,6 +21,8 @@ pub struct Task {
     pub job: MergeJob,
     /// The options it was started with.
     pub options: MergeOptions,
+    /// The photos it merges.
+    pub ids: Vec<PhotoId>,
     /// How far it is (0..1) and the stage it is at.
     pub progress: Arc<Mutex<(f32, String)>>,
     pub cancel: Arc<AtomicBool>,
@@ -49,8 +51,9 @@ pub enum Done {
 pub struct Runner {
     pub preview: Option<Task>,
     pub merging: Option<Task>,
-    /// Options whose preview failed: not tried again until they change.
-    pub failed: Option<MergeOptions>,
+    /// The photos and options whose preview failed: not tried again until either changes (or the
+    /// dialog opens again and clears it).
+    pub failed: Option<(Vec<PhotoId>, MergeOptions)>,
 }
 
 /// The options of the last merge of kind `command` started (kept in the library preferences), or
@@ -86,7 +89,7 @@ pub fn spawn(session: &Session, options: &MergeOptions, ids: &[PhotoId], preview
     std::thread::Builder::new().name("photo-merge".into()).spawn(work).map_err(|e| e.to_string())?;
     #[cfg(target_arch = "wasm32")]
     work();
-    Ok(Task { job, options: options.clone(), progress, cancel, rx, guard: None })
+    Ok(Task { job, options: options.clone(), ids: ids.to_vec(), progress, cancel, rx, guard: None })
 }
 
 impl Runner {
@@ -95,9 +98,9 @@ impl Runner {
         self.preview.is_some() || self.merging.is_some()
     }
 
-    /// The preview being drawn, or the options of the one that failed: nothing to start for them.
-    pub fn wants_preview(&self, options: &MergeOptions) -> bool {
-        self.preview.as_ref().map(|t| &t.options) != Some(options) && self.failed.as_ref() != Some(options)
+    /// The preview being drawn, or the photos and options of the one that failed: nothing to start for them.
+    pub fn wants_preview(&self, options: &MergeOptions, ids: &[PhotoId]) -> bool {
+        self.preview.as_ref().map(|t| &t.options) != Some(options) && !self.failed.as_ref().is_some_and(|(i, o)| i == ids && o == options)
     }
 
     /// Draw a preview of `options`, dropping the one being drawn.
@@ -110,7 +113,7 @@ impl Runner {
                 Ok(())
             }
             Err(e) => {
-                self.failed = Some(options.clone());
+                self.failed = Some((ids.to_vec(), options.clone()));
                 Err(e)
             }
         }
@@ -163,7 +166,7 @@ impl Runner {
                             // (a preview dropped for a newer one says nothing)
                             Err(e) if e == "cancelled" => {}
                             Err(e) => {
-                                self.failed = Some(t.options.clone());
+                                self.failed = Some((t.ids.clone(), t.options.clone()));
                                 done.push(Done::Preview { options: t.options, result: Err(e) });
                             }
                         }

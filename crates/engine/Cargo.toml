@@ -33,6 +33,8 @@ lightcraft-geo = { workspace = true }
 lightcraft-lensdb = { workspace = true }
 lightcraft-faces = { workspace = true }
 miniz_oxide = { workspace = true }
+# CRC-32 of a catalog unpacked from a Lightroom backup zip (lightroom_backup.rs).
+crc32fast = { workspace = true }
 lightcraft-merge = { workspace = true }
 lightcraft-geocode = { workspace = true }
 # AI Remove (MI-GAN on rten): built everywhere, the web included; the model is downloaded on request
@@ -50,6 +52,7 @@ log = { workspace = true }
 ab_glyph = { workspace = true }
 # Apply the font’s vertical substitutions and origins to Japanese watermarks.
 harfrust = { version = "0.13", default-features = false, features = ["std"] }
+unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
 lightcraft-segment = { workspace = true, optional = true }
 lightcraft-enhance = { workspace = true, optional = true }
@@ -72,6 +75,8 @@ ureq = { workspace = true }
 rustls-rustcrypto = { workspace = true }
 # capture-time parsing for face recognition (native only)
 chrono = { workspace = true }
+# free space of the drive holding the preview cache (the low-disk alert; pure Rust: rustix / windows-sys)
+fs4 = { workspace = true }
 
 [features]
 # `lightcraft_engine::testdata`: synthetic files for other crates' tests (the raw crate's).
@@ -91,12 +96,12 @@ lightcraft-testkit = { workspace = true }
 # HDR JPEG XL tests read the file's colour encoding
 jxl-oxide = { workspace = true }
 # Lossless synthetic HEIC files (the import test; decoded when the codecs' `heif` feature is on).
-lightcraft-heif = { workspace = true, features = ["testdata"] }
+craft-heif = { workspace = true, features = ["testdata"] }
 lightcraft-video = { workspace = true, features = ["testdata"] }
 # Synthetic VC-5 streams (the GoPro GPR import test).
 lightcraft-raw = { workspace = true, features = ["testdata"] }
 libc = { workspace = true }
-lightcraft-tiff = { workspace = true }
+craft-tiff = { workspace = true }
 # the corrupt-file sweep example counts and caps what it allocates
 lightcraft-sysmem = { workspace = true }
 

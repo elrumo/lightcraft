@@ -59,6 +59,9 @@ const FIELDS_WITHOUT_DEVELOP: &[&str] = &[
     "aperture",
     "shutterSpeed",
     "iso",
+    "flash",
+    "exposureBias",
+    "cameraSerial",
     "location",
     // the fork's "Place (from GPS)": the nearest place name of a photo's GPS position
     "place",

@@ -1,14 +1,18 @@
-use super::defaults::{apply_import_defaults, keeps_whole_sensor};
+use super::defaults::{apply_default_crop, apply_import_defaults, keeps_whole_sensor};
 use super::files::copy_into;
 use super::job::{Prepared, PreparedItem, ReadyFile};
-use super::types::{Duplicate, ImportOptions, ImportReport, Kept, Moved, OnDeleted};
-use super::*;
+use super::types::{Duplicate, ImportMode, ImportOptions, ImportReport, Kept, Moved, OnDeleted};
+use super::{HashMap, Op, Path, PathBuf, Photo, PhotoId, ProbeInfo, Session, Source};
 
 /// A batch's items in file order while its transfers are pending ([`ImportJob::run_plan`]).
 #[derive(Default)]
 pub(super) struct Plan {
     pub(super) slots: Vec<Slot>,
     pub(super) transfers: Vec<Transfer>,
+    /// The content hashes and name families of [`Plan::transfers`], so each new file is checked against them in
+    /// constant time rather than by scanning the pending transfers.
+    pub(super) pending_hashes: std::collections::HashSet<String>,
+    pub(super) pending_families: std::collections::HashSet<(String, String)>,
 }
 
 pub(super) enum Slot {
@@ -26,9 +30,6 @@ pub(super) struct Transfer {
     pub(super) how: How,
     /// Copy as DNG.
     pub(super) dng: bool,
-    /// The folder (lowercase) and [`name_family`]: transfers of one family can take each other's
-    /// names, so they never run at the same time.
-    pub(super) family: (String, String),
 }
 
 pub(super) enum How {
@@ -183,6 +184,7 @@ fn trashed_file_is_gone(cat: &lightcraft_catalog::Catalog, id: PhotoId) -> bool 
 /// The catalog half of an import: add the photos [`ImportJob::prepare`] readied (one undoable op;
 /// a Move's sources are removed once it is saved). On a failed commit a Move's placed files are
 /// taken back.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepared: Prepared) -> crate::Result<ImportReport> {
     let now = now.to_string();
     let mut report = ImportReport { scanned: prepared.scanned, ..Default::default() };
@@ -218,7 +220,7 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 }
                 report.imported.push(id.0);
             }
-            PreparedItem::Duplicate { path, existing, reason, hash } => {
+            PreparedItem::Duplicate { path, existing, reason, hash, file } => {
                 let existing = existing.or_else(|| {
                     let h = hash?;
                     new_hash.get(&h).copied().or_else(|| s.catalog.photos().find(|p| p.content_hash.as_deref() == Some(h.as_str())).map(|p| p.id))
@@ -251,7 +253,9 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                             report.imported.push(id.0);
                         }
                     }
-                    _ => report.duplicates.push(Duplicate { path, existing: existing.map(|i| i.0), reason, existing_deleted: trashed.is_some() }),
+                    _ => {
+                        report.duplicates.push(Duplicate { path, existing: existing.map(|i| i.0), reason, existing_deleted: trashed.is_some(), file })
+                    }
                 }
             }
             PreparedItem::Failed(path, e) => report.failed.push((path, e)),
@@ -274,6 +278,8 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                     }
                 }
                 let sidecar = sidecar.map(|sc| sc.resolve_label(&s.catalog)).filter(|sc| *sc != crate::sidecar::SidecarData::default());
+                // the photo is upright as the file's own orientation turns it, when the file states one
+                let sidecar = sidecar.map(|sc| crate::sidecar::SidecarData { orientation: info.orientation.or(sc.orientation), ..sc });
                 // a copy is catalogued under its new name
                 let name = Path::new(&stored).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
                 let origin = opts.origin.clone().or_else(|| {
@@ -334,6 +340,19 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                     p.edited = Some(now.clone());
                     p.history.push(lightcraft_catalog::HistoryStep { label, settings: d });
                 }
+                // the batch-edit recipe goes on top of everything above (sidecar, camera default,
+                // preset): only the controls it names change, through the same specs the sliders use
+                if !opts.recipe.is_empty() {
+                    let mut d = (*p.develop).clone();
+                    for (id, v) in &opts.recipe {
+                        // (`ImportJob::new` refused any id `set` would not write, and `set` clamps to the range)
+                        lightcraft_develop::controls::set(&mut d, id, *v);
+                    }
+                    let d = std::sync::Arc::new(d);
+                    p.develop = d.clone();
+                    p.edited = Some(now.clone());
+                    p.history.push(lightcraft_catalog::HistoryStep { label: "Import adjustments".into(), settings: d });
+                }
                 report.imported.push(id.0);
                 if let Some(clip) = motion {
                     motions.push((id, clip));
@@ -376,12 +395,14 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
 }
 
 /// Move, after the commit: save the library, then remove each source whose destination is
-/// still intact. Nothing is removed when the library can't be saved.
+/// still intact. Nothing is removed when the library can't be saved: saved is on disk, not just
+/// handed to the catalog log's thread, which looks at the folder only when it writes (issue #3240),
+/// so the log is flushed first.
 fn finish_moves(s: &mut Session, placed: Vec<crate::import_move::Placed>, log0: usize, report: &mut ImportReport) {
     // (saving here clears the pending ops, so the sidecars `execute` would auto-write are written here)
     let auto: Vec<Op> = if s.xmp.auto_write { s.pending_log.get(log0..).map(<[Op]>::to_vec).unwrap_or_default() } else { Vec::new() };
     let before = s.pending_log.len();
-    if let Err(e) = s.persist() {
+    if let Err(e) = s.persist().and_then(|()| s.flush_log()) {
         for p in placed {
             let reason = format!("the library could not be saved ({e}): the original stays; the photo uses the copy at {}", p.dst.display());
             report.kept.push(Kept { path: p.src.to_string_lossy().to_string(), reason });

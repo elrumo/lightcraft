@@ -255,8 +255,19 @@ fn fdct_quant(block: &[f32; 64], recip: &[f32; 64], out: &mut [i16; 64]) {
         aan_1d(&mut d, c, 8);
     }
     for i in 0..64 {
-        out[i] = (d[i] * recip[i]).round() as i16;
+        out[i] = round_i16(d[i] * recip[i]);
     }
+}
+/// `x.round() as i16` (half away from zero, saturating, NaN to 0) for every `x` (checked for all of them), in plain
+/// arithmetic: without SSE4.1 `f32::round` is a libm call, one per coefficient, that keeps the loop from vectorising.
+#[inline(always)]
+fn round_i16(x: f32) -> i16 {
+    // (below 2^24 the truncation is exact and so is the remainder)
+    let c = x.clamp(-65536.0, 65536.0);
+    let t = c as i32;
+    let f = c - t as f32;
+    let r = t + i32::from(f >= 0.5) - i32::from(f <= -0.5);
+    r.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
 
 #[inline]
@@ -390,6 +401,12 @@ fn encode_with(
     app_segments: &[(u8, Vec<u8>)],
     optimize: bool,
 ) -> Vec<u8> {
+    // The public entry takes caller-sized dimensions: refuse (an empty output) what would size an allocation from
+    // them or index past `data`, rather than panic or allocate for them.
+    let fits = width.checked_mul(height).and_then(|n| n.checked_mul(channels)).is_some_and(|n| n <= data.len());
+    if !fits || width == 0 || height == 0 || width > 65_535 || height > 65_535 || !matches!(channels, 1 | 3 | 4) {
+        return Vec::new();
+    }
     let gray = channels == 1;
     let (hs, vs) = match (gray, sub) {
         (true, _) | (false, ChromaSubsampling::S444) => (1usize, 1usize),
@@ -397,6 +414,56 @@ fn encode_with(
     };
     #[cfg(feature = "parallel")]
     use rayon::prelude::*;
+    // colour conversion (JFIF YCbCr, full range, level-shifted) of the pixel rows `rows`, one band's worth at a
+    // time (in the band's task: the planes of the whole image would be ~290 MB at 24 MP, written and read back
+    // once): 4:4:4 Y, Cb, Cr at full resolution in one pass; 4:2:0 Y, and chroma (rows `crows` of the
+    // half-size planes) straight from 2×2 RGB means (conversion is linear: average first, then convert once)
+    let ncomp = if gray || hs == 2 { 1 } else { 3 };
+    let (cw, ch) = (width.div_ceil(2), height.div_ceil(2));
+    let convert = |rows: std::ops::Range<usize>, crows: std::ops::Range<usize>| -> Vec<Plane> {
+        let mut full: Vec<Vec<f32>> = (0..ncomp).map(|_| vec![0f32; rows.len() * width]).collect();
+        for (k, y) in rows.clone().enumerate() {
+            let src = &data[y * width * channels..(y + 1) * width * channels];
+            let mut out: Vec<&mut [f32]> = full.iter_mut().map(|p| &mut p[k * width..(k + 1) * width]).collect();
+            if gray {
+                for (o, p) in out[0].iter_mut().zip(src.chunks_exact(channels)) {
+                    *o = p[0] as f32 - 128.0;
+                }
+                continue;
+            }
+            if out.len() == 1 {
+                for (o, p) in out[0].iter_mut().zip(src.chunks_exact(channels)) {
+                    *o = 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32 - 128.0;
+                }
+                continue;
+            }
+            for (x, p) in src.chunks_exact(channels).enumerate() {
+                let (r, g, b) = (p[0] as f32, p[1] as f32, p[2] as f32);
+                out[0][x] = 0.299 * r + 0.587 * g + 0.114 * b - 128.0;
+                out[1][x] = -0.168_736 * r - 0.331_264 * g + 0.5 * b;
+                out[2][x] = 0.5 * r - 0.418_688 * g - 0.081_312 * b;
+            }
+        }
+        let mut planes: Vec<Plane> = full.into_iter().map(|data| Plane { w: width, h: rows.len(), data }).collect();
+        if !gray && hs == 2 {
+            let (mut cb, mut cr) = (vec![0f32; cw * crows.len()], vec![0f32; cw * crows.len()]);
+            for (cy, (ob, or)) in crows.clone().zip(cb.chunks_mut(cw).zip(cr.chunks_mut(cw))) {
+                let (y0, y1) = (2 * cy, (2 * cy + 1).min(height - 1));
+                let (r0, r1) = (&data[y0 * width * channels..], &data[y1 * width * channels..]);
+                for cx in 0..cw {
+                    let (x0, x1) = (2 * cx * channels, (2 * cx + 1).min(width - 1) * channels);
+                    let s = |k: usize| (r0[x0 + k] as f32 + r0[x1 + k] as f32 + r1[x0 + k] as f32 + r1[x1 + k] as f32) * 0.25;
+                    let (r, g, b) = (s(0), s(1), s(2));
+                    ob[cx] = -0.168_736 * r - 0.331_264 * g + 0.5 * b;
+                    or[cx] = 0.5 * r - 0.418_688 * g - 0.081_312 * b;
+                }
+            }
+            planes.push(Plane { w: cw, h: crows.len(), data: cb });
+            planes.push(Plane { w: cw, h: crows.len(), data: cr });
+        }
+        planes
+    };
+
     let ql = scaled_quant(&Q_LUMA, quality);
     let qc = scaled_quant(&Q_CHROMA, quality);
     let (rl, rc) = (recip_table(&ql), recip_table(&qc));
@@ -405,72 +472,29 @@ fn encode_with(
     // restart interval: whole MCU rows per band, ≤ 65535 MCUs, enough bands to keep all cores busy
     let rows_per_band = (my / 64).clamp(1, (65_535 / mx.max(1)).max(1));
     let bands: Vec<usize> = (0..my.div_ceil(rows_per_band)).collect();
-    // A band's planes, made from its own rows when it is coded, never the whole picture's (a 267 MP export held 1.6 GB of
-    // them at 4:2:0, 3.2 GB at 4:4:4): JFIF YCbCr, full range, level-shifted; at 4:2:0 the chroma straight from 2×2 RGB
-    // means (the conversion is linear). Bands are whole MCU rows and the last one ends at the picture's bottom, so a block
-    // past an edge repeats the same row or column it does on whole planes: the file is the same.
-    let band_planes = |band: usize| -> Vec<Plane> {
-        let y0 = (band * rows_per_band * mcu_h).min(height);
-        let y1 = ((band + 1) * rows_per_band * mcu_h).min(height);
-        let bh = y1 - y0;
-        let ncomp = if gray || hs == 2 { 1 } else { 3 };
-        let mut planes: Vec<Plane> = (0..ncomp).map(|_| Plane { w: width, h: bh, data: vec![0f32; width * bh] }).collect();
-        for y in y0..y1 {
-            let src = &data[y * width * channels..(y + 1) * width * channels];
-            let at = (y - y0) * width;
-            for (x, p) in src.chunks_exact(channels).enumerate() {
-                if gray {
-                    planes[0].data[at + x] = p[0] as f32 - 128.0;
-                    continue;
-                }
-                let (r, g, b) = (p[0] as f32, p[1] as f32, p[2] as f32);
-                planes[0].data[at + x] = 0.299 * r + 0.587 * g + 0.114 * b - 128.0;
-                if ncomp == 3 {
-                    planes[1].data[at + x] = -0.168_736 * r - 0.331_264 * g + 0.5 * b;
-                    planes[2].data[at + x] = 0.5 * r - 0.418_688 * g - 0.081_312 * b;
-                }
-            }
-        }
-        if !gray && hs == 2 {
-            let cw = width.div_ceil(2);
-            let (c0, c1) = (y0 / 2, y1.div_ceil(2));
-            let (mut cb, mut cr) = (vec![0f32; cw * (c1 - c0)], vec![0f32; cw * (c1 - c0)]);
-            for cy in c0..c1 {
-                let (ya, yb) = (2 * cy, (2 * cy + 1).min(height - 1));
-                let (r0, r1) = (&data[ya * width * channels..], &data[yb * width * channels..]);
-                let at = (cy - c0) * cw;
-                for cx in 0..cw {
-                    let (x0, x1) = (2 * cx * channels, (2 * cx + 1).min(width - 1) * channels);
-                    let s = |k: usize| (r0[x0 + k] as f32 + r0[x1 + k] as f32 + r1[x0 + k] as f32 + r1[x1 + k] as f32) * 0.25;
-                    let (r, g, b) = (s(0), s(1), s(2));
-                    cb[at + cx] = -0.168_736 * r - 0.331_264 * g + 0.5 * b;
-                    cr[at + cx] = 0.5 * r - 0.418_688 * g - 0.081_312 * b;
-                }
-            }
-            planes.push(Plane { w: cw, h: c1 - c0, data: cb });
-            planes.push(Plane { w: cw, h: c1 - c0, data: cr });
-        }
-        planes
-    };
     // first pass: each band's quantized blocks as symbols, with their counts per table (DC
     // prediction restarts per band, as the restart markers say)
     let tokenize_band = |band: &usize| -> (Vec<Token>, [Freq; 4]) {
         let (mut blk, mut q) = ([0f32; 64], [0i16; 64]);
         let (mut tokens, mut freq) = (Vec::new(), [[0u64; 256]; 4]);
         let mut pred = [0i32; 3];
-        let (first, planes) = (band * rows_per_band, band_planes(*band));
-        for mcu_y in first..((band + 1) * rows_per_band).min(my) {
+        let (m0, m1) = (band * rows_per_band, ((band + 1) * rows_per_band).min(my));
+        // the band's planes, its MCU row `m0` at their top (blocks past the image's bottom repeat its last row,
+        // which is the band's last row then)
+        let planes = convert(m0 * mcu_h..(m1 * mcu_h).min(height), m0 * 8..(m1 * 8).min(ch));
+        for mcu_y in m0..m1 {
+            let mcu_y = mcu_y - m0;
             for mcu_x in 0..mx {
                 for vy in 0..vs {
                     for hx in 0..hs {
-                        planes[0].block(mcu_x * hs + hx, (mcu_y - first) * vs + vy, &mut blk);
+                        planes[0].block(mcu_x * hs + hx, mcu_y * vs + vy, &mut blk);
                         fdct_quant(&blk, &rl, &mut q);
                         tokenize_block(&q, &mut pred[0], false, &mut tokens, &mut freq);
                     }
                 }
                 if !gray {
                     for (plane, pred) in planes.iter().zip(pred.iter_mut()).take(3).skip(1) {
-                        plane.block(mcu_x, mcu_y - first, &mut blk);
+                        plane.block(mcu_x, mcu_y, &mut blk);
                         fdct_quant(&blk, &rc, &mut q);
                         tokenize_block(&q, pred, true, &mut tokens, &mut freq);
                     }
@@ -568,6 +592,13 @@ fn encode_with(
 mod tests {
     use super::*;
 
+    #[test]
+    fn hostile_dimensions_give_no_output_instead_of_a_panic_or_allocation() {
+        for (w, h, c) in [(1usize << 40, 1usize << 40, 3usize), (0, 8, 3), (70_000, 2, 3), (8, 8, 7), (8, 8, 3)] {
+            assert!(encode(&[0u8; 16], w, h, c, 90, ChromaSubsampling::S444, &[]).is_empty(), "{w} x {h} x {c}");
+        }
+    }
+
     fn test_rgb(w: usize, h: usize) -> Vec<u8> {
         let mut v = Vec::with_capacity(w * h * 3);
         for y in 0..h {
@@ -625,15 +656,13 @@ mod tests {
         ] {
             let src = test_rgb(w, h);
             let jpg = encode(&src, w, h, 3, 92, sub, &[]);
-            let mut d = jpeg_decoder::Decoder::new(&jpg[..]);
-            let px = d.decode().expect("jpeg-decoder");
-            let info = d.info().unwrap();
-            assert_eq!((info.width as usize, info.height as usize), (w, h));
+            let img = craft_image_codecs::decode_as_with(craft_image_codecs::Format::Jpeg, &jpg, &craft_image_codecs::DecodeOptions::default())
+                .expect("craft-image-codecs");
+            assert_eq!((img.width() as usize, img.height() as usize), (w, h));
+            let px = img.as_u8().expect("u8");
             if w * h > 64 {
-                assert!(psnr(&src, &px) > 30.0, "{w}x{h} {sub:?}: psnr {}", psnr(&src, &px));
+                assert!(psnr(&src, px) > 30.0, "{w}x{h} {sub:?}: psnr {}", psnr(&src, px));
             }
-            let z = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&jpg[..])).decode().expect("zune-jpeg");
-            assert_eq!(z.len(), px.len());
         }
     }
 
@@ -717,20 +746,60 @@ mod tests {
             let std = encode_with(&src, w, h, 3, q, sub, &[], false);
             let opt = encode(&src, w, h, 3, q, sub, &[]);
             assert!(opt.len() < std.len(), "q{q} {sub:?}: {} ≥ {}", opt.len(), std.len());
-            let a = jpeg_decoder::Decoder::new(&std[..]).decode().expect("standard tables");
-            let b = jpeg_decoder::Decoder::new(&opt[..]).decode().expect("optimized tables");
+            let dec = |b: &[u8]| {
+                craft_image_codecs::decode_as_with(craft_image_codecs::Format::Jpeg, b, &craft_image_codecs::DecodeOptions::default())
+                    .expect("craft-image-codecs")
+                    .as_u8()
+                    .expect("u8")
+                    .to_vec()
+            };
+            let a = dec(&std);
+            let b = dec(&opt);
             assert_eq!(a, b, "q{q} {sub:?}: pixels differ");
-            let z = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&opt[..])).decode().expect("zune-jpeg");
-            assert_eq!(z.len(), b.len());
         }
         // grayscale too
         let gray: Vec<u8> = src.iter().step_by(3).copied().collect();
         let std = encode_with(&gray, w, h, 1, 90, ChromaSubsampling::S444, &[], false);
         let opt = encode(&gray, w, h, 1, 90, ChromaSubsampling::S444, &[]);
         assert!(opt.len() < std.len());
-        assert_eq!(jpeg_decoder::Decoder::new(&std[..]).decode().unwrap(), jpeg_decoder::Decoder::new(&opt[..]).decode().unwrap());
+        let dec = |b: &[u8]| {
+            craft_image_codecs::decode_as_with(craft_image_codecs::Format::Jpeg, b, &craft_image_codecs::DecodeOptions::default())
+                .unwrap()
+                .as_u8()
+                .unwrap()
+                .to_vec()
+        };
+        assert_eq!(dec(&std), dec(&opt));
     }
 
+    /// The bytes written for 4:4:4, 4:2:0, grayscale and RGBA input at a size cut into many bands, with partial MCUs
+    /// at the right and bottom edges, pinned: each band converts its own rows to YCbCr, which must not change a bit.
+    #[test]
+    fn encoded_bytes_are_pinned() {
+        let fnv = |b: &[u8]| b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3));
+        let (w, h) = (1203, 1037);
+        let rgb = test_rgb(w, h);
+        let gray: Vec<u8> = rgb.as_chunks::<3>().0.iter().map(|p| p[1]).collect();
+        let rgba: Vec<u8> = rgb.as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        let got = [
+            fnv(&encode(&rgb, w, h, 3, 90, ChromaSubsampling::S444, &[])),
+            fnv(&encode(&rgb, w, h, 3, 75, ChromaSubsampling::S420, &[])),
+            fnv(&encode(&gray, w, h, 1, 90, ChromaSubsampling::S444, &[])),
+            fnv(&encode(&rgba, w, h, 4, 85, ChromaSubsampling::S444, &[])),
+        ];
+        assert_eq!(got, PINNED, "{got:#x?}");
+    }
+    /// [`round_i16`] against `f32::round` at the halves, the ends of `i16`, NaN and infinities, and a spread of every
+    /// magnitude (all 2^32 inputs were compared once, offline).
+    #[test]
+    fn round_i16_is_round_as_i16() {
+        let special = [0.5f32, -0.5, 1.5, -1.5, 2.5, -2.5, 0.499_999_97, -0.499_999_97, 32767.5, -32768.5, 32766.5, 1e9, -1e9];
+        let all = special.into_iter().chain([f32::NAN, f32::INFINITY, f32::NEG_INFINITY]).chain((0..=u32::MAX).step_by(9973).map(f32::from_bits));
+        for x in all {
+            assert_eq!(round_i16(x), x.round() as i16, "{x:e}");
+        }
+    }
+    const PINNED: [u64; 4] = [0x52ba_772a_589c_1430, 0x013f_8364_821f_1dde, 0xb2a3_b5e5_aef3_7402, 0x08df_d6dc_aa2f_1c78];
     #[test]
     fn grayscale_and_quality_monotone() {
         let (w, h) = (300, 200);
@@ -738,7 +807,8 @@ mod tests {
         let lo = encode(&src, w, h, 1, 30, ChromaSubsampling::S444, &[]);
         let hi = encode(&src, w, h, 1, 95, ChromaSubsampling::S444, &[]);
         assert!(lo.len() < hi.len());
-        let px = jpeg_decoder::Decoder::new(&hi[..]).decode().unwrap();
-        assert!(psnr(&src, &px) > 35.0);
+        let img = craft_image_codecs::decode_as_with(craft_image_codecs::Format::Jpeg, &hi, &craft_image_codecs::DecodeOptions::default()).unwrap();
+        let px = img.as_u8().unwrap();
+        assert!(psnr(&src, px) > 35.0);
     }
 }

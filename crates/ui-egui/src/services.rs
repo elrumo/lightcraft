@@ -1,4 +1,8 @@
-use super::*;
+use super::{Session, Value, pick};
+use crate::CameraHost;
+use crate::erase;
+use crate::haptics;
+use crate::sync_ui;
 
 pub type PickFiles = Box<dyn FnMut() -> Vec<String>>;
 
@@ -97,6 +101,8 @@ pub type SystemThemeFn = Box<dyn Fn(&egui::Context) -> Option<egui::Theme>>;
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
 pub struct Services {
+    /// Local's built-in places as (label, path). None uses the host's home folder.
+    pub local_places: Option<Vec<(String, String)>>,
     /// Native file dialogs for commands, shown off the UI thread and answered later
     /// (`pick`; #191). With it, the synchronous pickers below serve only the buttons inside
     /// dialogs; without it (the web, tests) they answer the commands too.
@@ -119,7 +125,8 @@ pub struct Services {
     /// Open dialog for a monitor ICC profile (`.icc` / `.icm`; Settings ▸ Display; desktop only).
     pub pick_display_profile: Option<PickFiles>,
     /// The profile of the screen showing the window, used while none is chosen in Settings ▸
-    /// Display (macOS, whose windows aren't colour-managed: issue #787).
+    /// Display: macOS's screen profile (its windows aren't colour-managed: issue #787), colord's on
+    /// Linux, and on Windows the monitor's (none while Windows colour-manages the desktop itself).
     pub screen_profile: Option<ScreenProfileFn>,
     /// The pointer while files are dragged in from outside the window (macOS). Without it the album
     /// under them can't be told, so the sidebar doesn't light one up and a drop goes to the album
@@ -186,7 +193,7 @@ pub struct Services {
     /// Runs self-hosted sync requests ([`sync_ui`]); `None`: this host doesn't sync.
     pub sync_exec: Option<sync_ui::SyncExec>,
     /// Fetches map tiles for the Map view ([`panels::map`]); `None`: only the built-in map.
-    pub tile_exec: Option<panels::map::TileExec>,
+    pub tile_exec: Option<crate::panels::map::TileExec>,
     /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
     pub share_exports: Option<ShareExports>,
     /// Adds exports to the device's photo library (iOS: Save to Photos in the share sheet and the

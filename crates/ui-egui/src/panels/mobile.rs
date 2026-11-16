@@ -81,6 +81,7 @@ enum Face<'a> {
 /// A glass button at one end of a page's bar (`button:<id>`), `align`ed to `at`, as iOS 26's sheets
 /// have them: a circle with an icon, or a capsule with a label; `tint` makes it a prominent one.
 /// `tip` is what a screen reader calls it. True when tapped.
+#[allow(clippy::too_many_arguments)] // fork code that predates the lint; split it when it is next reworked
 fn glass_end(ui: &mut egui::Ui, id: &str, tip: &str, face: Face, tint: Option<Color32>, enabled: bool, at: egui::Pos2, align: Align2) -> bool {
     let t = Tokens::get(ui.ctx());
     let tint = tint.filter(|_| enabled);

@@ -662,7 +662,7 @@ fn a_desktop_sends_the_server_the_text_it_read() {
     s.execute("vision.setText", &json!({"on": true})).unwrap();
     assert!(s.execute("vision.share", &json!({"wait": true})).is_err(), "nothing read yet");
     let r = s.execute("vision.index", &json!({"wait": true})).unwrap();
-    assert_eq!((r["done"].clone(), r["failed"].clone(), r["error"].clone()), (json!(4), json!(0), Value::Null), "{r}");
+    assert_eq!((r["done"].clone(), r["total"].clone(), r["failed"].clone(), r["error"].clone()), (json!(8), json!(8), json!(0), Value::Null), "{r}");
     s.vision_probe_server();
     sync(&mut s);
 
@@ -816,7 +816,7 @@ fn a_device_sends_the_faces_it_found_and_the_server_checks_them() {
     s.execute("vision.setFaces", &json!({"on": true})).unwrap();
     assert!(s.execute("vision.share", &json!({"wait": true})).is_err(), "nothing found yet");
     let r = s.execute("vision.index", &json!({"wait": true})).unwrap();
-    assert_eq!((r["done"].clone(), r["failed"].clone(), r["error"].clone()), (json!(4), json!(0), Value::Null), "{r}");
+    assert_eq!((r["done"].clone(), r["total"].clone(), r["failed"].clone(), r["error"].clone()), (json!(8), json!(8), json!(0), Value::Null), "{r}");
     s.vision_probe_server();
     sync(&mut s);
     assert!(s.vision.server_faces(), "the server says it finds people for this user: {:?}", s.vision.server_status());

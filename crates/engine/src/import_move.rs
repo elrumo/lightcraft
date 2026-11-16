@@ -298,36 +298,37 @@ fn link_or_copy(src: &Path, dst: &Path) -> io::Result<()> {
 /// source) when given, else byte for byte against the source. On any failure the partial copy is
 /// removed.
 pub(crate) fn copy_verified(src: &Path, dst: &Path, expect: Option<lightcraft_preview::Hash128>) -> io::Result<()> {
-    let mut out = OpenOptions::new().write(true).create_new(true).open(dst)?;
-    let r = (|| {
-        let mut inp = File::open(src)?;
-        if injected(Fault::FailWrite) {
-            out.write_all(b"partial")?;
-            return Err(io::Error::other("write failed (injected)"));
-        }
-        io::copy(&mut inp, &mut out)?;
-        #[cfg(test)]
-        if injected(Fault::Slow) {
-            COPY_THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(std::thread::current().id());
-            std::thread::sleep(std::time::Duration::from_millis(30));
-        }
-        if injected(Fault::Corrupt) {
-            out.write_all(b"!")?;
-        }
-        out.sync_all()?;
-        if let Ok(m) = fs::metadata(src).and_then(|m| m.modified()) {
-            let _ = out.set_modified(m);
-        }
-        match expect {
-            Some(h) if hash_file(dst)? != h => {
-                Err(io::Error::other("the copy differs from the original as it was read for the import (a bad copy, or the file changed meanwhile)"))
+    let r = {
+        let mut out = OpenOptions::new().write(true).create_new(true).open(dst)?;
+        (|| {
+            let mut inp = File::open(src)?;
+            if injected(Fault::FailWrite) {
+                out.write_all(b"partial")?;
+                return Err(io::Error::other("write failed (injected)"));
             }
-            Some(_) => Ok(()),
-            None if !same_bytes(src, dst)? => Err(io::Error::other("the copy differs from the original")),
-            None => Ok(()),
-        }
-    })();
-    drop(out);
+            io::copy(&mut inp, &mut out)?;
+            #[cfg(test)]
+            if injected(Fault::Slow) {
+                COPY_THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(std::thread::current().id());
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+            if injected(Fault::Corrupt) {
+                out.write_all(b"!")?;
+            }
+            out.sync_all()?;
+            if let Ok(m) = fs::metadata(src).and_then(|m| m.modified()) {
+                let _ = out.set_modified(m);
+            }
+            match expect {
+                Some(h) if hash_file(dst)? != h => Err(io::Error::other(
+                    "the copy differs from the original as it was read for the import (a bad copy, or the file changed meanwhile)",
+                )),
+                Some(_) => Ok(()),
+                None if !same_bytes(src, dst)? => Err(io::Error::other("the copy differs from the original")),
+                None => Ok(()),
+            }
+        })()
+    };
     if r.is_err() {
         let _ = fs::remove_file(dst);
     }

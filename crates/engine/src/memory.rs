@@ -173,11 +173,13 @@ pub struct WorkGate {
 
 #[derive(Default)]
 struct GateState {
-    /// Bytes held, by everything.
-    held: usize,
+    /// Bytes held, by everything. A `u128`: callers weigh work with saturating maths, so a permit may hold `usize::MAX`,
+    /// and the exact total of several such permits still fits, so releasing one in any order leaves the others counted
+    /// (issue #2576).
+    held: u128,
     limit: usize,
-    /// Bytes held by interactive work.
-    urgent: usize,
+    /// Bytes held by interactive work (a `u128` as `held` is).
+    urgent: u128,
     holders: usize,
     urgent_holders: usize,
     /// The most held at once and the most holders at once, in all and by interactive work ([`WorkGate::peak`]).
@@ -189,15 +191,15 @@ struct GateState {
 
 impl GateState {
     fn take(&mut self, bytes: usize, urgent: bool) {
-        self.held = self.held.saturating_add(bytes);
+        self.held = self.held.saturating_add(bytes as u128);
         if urgent {
-            self.urgent = self.urgent.saturating_add(bytes);
+            self.urgent = self.urgent.saturating_add(bytes as u128);
             self.urgent_holders += 1;
         }
         self.holders += 1;
-        self.peak = self.peak.max(self.held);
+        self.peak = self.peak.max(usize::try_from(self.held).unwrap_or(usize::MAX));
         self.peak_holders = self.peak_holders.max(self.holders);
-        self.peak_urgent = self.peak_urgent.max(self.urgent);
+        self.peak_urgent = self.peak_urgent.max(usize::try_from(self.urgent).unwrap_or(usize::MAX));
         self.peak_urgent_holders = self.peak_urgent_holders.max(self.urgent_holders);
     }
 }
@@ -223,10 +225,10 @@ impl WorkGate {
         self.cv.notify_all();
     }
 
-    /// Bytes held now and the limit.
+    /// Bytes held now (at most `usize::MAX`) and the limit.
     pub fn usage(&self) -> (usize, usize) {
         let g = self.lock();
-        (g.held, g.limit)
+        (usize::try_from(g.held).unwrap_or(usize::MAX), g.limit)
     }
 
     /// The most bytes held at once and the most holders at once, since the gate was made.
@@ -241,10 +243,11 @@ impl WorkGate {
         (g.peak_urgent, g.peak_urgent_holders)
     }
 
-    /// Hold `bytes`, waiting until they fit (or nothing else is held).
+    /// Hold `bytes`, waiting until they fit (or nothing else is held). Even `usize::MAX` bytes on
+    /// a gate whose limit is `usize::MAX` make the next holder wait.
     pub fn acquire(&self, bytes: usize) -> Permit<'_> {
         let mut g = self.lock();
-        while g.held > 0 && g.held.saturating_add(bytes) > g.limit {
+        while g.held > 0 && g.held.saturating_add(bytes as u128) > g.limit as u128 {
             g = self.cv.wait(g).unwrap_or_else(|e| e.into_inner());
         }
         g.take(bytes, false);
@@ -265,9 +268,9 @@ impl WorkGate {
 impl Drop for Permit<'_> {
     fn drop(&mut self) {
         let mut g = self.gate.lock();
-        g.held = g.held.saturating_sub(self.bytes);
+        g.held = g.held.saturating_sub(self.bytes as u128);
         if self.urgent {
-            g.urgent = g.urgent.saturating_sub(self.bytes);
+            g.urgent = g.urgent.saturating_sub(self.bytes as u128);
             g.urgent_holders = g.urgent_holders.saturating_sub(1);
         }
         g.holders = g.holders.saturating_sub(1);

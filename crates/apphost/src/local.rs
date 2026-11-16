@@ -88,8 +88,25 @@ pub fn local_places(
     browse_root: Option<&str>,
     hidden: &[String],
 ) -> LocalPlaces {
+    local_places_with_unlisted(builtin, saved, browsing, browse_root, hidden, &[])
+}
+
+/// [`local_places`] where the browsed folder may lie below folders Local never lists
+/// (`unlisted`: hidden folders on its way down, [`unlisted_ancestors`]): a place it is below only
+/// through one of those does not hold it, so it gets a session root of its own.
+pub fn local_places_with_unlisted(
+    builtin: Vec<(String, String)>,
+    saved: &[String],
+    browsing: Option<&str>,
+    browse_root: Option<&str>,
+    hidden: &[String],
+    unlisted: &[String],
+) -> LocalPlaces {
     use lightcraft_catalog::query::{folder_key, folder_within};
     let is_hidden = |p: &str| hidden.iter().any(|h| same_folder(h, p));
+    let listed_below = |current: &str, root: &str| {
+        folder_within(current, root) && !unlisted.iter().any(|h| !same_folder(h, root) && folder_within(current, h) && folder_within(h, root))
+    };
     let mut places = builtin;
     for path in saved {
         if !places.iter().any(|(_, p)| same_folder(p, path)) {
@@ -99,9 +116,9 @@ pub fn local_places(
     places.retain(|(_, p)| !is_hidden(p));
     let mut out = LocalPlaces::default();
     if let Some(c) = browsing
-        && !places.iter().any(|(_, p)| folder_within(c, p))
+        && !places.iter().any(|(_, p)| listed_below(c, p))
     {
-        let root = browse_root.filter(|r| folder_within(c, r)).unwrap_or(c);
+        let root = browse_root.filter(|r| listed_below(c, r)).unwrap_or(c);
         if !is_hidden(root) {
             places.push((folder_label(root), root.to_string()));
             out.browse_root = Some(root.to_string());
@@ -114,7 +131,7 @@ pub fn local_places(
         out.owner = places
             .iter()
             .enumerate()
-            .filter(|(_, (_, p))| folder_within(c, p) && !through_hidden(p))
+            .filter(|(_, (_, p))| listed_below(c, p) && !through_hidden(p))
             .max_by_key(|(_, (_, p))| folder_key(p).len())
             .map(|(i, _)| i);
     }
@@ -128,16 +145,22 @@ pub fn list_subfolders(path: &str) -> Vec<(String, String)> {
     let mut v: Vec<(String, String)> = std::fs::read_dir(path)
         .map(|rd| {
             rd.flatten()
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                .filter_map(|e| {
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && !lightcraft_engine::walk::is_hidden_entry(e))
+                .map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
-                    (!name.starts_with('.')).then(|| (name, e.path().to_string_lossy().to_string()))
+                    (name, e.path().to_string_lossy().to_string())
                 })
                 .collect()
         })
         .unwrap_or_default();
     v.sort_by_key(|(n, _)| n.to_lowercase());
     v
+}
+
+/// The folders on the way down to `path` (itself included) that are hidden ones (a dot folder, or
+/// one the system hides): Local lists none of them. Touches the disk: call it off a UI thread.
+pub fn unlisted_ancestors(path: &str) -> Vec<String> {
+    std::path::Path::new(path).ancestors().filter(|p| lightcraft_engine::walk::is_hidden_path(p)).map(|p| p.to_string_lossy().to_string()).collect()
 }
 
 /// Keep `path` in Local (Browse Folder…, Keep in Local): added to `roots` once however it is

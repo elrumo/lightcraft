@@ -590,3 +590,12 @@ GoPro	HERO5 Black	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sen
 GoPro	HERO6 Black	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sensor hash, green-pair check)
 GoPro	HERO7 Black	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sensor hash, green-pair check)
 GoPro	HERO10 Black	verified	corpus: crates/raw/tests/it/gpr_corpus.rs (pinned sensor hash, green-pair check)
+Canon	EOS D30	verified	corpus: crates/raw/tests/it/corpus.rs (xtask RAW_SAMPLES)
+Canon	EOS D60	verified	corpus: crates/raw/tests/it/corpus.rs; 18 maintainer files exact (craft-libs crates/crw/clean-room/03-verification.md)
+Canon	EOS 10D	verified	corpus: crates/raw/tests/it/corpus.rs (xtask RAW_SAMPLES; 3 files)
+Canon	EOS 300D (EOS Digital Rebel, EOS Kiss Digital)	verified	corpus: crates/raw/tests/it/corpus.rs (xtask RAW_SAMPLES; 3 files)
+Canon	PowerShot G1	verified	corpus: crates/raw/tests/it/corpus.rs (xtask RAW_SAMPLES)
+Canon	PowerShot G6	verified	corpus: crates/raw/tests/it/corpus.rs (xtask RAW_SAMPLES)
+Canon	PowerShot G5	preview	CRW entropy anomaly (craft-libs crates/crw/clean-room/02-crw-format.md section 4); embedded JPEG
+Olympus	OM-D E-M1	preview	compressed ORF support withdrawn pending provenance review; embedded JPEG
+Olympus	OM-D E-M10 Mark III	preview	compressed ORF support withdrawn pending provenance review; embedded JPEG

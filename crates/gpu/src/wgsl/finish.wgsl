@@ -237,7 +237,9 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     let lab0 = oklab(rgb);
     var l = lab0.x;
     var c = sqrt(lab0.y * lab0.y + lab0.z * lab0.z);
-    var h = atan2(lab0.z, lab0.y);
+    // a neutral (black or grey) pixel has no hue: atan2(0, 0) is undefined in WGSL (NaN on some
+    // GPUs, which a later lightening such as the vignette then shows); the CPU's atan2 gives 0
+    var h = select(atan2(lab0.z, lab0.y), 0.0, c == 0.0);
     if (pu(F_MIXER) != 0u) {
         let w = band_weights(h);
         var dh = 0.0;
@@ -260,7 +262,7 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
         let m = oklab(mix_hsv(rgb, dh * chroma_w, ds, dl * chroma_w, dp * chroma_w, keep));
         l = m.x;
         c = sqrt(m.y * m.y + m.z * m.z);
-        h = atan2(m.z, m.y);
+        h = select(atan2(m.z, m.y), 0.0, c == 0.0);
     }
     for (var k = 0u; k < pu(F_NPC); k++) {
         let r = point_color(k, vec3<f32>(l, c, h));
@@ -418,6 +420,65 @@ fn noise_strength(v: f32) -> f32 {
     return 0.10 - 0.06 * clamp(v, 0.0, 1.0);
 }
 
+// Crystal grain (process V8 on, the film style): `lightcraft_pipeline::crystal` (keep in step with
+// it). The tori's summed-area tables follow the other tables in `aux` (offsets F_GRAIN_SAT).
+fn cg_bilinear(o: u32, t: u32, x: f32, y: f32) -> f32 {
+    let s = t + 1u;
+    let i = min(u32(max(x, 0.0)), t - 1u);
+    let j = min(u32(max(y, 0.0)), t - 1u);
+    let fx = x - f32(i);
+    let fy = y - f32(j);
+    let b = o + j * s + i;
+    let a = aux[b] + (aux[b + 1u] - aux[b]) * fx;
+    let c = aux[b + s] + (aux[b + s + 1u] - aux[b + s]) * fx;
+    return a + (c - a) * fy;
+}
+
+fn cg_integral(o: u32, t: u32, x: f32, y: f32) -> f32 {
+    let tf = f32(t);
+    let wx = x >= tf;
+    let wy = y >= tf;
+    let rx = select(x, x - tf, wx);
+    let ry = select(y, y - tf, wy);
+    var v = cg_bilinear(o, t, rx, ry);
+    if (wx) {
+        v += cg_bilinear(o, t, tf, ry);
+    }
+    if (wy) {
+        v += cg_bilinear(o, t, rx, tf);
+    }
+    if (wx && wy) {
+        v += cg_bilinear(o, t, tf, tf);
+    }
+    return v;
+}
+
+fn cg_box(o: u32, t: u32, x0_: f32, y0_: f32, w: f32) -> f32 {
+    let tf = f32(t);
+    let x0 = x0_ - floor(x0_ / tf) * tf;
+    let y0 = y0_ - floor(y0_ / tf) * tf;
+    return cg_integral(o, t, x0 + w, y0 + w) - cg_integral(o, t, x0, y0 + w) - cg_integral(o, t, x0 + w, y0) + cg_integral(o, t, x0, y0);
+}
+
+fn cg_lift(v: f32) -> f32 {
+    let c = clamp(v, 0.0, 1.0);
+    return select((c + 0.055) / 2.4, c, c <= 0.04045);
+}
+
+fn cg_srgb_to_linear(v: f32) -> f32 {
+    return select(pow((v + 0.055) / 1.055, 2.4), v / 12.92, v <= 0.04045);
+}
+
+fn crystal_grain(e: vec3<f32>, gx: f32, gy: f32) -> vec3<f32> {
+    let w = pf(F_GRAIN_FOOT);
+    let x0 = gx * CRYSTAL_TPL - 0.5 * w;
+    let y0 = gy * CRYSTAL_TPL - 0.5 * w;
+    let g = (cg_box(pu(F_GRAIN_SAT), CRYSTAL_T0, x0, y0, w) + cg_box(pu(F_GRAIN_SAT + 1u), CRYSTAL_T1, x0, y0, w)) / (w * w);
+    let lum = clamp(0.2126 * e.x + 0.7152 * e.y + 0.0722 * e.z, 0.0, 1.0);
+    let k = pf(F_GRAIN_K) * g * (1.0 - cg_srgb_to_linear(lum));
+    return e + k * vec3<f32>(cg_lift(e.x), cg_lift(e.y), cg_lift(e.z));
+}
+
 // `finish.rs`: grain_apply (style 0 film, 1 digital, 2 colour).
 fn grain_apply(e: vec3<f32>, x: f32, y: f32, amt: f32, coarse: f32, seed: u32, style: u32) -> vec3<f32> {
     if (style == 1u) {
@@ -446,8 +507,25 @@ fn finite_or_0(v: f32) -> f32 {
     return v;
 }
 
-fn enc8(v: f32) -> u32 {
-    return u32(clamp(v, 0.0, 1.0) * 255.0 + 0.5);
+// The 8×8 ordered Bayer pattern of the 8-bit output's dither (`finish::bayer_dither_offset`).
+const BAYER_8X8 = array<f32, 64>(
+     0.0, 32.0,  8.0, 40.0,  2.0, 34.0, 10.0, 42.0,
+    48.0, 16.0, 56.0, 24.0, 50.0, 18.0, 58.0, 26.0,
+    12.0, 44.0,  4.0, 36.0, 14.0, 46.0,  6.0, 38.0,
+    60.0, 28.0, 52.0, 20.0, 62.0, 30.0, 54.0, 22.0,
+     3.0, 35.0, 11.0, 43.0,  1.0, 33.0,  9.0, 41.0,
+    51.0, 19.0, 59.0, 27.0, 49.0, 17.0, 57.0, 25.0,
+    15.0, 47.0,  7.0, 39.0, 13.0, 45.0,  5.0, 37.0,
+    63.0, 31.0, 55.0, 23.0, 61.0, 29.0, 53.0, 21.0,
+);
+
+// An encoded value (0..1) to 8 bits with the dither offset `d` (0..1): `finish::enc`.
+fn enc8(v: f32, d: f32) -> u32 {
+    let y = clamp(v, 0.0, 1.0) * 255.0;
+    if (y >= 254.9) {
+        return 255u;
+    }
+    return u32(clamp(y + d, 0.0, 255.0));
 }
 
 // sRGB-curve-encoded value → the output space's own curve (`OutputTrc`: 0 sRGB, 1 gamma, 2 Rec.709).
@@ -828,10 +906,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let py = f32(y) + 0.5;
         let gx = pf(F_GRAIN_AFF) * px + pf(F_GRAIN_AFF + 2u) * py + pf(F_GRAIN_AFF + 4u);
         let gy = pf(F_GRAIN_AFF + 1u) * px + pf(F_GRAIN_AFF + 3u) * py + pf(F_GRAIN_AFF + 5u);
-        let sc = pf(F_GRAIN_SC);
-        let coarse = pf(F_GRAIN_COARSE);
-        let seed = pu(F_GRAIN_SEED);
-        e = grain_apply(e, gx * sc, gy * sc, pf(F_GRAIN_AMT), coarse, seed, pu(F_GRAIN_STYLE));
+        if (pu(F_GRAIN_MODEL) == 1u) {
+            e = crystal_grain(e, gx, gy);
+        } else {
+            let sc = pf(F_GRAIN_SC);
+            let coarse = pf(F_GRAIN_COARSE);
+            let seed = pu(F_GRAIN_SEED);
+            e = grain_apply(e, gx * sc, gy * sc, pf(F_GRAIN_AMT), coarse, seed, pu(F_GRAIN_STYLE));
+        }
     }
     if (pu(F_HAS_LUT) != 0u) {
         // a LUT profile: it sees SDR values, an HDR render keeps what is above SDR white (`finish_with`)
@@ -850,5 +932,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         e = vec3<f32>(0.0, 0.25, 1.0);
     }
     let o8 = vec3<f32>(out_encode(e.x), out_encode(e.y), out_encode(e.z));
-    out[i] = enc8(o8.x) | (enc8(o8.y) << 8u) | (enc8(o8.z) << 16u) | (255u << 24u);
+    // dithered as the CPU's `finish` dithers, in the whole output's pixels; an HDR render's 8-bit picture is the
+    // reduction of its float one (`DeepImage::to_rgba8`), which is not dithered
+    var dither = 0.5;
+    if (pu(F_HDR_OUT) == 0u) {
+        let abs_x = u32(max(pf(F_VIG_VIEW), 0.0) + 0.5) + x;
+        let abs_y = u32(max(pf(F_VIG_VIEW + 1u), 0.0) + 0.5) + y;
+        dither = (BAYER_8X8[(abs_y & 7u) * 8u + (abs_x & 7u)] + 0.5) / 64.0;
+    }
+    out[i] = enc8(o8.x, dither) | (enc8(o8.y, dither) << 8u) | (enc8(o8.z, dither) << 16u) | (255u << 24u);
 }

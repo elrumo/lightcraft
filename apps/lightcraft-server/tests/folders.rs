@@ -58,6 +58,7 @@ fn files_in(dir: &Path) -> usize {
 }
 
 #[test]
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn library_folders_are_read_in_place() {
     let root = temp("main");
     let photos = root.join("nas/photos");

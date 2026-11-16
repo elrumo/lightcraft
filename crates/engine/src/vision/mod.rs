@@ -1491,6 +1491,7 @@ pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::pa
         view_cache: None,
         display: None,
         hdr_view: false,
+        on_screen: false,
         slide: None,
         preview_cut: None,
         server_tile: None,

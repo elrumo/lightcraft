@@ -1,8 +1,15 @@
 use super::geometry::CanvasMap;
-use super::*;
+use super::{
+    Affine, Color32, DevelopSettings, Frame, Gesture, LightcraftApp, PhotoId, Point, Pos2, Rect, Stroke, Tokens, json, pos2, register, vec2,
+};
+use crate::haptics;
+use crate::panels::detail::Haptic;
+use crate::panels::detail::TOUCH_HANDLE_REACH;
+use crate::panels::detail::touch_input;
 
 // ------------------------------------------------------------------------ crop
 
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub(super) fn crop_overlay(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,
@@ -34,6 +41,15 @@ pub(super) fn crop_overlay(
     if resp.hovered() && ui.input(|i| i.modifiers.command) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
+    // an untouched photo shows the remembered ratio's box, which the first drag (or Return) applies
+    let preview;
+    let d = match app.crop_tool_preview() {
+        Some(geometry) => {
+            preview = DevelopSettings { crop: lightcraft_develop::Crop { geometry, ..d.crop }, ..d.clone() };
+            &preview
+        }
+        None => d,
+    };
     let quad = frame_crop_quad(d, frame);
     let pts: Vec<Pos2> = quad.iter().map(|q| map.screen(*q)).collect();
     let p = ui.painter();
@@ -158,8 +174,8 @@ pub(super) fn crop_overlay(
         // a finger has moved a few points by the time the drag starts: pick the handle where it went down
         let q0 = if app.compact { ui.input(|i| i.pointer.press_origin()).unwrap_or(q) } else { q };
         app.gesture = Some(match grab(q0) {
-            Some(h) => Gesture::CropHandle { handle: h as u8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle, map: *map },
-            None if inside(q) => Gesture::CropHandle { handle: 8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle, map: *map },
+            Some(h) => Gesture::CropHandle { handle: h as u8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle, map: map.clone() },
+            None if inside(q) => Gesture::CropHandle { handle: 8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle, map: map.clone() },
             None => {
                 let c = map.screen(Point::new(0.5, 0.5));
                 Gesture::CropRotate { start_angle: d.crop.geometry.angle, a0: (q - c).angle() }

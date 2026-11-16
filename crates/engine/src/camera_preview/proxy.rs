@@ -3,7 +3,10 @@ use super::hue_sat::fit_hue_sat;
 use super::look_fit::{FIT_PREVIEW_MAX_PIXELS, SENSOR_CLIP, clip_mask, correct_vignetting, without_clipped};
 use super::pairs::{EDGE_CONTRAST, collect_pairs, fit_matrix, local_contrast};
 use super::tone::median;
-use super::*;
+use super::{
+    CameraLook, CameraMatch, CameraTransform, ColorData, Filter, HsvTable, Mat3, RawFormat, RawImage, Rgb32f, Xy, fit, luminance_2020, resize,
+    starting_colour,
+};
 
 /// Long edge of the proxies the camera's vignetting correction is estimated on ([`jpeg_vignetting`]).
 const VIGNETTE_PROXY: usize = 96;
@@ -38,7 +41,7 @@ pub(crate) fn jpeg_vignetting(raw: &RawImage, bytes: &[u8], transform: &CameraTr
         return None;
     }
     let t0 = web_time::Instant::now();
-    let (sensor, reference, clipped) = proxies(raw, bytes, transform, VIGNETTE_PROXY, 0.0, None)?;
+    let (sensor, reference, clipped) = proxies(raw, bytes, transform, VIGNETTE_PROXY, 0.0, None, None)?;
     let lens = vignetting_from_proxies(&sensor, &reference, &clipped);
     if lightcraft_pipeline::profiling() {
         eprintln!("[profile] JPEG vignetting {}: {:.1} ms", if lens.is_some() { "kept" } else { "none" }, t0.elapsed().as_secs_f64() * 1e3);
@@ -354,7 +357,8 @@ pub(super) fn structure_agrees(sensor: &Rgb32f, reference: &Rgb32f) -> bool {
 
 /// Same-size proxies of the sensor (white-balanced, baseline exposure, through `transform`'s
 /// matrix: the generic camera ≈ sRGB model) and of the file's embedded camera JPEG (linear Rec.2020),
-/// and per proxy pixel whether any sensor sample it covers is clipped.
+/// and per proxy pixel whether any sensor sample it covers is clipped. `embedded`'s vignetting correction is applied to
+/// the sensor ([`correct_vignetting`]) before any `lens` warp, at the source position, as the render applies it.
 pub(super) fn proxies(
     raw: &RawImage,
     bytes: &[u8],
@@ -362,6 +366,7 @@ pub(super) fn proxies(
     size: usize,
     min_fraction: f64,
     lens: Option<&LensGeometry>,
+    embedded: Option<&lightcraft_develop::EmbeddedLens>,
 ) -> Option<(Rgb32f, Rgb32f, Vec<bool>)> {
     let edge = (2 * size).max(384) as u32;
     let base = proxy_base(raw, bytes, edge)?;
@@ -370,7 +375,7 @@ pub(super) fn proxies(
     if min_fraction > 0.0 && (base.source_long as f64) < (min_fraction * crop.width.max(crop.height) as f64).max(384.0) {
         return None;
     }
-    proxies_with(raw, base.reference.clone(), base.sensor.as_ref().map(|(k, s, c)| (*k, s.clone(), c.clone())), transform, size, lens)
+    proxies_with(raw, base.reference.clone(), base.sensor.as_ref().map(|(k, s, c)| (*k, s.clone(), c.clone())), transform, size, lens, embedded)
 }
 
 /// What [`proxies`] pairs before any colour transform: the camera JPEG decoded to fit `edge` (working space), its
@@ -423,7 +428,7 @@ const FITS_KEPT: usize = 64;
 
 /// Keyed by the file, the decoded size, the profile database generation (its camera and lens profiles feed the fits) and
 /// the lens inputs of the decode ([`lens_key`]).
-type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize, u64, u64), std::sync::Arc<Fits>>;
+type FitsCache = lightcraft_preview::Lru<(lightcraft_preview::Hash128, usize, usize, u64, u64, u64), std::sync::Arc<Fits>>;
 
 /// The lens inputs [`decode_fits`] depends on beyond the file: the warp its camera applied to the JPEG and the lens
 /// correction it is given. Without them a decode given a database profile kept fits a decode without one then read
@@ -439,6 +444,13 @@ pub(super) fn lens_key(geometry: Option<&LensGeometry>, lens: Option<&lightcraft
         h.update(&serde_json::to_vec(l).unwrap_or_default());
     }
     h.finish().0 as u64
+}
+
+/// The [`decode_fits`] key of an imported camera profile's colour model (never 0, the file's own colour).
+pub(crate) fn colour_key(color: &lightcraft_raw::ColorData) -> u64 {
+    let mut h = lightcraft_preview::Hasher128::new();
+    h.update(&serde_json::to_vec(color).unwrap_or_default());
+    (h.finish().0 as u64).max(1)
 }
 
 pub(super) fn fits_cache() -> &'static std::sync::Mutex<FitsCache> {
@@ -472,15 +484,17 @@ pub(super) fn fingerprint(bytes: &[u8]) -> lightcraft_preview::Hash128 {
 /// preview, full size for zoom and export, and after its decoded source is evicted), and these fits were ~45 % of a
 /// CR3's preview decode. They depend only on the file, the decoded raw, the camera and lens profiles (read once per
 /// process, and again when the profile database changes) and the lens inputs given here, all of which the key follows,
-/// so a kept result is what fitting again gives. Returns the as-shot white, the camera transform, the
+/// so a kept result is what fitting again gives. `colour` tells an imported camera profile that replaced the file's
+/// colour model in `raw` apart ([`colour_key`]; 0: the file's own). Returns the as-shot white, the camera transform, the
 /// look, the Camera Matching profile and the lens correction.
 pub(crate) fn decode_fits(
     raw: &mut RawImage,
     bytes: &[u8],
     lens_geometry: Option<&LensGeometry>,
     lens: Option<lightcraft_develop::EmbeddedLens>,
+    colour: u64,
 ) -> (Xy, CameraTransform, Option<CameraLook>, Option<CameraMatch>, Option<lightcraft_develop::EmbeddedLens>) {
-    let key = (fingerprint(bytes), raw.width, raw.height, crate::profile_db::generation(), lens_key(lens_geometry, lens.as_ref()));
+    let key = (fingerprint(bytes), raw.width, raw.height, crate::profile_db::generation(), lens_key(lens_geometry, lens.as_ref()), colour);
     let kept = fits_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key).cloned();
     let fits = match kept {
         Some(fits) => {
@@ -554,10 +568,11 @@ pub(super) fn proxies_from(
     size: usize,
     lens: Option<&LensGeometry>,
 ) -> Option<(Rgb32f, Rgb32f, Vec<bool>)> {
-    proxies_with(raw, reference, None, transform, size, lens)
+    proxies_with(raw, reference, None, transform, size, lens, None)
 }
 
-/// [`proxies_from`], with the sensor proxy, its clip mask and binning factor already made when `sensor` has them.
+/// [`proxies_from`], with the sensor proxy, its clip mask and binning factor already made when `sensor` has them, and
+/// `embedded`'s vignetting correction applied to the sensor ([`proxies`]).
 fn proxies_with(
     raw: &RawImage,
     mut reference: Rgb32f,
@@ -565,6 +580,7 @@ fn proxies_with(
     transform: &CameraTransform,
     size: usize,
     lens: Option<&LensGeometry>,
+    embedded: Option<&lightcraft_develop::EmbeddedLens>,
 ) -> Option<(Rgb32f, Rgb32f, Vec<bool>)> {
     let edge = (2 * size).max(384) as u32;
     let (a, crop) = (raw.active_area, raw.crop.clipped(raw.active_area.width, raw.active_area.height));
@@ -606,6 +622,7 @@ fn proxies_with(
             (k, s, c)
         }
     };
+    correct_vignetting(&mut sensor, embedded, raw.orientation);
     // The camera may have corrected its JPEG with the lens warp the file carries (Nikon Z lenses always, at up to 9 %
     // zoom; other cameras when their correction setting is on): the sensor moved into that geometry is a candidate,
     // kept below when it lines up with the JPEG better than the uncorrected one.
@@ -801,7 +818,7 @@ pub(crate) fn profile_pairs(raw: &RawImage, bytes: &[u8], lens: Option<&LensGeom
         return None;
     }
     let transform = lightcraft_raw::color::camera_transform(raw, lightcraft_raw::color::as_shot_white_xy(raw));
-    let (sensor, reference, clipped) = proxies(raw, bytes, &transform, PROFILE_PROXY, 0.0, lens)?;
+    let (sensor, reference, clipped) = proxies(raw, bytes, &transform, PROFILE_PROXY, 0.0, lens, None)?;
     let to_camera = transform.matrix.inverse()?;
     // clipped sensor pixels don't record the scene's colour (see `fit_look`)
     let sensor = without_clipped(&sensor, &clipped).unwrap_or(sensor);
@@ -851,7 +868,10 @@ pub(super) fn alignment(a: &Rgb32f, b: &Rgb32f) -> f64 {
     if (b.width, b.height) != (w, h) || w < 3 || h < 3 {
         return -1.0;
     }
-    let lum = |img: &Rgb32f| img.data.iter().map(|p| (luminance_2020(*p).max(1e-4) as f64).ln()).collect::<Vec<f64>>();
+    // NaN (outside a lens-warped proxy) stays NaN: `max` would turn it into a black border and a false edge
+    let lum = |img: &Rgb32f| {
+        img.data.iter().map(|p| luminance_2020(*p)).map(|y| if y.is_nan() { f64::NAN } else { (y.max(1e-4) as f64).ln() }).collect::<Vec<f64>>()
+    };
     let high = |l: &[f64]| -> Vec<f64> {
         (0..w * h)
             .map(|i| {

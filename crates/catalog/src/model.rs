@@ -159,7 +159,10 @@ impl CopyrightStatus {
 pub fn parse_shutter_seconds(s: &str) -> Option<f64> {
     let s = s.trim().trim_end_matches(['s', '"']).trim();
     match s.split_once('/') {
-        Some((n, d)) => Some(n.trim().parse::<f64>().ok()? / d.trim().parse::<f64>().ok()?),
+        Some((n, d)) => {
+            let (n, d) = (n.trim().parse::<f64>().ok()?, d.trim().parse::<f64>().ok()?);
+            if n > 0.0 && d > 0.0 { Some(n / d) } else { None }
+        }
         None => s.parse().ok(),
     }
     .filter(|v: &f64| v.is_finite() && *v > 0.0)
@@ -170,9 +173,16 @@ pub fn parse_shutter_seconds(s: &str) -> Option<f64> {
 #[serde(default)]
 pub struct Meta {
     pub camera: String,
+    /// The maker, the lens's maker, the exact exposure time, the flash, the exposure compensation and the serial
+    /// number ([`CameraDetails`]), read through [`Meta::details`] and changed through [`Meta::edit_details`]. Boxed
+    /// (`None` when the file says none of them): about 100 B inline in every photo of a library otherwise, which took
+    /// the record past its small allocation. Written as the fields themselves, as when they were inline.
+    #[serde(flatten, deserialize_with = "details_or_none")]
+    pub details: Option<Box<CameraDetails>>,
     pub lens: String,
     pub focal_mm: Option<f32>,
     pub aperture: Option<f32>,
+    /// Shutter speed for display, from [`lightcraft_meta::format_exposure_time`] (`1/3`, `0.3571`, `2.5`).
     pub shutter: String,
     pub iso: Option<u32>,
     /// Place (sublocation, e.g. a landmark).
@@ -207,6 +217,69 @@ pub struct Meta {
     /// inline in every photo of a library otherwise, for the few bodies that record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<Box<lightcraft_meta::FocusPoint>>,
+}
+
+/// The camera details of a photo's file beyond those every photo shows ([`Meta::details`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CameraDetails {
+    /// The camera's maker, from Exif `Make` (`camera` is maker and model together).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub make: String,
+    /// The lens's maker, from Exif `LensMake`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub lens_make: String,
+    /// The file's exact exposure time in seconds, kept beside the rounded `shutter` text so export
+    /// writes the original duration; read through [`Meta::shutter_seconds`]. Left out of the catalog
+    /// JSON when unknown, so older catalogs read unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_time: Option<f64>,
+    /// Whether the flash fired, from Exif `Flash`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flash: Option<bool>,
+    /// Exposure compensation in EV, from Exif `ExposureBiasValue`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_bias: Option<f32>,
+    /// The camera body's serial number.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub serial_number: String,
+}
+
+/// [`Meta::details`] as the catalog JSON has them: none at all when the file gave none.
+fn details_or_none<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Box<CameraDetails>>, D::Error> {
+    let details = CameraDetails::deserialize(d)?;
+    Ok((details != CameraDetails::default()).then(|| Box::new(details)))
+}
+
+/// The details of a photo whose file gave none.
+static NO_DETAILS: CameraDetails = CameraDetails {
+    make: String::new(),
+    lens_make: String::new(),
+    exposure_time: None,
+    flash: None,
+    exposure_bias: None,
+    serial_number: String::new(),
+};
+
+impl Meta {
+    /// The file's camera details ([`CameraDetails`]; all empty when it gave none).
+    pub fn details(&self) -> &CameraDetails {
+        self.details.as_deref().unwrap_or(&NO_DETAILS)
+    }
+    /// Change the camera details; none are kept when they end up empty.
+    pub fn edit_details(&mut self, f: impl FnOnce(&mut CameraDetails)) {
+        let mut details = self.details.take().map(|d| *d).unwrap_or_default();
+        f(&mut details);
+        self.details = (details != CameraDetails::default()).then(|| Box::new(details));
+    }
+    /// Shutter speed in seconds: the exact [`CameraDetails::exposure_time`] while `shutter` still shows it,
+    /// otherwise whatever `shutter` says (set by hand, or a catalog from before the exact time was kept).
+    pub fn shutter_seconds(&self) -> Option<f64> {
+        self.details()
+            .exposure_time
+            .filter(|t| lightcraft_meta::format_exposure_time(*t).is_some_and(|text| text == self.shutter.trim()))
+            .or_else(|| parse_shutter_seconds(&self.shutter))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -318,10 +391,10 @@ pub struct Photo {
     /// picture style baked in — so it is treated as a rendered (non-raw) source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview_only: Option<String>,
-    /// The app version (`CARGO_PKG_VERSION`) whose decoder set [`Photo::preview_only`]; empty when
-    /// it isn't set, and in catalogs from before format v9. A preview-only photo whose stamp
-    /// differs from the running version is rechecked when its library opens (issue #662): newer
-    /// builds may decode the file, older ones may decode less.
+    /// The app version (`CARGO_PKG_VERSION`) whose decoder checked [`Photo::preview_only`].
+    /// Also set for supported ORF files: compressed ORF support was withdrawn after #3775, so
+    /// old sensor-decodable records need rechecking too. Empty for other supported formats and
+    /// legacy records. A stale stamp is rechecked when the library opens (issue #662).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub preview_checked: String,
     /// A Local record: the fingerprint of its state when the browse catalogued it, to tell
@@ -385,7 +458,7 @@ pub struct Analysis {
 /// file's white balance is edited relative to its as-shot look or in Kelvin depends on the camera:
 /// [`relative_wb_camera`].
 pub fn relative_wb_format(format: &str) -> bool {
-    ["ARW", "NEF", "NRW", "RW2", "RWL", "RAW", "RAF", "CR3", "CR2", "PEF", "SRW", "ORF", "ORI", "ERF", "MRW"]
+    ["ARW", "NEF", "NRW", "RW2", "RWL", "RAW", "RAF", "CR3", "CR2", "PEF", "SRW", "ORF", "ORI", "ERF", "MRW", "CRW"]
         .iter()
         .any(|f| format.eq_ignore_ascii_case(f))
 }
@@ -495,6 +568,17 @@ pub fn preview_stamp(preview_only: &Option<String>) -> String {
 }
 
 impl Photo {
+    /// Keep the newest [`HISTORY_LIMIT`](crate::HISTORY_LIMIT) History steps; the cursor moves with
+    /// its step, or to the oldest step kept when its own is dropped. Returns how many were dropped.
+    pub fn trim_history(&mut self) -> usize {
+        let n = self.history.len().saturating_sub(crate::HISTORY_LIMIT);
+        if n > 0 {
+            self.history.drain(..n);
+            self.history_cursor = self.history_cursor.map(|c| c.saturating_sub(n));
+        }
+        n
+    }
+
     /// The History step the settings are at (the cursor, clamped to the list; `None` = no history).
     pub fn history_index(&self) -> Option<usize> {
         let last = self.history.len().checked_sub(1)?;
@@ -547,13 +631,18 @@ impl Photo {
     }
     /// Sets [`Photo::preview_only`] as this build decided it, with its stamp.
     pub fn set_preview_only(&mut self, preview_only: Option<String>) {
-        self.preview_checked = preview_stamp(&preview_only);
+        self.preview_checked = self.preview_stamp(&preview_only);
         self.preview_only = preview_only;
     }
-    /// A preview-only photo whose flag was set by another app version (or before stamps existed),
-    /// so this build should probe its file again (issue #662).
+    /// The stamp for a fresh probe. Supported ORFs keep it too, so the support-withdrawal
+    /// recheck runs once, without repeatedly probing uncompressed ORFs on every library open.
+    pub fn preview_stamp(&self, preview_only: &Option<String>) -> String {
+        if self.format.eq_ignore_ascii_case("orf") { APP_VERSION.to_string() } else { preview_stamp(preview_only) }
+    }
+    /// A preview-only photo or ORF whose support was checked by another app version (or before
+    /// stamps existed), so this build should probe its file again (issues #662 and #3775).
     pub fn preview_only_stale(&self) -> bool {
-        self.preview_only.is_some() && self.preview_checked != APP_VERSION
+        (self.preview_only.is_some() || self.format.eq_ignore_ascii_case("orf")) && self.preview_checked != APP_VERSION
     }
     /// A raw file developed from its sensor data: not a rendered image, and not a raw shown from
     /// its embedded preview ([`Photo::preview_only`]).
@@ -571,6 +660,23 @@ impl Photo {
     /// ([`relative_wb_camera`]). Other raws edit white balance in Kelvin.
     pub fn relative_wb(&self) -> bool {
         self.develops_raw() && relative_wb_camera(&self.format, &self.meta.camera)
+    }
+    /// Every settings holder of this photo that can carry segmentation grids: the develop
+    /// settings, the versions', the history steps' and the import look. A snapshot's shared grid
+    /// table ([`crate::Catalog`]'s `grids`) covers all of them, so a new holder belongs here.
+    pub(crate) fn settings_holders(&self) -> impl Iterator<Item = &Arc<DevelopSettings>> {
+        std::iter::once(&self.develop)
+            .chain(self.versions.iter().map(|v| &v.settings))
+            .chain(self.history.iter().map(|h| &h.settings))
+            .chain(self.import_look.iter())
+    }
+    /// [`Photo::settings_holders`] with mutable access (resolving a snapshot's grid references).
+    pub(crate) fn settings_holders_mut(&mut self) -> impl Iterator<Item = &mut Arc<DevelopSettings>> {
+        let Photo { develop, versions, history, import_look, .. } = self;
+        std::iter::once(develop)
+            .chain(versions.iter_mut().map(|v| &mut v.settings))
+            .chain(history.iter_mut().map(|h| &mut h.settings))
+            .chain(import_look.as_mut())
     }
     /// The develop settings import gave this photo: [`Photo::camera_defaults`], or the user's
     /// default preset applied on top of them ([`Photo::import_look`]). Like the camera defaults,
@@ -608,6 +714,15 @@ impl Photo {
     /// when the name has none (`README`, a dot file such as `.hidden`).
     pub fn extension(&self) -> &str {
         self.file_name.rsplit_once('.').filter(|(stem, _)| !stem.is_empty()).map_or("", |(_, ext)| ext)
+    }
+    /// A video clip (an MP4, a MOV, …), which the image decoders can't read. Besides the kind, the
+    /// format and the extension count: a Lightroom catalog lists its videos with the format `VIDEO`,
+    /// and libraries made before they were imported as videos hold them as images.
+    pub fn is_video(&self) -> bool {
+        const EXTENSIONS: [&str; 12] = ["mp4", "mov", "m4v", "avi", "mts", "m2ts", "3gp", "mkv", "webm", "wmv", "mpg", "mpeg"];
+        self.kind == MediaKind::Video
+            || self.format.eq_ignore_ascii_case("VIDEO")
+            || EXTENSIONS.iter().any(|e| self.extension().eq_ignore_ascii_case(e))
     }
     /// Width and height in pixels as the photo is shown: turned by its orientation and cut by its
     /// crop. Straightening and Constrain Crop shrink the crop without changing its shape, so the
@@ -719,6 +834,22 @@ impl Album {
 mod edited_tests {
     use super::*;
     use lightcraft_develop::WbScale;
+
+    #[test]
+    fn a_video_is_known_by_its_kind_format_or_extension() {
+        let file = |name: &str, format: &str| Photo::new(PhotoId(1), Source::Demo { scene: 0 }, name, format, 10, 10, "2026-10-01T00:00:00");
+        let mut clip = file("a.jpg", "JPEG");
+        clip.kind = MediaKind::Video;
+        assert!(clip.is_video(), "by its kind");
+        assert!(file("clip", "video").is_video(), "by the format a Lightroom catalog gives videos");
+        for name in ["VID_1.mp4", "a.MOV", "b.m4v", "c.mts", "d.webm"] {
+            assert!(file(name, "").is_video(), "{name}");
+        }
+        // (a name without an extension, or a dot file, has none)
+        for (name, format) in [("a.jpg", "JPEG"), ("a.arw", "ARW"), ("a.heic", "HEIC"), ("mp4", ""), (".mov", "")] {
+            assert!(!file(name, format).is_video(), "{name}");
+        }
+    }
 
     #[test]
     fn raw_with_import_settings_is_not_edited() {
@@ -1014,5 +1145,40 @@ mod edited_tests {
             p.preview_only = Some("Olympus compressed ORF".into());
             assert!(!p.relative_wb(), "{camera}: shown from its JPEG");
         }
+    }
+}
+
+#[cfg(test)]
+mod shutter_tests {
+    use super::*;
+
+    #[test]
+    fn shutter_seconds_prefers_the_exact_time_while_the_text_still_shows_it() {
+        let mut m = Meta { shutter: "0.3571".into(), ..Default::default() };
+        m.edit_details(|d| d.exposure_time = Some(1.0 / 2.8));
+        assert_eq!(m.shutter_seconds(), Some(1.0 / 2.8));
+        m.shutter = "1/3".into();
+        m.edit_details(|d| d.exposure_time = Some(1.0 / 3.0));
+        assert_eq!(m.shutter_seconds(), Some(1.0 / 3.0));
+        // the text no longer matches the stored time (edited elsewhere): the text wins
+        m.shutter = "1/250".into();
+        assert_eq!(m.shutter_seconds(), Some(1.0 / 250.0));
+        // an older catalog without the exact time
+        m.edit_details(|d| d.exposure_time = None);
+        m.shutter = "2.5".into();
+        assert_eq!(m.shutter_seconds(), Some(2.5));
+        // the exact time stays out of the JSON when unknown, and round-trips when known
+        assert!(!serde_json::to_string(&m).unwrap().contains("exposure_time"));
+        m.edit_details(|d| d.exposure_time = Some(2.5));
+        let back: Meta = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        assert_eq!(back.details().exposure_time, Some(2.5));
+    }
+
+    #[test]
+    fn a_fraction_needs_a_positive_numerator_and_denominator() {
+        for s in ["-1/-250", "1/-250", "-1/250", "0/250"] {
+            assert_eq!(parse_shutter_seconds(s), None, "{s}");
+        }
+        assert_eq!(parse_shutter_seconds("1/250"), Some(0.004));
     }
 }

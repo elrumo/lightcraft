@@ -392,6 +392,7 @@ fn the_index_is_a_welcome_page_with_a_link_to_the_admin_page() {
 }
 
 #[test]
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn admin_page_sets_up_and_manages_users() {
     use std::io::{Read, Write};
     let root = temp("admin");

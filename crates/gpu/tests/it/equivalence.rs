@@ -2,12 +2,14 @@
 //! `lightcraft_gpu::render`, compared in 8-bit sRGB.
 //!
 //! Bounds (documented in `docs/gpu-pipeline.md`): mean |Δ| < 0.5 LSB and max |Δ| ≤ 3 LSB per
-//! channel for every case. Skips (passes with a note) when no GPU adapter exists; CI runs them on
-//! software adapters with `LIGHTCRAFT_GPU_ALLOW_SOFTWARE=1` (lavapipe, WARP) and on Metal.
+//! channel for every case. Skips (passes with a note) when no GPU adapter exists;
+//! `LIGHTCRAFT_GPU_ALLOW_SOFTWARE=1` runs them on a software adapter (lavapipe, WARP) instead.
 
 use std::sync::Arc;
 
-use lightcraft_develop::{BrushStroke, DevelopSettings, Mask, MaskComponent, MaskOp, MaskShape, Spot, Treatment, VignetteStyle, WbMode, Wheel};
+use lightcraft_develop::{
+    BrushStroke, DevelopSettings, Mask, MaskComponent, MaskOp, MaskShape, Process, Spot, Treatment, VignetteStyle, WbMode, Wheel,
+};
 use lightcraft_geom::{Orientation, Point, Rect};
 use lightcraft_pipeline::{Quality, RenderRequest, SourceInfo, StageCache, render};
 use lightcraft_raster::{Rgb32f, Rgba8};
@@ -18,8 +20,14 @@ const MAX_LSB: u8 = 3;
 fn gpu() -> bool {
     let ok = lightcraft_gpu::available();
     if !ok {
+        let why = lightcraft_gpu::unavailable_reason().unwrap_or_default();
+        // no adapter (CI) skips; an adapter whose kernels don't build is a bug in them
+        assert!(!why.contains("kernels failed to build"), "{why}");
         lightcraft_testkit::skip!(Gpu, "no GPU adapter");
     }
+    // which card the comparisons ran on (`LIGHTCRAFT_GPU_ADAPTER` picks one on a machine with two)
+    static NAMED: std::sync::Once = std::sync::Once::new();
+    NAMED.call_once(|| eprintln!("GPU equivalence tests on {}", lightcraft_gpu::adapter_name().unwrap_or_default()));
     ok
 }
 
@@ -42,6 +50,12 @@ fn camera_tone_and_relative_wb() {
     s.wb.mode = WbMode::Custom;
     s.wb.temp = 8000.0;
     check("camera tone edited", &src, &info, &s, &RenderRequest::fit(320, 240));
+    // each process's shoulder past the last knot, with highlights lifted into it (issue #1632)
+    for p in Process::ALL {
+        let mut lifted = DevelopSettings { process: p.version(), ..DevelopSettings::default() };
+        lifted.light.exposure = 2.0;
+        check(&format!("camera tone {p:?} exposure +2"), &src, &info, &lifted, &RenderRequest::fit(320, 240));
+    }
     // a camera chroma curve: richer shadows, highlights bleached toward white
     let curve = curve.with_chroma([1.4, 1.3, 1.1, 1.0, 0.7, 0.4, 0.25, 0.2]).unwrap();
     let info = SourceInfo { camera_tone: Some(curve), ..info };
@@ -136,6 +150,8 @@ fn banded_full_size_render_matches() {
     let src = scene(3, w, h);
     let mut s = DevelopSettings::default();
     typical(&mut s);
+    // (the lattice grain: from process V8 film grain is crystal grain, which renders on the CPU)
+    s.process = Process::V7.version();
     s.grain.amount = 30.0;
     s.vignette.amount = -30.0;
     s.masks = vec![Mask {
@@ -238,7 +254,9 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.vignette.amount = -40.0;
             s.vignette.style = VignetteStyle::PaintOverlay;
         }),
+        // (V8 on, film grain is crystal grain, which renders on the CPU: the GPU's grain is the lattice of V1 to V7)
         ("grain", |s| {
+            s.process = Process::V7.version();
             s.grain.amount = 50.0;
             s.grain.size = 40.0;
             s.grain.roughness = 60.0;
@@ -253,6 +271,25 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.grain.size = 40.0;
             s.grain.style = lightcraft_develop::GrainStyle::Color;
         }),
+        // the frozen value-noise grain of the earlier processes (the default is V8 on's crystals, which render on the CPU)
+        ("grain, process V7", |s| {
+            s.process = Process::V7.version();
+            s.grain.amount = 50.0;
+            s.grain.size = 40.0;
+            s.grain.roughness = 60.0;
+        }),
+        ("grain, process V1", |s| {
+            s.process = Process::V1.version();
+            s.grain.amount = 50.0;
+            s.grain.size = 40.0;
+            s.grain.roughness = 60.0;
+        }),
+        ("grain, process V2", |s| {
+            s.process = Process::V2.version();
+            s.grain.amount = 50.0;
+            s.grain.size = 40.0;
+            s.grain.roughness = 60.0;
+        }),
         ("dehaze -", |s| s.effects.dehaze = -50.0),
         ("dehaze - light", |s| s.effects.dehaze = -16.0),
         ("highlights +", |s| s.light.highlights = 49.0),
@@ -260,6 +297,33 @@ fn cases() -> Vec<(&'static str, Edit)> {
         ("clarity/texture -", |s| {
             s.effects.clarity = -60.0;
             s.effects.texture = -40.0;
+        }),
+        ("sharpen radius 2.5 detail 100", |s| {
+            s.detail.sharpen_amount = 100.0;
+            s.detail.sharpen_radius = 2.5;
+            s.detail.sharpen_detail = 100.0;
+        }),
+        ("sharpen radius 0.6 detail 0", |s| {
+            s.detail.sharpen_amount = 80.0;
+            s.detail.sharpen_radius = 0.6;
+            s.detail.sharpen_detail = 0.0;
+        }),
+        ("sharpen + texture + masking", |s| {
+            s.detail.sharpen_amount = 70.0;
+            s.detail.sharpen_masking = 30.0;
+            s.effects.texture = 40.0;
+        }),
+        ("local sharpness", |s| {
+            s.masks = vec![Mask {
+                components: vec![MaskComponent {
+                    name: None,
+                    op: MaskOp::Add,
+                    invert: false,
+                    shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.6) },
+                }],
+                adjust: lightcraft_develop::LocalAdjustments { sharpness: 80.0, ..Default::default() },
+                ..Default::default()
+            }];
         }),
         ("sharpen masking", |s| {
             s.detail.sharpen_amount = 90.0;
@@ -461,7 +525,7 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.calibration.blue_sat = 60.0;
             s.calibration.blue_hue = 25.0;
         }),
-        ("spots + defringe (cpu stage)", |s| {
+        ("spots + defringe", |s| {
             s.spots = vec![Spot { points: vec![Point::new(0.3, 0.3)], size: 0.03, source_offset: Some(Point::new(0.1, 0.0)), ..Default::default() }];
             s.optics.defringe_purple_amount = 5.0;
         }),
@@ -601,6 +665,34 @@ fn clipped_highlights_stay_neutral_on_both() {
             let p = img.get(90, 120);
             assert!(p[1] < 250 && p[0].max(p[1]).max(p[2]) - p[0].min(p[1]).min(p[2]) <= 1, "{name} {who}: clipped light {p:?}");
         }
+    }
+}
+
+/// Black pixels have no hue. The GPU's `atan2(0, 0)` is undefined (NaN on some GPUs), which made
+/// every exactly black pixel NaN once a colour tool ran, and a lightening vignette then showed it:
+/// the CPU lifted the black corners, the GPU left them black.
+#[test]
+fn black_pixels_match_under_colour_tools_and_a_light_vignette() {
+    if !gpu() {
+        return;
+    }
+    let base = scene(0, 320, 240);
+    // black bars across the frame, reaching into the corners the vignette lightens
+    let src = Arc::new(Rgb32f::from_fn(320, 240, |x, y| if y % 40 < 8 || x % 64 < 6 { [0.0; 3] } else { base.get(x, y) }));
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let req = RenderRequest::fit(320, 240);
+    for (name, f) in [
+        ("black, light vignette + saturation", (|s: &mut DevelopSettings| s.color.saturation = 40.0) as fn(&mut DevelopSettings)),
+        ("black, light vignette + vibrance", |s| s.color.vibrance = 30.0),
+        ("black, light vignette + mixer", |s| s.mixer.yellow.hue = 30.0),
+    ] {
+        let mut s = DevelopSettings::default();
+        s.vignette.amount = 25.0;
+        s.vignette.style = VignetteStyle::HighlightPriority;
+        f(&mut s);
+        check(name, &src, &info, &s, &req);
+        let gpu = lightcraft_gpu::render(&src, &info, &s, &req, None).expect("gpu render").image;
+        assert!(gpu.get(0, 0)[1] > 0, "{name}: the black corner is not lightened on the GPU");
     }
 }
 
@@ -758,7 +850,7 @@ fn cached_renders_with_masks_match_uncached() {
 }
 
 /// Issue #632: the Highlights / Shadows base of each process (V1: the edge-aware filter of log
-/// luminance; V2: of its fine median, a radius that grows with the render) matches the CPU's, and
+/// luminance; V2 to V7: of its fine median, V8 on: of its detail-free plane, a radius that grows with the render) matches the CPU's, and
 /// a warm cache never hands one process the other's base.
 #[test]
 fn highlights_shadows_base_matches() {
@@ -770,30 +862,55 @@ fn highlights_shadows_base_matches() {
     let cache = StageCache::default();
     for &(w, h) in &[(720, 480), (2400, 1600)] {
         let req = RenderRequest::fit(w, h);
-        let mut s = DevelopSettings::default();
-        s.light.highlights = -100.0;
-        s.light.shadows = 60.0;
-        check(&format!("highlights/shadows {w}"), &src, &raw, &s, &req);
-        typical(&mut s);
-        check(&format!("typical {w}"), &src, &raw, &s, &req);
-        s.masks = vec![Mask {
-            components: vec![MaskComponent {
-                name: None,
-                op: MaskOp::Add,
-                invert: false,
-                shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.9) },
-            }],
-            adjust: lightcraft_develop::LocalAdjustments { highlights: -70.0, shadows: 40.0, ..Default::default() },
-            ..Default::default()
-        }];
-        check(&format!("local highlights {w}"), &src, &raw, &s, &req);
-        // a warm cache renders what a cold one does
-        let mut s = DevelopSettings::default();
-        s.light.highlights = -100.0;
-        for _ in 0..2 {
+        for p in Process::ALL {
+            let mut s = DevelopSettings { process: p.version(), ..DevelopSettings::default() };
+            s.light.highlights = -100.0;
+            s.light.shadows = 60.0;
+            check(&format!("{p:?} highlights/shadows {w}"), &src, &raw, &s, &req);
+            typical(&mut s);
+            check(&format!("{p:?} typical {w}"), &src, &raw, &s, &req);
+            s.masks = vec![Mask {
+                components: vec![MaskComponent {
+                    name: None,
+                    op: MaskOp::Add,
+                    invert: false,
+                    shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.9) },
+                }],
+                adjust: lightcraft_develop::LocalAdjustments { highlights: -70.0, shadows: 40.0, ..Default::default() },
+                ..Default::default()
+            }];
+            check(&format!("{p:?} local highlights {w}"), &src, &raw, &s, &req);
+        }
+        for p in [Process::V1, Process::V2, Process::V5, Process::V9, Process::V1, Process::V2, Process::V5, Process::V9] {
+            let mut s = DevelopSettings { process: p.version(), ..DevelopSettings::default() };
+            s.light.highlights = -100.0;
             let warm = lightcraft_gpu::render(&src, &raw, &s, &req, Some(&cache)).expect("gpu");
             let fresh = lightcraft_gpu::render(&src, &raw, &s, &req, None).expect("gpu");
             assert_eq!(warm.image, fresh.image, "at {w} px, cached");
+        }
+    }
+}
+
+#[test]
+fn sharpening_matches_each_process_and_reduced_source() {
+    if !gpu() {
+        return;
+    }
+    let src = scene(0, 256, 192);
+    let info = SourceInfo { raw: true, native_long: Some(1024), ..Default::default() };
+    let req = RenderRequest::fit(128, 128);
+    let cache = StageCache::default();
+    for process in [Process::V1, Process::V2, Process::V3, Process::V2, Process::V3] {
+        let mut s = DevelopSettings { process: process.version(), ..Default::default() };
+        s.detail.sharpen_amount = 80.0;
+        s.detail.sharpen_radius = 2.0;
+        s.detail.sharpen_detail = 75.0;
+        for nr in [0.0, 50.0, 20.0] {
+            s.detail.nr_luminance = nr;
+            check(&format!("{process:?} sharpening NR {nr}"), &src, &info, &s, &req);
+            let warm = lightcraft_gpu::render(&src, &info, &s, &req, Some(&cache)).expect("gpu");
+            let fresh = lightcraft_gpu::render(&src, &info, &s, &req, None).expect("gpu");
+            assert_eq!(warm.image, fresh.image, "{process:?} NR {nr}");
         }
     }
 }
@@ -937,7 +1054,7 @@ fn red_eye_matches() {
         spots: vec![Spot { points: vec![Point::new(0.1, 0.2)], size: 0.02, source_offset: Some(Point::new(0.05, 0.0)), ..Default::default() }],
         ..Default::default()
     };
-    check("red eye + spot (cpu stage)", &src, &info, &s, &RenderRequest::fit(600, 600));
+    check("red eye + spot", &src, &info, &s, &RenderRequest::fit(600, 600));
 }
 
 fn saturated(s: &mut DevelopSettings) {
@@ -1110,7 +1227,7 @@ fn windows_cut_from_a_big_original_match() {
         return;
     }
     use lightcraft_pipeline::PixelWindow;
-    let src = scene(1, 6000, 4000);
+    let src = scene(1, BIG, BIG);
     let info = SourceInfo { raw: true, ..Default::default() };
     let mut rotated = DevelopSettings { orientation: Orientation::Rotate90, ..Default::default() };
     rotated.light.exposure = 0.3;
@@ -1225,6 +1342,89 @@ fn lut_profiles_match() {
     lut::unregister(id);
 }
 
+/// A non-trivial 3D LUT (cross-process look: lifted blacks, warm highlights, swapped-ish blues).
+fn look_lut(n: usize, domain_max: f32) -> lightcraft_pipeline::lut::Lut3d {
+    let mut data = Vec::with_capacity(n * n * n);
+    for b in 0..n {
+        for g in 0..n {
+            for r in 0..n {
+                let c = [r, g, b].map(|v| v as f32 / (n - 1) as f32 * domain_max);
+                data.push([
+                    (0.06 + 0.9 * c[0].powf(0.9) + 0.05 * c[2]).min(1.0),
+                    (0.04 + 0.92 * c[1] * (1.0 - 0.1 * c[2])).min(1.0),
+                    (0.1 + 0.6 * c[2] + 0.2 * c[0] * c[1]).min(1.0),
+                ]);
+            }
+        }
+    }
+    lightcraft_pipeline::lut::Lut3d { size: n, data, domain_min: [0.0; 3], domain_max: [domain_max; 3], title: None }
+}
+
+/// LUT profiles render on the GPU (the table is applied after grain, blended by the amount).
+#[test]
+fn lut_profiles_match_with_a_domain() {
+    if !gpu() {
+        return;
+    }
+    let src = scene(1, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    lightcraft_pipeline::lut::register("lut:gpu-test-17", look_lut(17, 1.0));
+    lightcraft_pipeline::lut::register("lut:gpu-test-domain", look_lut(9, 1.2));
+    for (id, amount) in [("lut:gpu-test-17", 100.0), ("lut:gpu-test-17", 160.0), ("lut:gpu-test-domain", 60.0)] {
+        for (name, edit) in [("default", (|_| {}) as Edit), ("saturated + curves + grain", saturated as Edit)] {
+            let mut s = DevelopSettings::default();
+            edit(&mut s);
+            s.profile.id = id.into();
+            s.profile.amount = amount;
+            check(&format!("{id} {amount} {name}"), &src, &raw, &s, &RenderRequest::fit(640, 640));
+        }
+    }
+}
+
+/// Refine Edges on a mask is the cross guided filter on the device, blended by √refine.
+#[test]
+fn refine_edges_match() {
+    if !gpu() {
+        return;
+    }
+    let src = scene(0, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    for refine in [15.0, 60.0, 100.0] {
+        let mut s = DevelopSettings::default();
+        typical(&mut s);
+        s.masks = vec![
+            Mask {
+                components: vec![MaskComponent {
+                    name: None,
+                    op: MaskOp::Add,
+                    invert: false,
+                    shape: MaskShape::Radial { center: Point::new(0.45, 0.55), rx: 0.3, ry: 0.2, angle: 10.0, feather: 30.0, invert: false },
+                }],
+                adjust: lightcraft_develop::LocalAdjustments { exposure: 0.9, saturation: -30.0, ..Default::default() },
+                refine,
+                ..Default::default()
+            },
+            Mask {
+                components: vec![MaskComponent {
+                    name: None,
+                    op: MaskOp::Add,
+                    invert: false,
+                    shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.5) },
+                }],
+                adjust: lightcraft_develop::LocalAdjustments { exposure: -0.7, amount: 70.0, ..Default::default() },
+                refine: refine / 2.0,
+                invert: true,
+                ..Default::default()
+            },
+        ];
+        check(&format!("refine edges {refine}"), &src, &raw, &s, &RenderRequest::fit(640, 640));
+        let gpu = |s: &DevelopSettings| lightcraft_gpu::render(&src, &raw, s, &RenderRequest::fit(640, 640), None).expect("gpu render").image;
+        let unrefined = DevelopSettings { masks: s.masks.iter().map(|m| Mask { refine: 0.0, ..m.clone() }).collect(), ..s.clone() };
+        // (a light refine barely moves a soft radial edge; a strong one visibly does)
+        assert!(refine < 50.0 || diff(&gpu(&s), &gpu(&unrefined)).1 > 3, "refine {refine} changes the mask");
+    }
+}
+
 #[test]
 fn soft_proofs_match() {
     if !gpu() {
@@ -1296,6 +1496,10 @@ fn every_control_matches_the_cpu_at_both_ends_and_through_the_stage_cache() {
             continue;
         }
         let mut base = DevelopSettings::default();
+        // (from process V8 film grain is crystal grain, which renders on the CPU: the GPU's grain is V1 to V7's)
+        if c.id.starts_with("grain.") {
+            base.process = Process::V7.version();
+        }
         lightcraft_develop::controls::prepare_to_show(&mut base, c.id);
         let at = |v: f64| {
             let mut s = base.clone();
@@ -1323,4 +1527,99 @@ fn every_control_matches_the_cpu_at_both_ends_and_through_the_stage_cache() {
         }
     }
     assert!(bad.is_empty(), "{} controls differ between the CPU and the GPU:\n{}", bad.len(), bad.join("\n"));
+}
+
+/// Spot removal on the device: Clone, Heal and Remove (automatic source, scored on the device),
+/// brushed strokes, overlapping spots (each reads what the earlier ones left), feather 0 and
+/// spots cut by the image edge.
+#[test]
+fn spots_match() {
+    if !gpu() {
+        return;
+    }
+    use lightcraft_develop::SpotMode;
+    let src = scene(3, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    let spot = |mode, pts: &[(f64, f64)], size, feather, off: Option<(f64, f64)>| Spot {
+        mode,
+        points: pts.iter().map(|p| Point::new(p.0, p.1)).collect(),
+        size,
+        feather,
+        opacity: 100.0,
+        source_offset: off.map(|o| Point::new(o.0, o.1)),
+        fill: None,
+        shape: None,
+    };
+    let sets: Vec<(&str, Vec<Spot>)> = vec![
+        ("clone", vec![spot(SpotMode::Clone, &[(0.3, 0.4)], 0.04, 40.0, Some((0.15, 0.05)))]),
+        ("heal", vec![spot(SpotMode::Heal, &[(0.6, 0.5)], 0.05, 60.0, Some((-0.12, 0.1)))]),
+        ("remove (auto source)", vec![spot(SpotMode::Remove, &[(0.5, 0.45)], 0.03, 50.0, None)]),
+        ("remove near the edge (auto)", vec![spot(SpotMode::Remove, &[(0.04, 0.5)], 0.03, 50.0, None)]),
+        ("brushed heal stroke", vec![spot(SpotMode::Heal, &[(0.2, 0.7), (0.3, 0.72), (0.4, 0.69)], 0.02, 30.0, Some((0.0, -0.15)))]),
+        ("feather 0, half opacity", vec![Spot { opacity: 50.0, ..spot(SpotMode::Clone, &[(0.7, 0.3)], 0.04, 0.0, Some((-0.2, 0.0))) }]),
+        ("cut by the edge", vec![spot(SpotMode::Heal, &[(0.99, 0.02)], 0.05, 50.0, Some((-0.2, 0.2)))]),
+        (
+            "overlapping, auto after manual",
+            vec![
+                spot(SpotMode::Clone, &[(0.45, 0.5)], 0.04, 50.0, Some((0.1, 0.0))),
+                spot(SpotMode::Remove, &[(0.47, 0.52)], 0.04, 50.0, None),
+                spot(SpotMode::Heal, &[(0.5, 0.5)], 0.03, 70.0, Some((0.0, 0.12))),
+            ],
+        ),
+    ];
+    for (name, spots) in sets {
+        let mut s = DevelopSettings::default();
+        typical(&mut s);
+        s.spots = spots;
+        check(&format!("spots: {name}"), &src, &raw, &s, &RenderRequest::fit(640, 640));
+    }
+}
+
+/// Defringe on the device: purple and green at several amounts and hue ranges, at preview and
+/// full size (its filter radius follows the output size).
+#[test]
+fn defringe_matches() {
+    if !gpu() {
+        return;
+    }
+    let src = scene(1, 1800, 1200);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    for (purple, green, hue) in [(4.0, 0.0, (30.0, 70.0)), (0.0, 10.0, (20.0, 80.0)), (20.0, 15.0, (0.0, 100.0))] {
+        let mut s = DevelopSettings::default();
+        typical(&mut s);
+        s.color.saturation = 40.0;
+        s.optics.defringe_purple_amount = purple;
+        s.optics.defringe_green_amount = green;
+        s.optics.defringe_purple_hue_lo = hue.0;
+        s.optics.defringe_purple_hue_hi = hue.1;
+        s.optics.defringe_green_hue_lo = hue.0;
+        s.optics.defringe_green_hue_hi = hue.1;
+        for edge in [640, 1800] {
+            check(&format!("defringe {purple}/{green} {hue:?} @{edge}"), &src, &raw, &s, &RenderRequest::fit(edge, edge));
+        }
+    }
+}
+
+/// The histogram counted on the device is exactly the CPU's count of the image the GPU returned,
+/// for whole frames (small and over 1 MP, where it samples) and for windows cut back after spots.
+#[test]
+fn device_histogram_is_exact() {
+    if !gpu() {
+        return;
+    }
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    let mut s = DevelopSettings::default();
+    typical(&mut s);
+    for (w, h) in [(640, 427), (2400, 1600)] {
+        let src = scene(0, w, h);
+        let r = lightcraft_gpu::render(&src, &raw, &s, &RenderRequest::fit(w, h), None).expect("gpu render");
+        assert_eq!(r.histogram, lightcraft_raster::Histogram::of_srgb8(&r.image), "{w}x{h}");
+    }
+    // a window with a spot reading from outside it: the render grows, the histogram is of the cut
+    let src = scene(0, 3000, 2000);
+    s.spots = vec![Spot { points: vec![Point::new(0.5, 0.5)], size: 0.02, source_offset: Some(Point::new(0.15, 0.0)), ..Default::default() }];
+    let req = RenderRequest { window: Some(lightcraft_pipeline::PixelWindow { x: 1200, y: 800, w: 500, h: 400 }), ..RenderRequest::fit(3000, 2000) };
+    let r = lightcraft_gpu::render(&src, &raw, &s, &req, None).expect("gpu render");
+    assert_eq!((r.image.width, r.image.height), (500, 400));
+    assert_eq!(r.histogram, lightcraft_raster::Histogram::of_srgb8(&r.image), "window");
 }

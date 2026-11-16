@@ -82,10 +82,15 @@ fn the_blur_is_the_same_relative_to_the_photo_at_every_size() {
         let out = render(&src, &info, &blurred(0.0), &RenderRequest::fit(size, size)).image;
         let (w, h) = (out.width, out.height);
         let row: Vec<f32> = (w / 2 + w / 10..w - w / 20).map(|x| out.data[(h / 2) * w + x][1] as f32).collect();
-        // the disc: brighter than halfway from the blurred surroundings to its peak
+        // the disc: brighter than halfway from the blurred surroundings to its level, the median of what is brighter
+        // than halfway to its peak. (Not halfway to the peak itself: the point's centre stays brighter than the disc,
+        // and that threshold sat on the disc's soft edge, where the 8-bit dither's one level took pixels in or out.)
         let peak = row.iter().copied().fold(0.0, f32::max);
         let base = row[0].min(row[row.len() - 1]);
-        let lit = row.iter().filter(|&&v| v > (peak + base) / 2.0).count();
+        let mut disc: Vec<f32> = row.iter().copied().filter(|&v| v > (peak + base) / 2.0).collect();
+        disc.sort_by(f32::total_cmp);
+        let level = disc[disc.len() / 2];
+        let lit = row.iter().filter(|&&v| v > (level + base) / 2.0).count();
         lit as f32 / w as f32
     };
     let (a, b) = (share(500), share(1000));

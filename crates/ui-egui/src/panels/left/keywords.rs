@@ -1,7 +1,7 @@
 use super::dates::browse_all_photos;
-use super::rows::{INDENT_STEP, out_of_sight, row, tree_open, tree_toggle};
+use super::rows::{INDENT_STEP, Row, out_of_sight, tree_open, tree_toggle};
 use super::sections::header_h;
-use super::*;
+use super::{Icon, KeywordNode, LibrarySource, LightcraftApp, SECTION_GAP, Sense, Tokens, heading, json, pos2, vec2};
 
 /// The user's library folders on the sync server, as folders (photos found there in place): a
 /// click shows a folder's photos (and those below it), the triangle opens it. Under My Photos'
@@ -34,10 +34,10 @@ fn server_folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &std::col
         let open_id = egui::Id::unique(("server-folder-open", path.to_string()));
         let mut open = tree_open(ui, open_id, false);
         let sel = app.session.filter.server_folder.as_deref() == Some(path);
-        let resp = row(app, ui, &format!("serverFolder:{path}"), Icon::Folder, name, Some(count), sel, indent);
+        let resp = Row::new(&format!("serverFolder:{path}"), Icon::Folder, name).count(Some(count)).selected(sel).indent(indent).show(app, ui);
         let has_children = all.range(format!("{path}/")..).next().is_some_and(|(k, _)| k.starts_with(&format!("{path}/")));
         if has_children {
-            tree_toggle(ui, &resp, indent, open_id, &mut open, format!("serverFolderToggle:{path}"));
+            tree_toggle(ui, &resp, indent, open_id, &mut open, format!("serverFolderToggle:{path}"), name);
         }
         let resp = resp.on_hover_text(format!("{path} on the sync server (with the folders in it)"));
         if resp.clicked() {
@@ -97,9 +97,9 @@ pub(super) fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[
 /// One drawn row of [`keyword_rows`]; `open_id` and `open` are its triangle's when it has rows inside it.
 fn keyword_row(app: &mut LightcraftApp, ui: &mut egui::Ui, n: &KeywordNode, id: &str, indent: f32, open_id: Option<egui::Id>, open: &mut bool) {
     let sel = app.session.filter.keyword.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(&n.path));
-    let resp = row(app, ui, id, Icon::Tag, &n.name, Some(n.count), sel, indent);
+    let resp = Row::new(id, Icon::Tag, &n.name).count(Some(n.count)).selected(sel).indent(indent).show(app, ui);
     if let Some(k) = open_id {
-        tree_toggle(ui, &resp, indent, k, open, format!("keywordToggle:{}", n.path));
+        tree_toggle(ui, &resp, indent, k, open, format!("keywordToggle:{}", n.path), &n.name);
     }
     let resp = resp.on_hover_text(if n.children.is_empty() { n.path.clone() } else { format!("{} (includes the keywords below it)", n.path) });
     if resp.clicked() {

@@ -1,5 +1,5 @@
 use super::info::touch_field;
-use super::*;
+use super::{HOLD, LightcraftApp, PhotoId, Rect, Tokens, fold_header, json, padded, register, text_button, vec2};
 
 pub(super) fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     // (the box is the selection's: the active photo only says that there is one)
@@ -146,9 +146,8 @@ fn keywording(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         // the painter: click photos in the grid to give them (or take away) a keyword
         ui.horizontal(|ui| {
-            let pid = egui::Id::unique("kw-painter");
             let painting = app.ui.keyword_painter.clone();
-            let mut k: String = ui.data(|d| d.get_temp(pid)).unwrap_or_else(|| painting.clone().unwrap_or_default());
+            let mut k = app.ui.keyword_painter_text.clone();
             // (fixed while painting: Stop first)
             let field = ui
                 .add_enabled_ui(painting.is_none(), |ui| {
@@ -156,7 +155,7 @@ fn keywording(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     touch_field(ui, field).width(130.0).show(ui)
                 })
                 .inner;
-            ui.data_mut(|d| d.insert_temp(pid, k.clone()));
+            app.ui.keyword_painter_text = k.clone();
             let label = if painting.is_some() { "Stop" } else { "Paint" };
             let returned = field.ending == Some(crate::text_field::Ending::Return) && painting.is_none() && !k.trim().is_empty();
             if text_button(ui, "keywordPaint", label, painting.is_some())

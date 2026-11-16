@@ -1,6 +1,6 @@
 # Matching a Lightroom preset: the Phoenix 200 "Orange You Glad" test
 
-> **Last reviewed:** 2026-10-25 · **Last updated:** 2026-11-14 · **Change:** positive Dehaze refitted, negative Dehaze checked at -50 and -100 (card #439); Calibration's Shadows Tint refitted; Colour Grading, HSL and Calibration checked against the exports there are
+> **Last reviewed:** 2026-10-25 · **Changes:** [revision history](#revision-history)
 
 One preset, one raw, one Lightroom export. It measures where LightCraft's render of a whole look departs from
 Lightroom's, and what was changed because of it. It is **one scene** (a Sony ILCE-6000, E PZ 16-50mm at 16 mm, sunset
@@ -235,3 +235,10 @@ The six-camera comparison is a scratch script (render each sidecar with `lightcr
 The fit's scratch tooling (env-var tunables in the pipeline, a coordinate-descent driver) is not kept: the final
 constants are the ones named above. To re-measure, render with the CLI as in *Method* and compare the two JPEGs at
 100 px.
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-11-14 | positive Dehaze refitted, negative Dehaze checked at -50 and -100 (card #439); Calibration's Shadows Tint refitted; Colour Grading, HSL and Calibration checked against the exports there are |

@@ -193,6 +193,35 @@ pub fn poll_photos(app: &mut LightcraftApp, ctx: &egui::Context) {
 #[cfg(target_arch = "wasm32")]
 pub fn poll_photos(_: &mut LightcraftApp, _: &egui::Context) {}
 
+/// What a finished export says: how many files were written, skipped or failed, and the Apple Photos note.
+fn export_summary(files: &[Value], photos: Option<&Value>, total: usize, cancelled: bool) -> String {
+    let sheet = files.first().filter(|f| f["contactSheet"] == true);
+    let ok = files.iter().filter(|f| f.get("path").is_some()).count();
+    let failed: Vec<&Value> = files.iter().filter(|f| f.get("error").is_some()).collect();
+    let skipped = files.iter().filter(|f| f.get("skipped").is_some()).count();
+    let mut m = crate::i18n::tr_format!("Exported {ok} of {total} photo{}", if total == 1 { "" } else { "s" }, ok = ok, total = total);
+    if let Some(sheet) = sheet {
+        m = format!("Exported contact sheet: {} photos, {} pages", sheet["photos"], sheet["pages"]);
+    }
+    if let Some(pdf) = files.first().filter(|f| f["print"] == true) {
+        m = format!("Printed to PDF: {} photos, {} pages", pdf["photos"], pdf["pages"]);
+    }
+    if skipped > 0 {
+        m += &crate::i18n::tr_format!(" · {skipped} skipped (file exists)", skipped = skipped);
+    }
+    if let Some(first) = failed.first() {
+        m += &crate::i18n::tr_format!(" · {} failed: {}", failed.len(), first["error"].as_str().unwrap_or("error"));
+    }
+    if cancelled {
+        m += " · cancelled";
+    }
+    if let Some(photos) = photos {
+        m += " · ";
+        m += &apple_photos_note(photos);
+    }
+    m
+}
+
 /// Per frame: keep the activity row up to date; when the batch finishes, report it.
 pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
     // saves to the photo library finish on the host's own thread
@@ -213,35 +242,13 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
             let photos_failed = matches!(&r, Ok((_, Some(p), _)) if p.get("error").is_some());
             let msg = match r {
                 Ok((files, photos, _)) => {
-                    let sheet = files.first().filter(|f| f["contactSheet"] == true);
+                    let m = export_summary(&files, photos.as_ref(), total, cancelled);
                     let ok = files.iter().filter(|f| f.get("path").is_some()).count();
-                    let failed: Vec<&Value> = files.iter().filter(|f| f.get("error").is_some()).collect();
-                    let skipped = files.iter().filter(|f| f.get("skipped").is_some()).count();
-                    let mut m =
-                        crate::i18n::tr_format!("Exported {ok} of {total} photo{}", if total == 1 { "" } else { "s" }, ok = ok, total = total);
-                    if let Some(sheet) = sheet {
-                        m = format!("Exported contact sheet: {} photos, {} pages", sheet["photos"], sheet["pages"]);
-                    }
-                    if let Some(pdf) = files.first().filter(|f| f["print"] == true) {
-                        m = format!("Printed to PDF: {} photos, {} pages", pdf["photos"], pdf["pages"]);
-                    }
-                    if skipped > 0 {
-                        m += &crate::i18n::tr_format!(" · {skipped} skipped (file exists)", skipped = skipped);
-                    }
-                    if let Some(first) = failed.first() {
-                        m += &crate::i18n::tr_format!(" · {} failed: {}", failed.len(), first["error"].as_str().unwrap_or("error"));
-                    }
-                    if cancelled {
-                        m += " · cancelled";
-                    }
-                    if let Some(photos) = &photos {
-                        m += " · ";
-                        m += &apple_photos_note(photos);
-                    }
+                    let failed = files.iter().any(|f| f.get("error").is_some());
                     crate::control::deliver(app, &files, send);
                     app.last_export_result = Some(json!({"files": files, "cancelled": cancelled, "applePhotos": photos}));
                     // (a save says how it went when it is done; nothing to add if it is going well)
-                    if send == SendTo::Photos && ok > 0 && failed.is_empty() && !cancelled {
+                    if send == SendTo::Photos && ok > 0 && !failed && !cancelled {
                         return;
                     }
                     m

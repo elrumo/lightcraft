@@ -303,6 +303,7 @@ fn point_colors(props: &Props) -> Option<Value> {
 /// Map the `crs:` fields of an XMP packet to a partial develop-settings JSON object.
 ///
 /// `target` decides how the white balance is read (see [`Target`]).
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn to_partial(props: &Props, target: Target) -> Value {
     let mut out = Value::Object(Map::new());
     let o = &mut out;

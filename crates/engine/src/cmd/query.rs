@@ -15,14 +15,12 @@ pub fn photo_summary(p: &Photo) -> Value {
         "fileName": p.file_name,
         "format": p.format,
         "kind": p.kind,
-        "fileSize": p.file_size,
         // a video clip's length in seconds (null for a picture)
         "duration": p.duration,
         "width": p.width,
         "height": p.height,
         "fileSize": p.file_size,
         "captured": p.captured,
-        "imported": p.imported,
         "imported": p.imported,
         "rating": p.rating,
         "flag": p.flag,
@@ -405,7 +403,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 .map(|r| json!({"group": r.group, "tag": r.tag, "name": r.name, "value": r.value}))
                 .collect();
             // Keep sidecar precedence; reuse the loaded bytes for embedded XMP.
-            let packet = match crate::sidecar::find_sidecar(path, s.sidecar_naming(ph.id)) {
+            let packet = match s.sidecar_lookup(ph.id).find(path) {
                 Some(sc) => std::fs::read_to_string(sc).ok(),
                 None => lightcraft_meta::embedded(&bytes).xmp,
             };
@@ -547,7 +545,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Photo Frame",
             [],
             None,
-            "{id?, applyCrop?: true} → {aspect, width, height, toNorm: [a,b,c,d,e,f], fromNorm, crop: {rect, angle, quad: [[x,y] ×4: top-left, top-right, bottom-right, bottom-left of the unflipped crop], toStraight: [6] (image → the straightened frame crop.drag takes), flipH, flipV}, guides: [[x0,y0,x1,y1]] (Guided Upright's, in image coordinates)} how the photo as shown (cropped, straightened, flipped) maps to the normalized image coordinates masks, spots, the crop and the pickers take: toNorm maps (u, v) in 0..1 across the shown image (top-left first) as (a·u + c·v + e, b·u + d·v + f); fromNorm is its inverse; width × height is the shown image at the photo's own resolution",
+            "{id?, applyCrop?: true} → {aspect, width, height, toNorm: [a,b,c,d,e,f], fromNorm, crop: {rect, angle, quad: [[x,y] ×4: top-left, top-right, bottom-right, bottom-left of the unflipped crop], toStraight: [6] (image → the straightened frame crop.drag takes), flipH, flipV}, guides: [[x0,y0,x1,y1]] (Guided Perspective's, in image coordinates)} how the photo as shown (cropped, straightened, flipped) maps to the normalized image coordinates masks, spots, the crop and the pickers take: toNorm maps (u, v) in 0..1 across the shown image (top-left first) as (a·u + c·v + e, b·u + d·v + f); fromNorm is its inverse; width × height is the shown image at the photo's own resolution",
             always,
             |s, p| {
                 let c = "view.frame";
@@ -703,9 +701,28 @@ pub fn specs() -> Vec<CommandSpec> {
                 "versions": ph.versions.iter().map(|v| json!({"name": v.name, "created": v.created})).collect::<Vec<_>>(),
             }))
         }),
-        cmd!(query "app.gpu", "GPU Rendering", [], None, "{enabled?: bool} — allow/forbid GPU rendering (CPU fallback; LIGHTCRAFT_GPU=0 forbids it for the process); returns {enabled, available, adapter, reason (why the GPU is off), lastFallback (latest render redone on the CPU, and why)}", always, |_, p| {
+        cmd!(query "app.gpu", "GPU Rendering", [], None, "{enabled?: bool, wait?: bool} — allow/forbid GPU rendering (CPU fallback; LIGHTCRAFT_GPU=0 forbids it for the process); returns {enabled, available, adapter, reason (why the GPU is off), lastFallback (latest render redone on the CPU, and why)}. wait: false never waits for a device still being created (available, adapter and reason are then null and the device is created in the background; with GPU rendering off they say so at once)", always, |_, p| {
             if let Some(on) = p.get("enabled").and_then(Value::as_bool) {
                 lightcraft_gpu::set_enabled(on);
+            }
+            // the UI applies the setting on its first frame: it must not wait seconds for the
+            // device there (issue #136; `warm_up` creates it off the UI thread)
+            if p.get("wait").and_then(Value::as_bool) == Some(false) && !lightcraft_gpu::ready() {
+                // off (preference, environment): known at once, and asking the adapter would
+                // create the device; on: still being created, so nothing is known yet
+                let on = lightcraft_gpu::enabled();
+                if on {
+                    // a caller that never waits still gets an answer later (off the UI thread;
+                    // starts at most once)
+                    lightcraft_gpu::warm_up();
+                }
+                return Ok(json!({
+                    "enabled": on,
+                    "available": if on { Value::Null } else { Value::Bool(false) },
+                    "adapter": null,
+                    "reason": if on { None } else { lightcraft_gpu::unavailable_reason() },
+                    "lastFallback": lightcraft_gpu::last_fallback(),
+                }));
             }
             Ok(json!({
                 "enabled": lightcraft_gpu::enabled(),
@@ -727,6 +744,21 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(serde_json::to_value(s.memory_report()).unwrap_or_default())
         }),
+        cmd!(query "app.hotPixelLimit", "Hot Pixel Limit", [], None, "{percent?: number} — Remove Hot Pixels leaves a raw alone when more than this share of its photosites would be replaced (0.001..100 %, default 0.2 %; real light it keeps doesn't count); returns {percent, default}", always, |s, p| {
+            if let Some(v) = p.get("percent").filter(|v| !v.is_null()) {
+                let Some(percent) = v.as_f64().filter(|x| (0.001..=100.0).contains(x)) else {
+                    return Err(bad("app.hotPixelLimit", "percent must be a number in 0.001..100"));
+                };
+                // (the default as an `f32` from the app's settings, 0.2000000029…, is the default: its keys stay)
+                let default = lightcraft_raw::HOT_PIXEL_MAX_SHARE;
+                let share = if (percent / 100.0 / default - 1.0).abs() < 1e-6 { default } else { percent / 100.0 };
+                if crate::files::set_hot_pixel_limit(share) {
+                    // decoded with the old limit, and their render keys change
+                    s.media.clear_sources();
+                }
+            }
+            Ok(json!({"percent": crate::files::hot_pixel_limit() * 100.0, "default": lightcraft_raw::HOT_PIXEL_MAX_SHARE * 100.0}))
+        }),
         cmd!(query "journal.list", "Command Journal", [], None, "{limit?}", always, |s, p| {
             let lim = p.get("limit").and_then(Value::as_u64).unwrap_or(100) as usize;
             let start = s.journal.len().saturating_sub(lim);
@@ -738,6 +770,23 @@ pub fn specs() -> Vec<CommandSpec> {
 #[cfg(test)]
 mod pagination_tests {
     use super::*;
+
+    #[test]
+    fn photo_summaries_include_import_date_and_file_size() {
+        let mut photo = Photo::new(
+            PhotoId(1),
+            lightcraft_catalog::Source::File { path: "photo.jpg".into() },
+            "photo.jpg",
+            "JPEG",
+            10,
+            10,
+            "2026-11-16T10:00:00Z",
+        );
+        photo.file_size = 2048;
+        let summary = photo_summary(&photo);
+        assert_eq!(summary["fileSize"], 2048);
+        assert_eq!(summary["imported"], "2026-11-16T10:00:00Z");
+    }
 
     #[test]
     fn offsets_and_limits_saturate_instead_of_wrapping_on_wasm() {

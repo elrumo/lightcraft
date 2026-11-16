@@ -1,7 +1,6 @@
 # Glow
 
-> **Last updated:** 2026-11-15 · **Status:** built (Effects panel, under Grain; `ctl:glow.*`), fitted to Lightroom at
-> Glow 100, Range 50, Spread 50 (card #444)
+> **Last reviewed:** 2026-11-15 · **Status:** built (Effects panel, under Grain; `ctl:glow.*`), fitted to Lightroom at Glow 100, Range 50, Spread 50 (card #444) · **Changes:** [revision history](#revision-history)
 
 Glow is light spread from a photo's bright parts, as a lens, a diffusion filter or film scatters it. Lightroom added
 it to the Effects panel in 2026 (Glow, a Style menu with Bloom, Diffusion and Halation on the desktop and also Motion
@@ -122,3 +121,11 @@ goes). The native frontend's parity harness has a case per style at Glow 100 (`g
   lights.
 - **XMP.** Glow is not written to or read from Lightroom's `crs:` XMP (its names there are unknown to us); LightCraft's
   own settings carry it.
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-11-15 | The five styles fitted to Lightroom mobile's renders at Glow 100, Range 50, Spread 50 (card #444). |
+| 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
+| 2026-11-09 | Last change before the header rule (recorded in the old header, no note). |

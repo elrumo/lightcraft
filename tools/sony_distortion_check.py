@@ -19,8 +19,10 @@ there, under "ILCE-7M3 validation").
 """
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -34,11 +36,17 @@ REPORT_WIDTH = 2376
 
 
 def render(cli, arw, out, on):
+    """Render `arw` with the profile correction `on` or off to `out`, reusing an output newer than the CLI and ARW."""
     settings = out + ".settings.json"
     with open(settings, "w") as f:
         json.dump({"optics": {"lens_profile": on, "profile_distortion": 100}}, f)
-    if not os.path.exists(out):
-        subprocess.run([cli, "render", arw, "-o", out, "--settings", settings], check=True, capture_output=True)
+    exe = shutil.which(cli) or cli
+    current = os.path.exists(out) and os.path.getmtime(out) >= max(os.path.getmtime(exe), os.path.getmtime(arw))
+    if not current:
+        r = subprocess.run([exe, "render", arw, "-o", out, "--settings", settings], capture_output=True)
+        if r.returncode != 0:
+            err = r.stderr.decode(errors="replace").strip()
+            raise RuntimeError(f"render failed ({r.returncode}) for {arw}: {err[-500:]}")
     return out
 
 
@@ -132,6 +140,7 @@ def lattice_vectors(pts, tree, centre):
 
 
 def grow_lattice(pts, tree, start, a, b):
+    """Label corners (row, column) by stepping lattice vectors `a` and `b` out from corner `start`."""
     labels = {start: (0, 0)}
     taken = {(0, 0): start}
     vec = {start: (a, b)}
@@ -158,6 +167,7 @@ def grow_lattice(pts, tree, start, a, b):
 
 
 def board(path):
+    """Checkerboard corners of image `path`, keyed by (row, column), in its full-size pixels, and its size."""
     gray, back, size = load_gray(path)
     pts = detect_corners(gray)
     labels = label_lattice(pts, np.array(gray.shape[::-1]) / 2.0)
@@ -236,6 +246,7 @@ def sift_pairs(src_path, dst_path):
 # ---------------------------------------------------------------- geometry
 
 def fit_similarity(s, d):
+    """Least-squares similarity (zoom, rotation, shift) mapping points `s` onto `d`, as complex (scale, offset)."""
     zs = s[:, 0] + 1j * s[:, 1]
     zd = d[:, 0] + 1j * d[:, 1]
     ms, md = zs.mean(), zd.mean()
@@ -244,6 +255,7 @@ def fit_similarity(s, d):
 
 
 def apply(model, p):
+    """Points `p` mapped by a `fit_similarity` model."""
     c, t = model
     z = c * (p[:, 0] + 1j * p[:, 1]) + t
     return np.stack([z.real, z.imag], 1)
@@ -311,6 +323,7 @@ def correction_fraction(on, off, size):
 # ---------------------------------------------------------------- driver
 
 def jpeg_for(arw):
+    """The camera JPEG next to `arw` (same stem), or None."""
     stem = os.path.splitext(arw)[0]
     for ext in (".JPG", ".jpg", ".JPEG", ".jpeg"):
         if os.path.exists(stem + ext):
@@ -319,6 +332,7 @@ def jpeg_for(arw):
 
 
 def exif_summary(jpg):
+    """Lens, focal length and aperture of `jpg` from its Exif, for the report."""
     from PIL import Image
     tags = Image.open(jpg).getexif().get_ifd(0x8769)
     lens = tags.get(0xA434, "?")
@@ -328,12 +342,15 @@ def exif_summary(jpg):
 
 
 def measure(cli, work, arw):
+    """Render `arw` corrected and uncorrected and measure both against its camera JPEG (None without one)."""
     jpg = jpeg_for(arw)
     if not jpg:
         return None
     name = os.path.splitext(os.path.basename(arw))[0]
-    on = render(cli, arw, os.path.join(work, name + ".on.png"), True)
-    off = render(cli, arw, os.path.join(work, name + ".off.png"), False)
+    # cards repeat names (DSC00001.ARW): the path's hash keeps renders of different folders apart
+    uid = hashlib.sha1(os.path.abspath(arw).encode()).hexdigest()[:8]
+    on = render(cli, arw, os.path.join(work, f"{name}.{uid}.on.png"), True)
+    off = render(cli, arw, os.path.join(work, f"{name}.{uid}.off.png"), False)
     out = {"file": name, "shot": exif_summary(jpg)}
     jgrid, jsize = board(jpg)
     out["kind"] = "board" if jgrid else "scene"
@@ -362,6 +379,7 @@ def measure(cli, work, arw):
 
 
 def show(o):
+    """Print one file's measurements."""
     k = REPORT_WIDTH / o["jpeg_width"]
     print(f"\n{o['file']}  {o['shot']}  [{o['kind']}]")
     for tag, label in (("on", "LightCraft corrected"), ("off", "LightCraft uncorrected")):
@@ -380,6 +398,7 @@ def show(o):
 
 
 def main():
+    """Measure every ARW with a camera JPEG in the given folders and print (and optionally save) the results."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cli", required=True)
     ap.add_argument("--work", required=True)

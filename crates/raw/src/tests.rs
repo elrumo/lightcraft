@@ -10,7 +10,7 @@ fn cfa_helpers() {
     assert_eq!(c.shifted(1, 1).name(), "BGGR");
     assert!(Cfa::bayer("RGGX").is_none());
     for name in ["RGGB", "BGGR", "GRBG", "GBRG"] {
-        assert_eq!(Cfa::bayer_static(name).name(), name);
+        assert_eq!(crate::bayer(name).name(), name);
     }
     let x = Cfa::xtrans();
     assert!(!x.is_bayer());
@@ -120,7 +120,7 @@ fn black_levels() {
 
 // --- TIFF shells around a private raw block (thumbnail-only IFD0) ---
 
-use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+use craft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
 
 /// An uncompressed 8-bit RGB image IFD.
 fn rgb_ifd(w: u32, h: u32) -> IfdBuilder {
@@ -206,7 +206,7 @@ fn ordinary_tiffs_are_not_shells() {
     let mut pef = rgb_ifd(400, 300);
     pef.set(t::MAKE, Value::Ascii("PENTAX Corporation".into()));
     let mut exif = exif_size(400, 300);
-    exif.set(vendor::EXIF_CFA_PATTERN, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
+    exif.set(0xa302, Value::Undefined(vec![0, 2, 0, 2, 0, 1, 1, 2]));
     pef.set_child(t::EXIF_IFD, exif);
     assert_eq!(probe(&padded(&[pef])), Some(RawFormat::Pef));
     let mut srw = rgb_ifd(400, 300);
@@ -258,9 +258,12 @@ fn private_containers_are_recognised_by_their_magic() {
     assert_eq!(probe(b"II\x1a\0\0\0HEAPCCDR\0\0"), Some(RawFormat::Crw));
     assert_eq!(probe(b"\0MRM\0\x01\0\0"), Some(RawFormat::Mrw));
     assert_eq!(probe(b"FOVb\x02\0\x02\0"), Some(RawFormat::X3f));
-    for f in [RawFormat::Crw, RawFormat::X3f] {
-        assert!(!f.is_supported());
+    for f in [RawFormat::Crw, RawFormat::Mrw] {
+        assert!(crate::is_supported(f));
     }
+    assert!(!crate::is_supported(RawFormat::X3f));
+    // a CRW signature with no heap behind it is corrupt, not a panic
+    assert!(matches!(decode(b"II\x1a\0\0\0HEAPCCDR\0\0"), Err(RawError::Corrupt(_))));
     assert!(matches!(decode(b"FOVb\x02\0\x02\0"), Err(RawError::Unsupported(w)) if w.contains("X3f")));
     // too short for the CIFF signature
     assert_eq!(probe(b"II\x1a\0\0\0HEAP"), None);
@@ -286,41 +289,6 @@ fn ifd0_without_dimensions_but_with_a_jpeg_is_a_preview_container() {
     // no pointer and no sub-IFDs: just a broken TIFF
     let g = write(&[IfdBuilder::new().with(t::MAKE, Value::Ascii("KODAK".into()))]);
     assert_eq!(probe(&g), None);
-}
-
-/// A GoPro GPR: a DNG whose one tile is a VC-5 stream (Compression 9). The full decode reads it and agrees with
-/// the header probe; a tile that isn't VC-5 fails with a reason that names the format.
-#[test]
-fn gopro_vc5_dng_decodes() {
-    let gpr = |tile: Vec<u8>, pattern: [u8; 4]| {
-        let mut ifd = IfdBuilder::new();
-        ifd.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![0]));
-        ifd.set(t::IMAGE_WIDTH, Value::Long(vec![64]));
-        ifd.set(t::IMAGE_LENGTH, Value::Long(vec![48]));
-        ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![16]));
-        ifd.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
-        ifd.set(t::PHOTOMETRIC, Value::Short(vec![32803]));
-        ifd.set(t::COMPRESSION, Value::Short(vec![9]));
-        ifd.set(t::DNG_VERSION, Value::Byte(vec![1, 4, 0, 0]));
-        ifd.set(t::CFA_REPEAT_PATTERN_DIM, Value::Short(vec![2, 2]));
-        ifd.set(t::CFA_PATTERN_EP, Value::Byte(pattern.to_vec()));
-        ifd.set(t::WHITE_LEVEL, Value::Short(vec![16383]));
-        ifd.set_image(ImageData::Tiles { tile_width: 64, tile_height: 48, tiles: vec![tile] });
-        write(&[ifd])
-    };
-    let bytes = gpr(crate::vc5::synthetic_stream(64, 48, [4000, 8192, 8192, 8192], 0), [0, 1, 1, 2]);
-    assert_eq!(probe(&bytes), Some(RawFormat::Dng));
-    let img = decode(&bytes).unwrap();
-    let RawData::U16(samples) = &img.data else { panic!("integer samples expected") };
-    assert_eq!((img.width, img.height, samples.len()), (64, 48, 64 * 48));
-    assert!(samples.iter().all(|&v| v == samples[0] && v > 0));
-    assert_eq!(img.info(), probe_info(&bytes).unwrap());
-    let Err(RawError::Corrupt(why)) = decode(&gpr(vec![0x5a; 400], [0, 1, 1, 2])) else { panic!("expected Corrupt") };
-    assert!(why.contains("VC-5"), "{why}");
-    // a layout GoPro's SDK doesn't write
-    let bytes = gpr(crate::vc5::synthetic_stream(64, 48, [4000, 8192, 8192, 8192], 0), [2, 1, 1, 0]);
-    assert!(matches!(decode(&bytes), Err(RawError::Unsupported(why)) if why.contains("GoPro VC-5")));
-    assert!(probe_info(&bytes).is_ok(), "the header probe still describes it");
 }
 
 /// A LinearRaw DNG in the layout of Lightroom's merges: a `w` × `h` main image (samples 1000) with a default
@@ -399,6 +367,7 @@ fn private_compression_99_is_a_raw() {
 /// without the block, or an RGB image carrying it, stays an ordinary image.
 #[test]
 fn uncompressed_leaf_mos_is_a_raw() {
+    const LEAF_DATA: u16 = 0x8606;
     let mosaic = |leaf_data: bool| {
         let mut ifd = IfdBuilder::new();
         ifd.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![0]));
@@ -414,7 +383,7 @@ fn uncompressed_leaf_mos_is_a_raw() {
         }
         ifd
     };
-    let bytes = TiffWriter::new(lightcraft_tiff::ByteOrder::Big, false).write(&[mosaic(true)]).unwrap();
+    let bytes = TiffWriter::new(craft_tiff::ByteOrder::Big, false).write(&[mosaic(true)]).unwrap();
     assert_eq!(probe(&bytes), Some(RawFormat::OtherTiff));
     assert!(matches!(decode(&bytes), Err(RawError::Unsupported(_))));
     assert!(matches!(probe_info(&bytes), Err(RawError::Unsupported(_))));
@@ -548,20 +517,6 @@ fn lossless_jpeg_cfa_tiff_decodes() {
     assert_eq!(r.cfa.unwrap().name(), "RGGB");
 }
 
-/// Hasselblad's own lossless-JPEG coding (selection value 8, as in FFF and most compressed 3FR files) of the
-/// same layout decodes: the file is read like the uncompressed one.
-#[test]
-fn selection_value_8_cfa_tiff_decodes() {
-    let strip = ljpeg::tests::encode_hasselblad(&cfa_samples(), 8, 6);
-    let bytes = plain_cfa_tiff(7, strip, None);
-    assert_eq!(probe(&bytes), Some(RawFormat::CfaTiff));
-    let r = decode(&bytes).unwrap();
-    assert_eq!((r.format, r.width, r.height), (RawFormat::CfaTiff, 8, 6));
-    assert_eq!(r.data, RawData::U16(cfa_samples()));
-    assert_eq!(r.cfa.unwrap().name(), "RGGB");
-    assert_eq!(probe_info(&bytes).unwrap().format, RawFormat::CfaTiff);
-}
-
 /// A lossless-JPEG scan whose predictor selection value is neither 0 to 7 (T.81) nor 8 (Hasselblad) is not a
 /// coding the lossless decoder knows: the file stays an undecodable raw, with that as the reason, and keeps the
 /// stand-in preview an unsupported container gets.
@@ -575,7 +530,7 @@ fn cfa_tiff_with_an_unknown_predictor_stays_undecodable() {
     assert!(matches!(ljpeg::decode(&strip, 1 << 20), Err(RawError::Unsupported(w)) if w.contains("selection value 9")));
     let bytes = plain_cfa_tiff(7, strip, None);
     assert_eq!(probe(&bytes), Some(RawFormat::OtherTiff));
-    assert!(!RawFormat::OtherTiff.is_supported());
+    assert!(!crate::is_supported(RawFormat::OtherTiff));
     let Err(RawError::Unsupported(why)) = decode(&bytes) else { panic!("expected Unsupported") };
     assert!(why.contains("lossless JPEG") && why.contains("selection value 9"), "{why}");
 }

@@ -33,8 +33,9 @@ const KNOWN_UNSUPPORTED: &[&str] = &[
     "orf-olympus-e-m10-mark-iiis.",
     "orf-olympus-e-pl10.",
     "orf-om-system-om-5.",
-    "-he.nef", // Nikon High Efficiency (HE / HE★) NEF, issue #193
-    "sraw",    // Canon sRAW / mRAW
+    "-he.nef",                    // Nikon High Efficiency (HE / HE★) NEF, issue #193
+    "sraw",                       // Canon sRAW / mRAW
+    "crw-canon-powershot-g5.crw", // Canon PowerShot G5 CRW: entropy coding anomaly (craft-libs crates/crw/clean-room/02-crw-format.md §4)
 ];
 
 #[test]
@@ -84,6 +85,11 @@ fn corpus_raw_decodes() {
         let info = probe_info(&bytes);
         let di = t2.elapsed().as_secs_f64() * 1e3;
         match (&decoded, &info) {
+            // a full CR3 decode adds the white headroom it finds in the samples to `baseline_exposure`, which a
+            // header probe can't see
+            (Ok(img), Ok(info)) if fmt == RawFormat::Cr3 => {
+                assert_eq!(without_baseline(img.info()), without_baseline(info.clone()), "{name}: probe_info differs from decode")
+            }
             (Ok(img), Ok(info)) => assert_eq!(&img.info(), info, "{name}: probe_info differs from decode"),
             (Err(RawError::Unsupported(_)), Err(RawError::Unsupported(_))) => {}
             (d, i) => panic!("{name}: decode {:?} but probe_info {:?}", d.as_ref().err(), i.as_ref().err()),
@@ -401,6 +407,12 @@ fn corpus_sony_pre2017_colour_metadata() {
     eprintln!("pre-2017 Sony ARW colour metadata checked on {seen} files");
 }
 
+/// `info` without its `baseline_exposure`, which only a full CR3 decode adjusts (from the samples' white headroom).
+pub(crate) fn without_baseline(mut info: lightcraft_raw::RawInfo) -> lightcraft_raw::RawInfo {
+    info.color.baseline_exposure = 0.0;
+    info
+}
+
 /// FNV-1a over the samples (little-endian bytes): a regression fingerprint of a decode.
 fn fingerprint(img: &lightcraft_raw::RawImage) -> u64 {
     let lightcraft_raw::RawData::U16(d) = &img.data else { panic!("float data") };
@@ -434,9 +446,8 @@ fn corpus_cr3_lossless_decodes_exactly() {
         assert!((wb[0] - wb_r).abs() < 0.002 && wb[1] == 1.0 && (wb[2] - wb_b).abs() < 0.002, "{name}: wb {wb:?}");
         // the default crop is the size of the camera's own JPEG
         let jpeg = embedded_preview(&bytes).expect("preview");
-        let mut jd = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&jpeg));
-        jd.decode_headers().expect("JPEG header");
-        assert_eq!(jd.dimensions(), Some((img.crop.width, img.crop.height)), "{name}: crop vs JPEG");
+        let (jw, jh, _) = craft_raw::preview::jpeg_frame(&jpeg).expect("JPEG header");
+        assert_eq!((jw as usize, jh as usize), (img.crop.width, img.crop.height), "{name}: crop vs JPEG");
         let got = fingerprint(&img);
         assert_eq!(got, print, "{name}: fingerprint {got:#018x}");
     }
@@ -735,10 +746,8 @@ fn corpus_sony_16x9_crops() {
         let c = img.crop;
         assert_eq!((c.x, c.y, c.width, c.height), (x, y, w, h), "{name}: crop");
         let jpeg = embedded_preview(&bytes).unwrap_or_else(|| panic!("{name}: no preview"));
-        let mut d = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&jpeg));
-        d.decode_headers().unwrap();
-        let info = d.info().unwrap();
-        let (aspect, preview) = (c.width as f64 / c.height as f64, info.width as f64 / info.height as f64);
+        let (jw, jh, _) = craft_raw::preview::jpeg_frame(&jpeg).unwrap();
+        let (aspect, preview) = (c.width as f64 / c.height as f64, jw as f64 / jh as f64);
         assert!((aspect / preview - 1.0).abs() < 0.02, "{name}: crop aspect {aspect} vs camera JPEG {preview}");
         seen += 1;
     }
@@ -828,12 +837,9 @@ fn corpus_sony_lens_tables_become_opcodes() {
 
 /// The embedded JPEG as linear RGB, reduced to `gw × gh` cells.
 fn jpeg_cells(jpeg: &[u8], gw: usize, gh: usize) -> Vec<[f64; 3]> {
-    use zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
-    let opts = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGB);
-    let mut d = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(jpeg), opts);
-    let px = d.decode().unwrap();
-    let info = d.info().unwrap();
-    let (w, h) = (info.width as usize, info.height as usize);
+    let img = craft_image_codecs::decode_as_with(craft_image_codecs::Format::Jpeg, jpeg, &craft_image_codecs::DecodeOptions::default()).unwrap();
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let px = img.as_u8().unwrap();
     let (mut sum, mut n) = (vec![[0f64; 3]; gw * gh], vec![0f64; gw * gh]);
     for y in 0..h {
         for x in 0..w {
@@ -1338,7 +1344,7 @@ fn a_sony_fixture_that_differs_from_its_pin_fails() {
 
 /// Sony's lens-correction records (`lightcraft_raw::lens_metadata`, `crates/raw/src/vendor/arw_lens.rs`) on the public
 /// samples: shading, CA and distortion decoded from the raw IFD with their settings, equal to their `SR2SubIFD` copies,
-/// the same from header and full decode, and nothing applied beyond the validated ILCE-7RM4A distortion. Expected
+/// the same from header and full decode, and nothing applied beyond the validated ILCE-7RM4A and ILCE-7M3 distortion. Expected
 /// tables and settings: what ExifTool, run as a black-box tool, prints for these files. Every file is checked against
 /// its pinned SHA-256 before it is decoded; absent files are skipped.
 #[test]
@@ -1462,13 +1468,13 @@ fn sony_lens_records_of_the_public_samples() {
         eprintln!("{name}: shading, CA and distortion decoded; distortion {status:?}");
         checked += 1;
     }
-    // every Sony corpus file: only the ILCE-7RM4A's distortion is ever applied, and an applied status is an opcode
+    // every Sony corpus file: only the ILCE-7RM4A's and ILCE-7M3's distortion is ever applied, and an applied status is an opcode
     for (name, _) in SONY_SAMPLES {
         let Some(bytes) = pinned_sony(&root, name) else { continue };
         let info = probe_info(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
         let Some(s) = &info.lens_metadata.sony else { continue };
         let applied = s.distortion.status == SonyLensStatus::Applied;
-        assert_eq!(applied, info.metadata.model.as_deref() == Some("ILCE-7RM4A"), "{name}");
+        assert_eq!(applied, matches!(info.metadata.model.as_deref(), Some("ILCE-7RM4A" | "ILCE-7M3")), "{name}");
         assert_eq!(info.opcodes.list3.len(), usize::from(applied), "{name}");
         assert!(![s.shading.status, s.chromatic_aberration.status].contains(&SonyLensStatus::Applied), "{name}");
         checked += 1;
@@ -1487,7 +1493,7 @@ fn a7cr_enabled_distortion_agrees_in_header_full_and_dng() {
         let Some(mut bytes) = pinned_sony(&root, name) else { continue };
         let original = probe_info(&bytes).unwrap();
         assert!(original.opcodes.list3.is_empty(), "Off files must remain uncorrected");
-        let tiff = lightcraft_tiff::Tiff::parse(&bytes).unwrap();
+        let tiff = craft_tiff::Tiff::parse(&bytes).unwrap();
         let at = tiff.find(0x7036).unwrap().offset as usize;
         let mut enabled = Vec::new();
         tiff.order.put_u16(&mut enabled, 17);
@@ -1554,7 +1560,7 @@ fn corpus_kodak_dcs520c() {
 
 /// Fujifilm RAF lens tables (`0xf00b` distortion, `0xf010` vignetting) become a warp and a vignette gain for the
 /// cameras whose geometry was checked against the camera JPEG (docs/fuji-lens-corrections.md). Reads `LIGHTCRAFT_FUJI` (a folder
-/// of RAFs or of per-model folders, e.g. the CC0 pixls set) or the corpus' `raf-fuji-*` files; skips when absent.
+/// of RAFs or of per-model folders, e.g. the CC0 pixls set) or the corpus' `raf-fuji*` files; skips when absent.
 #[test]
 fn fuji_embedded_lens_tables_follow_the_validated_models() {
     fn collect(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
@@ -1573,7 +1579,7 @@ fn fuji_embedded_lens_tables_follow_the_validated_models() {
         Some(dir) => collect(Path::new(&dir), 0, &mut files),
         None => {
             collect(&corpus_root().join("raw"), 1, &mut files);
-            files.retain(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("raf-fuji-")));
+            files.retain(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("raf-fuji")));
         }
     }
     files.sort();

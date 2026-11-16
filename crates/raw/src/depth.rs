@@ -4,10 +4,11 @@
 //! iPhone's ProRAW has none: only semantic mattes), so this follows the specification alone; the
 //! map is taken to span the developed picture (the default crop), as a portrait's does its photo.
 
-use crate::tiffraw::{Packing, read_image};
+use craft_raw::tiffraw::{Packing, read_image};
+use craft_tiff::Tiff;
+use craft_tiff::tags as t;
+
 use crate::{RawData, Result};
-use lightcraft_tiff::Tiff;
-use lightcraft_tiff::tags as t;
 
 /// NewSubFileType of a depth map IFD (and of a preview's depth map, with the preview bit).
 pub const SUBFILE_DEPTH_MAP: u32 = 8;
@@ -34,7 +35,7 @@ pub fn depth_map(bytes: &[u8]) -> Option<DngDepth> {
     read(bytes, &tiff, ifd).ok().flatten()
 }
 
-fn read(bytes: &[u8], tiff: &Tiff, ifd: &lightcraft_tiff::Ifd) -> Result<Option<DngDepth>> {
+fn read(bytes: &[u8], tiff: &Tiff, ifd: &craft_tiff::Ifd) -> Result<Option<DngDepth>> {
     let info = ifd.image()?;
     let (w, h) = (info.width as usize, info.height as usize);
     if info.samples_per_pixel != 1 || w == 0 || h == 0 || w.checked_mul(h).is_none_or(|n| n > MAX_DEPTH_SAMPLES) {
@@ -42,7 +43,7 @@ fn read(bytes: &[u8], tiff: &Tiff, ifd: &lightcraft_tiff::Ifd) -> Result<Option<
     }
     let bits = info.bits() as u32;
     // the samples as 0..1, 0 nearest
-    let v: Vec<f32> = match read_image(bytes, &info, tiff.order, Packing::Msb)? {
+    let v: Vec<f32> = match read_image(bytes, &info, tiff.order, Packing::Msb, &craft_raw::Limits::default())? {
         RawData::U16(v) if (1..=16).contains(&bits) => {
             let max = ((1u32 << bits) - 1) as f32;
             v.into_iter().map(|s| f32::from(s) / max).collect()
@@ -77,7 +78,7 @@ fn read(bytes: &[u8], tiff: &Tiff, ifd: &lightcraft_tiff::Ifd) -> Result<Option<
 mod tests {
     use super::*;
 
-    use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
+    use craft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
 
     /// A TIFF whose IFD0 is a main picture with one sub-IFD: a 4 × 1 8-bit depth map `samples`.
     fn dng(samples: [u8; 4], format: Option<u16>, range: Option<(f64, f64)>) -> Vec<u8> {
@@ -93,8 +94,8 @@ mod tests {
             depth.set(DEPTH_FORMAT, Value::Short(vec![f]));
         }
         if let Some((n, f)) = range {
-            depth.set(DEPTH_NEAR, Value::Rational(vec![lightcraft_tiff::writer::rational(n)]));
-            depth.set(DEPTH_FAR, Value::Rational(vec![lightcraft_tiff::writer::rational(f)]));
+            depth.set(DEPTH_NEAR, Value::Rational(vec![craft_tiff::writer::rational(n)]));
+            depth.set(DEPTH_FAR, Value::Rational(vec![craft_tiff::writer::rational(f)]));
         }
         depth.set_image(ImageData::Strips { rows_per_strip: 1, strips: vec![samples.to_vec()] });
         let mut main = IfdBuilder::new()

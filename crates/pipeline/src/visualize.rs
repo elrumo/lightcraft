@@ -63,7 +63,15 @@ pub enum Overlay {
     SharpenDetail,
     /// The sharpening mask, white where sharpening applies (Alt-drag on Sharpening Masking).
     SharpenMask,
+    /// Clipping warnings (J): the photo with every pixel that has a channel at 255 painted
+    /// [`CLIP_HIGH`] and every other pixel with a channel at 0 painted [`CLIP_LOW`].
+    ClipWarnings,
 }
+
+/// [`Overlay::ClipWarnings`] colour of clipped highlights.
+pub const CLIP_HIGH: [u8; 3] = [255, 0, 0];
+/// [`Overlay::ClipWarnings`] colour of clipped shadows.
+pub const CLIP_LOW: [u8; 3] = [0, 0, 255];
 
 /// [`Overlay::Depth`]'s colours (sRGB) for the nearest and the farthest part of the photo (Lens
 /// Blur's Focal Distance track uses the same).
@@ -161,6 +169,8 @@ impl Overlay {
             Overlay::Grayscale => (9, 0.0),
             Overlay::SharpenDetail => (10, 0.0),
             Overlay::SharpenMask => (11, 0.0),
+            // (upstream LightCraft numbers it 11: here 11 was taken by SharpenMask)
+            Overlay::ClipWarnings => (12, 0.0),
         }
     }
 
@@ -185,6 +195,7 @@ impl Overlay {
             9 => Overlay::Grayscale,
             10 => Overlay::SharpenDetail,
             11 => Overlay::SharpenMask,
+            12 => Overlay::ClipWarnings,
             _ => Overlay::None,
         }
     }
@@ -204,6 +215,7 @@ impl Overlay {
             Overlay::Grayscale => 0x5002,
             Overlay::SharpenDetail => 0x5003,
             Overlay::SharpenMask => 0x5004,
+            Overlay::ClipWarnings => 0x5005,
         }
     }
 
@@ -223,7 +235,7 @@ impl Overlay {
     /// The clipping previews, which test the sRGB values the histogram counts (a render for a
     /// display profile draws them in sRGB, then converts).
     pub fn is_clipping(self) -> bool {
-        matches!(self, Overlay::ClipShadows | Overlay::ClipHighlights)
+        matches!(self, Overlay::ClipShadows | Overlay::ClipHighlights | Overlay::ClipWarnings)
     }
 
     /// Whether the overlay draws from the render's detail planes ([`sharpen_plane`]).
@@ -245,6 +257,7 @@ impl Overlay {
                 | Overlay::Spots(_)
                 | Overlay::ClipShadows
                 | Overlay::ClipHighlights
+                | Overlay::ClipWarnings
                 | Overlay::Grayscale
         )
     }
@@ -360,6 +373,7 @@ pub fn apply(img: &mut Rgba8, o: Overlay, plan: &Plan<'_>, plane: Option<&Plane>
         }
         Overlay::ClipShadows => clipping(img, false),
         Overlay::ClipHighlights => clipping(img, true),
+        Overlay::ClipWarnings => clip_warnings(img),
         Overlay::Grayscale => grayscale(img),
         Overlay::SharpenDetail | Overlay::SharpenMask => {
             if let Some(p) = plane.filter(|a| (a.width, a.height) == (img.width, img.height)) {
@@ -394,6 +408,25 @@ pub fn clipping(img: &mut Rgba8, high: bool) {
                 };
             }
             px[3] = 255;
+        }
+    });
+}
+
+/// [`Overlay::ClipWarnings`]: pixels with a channel at 255 in [`CLIP_HIGH`], the rest with a
+/// channel at 0 in [`CLIP_LOW`], everything else unchanged.
+pub fn clip_warnings(img: &mut Rgba8) {
+    let w = img.width;
+    for_rows(&mut img.data, w, |_, row| {
+        for px in row.iter_mut() {
+            let c = &px[..3];
+            let paint = if c.contains(&255) {
+                CLIP_HIGH
+            } else if c.contains(&0) {
+                CLIP_LOW
+            } else {
+                continue;
+            };
+            *px = [paint[0], paint[1], paint[2], 255];
         }
     });
 }
@@ -779,7 +812,8 @@ mod tests {
             assert!(Overlay::for_control(c).is_some(), "{c}");
         }
         assert!(Overlay::ClipShadows.is_clipping() && Overlay::ClipHighlights.is_clipping() && !Overlay::Grayscale.is_clipping());
-        let all = [Overlay::ClipShadows, Overlay::ClipHighlights, Overlay::Grayscale, Overlay::SharpenDetail, Overlay::SharpenMask];
+        let all =
+            [Overlay::ClipShadows, Overlay::ClipHighlights, Overlay::Grayscale, Overlay::SharpenDetail, Overlay::SharpenMask, Overlay::ClipWarnings];
         for o in all {
             let (k, v) = o.to_parts();
             assert_eq!(Overlay::from_parts(k, v), o);
@@ -787,6 +821,7 @@ mod tests {
             assert_ne!(o.key(), Overlay::HdrRange.key());
         }
         assert!(Overlay::ClipShadows.per_pixel() && !Overlay::SharpenDetail.per_pixel());
+        assert!(Overlay::ClipWarnings.is_clipping() && Overlay::ClipWarnings.per_pixel());
         // All Masks and Depth round trip beside them, and a window render draws All Masks as it does a mask
         let both = [Overlay::AllMasks { view: MaskView::Color, color: [1, 2, 3], opacity: 40 }, Overlay::Depth];
         for o in both.into_iter().chain(all) {
@@ -794,5 +829,14 @@ mod tests {
             assert_eq!(Overlay::from_parts(k, v), o);
         }
         assert!(both[0].per_pixel() && !both[1].per_pixel());
+    }
+
+    #[test]
+    fn clip_warnings_paint_clipped_pixels_only() {
+        let data = vec![[255, 255, 255, 255], [0, 0, 0, 255], [128, 128, 128, 255], [255, 40, 0, 255], [10, 0, 30, 255]];
+        let mut img = Rgba8 { width: 5, height: 1, data };
+        super::clip_warnings(&mut img);
+        let rgb: Vec<[u8; 3]> = img.data.iter().map(|p| [p[0], p[1], p[2]]).collect();
+        assert_eq!(rgb, [super::CLIP_HIGH, super::CLIP_LOW, [128, 128, 128], super::CLIP_HIGH, super::CLIP_LOW]);
     }
 }

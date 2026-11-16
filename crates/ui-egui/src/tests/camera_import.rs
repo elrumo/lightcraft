@@ -170,9 +170,14 @@ fn names(d: &crate::import::ImportDialog) -> Vec<&str> {
 /// The whole flow, at a size: the camera's files arrive while the review is open and are listed
 /// newest day first under a heading per day; a day's box unchecks it; Import copies the checked
 /// files off the camera and imports them; opened again, those are greyed out in the library.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn camera_import_at(size: [f32; 2], tag: &str) {
     let root = base(tag);
     let (mut h, cam) = app_with_camera(&root, size);
+    // (the smallest thumbnails: with the Thumbnail size slider above it, the review's grid in a
+    // window this size has room for both days' headings only at that size)
+    let r = h.request("engine.execute", json!({"command": "view.importThumbSize", "params": {"size": crate::import::thumb_size(0.0)}}), T);
+    assert_eq!(r["ok"], true, "{r}");
     let camera = HostCamera { id: "cam1".into(), name: "Canon PowerShot V1".into(), kind: CameraKind::Camera };
     {
         let mut c = cam.borrow_mut();

@@ -77,6 +77,12 @@ const FIELDS: &[(&str, usize)] = &[
     ("GRAIN_COARSE", 1),
     ("GRAIN_SEED", 1),
     ("GRAIN_STYLE", 1),
+    // 0 = the noise styles (GRAIN_AMT .. GRAIN_STYLE), 1 = crystal layers (process V8 on, the film style)
+    ("GRAIN_MODEL", 1),
+    // crystal grain: amplitude, footprint (tile px per output px), the tori's tables in `aux`
+    ("GRAIN_K", 1),
+    ("GRAIN_FOOT", 1),
+    ("GRAIN_SAT", 2),
     ("GRAIN_AFF", 6),
     ("REFINE_SAT", 1),
     ("CALIB", 1),
@@ -265,6 +271,8 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     p.f("SKIN", ops.skin);
     p.fs("BANDH", lightcraft_pipeline::colorops::band_hues());
 
+    // (always: the window's place in the whole output is also where the 8-bit dither's pattern starts)
+    p.fs("VIG_VIEW", &fp.view);
     if let Some(v) = &fp.vig {
         p.b("VIG", true);
         p.f("VIG_AMOUNT", v.amount);
@@ -273,7 +281,6 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
         p.f("VIG_ASPECT_MIX", v.aspect_mix);
         p.f("VIG_POWER", v.power);
         p.f("VIG_HL", v.highlights);
-        p.fs("VIG_VIEW", &fp.view);
         p.u(
             "VIG_STYLE",
             match v.style {
@@ -316,6 +323,22 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
         p.b("PROOF_DEST_WARN", pp.dest_warning);
         p.b("PROOF_DISP_WARN", pp.display_warning);
     }
+    if let Some(g) = &fp.crystal {
+        // the crystal grain's tables follow `aux` on the GPU without being part of it: they stay
+        // resident between renders (`Gpu::grain_tables`) and the render copies them in
+        p.b("GRAIN", true);
+        p.u("GRAIN_MODEL", 1);
+        p.f("GRAIN_K", g.k);
+        p.f("GRAIN_FOOT", g.foot);
+        let mut off = aux.len();
+        if let Some(i) = index("GRAIN_SAT") {
+            for (slot, sat) in p.0.iter_mut().skip(i).take(2).zip(&g.tile.sats) {
+                *slot = off as u32;
+                off += sat.len();
+            }
+        }
+        grain_affine(&mut p, fp);
+    }
     if let Some((amt, cell, coarse, seed, style)) = fp.grain {
         p.b("GRAIN", true);
         p.f("GRAIN_AMT", amt);
@@ -330,10 +353,15 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
                 GrainStyle::Color => 2,
             },
         );
-        let long = fp.ow.max(fp.oh);
-        let [a, b, c, d, e, f] = fp.out_to_norm.0;
-        let (kx, ky) = (fp.ow / long, fp.oh / long);
-        p.fs("GRAIN_AFF", &[(a * kx) as f32, (b * ky) as f32, (c * kx) as f32, (d * ky) as f32, (e * kx) as f32, (f * ky) as f32]);
+        grain_affine(&mut p, fp);
     }
     (p.0, aux)
+}
+
+/// Output pixel → grain position (fractions of the long edge), as the CPU's `finish` places grain.
+fn grain_affine(p: &mut Block, fp: &FinishParams) {
+    let long = fp.ow.max(fp.oh);
+    let [a, b, c, d, e, f] = fp.out_to_norm.0;
+    let (kx, ky) = (fp.ow / long, fp.oh / long);
+    p.fs("GRAIN_AFF", &[(a * kx) as f32, (b * ky) as f32, (c * kx) as f32, (d * ky) as f32, (e * kx) as f32, (f * ky) as f32]);
 }

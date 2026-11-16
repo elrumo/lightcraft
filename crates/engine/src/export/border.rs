@@ -1,6 +1,6 @@
 use super::encoding::srgb8_in;
 use super::options::MAX_ENLARGED_PIXELS;
-use super::*;
+use super::{DeepImage, DeepSamples, Deserialize, OutputSpace, Rgba8, Serialize};
 
 /// A plain frame around an exported photo: the picture grows by the border on every side, so the photo keeps the size it
 /// was exported at. Drawn last, after output sharpening and the watermark (which stay on the photo).

@@ -29,6 +29,7 @@ pub mod blemish;
 pub mod camera_look;
 pub mod colorize;
 pub mod colorops;
+pub mod crystal;
 pub mod cull;
 pub mod curve;
 pub mod dust;
@@ -38,17 +39,24 @@ pub mod finish;
 pub mod geometry;
 pub mod glow;
 pub mod inpaint;
+// upstream LightCraft's mask-focused Lens Blur: its types and helpers (the fork's depth Lens Blur, [`lensblur`], renders)
+pub mod lens_blur;
 pub mod lensblur;
 pub mod local;
 pub mod local_tone;
 pub mod lut;
+pub mod mask_space;
 pub mod masks;
+pub mod nrc_joint;
+#[cfg(test)]
+mod nrc_joint_reference;
 pub mod optics;
 pub mod output;
 pub mod profiles;
 pub mod redeye;
 pub mod relight;
 pub mod spots;
+pub mod straighten;
 pub mod tone;
 pub mod transform;
 pub mod upright;
@@ -188,6 +196,9 @@ pub struct RenderRequest {
     /// Output must fit in `max_w × max_h` (aspect preserved).
     pub max_w: usize,
     pub max_h: usize,
+    /// The box is the final export size, already fitted against the full-resolution photo.
+    /// Reduced decode proxies must not fit it a second time.
+    pub exact_size: bool,
     pub quality: Quality,
     /// Show the crop frame's content only (true) or the whole uncropped image (crop tool active).
     pub apply_crop: bool,
@@ -229,11 +240,48 @@ impl PixelWindow {
     }
 }
 
+/// The longest output side a render may be asked for (TIFF/PNG/JPEG all fit within it).
+pub const MAX_OUTPUT_SIDE: usize = 65_535;
+/// The most output pixels a render may be asked for (the box it fits into, ≈ 1.07 Gpx).
+pub const MAX_OUTPUT_PIXELS: usize = 1 << 30;
+
+/// Rejects an output box past [`MAX_OUTPUT_SIDE`] or [`MAX_OUTPUT_PIXELS`] before anything is
+/// sized from it.
+pub fn check_output_size(max_w: usize, max_h: usize) -> Result<(), String> {
+    let pixels = max_w.checked_mul(max_h);
+    if max_w > MAX_OUTPUT_SIDE || max_h > MAX_OUTPUT_SIDE || pixels.is_none_or(|n| n > MAX_OUTPUT_PIXELS) {
+        return Err(format!("output size {max_w}×{max_h} is too large (at most {MAX_OUTPUT_SIDE} px per side and {MAX_OUTPUT_PIXELS} pixels)"));
+    }
+    Ok(())
+}
+
+/// Fails when a visible brush mask holds more dabs than its budget ([`masks::MAX_STROKE_DABS`]) at this render's
+/// output size: the render would otherwise skip its later strokes and show a wrong mask.
+pub fn check_brush_budget<'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest) -> Result<(), String> {
+    let brush =
+        |m: &lightcraft_develop::Mask| m.visible && m.components.iter().any(|c| matches!(c.shape, lightcraft_develop::MaskShape::Brush { .. }));
+    if !s.masks.iter().any(brush) {
+        return Ok(());
+    }
+    let p = plan(src, info, s, req);
+    for m in s.masks.iter().filter(|m| brush(m)) {
+        for c in &m.components {
+            if let lightcraft_develop::MaskShape::Brush { strokes } = &c.shape
+                && masks::brush_over_budget(strokes, &p.frame.for_mask(m.on_photo), p.w, p.h)
+            {
+                return Err(format!("mask \"{}\": the brush strokes hold more than {} dabs at this size", m.name, masks::MAX_STROKE_DABS));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl RenderRequest {
     pub fn fit(max_w: usize, max_h: usize) -> Self {
         Self {
             max_w,
             max_h,
+            exact_size: false,
             quality: Quality::Full,
             apply_crop: true,
             overlay: Overlay::None,
@@ -243,6 +291,20 @@ impl RenderRequest {
             window: None,
             display: None,
         }
+    }
+
+    /// Render to a final size calculated from the original photo, even from a rounded proxy.
+    pub fn exact(width: usize, height: usize) -> Self {
+        Self { exact_size: true, ..Self::fit(width, height) }
+    }
+
+    /// The output size for `frame`. An exact box stands against a proxy that only rounds the photo's
+    /// shape differently; a source of another shape (a raw's embedded preview) is fitted, not stretched.
+    fn size(&self, frame: &geometry::Frame) -> (usize, usize) {
+        let fitted = frame.fit(self.max_w, self.max_h);
+        let exact = (self.max_w.max(1), self.max_h.max(1));
+        let near = |a: usize, b: usize| a.abs_diff(b) <= b / 64 + 1;
+        if self.exact_size && near(fitted.0, exact.0) && near(fitted.1, exact.1) { exact } else { fitted }
     }
 }
 
@@ -282,7 +344,7 @@ pub(crate) struct Prepared {
 
 /// Output size for a source of `src_w × src_h` under `s`, fitting `max_w × max_h`.
 pub fn output_size(src_w: usize, src_h: usize, s: &DevelopSettings, req: &RenderRequest) -> (usize, usize) {
-    geometry::Frame::new(src_w, src_h, s, req.apply_crop).fit(req.max_w, req.max_h)
+    req.size(&geometry::Frame::new(src_w, src_h, s, req.apply_crop))
 }
 
 /// Size of the cropped output of a `src_w × src_h` source under `s` at the source's own resolution
@@ -297,6 +359,10 @@ pub fn frame_for<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, s: &Devel
     let mut frame = geometry::Frame::with_lens(src.width(), src.height(), s, apply_crop, info.lens.as_ref());
     if s.optics.remove_ca && s.section_enabled("optics") {
         frame.add_lateral_ca(optics::estimate_lateral_ca(src));
+        if apply_crop && !s.crop.expand {
+            // The estimated CA moves the colour planes too: keep the crop inside every one of them.
+            frame.constrain_to_image(s.constrains_crop());
+        }
     }
     // (a Generative Expand fill stored in the plain light gets the Camera Matching look the source got)
     if let (Some(ex), Some(m)) = (frame.expand.as_mut(), camera_look_of(info, s)) {
@@ -424,6 +490,8 @@ struct CacheEntry {
     geo: u64,
     sampled: Arc<Rgb32f>,
     lin: Option<(u64, Arc<Rgb32f>)>,
+    /// The joint colour NR's noise model of the whole frame ([`colour_noise`]), keyed by [`Plan::noise_key`].
+    colour_noise: Option<(u64, nrc_joint::JointNoise)>,
     planes: local::Planes,
     /// Alphas of the last render's masks (kept across changes to the image: those of masks that
     /// don't read it stay valid).
@@ -447,6 +515,8 @@ pub struct Plan<'a> {
     pub px_per_long: f64,
     /// Long edge of the source buffer (px).
     pub src_long: usize,
+    /// Long edge of the original photo, shared by sharpening and noise reduction.
+    pub native_long: usize,
     /// Output pixels per pixel of the original photo ([`SourceInfo::native_long`], else the source
     /// buffer), at most 1: the scale of noise reduction, whose radii are in the original's pixels.
     pub detail_scale: f32,
@@ -462,6 +532,9 @@ pub struct Plan<'a> {
     pub base_key: u64,
     /// Glow ([`glow`]), when it adds anything.
     pub glow: Option<glow::Setup>,
+    /// Key of the whole frame's noise model for the joint colour NR ([`colour_noise`]): what it is
+    /// measured after (everything before the colour NR), not the colour NR's own settings.
+    pub noise_key: u64,
     /// Red eye / pet eye corrections with their detected pupils, in output pixels.
     pub eyes: Vec<redeye::EyeK>,
     /// The whole frame's dehaze airlight, for a windowed render (which can't see the whole frame).
@@ -489,6 +562,8 @@ pub struct Plan<'a> {
     pub origin: [usize; 2],
     /// The whole output frame's size (a window's is smaller).
     pub full: [usize; 2],
+    /// The whole frame and its output size (a windowed render's [`Self::frame`] is part of it).
+    pub full_frame: (geometry::Frame, usize, usize),
 }
 
 /// `win` grown by `m` pixels on every side, inside a `full_w × full_h` frame.
@@ -520,7 +595,7 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
     }
     let s = &*settings;
     let frame = frame_for(src, info, s, req.apply_crop);
-    let (full_w, full_h) = frame.fit(req.max_w, req.max_h);
+    let (full_w, full_h) = req.size(&frame);
     // sizes and scale are those of the whole output; a window only narrows what is drawn
     let px_per_long = frame.px_per_long(full_w);
     let mattes = lensblur::mattes_for(s, info.mattes.as_ref());
@@ -531,6 +606,10 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
     let colorize = colorize::Setup::new(s);
     // (the Crop tool's uncropped view shows the photo, not the frame it sits in)
     let film = film::Setup::new(s, info.film_salt, req.space, req.apply_crop);
+    let src_long = src.width().max(src.height());
+    // (an original reported smaller than the source is the source)
+    let native_long = info.native_long.unwrap_or(0).max(src_long).max(1);
+    let detail_scale = local::detail_scale(px_per_long, native_long);
     let mut fixed_air = None;
     // (the key is the whole frame's, read before a window narrows the frame)
     let shadow_key = (s.section_enabled("light") && s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.shadows != 0.0)).then(|| {
@@ -540,6 +619,7 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
     });
     let mut keep = None;
     let mut origin = [0, 0];
+    let full_frame = (frame.clone(), full_w, full_h);
     let (frame, w, h) = match req.window {
         Some(win) => {
             let win = win.clamped(full_w, full_h);
@@ -560,6 +640,11 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
                 Some(g) => grown(work, g.reach(full_w.max(full_h)), full_w, full_h),
                 None => work,
             };
+            // (and so does the joint colour NR: its diffusion reads a chain of neighbours across its scales)
+            let work = match local::nrc_params(s, detail_scale).filter(|_| local::joint_colour_nr(s)) {
+                Some(params) => grown(work, params.passes.last().map_or(0, |p| (6.0 * p.sigma).ceil() as usize).saturating_add(4), full_w, full_h),
+                None => work,
+            };
             // (a film frame shrinks the whole photo into its window: the window is cut from the whole output.
             // ponytail: maps the window back to the photo if a zoomed engine render with a frame ever needs to be fast)
             let work = match &film {
@@ -574,10 +659,6 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
         }
         None => (frame, full_w, full_h),
     };
-    let src_long = src.width().max(src.height());
-    // (an original reported smaller than the source is the source)
-    let native_long = info.native_long.unwrap_or(0).max(src_long).max(1);
-    let detail_scale = local::detail_scale(px_per_long, native_long);
     let geo = hash_of((format!("{frame:?}"), w, h));
     let (wb_t, wb_tint) = local::effective_wb(info, s);
     let eyes = redeye::resolve(src, &s.red_eye, s.orientation, &frame, w, h, px_per_long);
@@ -604,7 +685,11 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
         pre_nr_key,
         [d.nr_luminance, d.nr_detail, d.nr_contrast, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits),
         detail_scale.to_bits(),
+        // the process picks the colour filter (Update to Current Process, undo)
+        local::joint_colour_nr(s),
     ));
+    // the joint colour NR's noise model is measured after everything before the colour NR (the glow comes after it)
+    let noise_key = hash_of((pre_nr_key, [d.nr_luminance, d.nr_detail, d.nr_contrast].map(f64::to_bits), detail_scale.to_bits()));
     // the glow is added after noise reduction: with one, the image the planes are made from is another (and every key is
     // as it was without one)
     let (pre_nr_key, lin_key) = match &glow {
@@ -618,11 +703,13 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
         h,
         px_per_long,
         src_long,
+        native_long,
         detail_scale,
         geo,
         lin_key,
         pre_nr_key,
         base_key,
+        noise_key,
         glow,
         eyes,
         fixed_air,
@@ -636,7 +723,70 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
         film,
         origin,
         full: [full_w, full_h],
+        full_frame,
     }
+}
+
+/// The joint colour NR's noise model of the whole frame, measured on fixed tiles of it
+/// ([`nrc_joint::tiles`]) so that every window of it is filtered alike. The tiles are resampled,
+/// tone-mapped, white-balanced (and colorized) and luminance-denoised like the frame; the retouching
+/// and defringing are left out. `None` when the joint colour NR is off, or when the render is the
+/// whole frame and that is a single tile: the noise is then measured on the image itself, as the CPU
+/// and the GPU do.
+pub fn colour_noise<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, p: &Plan<'_>) -> Option<nrc_joint::JointNoise> {
+    let s = &*p.settings;
+    if !local::joint_colour_nr(s) || local::nrc_params(s, p.detail_scale).is_none() {
+        return None;
+    }
+    let (full, fw, fh) = &p.full_frame;
+    let windows = nrc_joint::tiles(*fw, *fh);
+    if (p.w, p.h) == (*fw, *fh) && windows.len() == 1 {
+        return None;
+    }
+    let t = profiling().then(web_time::Instant::now);
+    let (lum, _) = local::nr_params(s, p.detail_scale);
+    // the source oriented and prefiltered once for all tiles (a source in half floats widened for it:
+    // ponytail: the whole picture, once per noise model; read the tiles' parts if a zoomed half-float view gets slow)
+    let src = src.into().to_f32();
+    let sampled = full.sample_windows(&src, *fw, *fh, &windows);
+    let tiles: Vec<Rgb32f> = windows
+        .into_iter()
+        .zip(sampled)
+        .map(|(t, mut img)| {
+            let frame = if (t.w, t.h) == (*fw, *fh) { full.clone() } else { full.window(*fw, *fh, t) };
+            let tile = Plan {
+                settings: Cow::Borrowed(s),
+                frame,
+                w: t.w,
+                h: t.h,
+                glow: None,
+                eyes: Vec::new(),
+                fixed_air: None,
+                keep: None,
+                mattes: None,
+                blur: None,
+                depth_look: None,
+                relight: None,
+                colorize: None,
+                film: None,
+                origin: [t.x, t.y],
+                full_frame: p.full_frame.clone(),
+                ..*p
+            };
+            local_tone::apply(&mut img, info, &tile);
+            local::white_balance(&mut img, info, s);
+            if let Some(c) = &p.colorize {
+                colorize::apply(&mut img, c, &tile.frame);
+            }
+            local::apply_nr(&mut img, lum, None);
+            img
+        })
+        .collect();
+    let noise = nrc_joint::noise_of_tiles(&tiles);
+    if let Some(t) = t {
+        eprintln!("    nr colour noise model ({} tiles): {:.0} ms", tiles.len(), t.elapsed().as_secs_f64() * 1e3);
+    }
+    Some(noise)
 }
 
 /// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal, Colorize).
@@ -784,13 +934,17 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     };
     lap("sample", &mut t);
 
+    let mut colour_noise = cached.as_ref().and_then(|e| e.colour_noise).filter(|(k, _)| *k == plan.noise_key);
     let base = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == base_key) {
         Some((_, img)) => img,
         None => {
             // Without a cache the resampled buffer is ours: work on it in place.
             let mut img = if shared.is_some() { (*sampled).clone() } else { Arc::unwrap_or_clone(sampled.clone()) };
             lin_cpu(&mut img, info, &plan);
-            local::denoise(&mut img, s, detail_scale);
+            if colour_noise.is_none() {
+                colour_noise = self::colour_noise(src_img, info, &plan).map(|n| (plan.noise_key, n));
+            }
+            local::denoise(&mut img, s, detail_scale, colour_noise.as_ref().map(|c| &c.1));
             after_denoise(&mut img, &plan, req.quality == Quality::Draft);
             Arc::new(img)
         }
@@ -824,10 +978,10 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
     prep.key = plan.shadow_key;
     lap("prepare", &mut t);
     if let Some((a, c)) = shared {
-        c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((base_key, base)), planes, masks: alphas });
+        c.put(CacheEntry { src: a.clone(), geo, sampled, lin: Some((base_key, base)), colour_noise, planes, masks: alphas });
     }
     if req.depth != OutputDepth::U8 {
-        let mut deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth, req.proof);
+        let mut deep = finish::finish_deep(&prep, s, frame, info, req.space, req.depth, req.proof, req.quality == Quality::Draft);
         if let Some(f) = &plan.film {
             f.apply_deep(&mut deep, plan.origin, plan.full);
         }
@@ -840,7 +994,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         lap("finish (deep)", &mut t);
         return Rendered { image, histogram, deep: Some(deep) };
     }
-    let mut image = finish::finish(&prep, s, frame, info, req.space, req.display.as_ref(), req.proof);
+    let mut image = finish::finish(&prep, s, frame, info, req.space, req.display.as_ref(), req.proof, req.quality == Quality::Draft);
     // Generative Expand: area past the photo with nothing generated yet is transparent
     expand::mark_missing(&mut image, frame);
     lap("finish", &mut t);
@@ -983,6 +1137,28 @@ pub(crate) fn for_rows<T: Send>(data: &mut [T], w: usize, f: impl Fn(usize, &mut
     par_rows(data, w, f)
 }
 
+/// `plan` must keep the output box the caller (export) already decided instead of
+/// re-fitting it: `Frame::fit` passes a box through unchanged only when it matches
+/// the *decoded* frame's aspect within rounding slack (geometry.rs:189-191), so a
+/// reduced source whose aspect rounds differently (a 149 x 100 proxy of a 240 x 160
+/// photo) makes `plan` return a size a pixel off from the box (issue #1042).
+#[cfg(test)]
+#[test]
+fn plan_preserves_matching_box_size() {
+    let src = Rgb32f::from_fn(149, 100, |_, _| [0.5; 3]);
+    let info = SourceInfo { native_long: Some(240), ..SourceInfo::default() };
+    let s = DevelopSettings::default();
+    let fitted = plan(&src, &info, &s, &RenderRequest::fit(240, 160));
+    assert_eq!((fitted.w, fitted.h), (238, 160));
+    let req = RenderRequest::exact(240, 160);
+    let p = plan(&src, &info, &s, &req);
+    assert_eq!((p.w, p.h), (240, 160));
+    // an embedded preview of another shape keeps its shape: an exact box must not stretch it
+    let preview = Rgb32f::from_fn(120, 100, |_, _| [0.5; 3]);
+    let p = plan(&preview, &info, &s, &req);
+    assert_eq!((p.w, p.h), (192, 160));
+}
+
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -995,6 +1171,8 @@ mod tests_geometry;
 mod tests_hdr;
 #[cfg(test)]
 mod tests_local;
+#[cfg(test)]
+mod tests_mask_geometry;
 #[cfg(test)]
 mod tests_nr_scale;
 #[cfg(test)]

@@ -157,7 +157,7 @@ fn lens_profile(s: &mut Session, p: &Value) -> Result<Value> {
 mod download {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use super::*;
+    use super::{Arc, Outcome, PoisonError, Result, Session, Value, bad, json, profile_db, store};
     use crate::activity::{Cancel, Unit};
     use crate::cmd::str_param;
 

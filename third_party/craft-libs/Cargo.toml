@@ -1,0 +1,38 @@
+# The craft-libs crates this fork patches (storytold/craft-libs at c7a872e2f24b2c0d9aa78f25c83f342be26fcad3),
+# with the fork's own decoder and metadata work ported on top. LightCraft's root Cargo.toml points the
+# craft-libs git dependencies of these four crates here through [patch]; see README.md.
+[workspace]
+resolver = "3"
+members = ["crates/raw", "crates/tiff", "crates/heif", "crates/metadata"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+repository = "https://github.com/storytold/craft-libs"
+
+[workspace.dependencies]
+thiserror = "2"
+craft-crw = { git = "https://github.com/storytold/craft-libs", rev = "c7a872e2f24b2c0d9aa78f25c83f342be26fcad3" }
+craft-heif = { path = "crates/heif" }
+craft-raw = { path = "crates/raw" }
+craft-tiff = { path = "crates/tiff" }
+craft-metadata = { path = "crates/metadata" }
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+serde_json = "1"
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(craft_pdf_unicode_fixtures)"] }
+
+[workspace.lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+unused_workspace_dependencies = "allow"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"

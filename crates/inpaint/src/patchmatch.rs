@@ -368,6 +368,7 @@ pub fn complete(w: usize, h: usize, ch: usize, img: &[f32], hole: &[bool], p: &C
 /// [`complete`] that can be cancelled (checked per EM iteration, PatchMatch pass and row band)
 /// (`cancelled` is polled per EM iteration, PatchMatch pass and row band): `Err(Cancelled)` once it
 /// returned `true`. `Ok(None)` also for mismatched buffer sizes or `ch == 0`.
+#[allow(clippy::cognitive_complexity)]
 pub fn complete_with(
     w: usize,
     h: usize,

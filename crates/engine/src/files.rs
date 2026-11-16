@@ -8,10 +8,12 @@ use lightcraft_catalog::{MediaKind, Meta};
 use lightcraft_color::cct::xy_to_temp_tint;
 use lightcraft_geom::Orientation;
 use lightcraft_pipeline::SourceInfo;
+use lightcraft_raster::Rgb32f;
 use lightcraft_raster::resample::{Filter, fit};
-use lightcraft_raster::{Rgb32f, SourcePixels};
 
-use crate::media::{CameraCrop, Catalogued, CompactLoader, DenoiseSpec, FileLoader, FileProbe, PairLoader, PreviewLoader, ProbeInfo, ReducedLoader};
+use lightcraft_raw::dcp::DcpProfile;
+
+use crate::media::{DenoiseSpec, FileLoader, FileProbe, PairLoader, PreviewLoader, ProbeInfo, ReducedLoader};
 
 mod colour;
 mod fs;
@@ -21,25 +23,20 @@ mod probe;
 
 pub use colour::bin_factor;
 pub(crate) use colour::clipped_white;
-#[cfg(target_arch = "wasm32")]
-pub(crate) use fs::load_video;
 pub use fs::{READ_WHOLE_MAX, fs_hooks, fs_pair_loader, fs_reduced_loader, read_file};
 #[cfg(test)]
 use fs::{quick_image_srgb, read_file_from};
 pub(crate) use load::{DngWhite, WbScaleOf, dng_tone_curve};
-pub use load::{
-    load_bytes, load_bytes_for, load_vec, load_vec_compact_for, load_vec_for, load_vec_pair, load_vec_pair_for, load_vec_reduced,
-    load_vec_reduced_for,
-};
+pub use load::{load_bytes, load_bytes_decoded, load_bytes_for, load_bytes_with, load_vec, load_vec_compact, load_vec_pair, load_vec_reduced};
 #[cfg(test)]
 use preview::PLAN_PREFIX;
 pub(crate) use preview::decode_raw_preview;
 pub use preview::{PreviewRead, embedded_preview_srgb, fs_preview_loader, load_embedded_preview, preview_window};
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) use probe::load_video_poster;
+#[cfg(not(target_arch = "wasm32"))]
 pub use probe::probe_video_at;
 pub use probe::{at_time, embedded_lens, is_video_file, probe_bytes, probe_video, split_time};
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use probe::{load_video, load_video_poster};
 #[cfg(test)]
 use probe::{meta_of, preview_reason};
 
@@ -114,6 +111,34 @@ impl CameraColourModel<'_> {
         };
         self.hue_sat.map_or(rgb, |h| h.apply(rgb)).map(|v| v.max(0.0))
     }
+}
+
+/// Remove Hot Pixels leaves a raw alone when more than this share of its photosites would be replaced (Settings ▸
+/// Performance ▸ Hot pixel limit, `app.hotPixelLimit`), as `f64` bits. Process-wide, like the GPU switch.
+static HOT_PIXEL_LIMIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(lightcraft_raw::HOT_PIXEL_MAX_SHARE.to_bits());
+
+/// The share of a raw's photosites Remove Hot Pixels may replace (0..1).
+pub fn hot_pixel_limit() -> f64 {
+    f64::from_bits(HOT_PIXEL_LIMIT.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Set [`hot_pixel_limit`]; false (nothing changed) unless `share` is a new value in 0..=1. Sources decoded before
+/// keep the old limit: the caller forgets them ([`crate::media::MediaCache::clear_sources`]).
+pub fn set_hot_pixel_limit(share: f64) -> bool {
+    if !(0.0..=1.0).contains(&share) {
+        return false;
+    }
+    HOT_PIXEL_LIMIT.swap(share.to_bits(), std::sync::atomic::Ordering::Relaxed) != share.to_bits()
+}
+
+/// What [`hot_pixel_limit`] adds to the render cache keys of `settings`: nothing at the default limit or when they
+/// don't remove hot pixels, so those renders stay valid whatever the limit.
+pub fn hot_pixel_key(settings: &lightcraft_develop::DevelopSettings) -> u64 {
+    let limit = hot_pixel_limit();
+    if !settings.removes_hot_pixels() || limit.to_bits() == lightcraft_raw::HOT_PIXEL_MAX_SHARE.to_bits() {
+        return 0;
+    }
+    limit.to_bits().wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(29)
 }
 
 #[cfg(test)]

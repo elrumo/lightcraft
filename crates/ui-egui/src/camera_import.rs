@@ -125,7 +125,7 @@ pub fn system_cameras(ctx: &egui::Context, staging: PathBuf) -> Option<Box<dyn C
 /// [`CameraHost`] over `lightcraft-capture`.
 #[cfg(any(target_os = "ios", target_os = "macos"))]
 mod system {
-    use super::*;
+    use super::{Arc, AtomicUsize, CameraFile, CameraHost, CameraKind, CopyDone, HostCamera, HostContents, HostCopied, HostTransfer, Path, PathBuf};
 
     pub struct Cameras {
         pub staging: PathBuf,

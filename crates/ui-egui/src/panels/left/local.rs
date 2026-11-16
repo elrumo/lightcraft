@@ -1,6 +1,6 @@
 use super::folders::folder_tree;
-use super::rows::row;
-use super::*;
+use super::rows::Row;
+use super::{Icon, LibrarySource, LightcraftApp, SidebarSection, json, register};
 
 /// Local's folders as they stand this frame, and the folder being browsed among them.
 pub(super) struct LocalNow {
@@ -19,11 +19,10 @@ pub(super) fn local_now(app: &mut LightcraftApp, ui: &egui::Ui) -> Option<LocalN
     if !SidebarSection::Local.available() || cfg!(target_os = "ios") {
         return None;
     }
-    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
-    let mut builtin: Vec<(String, String)> = Vec::new();
-    if !home.is_empty() {
-        for (name, sub) in lightcraft_apphost::local::BUILTIN {
-            let p = lightcraft_apphost::local::builtin_path(&home, sub);
+    let home = home_folder();
+    let mut builtin = app.services.local_places.clone().unwrap_or_default();
+    if app.services.local_places.is_none() {
+        for (name, p) in default_places(&home) {
             // (checked off the UI thread: a home folder can be on a network share)
             if fs_cached(ui, "is-dir", &p, 5.0, |p| std::path::Path::new(p).is_dir()) == Some(true) {
                 builtin.push((crate::i18n::tr(name).to_string(), p));
@@ -35,11 +34,53 @@ pub(super) fn local_now(app: &mut LightcraftApp, ui: &egui::Ui) -> Option<LocalN
     // a hidden built-in place keeps its name (Home, not the user's folder name)
     let name_of = |path: &str| builtin.iter().find(|(_, p)| same_folder(p, path)).map_or_else(|| folder_label(path), |(n, _)| n.clone());
     let hidden = app.ui.hidden_locations.iter().map(|h| (name_of(h), h.clone())).collect();
-    let places = local_places(builtin, &app.ui.local_roots, current.as_deref(), app.ui.local_browse_root.as_deref(), &app.ui.hidden_locations);
-    if current.is_some() {
+    let unlisted = current.as_deref().and_then(|path| fs_cached(ui, "unlisted-ancestors", path, 2.0, unlisted_ancestors));
+    let mut places = local_places_with_unlisted(
+        builtin,
+        &app.ui.local_roots,
+        current.as_deref(),
+        app.ui.local_browse_root.as_deref(),
+        &app.ui.hidden_locations,
+        unlisted.as_deref().unwrap_or(&[]),
+    );
+    if current.is_some() && unlisted.is_none() {
+        places.owner = None;
+    }
+    if current.is_some() && unlisted.is_some() {
         app.ui.local_browse_root = places.browse_root.clone();
     }
     Some(LocalNow { places, current, hidden })
+}
+
+/// The user's home folder, the engine's own reading of it (so the menu and the rename/move guard
+/// agree); empty when the host has none.
+fn home_folder() -> String {
+    lightcraft_engine::library::home_folder().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// Local's built-in places under `home` as (English name, path), in order. The names are keys for
+/// `tr`, never folder names: the folders on disk keep their own (Pictures, not "Bilder").
+fn default_places(home: &str) -> Vec<(&'static str, String)> {
+    if home.is_empty() {
+        return Vec::new();
+    }
+    lightcraft_apphost::local::BUILTIN.into_iter().map(|(name, sub)| (name, lightcraft_apphost::local::builtin_path(home, sub))).collect()
+}
+
+/// Whether `path` is one of Local's built-in places (the home folder, Pictures, Desktop,
+/// Downloads, or a place the host listed itself). They are the computer's own folders, shown under
+/// a translated label, so Local offers no Rename or Move for them.
+pub(super) fn is_builtin_place(app: &LightcraftApp, path: &str) -> bool {
+    builtin_place_in(app.services.local_places.as_deref(), &home_folder(), path)
+}
+
+/// [`is_builtin_place`] for the places the host listed (`injected`, which replace the defaults) or,
+/// without them, the ones under `home`.
+fn builtin_place_in(injected: Option<&[(String, String)]>, home: &str, path: &str) -> bool {
+    match injected {
+        Some(places) => places.iter().any(|(_, p)| same_folder(p, path)),
+        None => default_places(home).iter().any(|(_, p)| same_folder(p, path)),
+    }
 }
 
 /// Local's rows: each place as a folder tree, Browse Folder…, and the way back for hidden places.
@@ -50,8 +91,7 @@ pub(super) fn local_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, now: &Local
         let reveal = local.owner == Some(i);
         folder_tree(app, ui, path, name, path, 0.0, current, reveal, transient);
     }
-    if app.services.pick_folder.is_some() && row(app, ui, "local:browse", Icon::Plus, crate::i18n::tr("Browse Folder…"), None, false, 0.0).clicked()
-    {
+    if app.services.pick_folder.is_some() && Row::new("local:browse", Icon::Plus, crate::i18n::tr("Browse Folder…")).show(app, ui).clicked() {
         let picked = app.services.pick_folder.as_mut().and_then(|f| f());
         if let Some(path) = picked {
             match app.run("library.browse", json!({"path": path})) {
@@ -69,7 +109,8 @@ pub(super) fn local_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, now: &Local
     let hidden = now.hidden.len();
     if hidden > 0 {
         let label = crate::i18n::tr_format!("Show {hidden} hidden location{}", if hidden == 1 { "" } else { "s" }, hidden = hidden);
-        let resp = row(app, ui, "local:restoreHidden", Icon::Folder, &label, None, false, 0.0)
+        let resp = Row::new("local:restoreHidden", Icon::Folder, &label)
+            .show(app, ui)
             .on_hover_text(crate::i18n::tr("Put the locations you removed from Local back (no files change)"));
         if let [(_, only)] = now.hidden.as_slice() {
             if resp.clicked() {
@@ -101,22 +142,31 @@ fn hidden_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, hidden: &[(String, St
     }
 }
 
-pub(crate) use lightcraft_apphost::local::{LocalPlaces, folder_label, local_places, same_folder};
+pub(crate) use lightcraft_apphost::local::{LocalPlaces, folder_label, same_folder};
+use lightcraft_apphost::local::{local_places_with_unlisted, unlisted_ancestors};
 
 /// The subfolders of `path` (not hidden ones), sorted; listed on a worker thread at most every
 /// 2 s per folder (empty until the first listing).
-pub(super) fn subfolders(ui: &egui::Ui, path: &str) -> Vec<(String, String)> {
-    fs_cached(ui, "subfolders", path, 2.0, lightcraft_apphost::local::list_subfolders).unwrap_or_default()
+pub(super) fn subfolders(ui: &egui::Ui, path: &str) -> std::sync::Arc<Vec<(String, String)>> {
+    fs_cached(ui, "subfolders", path, 2.0, list_subfolders).unwrap_or_default()
 }
 
-/// How many [`fs_cached`] answers for `ctx` are being worked out right now. Rows appear (and
-/// the sidebar below them moves) when they land, so the headless driver counts them as pending
-/// work and waits for them before acting on widget positions.
+/// [`lightcraft_apphost::local::list_subfolders`], shared: the cache hands out a copy every frame.
+fn list_subfolders(path: &str) -> std::sync::Arc<Vec<(String, String)>> {
+    lightcraft_apphost::local::list_subfolders(path).into()
+}
+
+/// How many file-system answers for `ctx` are being worked out right now: [`fs_cached`]'s and the
+/// Missing Photos count's. Rows appear (and the sidebar below them moves) when they land, so the
+/// headless driver counts them as pending work and waits for them before acting on widget
+/// positions.
 pub(crate) fn fs_cached_running(ctx: &egui::Context) -> usize {
     fs_running_counter(ctx).load(std::sync::atomic::Ordering::Acquire)
 }
 
-fn fs_running_counter(ctx: &egui::Context) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+/// The counter behind [`fs_cached_running`]: a worker adds one before it starts and takes it off
+/// after its answer is stored.
+pub(super) fn fs_running_counter(ctx: &egui::Context) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<std::sync::Arc<std::sync::atomic::AtomicUsize>>(egui::Id::unique("fs-cached-running")).clone())
 }
 
@@ -180,6 +230,108 @@ pub(crate) fn fs_cached<T: Clone + Send + 'static>(ui: &egui::Ui, kind: &'static
 mod tests {
     use crate::widgets::elide_head;
 
+    #[test]
+    fn the_standard_places_under_a_home_are_built_in_and_nothing_else_is() {
+        let home = "/home/example";
+        for path in [home, "/home/example/", "/home/example/Pictures", "/home/example/Pictures/", "/home/example/Desktop", "/home/example/Downloads"]
+        {
+            assert!(super::builtin_place_in(None, home, path), "{path}");
+        }
+        for path in ["/home/example/Pictures/Trip", "/home/example/Documents", "/home/other", "/home", "Pictures"] {
+            assert!(!super::builtin_place_in(None, home, path), "{path}");
+        }
+        // no home: no standard places, and no relative ones
+        assert!(!super::builtin_place_in(None, "", "Pictures") && !super::builtin_place_in(None, "", ""));
+        // places the host listed replace the standard ones
+        let injected = vec![("Sandbox".to_string(), "/lightcraft-test/home".to_string())];
+        assert!(super::builtin_place_in(Some(&injected), home, "/lightcraft-test/home"));
+        assert!(!super::builtin_place_in(Some(&injected), home, "/home/example/Pictures"));
+    }
+
+    #[test]
+    fn injected_places_replace_the_machine_home() {
+        let places = vec![("Sandbox".to_string(), "/lightcraft-test/home".to_string())];
+        let services = crate::Services { local_places: Some(places.clone()), ..Default::default() };
+        let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::new(), services);
+        let mut view = crate::headless::HeadlessView::new();
+        let raw = crate::headless::HeadlessView::raw_input(egui::vec2(300.0, 200.0), 1.0, 0.0, vec![]);
+        view.run(raw, |ui| {
+            assert_eq!(super::local_now(&mut app, ui).unwrap().places.places, places);
+        });
+    }
+
+    #[test]
+    fn local_folder_rows_outside_the_viewport_skip_interactive_widgets() {
+        let mut app = crate::LightcraftApp::new(lightcraft_engine::Session::new(), crate::Services::default());
+        let mut view = crate::headless::HeadlessView::new();
+        for frame in 0..3 {
+            let raw = crate::headless::HeadlessView::raw_input(egui::vec2(300.0, 160.0), 1.0, frame as f64 / 60.0, vec![]);
+            view.run(raw, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for index in 0..500 {
+                        let path = format!("/lightcraft-test/folder-{index:04}");
+                        super::folder_tree(&mut app, ui, &path, &format!("Folder {index}"), &path, 0.0, None, false, false);
+                    }
+                });
+            });
+            let widgets = crate::widgets::take_registry(&view.ctx);
+            if frame == 2 {
+                let rows = widgets.iter().filter(|(id, _)| id.starts_with("source:local:")).count();
+                let toggles = widgets.iter().filter(|(id, _)| id.starts_with("folderToggle:")).count();
+                assert_eq!(rows, 500, "offscreen rows remain available for scrolling");
+                assert!((1..=10).contains(&toggles), "only visible rows build interactive widgets: {toggles}");
+            }
+        }
+    }
+
+    #[test]
+    fn browsing_below_an_unlisted_folder_has_a_session_root() {
+        let home = "/home/example";
+        let hidden = format!("{home}/.hidden");
+        let current = format!("{hidden}/Photos");
+        let builtin = || vec![("Home".into(), home.into())];
+        let unlisted = vec![hidden];
+        let first = super::local_places_with_unlisted(builtin(), &[], Some(&current), None, &[], &unlisted);
+        assert_eq!(first.browse_root.as_deref(), Some(current.as_str()));
+        assert_eq!(first.owner, Some(1));
+        let child = format!("{current}/Trip");
+        let next = super::local_places_with_unlisted(builtin(), &[], Some(&child), first.browse_root.as_deref(), &[], &unlisted);
+        assert_eq!(next.browse_root, first.browse_root);
+        assert_eq!(next.owner, Some(1));
+        let kept = super::local_places_with_unlisted(builtin(), std::slice::from_ref(&current), Some(&child), None, &[], &unlisted);
+        assert_eq!(kept.browse_root, None);
+        assert_eq!(kept.owner, Some(1));
+        let deeper = format!("{current}/.private");
+        let inside = format!("{deeper}/Trip");
+        let unlisted = vec![unlisted[0].clone(), deeper];
+        let moved = super::local_places_with_unlisted(builtin(), &[], Some(&inside), first.browse_root.as_deref(), &[], &unlisted);
+        assert_eq!(moved.browse_root.as_deref(), Some(inside.as_str()));
+        assert_eq!(moved.owner, Some(1));
+    }
+
+    #[test]
+    fn subfolders_leave_out_hidden_folders() {
+        let dir = std::env::temp_dir().join(format!("lc-ui-hidden-subfolders-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for name in ["Shown", ".dot", "Hidden"] {
+            std::fs::create_dir_all(dir.join(name)).unwrap();
+        }
+        #[cfg(windows)]
+        assert!(std::process::Command::new("attrib").arg("+h").arg(dir.join("Hidden")).status().unwrap().success());
+        #[cfg(target_os = "macos")]
+        assert!(std::process::Command::new("chflags").arg("hidden").arg(dir.join("Hidden")).status().unwrap().success());
+        let expected = if cfg!(any(windows, target_os = "macos")) { vec!["Shown"] } else { vec!["Hidden", "Shown"] };
+        let listed = super::list_subfolders(&dir.to_string_lossy());
+        assert_eq!(listed.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), expected);
+        let unlisted = super::unlisted_ancestors(&dir.join(".dot/Photos").to_string_lossy());
+        assert!(unlisted.contains(&dir.join(".dot").to_string_lossy().to_string()));
+        if cfg!(any(windows, target_os = "macos")) {
+            let unlisted = super::unlisted_ancestors(&dir.join("Hidden/Photos").to_string_lossy());
+            assert!(unlisted.contains(&dir.join("Hidden").to_string_lossy().to_string()));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// Width = characters, so a limit of 12 is "12 characters".
     fn fit(text: &str, max: usize) -> String {
         elide_head(text, max as f32, |s| s.chars().count() as f32)
@@ -219,7 +371,7 @@ mod tests {
         for frame in 0..3 {
             let raw = HeadlessView::raw_input(egui::vec2(300.0, 200.0), 1.0, frame as f64 / 60.0, vec![]);
             view.run(raw, |ui| {
-                super::row(&mut app, ui, "all", super::Icon::Photos, "All Photos", None, false, 0.0);
+                super::Row::new("all", super::Icon::Photos, "All Photos").show(&mut app, ui);
                 super::folder_tree(&mut app, ui, path, "Pictures", path, 0.0, None, false, false);
             });
             widgets = crate::widgets::take_registry(&view.ctx);

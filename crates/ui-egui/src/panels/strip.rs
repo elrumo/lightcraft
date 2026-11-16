@@ -26,6 +26,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin { left: 0, right: 0, top: 8, bottom: 8 }).stroke(egui::Stroke::new(1.0, t.divider))
     };
     egui::Panel::right("tool_strip").exact_size(t.strip_w + gap).resizable(false).frame(frame).show(ui, |ui| {
+        crate::widgets::announce_region(ui, egui::accesskit::Role::Toolbar, crate::i18n::tr("Tool strip"));
         let inset = if cards {
             ui.painter().rect_filled(ui.max_rect(), t.card_radius, t.chrome);
             ui.add_space(8.0);

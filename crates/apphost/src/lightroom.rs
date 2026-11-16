@@ -196,12 +196,25 @@ pub fn find_catalog(path: &Path) -> Result<PathBuf, String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn_inspect(path: PathBuf, cancel: Arc<AtomicBool>, progress: LightroomProgress, tx: mpsc::Sender<Message>, wake: Wake) -> Result<(), String> {
+fn spawn_inspect(
+    path: PathBuf,
+    temp: Option<PathBuf>,
+    cancel: Arc<AtomicBool>,
+    progress: LightroomProgress,
+    tx: mpsc::Sender<Message>,
+    wake: Wake,
+) -> Result<(), String> {
     std::thread::Builder::new()
         .name("lc-lightroom-inspect".into())
         .spawn(move || {
             let result = lightcraft_engine::guard::catch("Lightroom inspect", || {
-                lightcraft_engine::lightroom_catalog::inspect_staged(&path, &cancel, &progress.catalog_total, &progress.catalog_done, &progress.stage)
+                use lightcraft_engine::lightroom_catalog as lr;
+                // a Lightroom Classic catalog backup (`.zip`, issue #2592) is unpacked under `temp` and read there
+                if lightcraft_engine::lightroom_backup::is_backup(&path) {
+                    return lr::read_source(&path, temp.as_deref(), &cancel, &progress.catalog_total, &progress.catalog_done)
+                        .map(|data| lr::classic_report(&data));
+                }
+                lr::inspect_staged(&path, &cancel, &progress.catalog_total, &progress.catalog_done, &progress.stage)
             })
             .and_then(|r| r);
             let _ = tx.send(Message::Inspected(result));
@@ -288,7 +301,8 @@ impl Runner {
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = LightroomProgress::default();
         let (tx, rx) = mpsc::channel();
-        spawn_inspect(path.clone(), cancel.clone(), progress.clone(), tx, wake)?;
+        let temp = lightcraft_engine::lightroom_catalog::backup_temp_root(s);
+        spawn_inspect(path.clone(), temp, cancel.clone(), progress.clone(), tx, wake)?;
         self.last = None;
         self.task = Some(Task::new(s, Kind::Inspect, path.clone(), cancel, progress, rx, words));
         Ok(json!({"running": true, "kind": "inspect", "path": path}))
@@ -529,6 +543,8 @@ mod tests {
     fn inspect_report_keeps_empty_catalog_shape() {
         let report = lightcraft_engine::lightroom_catalog::classic_report(&CatalogImport {
             source: "synthetic.lrcat".into(),
+            catalog_id: None,
+            catalog_path: None,
             photos: Vec::new(),
             collections: Vec::new(),
             members: Vec::new(),

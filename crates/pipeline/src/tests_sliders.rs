@@ -42,6 +42,12 @@ fn big_scene() -> Rgb32f {
     lightcraft_scenes::sweep_scene(1280, 854)
 }
 
+/// The joint colour noise reduction (process V7 on) smooths only what its noise model calls noise, so Color
+/// Smoothness shows only on a picture with colour noise: it is swept on one.
+fn noisy_scene() -> Rgb32f {
+    crate::tests::colour_noise_scene(W, H, 0)
+}
+
 /// What a control needs besides settings: a lens profile for the Profile Corrections amounts.
 fn info_for(id: &str) -> SourceInfo {
     if !id.starts_with("optics.profile") {
@@ -195,9 +201,15 @@ fn every_control_changes_the_picture_at_both_ends_and_resets_exactly() {
     let (small, big) = (scene(), big_scene());
     let untouched_small = shot(&small, &SourceInfo::default(), &DevelopSettings::default());
     let untouched_big = shot(&big, &SourceInfo::default(), &DevelopSettings::default());
+    let noisy = noisy_scene();
+    let untouched_noisy = shot(&noisy, &SourceInfo::default(), &DevelopSettings::default());
     let mut failures: Vec<String> = Vec::new();
     for c in controls::CONTROLS {
-        let (src, untouched) = if c.id == "grain.size" { (&big, &untouched_big) } else { (&small, &untouched_small) };
+        let (src, untouched) = match c.id {
+            "grain.size" => (&big, &untouched_big),
+            "detail.nrColorSmoothness" => (&noisy, &untouched_noisy),
+            _ => (&small, &untouched_small),
+        };
         // (c) setting the default on an untouched edit gives the untouched render back, bit for bit
         let mut s = DevelopSettings::default();
         controls::set(&mut s, c.id, c.default);

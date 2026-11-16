@@ -44,9 +44,10 @@ const fn spec(id: &'static str, label: &'static str, min: f64, max: f64, default
 }
 const QUALITY: ControlSpec = spec("export.quality", "Quality", 1.0, 100.0, 90.0, 1.0);
 const LIMIT_KB: ControlSpec = spec("export.limitKb", "Limit file size (KB, 0 = off)", 0.0, 20_000.0, 0.0, 10.0);
-const SIZE_PX: ControlSpec = spec("export.sizePx", "Pixels", 16.0, 20_000.0, 2048.0, 16.0);
-const SIZE_W: ControlSpec = spec("export.sizeW", "Width (px)", 16.0, 20_000.0, 2048.0, 16.0);
-const SIZE_H: ControlSpec = spec("export.sizeH", "Height (px)", 16.0, 20_000.0, 2048.0, 16.0);
+// whole pixels: a typed size is snapped to the step, and 1080 or 1350 must stay what was typed (#3300)
+const SIZE_PX: ControlSpec = spec("export.sizePx", "Pixels", 16.0, 20_000.0, 2048.0, 1.0);
+const SIZE_W: ControlSpec = spec("export.sizeW", "Width (px)", 16.0, 20_000.0, 2048.0, 1.0);
+const SIZE_H: ControlSpec = spec("export.sizeH", "Height (px)", 16.0, 20_000.0, 2048.0, 1.0);
 const SIZE_MP: ControlSpec = ControlSpec { decimals: 1, ..spec("export.sizeMp", "Megapixels", 0.1, 100.0, 12.0, 0.1) };
 const SIZE_PCT: ControlSpec = spec("export.sizePercent", "Percent", 1.0, 400.0, 50.0, 1.0);
 const START_NUMBER: ControlSpec = spec("export.startNumber", "Start number", 1.0, 9999.0, 1.0, 1.0);
@@ -74,6 +75,7 @@ const WM_POSITIONS: [(P, &str); 9] = [
 ];
 
 /// The export settings: the desktop dialog's body, and a phone's "More Options" page.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part) {
     let Form { opts, full_size, resize, preset_name, limit_kb, dir } = f;
     let t = Tokens::get(ui.ctx());
@@ -275,6 +277,12 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     if opts.format == F::Tiff {
         use lightcraft_engine::export::TiffCompression as Z;
         choices(ui, "Compression", "exportTiffCompression", &[(Z::None, "None"), (Z::Lzw, "LZW"), (Z::Deflate, "ZIP")], &mut opts.tiff_compression);
+        // issue #2882: LZW stays as picked, with a note on what it costs
+        if let Some(note) = crate::dialogs::tiff_lzw_note(opts) {
+            let t = Tokens::get(ui.ctx());
+            let r = ui.label(RichText::new(crate::i18n::tr(note)).color(t.text_dim));
+            crate::widgets::register(ui, "note:exportTiffLzw", r.rect);
+        }
     }
     if opts.format == F::Dng {
         use lightcraft_engine::export::DngCompression as Z;

@@ -258,6 +258,19 @@ fn the_top_bar_button_and_settings_cards_drive_the_mode() {
     assert_eq!(crate::theme::current(&h.view.ctx), Some(ThemeKind::StudioDark));
 }
 
+/// Upstream removed its dead Cloud button (#3832); this fork keeps the button because it is its
+/// self-hosted sync's status (`tests/sync_ui.rs`). What upstream guarded still holds: the cloud in
+/// the top bar is never a button that does nothing, a click opens the sync popover.
+#[test]
+fn top_bar_cloud_widget_is_not_a_dead_button() {
+    let mut h = Headless::new(app(), [1400.0, 900.0], 1.0);
+    h.settle(T);
+    assert!(h.app.widgets.iter().any(|(id, _)| id == "icon:cloud"), "the top bar has the sync cloud");
+    assert_eq!(h.request("ui.clickWidget", json!({"id": "icon:cloud"}), T)["ok"], true);
+    h.settle(T);
+    assert!(h.app.widgets.iter().any(|(id, _)| id == "actions:syncStatus"), "a click opens the sync popover");
+}
+
 #[test]
 fn interface_settings_fit_small_windows_and_stack_theme_choices() {
     // Desktop windows have a 900×560 minimum (a narrower window gets the compact layout, whose

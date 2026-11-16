@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-11-09 · **Change:** minor (Relight and Depth Map added to *Fork additions*; earlier: upstream merged up to v0.14.0 (201 commits), checklist recounted 84.5% of 561 rows; GoPro GPR decodes (upstream #2787); pre-X FinePix and SuperCCD RAFs decode (upstream #2316); upstream merged again, up to v0.13.0 (38f8d2508): Print gains Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺); Minolta MRW decoded, 6 bodies verified; German catalog 91% → 97%; Finnish and Indonesian interfaces; earlier: checklist recount 84.3% of 554 rows after the colour mixer's fit to Lightroom exports and Calibration ✅ → 🟡; a native app moved to its own repository, so its rows and mentions are removed; Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 · **Changes:** [revision history](#revision-history)
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -12,20 +12,20 @@ from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are 
 
 | | Value | Kind |
 |---|---:|---|
-| **Feature breadth** (checklist) | **84.3%** of 554 rows (P0 98.0%, P1 93.9%, P2 61.2%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
+| **Feature breadth** (checklist) | **83.7%** of 575 rows (P0 97.8%, P1 92.4%, P2 62.5%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
 | **Feature breadth** (weighted by use) | **~77%** | estimated |
-| **Ready for real work** (full target) | **~61%** (56–66%) | estimated: weighted sum over the dimensions |
+| **Ready for real work** (full target) | **~62%** (57–67%) | estimated: weighted sum over the dimensions |
 | **Mainstream practitioner** | **~51%** (46–56%) | estimated |
 | **Essentials user** | **~65%** (60–70%) | estimated |
 | Remaining to **beta** | **~340–600 h** (Opus 5.5 agent hours, ~60% parallel) | estimated |
-| Remaining to **full parity** | **~1,000–1,800 h** (~70% parallel) | estimated |
+| Remaining to **full parity** | **~980–1,750 h** (~70% parallel) | estimated |
 
 Each audience with its own hours (Opus 5.5 agent wall-clock hours to ~95%):
 
 | Audience | Ready | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---:|---:|---|
-| Full target (ready for real work) | **~61%** | **1,000–1,800 h** (~70% parallelizes) | raw colour, lens and camera data; AI models; Classic output modules; localization; plug-in ecosystem |
-| Mainstream practitioner | **~51%** | **450–840 h** (~60% parallelizes) | camera colour and render fidelity; CR3 / ORF / HE NEF; lens database; subject / sky masks; Lightroom XMP exchange; stability |
+| Full target (ready for real work) | **~62%** | **980–1,750 h** (~70% parallelizes) | raw colour, lens and camera data; AI models; Classic output modules; localization; plug-in ecosystem |
+| Mainstream practitioner | **~51%** | **440–820 h** (~60% parallelizes) | camera colour and render fidelity; CR3 / ORF / HE NEF; lens database; subject / sky masks; Lightroom XMP exchange; stability |
 | Essentials user | **~65%** | **160–300 h** (~50% parallelizes) | default raw look for popular cameras; launch stability; basic-slider feel; opening CR3 / HEIC files people send |
 
 The gap between breadth and readiness is quality and coverage, not missing buttons: camera colour is
@@ -44,8 +44,8 @@ Hours are calibrated on this repo's PR history; see
 
 | Dimension | Ready | Breadth | Remaining | Doc |
 |---|---:|---:|---:|---|
-| Features | ~61% | ~77% (checklist 84.3%) | 600–1,100 h | [target-app-parity](docs/target-app-parity.md#features) |
-| ↳ RAW cameras, colour, lens profiles | ~60% | 86% of 1,446 Adobe models decode, 40% verified | 255–480 h | [raw-parity](docs/raw-parity.md) |
+| Features | ~62% | ~77% (checklist 83.7%) | 600–1,100 h | [target-app-parity](docs/target-app-parity.md#features) |
+| ↳ RAW cameras, colour, lens profiles | ~60% | 87% of 1,446 Adobe models decode, 40% verified | 255–480 h | [raw-parity](docs/raw-parity.md) |
 | UI/UX fidelity | ~70% | ~85% | 32–54 h | [ui-parity](docs/ui-parity.md) |
 | File formats (non-raw) | ~70% | ~85% | 30–55 h | [file-format-parity](docs/file-format-parity.md) |
 | Hardware | ~40% | ~50% | 40–80 h | [hardware-parity](docs/hardware-parity.md) |
@@ -102,13 +102,13 @@ Also shipped: Traditional Chinese (87%), Russian (74%), Ukrainian (99%), Italian
 
 Ranked toward beta; detail in [docs/roadmap.md](docs/roadmap.md), gaps in [docs/gaps.md](docs/gaps.md).
 
-1. Compressed ORF (8–15 h; +2.6 points of photographers, the best ratio of any raw gap)
+1. Compressed ORF (+2.6 points of photographers, the best ratio of any raw gap; upstream withdrew its decoder, #3775, so the estimate waits on a provenance review)
 2. Per-body decode fixes and per-model raw verification (25–45 h)
-3. Tests in CI on macOS, Windows and Linux (6–12 h)
+3. Tests in CI on macOS and Windows, and the GPU tests in CI (6–12 h)
 4. Render-fidelity suite against Lightroom, then tuning (30–60 h)
 5. Camera colour of our own: measured calibration for the popular models (50–90 h)
 6. AI masks: Subject / Sky / People (40–70 h + model decision)
-7. Lens profile database of our own (40–80 h)
+7. Lens profile database of our own (40–80 h, #329)
 8. CR3 variants no public file uses, and HE NEF (30–65 h; not beta blockers any more)
 
 Done: ~~full-resolution zoom~~ (2026-10-12), ~~CR3 for the popular Canon bodies~~ (26 verified). The step-by-step
@@ -121,7 +121,6 @@ This fork adds features upstream doesn't have; they are outside the numbers abov
 
 | Feature | State | Missing |
 |---|---|---|
-| 2026-10-25 | minor | Pre-X FinePix and SuperCCD RAFs decode (upstream #2316 for #2063, raw-parity.md): 11 more Fujifilm models verified (562, 39%), 85% of Adobe's models decode; use-weighted share unchanged at ~94% (86% on a verified body); headline numbers unchanged |
 | **Optional self-hosted sync** (`lightcraft-server`, [sync.md](docs/sync.md); local-first stays the default) | One library shared by a user's devices (desktop, CLI, web build, iOS app): previews and originals by content hash, field-level merges, photo folders already on the server read in place; presets, sets and LUT profiles follow the user; a library that already has photos can merge into the server's; album links (a timeline by day, a page per photo, a slideshow, Download All, an optional password, optionally a form for visitors to add photos to the album); per-user storage limits; opt-in writable folders (XMP sidecars written back, uploads filed into an imports folder); a size budget for downloaded originals, resumable uploads, small previews downloaded as the grid shows them; Sign Out waits for what is left, signs the device out and empties the library, so another account starts clean | Verification on real hardware (a physical iPhone over real TLS, a real NAS, a long-lived library); comments and likes on shared albums, accounts for other people |
 | **iPhone / iPad app** (`apps/lightcraft-ios`, `crates/ios-host`; [ios.md](docs/ios.md)) | The egui app with a compact touch layout: phone grid, touch sliders, crop, Remove and Masking screens, an iOS 26 glass look, export with Save to Photos; native host (Photos / Files pickers, share sheet, HEIC through ImageIO, lifecycle, memory budget). Checked on the simulator, partly on an iPhone | Most of the host on a device; Lightroom-mobile features ([ios-gaps.md](docs/ios-gaps.md)) |
 | **Map view and place search** (`crates/geo`, [map.md](docs/map.md)) | Desktop, web and iOS: clustered thumbnail markers, an offline world map plus OpenStreetMap tiles, place search (`madrid`, `photos in lisbon in june 2024`) and the place in Info, offline from GeoNames | Not yet run in a browser or on a device; drag-to-geotag, saved locations, a satellite layer |
@@ -140,6 +139,13 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 ## Progress log
 
+- 2026-11-15: Upstream merged again (v0.21.1, 6b2b7e6d1; 1,219 commits). From upstream: the raw decoders, TIFF, HEIF
+  and metadata code move to craft-libs (this fork keeps a patched copy in `third_party/craft-libs` with its Olympus,
+  Sony lens, HEIC gain map, GPX and big-TIFF work), Canon CRW decodes (581 models verified, ~95% of photographers'
+  cameras fully work), the lensfun download, upstream's Lens Blur focus mask and shapes beside this fork's depth Lens
+  Blur, Lightroom catalog backup zips, the Windows monitor profile, crystal grain and joint colour noise reduction
+  (processes V8 and V7 here: upstream's V5 to V8 are this fork's V6 to V9). Compressed ORF stays preview-only
+  (upstream added and withdrew a decoder, #3775). Checklist 83.7% of 575 rows.
 - 2026-11-09: Relight shades by MoGe-2's surface normals (an optional model) and snaps its light to the photo's edges; Depth Range masks pick their depths on the photo (`mask.pickDepth`, `depth.histogram`)
 - 2026-11-09: Relight and Depth Map (a light placed in the scene by the photo's depth; the photo drawn as its depth), on the CPU
   renderer with their commands; *Fork additions* row added, numbers unchanged.
@@ -153,6 +159,8 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 - 2026-10-23: GoPro GPR (VC-5) decodes from sensor data (`crates/raw/src/vc5.rs`, ported from GoPro's
   Apache-2.0 / MIT GPR SDK); FUSION, HERO5, HERO6, HERO7 and HERO10 Black verified on CC0 files. 556 models
   verified, 28 unsupported (was 37); 84% of Adobe's models decode (was 83%); use-weighted shares unchanged.
+- 2026-11-07: Compressed ORF support withdrawn pending provenance review; uncompressed support remains. Regenerated camera coverage: 557 verified, 665 unverified, 187 preview-only and 37 unsupported; 94% use-weighted coverage. See [ORF status](docs/orf-compression.md).
+- 2026-11-04: Compressed ORF support was introduced in #3775; subsequently withdrawn pending provenance review. Earlier clean-room and verification claims are withdrawn; compressed files use embedded previews when available.
 - 2026-10-22: Print page setup and PDF output gain the Japanese photo and postcard papers — L判
   (89 × 127 mm), 2L判 (127 × 178), KG判 (102 × 152), はがき (100 × 148), 往復はがき (148 × 200),
   六切 (203 × 254), 四切 (254 × 305) and 名刺 (55 × 91) — at their exact metric sizes. The Print dialog
@@ -174,6 +182,12 @@ it); then sharing between people with accounts (comments, likes, shared librarie
   in the album, on every device), and for an optional **password**; the page goes by day, opens each photo large
   (← →), plays a slideshow and offers Download All (a streamed ZIP). Admins can give each user a **storage limit**
   ([sync.md](docs/sync.md#share-an-album)).
+- 2026-10-13: Canon CRW (the 2000–2004 CIFF bodies) decodes from sensor data: compression
+  derived clean-room against a black-box reference and frozen (`craft-libs crates/crw/clean-room/02-crw-format.md`);
+  EOS D30/D60/10D/300D and PowerShot G1/G6 verified pixel-exact on 28 of 29 corpus files (18 of
+  them the maintainer's D60 shots); as-shot white balance, black level, rotation and capture time
+  from the CIFF records; the PowerShot G5's anomalous coding stays preview-only. With the
+  camera-coverage sweep and MRW merged, 557 models verified; Canon bucket 95% → 98%.
 - 2026-10-14: Camera-coverage sweep verifies 30 more models on 40 CC0 files, with file and sensor
   hashes pinned (`docs/raw/coverage.py`: 515 → 545 verified). Eleven candidates excluded after rechecking
   identity, provenance and camera-image agreement. Phone and drone DNG tone differences remain tracked in #1277.
@@ -206,10 +220,9 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 - 2026-10-10 (RAW): RAW measured model by model against Adobe's 1,446-model list (234 verified, 943
   unverified, 233 preview-only, 36 unsupported; ~84% of photographers' cameras decode, ~40% on a
   verified body). Full ~61%, mainstream ~49%, essentials ~64%; beta ~14 points away.
-- 2026-10-10 (final): full ready is a weighted sum over the dimensions (~59%; method aligned with
-  the standard); mainstream practitioner ~51% (450–840 h), essentials user ~63% (160–300 h);
+- 2026-10-10 (final): full ready is a weighted sum over the dimensions (~59%; no new evidence); mainstream practitioner ~51% (450–840 h), essentials user ~63% (160–300 h);
   alpha gate passes.
-- 2026-10-10: full re-measure for the progress-docs standard: stage alpha, ready ~55%, checklist
+- 2026-10-10: full re-measure, progress docs restructured: stage alpha, ready ~55%, checklist
   81.1%; new docs (target-app-parity, gaps, roadmap, architecture, raw / file-format / hardware / UI
   / localization parity); `docs/parity.md` renamed `docs/parity-checklist.md`. Landed today: Nikon
   lossy-after-split NEF (#633), ORF 12.8 bpp (#651), HDR gain map JPEG / PQ AVIF / float TIFF export
@@ -247,10 +260,14 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-15 | minor | Upstream v0.21.1 merged (1,219 commits): checklist recounted 83.7% of 575 rows (P0 97.8%, P1 92.4%, P2 62.5%); RAW 87% of Adobe's models decode, 40% verified (581), ~95% use-weighted; Features ~62% as upstream; Upcoming items 1, 3 and 7 take upstream's notes; a revision row that sat in the Fork additions table moved here |
+| 2026-10-25 | minor | Pre-X FinePix and SuperCCD RAFs decode (upstream #2316 for #2063, raw-parity.md): 11 more Fujifilm models verified (562, 39%), 85% of Adobe's models decode; use-weighted share unchanged at ~94% (86% on a verified body); headline numbers unchanged |
 | 2026-10-27 | minor | Upstream merged again (up to v0.14.0, 201 commits); checklist recounted 84.5% of 561 rows (P0 98.0%, P1 92.8%, P2 62.6%) |
 | 2026-10-25 | minor | Camera support from community pull requests integrated (X-Trans III Kelvin #2514, Blackmagic DNG #1305, two-field Coolpix #672, pre-X FinePix #2316, GoPro GPR #2787) and the Olympus family work (ORI files, five more uncompressed bodies verified, ORF preview details, aspect crop); Coolpix 5700, 8400 and 8800 move from unsupported to verified; RAW: 86% of Adobe's models decode, 40% verified (575), use-weighted share unchanged at ~94% (86% on a verified body); Canon CRW (#2512) and Nikon HE (#896) held back on clean-room provenance |
 | 2026-10-25 | minor | Upstream #2787: GoPro GPR (VC-5) decoded: RAW 83% → 84% of Adobe's models decode, 38% verified; readiness unchanged |
 | 2026-10-24 | minor | Upstream merged again (up to v0.13.0); headline numbers are recounted after the merge |
+| 2026-10-24 | minor | Priority 7 (lens profile database) links its tracking issue #329; headline numbers unchanged |
+| 2026-10-24 | patch | Alpha rationale: tests run in CI on Linux x64 (#2667) and FreeBSD nightly, not on macOS or Windows; ranked item 8 now reads "Tests in CI on macOS and Windows, and the GPU tests in CI"; percentages and hours unchanged |
 | 2026-10-22 | minor | Print: Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺) in the page setup, Print dialog and PDF output; headline numbers unchanged |
 | 2026-10-19 | minor | Indonesian interface (`id`): every plain and formats message, plus 69 command labels, locale, menu command and tests; What's New left in English; Localization ~55% → ~64% (mean of the 12 key languages), 8 of 12 present |
 | 2026-10-20 | minor | Checklist recount: 84.3% of 554 rows (P0 98.0%, P1 93.9%, P2 61.2%); Calibration ✅ → 🟡 (unlike Lightroom's), the colour mixer fitted to Lightroom single-slider exports |
@@ -260,6 +277,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 | 2026-10-15 | minor | Upstream merged again (up to 0da998f2); Upcoming re-ranked, *Next actions* added in docs/roadmap.md; numbers as upstream's |
 | 2026-10-15 | minor | Sync: Sign Out waits until everything has reached the server, then removes the account's library from the device (as Lightroom's does), so two accounts' libraries never meet on a device; *Fork additions* row updated; numbers unchanged |
 | 2026-10-14 | minor | Generative Expand: Stable Diffusion 1.5, Kandinsky 2.2 and SDXL inpainting, offered by the device's profile; *Fork additions* row updated; numbers unchanged |
+| 2026-10-13 | minor | Canon CRW decoded (clean-room): 6 bodies verified pixel-exact, G5 preview; 551 models verified after merging the coverage sweep |
 | 2026-10-14 | minor | Localization ~52% → ~55% (mean of the 12 key languages): de, es, fr, ja and uk catalogs filled |
 | 2026-10-16 | minor | German 91% → 97% (217 interface strings and 862 What's New lines added); headline numbers unchanged |
 | 2026-10-14 | minor | 21 Sony and Leica models verified (258 models, 18%); headline numbers unchanged |
@@ -287,10 +305,10 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 | 2026-10-12 | minor | 117 Nikon and Fujifilm bodies verified (354 models, 24%); headline numbers unchanged |
 | 2026-10-11 | minor | EOS R5 Mark II CR3 verified: CR3 on four verified bodies, RAW decoding 76% → 77%; headline numbers unchanged |
 | 2026-10-10 | minor | RAW measured model by model; RAW decode and colour as explicit rows: full 59% → 61%, mainstream 51% → 49%, essentials 63% → 64%; beta ~14 points |
-| 2026-10-10 | minor | Full ready restored to the additive weighted sum (~59%; method aligned with the standard, no new evidence); hours per audience; beta ~16 points away |
+| 2026-10-10 | minor | Full ready restored to the additive weighted sum (~59%; no new evidence); hours per audience; beta ~16 points away |
 | 2026-10-10 | minor | Mainstream practitioner and essentials user numbers; full ready 55% → 46% (method written down); beta 340–600 h |
 | 2026-10-10 | minor | Alpha gate added (core-workflow check): passes, stays alpha |
-| 2026-10-10 | major | Restructured to the progress-docs standard; re-measured; *Where we stand*, *Parity estimate* and *Totals* moved to docs/target-app-parity.md, milestones and risks to docs/roadmap.md, raw coverage to docs/raw-parity.md, catalog migration to docs/file-format-parity.md, CJK notes to docs/localization-parity.md |
+| 2026-10-10 | major | Progress docs restructured; re-measured; *Where we stand*, *Parity estimate* and *Totals* moved to docs/target-app-parity.md, milestones and risks to docs/roadmap.md, raw coverage to docs/raw-parity.md, catalog migration to docs/file-format-parity.md, CJK notes to docs/localization-parity.md |
 | 2026-10-08 | minor | *Where we stand* by dimension and by kind of user |
 | 2026-10-02 | major | Parity estimate and effort table |
 | 2026-09-30 | major | Created |

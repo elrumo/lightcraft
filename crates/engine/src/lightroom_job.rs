@@ -271,8 +271,14 @@ impl LightroomJob {
             return self.prepare_albums(library, cancel);
         }
         // (reading stops with a message when `cancel` is set: the flag says it was cancelled)
-        let mut data = lightroom_catalog::read_with_progress(&self.path, cancel, &self.progress.catalog_total, &self.progress.catalog_done)
-            .map_err(|e| if cancel.load(Ordering::Relaxed) { cancelled() } else { error(e) })?;
+        let mut data = lightroom_catalog::read_source(
+            &self.path,
+            self.archive_dir.as_deref(),
+            cancel,
+            &self.progress.catalog_total,
+            &self.progress.catalog_done,
+        )
+        .map_err(|e| if cancel.load(Ordering::Relaxed) { cancelled() } else { error(e) })?;
         lightroom_catalog::validate_for_job(&data).map_err(error)?;
         if cancel.load(Ordering::Relaxed) {
             return Err(cancelled());
@@ -321,6 +327,8 @@ impl LightroomJob {
         let settings_dir = cloud.then(|| self.path.with_file_name("settings"));
         Ok(PreparedLightroom {
             data: CatalogImport {
+                catalog_id: None,
+                catalog_path: None,
                 source: source.source.clone(),
                 photos: Vec::new(),
                 collections: Vec::new(),
@@ -430,6 +438,8 @@ mod tests {
     fn empty_data() -> CatalogImport {
         CatalogImport {
             source: "fixture.lrcat".into(),
+            catalog_id: None,
+            catalog_path: None,
             photos: Vec::new(),
             collections: Vec::new(),
             members: Vec::new(),
@@ -466,6 +476,8 @@ mod tests {
         PreparedLightroom {
             data: CatalogImport {
                 source: "fixture.lrcat".into(),
+                catalog_id: None,
+                catalog_path: None,
                 photos: vec![lightroom_catalog::CatalogPhoto {
                     source_id: 1,
                     uuid: "fixture-photo".into(),

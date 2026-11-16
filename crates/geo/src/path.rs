@@ -569,6 +569,60 @@ fn nearest(pieces: &[Piece], candidates: impl IntoIterator<Item = usize>, t: f64
         .map(|(k, _, _)| k)
 }
 
+struct RouteAssembler<'a> {
+    photos_by_id: &'a [Fix],
+    photo_count: u64,
+    trim_m: Option<f64>,
+    trim: &'a mut Trimmed,
+    legs: &'a mut Vec<Leg>,
+    stops: &'a mut Vec<(Option<(usize, usize)>, route::Stop)>,
+    gone: &'a mut [bool],
+    home: &'a mut [Option<(usize, usize)>],
+    joins: &'a mut HashMap<(usize, usize), Vec<usize>>,
+}
+
+impl RouteAssembler<'_> {
+    fn append(&mut self, ri: usize, route: &route::Route) {
+        let is_photo = |id: u64| id < self.photo_count;
+        let photo_first = route.stops.first().and_then(|s| s.photos.first()).is_some_and(|id| is_photo(*id));
+        let photo_last = route.stops.last().and_then(|s| s.photos.last()).is_some_and(|id| is_photo(*id));
+        let (kept_legs, stops_kept, cut) = trim_route(ri, route, self.trim_m, photo_first, photo_last);
+        self.trim.points += cut;
+        let first_kept = stops_kept.iter().position(|k| *k);
+        let has_photos = route.stops.iter().any(|s| s.photos.iter().any(|id| is_photo(*id)));
+        if first_kept.is_none() && has_photos {
+            self.trim.vanished += 1;
+        }
+        for (si, (stop, kept)) in route.stops.iter().zip(&stops_kept).enumerate() {
+            let photos: Vec<u64> = stop.photos.iter().copied().filter(|id| is_photo(*id)).collect();
+            if !kept {
+                for id in &photos {
+                    if let Some(g) = self.gone.get_mut(*id as usize) {
+                        *g = true;
+                    }
+                }
+                if first_kept.is_none_or(|f| si < f) {
+                    self.trim.start += photos.len();
+                } else {
+                    self.trim.end += photos.len();
+                }
+            } else if !photos.is_empty() {
+                for id in &photos {
+                    if let Some(h) = self.home.get_mut(*id as usize) {
+                        *h = Some((ri, si));
+                    }
+                }
+                let ends: Vec<usize> = stop.photos.iter().filter(|id| !is_photo(**id)).map(|a| ((a - self.photo_count) / 2) as usize).collect();
+                self.joins.insert((ri, si), ends);
+                let photos =
+                    photos.into_iter().filter_map(|id| usize::try_from(id).ok().and_then(|i| self.photos_by_id.get(i).map(|f| f.id))).collect();
+                self.stops.push((Some((ri, si)), route::Stop { photos, ..stop.clone() }));
+            }
+        }
+        self.legs.extend(kept_legs);
+    }
+}
+
 /// The path through `fixes` (the photos with a position and a time) and `tracks` (each one recording's points, in the
 /// order of their start: the first to cover a moment keeps it). A track is taken when its turn comes, so only one is
 /// held whole at a time.
@@ -620,7 +674,6 @@ pub fn build(fixes: &[Fix], tracks: impl IntoIterator<Item = Vec<Point>>, params
     // the estimated runs, between the recorded pieces: a photo is named by its place in `fx` (below `n`), and the
     // ends of recorded piece k by `n + 2k` (its start) and `n + 2k + 1` (its end)
     let n = fx.len() as u64;
-    let is_photo = |id: u64| id < n;
     let anchor = |k: usize, end: bool| -> Option<Fix> {
         let r = recs.get(k)?;
         let q = if end { r.points.last()? } else { r.points.first()? };
@@ -642,49 +695,25 @@ pub fn build(fixes: &[Fix], tracks: impl IntoIterator<Item = Vec<Point>>, params
     let refs: Vec<&[Fix]> = runs.iter().map(Vec::as_slice).collect();
     let routes = route::estimate_runs(&refs, &p.route);
     // trim each route at its ends that are photos; keep its legs and the stops that hold photos
-    let real_id = |i: u64| fx.get(i as usize).map(|f| f.id);
     let mut legs: Vec<Leg> = Vec::new();
     let mut stops: Vec<(Option<(usize, usize)>, route::Stop)> = Vec::new();
     let mut gone = vec![false; fx.len()];
     // each photo's stop, and the recorded pieces a stop with photos joins (its piece ends)
     let mut home: Vec<Option<(usize, usize)>> = vec![None; fx.len()];
     let mut joins: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    let mut assembler = RouteAssembler {
+        photos_by_id: &fx,
+        photo_count: n,
+        trim_m: p.trim_m,
+        trim: &mut trim,
+        legs: &mut legs,
+        stops: &mut stops,
+        gone: &mut gone,
+        home: &mut home,
+        joins: &mut joins,
+    };
     for (ri, r) in routes.routes.iter().enumerate() {
-        let photo_first = r.stops.first().and_then(|s| s.photos.first()).is_some_and(|id| is_photo(*id));
-        let photo_last = r.stops.last().and_then(|s| s.photos.last()).is_some_and(|id| is_photo(*id));
-        let (kept_legs, stops_kept, cut) = trim_route(ri, r, p.trim_m, photo_first, photo_last);
-        trim.points += cut;
-        let first_kept = stops_kept.iter().position(|k| *k);
-        let has_photos = r.stops.iter().any(|s| s.photos.iter().any(|id| is_photo(*id)));
-        if first_kept.is_none() && has_photos {
-            trim.vanished += 1;
-        }
-        for (si, (s, kept)) in r.stops.iter().zip(&stops_kept).enumerate() {
-            let photos: Vec<u64> = s.photos.iter().copied().filter(|id| is_photo(*id)).collect();
-            if !kept {
-                for id in &photos {
-                    if let Some(g) = gone.get_mut(*id as usize) {
-                        *g = true;
-                    }
-                }
-                if first_kept.is_none_or(|f| si < f) {
-                    trim.start += photos.len();
-                } else {
-                    trim.end += photos.len();
-                }
-            } else if !photos.is_empty() {
-                for id in &photos {
-                    if let Some(h) = home.get_mut(*id as usize) {
-                        *h = Some((ri, si));
-                    }
-                }
-                let ends: Vec<usize> = s.photos.iter().filter(|id| !is_photo(**id)).map(|a| ((a - n) / 2) as usize).collect();
-                joins.insert((ri, si), ends);
-                let photos = photos.into_iter().filter_map(real_id).collect();
-                stops.push((Some((ri, si)), route::Stop { photos, ..s.clone() }));
-            }
-        }
-        legs.extend(kept_legs);
+        assembler.append(ri, r);
     }
     // the stops in time order: estimated (with photos) and recorded (photos below)
     for r in &recs {

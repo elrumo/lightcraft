@@ -1,4 +1,4 @@
-use super::*;
+use super::UiCommand;
 
 pub use lightcraft_apphost::ui_commands::UI_COMMANDS;
 

@@ -368,13 +368,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     }
     divider(ui);
     super::mask_effects::effect_row(app, ui, &m);
-    for s in LOCAL {
+    // (Lens Blur has its own block below)
+    for s in LOCAL.iter().filter(|s| s.id != "lens_blur") {
         let v = local_get(&m.adjust, s.id);
         let out = slider(ui, s, v, true, None);
         apply_slider_out(app, s, out, |app, v| app.run("mask.adjust", json!({"values": {s.id: v}})));
     }
     amount_slider(app, ui, &m);
     refine_slider(app, ui, &m);
+    divider(ui);
+    lens_blur_block(app, ui, &m);
     ui.add_space(30.0);
     let _ = Stroke::NONE;
 }
@@ -450,6 +453,59 @@ pub(super) fn refine_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &ligh
         let out = slider(ui, &spec, value, true, None);
         apply_slider_out(app, &spec, out, |app, v| app.run("mask.setShapeControl", json!({"control": spec.id, "value": v})));
     }
+}
+
+/// The mask's Lens Blur block (`section:maskLensBlur`): a header that folds it and whose eye
+/// switches it off (the values kept), which side of the mask it blurs (`button:maskLensBlurSide-*`),
+/// then its Amount, Boost and Transition (`lens_blur*` local adjustments, `mask.adjust`).
+fn lens_blur_block(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &lightcraft_develop::Mask) {
+    let a = &m.adjust;
+    let open = !app.ui.section_folded("maskLensBlur");
+    let (resp, toggled) = crate::widgets::section_header(ui, "maskLensBlur", "Lens Blur", open, Some(!a.lens_blur_off));
+    if let Some(on) = toggled {
+        // switched on with nothing to blur: a visible amount, as the Edit section's Apply does
+        let mut v = json!({"lens_blur_off": !on});
+        if on && a.lens_blur <= 0.0 {
+            v["lens_blur"] = json!(50.0);
+        }
+        let _ = app.run("mask.adjust", json!({"values": v}));
+    } else if resp.clicked() {
+        app.ui.toggle_folded("maskLensBlur");
+    }
+    if !open {
+        return;
+    }
+    ui.add_enabled_ui(!a.lens_blur_off, |ui| {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 0, bottom: 6 }).show(ui, |ui| {
+            let t = Tokens::get(ui.ctx());
+            ui.label(egui::RichText::new(crate::i18n::tr("Blur")).color(t.text_dim).size(11.5));
+            let items = [("Selection", "inside"), ("Outside", "outside")];
+            let side = if a.lens_blur_outside { 1 } else { 0 };
+            if let Some(i) = crate::widgets::segmented(ui, "maskLensBlurSide", &items, Some(side), 2)
+                && i != side
+            {
+                let mut v = json!({"lens_blur_outside": i == 1});
+                if a.lens_blur <= 0.0 {
+                    v["lens_blur"] = json!(50.0);
+                }
+                let _ = app.run("mask.adjust", json!({"values": v}));
+            }
+        });
+        for s in LENS_BLUR {
+            let v = local_get(a, s.id);
+            let out = slider(ui, s, v, true, None);
+            apply_slider_out(app, s, out, |app, v| app.run("mask.adjust", json!({"values": {s.id: v}})));
+        }
+    });
+}
+
+/// The sliders of a mask's Lens Blur block (key = `LocalAdjustments` field name).
+const LENS_BLUR: &[ControlSpec] =
+    &[lens_blur_spec("lens_blur", "Amount"), lens_blur_spec("lens_blur_boost", "Boost"), lens_blur_spec("lens_blur_transition", "Transition")];
+
+/// A 0 to 100 slider of a mask's Lens Blur block.
+const fn lens_blur_spec(id: &'static str, label: &'static str) -> ControlSpec {
+    ControlSpec { id, label, section: Section::Light, min: 0.0, max: 100.0, default: 0.0, step: 1.0, decimals: 0, track: Track::Plain }
 }
 
 /// Translate fixed action labels, but never mutate or translate user-entered mask names.
