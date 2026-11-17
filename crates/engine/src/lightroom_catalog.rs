@@ -1172,6 +1172,7 @@ fn first_of_each_collection<'a>(data: &'a CatalogImport, warnings: &mut Vec<Stri
 
 /// Turn the read catalog into library records in one undo step and return the import report
 /// (added, missing, failed, warnings and skipped images).
+#[allow(clippy::cognitive_complexity)]
 pub(crate) fn apply_prepared(s: &mut crate::Session, mut data: CatalogImport, context: ApplyPrepared<'_>) -> crate::Result<AppliedImport> {
     let ApplyPrepared { update_existing, files, index, archive_path, missing_sources, undo0 } = context;
     // nothing but a file type LightCraft reads becomes a record, whichever route got here (#2135)

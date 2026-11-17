@@ -1,6 +1,6 @@
 # Target-app parity: LightCraft vs Adobe Lightroom
 
-> **Last reviewed:** 2026-10-10 · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop) · **Changes:** [revision history](#revision-history)
+> **Last reviewed:** 2026-11-17 · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop) · **Changes:** [revision history](#revision-history)
 
 The authoritative assessment of how close LightCraft is to Lightroom. The row-by-row checklist is
 [parity-checklist.md](parity-checklist.md); the ranked work list is [gaps.md](gaps.md); deep areas
@@ -303,7 +303,9 @@ P2 items 12–25 h; look tuning, performance, packaging, hardening 25–45 h.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-17 | minor | Upstream LightCraft main through aa08a7706 (v0.22.0; 159 commits since the previous sync) merged, including later shared Craft image-codec, PDF print, MIME and plist cutovers; the measured percentages below remain the 2026-11-15 count. |
 | 2026-11-15 | minor | Upstream v0.21.1 merged (1,219 commits): checklist recounted 83.7% of 575 in-scope rows (P0 97.8%, P1 92.4%, P2 62.5%); RAW coverage regenerated with both sides' decoders (Canon CRW from upstream; pre-X FinePix, GoPro GPR, Coolpix and the Olympus work from the fork): 581 verified (40%), 87% of Adobe's 1,446 models decode, ~95% use-weighted (86% on a verified body); compressed ORF stays preview-only (upstream withdrew its decoder, #3775); Ready for real work ~62% as upstream; Stability counts the Windows leg; the discount table's Stability and File exchange rows, listed three times by earlier merges, listed once |
+| 2026-11-15 | minor | Lens Blur renders with AI subject focus and per-mask bokeh (the AI table's 🟡 and the missing depth map are unchanged); survey layout, opened-library folder safety, direct Lightroom backup-zip import, legacy shutter repair and the Highlights/Shadows block fix landed; craft-libs cutover (TIFF/JPEG/JXL/GIF/PSD/HEIF/raw, metadata, gain maps); v0.21.0 and v0.21.1 released. Headline numbers, coverage and estimates were not re-measured. |
 | 2026-11-07 | correction | Compressed ORF sensor support withdrawn pending provenance review; embedded preview fallback remains. Coverage regenerated without the removed decoder: 557 verified, 665 unverified, 187 preview-only, 37 unsupported; 94% use-weighted coverage. |
 | 2026-10-27 | minor | Upstream merged again (up to v0.14.0); checklist recounted 84.5% of 561 rows; percentages as in each entry |
 | 2026-10-25 | minor | Camera support from community pull requests integrated (X-Trans III Kelvin #2514, Blackmagic DNG #1305, two-field Coolpix #672, pre-X FinePix #2316, GoPro GPR #2787) and the Olympus family work (ORI files, five more uncompressed bodies verified, ORF preview details, aspect crop); Coolpix 5700, 8400 and 8800 move from unsupported to verified; RAW: 86% of Adobe's models decode, 40% verified (575), use-weighted share unchanged at ~94% (86% on a verified body); Canon CRW (#2512) and Nikon HE (#896) held back on clean-room provenance |

@@ -2229,6 +2229,7 @@ impl Session {
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn control_done(&mut self, st: &mut SyncState, c: Control, d: &Done) {
         if d.status == 401 && !matches!(c, Control::Login(_)) {
             st.signed_out("the server signed this device out: sign in again");

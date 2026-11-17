@@ -1,4 +1,4 @@
-# The craft-libs crates this fork patches (storytold/craft-libs at c7a872e2f24b2c0d9aa78f25c83f342be26fcad3),
+# The craft-libs crates this fork patches (storytold/craft-libs based on c7a872e2f24b2c0d9aa78f25c83f342be26fcad3, refreshed through 892ef9116c432d7afb5c08aba93e93a4e0b1548f),
 # with the fork's own decoder and metadata work ported on top. LightCraft's root Cargo.toml points the
 # craft-libs git dependencies of these four crates here through [patch]; see README.md.
 [workspace]
@@ -14,7 +14,7 @@ repository = "https://github.com/storytold/craft-libs"
 
 [workspace.dependencies]
 thiserror = "2"
-craft-crw = { git = "https://github.com/storytold/craft-libs", rev = "c7a872e2f24b2c0d9aa78f25c83f342be26fcad3" }
+craft-crw = { git = "https://github.com/storytold/craft-libs", rev = "94777dcf7f8962476e96b049d08d22e25b9330c2" }
 craft-heif = { path = "crates/heif" }
 craft-raw = { path = "crates/raw" }
 craft-tiff = { path = "crates/tiff" }

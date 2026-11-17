@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 · **Changes:** [revision history](#revision-history)
+> **Last reviewed:** 2026-11-17 · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 · **Changes:** [revision history](#revision-history)
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -260,12 +260,14 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-17 | minor | Upstream LightCraft main through aa08a7706 (v0.22.0; 159 commits since the previous sync) merged, including its later shared Craft image-codec, PDF print, MIME and plist cutovers; parity counts remain at the 2026-11-15 assessment. |
 | 2026-11-15 | minor | Upstream v0.21.1 merged (1,219 commits): checklist recounted 83.7% of 575 rows (P0 97.8%, P1 92.4%, P2 62.5%); RAW 87% of Adobe's models decode, 40% verified (581), ~95% use-weighted; Features ~62% as upstream; Upcoming items 1, 3 and 7 take upstream's notes; a revision row that sat in the Fork additions table moved here |
 | 2026-10-25 | minor | Pre-X FinePix and SuperCCD RAFs decode (upstream #2316 for #2063, raw-parity.md): 11 more Fujifilm models verified (562, 39%), 85% of Adobe's models decode; use-weighted share unchanged at ~94% (86% on a verified body); headline numbers unchanged |
 | 2026-10-27 | minor | Upstream merged again (up to v0.14.0, 201 commits); checklist recounted 84.5% of 561 rows (P0 98.0%, P1 92.8%, P2 62.6%) |
 | 2026-10-25 | minor | Camera support from community pull requests integrated (X-Trans III Kelvin #2514, Blackmagic DNG #1305, two-field Coolpix #672, pre-X FinePix #2316, GoPro GPR #2787) and the Olympus family work (ORI files, five more uncompressed bodies verified, ORF preview details, aspect crop); Coolpix 5700, 8400 and 8800 move from unsupported to verified; RAW: 86% of Adobe's models decode, 40% verified (575), use-weighted share unchanged at ~94% (86% on a verified body); Canon CRW (#2512) and Nikon HE (#896) held back on clean-room provenance |
 | 2026-10-25 | minor | Upstream #2787: GoPro GPR (VC-5) decoded: RAW 83% → 84% of Adobe's models decode, 38% verified; readiness unchanged |
 | 2026-10-24 | minor | Upstream merged again (up to v0.13.0); headline numbers are recounted after the merge |
+| 2026-11-15 | minor | Lens Blur with AI subject focus and per-mask bokeh; survey tiles fit the photos' shapes and glide to their new places; direct import of Lightroom backup zips (#2592); legacy shutter repair in virtual copies; the opened-library folder-safety fix; v0.21.0 and v0.21.1 released; craft-libs cutover for TIFF/JPEG/JXL/GIF/PSD/HEIF/raw, metadata and gain maps, plus a security-hardening batch; headline numbers not re-measured |
 | 2026-10-24 | minor | Priority 7 (lens profile database) links its tracking issue #329; headline numbers unchanged |
 | 2026-10-24 | patch | Alpha rationale: tests run in CI on Linux x64 (#2667) and FreeBSD nightly, not on macOS or Windows; ranked item 8 now reads "Tests in CI on macOS and Windows, and the GPU tests in CI"; percentages and hours unchanged |
 | 2026-10-22 | minor | Print: Japanese photo and postcard paper sizes (L判, 2L判, KG判, はがき, 往復はがき, 六切, 四切, 名刺) in the page setup, Print dialog and PDF output; headline numbers unchanged |

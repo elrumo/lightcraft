@@ -9,8 +9,9 @@ description = "LightCraft engine: session, command registry, history, render job
 workspace = true
 
 [dependencies]
-# a device's work for its server runs at background priority (`vision::helper`)
-lightcraft-sysmem = { workspace = true }
+craft-plist = { workspace = true }
+craft-pdf-print.workspace = true
+craft-mime = { workspace = true }
 # Paths stored in a Lightroom catalog are followed only to local files or the catalog's share.
 craft-docpath = { workspace = true }
 lightcraft-geom = { workspace = true }
@@ -28,8 +29,6 @@ lightcraft-raw = { workspace = true }
 lightcraft-denoise-core = { workspace = true }
 lightcraft-denoise = { workspace = true, optional = true }
 lightcraft-meta = { workspace = true }
-lightcraft-video = { workspace = true }
-lightcraft-geo = { workspace = true }
 lightcraft-lensdb = { workspace = true }
 lightcraft-faces = { workspace = true }
 miniz_oxide = { workspace = true }
@@ -37,16 +36,10 @@ miniz_oxide = { workspace = true }
 crc32fast = { workspace = true }
 lightcraft-merge = { workspace = true }
 lightcraft-geocode = { workspace = true }
-# AI Remove (MI-GAN on rten): built everywhere, the web included; the model is downloaded on request
-lightcraft-erase = { workspace = true }
 lightcraft-slideshow = { workspace = true }
-lightcraft-depth = { workspace = true }
 rayon = { workspace = true }
-# the loupe's HDR picture (f16 pixels, `hdr_view`)
-half = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-base64 = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 ab_glyph = { workspace = true }
@@ -55,56 +48,53 @@ harfrust = { version = "0.13", default-features = false, features = ["std"] }
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
 lightcraft-segment = { workspace = true, optional = true }
-lightcraft-enhance = { workspace = true, optional = true }
-lightcraft-diffuse = { workspace = true, optional = true }
-# the store, index and traits only; the model itself is the `vision` feature
-lightcraft-vision = { workspace = true }
-# the Hidden album's password (argon2id; the salt comes from sha2, not the OS's random source)
+
+# model downloads run natively only (the web build fetches no models)
 argon2 = { workspace = true }
+base64 = { workspace = true }
+half = { workspace = true }
+lightcraft-depth = { workspace = true }
+lightcraft-diffuse = { workspace = true, optional = true }
+lightcraft-enhance = { workspace = true, optional = true }
+lightcraft-erase = { workspace = true }
+lightcraft-geo = { workspace = true }
+lightcraft-sysmem = { workspace = true }
+lightcraft-video = { workspace = true }
+lightcraft-vision = { workspace = true }
 sha2 = { workspace = true }
-
-# argon2's password-hash pulls in getrandom 0.2, which needs its browser backend to build for the web (the
-# Hidden password's salt doesn't use it)
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom-02 = { package = "getrandom", version = "0.2", features = ["js"] }
-
-# model downloads and the sync client run natively only (the web build fetches no models)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 lightcraft-fetch = { workspace = true }
 ureq = { workspace = true }
 rustls-rustcrypto = { workspace = true }
+libc = { workspace = true }
 # capture-time parsing for face recognition (native only)
 chrono = { workspace = true }
 # free space of the drive holding the preview cache (the low-disk alert; pure Rust: rustix / windows-sys)
 fs4 = { workspace = true }
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# argon2's password-hash dependency uses rand_core 0.6 on wasm.
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
 [features]
-# `lightcraft_engine::testdata`: synthetic files for other crates' tests (the raw crate's).
-testdata = ["lightcraft-raw/testdata"]
 # AI masks with SAM 3 (Object / Describe). Off for the web and CLI builds.
 sam = ["dep:lightcraft-segment"]
 denoise = ["dep:lightcraft-denoise", "lightcraft-denoise/runtime", "lightcraft-gpu/denoise"]
 rawnind-model = ["denoise", "lightcraft-denoise/rawnind-model", "lightcraft-denoise-core/rawnind-model"]
-# Natural-language search with SigLIP 2, reading the text in photos (PP-OCRv6) and, later, People. Off for the web and CLI builds.
+# Keep the fork's app feature names as aliases over the current engine dependencies.
+testdata = ["lightcraft-raw/testdata"]
 vision = ["lightcraft-vision/siglip", "lightcraft-vision/onnx", "lightcraft-depth/gpu"]
-# AI Super Resolution (Photo → Enhance). Off for the web and CLI builds.
 enhance = ["dep:lightcraft-enhance", "dep:lightcraft-diffuse"]
 
 [dev-dependencies]
 # tests record why they skip (`cargo xtask ci` lists the skips)
 lightcraft-testkit = { workspace = true }
+lightcraft-vision = { workspace = true, features = ["testing"] }
 # HDR JPEG XL tests read the file's colour encoding
-jxl-oxide = { workspace = true }
+craft-jxl = { workspace = true }
 # Lossless synthetic HEIC files (the import test; decoded when the codecs' `heif` feature is on).
 craft-heif = { workspace = true, features = ["testdata"] }
-lightcraft-video = { workspace = true, features = ["testdata"] }
-# Synthetic VC-5 streams (the GoPro GPR import test).
-lightcraft-raw = { workspace = true, features = ["testdata"] }
-libc = { workspace = true }
 craft-tiff = { workspace = true }
-# the corrupt-file sweep example counts and caps what it allocates
+jxl-oxide = { workspace = true }
+lightcraft-raw = { workspace = true, features = ["testdata"] }
 lightcraft-sysmem = { workspace = true }
-
-[dev-dependencies.lightcraft-vision]
-workspace = true
-features = ["testing"]
+lightcraft-video = { workspace = true, features = ["testdata"] }

@@ -202,7 +202,7 @@ impl Run {
                     *files = Some(job.expand(queue).into());
                     return Some(Vec::new());
                 }
-                let Some(files) = files.as_mut() else { return None };
+                let files = files.as_mut()?;
                 if files.is_empty() {
                     return None;
                 }

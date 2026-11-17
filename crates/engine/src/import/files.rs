@@ -282,8 +282,8 @@ pub fn library_dir_of(path: &Path) -> Option<PathBuf> {
 pub const LAUNCH_PROBE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// When the launch arguments' library checks, starting now, must be done: [`LAUNCH_PROBE_LIMIT`] from now.
-pub fn launch_deadline() -> std::time::Instant {
-    let now = std::time::Instant::now();
+pub fn launch_deadline() -> web_time::Instant {
+    let now = web_time::Instant::now();
     now.checked_add(LAUNCH_PROBE_LIMIT).unwrap_or(now)
 }
 
@@ -325,7 +325,7 @@ pub fn launch_path_until(
     cwd: Option<&Path>,
     home: Option<&Path>,
     dcim: impl Fn(&Path) -> Option<PathBuf>,
-    deadline: std::time::Instant,
+    deadline: web_time::Instant,
 ) -> Option<LaunchPath> {
     if arg.trim().is_empty() {
         return None;
@@ -361,7 +361,7 @@ pub fn launch_path_until(
     if home.is_some_and(|h| key(&h.to_string_lossy()) == key(&shown)) {
         return Some(LaunchPath::Refused { path: shown, why: "the whole home folder".into() });
     }
-    let left = deadline.saturating_duration_since(std::time::Instant::now());
+    let left = deadline.saturating_duration_since(web_time::Instant::now());
     let probed = abs.clone();
     if !left.is_zero()
         && let Some(dir) = within(left, move || library_dir_of(&probed))

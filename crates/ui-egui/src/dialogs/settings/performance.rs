@@ -1,8 +1,10 @@
 use super::widgets::{check, choices, heading, hint, row};
 use super::{
     CACHE_SIZES, HOT_PIXEL_LIMIT_DEFAULT, HOT_PIXEL_LIMITS, IOS, LightcraftApp, PREVIEW_LIMITS, RichText, Tokens, Value, action, hint_line, info,
-    json, path_label_beside, pick, register,
+    json, pick,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use super::{path_label_beside, register};
 
 // --------------------------------------------------------------------------------- Performance
 

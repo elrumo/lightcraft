@@ -1,5 +1,7 @@
+#[cfg(not(target_arch = "wasm32"))]
+use super::register;
 use super::widgets::{check, choices, field, heading, hint, path_label, row};
-use super::{LightcraftApp, StartupView, Tokens, json, register};
+use super::{LightcraftApp, StartupView, Tokens, json};
 use crate::panels::settings::IOS;
 use crate::panels::settings::action;
 use crate::panels::settings::option;

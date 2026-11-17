@@ -480,26 +480,7 @@ async fn boot(opts: Options, bridge: Option<crate::host::Bridge>) -> Boot {
                 );
             }
         });
-        // thumbnails stored without an index entry (index saved late, or lost): delete them; not
-        // when the index couldn't be read, which would make every thumbnail look unindexed
-        let b2 = b.clone();
-        let known: std::collections::HashSet<String> = b
-            .list("thumbs")
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|n| n.ends_with(".jpg"))
-            .map(|n| n.trim_end_matches(".jpg").to_string())
-            .collect();
-        let orphans: Vec<String> = if index_read.is_ok() { known.into_iter().filter(|k| !index.contains(k)).collect() } else { Vec::new() };
-        if !orphans.is_empty() {
-            wasm_bindgen_futures::spawn_local(async move {
-                for k in &orphans {
-                    let _ = b2.remove(&crate::wire::thumb_storage_key(k)).await;
-                }
-                log::info!("thumbnail cache: removed {} unindexed files", orphans.len());
-            });
-        }
+        clean_orphan_thumbnails(b, &index, index_read.is_ok()).await;
     }
     let mut stored = None;
     if let Some(b) = &backend {
@@ -517,6 +498,31 @@ async fn boot(opts: Options, bridge: Option<crate::host::Bridge>) -> Boot {
         index.total() as f64 / 1e6
     );
     Boot { opts, backend, files, index, lib_dir, stored, bridge, load_error }
+}
+
+/// Remove only thumbnails whose index was successfully read and does not name them.
+async fn clean_orphan_thumbnails(b: &Backend, index: &ThumbIndex, index_read: bool) {
+    if !index_read {
+        return;
+    }
+    let known: std::collections::HashSet<String> = b
+        .list("thumbs")
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|name| name.ends_with(".jpg"))
+        .map(|name| name.trim_end_matches(".jpg").to_string())
+        .collect();
+    let orphans: Vec<String> = known.into_iter().filter(|key| !index.contains(key)).collect();
+    if !orphans.is_empty() {
+        let b = b.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            for key in &orphans {
+                let _ = b.remove(&crate::wire::thumb_storage_key(key)).await;
+            }
+            log::info!("thumbnail cache: removed {} unindexed files", orphans.len());
+        });
+    }
 }
 
 struct WebApp {
@@ -614,7 +620,7 @@ impl WebApp {
             }
         }
         // `?bench` never has storage (see `Options::from_url`): it measures the generated demo photos
-        if opts.bench && backend.is_none() && session.catalog.len() == 0 {
+        if opts.bench && backend.is_none() && session.catalog.is_empty() {
             lightcraft_engine::demo::load(&mut session);
         }
         if backend.is_some() {

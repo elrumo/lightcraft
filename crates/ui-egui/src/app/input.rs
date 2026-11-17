@@ -1,4 +1,7 @@
-use super::{GESTURE_TIMEOUT_MS, InjectedDrop, InjectedPress, LightcraftApp, drop_overlay, import, panels};
+use super::{GESTURE_TIMEOUT_MS, InjectedDrop, InjectedPress, LightcraftApp, import};
+#[cfg(not(target_arch = "wasm32"))]
+use super::{drop_overlay, panels};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::file_drop;
 
 impl LightcraftApp {

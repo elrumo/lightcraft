@@ -1,6 +1,6 @@
 # third_party/craft-libs
 
-Four crates from [storytold/craft-libs](https://github.com/storytold/craft-libs) at `c7a872e2f24b2c0d9aa78f25c83f342be26fcad3` (MIT OR Apache-2.0; see
+Four crates from [storytold/craft-libs](https://github.com/storytold/craft-libs) based on `c7a872e2f24b2c0d9aa78f25c83f342be26fcad3`, refreshed with upstream craft-libs through `892ef9116c432d7afb5c08aba93e93a4e0b1548f` (MIT OR Apache-2.0; see
 `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`), merged with LightCraft fork changes:
 `craft-raw`, `craft-tiff`, `craft-heif`, `craft-metadata`.
 
@@ -11,5 +11,5 @@ decode, partial big-TIFF reads and more), so the crates live here with that work
 
 This is its own Cargo workspace (excluded from LightCraft's), so it keeps craft-libs' lints and conventions.
 
-When upstream LightCraft moves its craft-libs pin: diff craft-libs between the old and new pin for these four
-crates and apply that diff here (`git diff <old> <new> -- crates/raw crates/tiff crates/heif crates/metadata`).
+When upstream LightCraft moves its craft-libs pins: diff craft-libs between the old and new commits for these four
+crates and apply upstream changes while retaining the fork-owned changes.

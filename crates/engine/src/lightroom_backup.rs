@@ -248,7 +248,7 @@ pub fn extract(zip: &Path, root: &Path, cancel: &AtomicBool) -> Result<Extracted
     std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
     check_space(root, entry.size, crate::disk_space::read(root).map(|space| space.available))?;
     sweep(root);
-    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let stamp = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let dir = root.join(format!("{PREFIX}{}-{stamp}", std::process::id()));
     // owner-only from the start on Unix (a catalog holds the person's paths and metadata)
     #[cfg(unix)]
@@ -519,7 +519,7 @@ pub(crate) mod tests {
         let recent = root.join(format!("{PREFIX}2-2"));
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&recent).unwrap();
-        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(STALE_SECS + 60);
+        let past = web_time::SystemTime::now() - std::time::Duration::from_secs(STALE_SECS + 60);
         File::open(&old).unwrap().set_modified(past).unwrap();
         sweep(&root);
         assert!(!old.exists() && recent.exists());

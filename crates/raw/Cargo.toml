@@ -23,20 +23,20 @@ miniz_oxide = { workspace = true }
 craft-image-codecs = { workspace = true }
 
 [features]
-## `lightcraft_raw::testdata`: synthetic VC-5 (GoPro GPR) streams and Olympus and Panasonic files for other crates' tests
-## (made by craft-raw's own `testdata` feature, where the decoders they test live).
+## Synthetic VC-5 (GoPro GPR), Olympus and Panasonic files for tests in other crates.
 testdata = ["craft-raw/testdata"]
 
 [dev-dependencies]
 # tests record why they skip (`cargo xtask ci` lists the skips)
 lightcraft-testkit = { workspace = true }
 proptest = { workspace = true }
-zune-jpegxl = { workspace = true }
-zune-core = { workspace = true }
-# decoding and writing camera JPEGs in the fork's corpus and DNG tests (test-only)
-zune-jpeg = { version = "0.5", default-features = false, features = ["std"] }
-jpeg-encoder = { version = "0.7", default-features = false, features = ["std"] }
+craft-jxl = { workspace = true }
+jixel = { workspace = true }
 # Pinned CC0 corpus identities; not a product dependency.
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 # Peak-heap regression tests (tests/sr2_heap.rs); not a product dependency.
 dhat = { workspace = true }
+jpeg-encoder = { version = "0.7", default-features = false, features = ["std"] }
+zune-core = { workspace = true }
+zune-jpeg = { version = "0.5", default-features = false, features = ["std"] }
+zune-jpegxl = { workspace = true }

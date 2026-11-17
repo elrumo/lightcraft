@@ -956,6 +956,7 @@ impl Session {
 
     /// Take records into this device: presets and settings replace or remove their item, a server or an edit of
     /// a photo not here is held, an edit of a photo here is applied to it.
+    #[allow(clippy::cognitive_complexity)]
     fn icloud_apply(&mut self, ic: &mut ICloud, take: &[(String, String, String, Option<String>)]) -> usize {
         let mut applied = 0;
         // presets: one change to the list

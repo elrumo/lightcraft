@@ -9,6 +9,7 @@ use craft_update::dialog::{CheckResultDialog, CheckResultResponse};
 #[cfg(not(target_arch = "wasm32"))]
 use craft_update::updater::{Action, Status, Updater};
 
+#[cfg_attr(target_arch = "wasm32", derive(Default))]
 pub(crate) struct Runtime {
     #[cfg(not(target_arch = "wasm32"))]
     updater: Updater,
@@ -27,6 +28,7 @@ pub(crate) struct Runtime {
     pub(crate) status_message: Option<String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for Runtime {
     fn default() -> Self {
         Self {
