@@ -114,6 +114,7 @@ fn count_text_by_unit() {
         eta_ms: None,
         rate_per_min: 0,
         age_ms: 600,
+        photo: None,
     };
     assert_eq!(count_text(&t), "3 of 25");
     (t.done, t.total, t.unit) = (12 * 1_048_576, 340 * 1_048_576, Unit::Bytes);
