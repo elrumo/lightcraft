@@ -621,6 +621,7 @@ impl Session {
         let d = self.develop_of(id).ok_or("no such photo")?;
         let (width, height) = input.size();
         let guard = self.activity.start("expand", "Generative Expand", Cancel::No);
+        guard.set_photo(id.0);
         let canvas = input.placeholder();
         drop(guard);
         let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -655,6 +656,7 @@ impl Session {
         let input = self.expand_canvas_input(id, lightcraft_pipeline::expand::MAX_CANVAS)?;
         let (width, height) = input.size();
         let guard = self.activity.start("expand", "Generative Expand", Cancel::No);
+        guard.set_photo(id.0);
         guard.detail(model);
         let filled = input
             .from_picture(&answer)
@@ -700,6 +702,7 @@ impl Session {
         let passes = job.passes();
         let (width, height) = job.input.size();
         let guard = self.activity.start("expand", "Generative Expand", Cancel::No);
+        guard.set_photo(id.0);
         guard.set_unit(Unit::Percent);
         guard.detail(job.model.label());
         let h = guard.handle();
@@ -719,6 +722,7 @@ impl Session {
         let job = self.expand_job(id, model)?;
         let cancel = Arc::new(AtomicBool::new(false));
         let guard = self.activity.start("expand", "Generative Expand", Cancel::Flag(cancel.clone()));
+        guard.set_photo(id.0);
         guard.set_unit(Unit::Percent);
         guard.detail(job.model.label());
         let (tx, rx) = channel();

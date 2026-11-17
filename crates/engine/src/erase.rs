@@ -350,6 +350,7 @@ impl Session {
     pub(crate) fn spawn_erase(&mut self, job: EraseJob, label: &str) -> Result<(), String> {
         let cancel = Arc::new(AtomicBool::new(false));
         let guard = self.activity.start("erase", label, Cancel::Flag(cancel.clone()));
+        guard.set_photo(job.photo.0);
         guard.set_unit(Unit::Percent);
         let (tx, rx) = channel();
         let (photo, key) = (job.photo, job.key.clone());

@@ -39,7 +39,7 @@ const EMBEDDED: &[(&str, &[&str])] = &[
     ("assets/fonts/", &["lightcraft-engine", "lightcraft-ui-egui", "lightcraft-vision"]),
     ("contributors/", &["lightcraft-ui-egui"]),
     ("docs/whats-new.md", &["lightcraft-engine", "lightcraft-ui-egui"]),
-    ("xtask/src/build_info.rs", &["lightcraft", "lightcraft-server"]),
+    ("xtask/src/build_info.rs", &["lightcraft", "lightcraft-server", "lightcraft-ios-swift"]),
     ("crates/apphost/src/ui_commands.rs", &["xtask"]),
     ("packaging/linux/flatpak/", &["lightcraft-ui-egui"]),
     ("docs/raw/coverage-sweep.tsv", &["lightcraft-raw"]),
@@ -47,6 +47,7 @@ const EMBEDDED: &[(&str, &[&str])] = &[
     ("xtask/src/raw_samples.rs", &["lightcraft-raw"]),
     ("crates/ui-egui/src/menus.rs", &["xtask"]),
     ("crates/ui-egui/src/menus/", &["xtask"]),
+    ("crates/ui-egui/src/state/dialog.rs", &["lightbites-tools"]),
 ];
 
 /// The packages that compile in `path` from outside their own directory.

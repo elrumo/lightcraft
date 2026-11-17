@@ -452,10 +452,12 @@ impl Session {
             Some(r) => {
                 task.progress(r.progress.done.load(Ordering::Relaxed) as u64, r.progress.total.load(Ordering::Relaxed) as u64);
                 task.detail(self.catalog.photo(r.photo).map_or("", |p| p.file_name.as_str()));
+                task.set_photo(r.photo.0);
             }
             None => {
                 task.progress(0, 0);
                 task.detail("");
+                task.set_photo(0);
             }
         }
     }

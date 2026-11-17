@@ -108,6 +108,9 @@ pub struct TaskInfo {
     /// `rate` for a minute, for work that is slower than a unit a second (0 while not known yet).
     pub rate_per_min: u64,
     pub age_ms: u64,
+    /// The photo the task works on (AI Remove, Denoise, Expand, depth…), so a frontend can show it and open it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub photo: Option<u64>,
 }
 
 /// How fast a task's `done` grows: an average over half-second steps. The first change after the task starts is
@@ -165,6 +168,8 @@ struct Entry {
     total: AtomicU64,
     unit: AtomicU8,
     detail: Mutex<String>,
+    /// The photo's id, 0 when the task isn't on one ([`TaskGuard::set_photo`]).
+    photo: AtomicU64,
     cancel: Option<Arc<AtomicBool>>,
     cancellable: AtomicBool,
     queued: AtomicBool,
@@ -256,6 +261,7 @@ impl Entry {
             rate_per_min: (rate * 60.0).round() as u64,
             eta_ms,
             age_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            photo: Some(self.photo.load(Ordering::Relaxed)).filter(|&p| p != 0),
         }
     }
 }
@@ -279,6 +285,7 @@ impl Activity {
             total: AtomicU64::new(0),
             unit: AtomicU8::new(Unit::Count.to_u8()),
             detail: Mutex::new(String::new()),
+            photo: AtomicU64::new(0),
             cancellable: AtomicBool::new(cancel.is_some()),
             cancel,
             queued: AtomicBool::new(false),
@@ -396,6 +403,11 @@ impl TaskGuard {
         self.entry.detail(text);
     }
 
+    /// The photo the task works on, for a frontend that shows its thumbnail and opens it.
+    pub fn set_photo(&self, id: u64) {
+        self.entry.photo.store(id, Ordering::Relaxed);
+    }
+
     /// How fast `done` grows, in units a second, as the task measures it (work that comes in slow batches: the
     /// meter, which wants a step every few seconds, reads it as stalled). `None`: the meter's.
     pub fn set_rate(&self, per_second: Option<f64>) {
@@ -488,6 +500,15 @@ mod tests {
         assert_eq!(a.list().len(), 1);
         drop(g);
         assert!(a.list().is_empty());
+    }
+
+    #[test]
+    fn a_task_names_its_photo() {
+        let a = Activity::default();
+        let g = a.start("erase", "Removing with AI", Cancel::No);
+        assert_eq!(a.list()[0].photo, None);
+        g.set_photo(7);
+        assert_eq!(a.list()[0].photo, Some(7));
     }
 
     #[test]
