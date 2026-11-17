@@ -650,11 +650,10 @@ impl PreparedExport {
                                 .into_iter()
                                 .flatten()
                                 .any(|value| !value.trim().is_empty());
-                        if lightcraft_meta::embeds_location(&bytes) || embeds_place_name {
-                            // DNG only for what the DNG export below takes
+                        if metadata.gps.is_some() || embeds_place_name || lightcraft_meta::embeds_location(&bytes) {
                             let instead = if lightcraft_raw::probe(&bytes).is_some() { "JPEG, TIFF or DNG" } else { "JPEG or TIFF" };
                             return Err(format!(
-                                "{label}: can't remove the location from an original file that embeds GPS or place names; export as {instead} instead"
+                                "{label}: can't remove the location from this original file: it contains GPS or place names, or its location metadata could not be fully checked; export as {instead} instead"
                             ));
                         }
                     }

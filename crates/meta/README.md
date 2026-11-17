@@ -8,13 +8,14 @@ Photo metadata: EXIF, XMP (read + write), IPTC-IIM, and the containers that carr
 |---|---|
 | `read_exif(&[u8]) -> Metadata` | TIFF-structured Exif block (whole TIFF/DNG/raw file, or JPEG APP1 payload with/without `Exif\0\0`). `try_read_exif` reports header errors. |
 | `from_tiff(&Tiff) -> Metadata` | Same, from an already parsed stream (used by `lightcraft-raw`). |
-| `embedded(&[u8]) -> Embedded` | Sniffs JPEG / PNG / WebP / TIFF / PSD / PSB / Fujifilm RAF / Canon CR3 / HEIF (HEIC, AVIF) and returns the Exif, XMP (+ extended XMP), ICC and IPTC blocks. PSD/PSB EXIF resource 1058 and XMP resource 1060 are read from the bounded image-resource section without decoding pixels. `jpeg_segments`, `png_chunks`, `webp_chunks` are the per-container walkers; HEIF gives the primary image's `Exif` and XMP items, read from the box structure without decoding (`src/heif.rs`). |
+| `embedded(&[u8]) -> Embedded` | Sniffs JPEG / PNG / WebP / TIFF / PSD / PSB / Fujifilm RAF / Canon CR3 / HEIF (HEIC, AVIF) and returns the Exif, XMP (+ extended XMP), ICC and IPTC blocks. PSD/PSB EXIF resource 1058 and XMP resource 1060 are read from the bounded image-resource section without decoding pixels. `jpeg_segments`, `png_chunks`, `webp_chunks` are the per-container walkers; HEIF gives the primary image's `Exif` and XMP items, read without decoding (`src/heif.rs`). |
 | `parse_xmp(&str) -> Result<XmpData>` | Metadata + the opaque `lc:settings` JSON + every property (`prefix:name`, structs flattened as `a:b/c:d`). |
 | `write_xmp(&Metadata, Option<&str>) -> String` | Complete `<?xpacket?>` packet; the second argument is LightCraft's full develop settings JSON. |
 | `parse_iptc(&[u8]) -> Metadata` | IIM record 2: title (2:5), keywords (2:25), by-line (2:80), copyright (2:116), caption (2:120), date/time created (2:55/2:60). |
 | `extract(&[u8]) -> Metadata` | Everything for a whole file. Precedence: EXIF → IPTC fills gaps → XMP overrides user fields (rating, label, title, caption, artist, copyright, keywords, GPS) and fills the rest. |
 | `embeds_location(&[u8]) -> bool` | Whether a file carries GPS anywhere it can be read from (export's "remove location" check): for HEIF every Exif and XMP item, whichever image it describes, with unreadable items counted as a location; otherwise what `extract` reads. |
 | `try_extract(&[u8]) -> Result<Metadata, ExtractError>` | Like `extract`, but reports malformed PSD/PSB headers, image-resource sections, or embedded EXIF/XMP structure (including duplicate EXIF/XMP resources) so callers can fail closed when location absence cannot be established. Other formats remain best-effort. |
+| `embeds_location(&[u8]) -> bool` | Whether a file carries GPS anywhere it can be read from (export's "remove location" check): for HEIF every Exif and XMP item, whichever image it describes, with unreadable items and incomplete item catalogs counted as a location; otherwise what `extract` reads. |
 
 `Metadata` carries camera (make, model, serial, software), lens (make, model, serial, specification), capture
 (date-time with UTC offset and milliseconds, exposure time, f-number, ISO incl. extended ISO, focal length and
@@ -48,6 +49,7 @@ XMP parser; truncation tests cut a sample JPEG at every byte, and a HEIF file at
 four values). The HEIF reader's boxes, items and gathered bytes are bounded and it walks `iloc` once. They also
 exercise truncated PSD/PSB headers and image-resource records with hostile declared lengths.
 PSD/PSB XMP resources require valid UTF-8; trailing NUL padding is trimmed after validation.
+The HEIF truncation and byte-damage tests cover bounded box and item walks; the reader walks `iloc` once.
 
 ISO capture-time parsing requires a complete clock and consumes every clock and fractional-second character. Invalid
 XMP capture-time values remain available in the raw property map but are not projected into `Metadata`; a later valid

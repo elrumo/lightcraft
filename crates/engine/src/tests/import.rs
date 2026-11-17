@@ -3375,40 +3375,6 @@ fn heic_imports_as_a_normal_photo_or_says_why_not() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
-/// Issue #693: a HEIC's EXIF reaches the catalog (camera, capture time) and All Metadata, as a
-/// JPEG's does. The file is made like the issue sweep's `synthetic-metadata.heic`: the HEIF test
-/// builder, 96 × 64, with an EXIF block naming the camera and the capture time. The container is
-/// read without the decoder; importing needs the codecs' `heif` feature (`cargo xtask ci` runs
-/// this test with it).
-#[test]
-fn heic_exif_reaches_the_catalog_and_all_metadata() {
-    use craft_heif::testdata::{Spec, build};
-    let photo = |x: u32, y: u32| [((x * 7 + y * 13) % 200 + 30) as u16, 110, 150];
-    let exif = lightcraft_meta::write_exif(&lightcraft_meta::Metadata {
-        make: Some("Synthetic".into()),
-        model: Some("Issue sweep camera".into()),
-        capture_time: lightcraft_meta::DateTime::parse_iso("2026-10-12T12:34:56"),
-        ..Default::default()
-    });
-    let bytes = build(&Spec { exif: Some(exif), ..Spec::new(96, 64, &photo) });
-    let m = lightcraft_meta::extract(&bytes);
-    assert_eq!(m.model.as_deref(), Some("Issue sweep camera"));
-    assert_eq!(m.capture_time.map(|d| d.to_iso()).as_deref(), Some("2026-10-12T12:34:56"));
-    if !lightcraft_codecs::Format::Heif.can_decode() {
-        return; // importing needs the decoder; `heic_imports_as_a_normal_photo_or_says_why_not` checks the error
-    }
-    let src = temp_dir("heic-exif");
-    std::fs::write(src.join("IMG_0002.HEIC"), &bytes).unwrap();
-    let mut s = Session::new().with_fs();
-    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
-    assert_eq!(ids(&r, "imported"), 1, "{r}");
-    let p = s.catalog.photos().next().unwrap().clone();
-    assert_eq!((p.meta.camera.as_str(), p.captured.as_deref()), ("Synthetic Issue sweep camera", Some("2026-10-12T12:34:56")));
-    let all = s.execute("photo.allMetadata", &json!({"id": p.id.0})).unwrap();
-    assert!(all["exif"].as_array().unwrap().iter().any(|r| r["name"] == "Model" && r["value"] == "Issue sweep camera"), "{all}");
-    let _ = std::fs::remove_dir_all(&src);
-}
-
 /// Issue #2284: a photo taken at 13:00 in UTC-5 must be catalogued as 13:00. HEICs carried no Exif
 /// (issue #1233), so every one of them fell back to the file's modification time, which the import
 /// writes as UTC: an iPhone photo landed five hours late and after 19:00 on the wrong day.
@@ -3812,6 +3778,72 @@ fn smart_previews_of_a_raw_take_a_frontends_development() {
     assert!(crate::smart::stored_info(&bytes).is_some_and(|i| i.raw), "this engine's facts");
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&lib);
+}
+
+#[test]
+fn heic_exif_reaches_the_catalog_and_all_metadata() {
+    use craft_heif::testdata::{Spec, build};
+    let photo = |x: u32, y: u32| [((x * 7 + y * 13) % 200 + 30) as u16, 110, 150];
+    let exif = lightcraft_meta::write_exif(&lightcraft_meta::Metadata {
+        make: Some("Synthetic".into()),
+        model: Some("Issue sweep camera".into()),
+        capture_time: lightcraft_meta::DateTime::parse_iso("2026-10-12T12:34:56"),
+        ..Default::default()
+    });
+    let bytes = build(&Spec { exif: Some(exif), ..Spec::new(96, 64, &photo) });
+    let m = lightcraft_meta::extract(&bytes);
+    assert_eq!(m.model.as_deref(), Some("Issue sweep camera"));
+    assert_eq!(m.capture_time.map(|d| d.to_iso()).as_deref(), Some("2026-10-12T12:34:56"));
+    if !lightcraft_codecs::Format::Heif.can_decode() {
+        return; // importing needs the decoder; `heic_imports_as_a_normal_photo_or_says_why_not` checks the error
+    }
+    let src = temp_dir("heic-exif");
+    std::fs::write(src.join("IMG_0002.HEIC"), &bytes).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(ids(&r, "imported"), 1, "{r}");
+    let p = s.catalog.photos().next().unwrap().clone();
+    assert_eq!((p.meta.camera.as_str(), p.captured.as_deref()), ("Synthetic Issue sweep camera", Some("2026-10-12T12:34:56")));
+    let all = s.execute("photo.allMetadata", &json!({"id": p.id.0})).unwrap();
+    assert!(all["exif"].as_array().unwrap().iter().any(|r| r["name"] == "Model" && r["value"] == "Issue sweep camera"), "{all}");
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+fn heic_camera_exif(date: &str) -> Vec<u8> {
+    use craft_tiff::{ByteOrder, IfdBuilder, TiffWriter, Value, tags as t};
+    let mut exif = IfdBuilder::new();
+    exif.set(t::DATE_TIME_ORIGINAL, Value::Ascii(date.into()));
+    exif.set(t::OFFSET_TIME_ORIGINAL, Value::Ascii("-05:00".into()));
+    let mut ifd0 = IfdBuilder::new();
+    ifd0.set(t::MAKE, Value::Ascii("Apple".into()));
+    ifd0.set(t::MODEL, Value::Ascii("iPhone 15 Pro".into()));
+    ifd0.set(t::ORIENTATION, Value::Short(vec![6]));
+    ifd0.set_child(t::EXIF_IFD, exif);
+    TiffWriter::new(ByteOrder::Little, false).write(&[ifd0]).unwrap()
+}
+
+#[test]
+fn heic_exif_orientation_does_not_rotate_the_picture_twice() {
+    use craft_heif::testdata::{Prop, Spec, build};
+    let photo = |x: u32, y: u32| [((x * 7 + y * 13) % 200 + 30) as u16, 110, 150];
+    for (props, size) in [(vec![], (96, 64)), (vec![Prop::Irot(3)], (64, 96))] {
+        let plain = build(&Spec { props: props.clone(), ..Spec::new(96, 64, &photo) });
+        let bytes = build(&Spec { props, exif: Some(heic_camera_exif("2026:10:18 13:00:00")), ..Spec::new(96, 64, &photo) });
+        assert_eq!(lightcraft_meta::extract(&bytes).orientation, Some(lightcraft_geom::Orientation::Rotate90));
+        if lightcraft_codecs::Format::Heif.can_decode() {
+            let header = lightcraft_codecs::read_header(&bytes).unwrap();
+            assert_eq!((header.width, header.height, header.orientation), (size.0, size.1, 1));
+            let info = crate::files::probe_bytes("rotated.HEIC", &bytes).unwrap();
+            assert_eq!((info.width, info.height), size);
+            let (image, _) = crate::files::load_bytes(&bytes, 96).unwrap();
+            let (without_exif, _) = crate::files::load_bytes(&plain, 96).unwrap();
+            assert_eq!((image.width, image.height), (size.0 as usize, size.1 as usize));
+            assert_eq!(image.data, without_exif.data, "Exif must not turn the decoded pixels again");
+        } else {
+            assert!(crate::files::probe_bytes("rotated.HEIC", &bytes).unwrap_err().contains("isn't included in this build"));
+            assert!(crate::files::load_bytes(&bytes, 96).unwrap_err().contains("isn't included in this build"));
+        }
+    }
 }
 
 /// A batch-edit recipe changes the imported photos' actual develop settings (not just an option

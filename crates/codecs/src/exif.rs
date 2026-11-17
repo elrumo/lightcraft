@@ -60,7 +60,7 @@ impl<'a> Tiff<'a> {
         let next = self.u32_at(pos + 2 + n * 12).unwrap_or(0) as usize;
         Some((v, next))
     }
-    /// First value of a SHORT/LONG entry.
+    /// First value of a SHORT/LONG entry (the HEIC gain-map reader uses it outside tests).
     pub fn uint(&self, e: &Entry) -> Option<u32> {
         match e.typ {
             3 => self.u16_at(e.value_pos).map(u32::from),

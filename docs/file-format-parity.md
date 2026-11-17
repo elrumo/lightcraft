@@ -88,3 +88,5 @@ Remaining: **22–39 h** (AVIF decode 8–15 h if a permissive decoder is writte
 | 2026-10-12 | minor | Render to DNG: "Rendered DNG" export format (linear 16-bit float DNG of the rendered photo) |
 | 2026-10-12 | minor | Photo ▸ Render to DNG: rendered DNGs written next to the originals and stacked with them |
 | 2026-10-12 | minor | HEIC / HEIF and AVIF: EXIF and XMP read from the container, without the decoder (#693); statuses unchanged |
+| 2026-10-12 | minor | Lossy DNG export (JPEG tiles, `dngCompression: "lossy"`); PSD write had already landed (#953), so it leaves the remaining hours |
+| 2026-10-13 | patch | JPEG write (#1373): Huffman tables made for each image, 12–14 % smaller files at the same pixels; statuses unchanged |
