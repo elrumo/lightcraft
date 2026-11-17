@@ -109,6 +109,9 @@ impl ErrorBody {
 pub struct HostState {
     /// Changes with every catalog change (an edit, a rating, an import…).
     pub catalog_revision: u64,
+    /// A journal shadow is current only after it has read through this sequence; `None` means it cannot be used.
+    #[serde(default)]
+    pub journal_seq: Option<u64>,
     /// Identifies the grid's photo list (source, filter, sort): a new value when it changes.
     pub visible_gen: u64,
     pub visible_count: usize,

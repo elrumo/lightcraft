@@ -82,6 +82,19 @@ fn open_with(store: &Flaky, files: &MemStore, seed: bool) -> Session {
 }
 
 #[test]
+fn journal_shadow_sequence_is_unavailable_while_an_edit_is_not_queued() {
+    let store = Flaky::default();
+    let mut session = open(&store, true);
+    let before = session.journal_shadow_seq().unwrap();
+    store.set_failing(true);
+    assert!(session.execute("photo.rate", &json!({"rating": 4})).is_err());
+    assert_eq!(session.journal_shadow_seq(), None);
+    store.set_failing(false);
+    session.persist().unwrap();
+    assert!(session.journal_shadow_seq().unwrap() > before);
+}
+
+#[test]
 fn failed_append_fails_the_command_and_is_retried() {
     let store = Flaky::default();
     let mut s = open(&store, true);

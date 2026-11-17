@@ -48,6 +48,40 @@ fn slow_drive(dir: &std::path::Path, sync: Duration, fail: Arc<AtomicBool>) {
     );
 }
 
+#[test]
+fn journal_shadow_sequence_advances_before_a_queued_write_reaches_disk() {
+    let dir = temp_dir("shadow-sequence");
+    let mut session = open(&dir);
+    session.flush_log().unwrap();
+    let before = session.journal_shadow_seq().unwrap();
+    let held = Arc::new(AtomicBool::new(true));
+    let gate = held.clone();
+    fault::install(
+        &dir,
+        Arc::new(move |step| {
+            if step == Step::Write {
+                let started = Instant::now();
+                while gate.load(Ordering::SeqCst) && started.elapsed() < Duration::from_secs(10) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            Ok(())
+        }),
+    );
+    session.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    let queued = session.journal_shadow_seq().unwrap();
+    let log = std::fs::read_to_string(dir.join("catalog.log")).unwrap_or_default();
+    held.store(false, Ordering::SeqCst);
+    session.flush_log().unwrap();
+    let written = std::fs::read_to_string(dir.join("catalog.log")).unwrap();
+    fault::remove(&dir);
+    drop(session);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(queued > before);
+    assert!(!log.contains(&format!("\"seq\":{queued},")));
+    assert!(written.contains(&format!("\"seq\":{queued},")));
+}
+
 /// The flag or rating each photo got, as `(id, flag, rating)`.
 fn culled(s: &Session) -> Vec<(PhotoId, Flag, u8)> {
     ids(s).into_iter().filter_map(|id| s.catalog.photo(id).map(|p| (id, p.flag, p.rating))).collect()

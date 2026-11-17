@@ -1832,6 +1832,7 @@ impl Engine {
         let (visible_gen, visible) = self.session.visible_shared();
         HostState {
             catalog_revision: self.session.catalog.revision,
+            journal_seq: self.session.journal_shadow_seq(),
             visible_gen,
             visible_count: visible.len(),
             library_generation: self.session.library_generation(),

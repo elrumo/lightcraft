@@ -101,10 +101,14 @@ the control protocol of [control-protocol.md](control-protocol.md): one `{"id","
 as it drives the egui app. `engine.*`, `render.*` and `host.*` are answered by the engine; `ui.*` go to the frontend as
 `uiRequest`s, which it answers with `ui.reply` (the same path a script uses).
 
+For a reader of the catalog files, `journalSeq` is the sequence it must have replayed before its catalog can reflect the
+current state. It is `null` during an interaction or while changes have not been queued, and may lead the file while the
+background writer is still working. Recheck the host state and file identity before returning a shadow read.
+
 Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, quick?, ms, histogram?, space?}` (slots
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…; `main`'s `histogram` comes with every sharp picture and
 with a draft at most every 33 ms, a drag's ~120 pictures a second each carrying 1,024 numbers: keep the last one); `renderFailed {slot, photo, key, error}`; `state {state:
-{catalogRevision, visibleGen, visibleCount, libraryGeneration, presetsGeneration, sensitiveRev, active, selectionCount, undo, redo,
+{catalogRevision, journalSeq, visibleGen, visibleCount, libraryGeneration, presetsGeneration, sensitiveRev, active, selectionCount, undo, redo,
 interaction, activeMask, activeSpot, unsaved, sync?, faces?, icloud?}}` when any of it changes (`presetsGeneration`: changes
 with the preset list, including presets the sync brings from another device: the Presets panel reads `presets.list`
 again) (`sensitiveRev`: changes when the photos flagged as possibly sensitive may have, a mark by the person

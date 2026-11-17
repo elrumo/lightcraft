@@ -1226,6 +1226,14 @@ impl Session {
         self.pending_log.is_empty() && self.library.as_ref().is_some_and(|l| l.journal.snapshot_seq() >= l.journal.seq())
     }
 
+    /// Sequence a read-only journal shadow must reach before it can represent the current catalog.
+    pub fn journal_shadow_seq(&self) -> Option<u64> {
+        if !self.pending_log.is_empty() || self.interaction.is_some() {
+            return None;
+        }
+        self.library.as_ref().map(|library| library.journal.seq())
+    }
+
     /// Wait until what the catalog log's thread was handed is on disk, then read again what it
     /// holds ([`Session::refresh_unsaved`]). Before the quit check: a change the thread accepted
     /// but hasn't written yet is in no count of [`Session::unsaved`]. An error (a write failed, or
