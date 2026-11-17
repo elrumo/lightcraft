@@ -65,8 +65,15 @@ fn check_target(target: &str, set: &[String], clock_lint: bool) -> Result<(), St
         c.args(["-p", pkg]);
     }
     if clock_lint {
-        c.env("CLIPPY_CONF_DIR", root().join("xtask/wasm"))
-            .args(["--", "-A", "clippy::all", "-A", "clippy::cognitive_complexity", "-D", "clippy::disallowed_methods"]);
+        c.env("CLIPPY_CONF_DIR", root().join("xtask/wasm")).args([
+            "--",
+            "-A",
+            "clippy::all",
+            "-A",
+            "clippy::cognitive_complexity",
+            "-D",
+            "clippy::disallowed_methods",
+        ]);
     }
     run(c, &format!("cargo {tool} --target {target} --keep-going -p {}", set.join(" -p ")))
         .map_err(|e| format!("{e} (is the target installed? `rustup target add {target}`)"))
