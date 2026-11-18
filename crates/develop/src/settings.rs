@@ -178,6 +178,11 @@ pub struct DevelopSettings {
     /// Film effects: a frame and a stack of film marks over the finished picture. Not written while it is the default.
     #[serde(skip_serializing_if = "Film::is_default")]
     pub film: Film,
+    /// Double exposure: other photos of the library drawn over the finished picture, bottom to top, at most
+    /// [`MAX_EXPOSURE_LAYERS`]. They belong to this photo (no copyable group carries them: Copy Settings, presets,
+    /// sync-settings and Auto Sync leave them). Not written while there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub exposure_layers: Vec<ExposureLayer>,
     pub detail: Detail,
     pub optics: Optics,
     pub geometry: Geometry,
@@ -236,6 +241,7 @@ impl Default for DevelopSettings {
             glow: Glow::default(),
             blur: Blur::default(),
             film: Film::default(),
+            exposure_layers: Vec::new(),
             detail: Detail::default(),
             optics: Optics::default(),
             geometry: Geometry::default(),
@@ -1057,6 +1063,88 @@ impl Film {
     /// The id a new layer takes.
     pub fn next_id(&self) -> u32 {
         self.layers.iter().map(|l| l.id).max().map_or(1, |m| m.saturating_add(1))
+    }
+}
+
+/// The most photos a double exposure draws over its base (each is one more photo rendered for every picture of it).
+pub const MAX_EXPOSURE_LAYERS: usize = 4;
+
+/// How a double exposure's layer mixes with what is under it, on display-encoded values (as an image editor's layer
+/// modes do). A name this build does not know (from a newer app) reads as Screen, the double exposure's own mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LayerBlend {
+    Normal,
+    Multiply,
+    Overlay,
+    SoftLight,
+    Lighten,
+    Darken,
+    Difference,
+    /// Lightens: the layer's light parts show through the base's dark ones (the classic double exposure). Last, as
+    /// serde wants the variant an unknown name reads as.
+    #[default]
+    #[serde(other)]
+    Screen,
+}
+
+impl LayerBlend {
+    pub const ALL: [LayerBlend; 8] = [
+        LayerBlend::Normal,
+        LayerBlend::Screen,
+        LayerBlend::Multiply,
+        LayerBlend::Overlay,
+        LayerBlend::SoftLight,
+        LayerBlend::Lighten,
+        LayerBlend::Darken,
+        LayerBlend::Difference,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LayerBlend::Normal => "Normal",
+            LayerBlend::Screen => "Screen",
+            LayerBlend::Multiply => "Multiply",
+            LayerBlend::Overlay => "Overlay",
+            LayerBlend::SoftLight => "Soft Light",
+            LayerBlend::Lighten => "Lighten",
+            LayerBlend::Darken => "Darken",
+            LayerBlend::Difference => "Difference",
+        }
+    }
+}
+
+/// One photo of a double exposure (card #452): another photo of the library, drawn with its own edits over this one's
+/// finished picture. Only its id is stored, never its pixels, so the double exposure stays an edit of the base photo.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExposureLayer {
+    /// The library photo drawn (a catalog photo id).
+    pub photo: u64,
+    pub visible: bool,
+    pub blend: LayerBlend,
+    /// 0..100.
+    pub opacity: f64,
+    /// Where the layer's middle is from the frame's middle, in percent of the frame's width (`x`, right) and height
+    /// (`y`, down), −100..100.
+    pub x: f64,
+    pub y: f64,
+    /// 100: the layer just covers the frame (as a fill does); 10..400.
+    pub scale: f64,
+    /// Degrees, clockwise, about the layer's middle, −180..180.
+    pub angle: f64,
+}
+
+impl Default for ExposureLayer {
+    fn default() -> Self {
+        ExposureLayer::new(0)
+    }
+}
+
+impl ExposureLayer {
+    /// A new layer of `photo`: screened over the base, whole, covering the frame.
+    pub fn new(photo: u64) -> Self {
+        ExposureLayer { photo, visible: true, blend: LayerBlend::Screen, opacity: 100.0, x: 0.0, y: 0.0, scale: 100.0, angle: 0.0 }
     }
 }
 

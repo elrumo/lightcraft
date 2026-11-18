@@ -103,7 +103,7 @@ fn virtual_copy_names(s: &Session, targets: &[PhotoId], name: Option<&str>) -> R
 /// Create one virtual copy of `src`: a new photo sharing its file, with the same settings and
 /// metadata, added to the same albums and stacked right after it (the stack is expanded so the
 /// copy is visible). `name` is resolved by the command before any copies are created.
-fn virtual_copy(s: &mut Session, src: PhotoId, name: &str) -> Result<Option<PhotoId>> {
+pub(super) fn virtual_copy(s: &mut Session, src: PhotoId, name: &str) -> Result<Option<PhotoId>> {
     let Some(orig) = s.catalog.photo(src).cloned() else { return Ok(None) };
     let master = orig.copy_of.unwrap_or(src);
     let id = s.catalog.alloc_photo_id();

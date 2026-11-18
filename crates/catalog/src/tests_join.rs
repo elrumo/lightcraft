@@ -335,3 +335,21 @@ fn a_photo_in_the_servers_recently_deleted_is_not_the_same_photo() {
     assert_eq!((joined.photos_shared, joined.photos_added), (0, 1), "the photo stays in this library, live");
     assert!(server.photos().any(|p| p.file_name == "mine.jpg" && !p.deleted));
 }
+
+#[test]
+fn a_double_exposures_layers_follow_their_photos_to_the_servers_ids() {
+    let (mut local, mut server) = libraries();
+    let mut p = photo(4, "mine-double.jpg", None);
+    p.develop = Arc::new(lightcraft_develop::DevelopSettings {
+        exposure_layers: vec![lightcraft_develop::ExposureLayer::new(2), lightcraft_develop::ExposureLayer::new(77)],
+        ..Default::default()
+    });
+    add(&mut local, p);
+    let mut outbox = Outbox::default();
+    join_libraries(&local, &mut server, 5, &mut outbox);
+    let double = server.photos().find(|p| p.file_name == "mine-double.jpg").unwrap();
+    let b = server.photos().find(|p| p.file_name == "mine-b.jpg").unwrap().id;
+    // (mine-b.jpg's new id, never the server's photo 2; a photo that did not come along: none)
+    let layers: Vec<u64> = double.develop.exposure_layers.iter().map(|l| l.photo).collect();
+    assert_eq!(layers, [b.0, 0]);
+}

@@ -54,6 +54,55 @@ pub struct RenderJob {
     /// to a 64 px step) and the window would otherwise shrink the texture with 2-tap bilinear sampling, which blurs fine detail at
     /// small ratios and aliases it at large ones. The caches keep the full render.
     pub display_fit: Option<(usize, usize)>,
+    /// A double exposure's layers ([`lightcraft_develop::ExposureLayer`]): each one's photo rendered by a job of its
+    /// own and drawn over this job's picture, bottom to top ([`crate::Session`] builds them with the job). Empty for
+    /// every other photo.
+    pub layers: Vec<LayerJob>,
+}
+
+/// One layer of a double exposure: the layer's values and the job that renders its photo (its own edits, no layers
+/// of its own). The job's size is set when the base's output size is known ([`RenderJob::run`]).
+#[derive(Clone)]
+pub struct LayerJob {
+    pub layer: lightcraft_develop::ExposureLayer,
+    /// The layer photo's frame as it shows (width / height): the box it is rendered into covers the base's frame.
+    pub aspect: f64,
+    pub job: Box<RenderJob>,
+}
+
+/// Draw `layers` over `rendered`, a `w × h` part at (`ox`, `oy`) of a `full_w × full_h` output in `space`: each layer's
+/// photo is rendered (8-bit, in the same space, at the base's quality) into the box that covers the frame at its
+/// scale, then mixed in ([`lightcraft_pipeline::layers`]). A layer whose photo can't be rendered is left out and
+/// logged; the base is never lost to it.
+fn composite_layers(rendered: &mut Rendered, layers: &[LayerJob], request: &RenderRequest, origin: (usize, usize), full: (usize, usize)) {
+    use lightcraft_pipeline::layers;
+    for l in layers.iter().filter(|l| layers::draws(&l.layer)) {
+        let (bw, bh) = layers::render_box(full.0, full.1, l.aspect, &l.layer);
+        let mut job = (*l.job).clone();
+        job.request = RenderRequest {
+            max_w: bw,
+            max_h: bh,
+            quality: request.quality,
+            space: request.space,
+            depth: lightcraft_pipeline::OutputDepth::U8,
+            ..RenderRequest::fit(bw, bh)
+        };
+        job.request.apply_crop = true;
+        job.cache = None;
+        job.cache_larger.clear();
+        let pic = match job.run().rendered {
+            Ok(r) => r.image,
+            Err(e) => {
+                log::warn!("double exposure: layer photo {} was not drawn: {e}", l.layer.photo);
+                continue;
+            }
+        };
+        layers::composite_rgba8(&mut rendered.image, origin, full, &pic, &l.layer);
+        if let Some(lightcraft_pipeline::DeepImage { width, samples: lightcraft_pipeline::DeepSamples::U16(v), .. }) = rendered.deep.as_mut() {
+            layers::composite_u16(v, *width, full, &pic, &l.layer);
+        }
+    }
+    rendered.histogram = Histogram::of_srgb8(&rendered.image);
 }
 
 /// `img` shrunk to fit `max_w × max_h` with a Lanczos filter (see [`RenderJob::display_fit`]).
@@ -265,7 +314,8 @@ impl RenderJob {
     }
 
     fn run_banded_unguarded(self) -> RenderResult {
-        if !bandable(&self.settings, &self.request) {
+        // (a double exposure's layers are drawn over the whole picture)
+        if !bandable(&self.settings, &self.request) || !self.layers.is_empty() {
             return self.run_photo();
         }
         let source = match self.source.load_source() {
@@ -505,7 +555,7 @@ impl RenderJob {
                     || self.display.is_some()
                     || (self.view_cache.is_some() && self.request.quality == Quality::Full);
                 let hdr_or_src = hdr_src.as_ref().unwrap_or(src);
-                let frame = (self.on_screen && !pixels_needed && gpu && gpu_renders(&self.settings, &request))
+                let frame = (self.on_screen && !pixels_needed && self.layers.is_empty() && gpu && gpu_renders(&self.settings, &request))
                     .then(|| develop_on_screen(src, hdr_or_src, &info, &self.settings, &request, self.stages.as_deref()));
                 let (mut rendered, gpu_fallback, hdr) = match frame {
                     Some(OnScreen::Frame(frame, histogram)) => {
@@ -538,6 +588,13 @@ impl RenderJob {
                         (r, f, None)
                     }
                 };
+                // a double exposure: its layers over the finished picture, in the output's space (before a display's values)
+                if !self.layers.is_empty() {
+                    let full =
+                        lightcraft_pipeline::output_size(src.width(), src.height(), &self.settings, &RenderRequest { window: None, ..request });
+                    let origin = request.window.map_or((0, 0), |w| (w.x, w.y));
+                    composite_layers(&mut rendered, &self.layers, &request, origin, full);
+                }
                 // for a display profile: the image goes to the display's values, the histogram
                 // and the cached view preview stay sRGB
                 let mut srgb = None;

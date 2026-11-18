@@ -28,6 +28,7 @@ mod focus;
 pub mod geocode;
 mod hidden;
 pub mod keywords;
+mod layers;
 pub mod lens_refresh;
 mod lensblur;
 pub mod library;
@@ -171,6 +172,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(curves::specs());
         v.extend(masks::specs());
         v.extend(film::specs());
+        v.extend(layers::specs());
         v.extend(lensblur::specs());
         v.extend(relight::specs());
         v.extend(colorize::specs());

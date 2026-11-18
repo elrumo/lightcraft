@@ -120,7 +120,7 @@ fn every_control_survives_the_commands_undo_copy_paste_and_reset() {
     }
 }
 
-/// The indexed controls (a point colour's sliders, a red eye correction's) take the same roads.
+/// The indexed controls (a point colour's sliders, a red eye correction's, a film effect's and a double exposure layer's) take the same roads.
 #[test]
 fn indexed_controls_are_set_listed_and_reset() {
     let mut s = Session::with_demo();
@@ -129,8 +129,15 @@ fn indexed_controls_are_set_listed_and_reset() {
     let eye = serde_json::to_value(lightcraft_develop::RedEye::default()).unwrap();
     s.execute("develop.merge", &json!({"settings": {"point_colors": [{"lum": 0.4, "chroma": 0.1, "hue": 120.0}], "red_eye": [eye]}})).unwrap();
     s.execute("film.add", &json!({"kind": "dust", "seed": 3})).unwrap();
+    // (and a double exposure's layer: another photo of the library over this one)
+    let other = s.visible_cloned()[1];
+    s.execute("layer.add", &json!({"photo": other.0})).unwrap();
     let base = dev(&s, a);
-    assert_eq!((base.point_colors.len(), base.red_eye.len(), base.film.layers.len()), (1, 1, 1), "the sample, the eye and the film layer exist");
+    assert_eq!(
+        (base.point_colors.len(), base.red_eye.len(), base.film.layers.len(), base.exposure_layers.len()),
+        (1, 1, 1, 1),
+        "the sample, the eye, the film layer and the double exposure's layer exist"
+    );
     for spec in INDEXED {
         let (fam, field) = spec.id.split_once('.').unwrap();
         let id = format!("{fam}.0.{field}");

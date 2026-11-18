@@ -25,6 +25,8 @@ pub enum Section {
     Blur,
     Film,
     FilmLayer,
+    /// A double exposure's layer (`exposureLayer.<i>.*`).
+    ExposureLayer,
     Detail,
     Optics,
     Geometry,
@@ -54,6 +56,7 @@ impl Section {
             Section::Blur => "Blur",
             Section::Film => "Film",
             Section::FilmLayer => "Film Effect",
+            Section::ExposureLayer => "Layer",
             Section::Detail => "Detail",
             Section::Optics => "Optics",
             Section::Geometry => "Geometry",
@@ -714,6 +717,61 @@ pub static INDEXED: &[ControlSpec] = &[
         decimals: 0,
         track: Plain,
     },
+    ControlSpec {
+        id: "exposureLayer.opacity",
+        label: "Opacity",
+        section: Section::ExposureLayer,
+        min: 0.0,
+        max: 100.0,
+        default: 100.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
+    ControlSpec {
+        id: "exposureLayer.x",
+        label: "Horizontal",
+        section: Section::ExposureLayer,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Centered,
+    },
+    ControlSpec {
+        id: "exposureLayer.y",
+        label: "Vertical",
+        section: Section::ExposureLayer,
+        min: -100.0,
+        max: 100.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Centered,
+    },
+    ControlSpec {
+        id: "exposureLayer.scale",
+        label: "Scale",
+        section: Section::ExposureLayer,
+        min: 10.0,
+        max: 400.0,
+        default: 100.0,
+        step: 1.0,
+        decimals: 0,
+        track: Plain,
+    },
+    ControlSpec {
+        id: "exposureLayer.angle",
+        label: "Rotate",
+        section: Section::ExposureLayer,
+        min: -180.0,
+        max: 180.0,
+        default: 0.0,
+        step: 1.0,
+        decimals: 0,
+        track: Centered,
+    },
 ];
 
 /// `pointColor.3.hueShift` → (`pointColor`, 3, `hueShift`).
@@ -765,6 +823,17 @@ fn indexed_field<'a>(s: &'a mut DevelopSettings, id: &str) -> Option<&'a mut f64
                 _ => return None,
             })
         }
+        "exposureLayer" => {
+            let l = s.exposure_layers.get_mut(i)?;
+            Some(match field {
+                "opacity" => &mut l.opacity,
+                "x" => &mut l.x,
+                "y" => &mut l.y,
+                "scale" => &mut l.scale,
+                "angle" => &mut l.angle,
+                _ => return None,
+            })
+        }
         _ => None,
     }
 }
@@ -778,6 +847,7 @@ fn indexed_get(s: &DevelopSettings, id: &str) -> Option<f64> {
         "pointColor" => c.point_colors.push(*s.point_colors.get(i)?),
         "redEye" => c.red_eye.push(*s.red_eye.get(i)?),
         "filmLayer" => c.film.layers.push(s.film.layers.get(i)?.clone()),
+        "exposureLayer" => c.exposure_layers.push(*s.exposure_layers.get(i)?),
         _ => return None,
     }
     indexed_field(&mut c, &format!("{fam}.0.{field}")).map(|v| *v)
@@ -825,6 +895,7 @@ pub fn indexed_instances(s: &DevelopSettings) -> Vec<(String, &'static ControlSp
             "pointColor" => s.point_colors.len(),
             "redEye" => s.red_eye.len(),
             "filmLayer" => s.film.layers.len(),
+            "exposureLayer" => s.exposure_layers.len(),
             _ => 0,
         };
         for i in 0..n {

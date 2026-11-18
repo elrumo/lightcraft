@@ -64,6 +64,64 @@ impl crate::Session {
         apply_crop: bool,
         thumb_bucket: Option<usize>,
     ) -> Option<RenderJob> {
+        let mut job = self.build_plain_job(id, max_w, max_h, before, apply_crop, thumb_bucket)?;
+        // (the Before side is the photo without its edits, layers included)
+        if !before {
+            self.add_layer_jobs(&mut job);
+        }
+        Some(job)
+    }
+
+    /// A double exposure's layers for `job` (card #452): a job of each shown layer's photo, with its own edits and no
+    /// layers of its own (so a photo layered over itself, or two double exposures over each other, end there). A layer
+    /// whose photo is not in the library, is in Recently Deleted or is a video is left out: the base draws without it,
+    /// and `layer.list` says why. Every layer job's key goes into `job`'s keys and its cached thumbnails' keys, so an
+    /// edit of a layer's photo shows in the double exposure.
+    pub(crate) fn add_layer_jobs(&mut self, job: &mut RenderJob) {
+        let s = job.settings.clone();
+        if s.exposure_layers.is_empty() || !s.section_enabled("layers") {
+            return;
+        }
+        let mut salt = 0u64;
+        for (i, l) in s.exposure_layers.iter().take(lightcraft_develop::MAX_EXPOSURE_LAYERS).enumerate() {
+            if !lightcraft_pipeline::layers::draws(l) {
+                continue;
+            }
+            let lid = PhotoId(l.photo);
+            if !self.catalog.photo(lid).is_some_and(|p| !p.deleted && p.kind != MediaKind::Video) {
+                continue;
+            }
+            let aspect = self.slide_photo_aspect(lid).unwrap_or(1.5);
+            // (decoded for about the size it is drawn at: the box is set when the job runs, `composite_layers`)
+            let k = if l.scale.is_finite() { (l.scale / 100.0).clamp(1.0, 2.0) } else { 1.0 };
+            let (w, h) = ((job.request.max_w as f64 * k) as usize, (job.request.max_h as f64 * k) as usize);
+            let Some(mut sub) = self.build_plain_job(lid, w.max(1), h.max(1), false, true, None) else { continue };
+            if !sub.settings.exposure_layers.is_empty() {
+                let mut d = (*sub.settings).clone();
+                d.exposure_layers.clear();
+                sub.settings = Arc::new(d);
+            }
+            salt ^= sub.key.rotate_left((i as u32 + 1) * 11);
+            job.layers.push(super::render::LayerJob { layer: *l, aspect, job: Box::new(sub) });
+        }
+        job.key ^= salt;
+        if let Some((_, k)) = job.cache.as_mut() {
+            k.0 ^= u128::from(salt);
+        }
+        for k in &mut job.cache_larger {
+            k.0 ^= u128::from(salt);
+        }
+    }
+
+    fn build_plain_job(
+        &mut self,
+        id: PhotoId,
+        max_w: usize,
+        max_h: usize,
+        before: bool,
+        apply_crop: bool,
+        thumb_bucket: Option<usize>,
+    ) -> Option<RenderJob> {
         let p = self.catalog.photo(id)?.clone();
         let settings = if before { Arc::new(self.before_settings(&p)) } else { p.develop.clone() };
         let level = SourceLevel::for_size(if thumb_bucket.is_some() {
@@ -146,6 +204,7 @@ impl crate::Session {
             preview_cut: None,
             server_tile: None,
             display_fit: None,
+            layers: Vec::new(),
         })
     }
 
@@ -243,6 +302,7 @@ impl crate::Session {
             preview_cut: None,
             server_tile: None,
             display_fit: None,
+            layers: Vec::new(),
         })
     }
 
@@ -310,6 +370,7 @@ impl crate::Session {
             preview_cut,
             server_tile,
             display_fit: None,
+            layers: Vec::new(),
         })
     }
 
@@ -421,7 +482,11 @@ impl crate::Session {
         let mut job = self.render_job(id, max_w, max_h, false, apply_crop)?;
         let p = self.catalog.photo(id)?.clone();
         let h = self.media.settings_hashes.get(id, &p.develop);
-        job.view_cache = Some((self.media.rendered.clone(), self.view_key_with(&p, h, apply_crop)));
+        // (a double exposure's view follows its layers' photos too)
+        let layers = job.layers.iter().enumerate().fold(0u64, |k, (i, l)| k ^ l.job.key.rotate_left((i as u32 + 1) * 11));
+        let mut key = self.view_key_with(&p, h, apply_crop);
+        key.0 ^= u128::from(layers);
+        job.view_cache = Some((self.media.rendered.clone(), key));
         Some(job)
     }
 

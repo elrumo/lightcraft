@@ -153,6 +153,31 @@ fn remap_filter(f: &Filter, photos: &HashMap<PhotoId, PhotoId>, albums: &HashMap
     out
 }
 
+/// A double exposure's layers name photos by id (`exposure_layers`): photos carried from `local` into `target` under new
+/// ids (`placed`: old to new) that took their settings along get them naming each layer photo's new id, and a layer
+/// whose photo did not come along names none (id 0, never given out), which shows as missing rather than as another
+/// photo that has its old id. The changes, to apply after every photo is placed.
+pub(crate) fn remap_layer_photos(local: &Catalog, target: &Catalog, placed: &HashMap<PhotoId, PhotoId>) -> Vec<Op> {
+    let mut ops = Vec::new();
+    let mut moved: Vec<(&PhotoId, &PhotoId)> = placed.iter().collect();
+    moved.sort();
+    for (old, new) in moved {
+        let (Some(p), Some(t)) = (local.photo(*old), target.photo(*new)) else { continue };
+        // (only settings that came along: a matched photo that kept the server's has the server's own ids)
+        if p.develop.exposure_layers.is_empty() || t.develop != p.develop {
+            continue;
+        }
+        let mut d = (*p.develop).clone();
+        for l in &mut d.exposure_layers {
+            l.photo = placed.get(&PhotoId(l.photo)).map_or(0, |n| n.0);
+        }
+        if d != *p.develop {
+            ops.push(Op::SetDevelop { id: *new, settings: Arc::new(d), label: "Joined library".into(), edited: t.edited.clone() });
+        }
+    }
+    ops
+}
+
 /// Merge `local` into `server`, which this device then continues from as `space` (the id space the server gave it).
 pub fn merge(local: &Catalog, server: Catalog, space: u32) -> Merged {
     let mut m = server;
@@ -193,6 +218,9 @@ pub fn merge(local: &Catalog, server: Catalog, space: u32) -> Merged {
         apply(&mut m, &mut out, Op::AddPhoto { photo: Box::new(np) });
         photos.insert(p.id, id);
         report.added += 1;
+    }
+    for op in remap_layer_photos(local, &m, &photos) {
+        apply(&mut m, &mut out, op);
     }
 
     // albums: folders and plain albums by depth (parents first), smart albums last (their rules name albums)

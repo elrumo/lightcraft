@@ -216,3 +216,18 @@ fn a_photo_hidden_on_either_side_stays_hidden() {
     server.apply(Op::SetHidden { id: sa, hidden: true }).unwrap();
     assert!(merge(&local, server, 3).catalog.photo(sa).unwrap().hidden);
 }
+
+#[test]
+fn a_double_exposures_layers_name_the_photos_new_ids() {
+    let (server, mut local, [sa, _sb], [la, lc]) = two_libraries();
+    // (photo 99 is not in this library: its layer comes across naming no photo, not the server's photo 99)
+    with_develop(&mut local, lc, |s| {
+        s.exposure_layers = vec![lightcraft_develop::ExposureLayer::new(la.0), lightcraft_develop::ExposureLayer::new(99)];
+    });
+    let mut merged = merge(&local, server.clone(), 3);
+    let c = merged.photos[&lc];
+    let layers = |cat: &Catalog| cat.photo(c).unwrap().develop.exposure_layers.iter().map(|l| l.photo).collect::<Vec<_>>();
+    assert_eq!(layers(&merged.catalog), [sa.0, 0]);
+    let replayed = replay(&server, &merged.catalog, &mut merged.outbox);
+    assert_eq!(layers(&replayed), [sa.0, 0]);
+}

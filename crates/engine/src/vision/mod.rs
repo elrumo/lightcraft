@@ -1496,6 +1496,7 @@ pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::pa
         preview_cut: None,
         server_tile: None,
         display_fit: None,
+        layers: Vec::new(),
     };
     guard::catch("rendering a photo for search", || job.run().rendered.map(|r| r.image))?
 }

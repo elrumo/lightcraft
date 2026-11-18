@@ -166,6 +166,9 @@ fn join_photos(local: &Catalog, server: &mut Catalog, outbox: &mut Outbox, joine
             joined.photos_added += 1;
         }
     }
+    for op in crate::merge::remap_layer_photos(local, server, &placed) {
+        apply(server, outbox, op);
+    }
     placed
 }
 

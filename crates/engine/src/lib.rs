@@ -1287,7 +1287,8 @@ impl Session {
         new_json["hdr"]["expand"] = serde_json::json!(new.hdr.expand);
         let Some(mut delta) = json_delta(&old_json, &new_json) else { return Vec::new() };
         if let Some(o) = delta.as_object_mut() {
-            for k in ["spots", "red_eye", "version", "process"] {
+            // (a double exposure's layers are photos of this library drawn over this photo: they stay with it)
+            for k in ["spots", "red_eye", "version", "process", "exposure_layers"] {
                 o.remove(k);
             }
             // (an estimated depth or surface is a picture of this photo: each photo has its own, as copies leave them behind)

@@ -40,6 +40,7 @@ pub mod finish;
 pub mod geometry;
 pub mod glow;
 pub mod inpaint;
+pub mod layers;
 // upstream LightCraft's mask-focused Lens Blur: its types and helpers (the fork's depth Lens Blur, [`lensblur`], renders)
 pub mod lens_blur;
 pub mod lensblur;

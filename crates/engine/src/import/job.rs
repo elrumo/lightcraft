@@ -534,6 +534,7 @@ impl Session {
             preview_cut: None,
             server_tile: None,
             display_fit: None,
+            layers: Vec::new(),
         };
         let embedded = match (&self.media.preview_loader, c.kind) {
             (Some(l), MediaKind::Raw) => Some((c.path.clone(), l.clone(), edge)),
