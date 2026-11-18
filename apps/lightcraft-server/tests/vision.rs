@@ -350,6 +350,9 @@ fn device_in(f: &Fixture, dir: &Path, model: Option<Arc<dyn Embedder>>) -> Sessi
         // (a device with no model of its own: the web build, iOS; whatever this build could do)
         None => s.vision.thin = true,
     }
+    // (below high the helper's threads run at background priority, which a busy machine never schedules: the tests
+    // would wait on the load, not on the helper)
+    s.execute("vision.setHelperUsage", &json!({"usage": "high"})).unwrap();
     s.execute("sync.signIn", &json!({"server": f.ann.url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
     sync(&mut s);
     assert_eq!(s.catalog.len(), 4, "the library arrived");
