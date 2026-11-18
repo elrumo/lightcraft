@@ -345,4 +345,78 @@ mod tests {
         assert_eq!(s.undo.len(), undo0 + 1);
         let _ = (std::fs::remove_dir_all(&lib), std::fs::remove_dir_all(&src));
     }
+
+    /// Run `files` to the end, committing every batch.
+    fn run_to_end(s: &mut Session, files: Vec<String>, p: &Value) -> Tally {
+        let mut run = Run::begin(s, files, p, None).unwrap();
+        let mut tally = Tally::default();
+        loop {
+            let batches = run.next_batches();
+            let done = batches.is_none();
+            for b in batches.into_iter().flatten() {
+                tally.add(&commit(s, &mut run, b).unwrap());
+            }
+            if done {
+                return tally;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// The app killed in the middle of a Move import (card #497): only the first batch was committed, the rest was readied
+    /// or not. Running the import again on what is left in the staging folder (a frontend's resume at the next launch) adds
+    /// every photo exactly once: the committed ones' sources are gone, and one whose source was still there (killed between the
+    /// catalog save and the removal) is a duplicate, skipped.
+    #[test]
+    fn a_move_import_killed_half_way_resumes_without_duplicates_or_losses() {
+        let lib = temp("kill-lib");
+        let src = temp("kill-src");
+        let mut demo = Session::with_demo();
+        let ids: Vec<u64> = demo.visible_cloned().iter().take(20).map(|id| id.0).collect();
+        let n = ids.len();
+        assert!(n > lightcraft_engine::import::batch_size(), "more photos than one batch: {n}");
+        let p = json!({"dir": src.to_string_lossy(), "ids": ids, "longEdge": 48, "format": "png"});
+        crate::export::export_now(&mut demo, &p, &mut |_, _, _| true).unwrap();
+        let staged = |dir: &std::path::Path| -> Vec<String> {
+            let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path().to_string_lossy().to_string()).collect();
+            v.sort();
+            v
+        };
+        let files = staged(&src);
+        assert_eq!(files.len(), n);
+        // (the apps' file hooks: the probe hashes each file, which finds a duplicate)
+        let mut s = Session::new().with_fs();
+        s.open_library(&lib, false).unwrap();
+        let mv = json!({"mode": "move"});
+        // the first batch is committed, then the app is "killed": the run goes with whatever its worker readied
+        let mut run = Run::begin(&mut s, files, &mv, None).unwrap();
+        let first = loop {
+            if let Some(b) = run.next_batches().and_then(|mut v| (!v.is_empty()).then(|| v.remove(0))) {
+                break b;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let mut committed = Tally::default();
+        committed.add(&commit(&mut s, &mut run, first).unwrap());
+        let k = committed.imported;
+        assert!(k > 0 && k < n, "{committed:?}");
+        drop(run);
+        assert_eq!(s.catalog.len(), k);
+        let left = staged(&src);
+        assert_eq!(left.len(), n - k, "the committed photos' sources were removed, the others kept");
+        // one committed photo whose source the kill left behind
+        let path_of = |ph: &lightcraft_catalog::Photo| match &ph.source {
+            lightcraft_catalog::Source::File { path } => std::path::PathBuf::from(path),
+            other => panic!("not a file: {other:?}"),
+        };
+        let back = path_of(s.catalog.photos().next().unwrap());
+        std::fs::copy(&back, src.join(back.file_name().unwrap())).unwrap();
+        let again = run_to_end(&mut s, staged(&src), &mv);
+        assert_eq!(again.imported, n - k, "{again:?}");
+        assert_eq!(again.duplicates, 1, "{again:?}");
+        assert_eq!(s.catalog.len(), n, "every photo once");
+        let pictures: std::collections::HashSet<Vec<u8>> = s.catalog.photos().map(|ph| std::fs::read(path_of(ph)).unwrap()).collect();
+        assert_eq!(pictures.len(), n, "no photo twice");
+        let _ = (std::fs::remove_dir_all(&lib), std::fs::remove_dir_all(&src));
+    }
 }
