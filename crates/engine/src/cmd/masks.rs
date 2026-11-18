@@ -1157,7 +1157,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Mask Adjustments",
             [],
             None,
-            "{id?, values: {exposure, contrast, highlights, shadows, whites, blacks, temp, tint, texture, clarity, dehaze, hue, saturation, sharpness, noise, moire, defringe, lens_blur, lens_blur_off, lens_blur_outside, lens_blur_boost, lens_blur_transition, color_hue, color_sat, amount}}",
+            "{id?, values: {exposure, contrast, highlights, shadows, whites, blacks, temp, tint, texture, clarity, dehaze, hue, saturation, sharpness, noise, moire, defringe, lens_blur, lens_blur_off, lens_blur_outside, lens_blur_boost, lens_blur_transition, blur, blur_style (gaussian, lens, motion, spin, zoom), blur_angle, blur_center_x, blur_center_y, color_hue, color_sat, amount}}",
             has_active,
             |s, p| {
                 let vals = p.get("values").cloned().ok_or_else(|| bad("mask.adjust", "missing values"))?;
@@ -1759,6 +1759,11 @@ pub(crate) fn clamp_local(mut a: LocalAdjustments) -> LocalAdjustments {
     c(&mut a.lens_blur, 0.0, 100.0);
     c(&mut a.lens_blur_boost, 0.0, 100.0);
     c(&mut a.lens_blur_transition, 0.0, 100.0);
+    c(&mut a.blur, 0.0, 100.0);
+    c(&mut a.blur_angle, -90.0, 90.0);
+    for v in [&mut a.blur_center_x, &mut a.blur_center_y] {
+        *v = if v.is_finite() { v.clamp(0.0, 100.0) } else { 50.0 };
+    }
     c(&mut a.color_hue, 0.0, 360.0);
     c(&mut a.color_sat, 0.0, 100.0);
     c(&mut a.amount, 0.0, 200.0);

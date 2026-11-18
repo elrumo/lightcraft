@@ -2727,5 +2727,9 @@
   "Welcome": "Benvenuto",
   "Next": "Avanti",
   "Get Started": "Inizia",
-  "Stopped at the scan limit: there may be more photos": "Fermati al limite di scansione: potrebbero esserci altre foto"
+  "Stopped at the scan limit: there may be more photos": "Fermati al limite di scansione: potrebbero esserci altre foto",
+  "Gaussian": "Gaussiana",
+  "Spin": "Rotazione",
+  "Center X": "Centro X",
+  "Center Y": "Centro Y"
 }

@@ -37,7 +37,7 @@ impl DevelopSettings {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
-    /// [`Self::to_json`] with the groups left out while they are the default (HDR, Glow, Film, Relight, Depth Map, Colorize)
+    /// [`Self::to_json`] with the groups left out while they are the default (HDR, Glow, Blur, Film, Relight, Depth Map, Colorize)
     /// written out, and Remove Hot Pixels stated ([`Self::to_json_for_merge`]): what a value is interpolated from or
     /// compared with needs every leaf, not a missing key.
     pub fn to_json_full(&self) -> Value {
@@ -46,6 +46,7 @@ impl DevelopSettings {
             let groups = [
                 ("hdr", serde_json::to_value(self.hdr)),
                 ("glow", serde_json::to_value(self.glow)),
+                ("blur", serde_json::to_value(self.blur)),
                 ("film", serde_json::to_value(&self.film)),
                 ("relight", serde_json::to_value(&self.relight)),
                 ("depth_map", serde_json::to_value(self.depth_map)),
@@ -241,6 +242,8 @@ impl DevelopSettings {
             }
             // (the frame, the switches and the layers are not sliders: the whole group starts over)
             Section::Film | Section::FilmLayer => self.film = settings::Film::default(),
+            // (the style is not a slider either)
+            Section::Blur => self.blur = settings::Blur::default(),
             // the creative profile is not a control: the chosen look goes back to the default one,
             // and so does the camera's own local tone mapping
             Section::Profile => {

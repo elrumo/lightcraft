@@ -2788,5 +2788,9 @@
   "Top bar": "Thanh trên cùng",
   "Tool strip": "Thanh công cụ",
   "Bottom bar": "Thanh dưới cùng",
-  "Stopped at the scan limit: there may be more photos": "Đã dừng ở giới hạn quét: có thể còn ảnh khác"
+  "Stopped at the scan limit: there may be more photos": "Đã dừng ở giới hạn quét: có thể còn ảnh khác",
+  "Gaussian": "Gaussian",
+  "Spin": "Xoay",
+  "Center X": "Tâm X",
+  "Center Y": "Tâm Y"
 }

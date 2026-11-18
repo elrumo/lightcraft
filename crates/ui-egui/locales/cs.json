@@ -2607,5 +2607,9 @@
   "Welcome": "Vítejte",
   "Next": "Další",
   "Get Started": "Začít",
-  "Stopped at the scan limit: there may be more photos": "Zastaveno na limitu skenování: je možné, že existují další fotografie"
+  "Stopped at the scan limit: there may be more photos": "Zastaveno na limitu skenování: je možné, že existují další fotografie",
+  "Gaussian": "Gaussovské",
+  "Spin": "Rotace",
+  "Center X": "Střed X",
+  "Center Y": "Střed Y"
 }

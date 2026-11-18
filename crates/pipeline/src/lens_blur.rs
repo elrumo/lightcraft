@@ -485,6 +485,11 @@ fn transition_ramp(focus: &Plane, d: f32, px_per_long: f64, origin: (usize, usiz
 /// highlights brightened by `boost` (0..1) before they are spread.
 /// `origin`: where `img`'s pixel (0, 0) sits in the whole output (a zoomed view's window), so the
 /// coarse grids line up with the whole render's.
+/// The disc blur alone, without highlight boost ([`crate::blur`]'s Lens).
+pub(crate) fn disc_blur(img: &mut Rgb32f, coc: &[f32], r: f32, origin: (usize, usize)) {
+    blur(img, coc, r, 0.0, origin);
+}
+
 fn blur(img: &mut Rgb32f, coc: &[f32], r: f32, boost: f32, origin: (usize, usize)) {
     let w = img.width;
     // highlights brightened before they are spread (the bokeh), the rest as it is

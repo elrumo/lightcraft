@@ -171,6 +171,10 @@ pub struct DevelopSettings {
     /// so settings without a glow keep their JSON and `hash64` (and every cached preview stays valid).
     #[serde(skip_serializing_if = "Glow::is_default")]
     pub glow: Glow,
+    /// Blur (Effects panel, under Glow; card #499): a plain, lens or motion blur over the whole photo. Not written while it
+    /// is the default, so settings without one keep their JSON and `hash64`.
+    #[serde(skip_serializing_if = "Blur::is_default")]
+    pub blur: Blur,
     /// Film effects: a frame and a stack of film marks over the finished picture. Not written while it is the default.
     #[serde(skip_serializing_if = "Film::is_default")]
     pub film: Film,
@@ -230,6 +234,7 @@ impl Default for DevelopSettings {
             vignette: Vignette::default(),
             grain: Grain::default(),
             glow: Glow::default(),
+            blur: Blur::default(),
             film: Film::default(),
             detail: Detail::default(),
             optics: Optics::default(),
@@ -807,6 +812,71 @@ impl Glow {
     }
 }
 
+/// How a blur spreads the picture (`lightcraft_pipeline::blur`): a plain (Gaussian) blur, a lens's disc (bokeh), or a
+/// camera moving while the shutter is open: along a line, spinning round a centre, or zooming towards it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BlurStyle {
+    #[default]
+    Gaussian,
+    Lens,
+    Motion,
+    Spin,
+    Zoom,
+}
+
+impl BlurStyle {
+    pub const ALL: [BlurStyle; 5] = [BlurStyle::Gaussian, BlurStyle::Lens, BlurStyle::Motion, BlurStyle::Spin, BlurStyle::Zoom];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BlurStyle::Gaussian => "Gaussian",
+            BlurStyle::Lens => "Bokeh",
+            BlurStyle::Motion => "Motion",
+            BlurStyle::Spin => "Spin",
+            BlurStyle::Zoom => "Zoom",
+        }
+    }
+
+    /// Whether `Blur::angle` turns the style (a line).
+    pub fn directional(self) -> bool {
+        self == BlurStyle::Motion
+    }
+
+    /// Whether the style moves round or towards `Blur::center_x` / `center_y`.
+    pub fn centred(self) -> bool {
+        matches!(self, BlurStyle::Spin | BlurStyle::Zoom)
+    }
+}
+
+/// Blur (Effects panel; card #499): the whole photo blurred in scene-linear light after Lens Blur
+/// (`lightcraft_pipeline::blur`), sized by the long edge so previews and exports match.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Blur {
+    /// How strong the blur is, 0..100 (0: none).
+    pub amount: f64,
+    pub style: BlurStyle,
+    /// Motion's direction, degrees −90..90 (0: horizontal).
+    pub angle: f64,
+    /// Spin's and Zoom's centre, percent of the framed photo's width and height (50, 50: the middle).
+    pub center_x: f64,
+    pub center_y: f64,
+}
+
+impl Default for Blur {
+    fn default() -> Self {
+        Self { amount: 0.0, style: BlurStyle::Gaussian, angle: 0.0, center_x: 50.0, center_y: 50.0 }
+    }
+}
+
+impl Blur {
+    /// Whether these are a fresh photo's blur settings (none, nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == Blur::default()
+    }
+}
+
 /// The most marks a photo's film effects stack holds (one pass draws them all, so the work per pixel stays bounded).
 pub const MAX_FILM_LAYERS: usize = 8;
 
@@ -1326,6 +1396,19 @@ pub struct LocalAdjustments {
     /// mask's own edge).
     #[serde(skip_serializing_if = "is_zero")]
     pub lens_blur_transition: f64,
+    /// Blur inside the mask, 0..100 (`lightcraft_pipeline::blur`, as the photo's Blur with [`BlurStyle`]): what the mask
+    /// selects is blurred, its feathered edge less. Omitted while 0 (and the others below while at their defaults), so
+    /// masks without it keep their JSON.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub blur: f64,
+    #[serde(skip_serializing_if = "is_default_style")]
+    pub blur_style: BlurStyle,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub blur_angle: f64,
+    #[serde(skip_serializing_if = "is_fifty")]
+    pub blur_center_x: f64,
+    #[serde(skip_serializing_if = "is_fifty")]
+    pub blur_center_y: f64,
     /// Colour overlay (hue degrees, saturation 0..100); sat 0 = none.
     pub color_hue: f64,
     pub color_sat: f64,
@@ -1358,6 +1441,11 @@ impl Default for LocalAdjustments {
             lens_blur_outside: false,
             lens_blur_boost: 0.0,
             lens_blur_transition: 0.0,
+            blur: 0.0,
+            blur_style: BlurStyle::Gaussian,
+            blur_angle: 0.0,
+            blur_center_x: 50.0,
+            blur_center_y: 50.0,
             color_hue: 0.0,
             color_sat: 0.0,
             amount: 100.0,
@@ -1599,6 +1687,14 @@ impl Mask {
     pub fn edits_edges(&self) -> bool {
         self.refine > 0.0 || self.shift != 0.0 || self.feather > 0.0
     }
+}
+
+fn is_fifty(v: &f64) -> bool {
+    *v == 50.0
+}
+
+fn is_default_style(v: &BlurStyle) -> bool {
+    *v == BlurStyle::Gaussian
 }
 
 fn is_zero(v: &f64) -> bool {

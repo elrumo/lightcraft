@@ -26,6 +26,7 @@
 
 pub mod auto;
 pub mod blemish;
+pub mod blur;
 pub mod camera_look;
 pub mod colorize;
 pub mod colorops;
@@ -550,6 +551,8 @@ pub struct Plan<'a> {
     pub mattes: Option<Arc<masks::Mattes>>,
     /// Lens Blur, when it blurs anything.
     pub blur: Option<lensblur::Setup>,
+    /// Blur (Effects panel: Gaussian, lens, motion, spin, zoom; the photo's and the masks'), when it blurs anything.
+    pub fx_blur: Option<blur::Setup>,
     /// Depth Map, when it draws the depth.
     pub depth_look: Option<relight::Look>,
     /// Relight, when it lights anything.
@@ -600,6 +603,7 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
     let px_per_long = frame.px_per_long(full_w);
     let mattes = lensblur::mattes_for(s, info.mattes.as_ref());
     let blur = lensblur::Setup::new(s, mattes.as_deref(), px_per_long);
+    let fx_blur = blur::Setup::new(s, px_per_long);
     let glow = glow::Setup::new(s, px_per_long).map(|g| g.with_white(glow::source_white(info)));
     let depth_look = relight::Look::new(s, mattes.as_deref());
     let relight = relight::Setup::new(s, mattes.as_deref(), s.orientation);
@@ -633,6 +637,11 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
             // (and so does Lens Blur, by the largest circle it draws)
             let work = match &blur {
                 Some(b) => grown(work, b.reach(), full_w, full_h),
+                None => work,
+            };
+            // (and so does Blur, by how far it reads)
+            let work = match &fx_blur {
+                Some(b) => grown(work, b.reach([full_w, full_h]), full_w, full_h),
                 None => work,
             };
             // (and so does the glow, by how far its light spreads)
@@ -678,6 +687,8 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
         // and so do Depth Map and Relight (a draft's shadows are coarser too)
         depth_look.as_ref().map(|l| l.key),
         relight.as_ref().map(|r| (r.key, req.quality == Quality::Draft)),
+        // and Blur follows Lens Blur
+        fx_blur.as_ref().map(|b| b.key),
         // Colorize follows the white balance
         colorize.as_ref().map(|c| c.key),
     ));
@@ -717,6 +728,7 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
         keep,
         mattes,
         blur,
+        fx_blur,
         depth_look,
         relight,
         colorize,
@@ -765,6 +777,7 @@ pub fn colour_noise<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, p: &Pl
                 keep: None,
                 mattes: None,
                 blur: None,
+                fx_blur: None,
                 depth_look: None,
                 relight: None,
                 colorize: None,
@@ -821,7 +834,7 @@ pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     redeye::apply(img, &p.eyes);
 }
 
-/// What follows noise reduction in the scene-linear stage, in place: Depth Map, Relight, then Lens Blur
+/// What follows noise reduction in the scene-linear stage, in place: Depth Map, Relight, Lens Blur, then Blur
 /// (`draft`: their interactive quality). The GPU renderer runs it on the CPU too.
 pub fn after_denoise(img: &mut Rgb32f, p: &Plan<'_>, draft: bool) {
     if let Some(l) = &p.depth_look {
@@ -833,11 +846,14 @@ pub fn after_denoise(img: &mut Rgb32f, p: &Plan<'_>, draft: bool) {
     if let Some(b) = &p.blur {
         lensblur::apply(img, b, &p.frame, p.origin, draft);
     }
+    if let Some(b) = &p.fx_blur {
+        blur::apply(img, b, &p.frame, p.origin, p.full, p.settings.light.exposure as f32, p.mattes.as_deref());
+    }
 }
 
 /// Whether anything follows noise reduction in the scene-linear stage ([`after_denoise`]).
 pub fn has_after_denoise(p: &Plan<'_>) -> bool {
-    p.depth_look.is_some() || p.relight.is_some() || p.blur.is_some()
+    p.depth_look.is_some() || p.relight.is_some() || p.blur.is_some() || p.fx_blur.is_some()
 }
 
 /// The settings a render of `s` for `req` uses: the HDR edit for an [`OutputDepth::F32Hdr`]

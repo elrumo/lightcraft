@@ -22,6 +22,7 @@ pub enum Section {
     Vignette,
     Grain,
     Glow,
+    Blur,
     Film,
     FilmLayer,
     Detail,
@@ -50,6 +51,7 @@ impl Section {
             Section::Vignette => "Vignette",
             Section::Grain => "Grain",
             Section::Glow => "Glow",
+            Section::Blur => "Blur",
             Section::Film => "Film",
             Section::FilmLayer => "Film Effect",
             Section::Detail => "Detail",
@@ -208,6 +210,11 @@ pub const LOCAL: &[ControlSpec] = &[
     local("moire", "Moiré", -100.0, 100.0, 1.0, 0, Track::Centered),
     // (only a positive Defringe removes fringes; a negative one never did anything, so the slider starts at 0)
     local("defringe", "Defringe", 0.0, 100.0, 1.0, 0, Track::Plain),
+    // (Blur's style is `blur_style`, a word: `mask.adjust {values: {blur_style: "spin"}}`)
+    local("blur", "Blur", 0.0, 100.0, 1.0, 0, Track::Plain),
+    local("blur_angle", "Angle", -90.0, 90.0, 1.0, 0, Track::Centered),
+    ControlSpec { default: 50.0, ..local("blur_center_x", "Center X", 0.0, 100.0, 1.0, 0, Track::Plain) },
+    ControlSpec { default: 50.0, ..local("blur_center_y", "Center Y", 0.0, 100.0, 1.0, 0, Track::Plain) },
 ];
 
 /// How strongly a mask applies its adjustments (`mask.adjust {amount}`, percent).
@@ -437,6 +444,10 @@ controls! {
     "glow.spread" => glow.spread, "Spread", Glow, 0, 100, 50, 1, 0, Plain;
     "glow.warmth" => glow.warmth, "Warmth", Glow, -100, 100, 0, 1, 0, Temp;
     "glow.angle" => glow.angle, "Angle", Glow, -90, 90, 0, 1, 0, Centered;
+    "blur.amount" => blur.amount, "Blur", Blur, 0, 100, 0, 1, 0, Plain;
+    "blur.angle" => blur.angle, "Angle", Blur, -90, 90, 0, 1, 0, Centered;
+    "blur.centerX" => blur.center_x, "Center X", Blur, 0, 100, 50, 1, 0, Plain;
+    "blur.centerY" => blur.center_y, "Center Y", Blur, 0, 100, 50, 1, 0, Plain;
     "film.border" => film.border, "Border", Film, 0, 100, 30, 1, 0, Plain;
     "enhance.denoise" => enhance.denoise, "Amount", Detail, 0, 100, 0, 1, 0, Plain;
     "detail.sharpenAmount" => detail.sharpen_amount, "Sharpening", Detail, 0, 150, 0, 1, 0, Plain;
@@ -867,6 +878,15 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
         "glow.angle" => {
             put(s, "glow.amount", 60.0);
             s.glow.style = crate::settings::GlowStyle::Streak;
+        }
+        // (the angle turns Motion; the centre moves Spin and Zoom, off the middle)
+        "blur.angle" => {
+            put(s, "blur.amount", 60.0);
+            s.blur.style = crate::settings::BlurStyle::Motion;
+        }
+        "blur.centerX" | "blur.centerY" => {
+            put(s, "blur.amount", 60.0);
+            s.blur.style = crate::settings::BlurStyle::Zoom;
         }
         "detail.sharpenRadius" | "detail.sharpenDetail" | "detail.sharpenMasking" => put(s, "detail.sharpenAmount", 80.0),
         "detail.nrDetail" | "detail.nrContrast" => put(s, "detail.nrLuminance", 50.0),

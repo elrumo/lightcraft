@@ -283,7 +283,20 @@ fn masked(adjust: LocalAdjustments) -> DevelopSettings {
 }
 
 fn with_local(id: &str, v: f64) -> LocalAdjustments {
-    let mut a = LocalAdjustments::default();
+    on_local(local_base(id), id, v)
+}
+
+/// What `id` acts on: nothing for most controls; a blurring mask for the blur's direction (Motion) and centre (Zoom).
+fn local_base(id: &str) -> LocalAdjustments {
+    let style = match id {
+        "blur_angle" => lightcraft_develop::BlurStyle::Motion,
+        "blur_center_x" | "blur_center_y" => lightcraft_develop::BlurStyle::Zoom,
+        _ => return LocalAdjustments::default(),
+    };
+    LocalAdjustments { blur: 60.0, blur_style: style, ..LocalAdjustments::default() }
+}
+
+fn on_local(mut a: LocalAdjustments, id: &str, v: f64) -> LocalAdjustments {
     let mut json = serde_json::to_value(a).unwrap_or_default();
     json[id] = serde_json::json!(v);
     a = serde_json::from_value(json).unwrap_or_default();
@@ -305,14 +318,16 @@ fn every_local_slider_changes_the_picture_and_zero_changes_nothing() {
             "`{}` is a LocalAdjustments field",
             c.id
         );
+        // (a control that modifies another, as the blur's angle and centre, is measured against that other alone)
+        let base = shot(&src, &info, &masked(local_base(c.id)));
         for (name, end) in [("min", c.min), ("max", c.max)] {
             if end == c.default {
                 continue;
             }
             let mut last = 0.0;
             for f in [0.25, 0.5, 1.0] {
-                let img = shot(&src, &info, &masked(with_local(c.id, end * f)));
-                let (n, d) = (changed(&untouched, &img), distance(&untouched, &img));
+                let img = shot(&src, &info, &masked(with_local(c.id, c.default + (end - c.default) * f)));
+                let (n, d) = (changed(&base, &img), distance(&base, &img));
                 if n == 0 {
                     failures.push(format!("local {} {name} x{f}: no change at all", c.id));
                 }

@@ -2813,5 +2813,9 @@
   "Welcome to LightCraft": "Et donem la benvinguda a LightCraft",
   "What stays sharp: the photo's subject, or the selection of one of its masks": "El que queda nítid: el subjecte de la foto o la selecció d'una de les seves màscares",
   "lensfun's open lens database (CC BY-SA 3.0) corrects distortion and vignetting for many lenses. It is only downloaded when you choose to.": "La base de dades oberta d'objectius de lensfun (CC BY-SA 3.0) corregeix la distorsió i el vinyetatge de molts objectius. Només es baixa si tu ho tries.",
-  "⌘-drag to straighten, ⇧G Guided Perspective, a grid while transforming.": "⌘-arrossega per redreçar, ⇧G Perspectiva guiada, una quadrícula mentre transformes."
+  "⌘-drag to straighten, ⇧G Guided Perspective, a grid while transforming.": "⌘-arrossega per redreçar, ⇧G Perspectiva guiada, una quadrícula mentre transformes.",
+  "Gaussian": "Gaussià",
+  "Spin": "Gir",
+  "Center X": "Centre X",
+  "Center Y": "Centre Y"
 }

@@ -266,6 +266,12 @@ fn gaussians(img: &Rgb32f, sigma: f32, blurs: &[(f32, f32)]) -> Rgb32f {
 /// line is made a row by shearing the image (a mostly vertical line by transposing it first), the rows are blurred by
 /// three boxes with running sums (`blur::box_radii`, as `blur::gaussian`) and the image is sheared back: linear in the
 /// pixels whatever the length.
+/// One Gaussian of `sigma` pixels along the line through each pixel in direction `dir` (unit, rows running down): Core
+/// Image's motion blur ([`crate::blur`]'s Motion).
+pub(crate) fn line_blur(img: &Rgb32f, dir: [f32; 2], sigma: f32) -> Rgb32f {
+    line_blurs(img, dir, sigma, &[(1.0, 1.0)], 0.0)
+}
+
 fn line_blurs(img: &Rgb32f, dir: [f32; 2], sigma: f32, blurs: &[(f32, f32)], trail: f32) -> Rgb32f {
     let [dx, dy] = dir;
     if !(dx.is_finite() && dy.is_finite()) || img.width == 0 || img.height == 0 {

@@ -122,7 +122,7 @@ impl SettingsGroup {
             SettingsGroup::ColorMixer => &["mixer", "bw_mix", "point_colors"],
             SettingsGroup::ColorGrading => &["grading"],
             // (Glow sits in the Effects panel, as Lightroom has it)
-            SettingsGroup::Effects => &["effects", "glow"],
+            SettingsGroup::Effects => &["effects", "glow", "blur"],
             SettingsGroup::Vignette => &["vignette"],
             SettingsGroup::Grain => &["grain"],
             SettingsGroup::Detail => &["detail", "enhance"],
