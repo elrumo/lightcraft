@@ -125,11 +125,14 @@ impl Session {
     }
 
     /// The people come from the sync server's faces when this device finds none itself (the web
-    /// build, iOS, a computer that didn't turn finding people on) and the server does.
+    /// build, iOS, a computer that didn't turn finding people on) and the server does. While what the server can do isn't
+    /// known (its status check didn't get through: a phone on a weak network, a server restarting), the people it listed
+    /// last stay: this device's own faces, none, would empty the list and lose the person just tapped (HB-451).
     fn people_from_server(&self) -> bool {
         // (faces found here, or that another device found and sent through iCloud: `portable`)
         let local = (self.vision.faces_available() && self.vision.faces) || self.vision.faces_found() > 0;
-        !local && self.vision.remote.faces_enabled()
+        let r = &self.vision.remote;
+        !local && (r.faces_enabled() || (r.status.is_none() && r.people.is_some()))
     }
 
     /// The people the faces make (cached while the faces don't change). `wait`: when they come

@@ -240,6 +240,31 @@ fn a_person_the_server_listed_is_found_by_any_of_their_faces_too() {
     assert!(named_faces(&thin, "Ada") >= 1);
 }
 
+#[test]
+fn the_server_s_people_stay_while_the_server_can_t_be_reached() {
+    let mut s = demo();
+    scanned(&mut s);
+    let clusters = s.people_clusters(false).unwrap();
+
+    let mut thin = Session::with_demo();
+    thin.vision.text_edge = 192;
+    thin.vision.remote.set_status(Some(json!({"available": true, "faces": {"enabled": true}})));
+    thin.vision.remote.people = Some((web_time::Instant::now(), clusters.clone()));
+    let listed = people(&mut thin, false);
+    let id = listed.first().expect("the server's people are listed")["id"].as_str().unwrap().to_string();
+
+    // the minute's check of what the server can do didn't get through (a phone on a weak network): it is not known now
+    // (HB-451: the people went, and naming the one tapped said they were "no longer there")
+    thin.vision.remote.set_status(None);
+    assert_eq!(people(&mut thin, false).len(), listed.len(), "the people the server listed are still there");
+    let r = thin.execute("people.name", &json!({"cluster": id, "name": "Ada"})).unwrap();
+    assert!(r["faces"].as_u64().unwrap() >= 1, "{r}");
+
+    // a server that says it finds no faces now has no people here
+    thin.vision.remote.set_status(Some(json!({"available": true, "faces": {"enabled": false}})));
+    assert!(people(&mut thin, true).is_empty());
+}
+
 /// A member of a person as the server lists it: `[photo, face, x0, y0, x1, y1, score]`.
 fn server_member(on: &Session, m: &super::FaceRef) -> Value {
     let photo = on.vision_keys().get(&m.key).and_then(|ids| ids.first()).map_or(9_999_999, |id| id.0);
