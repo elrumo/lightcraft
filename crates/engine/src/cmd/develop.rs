@@ -1288,7 +1288,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "HDR",
             [],
             None,
-            "{enabled?: bool (default: toggle), maxEv?: number 0..5 (headroom limit, stops above SDR white)} — HDR editing: highlights above SDR white for HDR exports and displays; every SDR render uses the SDR rendition (the hdr.sdr* controls)",
+            "{enabled?: bool (default: toggle), maxEv?: number 0..5 (headroom limit, stops above SDR white), expand?: number 0..100 (SDR to HDR: highlights lifted above SDR white for a photo without HDR data, a JPEG or PNG; raws and gain maps ignore it)} — HDR editing: highlights above SDR white for HDR exports and displays; every SDR render uses the SDR rendition (the hdr.sdr* controls)",
             has_active,
             |s, p| {
                 let id = active(s, "develop.hdr")?;
@@ -1298,15 +1298,23 @@ pub fn specs() -> Vec<CommandSpec> {
                     None => None,
                     Some(v) => Some(v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("develop.hdr", "`maxEv` must be a number"))?),
                 };
+                let expand = match p.get("expand") {
+                    None => None,
+                    Some(v) => Some(v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("develop.hdr", "`expand` must be a number"))?),
+                };
                 let label = if enabled { "HDR On" } else { "HDR Off" };
                 edit(s, "develop.hdr", label, |d| {
                     d.hdr.enabled = enabled;
                     if let Some(m) = max_ev {
                         d.hdr.max_ev = m.clamp(0.0, lightcraft_develop::Hdr::MAX_EV_LIMIT);
                     }
+                    if let Some(e) = expand {
+                        d.hdr.expand = e.clamp(0.0, 100.0);
+                    }
                     Ok(())
                 })?;
-                Ok(json!({"enabled": enabled, "maxEv": s.develop_of(id).map(|d| d.hdr.max_ev)}))
+                let now = s.develop_of(id).map(|d| d.hdr);
+                Ok(json!({"enabled": enabled, "maxEv": now.map(|h| h.max_ev), "expand": now.map(|h| h.expand)}))
             }
         ),
         // ---- geometry: Upright

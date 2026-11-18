@@ -1,5 +1,5 @@
-//! HDR sources: a file's own gain map (an iPhone HEIC, an Ultra HDR JPEG) gives the HDR render real highlights, and
-//! the SDR render stays the base picture's.
+//! HDR sources: a file's own gain map (an iPhone HEIC, an Ultra HDR JPEG) gives the HDR render real highlights, SDR to
+//! HDR lifts those of a photo without one, and the SDR render stays the base picture's.
 
 use serde_json::json;
 
@@ -149,5 +149,41 @@ fn an_ultra_hdr_jpeg_export_comes_back_with_its_highlights() {
     assert!(max_want > 2.0 && n > 100, "the sun is above white (peak {max_want}, {n} pixels)");
     assert!((max_got / max_want - 1.0).abs() < 0.2, "peak {max_got} re-imported, {max_want} rendered");
     assert!(sum / (n as f32) < 0.25, "mean luminance error above white {}", sum / n as f32);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The float TIFF export of a file's one photo with HDR on at 3 stops and SDR to HDR at `expand`: its HDR rendition, or
+/// its SDR one.
+fn expanded(path: &std::path::Path, expand: f64, hdr_output: bool) -> Vec<[f32; 3]> {
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+    let id = s.catalog.photos().next().unwrap().id;
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    let r = s.execute("develop.hdr", &json!({"enabled": true, "maxEv": 3, "expand": expand})).unwrap();
+    assert_eq!(r["expand"], json!(expand), "{r}");
+    let o = ExportOptions::from_json(&json!({"longEdge": 96, "format": "tiff", "bitDepth": 32, "hdr": hdr_output}));
+    lightcraft_codecs::decode(&export_photo(&mut s, id, &o, 1).unwrap().bytes, Default::default()).unwrap().image.data
+}
+
+#[test]
+fn sdr_to_hdr_lifts_a_plain_photos_highlights_above_white_and_leaves_its_sdr_render_alone() {
+    let dir = temp_dir("hdr-expand");
+    let plain = heic(&dir, "plain.heic", false);
+    let sdr = tiff(&plain, false, false);
+    assert_eq!(expanded(&plain, 80.0, false), sdr, "the SDR rendition is the photo as it was");
+    let lifted = expanded(&plain, 80.0, true);
+    let flat = expanded(&plain, 0.0, true);
+    assert!(flat.iter().all(|p| luma(p) <= 1.0001), "at 0 nothing goes past white");
+    let peak = lifted.iter().map(luma).fold(0.0f32, f32::max);
+    assert!(peak > 1.5, "the brightest part goes past white: {peak}");
+    for (h, s) in lifted.iter().zip(&flat) {
+        assert!(luma(h) >= luma(s) - 2e-3, "{h:?} darker than {s:?}");
+        if luma(s) < 0.2 {
+            assert!((luma(h) - luma(s)).abs() < 2e-3, "the shadows and midtones stay: {h:?} vs {s:?}");
+        }
+    }
+    // (a file with a gain map keeps its own highlights: SDR to HDR does not add to them)
+    let gained = heic(&dir, "gained.heic", true);
+    assert_eq!(expanded(&gained, 80.0, true), expanded(&gained, 0.0, true));
     let _ = std::fs::remove_dir_all(&dir);
 }

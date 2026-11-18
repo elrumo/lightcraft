@@ -467,9 +467,10 @@ impl RenderJob {
                 // in the camera's own look for the Camera Matching profile
                 let (sdr_src, info) = source.develop_input(&self.settings, self.info);
                 // An HDR render (the loupe's HDR picture, an HDR export) of a file with a gain map starts from the
-                // highlights that map holds; an SDR render, and every other source, from the base picture.
+                // highlights that map holds, of a display-referred file without one from those SDR to HDR lifts; an SDR
+                // render, and a raw, from the base picture.
                 let wants_hdr = self.hdr_view || self.request.depth == lightcraft_pipeline::OutputDepth::F32Hdr;
-                let hdr_src = (wants_hdr || self.settings.hdr.enabled).then(|| source.hdr_input(&sdr_src, &info));
+                let hdr_src = (wants_hdr || self.settings.hdr.enabled).then(|| source.hdr_input(&sdr_src, &info, &self.settings.hdr));
                 let src = if wants_hdr { hdr_src.as_ref().unwrap_or(&sdr_src) } else { &sdr_src };
                 // Views and exports use the GPU when there is one (waiting for the device if it is
                 // still being created). Thumbnails (grid, filmstrip, preset and profile previews)

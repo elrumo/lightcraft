@@ -2344,6 +2344,12 @@ pub struct Hdr {
     pub sdr_shadows: f64,
     pub sdr_whites: f64,
     pub sdr_clarity: f64,
+    /// SDR to HDR (0..100): how far an HDR render lifts the highlights of a photo that has no HDR data of its own (a
+    /// JPEG, PNG or HEIC without a gain map) above SDR white ([`Hdr::expand_gain`]). Raws and files with a gain map
+    /// have real highlights and ignore it. Not written while 0, so HDR edits made before it keep their JSON and
+    /// `hash64`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub expand: f64,
 }
 
 impl Default for Hdr {
@@ -2357,6 +2363,7 @@ impl Default for Hdr {
             sdr_shadows: 0.0,
             sdr_whites: 0.0,
             sdr_clarity: 0.0,
+            expand: 0.0,
         }
     }
 }
@@ -2364,6 +2371,33 @@ impl Default for Hdr {
 impl Hdr {
     pub const DEFAULT_MAX_EV: f64 = 3.0;
     pub const MAX_EV_LIMIT: f64 = 5.0;
+    /// Stops SDR to HDR lifts SDR white by at its full amount (100); the headroom limit still holds the render.
+    pub const EXPAND_MAX_EV: f32 = 3.0;
+    /// Where SDR to HDR starts lifting, on a 2.2 curve of linear luminance (about a quarter of SDR white).
+    const EXPAND_KNEE: f32 = 0.55;
+
+    /// SDR to HDR's amount, 0 to 1: 0 when HDR is off or the stored amount is not a number.
+    pub fn expand_amount(&self) -> f32 {
+        if !self.enabled || !self.expand.is_finite() {
+            return 0.0;
+        }
+        (self.expand.clamp(0.0, 100.0) / 100.0) as f32
+    }
+
+    /// The gain SDR to HDR gives a pixel of linear luminance `y` (SDR white = 1) of a display-referred picture: 1
+    /// through the shadows and midtones, then rising in stops with the square of how far the pixel is into the top of
+    /// the range (on a 2.2 curve, from 0.55), to `EXPAND_MAX_EV` times the amount at white, so the
+    /// brightest parts gain the most and the picture stays monotone. 1 at an amount of 0 and for a `y` that is not a
+    /// positive number. A native (non-Rust) renderer draws the same formula.
+    pub fn expand_gain(&self, y: f32) -> f32 {
+        let amount = self.expand_amount();
+        if amount <= 0.0 || y.is_nan() || y <= 0.0 {
+            return 1.0;
+        }
+        let p = y.min(1.0).powf(1.0 / 2.2);
+        let t = ((p - Self::EXPAND_KNEE) / (1.0 - Self::EXPAND_KNEE)).clamp(0.0, 1.0);
+        (Self::EXPAND_MAX_EV * amount * t * t).exp2()
+    }
 
     /// Whether these are the default HDR settings (HDR off, nothing changed).
     pub fn is_default(&self) -> bool {

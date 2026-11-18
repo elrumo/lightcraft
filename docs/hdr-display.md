@@ -1,6 +1,6 @@
 # HDR display (LR-VIEW-HDR-DISPLAY)
 
-> **Last reviewed:** 2026-10-25 · **Changes:** [revision history](#revision-history)
+> **Last reviewed:** 2026-11-18 · **Changes:** [revision history](#revision-history)
 
 When **Edit ▸ Light ▸ HDR** is on and the screen can show more than SDR white, the loupe draws the photo
 in HDR: highlights go past white, up to the edit's headroom limit (`hdr.maxEv`). Every other view, and a
@@ -65,6 +65,20 @@ of an SDR preview and a HEIC whose primary item is the `tmap` itself are not cov
 real iPhone, Pixel and Lightroom files were not available to check against, only synthetic ones and LightCraft's own HDR
 JPEG export read back (peak and mean luminance above white within a few percent).
 
+## SDR to HDR
+
+A photo with no HDR data of its own (a JPEG, a PNG, an HEIC without a gain map) has nothing above SDR white, so its HDR
+render at neutral sliders is its SDR picture. **SDR to HDR** (`hdr.expand`, 0 to 100, `develop.hdr {expand}`) works out
+highlights for it: `DecodedSource::hdr_input` multiplies each pixel of the decoded picture by a gain of its luminance
+(`Hdr::expand_gain`, `hdr_from_sdr`): 1 below about a quarter of SDR white (0.55 on a 2.2 curve), then rising in stops with
+the square of how far the pixel is into the top of the range, to 3 stops at white for 100 (so the brightest parts gain the
+most and the picture stays monotone; hue and saturation stay, every channel gets the same gain). It runs before every
+stage, so the sliders shape the lifted range like a gain map's, and the headroom limit still holds the render. Raws and
+files with a gain map have real highlights and ignore it; the SDR rendition (HDR off) never sees it; an amount of 0 is not
+written, so HDR edits made before it keep their JSON. A native (non-Rust) frontend draws the same formula and switches it on
+with HDR for such a photo (`tests_hdr_sources`: highlights above white, shadows and midtones as they were, the SDR export
+unchanged, a gain map's file unchanged).
+
 ## The desktop window's surface
 
 eframe 0.36 picks its wgpu surface format itself, 8-bit only, so no pixel could be brighter than white.
@@ -123,5 +137,6 @@ shader writes what it samples), so a value above 1 reaches the surface as it is.
 
 | Date | Change |
 |---|---|
+| 2026-11-18 | SDR to HDR (`hdr.expand`): highlights worked out above SDR white for a photo without HDR data of its own. |
 | 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
 | 2026-10-25 | HDR sources: an iPhone HEIC's and an Ultra HDR JPEG's gain map give the HDR render its highlights (FB-HDR-6); before: the HDR picture renders on the GPU (half floats and the HDR histogram from the GPU pipeline), and the draft budget learns HDR drafts apart: HDR drags at or near full size |

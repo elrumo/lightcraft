@@ -1,4 +1,5 @@
 use super::{Arc, DcpProfile, Deserialize, DevelopSettings, MediaKind, Photo, Rgb32f, Rgba8, Serialize, SourceInfo};
+use lightcraft_develop::Hdr;
 use lightcraft_raster::SourcePixels;
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
@@ -225,9 +226,9 @@ pub struct DecodedSource {
     pub denoised: Option<Arc<Twin>>,
     /// The picture last developed in the camera's own look, and the one it was made from ([`Self::develop_input`]).
     pub camera_matched: Arc<std::sync::Mutex<Option<(SourcePixels, SourcePixels)>>>,
-    /// The picture an HDR render starts from, made from the file's gain map, and the one it was made from
-    /// ([`Self::hdr_input`]).
-    pub hdr_made: Arc<std::sync::Mutex<Option<(SourcePixels, SourcePixels)>>>,
+    /// The picture an HDR render starts from, made from the file's gain map or by SDR to HDR, the one it was made from
+    /// and the SDR to HDR amount it was made for (its bits; 0 for a gain map) ([`Self::hdr_input`]).
+    pub hdr_made: Arc<std::sync::Mutex<Option<(SourcePixels, u32, SourcePixels)>>>,
     /// The imported camera profile (`dcp:…` id) the raw file was developed with, if any: a cached source made with
     /// another one (or none) doesn't stand in for it.
     pub camera_profile: Option<String>,
@@ -303,26 +304,37 @@ impl DecodedSource {
         (matched, info)
     }
 
-    /// The picture an HDR render of `image` (what [`Self::develop_input`] gave) starts from. A source with an HDR gain
-    /// ([`SourceInfo::hdr_gain`]: an iPhone HEIC, an Ultra HDR JPEG) gets the highlights its gain map holds, up to the
-    /// file's own headroom; any other source is its own HDR input. The SDR render never uses it, so the SDR look is the
-    /// base picture's. Made once and kept while `image` stays.
+    /// The picture an HDR render of `image` (what [`Self::develop_input`] gave) with `hdr` starts from. A source with an
+    /// HDR gain ([`SourceInfo::hdr_gain`]: an iPhone HEIC, an Ultra HDR JPEG) gets the highlights its gain map holds, up
+    /// to the file's own headroom; a display-referred source without one (a JPEG, a PNG) gets the highlights SDR to HDR
+    /// lifts above white ([`Hdr::expand_gain`]); a raw, and any source at an SDR to HDR of 0, is its own HDR input. The
+    /// SDR render never uses it, so the SDR look is the base picture's. Made once and kept while `image` and the amount
+    /// stay.
     ///
-    /// A picture in half floats is widened whole for it and the result kept in half floats.
+    /// A picture in half floats is widened whole for a gain map and the result kept in half floats.
     // ponytail: the gain map is applied to the whole picture at once; per strip if HDR edits of huge pictures matter
-    pub fn hdr_input(&self, image: &SourcePixels, info: &SourceInfo) -> SourcePixels {
-        let Some(gain) = &info.hdr_gain else { return image.clone() };
+    pub fn hdr_input(&self, image: &SourcePixels, info: &SourceInfo, hdr: &Hdr) -> SourcePixels {
+        let expand = if info.hdr_gain.is_some() || info.raw { 0.0 } else { hdr.expand_amount() };
+        if info.hdr_gain.is_none() && expand <= 0.0 {
+            return image.clone();
+        }
+        let key = expand.to_bits();
         let kept = || self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let hit = kept().as_ref().filter(|(from, _)| from.ptr_eq(image)).map(|(_, made)| made.clone());
+        let hit = kept().as_ref().filter(|(from, k, _)| from.ptr_eq(image) && *k == key).map(|(_, _, made)| made.clone());
         if let Some(made) = hit {
             return made;
         }
-        let Some(made) = hdr_from_gain(&image.to_f32(), gain) else { return image.clone() };
-        let made: SourcePixels = match image {
-            SourcePixels::F32(_) => made.into(),
-            SourcePixels::F16(_) => lightcraft_raster::Rgb16f::from_f32(&made).into(),
+        let made: SourcePixels = match &info.hdr_gain {
+            Some(gain) => {
+                let Some(made) = hdr_from_gain(&image.to_f32(), gain) else { return image.clone() };
+                match image {
+                    SourcePixels::F32(_) => made.into(),
+                    SourcePixels::F16(_) => lightcraft_raster::Rgb16f::from_f32(&made).into(),
+                }
+            }
+            None => hdr_from_sdr(image, hdr),
         };
-        *kept() = Some((image.clone(), made.clone()));
+        *kept() = Some((image.clone(), key, made.clone()));
         made
     }
 
@@ -359,7 +371,7 @@ impl DecodedSource {
         let local_tone = self.info.as_ref().and_then(|i| i.local_tone.as_ref()).or(self.local_tone.as_ref());
         let mattes = mattes + local_tone.map_or(0, |t| t.map.gains.len() * 4);
         let matched = self.camera_matched.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.bytes());
-        let hdr = self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, m)| m.bytes());
+        let hdr = self.hdr_made.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, |(_, _, m)| m.bytes());
         let gain = self.info.as_ref().and_then(|i| i.hdr_gain.as_ref()).map_or(0, |g| g.gain.data.len());
         self.image.bytes() + 64 + std::mem::size_of::<SourceInfo>() + mattes + self.denoised.as_ref().map_or(0, |t| t.bytes()) + matched + hdr + gain
     }
@@ -401,6 +413,19 @@ pub fn hdr_from_gain(image: &Rgb32f, gain: &lightcraft_codecs::gainmap::JpegGain
     let mut hdr = image.clone();
     lightcraft_codecs::gainmap::apply(&mut hdr.data, hdr.width, hdr.height, &gain.gain, &gain.meta, 1.0).ok()?;
     Some(hdr)
+}
+
+/// `image` (a display-referred picture in linear working light) with SDR to HDR's gain ([`Hdr::expand_gain`]) on each
+/// pixel's luminance: the HDR rendition of a photo without HDR data of its own. Every channel of a pixel gets the same
+/// gain, so its hue and saturation stay.
+pub fn hdr_from_sdr(image: &SourcePixels, hdr: &Hdr) -> SourcePixels {
+    let y = lightcraft_color::LUMA_2020;
+    per_pixel(image, |strip, _| {
+        for p in &mut strip.data {
+            let g = hdr.expand_gain(y[0] * p[0] + y[1] * p[1] + y[2] * p[2]);
+            *p = p.map(|v| v * g);
+        }
+    })
 }
 
 /// The lens profile a render uses: the file's own correction as decoded (`decoded`, it is part of the file), else the

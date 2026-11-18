@@ -20,6 +20,10 @@ const H: usize = 256;
 const EXEMPT: &[(&str, &str)] = &[
     ("enhance.denoise", "mixes in the picture the AI denoise model makes (a model download); without that picture the render is the unedited one"),
     ("hdr.maxEv", "the headroom limit shapes only the HDR rendition (an F32Hdr render, tested in tests_hdr.rs); every SDR render ignores it"),
+    (
+        "hdr.expand",
+        "SDR to HDR lifts the source of an HDR render in the engine (`DecodedSource::hdr_input`, tested there); the pipeline never sees it",
+    ),
 ];
 
 /// Known dead stretches of a slider (`id`, end, fraction of the way to it), each with its reason. A stretch fixed

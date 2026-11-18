@@ -363,6 +363,7 @@ controls! {
     "hdr.sdrShadows" => hdr.sdr_shadows, "SDR Shadows", Light, -100, 100, 0, 1, 0, Centered;
     "hdr.sdrWhites" => hdr.sdr_whites, "SDR Whites", Light, -100, 100, 0, 1, 0, Centered;
     "hdr.sdrClarity" => hdr.sdr_clarity, "SDR Clarity", Light, -100, 100, 0, 1, 0, Centered;
+    "hdr.expand" => hdr.expand, "SDR to HDR", Light, 0, 100, 0, 1, 0, Plain;
     "curve.highlights" => curve.highlights, "Highlights", Curve, -100, 100, 0, 1, 0, Centered;
     "curve.lights" => curve.lights, "Lights", Curve, -100, 100, 0, 1, 0, Centered;
     "curve.darks" => curve.darks, "Darks", Curve, -100, 100, 0, 1, 0, Centered;
@@ -840,9 +841,8 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
     match id {
         "wb.temp" | "wb.tint" => s.wb.mode = WbMode::Custom,
         "profile.amount" => s.profile.id = "lc.vivid".into(),
-        "hdr.maxEv" | "hdr.sdrBrightness" | "hdr.sdrContrast" | "hdr.sdrHighlights" | "hdr.sdrShadows" | "hdr.sdrWhites" | "hdr.sdrClarity" => {
-            s.hdr.enabled = true
-        }
+        "hdr.maxEv" | "hdr.sdrBrightness" | "hdr.sdrContrast" | "hdr.sdrHighlights" | "hdr.sdrShadows" | "hdr.sdrWhites" | "hdr.sdrClarity"
+        | "hdr.expand" => s.hdr.enabled = true,
         "curve.splitShadows" | "curve.splitMid" | "curve.splitHighlights" => {
             for k in ["curve.highlights", "curve.lights", "curve.darks", "curve.shadows"] {
                 put(s, k, 60.0);

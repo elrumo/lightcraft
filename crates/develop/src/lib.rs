@@ -439,6 +439,33 @@ mod tests {
     }
 
     #[test]
+    fn sdr_to_hdr_lifts_only_the_highlights_and_stays_monotone() {
+        let mut h = Hdr { enabled: true, expand: 100.0, ..Hdr::default() };
+        assert_eq!(h.expand_gain(1.0), Hdr::EXPAND_MAX_EV.exp2(), "white gains the whole lift");
+        assert_eq!(h.expand_gain(0.2), 1.0, "midtones stay");
+        assert_eq!(h.expand_gain(0.0), 1.0);
+        assert_eq!(h.expand_gain(f32::NAN), 1.0);
+        assert_eq!(h.expand_gain(-1.0), 1.0);
+        let mut last = 0.0;
+        for i in 1..=200 {
+            let y = i as f32 / 200.0;
+            let out = y * h.expand_gain(y);
+            assert!(out >= last, "{y}: {out} below {last}");
+            last = out;
+        }
+        h.expand = 50.0;
+        assert_eq!(h.expand_gain(1.0), (Hdr::EXPAND_MAX_EV / 2.0).exp2());
+        for (enabled, expand) in [(false, 100.0), (true, 0.0), (true, f64::NAN), (true, -20.0)] {
+            let off = Hdr { enabled, expand, ..Hdr::default() };
+            assert_eq!(off.expand_gain(1.0), 1.0, "{enabled} {expand}");
+        }
+        assert_eq!(Hdr { enabled: true, expand: 400.0, ..Hdr::default() }.expand_amount(), 1.0);
+        // (an amount of 0 is not written: HDR edits made before SDR to HDR keep their JSON)
+        let json = serde_json::to_value(Hdr { enabled: true, ..Hdr::default() }).unwrap();
+        assert!(json.get("expand").is_none(), "{json}");
+    }
+
+    #[test]
     fn missing_fields_take_defaults_and_unknown_ignored() {
         let s = DevelopSettings::from_json(&json!({"light": {"exposure": 0.5}, "futureThing": 3})).unwrap();
         assert_eq!(s.light.exposure, 0.5);
