@@ -77,7 +77,8 @@ stage, so the sliders shape the lifted range like a gain map's, and the headroom
 files with a gain map have real highlights and ignore it; the SDR rendition (HDR off) never sees it; an amount of 0 is not
 written, so HDR edits made before it keep their JSON. A native (non-Rust) frontend draws the same formula and switches it on
 with HDR for such a photo (`tests_hdr_sources`: highlights above white, shadows and midtones as they were, the SDR export
-unchanged, a gain map's file unchanged).
+unchanged, a gain map's file unchanged). Visualize HDR draws its bands from the HDR input too (`develop_reporting_hdr`), so
+it shows what SDR to HDR and a file's gain map lift; it used to measure the base picture, which has nothing above white.
 
 ## The desktop window's surface
 

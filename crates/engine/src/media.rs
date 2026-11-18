@@ -51,7 +51,7 @@ pub(crate) use source::per_pixel;
 pub use source::{
     CameraCrop, Catalogued, CompactLoader, DISK_CACHE_BYTES, DISK_CACHE_PER_PHOTO, DecodedSource, DenoiseSpec, FACE_EDGE_STEP, FileLoader, FileProbe,
     MakeProduct, PairLoader, PreviewLoader, ProbeInfo, ProxyBytes, RENDER_CACHE_VERSION, RawDecode, ReducedLoader, SourceLevel, SourceRef,
-    THUMB_SIZES, ThumbAsk, Twin, default_disk_cache_bytes, face_edge, hdr_from_gain, thumb_bucket,
+    THUMB_SIZES, ThumbAsk, Twin, default_disk_cache_bytes, face_edge, hdr_from_gain, hdr_from_sdr, thumb_bucket,
 };
 
 pub struct MediaCache {

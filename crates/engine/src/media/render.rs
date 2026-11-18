@@ -732,7 +732,8 @@ pub fn develop_reporting(
 }
 
 /// [`develop_reporting`] for a source that has an HDR picture of its own (`hdr_src`, see
-/// [`DecodedSource::hdr_input`]): the render is of `src`, the HDR histogram of an HDR edit's preview measures `hdr_src`.
+/// [`DecodedSource::hdr_input`]): the render is of `src`, the HDR histogram of an HDR edit's preview and the bands of its
+/// Visualize HDR measure `hdr_src`.
 pub fn develop_reporting_hdr(
     src: &SourcePixels,
     hdr_src: &SourcePixels,
@@ -742,7 +743,18 @@ pub fn develop_reporting_hdr(
     stages: Option<&StageCache>,
     gpu: bool,
 ) -> (Rendered, Option<String>) {
-    let (mut rendered, fallback) = develop_image(src, info, s, req, stages, gpu);
+    // Visualize HDR of a photo whose HDR render starts from its own picture (a gain map, SDR to HDR): the bands come
+    // from that picture's HDR render (the pipeline's own overlay would draw them from the base, which has none above white)
+    use lightcraft_pipeline::Overlay;
+    let range_of_input = req.overlay == Overlay::HdrRange && s.hdr.enabled && !hdr_src.ptr_eq(src);
+    let plain = RenderRequest { overlay: Overlay::None, ..*req };
+    let (mut rendered, fallback) = develop_image(src, info, s, if range_of_input { &plain } else { req }, stages, gpu);
+    if range_of_input {
+        let hdr = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, proof: None, ..plain };
+        if let Some(deep) = lightcraft_pipeline::render(hdr_src, info, s, &hdr).deep {
+            lightcraft_pipeline::visualize::hdr_range(&mut rendered.image, &deep, req.space.luma());
+        }
+    }
     // an HDR edit's preview is its SDR rendition: its histogram shows the HDR range instead
     if let Some(h) = lightcraft_pipeline::hdr_histogram(hdr_src, info, s, req) {
         rendered.histogram = h;

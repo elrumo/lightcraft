@@ -187,3 +187,24 @@ fn sdr_to_hdr_lifts_a_plain_photos_highlights_above_white_and_leaves_its_sdr_ren
     assert_eq!(expanded(&gained, 80.0, true), expanded(&gained, 0.0, true));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Visualize HDR of a photo SDR to HDR lifts shows the lifted highlights in its bands (they come from the HDR input, not
+/// the base picture, which has nothing above white); the same edit with the base as its HDR input shows next to none.
+#[test]
+fn visualize_hdr_shows_the_highlights_sdr_to_hdr_lifts() {
+    use crate::media::{develop_reporting_hdr, hdr_from_sdr};
+    use lightcraft_pipeline::{Overlay, RenderRequest, SourceInfo};
+    let base: lightcraft_raster::SourcePixels = lightcraft_raster::Rgb32f::from_fn(64, 32, |x, _| [x as f32 / 63.0; 3]).into();
+    let mut s = lightcraft_develop::DevelopSettings::default();
+    s.hdr.enabled = true;
+    s.hdr.expand = 100.0;
+    let lifted = hdr_from_sdr(&base, &s.hdr);
+    let req = RenderRequest { overlay: Overlay::HdrRange, ..RenderRequest::fit(64, 32) };
+    let coloured = |hdr_src: &lightcraft_raster::SourcePixels| {
+        let (r, _) = develop_reporting_hdr(&base, hdr_src, &SourceInfo::default(), &s, &req, None, false);
+        r.image.data.iter().filter(|p| p[0] != p[1] || p[1] != p[2]).count()
+    };
+    // (the base's white column, 1.0, lands a hair above white in the HDR render: at most that one is in a band)
+    let (lit, plain) = (coloured(&lifted), coloured(&base));
+    assert!(plain <= 32 && lit > 20 * 32, "the lifted top of the ramp is in the bands: {lit} pixels, the base {plain}");
+}
