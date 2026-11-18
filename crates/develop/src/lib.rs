@@ -64,6 +64,10 @@ impl DevelopSettings {
             if let Some(color) = o.get_mut("color").and_then(Value::as_object_mut) {
                 color.entry("density").or_insert(Value::from(0.0));
             }
+            // (and SDR to HDR, left out of the HDR group while 0)
+            if let Some(hdr) = o.get_mut("hdr").and_then(Value::as_object_mut) {
+                hdr.entry("expand").or_insert(Value::from(0.0));
+            }
         }
         v
     }
@@ -460,9 +464,18 @@ mod tests {
             assert_eq!(off.expand_gain(1.0), 1.0, "{enabled} {expand}");
         }
         assert_eq!(Hdr { enabled: true, expand: 400.0, ..Hdr::default() }.expand_amount(), 1.0);
-        // (an amount of 0 is not written: HDR edits made before SDR to HDR keep their JSON)
+        // (an amount of 0 is not written: HDR edits made before SDR to HDR keep their JSON) but the full JSON and a
+        // copied Light group state it, so a paste or a merge takes a lifted photo back to 0
         let json = serde_json::to_value(Hdr { enabled: true, ..Hdr::default() }).unwrap();
         assert!(json.get("expand").is_none(), "{json}");
+        let mut s = DevelopSettings::default();
+        s.hdr.enabled = true;
+        assert_eq!(s.to_json_full()["hdr"]["expand"], json!(0.0));
+        let copied = crate::presets::extract_groups(&s, &[crate::presets::SettingsGroup::Light]);
+        assert_eq!(copied["hdr"]["expand"], json!(0.0));
+        let mut lifted = s.clone();
+        lifted.hdr.expand = 50.0;
+        assert_eq!(crate::presets::apply_partial(&lifted, &copied, 100.0).hdr.expand, 0.0);
     }
 
     #[test]

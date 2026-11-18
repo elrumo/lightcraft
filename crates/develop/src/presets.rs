@@ -171,6 +171,10 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     if let Some(color) = out.get_mut("color").and_then(Value::as_object_mut) {
         color.entry("density").or_insert(Value::from(0.0));
     }
+    // (and the HDR group's SDR to HDR, left out while 0, takes that of the photo it lands on back to 0)
+    if let Some(hdr) = out.get_mut("hdr").and_then(Value::as_object_mut) {
+        hdr.entry("expand").or_insert(Value::from(0.0));
+    }
     if let Some(Value::Array(spots)) = out.get_mut("spots") {
         // (a Tap to Remove spot is the shape of an object in this photo: nowhere else it means anything)
         spots.retain(|spot| spot.get("shape").is_none());

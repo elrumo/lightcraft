@@ -1282,6 +1282,9 @@ impl Session {
         // (and Density, left out while 0)
         old_json["color"]["density"] = serde_json::json!(old.color.density);
         new_json["color"]["density"] = serde_json::json!(new.color.density);
+        // (and SDR to HDR, left out of the HDR group while 0)
+        old_json["hdr"]["expand"] = serde_json::json!(old.hdr.expand);
+        new_json["hdr"]["expand"] = serde_json::json!(new.hdr.expand);
         let Some(mut delta) = json_delta(&old_json, &new_json) else { return Vec::new() };
         if let Some(o) = delta.as_object_mut() {
             for k in ["spots", "red_eye", "version", "process"] {
