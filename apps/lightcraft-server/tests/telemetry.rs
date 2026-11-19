@@ -65,7 +65,11 @@ fn a_server_sends_a_heartbeat_with_its_install_id_and_coarse_counts_but_no_names
     let (head, body) = rx.recv_timeout(Duration::from_secs(60)).expect("a heartbeat arrives");
     assert!(head.starts_with("POST /api/telemetry/server"), "{head}");
     let id = body["installId"].as_str().unwrap();
-    assert_eq!(std::fs::read_to_string(data.join(".lightbites-telemetry-id")).unwrap(), id, "the id is kept in the data folder");
+    assert_eq!(
+        std::fs::read_to_string(data.join(format!(".{}-telemetry-id", lightcraft_server::brand::slug()))).unwrap(),
+        id,
+        "the id is kept in the data folder"
+    );
     assert_eq!(body["env"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(body["env"]["os"], std::env::consts::OS);
     assert_eq!(body["library"]["users"], 1);

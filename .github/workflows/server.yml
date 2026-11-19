@@ -113,7 +113,8 @@ jobs:
         shell: bash
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      LIGHTBITES_BUGSINK_DSN: ${{ vars.LIGHTBITES_BUGSINK_DSN || 'https://864779c6953e435696525549a16dae9c@bugs.eliasruiz.com/11' }}
+      # brand.env's default DSN unless the repository variable names another
+      LIGHTCRAFT_SERVER_BUGSINK_DSN: ${{ vars.LIGHTBITES_BUGSINK_DSN }}
       # the same Developer ID secrets as release.yml; without them the Mac zips stay unsigned (a tag release then warns)
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -131,9 +132,9 @@ jobs:
           key: server-${{ matrix.target }}
       - name: Build
         run: |
-          cargo build --release --locked -p lightcraft-server --target ${{ matrix.target }}
-          # the menu-bar app (status, Start, Stop) ships in the Mac zips
-          if [ "${{ runner.os }}" = macOS ]; then cargo build --release --locked -p lightbites-menubar --target ${{ matrix.target }}; fi
+          # the LightCraft server under LightBites' name (brand.env), saved as lightbites-server; on a Mac also the
+          # menu-bar app (status, Start, Stop) the Mac zips carry
+          packaging/lightbites-server/build.sh --target ${{ matrix.target }}
       - uses: actions/download-artifact@v4
         with:
           name: web
@@ -242,7 +243,7 @@ jobs:
           build-args: |
             LIGHTCRAFT_VERSION=${{ env.VERSION }}
             LIGHTCRAFT_COMMIT=${{ github.sha }}
-            LIGHTBITES_BUGSINK_DSN=${{ vars.LIGHTBITES_BUGSINK_DSN || 'https://864779c6953e435696525549a16dae9c@bugs.eliasruiz.com/11' }}
+            SERVER_BRAND=packaging/lightbites-server/brand.env
           labels: |
             org.opencontainers.image.version=${{ env.VERSION }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

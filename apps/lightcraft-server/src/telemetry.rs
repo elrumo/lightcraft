@@ -1,12 +1,12 @@
 //! Anonymous, optional server telemetry. No account or device identifiers are sent.
 //!
-//! Two parts, both switched off by `LIGHTBITES_TELEMETRY=0` (and both off in a build without a Bugsink DSN, which is
-//! how a test or a build from source stays quiet):
+//! Two parts, both switched off by `LIGHTCRAFT_TELEMETRY=0` (and both off in a build without a Bugsink DSN, which is
+//! how a test or a build from source stays quiet; a distribution sets the DSN and the heartbeat address at build time,
+//! [`crate::brand`]):
 //! - Bugsink gets an install and a start event and the status class of every HTTP 5xx ([`start`], [`server_error`]).
-//! - lightbites.app gets a heartbeat ([`run`]): a random install id the server makes and keeps in its data folder, the
-//!   version and platform, how long it has been up, and a few coarse counts and size buckets. Never a name, a path, a
-//!   photo or an address; the site stores it as `/admin` ▸ Servers (`apps/lightbites-web/server/utils/serverTelemetry.ts`
-//!   holds the allow-list that decides what is kept).
+//! - The distribution's site gets a heartbeat ([`run`]): a random install id the server makes and keeps in its data
+//!   folder, the version and platform, how long it has been up, and a few coarse counts and size buckets. Never a name,
+//!   a path, a photo or an address.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -15,10 +15,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::{State, accounts};
-
-/// Where heartbeats go unless `LIGHTBITES_TELEMETRY_URL` says otherwise.
-const URL: &str = "https://lightbites.app/api/telemetry/server";
+use crate::{State, accounts, brand};
 
 /// The first heartbeat waits this long (counting the libraries is work the server's start should not wait for), the
 /// others come this far apart.
@@ -29,22 +26,23 @@ const EVERY: Duration = Duration::from_secs(6 * 3600);
 static ERRORS: AtomicU64 = AtomicU64::new(0);
 
 fn opted_out() -> bool {
-    std::env::var("LIGHTBITES_TELEMETRY").is_ok_and(|value| matches!(value.as_str(), "0" | "false" | "off"))
+    brand::env("LIGHTCRAFT_TELEMETRY").is_some_and(|value| matches!(value.as_str(), "0" | "false" | "off"))
 }
 
 fn dsn() -> Option<String> {
-    std::env::var("LIGHTBITES_BUGSINK_DSN")
-        .ok()
+    brand::env("LIGHTCRAFT_BUGSINK_DSN")
         .filter(|value| !value.is_empty())
-        .or_else(|| option_env!("LIGHTBITES_BUGSINK_DSN").filter(|value| !value.is_empty()).map(str::to_owned))
+        .or_else(|| Some(brand::BUGSINK_DSN).filter(|value| !value.is_empty()).map(str::to_owned))
 }
 
-/// Where to send heartbeats: `None` when the owner turned telemetry off or this isn't an official build.
+/// Where to send heartbeats: `None` when the owner turned telemetry off or the build has no DSN and heartbeat address.
 pub fn endpoint() -> Option<String> {
     if opted_out() {
         return None;
     }
-    std::env::var("LIGHTBITES_TELEMETRY_URL").ok().filter(|value| !value.is_empty()).or_else(|| dsn().map(|_| URL.to_string()))
+    brand::env("LIGHTCRAFT_TELEMETRY_URL")
+        .filter(|value| !value.is_empty())
+        .or_else(|| dsn().and(Some(brand::TELEMETRY_URL)).filter(|url| !url.is_empty()).map(str::to_owned))
 }
 
 /// Starts Bugsink reporting for the lifetime of the server process and reports aggregate usage.
@@ -55,16 +53,17 @@ pub fn start(data: &Path) -> Option<sentry::ClientInitGuard> {
     let dsn = dsn()?.parse::<sentry::types::Dsn>().ok()?;
     let mut options = sentry::ClientOptions::new();
     options.dsn = Some(dsn);
-    options.release = Some(format!("lightbites-server@{}", env!("CARGO_PKG_VERSION")).into());
+    options.release = Some(format!("{}@{}", brand::COMMAND, env!("CARGO_PKG_VERSION")).into());
     options.send_default_pii = false;
     options.default_integrations = false;
     let guard = sentry::init(options);
 
-    let install_marker = data.join(".lightbites-telemetry-installed");
+    let slug = brand::slug();
+    let install_marker = data.join(format!(".{slug}-telemetry-installed"));
     if let Ok(file) = std::fs::OpenOptions::new().write(true).create_new(true).open(install_marker) {
         drop(file);
         sentry::with_scope(
-            |scope| scope.set_fingerprint(Some(&["lightbites", "server-install"])),
+            |scope| scope.set_fingerprint(Some(&[slug.as_str(), "server-install"])),
             || sentry::capture_message("server install", sentry::Level::Info),
         );
     }
@@ -74,7 +73,7 @@ pub fn start(data: &Path) -> Option<sentry::ClientInitGuard> {
             users.users.keys().fold(0usize, |total, user| total.saturating_add(accounts::devices(data, user).map_or(0, |file| file.devices.len())));
         sentry::with_scope(
             |scope| {
-                scope.set_fingerprint(Some(&["lightbites", "server-start"]));
+                scope.set_fingerprint(Some(&[slug.as_str(), "server-start"]));
                 scope.set_tag("users", users.users.len());
                 scope.set_tag("devices", device_count);
             },
@@ -88,9 +87,10 @@ pub fn start(data: &Path) -> Option<sentry::ClientInitGuard> {
 pub fn server_error(status: u16) {
     if status >= 500 {
         ERRORS.fetch_add(1, Ordering::Relaxed);
+        let slug = brand::slug();
         sentry::with_scope(
             |scope| {
-                scope.set_fingerprint(Some(&["lightbites", "server-error"]));
+                scope.set_fingerprint(Some(&[slug.as_str(), "server-error"]));
                 scope.set_tag("http.status", status);
             },
             || sentry::capture_message("server request failed", sentry::Level::Error),
@@ -98,10 +98,10 @@ pub fn server_error(status: u16) {
     }
 }
 
-/// The install's random id, made the first time and kept in `<data>/.lightbites-telemetry-id` (delete the file for a
+/// The install's random id, made the first time and kept in `<data>/.lightcraft-telemetry-id` (the product's name) (delete the file for a
 /// new one). `None` when the folder can't be written: no heartbeat then, never a made-up id that changes every start.
 pub(crate) fn install_id(data: &Path) -> Option<String> {
-    let path = data.join(".lightbites-telemetry-id");
+    let path = data.join(format!(".{}-telemetry-id", brand::slug()));
     if let Some(have) = std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string()).filter(|s| is_uuid(s)) {
         return Some(have);
     }
@@ -307,7 +307,7 @@ mod tests {
         let id = install_id(&dir).unwrap();
         assert!(is_uuid(&id) && id.as_bytes()[14] == b'4', "{id}");
         assert_eq!(install_id(&dir), Some(id.clone()), "the same one the next time");
-        std::fs::write(dir.join(".lightbites-telemetry-id"), "not an id").unwrap();
+        std::fs::write(dir.join(format!(".{}-telemetry-id", brand::slug())), "not an id").unwrap();
         let fresh = install_id(&dir).unwrap();
         assert!(is_uuid(&fresh) && fresh != id, "a damaged file is replaced");
         assert_eq!(install_id(&dir.join("missing")), None, "an unwritable folder gives no id, not a different one each time");

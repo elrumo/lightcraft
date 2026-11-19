@@ -32,7 +32,7 @@
 //! admin, are read in place — never copied, moved or written — and their photos join the user's
 //! library like any other (the server builds their previews and serves their originals).
 //!
-//! Users, devices and library folders are managed from the command line (`lightbites-server
+//! Users, devices and library folders are managed from the command line (`lightcraft-server
 //! user …`, `folder …`) or the admin page at `/admin` ([`admin`]).
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -40,6 +40,7 @@
 pub mod accounts;
 pub mod admin;
 pub mod api;
+pub mod brand;
 pub mod colors;
 pub mod companions;
 pub mod cors;
@@ -118,7 +119,7 @@ pub struct Config {
     /// no time on a machine other work has saturated, so tests that need an encode to finish there turn it off.
     pub video_low_priority: bool,
     /// Where the anonymous heartbeat goes, and how long the first one waits (`None`: [`telemetry::endpoint`], which is
-    /// nowhere in a build that isn't official or when the owner set `LIGHTBITES_TELEMETRY=0`, and a minute). Tests.
+    /// nowhere in a build that isn't official or when the owner set `LIGHTCRAFT_TELEMETRY=0`, and a minute). Tests.
     pub telemetry_url: Option<String>,
     pub telemetry_first: Option<std::time::Duration>,
 }
@@ -277,7 +278,7 @@ impl Server {
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-usage".into()).spawn(move || s.usage.run()).map_err(|e| e.to_string())?);
         if let Some(url) = cfg.telemetry_url.or_else(telemetry::endpoint) {
-            log::info!("anonymous telemetry is on (LIGHTBITES_TELEMETRY=0 turns it off): see docs/self-hosting.md");
+            log::info!("anonymous telemetry is on ({}_TELEMETRY=0 turns it off): see docs/self-hosting.md", brand::PRODUCT.to_uppercase());
             let (s, first) = (state.clone(), cfg.telemetry_first);
             workers.push(
                 std::thread::Builder::new().name("lc-telemetry".into()).spawn(move || telemetry::run(&s, &url, first)).map_err(|e| e.to_string())?,

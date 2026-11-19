@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Welcome to LightBites Server</title>
+<title>Welcome to {{PRODUCT}} Server</title>
 <link rel="icon" href="/admin/icon.png">
 <link rel="stylesheet" href="/admin/admin.css">
 <link rel="stylesheet" href="/welcome/welcome.css">
@@ -28,9 +28,9 @@
 
 <header class="wbar">
   <div class="wbar-inner">
-    <a class="brand" href="/"><img src="/admin/icon.png" alt="" width="28" height="28"><span>LightBites <b>Server</b></span></a>
+    <a class="brand" href="/"><img src="/admin/icon.png" alt="" width="28" height="28"><span>{{PRODUCT}} <b>Server</b></span></a>
     <nav class="wnav" aria-label="Site">
-      <a class="wlink" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer">Guides</a>
+      <a class="wlink" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer">Guides</a>
       <a class="btn accent" href="/admin" id="adminLink">Admin</a>
     </nav>
   </div>
@@ -39,11 +39,11 @@
 <main class="wmain">
   <section class="hero">
     <p class="status" id="status"><span class="dot"></span><span id="statusText">Server is running</span></p>
-    <h1>Welcome to your LightBites server</h1>
+    <h1>Welcome to your {{PRODUCT}} server</h1>
     <p class="lead">Your photos, edits, albums and ratings now sync between your devices through a computer you control. A few steps and you are ready.</p>
     <div class="hero-actions">
       <a class="btn accent" href="/admin" id="heroAdmin">Open the admin page</a>
-      <a class="btn secondary" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer"><span>Read the guides</span><svg class="icon"><use href="#i-external"/></svg></a>
+      <a class="btn secondary" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer"><span>Read the guides</span><svg class="icon"><use href="#i-external"/></svg></a>
     </div>
   </section>
 
@@ -54,7 +54,7 @@
         <span class="num" aria-hidden="true">1</span>
         <div>
           <h3>Create your administrator</h3>
-          <p id="stepAdminText">Open the <a href="/admin">admin page</a> and enter the one-time setup code the server printed when it started: run <code>docker compose logs lightcraft</code>, or look in the terminal running <code>lightcraft-server serve</code>.</p>
+          <p id="stepAdminText">Open the <a href="/admin">admin page</a> and enter the one-time setup code the server printed when it started: run <code>docker compose logs {{SERVICE}}</code>, or look in the terminal running <code>{{COMMAND}} serve</code>.</p>
         </div>
       </li>
       <li>
@@ -75,7 +75,7 @@
         <span class="num" aria-hidden="true">4</span>
         <div>
           <h3>Connect your devices</h3>
-          <p>In LightBites open <b>Settings ▸ Sync</b>, type this server's address with a user name and password, then <b>Sign In</b>.</p>
+          <p>In {{PRODUCT}} open <b>Settings ▸ Sync</b>, type this server's address with a user name and password, then <b>Sign In</b>.</p>
           <div class="copy-field">
             <input id="origin" readonly aria-label="Server address" spellcheck="false">
             <button type="button" class="btn secondary" id="copyOrigin"><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
@@ -94,21 +94,21 @@
 
   <section class="block" aria-labelledby="guidesH">
     <h2 id="guidesH">Guides</h2>
-    <p class="lead">Step-by-step help lives at <a href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer">lightbites.app/server</a>.</p>
+    <p class="lead">Step-by-step help lives at <a href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer">{{GUIDE_TEXT}}</a>.</p>
     <div class="guides">
-      <a class="guide" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-box"/></svg><h3>Docker setup</h3><p>Run the server with Docker or Docker Compose, or as a program on macOS, Linux and Windows.</p></a>
-      <a class="guide" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-lock"/></svg><h3>HTTPS</h3><p>Reach the server safely from outside your home network.</p></a>
-      <a class="guide" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-shield"/></svg><h3>First-run setup</h3><p>The setup code, your administrator, users and library folders.</p></a>
-      <a class="guide" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-device"/></svg><h3>Connect the apps</h3><p>Sign in from the desktop, web, iPhone and iPad apps.</p></a>
-      <a class="guide" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-storage"/></svg><h3>Backups</h3><p>What to copy so your library survives a failed disk.</p></a>
-      <a class="guide" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-refresh"/></svg><h3>Updates</h3><p>Move to a new server version and keep the apps in step.</p></a>
-      <a class="guide" href="https://lightbites.app/server" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-info"/></svg><h3>Troubleshooting</h3><p>When a device will not sign in or a photo does not arrive.</p></a>
+      <a class="guide" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-box"/></svg><h3>Docker setup</h3><p>Run the server with Docker or Docker Compose, or as a program on macOS, Linux and Windows.</p></a>
+      <a class="guide" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-lock"/></svg><h3>HTTPS</h3><p>Reach the server safely from outside your home network.</p></a>
+      <a class="guide" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-shield"/></svg><h3>First-run setup</h3><p>The setup code, your administrator, users and library folders.</p></a>
+      <a class="guide" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-device"/></svg><h3>Connect the apps</h3><p>Sign in from the desktop, web, iPhone and iPad apps.</p></a>
+      <a class="guide" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-storage"/></svg><h3>Backups</h3><p>What to copy so your library survives a failed disk.</p></a>
+      <a class="guide" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-refresh"/></svg><h3>Updates</h3><p>Move to a new server version and keep the apps in step.</p></a>
+      <a class="guide" href="{{GUIDE_URL}}" target="_blank" rel="noopener noreferrer"><svg class="icon"><use href="#i-info"/></svg><h3>Troubleshooting</h3><p>When a device will not sign in or a photo does not arrive.</p></a>
     </div>
   </section>
 
   <footer class="wfoot">
-    <span id="version">LightBites Server</span>
-    <span><a href="/admin">Admin</a> · <a href="https://github.com/elrumo/lightbites-server" target="_blank" rel="noopener noreferrer">Downloads</a></span>
+    <span id="version">{{PRODUCT}} Server</span>
+    <span><a href="/admin">Admin</a> · <a href="{{DOWNLOADS_URL}}" target="_blank" rel="noopener noreferrer">Downloads</a></span>
   </footer>
 </main>
 </body>

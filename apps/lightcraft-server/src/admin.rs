@@ -38,15 +38,15 @@ use crate::accounts::{self, LoginError};
 use crate::api::{Resp, error, header, header_value, json, read_json, read_small_json};
 use crate::switch::Part;
 
-const INDEX: &str = include_str!("../admin/index.html");
-const SCRIPT: &str = include_str!("../admin/admin.js");
+const INDEX: &str = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
+const SCRIPT: &str = include_str!(concat!(env!("OUT_DIR"), "/admin.js"));
 const STYLE: &str = include_str!("../admin/admin.css");
 /// The welcome page (`/` when the server has no web build, `/welcome` always) and its files.
-const WELCOME: &str = include_str!("../admin/welcome.html");
-const WELCOME_SCRIPT: &str = include_str!("../admin/welcome.js");
+const WELCOME: &str = include_str!(concat!(env!("OUT_DIR"), "/welcome.html"));
+const WELCOME_SCRIPT: &str = include_str!(concat!(env!("OUT_DIR"), "/welcome.js"));
 const WELCOME_STYLE: &str = include_str!("../admin/welcome.css");
-/// The LightBites app icon (128 px, shown at 28 to 40 px), for the page's header and tab.
-const ICON: &[u8] = include_bytes!("../admin/lightbites-icon.png");
+/// The app icon (128 px, shown at 28 to 40 px), for the page's header and tab (`LIGHTCRAFT_SERVER_ICON`, [`crate::brand`]).
+const ICON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icon.png"));
 
 /// Wrong setup codes before a new one is made.
 const SETUP_TRIES: u32 = 10;
@@ -736,7 +736,10 @@ fn setup(st: &State, req: &mut Request) -> Resp {
         return error(403, "wrong setup code (it is in the server's log)");
     }
     if accounts::read_users(&st.data).is_ok_and(|f| f.users.contains_key(&s.user)) {
-        return error(409, format!("`{}` exists: make them admin with `lightbites-server user admin {} on`, or pick another name", s.user, s.user));
+        return error(
+            409,
+            format!("`{}` exists: make them admin with `{} user admin {} on`, or pick another name", s.user, crate::brand::COMMAND, s.user),
+        );
     }
     if let Err(e) = accounts::set_user(&st.data, &s.user, &s.password, false).and_then(|()| accounts::set_admin(&st.data, &s.user, true)) {
         return error(400, e);

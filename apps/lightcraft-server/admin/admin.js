@@ -140,7 +140,7 @@ function storageParts(u) {
   if (u.bytes === null || !u.folderBytes) return '';
   // (a size doesn't break between its number and its unit)
   const fixed = (x) => bytes(x).replace(' ', '\u00a0');
-  return fixed(u.bytes - u.folderBytes) + ' kept by LightCraft · ' + fixed(u.folderBytes) + ' in library folders';
+  return fixed(u.bytes - u.folderBytes) + ' kept by {{PRODUCT}} · ' + fixed(u.folderBytes) + ' in library folders';
 }
 
 /**
@@ -390,7 +390,7 @@ function showPresets(p) {
   const presets = p.items.filter((i) => !isHiddenItem(i));
   const body = $('sharedPresets').querySelector('tbody');
   body.replaceChildren();
-  if (!presets.length) body.append(emptyRow(3, 'presets', 'No shared presets yet. Import LightCraft, XMP or Lightroom preset files, or a zip of them.'));
+  if (!presets.length) body.append(emptyRow(3, 'presets', 'No shared presets yet. Import {{PRODUCT}}, XMP or Lightroom preset files, or a zip of them.'));
   for (const [group, list] of byGroup(presets)) {
     const off = list.filter((it) => it.disabled === true).length;
     const allOff = off === list.length;
@@ -723,7 +723,7 @@ function showUsage(u) {
   // (where the machine can't be read there is nothing to chart for these two)
   $('ldCpuBox').hidden = $('ldMemBox').hidden = !u.supported;
   $('loadNote').textContent = u.supported
-    ? 'Read from this machine every 30 seconds' + (span >= 120 ? ' (the last ' + dur(Math.round(span / 60) * 60) + ' are shown; 24 hours are kept, and a restart starts them again)' : '') + '. The dashed lines are everything running on the machine, not only LightCraft.'
+    ? 'Read from this machine every 30 seconds' + (span >= 120 ? ' (the last ' + dur(Math.round(span / 60) * 60) + ' are shown; 24 hours are kept, and a restart starts them again)' : '') + '. The dashed lines are everything running on the machine, not only {{PRODUCT}}.'
     : 'CPU and memory can be read where the server runs on Linux, as it does in Docker. This server runs elsewhere, so only the requests are shown.';
   // CPU: the server's, in cores, against all the cores it may use
   $('ldCpu').textContent = last.cpu == null ? '–' : pct(last.cpu / cores);
@@ -899,7 +899,7 @@ function showUsers([users]) {
 function addUser() {
   return ask({
     title: 'Add a user',
-    text: 'They sign in to LightCraft on their devices with this user name and password, and get a library of their own.',
+    text: 'They sign in to {{PRODUCT}} on their devices with this user name and password, and get a library of their own.',
     fields: [
       { name: 'name', label: 'User name', pattern: NAME, help: 'Letters, digits, dots, dashes and underscores.' },
       { name: 'password', label: 'Password', type: 'password', minlength: 8, autocomplete: 'new-password', help: 'At least 8 characters. Give it to them privately.' },
@@ -965,7 +965,7 @@ function showUser(name, users) {
   $('uDevices').textContent = n(u.devices);
   $('uBytes').textContent = size(u.bytes);
   $('uBytesNote').textContent = storageParts(u);
-  // (the limit counts what LightCraft keeps for them, not their library folders)
+  // (the limit counts what {{PRODUCT}} keeps for them, not their library folders)
   const limit = $('uQuotaText');
   const meter = $('uQuotaMeter');
   limit.hidden = meter.hidden = !u.quota;
@@ -1541,7 +1541,7 @@ const FEATURES = {
     idle: 'Nothing is described while search is off.',
     title: 'Download the search model?',
     ask: (f) =>
-      'Search by description uses an AI model that understands photos and words. It is not part of LightCraft: it is SigLIP 2 from Google, a ' +
+      'Search by description uses an AI model that understands photos and words. It is not part of {{PRODUCT}}: it is SigLIP 2 from Google, a ' +
       bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading it means accepting that licence: ' + f.licenseUrl +
       " Afterwards the server describes every user's photos in the background, and their devices search through it.",
     done: 'Search is on for everyone on this server.',
@@ -1559,7 +1559,7 @@ const FEATURES = {
     idle: 'Nothing is read while this is off.',
     title: 'Download the text-reading models?',
     ask: (f) =>
-      'Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They are not part of LightCraft: they are PP-OCRv6 from Baidu, a ' +
+      'Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They are not part of {{PRODUCT}}: they are PP-OCRv6 from Baidu, a ' +
       bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading them means accepting that licence: ' + f.licenseUrl +
       " Afterwards the server reads every user's photos in the background, about a second each.",
     done: 'Finding photos by their words is on for everyone on this server.',
@@ -1578,7 +1578,7 @@ const FEATURES = {
     idle: 'Nothing is checked while this is off.',
     title: 'Download the sensitive-content model?',
     ask: (f) =>
-      'Flagging photos that might be sensitive (nudity and the like) uses an AI model that looks at each photo. It is not part of LightCraft: it is nsfw_image_detection from Falcons.ai, a ' +
+      'Flagging photos that might be sensitive (nudity and the like) uses an AI model that looks at each photo. It is not part of {{PRODUCT}}: it is nsfw_image_detection from Falcons.ai, a ' +
       bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading it means accepting that licence: ' + f.licenseUrl +
       " Afterwards the server checks every user's photos in the background. It can be wrong both ways: it only suggests, and each person decides what to hide.",
     done: 'Flagging photos that might be sensitive is on for everyone on this server.',
@@ -1950,7 +1950,7 @@ function showVideoForm(v) {
     pick('maxHeight', 'Biggest size', VIDEO_HEIGHTS, s.maxHeight, 'A video is never made bigger than it is.'),
     pick('quality', 'Quality', VIDEO_QUALITIES, s.quality, 'Balanced is about 5 Mbit/s for a 1080p video and 2.5 for 720p.'),
     check('skipIfSmaller', 'Keep only copies that are worth it', 'A copy that is not at least 15% smaller than the video is dropped, and the video is marked already efficient.', s.skipIfSmaller),
-    check('helper', 'Let a Mac helper make them', 'A Mac running a native LightCraft app takes videos while it is idle, using its video hardware: a fraction of the processor time.', s.helper),
+    check('helper', 'Let a Mac helper make them', 'A Mac running a native {{PRODUCT}} app takes videos while it is idle, using its video hardware: a fraction of the processor time.', s.helper),
     check('serverFallback', 'Let the server make them when no Mac does', 'In software, one video at a time, on one core, at the lowest priority: hours for a long video. H.264 only.', s.serverFallback),
   );
 }
@@ -1979,7 +1979,7 @@ function showVideos(v) {
   if (document.activeElement !== sw) sw.checked = s.enabled;
   const done = v.have + v.efficient;
   $('vdHelp').textContent = s.enabled
-    ? 'A lighter copy of every video, kept beside the original, which is never touched. A Mac running LightCraft makes them while idle; without one the server can, slowly.'
+    ? 'A lighter copy of every video, kept beside the original, which is never touched. A Mac running {{PRODUCT}} makes them while idle; without one the server can, slowly.'
     : 'Off. Turn on to make a lighter copy of every video, the ones already here and the new ones.';
   $('vdCover').textContent = [v.efficient ? n(v.efficient) + ' already efficient' : '', v.failed ? n(v.failed) + ' failed' : '', v.noOriginal ? n(v.noOriginal) + ' whose original is not here yet' : ''].filter(Boolean).join(' · ');
   $('vdText').textContent = videoText(v);
@@ -1992,7 +1992,7 @@ function showVideos(v) {
     wait.querySelector('b').textContent = v.waitingFor === 'helper' ? 'Waiting for a Mac helper' : 'Nothing can make them';
     wait.querySelector('p').textContent =
       v.waitingFor === 'helper'
-        ? 'No Mac has asked for videos yet. Open a native LightCraft app on a Mac signed in to this server and turn on the helper in its settings, or let the server make them itself below.'
+        ? 'No Mac has asked for videos yet. Open a native {{PRODUCT}} app on a Mac signed in to this server and turn on the helper in its settings, or let the server make them itself below.'
         : 'Turn on the Mac helper or let the server make them, below.';
   }
   const pause = $('vdPause');
@@ -2234,7 +2234,7 @@ async function downloadFaces(btn) {
     const ok = await ask({
       title: 'Download the face models?',
       text:
-        'Finding people uses two small AI models: YuNet finds faces and SFace tells them apart. They are not part of LightCraft. Together they are a ' +
+        'Finding people uses two small AI models: YuNet finds faces and SFace tells them apart. They are not part of {{PRODUCT}}. Together they are a ' +
         bytes(f.sizeBytes) + ' download onto this server, under ' + f.licenses.map((l) => 'the ' + l.name + ' (' + l.url + ')').join(' and ') +
         '. Downloading them means accepting those licences. Nothing is looked at until you turn it on for a user.',
       ok: 'Download',

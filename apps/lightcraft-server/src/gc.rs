@@ -1,4 +1,4 @@
-//! `lightbites-server gc`: delete photo files no library refers to any more (photos removed for
+//! `lightcraft-server gc`: delete photo files no library refers to any more (photos removed for
 //! good), and uploads that never finished. Files younger than [`KEEP_NEW`] stay: a device
 //! uploads a photo's files before the change that adds the photo reaches the server.
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>LightBites Server</title>
+<title>{{PRODUCT}} Server</title>
 <link rel="icon" href="/admin/icon.png">
 <link rel="stylesheet" href="/admin/admin.css">
 <script src="/admin/admin.js" defer></script>
@@ -43,7 +43,7 @@
 <!-- Sign in / first run -->
 <div class="auth" id="auth" hidden>
   <div class="auth-card">
-    <div class="auth-brand"><img src="/admin/icon.png" alt="" width="40" height="40"><span>LightBites <b>Server</b></span></div>
+    <div class="auth-brand"><img src="/admin/icon.png" alt="" width="40" height="40"><span>{{PRODUCT}} <b>Server</b></span></div>
 
     <section id="setup" hidden>
       <h1>Set up your server</h1>
@@ -52,7 +52,7 @@
         <div class="field">
           <label for="setupCode">Setup code</label>
           <input id="setupCode" name="code" required placeholder="ABCD-1234" autocomplete="one-time-code" spellcheck="false">
-          <p class="help">Printed in the server's log when it starts: run <code>docker compose logs lightcraft</code>, or look in the terminal running <code>lightbites-server serve</code>.</p>
+          <p class="help">Printed in the server's log when it starts: run <code>docker compose logs {{SERVICE}}</code>, or look in the terminal running <code>{{COMMAND}} serve</code>.</p>
         </div>
         <div class="field">
           <label for="setupUser">User name</label>
@@ -94,13 +94,13 @@
       </form>
     </section>
   </div>
-  <p class="auth-foot">LightBites Server · your photos, on your own hardware</p>
+  <p class="auth-foot">{{PRODUCT}} Server · your photos, on your own hardware</p>
 </div>
 
 <!-- The console -->
 <div class="shell" id="dash" hidden>
   <header class="topbar">
-    <a class="brand" href="#/overview"><img src="/admin/icon.png" alt="" width="28" height="28"><span>LightBites <b>Server</b></span><small class="brand-version" id="brandVersion"></small></a>
+    <a class="brand" href="#/overview"><img src="/admin/icon.png" alt="" width="28" height="28"><span>{{PRODUCT}} <b>Server</b></span><small class="brand-version" id="brandVersion"></small></a>
     <div class="account">
       <span class="avatar" id="meAvatar" aria-hidden="true"></span>
       <span class="account-name" id="whoName"></span>
@@ -159,17 +159,17 @@
       <div class="columns" id="overviewColumns">
         <section class="panel">
           <h2>Connect a device</h2>
-          <p class="muted">Sync a library with this server from LightCraft on a Mac, PC or iPhone.</p>
+          <p class="muted">Sync a library with this server from {{PRODUCT}} on a Mac, PC or iPhone.</p>
           <div class="field">
             <label for="origin">Server address</label>
             <div class="copy-field"><input id="origin" readonly><button type="button" class="btn secondary" id="copyOrigin"><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button></div>
           </div>
           <ol class="steps">
-            <li><span>In LightCraft, open <b>Settings › Sync</b>.</span></li>
+            <li><span>In {{PRODUCT}}, open <b>Settings › Sync</b>.</span></li>
             <li><span>Enter the server address above.</span></li>
             <li><span>Sign in with a user name and password from <a href="#/users">Users</a>.</span></li>
           </ol>
-          <p class="muted" id="webHint" hidden>Or open the server address in a web browser to use LightCraft there.</p>
+          <p class="muted" id="webHint" hidden>Or open the server address in a web browser to use {{PRODUCT}} there.</p>
         </section>
         <section class="panel">
           <h2>Server details</h2>
@@ -404,7 +404,7 @@
             <ul class="usage work" id="srUsers"></ul>
             <p class="muted" id="srUsersNone" hidden></p>
           </details>
-          <p class="help">Someone who prefers to search on their own computer can still choose that in LightCraft's search panel.</p>
+          <p class="help">Someone who prefers to search on their own computer can still choose that in {{PRODUCT}}'s search panel.</p>
           <div class="model" id="srModel"></div>
         </section>
 
@@ -475,7 +475,7 @@
     <!-- Presets -->
     <section data-view="presets" hidden>
       <div class="page-head">
-        <div><h1>Presets</h1><p class="lead">Presets every user gets in LightCraft, beside their own. On their devices they can favorite and hide them, not change them. Drag a preset onto another group to move it, and switch a preset or a group off to take it from every device without deleting it.</p></div>
+        <div><h1>Presets</h1><p class="lead">Presets every user gets in {{PRODUCT}}, beside their own. On their devices they can favorite and hide them, not change them. Drag a preset onto another group to move it, and switch a preset or a group off to take it from every device without deleting it.</p></div>
         <button type="button" class="btn accent" id="importPresets"><svg class="icon"><use href="#i-upload"/></svg><span>Import presets</span></button>
         <input type="file" id="presetFiles" multiple hidden accept=".lcpreset,.xmp,.lrtemplate,.zip,.lmp,.mplumpack">
       </div>

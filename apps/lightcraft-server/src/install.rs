@@ -1,9 +1,10 @@
-//! `lightbites-server install` / `uninstall`: run the server on a Mac or a Linux desktop without Docker or a terminal left open.
+//! `lightcraft-server install` / `uninstall`: run the server on a Mac or a Linux desktop without Docker or a terminal left open.
 //!
 //! macOS: `install` copies the program and its `web` folder to `~/Library/Application Support/LightCraft Server/program`
 //! and starts it with a launchd agent (`~/Library/LaunchAgents/ai.lightcraft.server.plist`): it runs at login, is
 //! restarted if it stops, and keeps its data in `…/LightCraft Server/data`. Linux: the same with a systemd user service
-//! (`~/.config/systemd/user/lightbites-server.service`) and `~/.local/share/lightbites-server`. `uninstall` stops it and
+//! (`~/.config/systemd/user/lightcraft-server.service`) and `~/.local/share/lightcraft-server`, named after the program
+//! ([`brand::COMMAND`]). `uninstall` stops it and
 //! removes the agent and the program; the data stays. `start`, `stop` and `status` control the installed agent without
 //! removing it (a stopped server stays stopped across logins until `start`); `status --porcelain` prints one word
 //! (`running`, `stopped` or `not-installed`) for the menu-bar app and scripts. On a Mac, `install` also starts the
@@ -15,11 +16,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use lightcraft_server::brand;
+
 const LABEL: &str = "ai.lightcraft.server";
 const MENUBAR_LABEL: &str = "ai.lightcraft.server.menubar";
-const UNIT: &str = "lightbites-server.service";
 /// Most nested folders `copy_dir` follows (the web build is two or three deep).
 const MAX_DEPTH: usize = 8;
+
+/// The systemd user service (Linux).
+fn service() -> String {
+    format!("{}.service", brand::COMMAND)
+}
 
 fn xml(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
@@ -85,7 +92,8 @@ fn unit(program: &Path, data: &Path, listen: &str, web: &Path, log: &Path) -> St
     let exec = words.iter().map(|w| unit_word(w)).collect::<Vec<_>>().join(" ");
     let log = format!("append:{}", log.to_string_lossy().replace('%', "%%"));
     format!(
-        "[Unit]\nDescription=LightBites Server\nAfter=network-online.target\n\n[Service]\nExecStart={exec}\nRestart=always\nRestartSec=3\nStandardOutput={log}\nStandardError={log}\n\n[Install]\nWantedBy=default.target\n"
+        "[Unit]\nDescription={} Server\nAfter=network-online.target\n\n[Service]\nExecStart={exec}\nRestart=always\nRestartSec=3\nStandardOutput={log}\nStandardError={log}\n\n[Install]\nWantedBy=default.target\n",
+        brand::PRODUCT
     )
 }
 
@@ -127,9 +135,9 @@ fn shell_quote(s: &Path) -> String {
 }
 
 /// A line to paste in a terminal that runs `verb` on the installed program. The install folder is not on `PATH`, so a
-/// bare `lightbites-server start` would not be found.
+/// bare `lightcraft-server start` would not be found.
 fn command_line(p: &Paths, verb: &str) -> String {
-    format!("{} {verb}", shell_quote(&p.app.join("program/lightbites-server")))
+    format!("{} {verb}", shell_quote(&p.app.join("program").join(brand::COMMAND)))
 }
 
 fn home() -> Result<PathBuf, String> {
@@ -159,10 +167,10 @@ fn paths() -> Result<Paths, String> {
             std::env::var(var).ok().filter(|d| d.starts_with('/')).map(PathBuf::from).unwrap_or_else(|| home.join(fallback))
         };
         Ok(Paths {
-            app: xdg("XDG_DATA_HOME", ".local/share").join("lightbites-server"),
-            agent: xdg("XDG_CONFIG_HOME", ".config").join("systemd/user").join(UNIT),
+            app: xdg("XDG_DATA_HOME", ".local/share").join(brand::COMMAND),
+            agent: xdg("XDG_CONFIG_HOME", ".config").join("systemd/user").join(service()),
             menubar_agent: PathBuf::new(),
-            log: xdg("XDG_STATE_HOME", ".local/state").join("lightbites-server/server.log"),
+            log: xdg("XDG_STATE_HOME", ".local/state").join(brand::COMMAND).join("server.log"),
             domain: String::new(),
         })
     } else {
@@ -187,7 +195,7 @@ fn unload(p: &Paths) {
     if cfg!(target_os = "macos") {
         run("launchctl", &["bootout", &format!("{}/{LABEL}", p.domain)]);
     } else {
-        systemctl(&["stop", UNIT]);
+        systemctl(&["stop", &service()]);
     }
 }
 
@@ -200,7 +208,7 @@ fn unload_menubar(p: &Paths) {
 
 /// Starts the menu-bar icon now and at every login. Best effort: the server works without its icon.
 fn load_menubar(p: &Paths, program_dir: &Path, port: &str) {
-    let program = program_dir.join("lightbites-menubar");
+    let program = program_dir.join(brand::MENUBAR);
     if !cfg!(target_os = "macos") || !program.is_file() {
         return;
     }
@@ -215,7 +223,7 @@ fn enable(p: &Paths) {
     if cfg!(target_os = "macos") {
         run("launchctl", &["enable", &format!("{}/{LABEL}", p.domain)]);
     } else {
-        systemctl(&["enable", UNIT]);
+        systemctl(&["enable", &service()]);
     }
 }
 
@@ -224,7 +232,7 @@ fn disable(p: &Paths) {
     if cfg!(target_os = "macos") {
         run("launchctl", &["disable", &format!("{}/{LABEL}", p.domain)]);
     } else {
-        systemctl(&["disable", UNIT]);
+        systemctl(&["disable", &service()]);
     }
 }
 
@@ -232,7 +240,7 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     let p = paths()?;
     let exe = std::env::current_exe().map_err(|e| format!("can't find this program: {e}"))?.canonicalize().map_err(|e| e.to_string())?;
     let program_dir = p.app.join("program");
-    let installed_exe = program_dir.join("lightbites-server");
+    let installed_exe = program_dir.join(brand::COMMAND);
     let installed_web = program_dir.join("web");
     let web_src = web.or_else(|| exe.parent().map(|d| d.join("web"))).filter(|w| w.is_dir());
     let data = match data {
@@ -247,12 +255,14 @@ pub fn install(data: Option<PathBuf>, listen: &str, web: Option<PathBuf>) -> Res
     if exe != installed_exe {
         std::fs::create_dir_all(&program_dir).map_err(|e| format!("{}: {e}", program_dir.display()))?;
         std::fs::copy(&exe, &installed_exe).map_err(|e| format!("{}: {e}", installed_exe.display()))?;
-        // releases before the rename installed it as `lightcraft-server`
-        let _ = std::fs::remove_file(program_dir.join("lightcraft-server"));
+        // releases before a rename installed it as `lightcraft-server`
+        if brand::COMMAND != "lightcraft-server" {
+            let _ = std::fs::remove_file(program_dir.join("lightcraft-server"));
+        }
     }
     // the Mac zips carry the menu-bar app beside the server: keep it with the installed program
-    if let Some(menubar) = exe.parent().map(|d| d.join("lightbites-menubar")).filter(|m| m.is_file()) {
-        let _ = std::fs::copy(&menubar, program_dir.join("lightbites-menubar"));
+    if let Some(menubar) = exe.parent().map(|d| d.join(brand::MENUBAR)).filter(|m| m.is_file()) {
+        let _ = std::fs::copy(&menubar, program_dir.join(brand::MENUBAR));
     }
     if let Some(src) = web_src.as_ref().filter(|s| s.canonicalize().ok().as_deref() != installed_web.canonicalize().ok().as_deref()) {
         let _ = std::fs::remove_dir_all(&installed_web);
@@ -302,7 +312,7 @@ fn load(p: &Paths) -> Result<(), String> {
         }
     } else {
         systemctl(&["daemon-reload"]);
-        if systemctl(&["enable", "--now", UNIT]) {
+        if systemctl(&["enable", "--now", &service()]) {
             return Ok(());
         }
     }
@@ -313,7 +323,7 @@ fn running(p: &Paths) -> bool {
     if cfg!(target_os = "macos") {
         run("launchctl", &["print", &format!("{}/{LABEL}", p.domain)])
     } else {
-        systemctl(&["is-active", "--quiet", UNIT])
+        systemctl(&["is-active", "--quiet", &service()])
     }
 }
 
@@ -398,8 +408,8 @@ mod tests {
 
     #[test]
     fn plist_escapes_paths_and_lists_the_serve_arguments() {
-        let p = plist(Path::new("/a & b/lightbites-server"), Path::new("/d"), "0.0.0.0:8080", Path::new("/w<1>"), Path::new("/l.log"));
-        assert!(p.contains("<string>/a &amp; b/lightbites-server</string>\n    <string>serve</string>"));
+        let p = plist(Path::new("/a & b/lightcraft-server"), Path::new("/d"), "0.0.0.0:8080", Path::new("/w<1>"), Path::new("/l.log"));
+        assert!(p.contains("<string>/a &amp; b/lightcraft-server</string>\n    <string>serve</string>"));
         assert!(p.contains("<string>/w&lt;1&gt;</string>"));
         assert!(p.contains("<key>KeepAlive</key><true/>"));
         // macOS's own checker agrees it is a property list
@@ -413,8 +423,8 @@ mod tests {
 
     #[test]
     fn menubar_plist_runs_the_icon_at_login_with_the_port_and_without_keepalive() {
-        let p = menubar_plist(Path::new("/a & b/lightbites-menubar"), "9090");
-        assert!(p.contains("<string>/a &amp; b/lightbites-menubar</string>\n    <string>--port</string>\n    <string>9090</string>"));
+        let p = menubar_plist(Path::new("/a & b/lightcraft-menubar"), "9090");
+        assert!(p.contains("<string>/a &amp; b/lightcraft-menubar</string>\n    <string>--port</string>\n    <string>9090</string>"));
         assert!(p.contains("<key>RunAtLoad</key><true/>"));
         assert!(!p.contains("KeepAlive"));
         if cfg!(target_os = "macos") {
@@ -427,9 +437,9 @@ mod tests {
 
     #[test]
     fn unit_quotes_words_and_escapes_what_systemd_expands() {
-        let u = unit(Path::new("/a b/lightbites-server"), Path::new("/d%1/$x"), "0.0.0.0:8080", Path::new("/w"), Path::new("/l 100%.log"));
+        let u = unit(Path::new("/a b/lightcraft-server"), Path::new("/d%1/$x"), "0.0.0.0:8080", Path::new("/w"), Path::new("/l 100%.log"));
         assert!(
-            u.contains("ExecStart=\"/a b/lightbites-server\" \"serve\" \"--data\" \"/d%%1/$$x\" \"--listen\" \"0.0.0.0:8080\" \"--web\" \"/w\"\n"),
+            u.contains("ExecStart=\"/a b/lightcraft-server\" \"serve\" \"--data\" \"/d%%1/$$x\" \"--listen\" \"0.0.0.0:8080\" \"--web\" \"/w\"\n"),
             "{u}"
         );
         assert!(u.contains("StandardOutput=append:/l 100%%.log\n"));
@@ -447,7 +457,8 @@ mod tests {
             domain: String::new(),
         };
         // the install folder is not on PATH and has a space in it
-        assert_eq!(command_line(&p, "start"), "'/Users/a b/Library/Application Support/LightCraft Server/program/lightbites-server' start");
+        let want = format!("'/Users/a b/Library/Application Support/LightCraft Server/program/{}' start", brand::COMMAND);
+        assert_eq!(command_line(&p, "start"), want);
         assert_eq!(shell_quote(Path::new("/it's/x")), "'/it'\\''s/x'");
         // what the shell makes of it: one word, the same path
         if cfg!(unix) {

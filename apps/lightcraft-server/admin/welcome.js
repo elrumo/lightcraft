@@ -19,7 +19,7 @@
 
   fetch('/api/health', { cache: 'no-store' })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-    .then((h) => { if (h.version) $('version').textContent = `LightBites Server ${h.version}`; })
+    .then((h) => { if (h.version) $('version').textContent = `{{PRODUCT}} Server ${h.version}`; })
     .catch(() => {
       $('status').classList.add('down');
       $('statusText').textContent = 'Server is not answering';

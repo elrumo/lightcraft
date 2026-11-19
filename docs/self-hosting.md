@@ -218,7 +218,7 @@ git clone https://github.com/elrumo/lightcraft
 cd lightcraft
 ```
 
-Docker: `docker build -f apps/lightcraft-server/Dockerfile -t lightbites-server .` (`--target lite` leaves out the web
+Docker: `docker build -f apps/lightcraft-server/Dockerfile --build-arg SERVER_BRAND=packaging/lightbites-server/brand.env -t lightbites-server .` (`--target lite` leaves out the web
 app; the first build takes 10–20 minutes), or `cd apps/lightcraft-server && LIGHTCRAFT_DOMAIN=photos.example.com
 docker compose up -d --build` for the Caddy setup from source. Without Docker:
 
@@ -226,10 +226,31 @@ docker compose up -d --build` for the Caddy setup from source. Without Docker:
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --locked --version "$(sed -n '/^name = "wasm-bindgen"$/{n;s/version = "\(.*\)"/\1/p;}' Cargo.lock)"
 cargo xtask web                                   # the web app → target/web-site
-cargo build --release -p lightcraft-server        # → target/release/lightbites-server
+packaging/lightbites-server/build.sh             # → target/release/lightbites-server (see below)
 sudo install -m 755 target/release/lightbites-server /usr/local/bin/
 sudo mkdir -p /opt/lightcraft && sudo cp -r target/web-site /opt/lightcraft/web
 ```
+
+`cargo build --release -p lightcraft-server` alone builds the plain LightCraft server, `target/release/lightcraft-server`.
+
+#### Building under another name
+
+The server's name, program name, links, admin page icon and telemetry addresses are set when it is built, from the
+environment (`apps/lightcraft-server/src/brand.rs` lists them; unset, the server is LightCraft's and sends no telemetry):
+
+| Variable | LightCraft's value | What it sets |
+|---|---|---|
+| `LIGHTCRAFT_SERVER_PRODUCT` | `LightCraft` | the name pages and messages show ("LightCraft Server"); also `<NAME>_*` environment variables as aliases of `LIGHTCRAFT_*` |
+| `LIGHTCRAFT_SERVER_COMMAND` | `lightcraft-server` | the program name in help, messages, install paths and the systemd unit |
+| `LIGHTCRAFT_SERVER_MENUBAR` | `lightcraft-menubar` | the menu-bar program a Mac zip carries beside the server |
+| `LIGHTCRAFT_SERVER_GUIDE_URL` | this repository's docs/self-hosting.md | the welcome page's guide links |
+| `LIGHTCRAFT_SERVER_DOWNLOADS_URL` | this repository's releases | the welcome page's Downloads link |
+| `LIGHTCRAFT_SERVER_ICON` | `assets/app-icon/…/128x128/…lightcraft.png` | the admin page's icon (a PNG, relative to the workspace) |
+| `LIGHTCRAFT_SERVER_TELEMETRY_URL`, `LIGHTCRAFT_SERVER_BUGSINK_DSN` | none | where heartbeats and error events go |
+
+LightBites' values are in `packaging/lightbites-server/brand.env`: `packaging/lightbites-server/build.sh` builds with
+them and saves the program as `lightbites-server`, the Dockerfile reads them with `--build-arg
+SERVER_BRAND=packaging/lightbites-server/brand.env`, and the release workflow and `tools/release-server.sh` do both.
 
 ### Run it as a service (Linux, systemd)
 

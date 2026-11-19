@@ -382,7 +382,7 @@ fn the_index_is_a_welcome_page_with_a_link_to_the_admin_page() {
     assert!(h.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.starts_with("text/html")));
     assert!(h.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-security-policy") && v.contains("script-src 'self'")));
     assert!(html.contains("<header class=\"wbar\">") && html.contains("href=\"/admin\""), "the header links to the admin page");
-    assert!(html.contains("What to do next") && html.contains("https://lightbites.app/server"));
+    assert!(html.contains("What to do next") && html.contains(lightcraft_server::brand::GUIDE_URL));
     assert_eq!(get("/welcome").1, body);
     assert_eq!(get("/welcome/welcome.js").0, 200);
     assert_eq!(get("/welcome/welcome.css").0, 200);

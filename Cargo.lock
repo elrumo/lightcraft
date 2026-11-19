@@ -5195,25 +5195,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lightcraft-ios-swift"
-version = "0.21.1"
-dependencies = [
- "lightcraft-apphost",
- "lightcraft-denoise",
- "lightcraft-denoise-core",
- "lightcraft-diffuse",
- "lightcraft-engine",
- "lightcraft-erase",
- "lightcraft-ios-host",
- "lightcraft-raster",
- "lightcraft-raw",
- "lightcraft-segment",
- "lightcraft-sysmem",
- "log",
- "serde_json",
-]
-
-[[package]]
 name = "lightcraft-lensdb"
 version = "0.21.1"
 dependencies = [

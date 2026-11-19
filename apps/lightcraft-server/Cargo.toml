@@ -9,10 +9,6 @@ description = "LightCraft sync server: each user's library, shared by their devi
 [lib]
 path = "src/lib.rs"
 
-[[bin]]
-name = "lightbites-server"
-path = "src/main.rs"
-
 [lints]
 workspace = true
 
@@ -37,7 +33,7 @@ lightcraft-sysmem = { workspace = true }
 rayon = { workspace = true }
 # Optional Sentry-compatible reporting to Bugsink. Rustls keeps the client pure Rust.
 sentry = { version = "0.49.3", default-features = false, features = ["ureq", "rustls"] }
-# the anonymous heartbeat to lightbites.app (`telemetry`): pure-Rust TLS like the other clients
+# the anonymous heartbeat to a distribution's site (`telemetry`, off unless the build names one): pure-Rust TLS like the other clients
 ureq = { workspace = true }
 rustls-rustcrypto = { workspace = true }
 # the lighter copies of videos (`video`): reading a clip's header, encoding it again when no Mac helper does
