@@ -1,8 +1,11 @@
 //! A host with a system decoder (iOS: ImageIO) installs it, and it decodes HEIC / HEIF and AVIF
-//! from then on. Without one AVIF stays unsupported (no pure-Rust decoder) and HEIC goes through
-//! `heic-rs`. One test, sequential: the decoder is process-wide.
+//! from then on. Without one AVIF goes through the pure-Rust AV1 decoder (the `avif` feature) and
+//! HEIC through `heic-rs`. One test, sequential: the decoder is process-wide.
 
 use lightcraft_codecs::{DecodeOptions, Error, Format, SystemImage, SystemPixels, decode, sniff};
+
+/// Whether this build decodes AVIF itself (upstream's AV1 decoder), without a host decoder.
+const NATIVE_AVIF: bool = cfg!(all(feature = "avif", not(target_arch = "wasm32")));
 
 const HEIC: &[u8] = b"\0\0\0\x18ftypheic\0\0\0\0mif1heic\0\0\0\x08free";
 
@@ -39,14 +42,14 @@ fn failing(_bytes: &[u8], _max: Option<(u32, u32)>) -> Result<SystemImage, Strin
 #[test]
 fn heic_decodes_through_the_system_decoder_when_the_host_has_one() {
     assert_eq!(sniff(HEIC), Some(Format::Heif));
-    assert!(Format::Heif.can_decode() && !Format::Avif.can_decode());
+    assert!(Format::Heif.can_decode() && Format::Avif.can_decode() == NATIVE_AVIF);
     // our own decoder: this file has no image in it
     let e = decode(HEIC, DecodeOptions::default()).unwrap_err();
     assert!(matches!(e, Error::Malformed(Format::Heif, _) | Error::Unsupported(Format::Heif, _)), "{e:?}");
 
     lightcraft_codecs::set_system_decoder(&[Format::Heif], fake);
     assert!(Format::Heif.can_decode());
-    assert!(!Format::Avif.can_decode(), "only the formats it was installed for");
+    assert_eq!(Format::Avif.can_decode(), NATIVE_AVIF, "only the formats it was installed for");
     let d = decode(HEIC, DecodeOptions::default()).unwrap();
     assert_eq!((d.format, d.width, d.height), (Format::Heif, 4, 2));
     assert_eq!((d.source_width, d.source_height), (4032, 3024));
@@ -69,5 +72,5 @@ fn heic_decodes_through_the_system_decoder_when_the_host_has_one() {
     assert!(e.to_string().contains("no image in the file"), "{e}");
 
     lightcraft_codecs::clear_system_decoder();
-    assert!(Format::Heif.can_decode() && !Format::Avif.can_decode());
+    assert!(Format::Heif.can_decode() && Format::Avif.can_decode() == NATIVE_AVIF);
 }

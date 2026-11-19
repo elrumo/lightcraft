@@ -86,6 +86,7 @@ vision = ["lightcraft-vision/siglip", "lightcraft-vision/onnx", "lightcraft-dept
 enhance = ["dep:lightcraft-enhance", "dep:lightcraft-diffuse"]
 
 [dev-dependencies]
+# Construct RAW errors using the same TIFF package as craft-raw.
 # tests record why they skip (`cargo xtask ci` lists the skips)
 lightcraft-testkit = { workspace = true }
 lightcraft-vision = { workspace = true, features = ["testing"] }

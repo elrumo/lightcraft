@@ -1,7 +1,8 @@
 //! Minimal, bounds-checked TIFF/EXIF walking: just what decoding needs (orientation, embedded
 //! thumbnail, colour-space hint). Full EXIF parsing lives in `lightcraft-meta`.
 
-/// Byte-order aware reader over a TIFF-structured blob.
+/// Byte-order aware reader over a TIFF-structured blob (this fork: `gainmap::apple_stops` reads an iPhone HEIC's
+/// maker note with it, so it is not test-only here).
 #[derive(Clone, Copy)]
 pub(crate) struct Tiff<'a> {
     pub data: &'a [u8],

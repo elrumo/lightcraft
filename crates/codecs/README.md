@@ -114,9 +114,9 @@ Run `cargo test --release -p lightcraft-codecs --test it bench:: -- --ignored --
 
 ## Gaps / limitations
 
-- **AVIF decode**: no permissively licensed, pure-Rust AV1 decoder exists today (dav1d is C;
-  rav1d-safe is AGPL). Files are sniffed and rejected with `Error::Unsupported` unless the host
-  installed a system decoder (`set_system_decoder`).
+- **AVIF decode** uses the host's system decoder first when one is installed (`set_system_decoder`), else
+  the shared pure-Rust AV1 decoder on native builds with the `avif` feature. Animated AVIF, depth and
+  gain-map auxiliary images, and progressive/layered images are unsupported.
 - **HEIC** needs the `heif` feature (on by default in this fork; upstream leaves it off because HEVC
   patents are the distributor's call); without it and without a system decoder,
   `Error::Unsupported` says the build has no HEIC support. A HEIC whose picture

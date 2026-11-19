@@ -106,7 +106,9 @@ use tone::{HighlightCheck, ToneFit, fit_tone, fit_tone_conditional, highlights};
 /// CR3/CR2 camera JPEG read in the colour space of the Canon maker note (#2654); the sensor proxy of every per-file fit
 /// gets the embedded vignetting correction the render applies (Fujifilm RAF; other makes with a lens database), at the
 /// position a lens warp samples; the warped candidate's alignment leaves out the pixels outside the sensor.
-pub const LOOK_VERSION: u32 = 24;
+/// 25: upstream's look version 14: bundled camera profiles also match the Nikon model spellings that differ in case,
+/// spacing or the Z8 alias, so previews made without the profile are rebuilt.
+pub const LOOK_VERSION: u32 = 25;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {

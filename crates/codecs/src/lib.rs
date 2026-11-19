@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod avif_decode;
 mod convert;
 pub mod depth;
 pub mod display;
@@ -256,6 +257,7 @@ pub fn read_header_unguarded(bytes: &[u8], format: Format) -> Result<Header> {
         Format::WebP => webp::header(bytes)?,
         Format::Psd => psd::header(bytes)?,
         Format::Heif => heif::header(bytes)?,
+        Format::Avif => avif_decode::header(bytes)?,
         Format::Gif | Format::Bmp => other::header(bytes, format)?,
         // rare here (or, for JPEG XL, without a header reader yet): a small decode, as before
         _ => {
@@ -293,7 +295,7 @@ pub fn decode_unguarded(bytes: &[u8], format: Format, opts: &DecodeOptions) -> R
         Format::Jxl => unsupported(),
         // the system's decoder first when the host installed one (iOS: ImageIO), see `system`
         Format::Heif => system::decode(bytes, format, &opts).unwrap_or_else(|| heif::decode(bytes, &opts)),
-        Format::Avif => system::decode(bytes, format, &opts).unwrap_or_else(unsupported),
+        Format::Avif => system::decode(bytes, format, &opts).unwrap_or_else(|| avif_decode::decode(bytes, &opts)),
         Format::RawTiffLike | Format::RawOther => unsupported(),
     }
 }

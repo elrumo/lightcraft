@@ -16,8 +16,8 @@ pub const EXTENSIONS: &[&str] = &[
     "pef", "srw", "psd", "psb", "jxl", "gif", "bmp",
     // Decoded when built with the codecs' `heif` feature; otherwise the import reports them as
     // failed with the reason ("HEIC/HEIF support isn't included in this build").
-    "heic", "heif", "avif", // no AV1 decoder yet: reported as failed, like a HEIC without the feature
-    "iiq", "crw", "mrw", "x3f", "kdc", "mos", "erf", "3fr", "fff", "mef", "gpr",
+    "heic", "heif", // AVIF decoding is available in native builds with the codecs' `avif` feature.
+    "avif", "iiq", "crw", "mrw", "x3f", "kdc", "mos", "erf", "3fr", "fff", "mef", "gpr",
     // Video clips: listed, played and given a poster frame by `lightcraft-video` (H.264 and HEVC in MP4 / MOV).
     "mp4", "m4v", "mov",
 ];

@@ -1,6 +1,6 @@
 # third_party/craft-libs
 
-Four crates from [storytold/craft-libs](https://github.com/storytold/craft-libs) based on `c7a872e2f24b2c0d9aa78f25c83f342be26fcad3`, refreshed with upstream craft-libs through `892ef9116c432d7afb5c08aba93e93a4e0b1548f` (MIT OR Apache-2.0; see
+Four crates from [storytold/craft-libs](https://github.com/storytold/craft-libs) based on `c7a872e2f24b2c0d9aa78f25c83f342be26fcad3`, refreshed with upstream craft-libs through `f589ff485707007e814671229d0f4e77bc06968a` (MIT OR Apache-2.0; see
 `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`), merged with LightCraft fork changes:
 `craft-raw`, `craft-tiff`, `craft-heif`, `craft-metadata`.
 
