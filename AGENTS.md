@@ -269,14 +269,6 @@ of it.
   `-derivedDataPath "$(ext-storage xcode-dd/<name> <scratch>/dd)"` instead of a path on the main drive. Unplugged =
   the default location, so a cold build; never symlink `target/` to the drive.
 - Parallel agents: separate git worktrees and `CARGO_TARGET_DIR` (see above; was `target/agent-<name>`); each agent uses its **own control port** (pick one in 18000–19999, never the default 7980) and its own scratch subfolder (`<scratch>/<agent-name>/`) — never `rm -rf` shared paths; delete your target dir when done (disk is shared); keep every `Cargo.toml` valid at all times (the `crates/*` glob means one broken manifest breaks everyone).
-- **Queued builds share one warm cache.** When several agents take turns building (one slot at a time, so the
-  machine isn't overloaded), they all build the shared checkout with the same dirs instead of their own:
-  `CARGO_TARGET_DIR="$(ext-storage cargo-target/agent-chain target/agent-chain)"`, Xcode
-  `-derivedDataPath "$(ext-storage xcode-dd/chain-ios <scratch>/dd)"` (`chain-mac` for the Mac app) and one simulator,
-  `Chain iPhone` (created once as an iPhone 17 Pro; never erase or delete it, reset only your own app data). Each slot
-  then rebuilds only what changed instead of building from cold. Plan every check before building and run them all on
-  that one build; group cards in the same part of the app into one agent so one build tests several. Only a build in
-  a separate clean copy or worktree uses its own dirs (a different source path invalidates the shared cache).
 - Test corpora: `cargo xtask corpus --download` into `corpus/` (gitignored, CC0 only). Never commit media.
 - Shared real-file test corpora (Photoshop-authored PSDs, etc.) live in [`storytold/photocraft-corpus`](https://github.com/storytold/photocraft-corpus). Never commit large binary fixtures to this repo; fetch them pinned by commit and sha256-verified, as PhotoCraft does with `cargo xtask corpus`.
 
