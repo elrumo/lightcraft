@@ -69,6 +69,7 @@
 //! | 14 | Keep Originals Where They Are (this fork) | `Photo.origin` |
 //! | 15 | upstream's formats 10 to 13, merged into this fork: masks stay on the photo under lens corrections, Upright and Transform; lens database profiles named in the Optics panel; history steps and versions share segmentation grids in the snapshot (#2154); upstream's Lens Blur fields | `Mask.on_photo`, `EmbeddedLens.source`, `Catalog.grids` / `SegMask.grid`, `LensBlur`'s `focus_mask` / `transition` / `shape` / `area`, `Mask.adjust.lens_blur`. Upstream's own files of formats 10 to 13 open too: every field they add is `#[serde(default)]` |
 //! | 16 | compositing (this fork, card #446): text layers and layers behind the photo's subject | `ExposureLayer.text`, `ExposureLayer.behind` (an older build would drop them, and its next edit of the photo would sync the layer back without them) |
+//! | 17 | compositing tools (this fork, card #446): shape and drawing layers | `ExposureLayer.shape`, `ExposureLayer.drawing` (as v16: an older build would turn them into empty photo layers and sync that back) |
 //!
 //! Rules:
 //! - **Bump [`VERSION`]** (and add a row above) in the change that adds an [`Op`] variant or a
@@ -98,15 +99,15 @@ pub const LOG: &str = "catalog.log";
 const FORMAT: &str = "lightcraft-catalog";
 /// The catalog format this build writes (and the newest it reads). See the module docs →
 /// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
-pub const VERSION: u32 = 16;
+pub const VERSION: u32 = 17;
 
 /// The newest catalog format a sync peer must understand: what a server says it keeps (`format` of
 /// [`crate::sync::proto::Ops`]), which a device compares with its own before it sends changes. It moves with [`VERSION`]
 /// for a new op or field, which go over the sync protocol, and not for a change to how a file is written: v13 only
 /// changed `catalog.snap`, so it stayed 12 (a server saying 13 would have made every device of v12 stop sending);
 /// v14's `Photo.origin` goes over the protocol, so it is 14; v15's mask, lens and Lens Blur fields do too, so it is
-/// 15 (its shared grid table is only in `catalog.snap`); v16's text and behind-the-subject layers do too, so it is 16.
-pub const SYNC_VERSION: u32 = 16;
+/// 15 (its shared grid table is only in `catalog.snap`); v16's text and behind-the-subject layers do too, and v17's shape and drawing layers, so it is 17.
+pub const SYNC_VERSION: u32 = 17;
 
 /// How far into `catalog.snap` its header may reach: `"catalog":` comes after the develop defaults (a few KB).
 pub(crate) const HEADER_BYTES: usize = 64 << 10;
