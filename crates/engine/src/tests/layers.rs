@@ -281,3 +281,32 @@ fn hostile_shape_and_drawing_json_reads_without_a_panic() {
     s.render_now(id, 32, 32).unwrap();
     s.execute("layer.list", &json!({"id": id.0})).unwrap();
 }
+
+#[test]
+fn a_text_layers_type_options_are_set_checked_and_kept() {
+    let mut s = Session::with_demo();
+    let id = s.catalog.photos().map(|p| p.id).next().unwrap();
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("layer.addText", &json!({"text": "Caption", "family": "Helvetica Neue", "weight": "light", "italic": true, "align": "left"})).unwrap();
+    let t = s.develop_of(id).unwrap().exposure_layers[0].text.clone().unwrap();
+    assert_eq!((t.family.as_str(), t.weight.as_str(), t.italic, t.align.as_str()), ("Helvetica Neue", "light", true, "left"));
+    // the rest kept as it was, the numbers brought into range
+    s.execute("layer.text", &json!({"layer": 0, "underline": true, "strike": true, "tracking": 5000, "leading": 0.1})).unwrap();
+    let t = s.develop_of(id).unwrap().exposure_layers[0].text.clone().unwrap();
+    assert_eq!((t.family.as_str(), t.underline, t.strike, t.tracking, t.leading), ("Helvetica Neue", true, true, 800.0, 0.5));
+    assert!(s.execute("layer.text", &json!({"layer": 0, "weight": "extraBold"})).is_err());
+    assert!(s.execute("layer.text", &json!({"layer": 0, "align": "middle"})).is_err());
+    assert!(s.execute("layer.text", &json!({"layer": 0, "italic": "yes"})).is_err());
+    // back to the system font, a family name cut to its most
+    s.execute("layer.text", &json!({"layer": 0, "family": "x".repeat(400)})).unwrap();
+    assert_eq!(s.develop_of(id).unwrap().exposure_layers[0].text.as_ref().unwrap().family.chars().count(), lightcraft_develop::MAX_LAYER_FAMILY);
+    s.execute("layer.text", &json!({"layer": 0, "family": ""})).unwrap();
+    assert!(s.develop_of(id).unwrap().exposure_layers[0].text.as_ref().unwrap().family.is_empty());
+    // from a file or another device: hostile values read and are brought into range
+    let d: lightcraft_develop::DevelopSettings = serde_json::from_value(json!({"exposure_layers": [
+        {"text": {"text": "x", "family": "A\u{0}B", "weight": "mega", "align": "diagonal", "tracking": f64::MAX, "leading": -1}},
+    ]}))
+    .unwrap_or_default();
+    let t = d.exposure_layers[0].text.as_ref().unwrap().sane();
+    assert_eq!((t.family.as_str(), t.weight.as_str(), t.align.as_str(), t.tracking, t.leading), ("AB", "", "center", 800.0, 0.5));
+}

@@ -13,7 +13,8 @@
 
 use lightcraft_catalog::{MediaKind, PhotoId};
 use lightcraft_develop::{
-    ExposureLayer, LayerBlend, LayerDrawing, LayerShape, LayerText, MAX_EXPOSURE_LAYERS, MAX_LAYER_DRAWING, MAX_LAYER_TEXT, MAX_LAYERS,
+    ExposureLayer, LayerBlend, LayerDrawing, LayerShape, LayerText, MAX_EXPOSURE_LAYERS, MAX_LAYER_DRAWING, MAX_LAYER_FAMILY, MAX_LAYER_TEXT,
+    MAX_LAYERS,
 };
 use serde_json::{Value, json};
 
@@ -204,13 +205,33 @@ fn text_params(p: &Value, mut t: LayerText, c: &str) -> Result<LayerText> {
         }
         t.font = font.into();
     }
-    if let Some(v) = p.get("bold").filter(|v| !v.is_null()) {
-        t.bold = v.as_bool().ok_or_else(|| bad(c, "`bold` must be true or false"))?;
+    if let Some(v) = p.get("family").filter(|v| !v.is_null()) {
+        let family = v.as_str().ok_or_else(|| bad(c, "`family` must be a font family's name, or empty for the system font"))?;
+        t.family = family.chars().take(MAX_LAYER_FAMILY).collect();
+    }
+    for (key, field) in [("bold", &mut t.bold), ("italic", &mut t.italic), ("underline", &mut t.underline), ("strike", &mut t.strike)] {
+        if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
+            *field = v.as_bool().ok_or_else(|| bad(c, format!("`{key}` must be true or false")))?;
+        }
+    }
+    if let Some(v) = p.get("weight").filter(|v| !v.is_null()) {
+        let weight = v.as_str().filter(|w| w.is_empty() || LayerText::WEIGHTS.contains(w));
+        t.weight = weight.ok_or_else(|| bad(c, format!("`weight` must be one of {}", LayerText::WEIGHTS.join(", "))))?.into();
+    }
+    if let Some(v) = p.get("align").filter(|v| !v.is_null()) {
+        let align = v.as_str().filter(|a| LayerText::ALIGNS.contains(a)).ok_or_else(|| bad(c, "`align` must be left, center, right or justify"))?;
+        t.align = align.into();
+    }
+    if let Some(v) = num(p, "tracking", c)? {
+        t.tracking = v;
+    }
+    if let Some(v) = num(p, "leading", c)? {
+        t.leading = v;
     }
     if let Some(rgb) = color(p, c)? {
         t.color = rgb;
     }
-    Ok(t)
+    Ok(t.sane())
 }
 
 fn two_selected(s: &Session) -> std::result::Result<(), String> {
@@ -435,7 +456,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 "Add Text",
                 [],
                 None,
-                "{text?, font?: system|serif|rounded|mono, bold?, color?: [r, g, b] (sRGB 0..1), x?, y?, scale?, angle?, opacity?, blend?, id?} — a text layer on top of the photo (white bold words in the middle, half the frame wide, unless placed; drawn by a native frontend), as one undo step; no copy is made",
+                "{text?, font?: system|serif|rounded|mono, family?, bold?, weight?, italic?, underline?, strike?, align?, tracking?, leading?, color?: [r, g, b] (sRGB 0..1), x?, y?, scale?, angle?, opacity?, blend?, id?} — a text layer on top of the photo (white bold words in the middle, half the frame wide, unless placed; drawn by a native frontend), as one undo step; no copy is made",
                 has_active,
                 |s, p| {
                     const C: &str = "layer.addText";
@@ -457,7 +478,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 "Edit Text",
                 [],
                 None,
-                "{layer: index, text?, font?, bold?, color?, id?} — a text layer's words and type, the fields left out kept",
+                "{layer: index, text?, font?: system|serif|rounded|mono, family?: an installed font family (empty: the system font), bold?, weight?: ultraLight…black, italic?, underline?, strike?, align?: left|center|right|justify, tracking?: thousandths of the size, leading?: a multiple of the line height, color?, id?} — a text layer's words and type, the fields left out kept",
                 has_active,
                 |s, p| {
                     const C: &str = "layer.text";

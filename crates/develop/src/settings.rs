@@ -1120,38 +1120,85 @@ impl LayerBlend {
 /// The longest text a text layer keeps, in characters (a longer one is cut by the commands and by a renderer).
 pub const MAX_LAYER_TEXT: usize = 500;
 
-/// The words of a text layer (card #446): set on lines of their own, centred, in one colour.
+/// The longest font family name a text layer keeps, in characters.
+pub const MAX_LAYER_FAMILY: usize = 120;
+
+/// The words of a text layer (card #446): set on lines of their own, aligned to each other, in one colour, in the
+/// system font's design or a font family installed on the device (a device without it draws the system font).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LayerText {
     /// At most [`MAX_LAYER_TEXT`] characters; `\n` starts a line.
     pub text: String,
-    /// The type's look: `system`, `serif`, `rounded` or `mono` (a name this build does not know reads as `system`).
+    /// The system font's design: `system`, `serif`, `rounded` or `mono` (a name this build does not know reads as
+    /// `system`), when `family` is empty.
     pub font: String,
+    /// A font family installed on the device (`Helvetica Neue`); empty: the system font in `font`'s design. At most
+    /// [`MAX_LAYER_FAMILY`] characters.
+    pub family: String,
+    /// Bold, when `weight` is empty (the first text layers had only this).
     pub bold: bool,
+    /// `ultraLight`, `thin`, `light`, `regular`, `medium`, `semibold`, `bold`, `heavy` or `black`; empty: from `bold`.
+    pub weight: String,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
+    /// How the lines line up: `left`, `center`, `right` or `justify` (a name this build does not know reads as `center`).
+    pub align: String,
+    /// The space added between letters, in thousandths of the type's size, −200..800.
+    pub tracking: f64,
+    /// The lines' spacing as a multiple of the type's own, 0.5..3.
+    pub leading: f64,
     /// sRGB, 0..1 each.
     pub color: [f64; 3],
 }
 
 impl Default for LayerText {
     fn default() -> Self {
-        LayerText { text: String::new(), font: "system".into(), bold: true, color: [1.0, 1.0, 1.0] }
+        LayerText {
+            text: String::new(),
+            font: "system".into(),
+            family: String::new(),
+            bold: true,
+            weight: String::new(),
+            italic: false,
+            underline: false,
+            strike: false,
+            align: "center".into(),
+            tracking: 0.0,
+            leading: 1.0,
+            color: [1.0, 1.0, 1.0],
+        }
     }
 }
 
 impl LayerText {
-    /// `self` brought into range: the text cut to [`MAX_LAYER_TEXT`] characters, a font name this build knows, colours
-    /// that are numbers in 0..1 (from a file or another device any value can arrive).
+    pub const WEIGHTS: [&'static str; 9] = ["ultraLight", "thin", "light", "regular", "medium", "semibold", "bold", "heavy", "black"];
+    pub const ALIGNS: [&'static str; 4] = ["left", "center", "right", "justify"];
+
+    /// `self` brought into range: the text cut to [`MAX_LAYER_TEXT`] characters, the family to [`MAX_LAYER_FAMILY`],
+    /// names this build knows, numbers in range (from a file or another device any value can arrive).
     pub fn sane(&self) -> LayerText {
         let font = match self.font.as_str() {
             "serif" | "rounded" | "mono" => self.font.clone(),
             _ => "system".into(),
         };
+        let weight = if Self::WEIGHTS.contains(&self.weight.as_str()) { self.weight.clone() } else { String::new() };
+        let align = if Self::ALIGNS.contains(&self.align.as_str()) { self.align.clone() } else { "center".into() };
         let c = |v: f64| if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 };
+        let r = |v: f64, lo: f64, hi: f64, or: f64| if v.is_finite() { v.clamp(lo, hi) } else { or };
         LayerText {
             text: self.text.chars().take(MAX_LAYER_TEXT).collect(),
             font,
+            family: self.family.chars().filter(|ch| !ch.is_control()).take(MAX_LAYER_FAMILY).collect(),
             bold: self.bold,
+            weight,
+            italic: self.italic,
+            underline: self.underline,
+            strike: self.strike,
+            align,
+            tracking: r(self.tracking, -200.0, 800.0, 0.0),
+            leading: r(self.leading, 0.5, 3.0, 1.0),
             color: [c(self.color[0]), c(self.color[1]), c(self.color[2])],
         }
     }
