@@ -120,7 +120,8 @@ A trip is a saved, named grouping of photos and paths with notes, linked to albu
 frontend shows trips, the core keeps and syncs them ([sync.md](sync.md#trips), where the documents and the album
 references are described).
 
-- **Its photos** (`trip.photos`) are the members of the albums it links (manual albums only) and, when `photosInRange`
+- **Its photos** (`trip.photos`) are the members of the albums it links (manual albums only), the photos added to it one
+  by one (`photos`, kept by content hash so they mean the same on every device; at most 5000, more go in an album) and, when `photosInRange`
   is on, the photos with a position captured inside its range (both ends included), each once, by capture time
   (photos without one last). Photos in Recently Deleted or hidden are left out, and so are Local records and virtual
   copies from the range. A capture time is read as `map.route` reads it: exact with its recorded zone, else in the zone
@@ -246,12 +247,14 @@ GeoNames dumps (`cities15000.txt`, `countryInfo.txt`, `admin1CodesASCII.txt`) an
 | `track.import {gpx? \| path?, name?, tz?}` | a GPX file as one session (every track and segment of it), as `track.create` plus the file's track and untimed point counts |
 | `track.list {fromMs?, toMs?, chunks?}` | the stored sessions (start, end, points, distance, climb, box, chunks, `unreadable`), the document's size and limits |
 | `track.get {session \| id, points?, maxPoints?, fromMs?, toMs?}` | one session (or one chunk), with its points on request: at most `maxPoints` (4000), both ends and both sides of every break kept |
+| `track.lines {maxPoints?, bbox?, sessions?}` | every session's line at once, simplified by shape (200 points each by default), only those whose box meets `bbox` when given: a map of all the tracks asks for the world coarsely, then for what is on screen in more detail |
 | `track.rename {session, name}`, `track.delete {session}` | rename (empty clears) or delete a session, on every device through the sync |
 | `track.export {session \| sessions, privacyTrim?, name?, path?}` | sessions as GPX 1.1 text, or written to `path`; `privacyTrim` (`true`, `false` or metres) defaults to the setting |
 | `tracking.settings {trim?, trimRadiusM?}` | the privacy trim for exports, read (no params) or set; shared by the person's devices |
-| `trip.create {name, albums?, range?, photosInRange?, tracks?, cover?}`, `trip.fromAlbum {album, name?}` | a new [trip](#trips) (`limit:` past 500); answers as `trip.get` |
+| `trip.create {name, albums?, photos?, people?, range?, photosInRange?, tracks?, cover?}`, `trip.fromAlbum {album, name?}` | a new [trip](#trips) (`limit:` past 500); answers as `trip.get` |
 | `trip.update {id, …}`, `trip.link`, `trip.unlink {id, album \| ref}`, `trip.delete {id}` | change a trip (`null` clears a field), link or unlink an album, delete it with its notes |
-| `trip.list`, `trip.get {id}`, `trip.photos {id}` | the trips (photos, albums and notes counted, the span), one trip with its linked albums resolved, a trip's photos |
+| `trip.addPhotos {id, photos}`, `trip.removePhotos {id, photos}` | photos added to a trip one by one, or taken out (by photo id; kept by content hash) |
+| `trip.list`, `trip.get {id}`, `trip.photos {id}` | the trips (photos, albums and notes counted, the span), one trip with its linked albums resolved, its tracks, people and cameras, a trip's photos |
 | `trip.toAlbum {id, name?}` | a new album with the trip's photos (one undo step) |
 | `trip.note.add {trip, text, tMs?, lat?, lon?, photo?}`, `trip.note.update`, `trip.note.delete`, `trip.notes {trip}` | a trip's notes (`limit:` past 1500), by time |
 | `album.ref {id}`, `album.resolve {ref}`, `album.trips {id}` | an album's sync-stable reference, the album a reference names here (or `{id: null}`), the trips that link an album |

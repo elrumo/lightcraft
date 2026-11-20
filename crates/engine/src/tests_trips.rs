@@ -146,6 +146,57 @@ fn a_trip_is_its_albums_and_the_located_photos_in_its_range() {
 }
 
 #[test]
+fn photos_added_one_by_one_people_and_cameras() {
+    let Alps { mut s, root, alps, p } = alps("added");
+    // a camera and a named face on two photos
+    for (i, camera, name) in [(0usize, "Canon EOS R6", Some("Ana")), (3, "Canon EOS R6", Some("ana ")), (2, "iPhone 17 Pro", None)] {
+        let mut meta = s.catalog.photo(p[i]).unwrap().meta.clone();
+        meta.camera = camera.into();
+        if let Some(name) = name {
+            let rect = lightcraft_meta::Rect { x0: 0.1, y0: 0.1, x1: 0.3, y1: 0.3 };
+            meta.regions.push(lightcraft_meta::Region { rect, kind: lightcraft_meta::RegionKind::Face, name: Some(name.into()), description: None });
+        }
+        s.apply_system(Op::SetMeta { id: p[i], meta: Box::new(meta) }).unwrap();
+    }
+    let r = s
+        .execute("trip.create", &json!({"name": "Alps", "albums": [alps.0], "photos": [p[3].0, p[0].0, p[3].0], "people": [" Ben ", "ben", ""]}))
+        .unwrap();
+    let id = r["trip"]["id"].as_str().unwrap().to_string();
+    assert_eq!(r["trip"]["photos"], json!([format!("{:032x}", 4), format!("{:032x}", 1)]), "by content, each once");
+    assert_eq!(r["trip"]["people"], json!(["Ben"]));
+    assert_eq!((r["photos"].as_u64(), r["added"].as_u64()), (Some(4), Some(1)), "p[0] is in the album already");
+    assert_eq!(r["people"], json!([{"name": "Ben", "photos": 0, "added": true}, {"name": "Ana", "photos": 2, "added": false}]));
+    assert_eq!(r["cameras"], json!([{"name": "Canon EOS R6", "photos": 2}]));
+    let got = s.execute("trip.photos", &json!({"id": id})).unwrap();
+    assert_eq!(ids(&got["ids"]), vec![p[1].0, p[0].0, p[3].0, p[7].0]);
+    assert_eq!((got["fromAlbums"].as_u64(), got["added"].as_u64(), got["fromRange"].as_u64()), (Some(3), Some(1), Some(0)));
+    // add and take out; a photo of the album stays when taken out
+    let r = s.execute("trip.addPhotos", &json!({"id": id, "photos": [p[2].0]})).unwrap();
+    assert_eq!((r["photos"].as_u64(), r["added"].as_u64()), (Some(5), Some(2)));
+    assert_eq!(r["cameras"], json!([{"name": "Canon EOS R6", "photos": 2}, {"name": "iPhone 17 Pro", "photos": 1}]));
+    let r = s.execute("trip.removePhotos", &json!({"id": id, "photos": [p[3].0, p[0].0]})).unwrap();
+    assert_eq!(r["trip"]["photos"], json!([format!("{:032x}", 3)]));
+    assert_eq!(r["photos"].as_u64(), Some(4));
+    // the list counts them too; clearing them removes the field
+    assert_eq!(s.execute("trip.list", &json!({})).unwrap()["trips"][0]["photos"].as_u64(), Some(4));
+    let r = s.execute("trip.update", &json!({"id": id, "photos": null, "people": null})).unwrap();
+    assert!(r["trip"].get("photos").is_none() && r["trip"].get("people").is_none());
+    // refused: not photo ids, a photo that isn't here, no list
+    assert!(err(&mut s, "trip.addPhotos", json!({"id": id, "photos": ["x"]})).contains("photo ids"));
+    assert!(err(&mut s, "trip.addPhotos", json!({"id": id, "photos": [999_999]})).contains("no such photo"));
+    assert!(err(&mut s, "trip.addPhotos", json!({"id": id})).contains("missing `photos`"));
+    assert!(err(&mut s, "trip.update", json!({"id": id, "people": [7]})).contains("names"));
+    // the document from elsewhere: lists of the wrong kind are left out, never a crash
+    assert_eq!(super::trips::take(super::trips::Doc::Trips, &[json!({"id": "tX", "name": "x", "createdMs": 1, "photos": "ab"})]).1, 1);
+    assert_eq!(super::trips::take(super::trips::Doc::Trips, &[json!({"id": "tX", "name": "x", "createdMs": 1, "people": [1]})]).1, 1);
+    assert_eq!(
+        super::trips::take(super::trips::Doc::Trips, &[json!({"id": "tX", "name": "x", "createdMs": 1, "photos": ["ab"], "people": ["A"]})]).1,
+        0
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn folders_smart_albums_and_the_quick_collection_are_not_linked() {
     let Alps { mut s, root, alps, .. } = alps("refused");
     let folder = s.catalog.alloc_album_id();
@@ -511,6 +562,12 @@ fn a_trips_tracks_are_its_list_or_those_that_overlap_it() {
         .unwrap()
         .to_string();
     assert_eq!(s.trip_tracks(&listed).unwrap(), vec![outside.clone()], "the ones this device has");
+    // a trip of tracks alone is listed with their span and no cover
+    let row = s.execute("trip.list", &json!({})).unwrap()["trips"].as_array().unwrap().iter().find(|r| r["id"] == listed.as_str()).cloned().unwrap();
+    assert_eq!((row["startMs"].as_i64(), row["cover"].clone()), (Some(ms("2026-08-02T06:00:00Z")), Value::Null));
+    // without a cover chosen, the first photo stands for it
+    let row = s.execute("trip.list", &json!({})).unwrap()["trips"].as_array().unwrap().iter().find(|r| r["id"] == spanned.as_str()).cloned().unwrap();
+    assert!(row["cover"].as_u64().is_some());
     assert!(s.trip_tracks("t-gone").unwrap_err().to_string().contains("no such trip"));
     let _ = std::fs::remove_dir_all(root);
 }

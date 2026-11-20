@@ -205,6 +205,73 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(answer)
 }
 
+/// `track.lines`' points per session at most, by default, and overall at most.
+const LINES_MAX: std::ops::RangeInclusive<u64> = 2..=20_000;
+const LINES_DEFAULT: usize = 200;
+const LINES_TOTAL_MAX: usize = 400_000;
+
+/// `bbox`: `{south, west, north, east}` in degrees (`None`: not given). West past east crosses the antimeridian.
+fn bbox_param(p: &Value, c: &str) -> Result<Option<[f64; 4]>> {
+    let Some(b) = p.get("bbox").filter(|b| !b.is_null()) else { return Ok(None) };
+    let deg = |k: &str, lim: f64| b.get(k).and_then(Value::as_f64).filter(|d| d.is_finite() && d.abs() <= lim);
+    match (deg("south", 90.0), deg("west", 180.0), deg("north", 90.0), deg("east", 180.0)) {
+        (Some(s), Some(w), Some(n), Some(e)) if s <= n => Ok(Some([s, w, n, e])),
+        _ => Err(bad(c, "`bbox` is {south, west, north, east} in degrees, south not above north")),
+    }
+}
+
+/// Whether box `a` and box `b` (`[south, west, north, east]`) meet. A box across the antimeridian is taken as meeting.
+fn boxes_meet(a: [f64; 4], b: [f64; 4]) -> bool {
+    let lat = a[0] <= b[2] && b[0] <= a[2];
+    let lon = a[1] > a[3] || b[1] > b[3] || (a[1] <= b[3] && b[1] <= a[3]);
+    lat && lon
+}
+
+/// `track.lines`: every session's line at once, simplified by shape, for a map of all the tracks.
+fn lines(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "track.lines";
+    let max = match p.get("maxPoints") {
+        None | Some(Value::Null) => LINES_DEFAULT,
+        Some(v) => v.as_u64().filter(|m| LINES_MAX.contains(m)).map(|m| m as usize).ok_or_else(|| bad(C, "`maxPoints` is 2..20000"))?,
+    };
+    let only: Option<Vec<&str>> = match p.get("sessions") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(a)) if a.len() <= 5000 => Some(a.iter().filter_map(Value::as_str).collect()),
+        Some(_) => return Err(bad(C, "`sessions` is a list of at most 5000 sessions")),
+    };
+    let bbox = bbox_param(p, C)?;
+    let (mut out, mut total, mut skipped) = (Vec::new(), 0usize, 0usize);
+    for (id, pieces) in store::sessions(s.tracks.items()) {
+        if only.as_ref().is_some_and(|o| !o.contains(&id)) {
+            continue;
+        }
+        let summary = store::summary(id, &pieces);
+        let b = &summary["bbox"];
+        let own = match (b["south"].as_f64(), b["west"].as_f64(), b["north"].as_f64(), b["east"].as_f64()) {
+            (Some(s), Some(w), Some(n), Some(e)) => [s, w, n, e],
+            _ => continue,
+        };
+        if bbox.is_some_and(|q| !boxes_meet(q, own)) {
+            continue;
+        }
+        if total.saturating_add(max) > LINES_TOTAL_MAX {
+            skipped += 1;
+            continue;
+        }
+        let few = lightcraft_geo::path::simplify_shape(&store::points_of(&pieces), max);
+        let mut drawn: Vec<Vec<[f64; 2]>> = Vec::new();
+        for q in &few {
+            match drawn.last_mut() {
+                Some(line) if !q.new_segment => line.push([q.lat, q.lon]),
+                _ => drawn.push(vec![[q.lat, q.lon]]),
+            }
+        }
+        total = total.saturating_add(few.len());
+        out.push(json!({"session": id, "startMs": summary["startMs"], "bbox": summary["bbox"], "lines": drawn}));
+    }
+    Ok(json!({"lines": out, "points": total, "skipped": skipped}))
+}
+
 fn no_such(session: &str) -> EngineError {
     EngineError::Other(format!("no such track: {}", session.chars().take(40).collect::<String>()))
 }
@@ -396,6 +463,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "track.get", "Recorded Track", [], None,
             "{session | id: one chunk, points?: bool, maxPoints?: 2..20000 (4000), fromMs?, toMs?} → the session as track.list has it, with chunks: [chunk] and, with `points`, points: [[tMs, lat, lon, ele|null, acc|null, seg: 0|1]] (at most `maxPoints`: both ends and both sides of every break kept, `simplified` says whether any was left out)",
             always, get),
+        cmd!(query "track.lines", "Recorded Track Lines", [], None,
+            "{maxPoints?: per session 2..20000 (200), bbox?: {south, west, north, east}: only the sessions whose box meets it, sessions?: [session]} → {lines: [{session, startMs, bbox, lines: [[[lat, lon]]]: one per stretch of recording}], points: n, skipped: n}. Every stored session's line at once, simplified by shape (bends kept before straight runs and stops), for a map of all the tracks: draw the few points of every track for the whole world, then ask again with a box and more points as the map zooms in. At most 400000 points in all: the sessions past that are counted in `skipped`",
+            always, lines),
         cmd!(query "track.rename", "Rename Recorded Track", [], None,
             "{session, name} → {session, name}. An empty name clears it. The only change a stored track takes",
             always, rename),

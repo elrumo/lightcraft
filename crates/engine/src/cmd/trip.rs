@@ -9,7 +9,9 @@ use lightcraft_catalog::{Album, AlbumId, Op, PhotoId};
 use serde_json::{Map, Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
-use crate::trips::{self as store, Doc, LIST_MAX, Located, MODES, NAME_MAX, TEXT_MAX, capture_ms, id_ok, readable, refs_of, str_of};
+use crate::trips::{
+    self as store, Doc, LIST_MAX, Located, MODES, NAME_MAX, PHOTOS_MAX, TEXT_MAX, capture_ms, id_ok, keys_of, readable, refs_of, str_of,
+};
 use crate::{EngineError, Result, Session};
 
 fn id_param<'a>(p: &'a Value, key: &str, c: &str) -> Result<&'a str> {
@@ -101,6 +103,84 @@ fn photo_key(s: &Session, id: u64, c: &str) -> Result<String> {
     lightcraft_catalog::sync::content_key(p).ok_or_else(|| bad(c, format!("photo {id} has no content hash yet: try again once it is read")))
 }
 
+/// `p[key]`: a list of photo ids, as the content hashes a trip keeps (each once, in their order; `null`: none).
+fn photo_keys_param(s: &Session, p: &Value, key: &str, c: &str) -> Result<Vec<String>> {
+    let ids = match p.get(key) {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(a)) if a.len() <= PHOTOS_MAX => a,
+        Some(_) => return Err(bad(c, format!("`{key}` is a list of at most {PHOTOS_MAX} photo ids"))),
+    };
+    let mut keys: Vec<String> = Vec::new();
+    for v in ids {
+        let id = v.as_u64().ok_or_else(|| bad(c, format!("`{key}` is a list of photo ids")))?;
+        if s.catalog.photo(PhotoId(id)).is_some_and(|p| p.local || p.copy_of.is_some()) {
+            return Err(bad(c, format!("photo {id} is a Local photo or a virtual copy: add photos of the library")));
+        }
+        let k = photo_key(s, id, c)?;
+        if !keys.contains(&k) {
+            keys.push(k);
+        }
+    }
+    Ok(keys)
+}
+
+/// `people`: names (trimmed, each once whatever its case, at most 200 characters; `null`: none).
+fn people_param(p: &Value, c: &str) -> Result<Vec<String>> {
+    let names = match p.get("people") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(a)) if a.len() <= LIST_MAX => a,
+        Some(_) => return Err(bad(c, format!("`people` is a list of at most {LIST_MAX} names"))),
+    };
+    let mut out: Vec<String> = Vec::new();
+    for v in names {
+        let n = v.as_str().map(str::trim).ok_or_else(|| bad(c, "`people` is a list of names"))?;
+        if n.chars().count() > NAME_MAX {
+            return Err(bad(c, format!("a name in `people` is at most {NAME_MAX} characters")));
+        }
+        if !n.is_empty() && !out.iter().any(|o| o.to_lowercase() == n.to_lowercase()) {
+            out.push(n.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// The people of a trip: the names it was given (`added`) and those on the faces in its photos, with how many of its
+/// photos show each; given ones first, then most photos first.
+fn people_of(s: &Session, t: &Value, photos: &[PhotoId]) -> Value {
+    let mut rows: Vec<(String, usize, bool)> = t
+        .get("people")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(|n| (n.to_string(), 0, true)).collect())
+        .unwrap_or_default();
+    for p in photos.iter().filter_map(|id| s.catalog.photo(*id)) {
+        for name in p.people() {
+            match rows.iter_mut().find(|(n, _, _)| n.to_lowercase() == name.to_lowercase()) {
+                Some(row) => row.1 += 1,
+                None => rows.push((name.to_string(), 1, false)),
+            }
+        }
+    }
+    rows.sort_by(|a, b| b.2.cmp(&a.2).then(b.1.cmp(&a.1)).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+    json!(rows.into_iter().map(|(name, photos, added)| json!({"name": name, "photos": photos, "added": added})).collect::<Vec<_>>())
+}
+
+/// The cameras a trip's photos were taken with, most photos first.
+fn cameras_of(s: &Session, photos: &[PhotoId]) -> Value {
+    let mut rows: Vec<(String, usize)> = Vec::new();
+    for p in photos.iter().filter_map(|id| s.catalog.photo(*id)) {
+        let name = p.meta.camera.trim();
+        if name.is_empty() {
+            continue;
+        }
+        match rows.iter_mut().find(|(n, _)| n == name) {
+            Some(row) => row.1 += 1,
+            None => rows.push((name.to_string(), 1)),
+        }
+    }
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    json!(rows.into_iter().map(|(name, photos)| json!({"name": name, "photos": photos})).collect::<Vec<_>>())
+}
+
 /// `cover`: a photo id; `null` clears it.
 fn cover_param(s: &Session, v: &Value, c: &str) -> Result<Option<Value>> {
     match v {
@@ -129,14 +209,25 @@ fn trip_answer(s: &Session, t: &Value) -> Value {
         .collect();
     let cover = t.get("cover").and_then(|c| str_of(c, "key"));
     let index = if cover.is_some() { crate::icloud::collections::index(s) } else { HashMap::new() };
-    let photos = if readable(t) { s.photos_of_trip(t, None).ids.len() } else { 0 };
+    if !readable(t) {
+        return json!({
+            "trip": t, "linked": linked, "coverPhoto": photo_of_key(&index, cover), "photos": 0, "added": 0,
+            "notes": s.trips.items(Doc::Notes).iter().filter(|n| str_of(n, "trip") == Some(id)).count(),
+            "sessions": [], "people": [], "cameras": [], "unreadable": true,
+        });
+    }
+    let found = s.photos_of_trip(t, None);
     json!({
         "trip": t,
         "linked": linked,
         "coverPhoto": photo_of_key(&index, cover),
-        "photos": photos,
+        "photos": found.ids.len(),
+        "added": found.added,
         "notes": s.trips.items(Doc::Notes).iter().filter(|n| str_of(n, "trip") == Some(id)).count(),
-        "unreadable": !readable(t),
+        "sessions": s.trip_tracks(id).unwrap_or_default(),
+        "people": people_of(s, t, &found.ids),
+        "cameras": cameras_of(s, &found.ids),
+        "unreadable": false,
     })
 }
 
@@ -177,6 +268,14 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     t.insert("photosInRange".into(), json!(in_range.transpose()?.unwrap_or(false)));
     t.insert("tracks".into(), tracks_param(p.get("tracks").unwrap_or(&Value::Null), C)?);
     t.insert("overrides".into(), json!([]));
+    let keys = photo_keys_param(s, p, "photos", C)?;
+    if !keys.is_empty() {
+        t.insert("photos".into(), json!(keys));
+    }
+    let people = people_param(p, C)?;
+    if !people.is_empty() {
+        t.insert("people".into(), json!(people));
+    }
     if let Some(c) = cover_param(s, p.get("cover").unwrap_or(&Value::Null), C)? {
         t.insert("cover".into(), c);
     }
@@ -263,6 +362,14 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(v) = p.get("cover") {
         set.push(("cover", cover_param(s, v, C)?));
     }
+    if p.get("photos").is_some() {
+        let keys = photo_keys_param(s, p, "photos", C)?;
+        set.push(("photos", (!keys.is_empty()).then(|| json!(keys))));
+    }
+    if p.get("people").is_some() {
+        let people = people_param(p, C)?;
+        set.push(("people", (!people.is_empty()).then(|| json!(people))));
+    }
     let same = s.trip_item(&id).is_ok_and(|t| set.iter().all(|(k, v)| t.get(*k) == v.as_ref()));
     if !same {
         change_trip(s, &id, |o| {
@@ -275,6 +382,49 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
         })?;
     }
     answer_for(s, &id)
+}
+
+/// `trip.addPhotos` (`add`) and `trip.removePhotos`: the photos added to trip `id` one by one, with these added or taken out.
+fn change_photos(s: &mut Session, p: &Value, add: bool) -> Result<Value> {
+    let c = if add { "trip.addPhotos" } else { "trip.removePhotos" };
+    s.trips_follow_mode();
+    let id = id_param(p, "id", c)?.to_string();
+    changeable(s, &id)?;
+    if p.get("photos").is_none_or(Value::is_null) {
+        return Err(bad(c, "missing `photos`"));
+    }
+    let given = photo_keys_param(s, p, "photos", c)?;
+    let had: Vec<String> = keys_of(s.trip_item(&id)?).into_iter().map(str::to_string).collect();
+    let now: Vec<String> = if add {
+        let mut now = had.clone();
+        now.extend(given.into_iter().filter(|k| !had.contains(k)));
+        if now.len() > PHOTOS_MAX {
+            return Err(EngineError::Other(format!(
+                "limit: a trip holds at most {PHOTOS_MAX} photos added one by one: put more in an album and link it"
+            )));
+        }
+        now
+    } else {
+        had.iter().filter(|k| !given.contains(k)).cloned().collect()
+    };
+    if now != had {
+        change_trip(s, &id, |o| {
+            if now.is_empty() {
+                o.remove("photos");
+            } else {
+                o.insert("photos".into(), json!(now));
+            }
+        })?;
+    }
+    answer_for(s, &id)
+}
+
+fn add_photos(s: &mut Session, p: &Value) -> Result<Value> {
+    change_photos(s, p, true)
+}
+
+fn remove_photos(s: &mut Session, p: &Value) -> Result<Value> {
+    change_photos(s, p, false)
 }
 
 fn link(s: &mut Session, p: &Value) -> Result<Value> {
@@ -328,8 +478,8 @@ fn unlink(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn list(s: &mut Session, _: &Value) -> Result<Value> {
     s.trips_follow_mode();
-    let located = Located::of(s);
     let trips = s.trips.items(Doc::Trips);
+    let located = Located::with_keys(s, trips.iter().any(|t| !keys_of(t).is_empty()));
     let index = if trips.iter().any(|t| t.get("cover").is_some()) { crate::icloud::collections::index(s) } else { HashMap::new() };
     let mut notes: HashMap<&str, usize> = HashMap::new();
     for n in s.trips.items(Doc::Notes) {
@@ -352,13 +502,15 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
             continue;
         }
         let photos = s.photos_of_trip(t, Some(&located)).ids;
-        o.insert("cover".into(), photo_of_key(&index, t.get("cover").and_then(|c| str_of(c, "key"))));
+        // (no cover chosen: its first photo)
+        let cover = photo_of_key(&index, t.get("cover").and_then(|c| str_of(c, "key")));
+        o.insert("cover".into(), if cover.is_null() { json!(photos.first().map(|p| p.0)) } else { cover });
         o.insert("photos".into(), json!(photos.len()));
         o.insert("albums".into(), json!(refs_of(t).len()));
         if let Some(r) = t.get("range").filter(|r| !r.is_null()) {
             o.insert("range".into(), r.clone());
         }
-        let span = s.trip_span(t, &photos);
+        let span = s.trip_span(t, &photos).or_else(|| s.listed_tracks_span(t));
         if let Some((start, end)) = span {
             o.insert("startMs".into(), json!(start));
             o.insert("endMs".into(), json!(end));
@@ -380,7 +532,9 @@ fn photos(s: &mut Session, p: &Value) -> Result<Value> {
     s.trips_follow_mode();
     let t = s.trip_item(id_param(p, "id", "trip.photos")?)?;
     let found = s.photos_of_trip(t, None);
-    Ok(json!({"ids": found.ids.iter().map(|id| id.0).collect::<Vec<_>>(), "fromAlbums": found.from_albums, "fromRange": found.from_range}))
+    Ok(
+        json!({"ids": found.ids.iter().map(|id| id.0).collect::<Vec<_>>(), "fromAlbums": found.from_albums, "added": found.added, "fromRange": found.from_range}),
+    )
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
@@ -554,7 +708,7 @@ fn album_trips(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "trip.create", "New Trip", [], None,
-            "{name, albums?: [album id], range?: {fromMs, toMs}, photosInRange?: bool (false), tracks?: \"range\" | [session] (\"range\"), cover?: photo id} → as trip.get. A trip of the shared `trips` document: its photos are the members of the albums it links and, with photosInRange, the located photos captured inside its range. Refused with `limit: …` past 500 trips. Times are milliseconds since 1970 (UTC). Not an undo step",
+            "{name, albums?: [album id], photos?: [photo id] (added one by one, at most 5000), people?: [name], range?: {fromMs, toMs}, photosInRange?: bool (false), tracks?: \"range\" | [session] (\"range\"), cover?: photo id} → as trip.get. A trip of the shared `trips` document: its photos are the members of the albums it links, the photos added to it and, with photosInRange, the located photos captured inside its range. Refused with `limit: …` past 500 trips. Times are milliseconds since 1970 (UTC). Not an undo step",
             always, create),
         cmd!(query "trip.fromAlbum", "Trip from Album", [], None,
             "{album: album id, name? (the album's)} → as trip.get: a trip that links the album, its range the span of the album's photos' capture times, photosInRange false",
@@ -569,8 +723,14 @@ pub fn specs() -> Vec<CommandSpec> {
             to_album
         ),
         cmd!(query "trip.update", "Edit Trip", [], None,
-            "{id, name?, albums?: [album id], range?: {fromMs, toMs}, photosInRange?, tracks?: \"range\" | [session], overrides?: [{atMs, mode: walk|bike|road|flight}], cover?: photo id} → as trip.get. Only what is given changes; `null` clears (albums and overrides to none, tracks to \"range\"; a name can't be cleared)",
+            "{id, name?, albums?: [album id], photos?: [photo id], people?: [name], range?: {fromMs, toMs}, photosInRange?, tracks?: \"range\" | [session], overrides?: [{atMs, mode: walk|bike|road|flight}], cover?: photo id} → as trip.get. Only what is given changes; `null` clears (albums, photos, people and overrides to none, tracks to \"range\"; a name can't be cleared)",
             always, update),
+        cmd!(query "trip.addPhotos", "Add Photos to Trip", [], None,
+            "{id, photos: [photo id]} → as trip.get: these photos added to the trip one by one (each once; Local photos and virtual copies refused; at most 5000 a trip)",
+            always, add_photos),
+        cmd!(query "trip.removePhotos", "Remove Photos from Trip", [], None,
+            "{id, photos: [photo id]} → as trip.get: these photos no longer added one by one (a photo of a linked album or of the range stays in the trip)",
+            always, remove_photos),
         cmd!(query "trip.link", "Link Album to Trip", [], None,
             "{id, album: album id} → as trip.get. Folders, smart albums and the Quick Collection are refused",
             always, link),
@@ -578,13 +738,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id, album: album id | ref: an album reference trip.get lists (for one whose album is gone)} → as trip.get",
             always, unlink),
         cmd!(query "trip.list", "Trips", [], None,
-            "{} → {trips: [{id, name, createdMs, cover: photo id | null, photos: n, albums: n, notes: n, range?, startMs?, endMs?, unreadable}]}, the latest first. startMs/endMs: the range, else the span of the photos' capture times; unreadable: saved by a newer version (kept, not read)",
+            "{} → {trips: [{id, name, createdMs, cover: photo id | null (the chosen cover, else its first photo), photos: n, albums: n, notes: n, range?, startMs?, endMs?, unreadable}]}, the latest first. startMs/endMs: the range, else the span of the photos' capture times, else of the tracks it lists; unreadable: saved by a newer version (kept, not read)",
             always, list),
         cmd!(query "trip.get", "Trip", [], None,
-            "{id} → {trip: as stored, linked: [{ref, album: {id, name} | null (deleted, or not here yet)}], coverPhoto: photo id | null, photos: n, notes: n, unreadable}",
+            "{id} → {trip: as stored, linked: [{ref, album: {id, name} | null (deleted, or not here yet)}], coverPhoto: photo id | null, photos: n, added: n (added one by one, not in a linked album), notes: n, sessions: [session] (its recorded tracks, as map.path takes them), people: [{name, photos: n, added: bool}] (the names it was given, then those on the faces of its photos), cameras: [{name, photos: n}], unreadable}",
             always, get),
         cmd!(query "trip.photos", "Trip Photos", [], None,
-            "{id} → {ids: [photo id], fromAlbums: n, fromRange: n}: the members of the linked albums and, with photosInRange, the located photos captured inside the range (fromRange: those no linked album holds), each once, by capture time (photos without one last). Recently Deleted and hidden photos are left out",
+            "{id} → {ids: [photo id], fromAlbums: n, added: n, fromRange: n}: the members of the linked albums, the photos added one by one (added: those no linked album holds) and, with photosInRange, the located photos captured inside the range (fromRange: the rest), each once, by capture time (photos without one last). Recently Deleted and hidden photos are left out",
             always, photos),
         cmd!(query "trip.delete", "Delete Trip", [], None,
             "{id} → {removed: true, notes: n}: the trip and its notes, on this device and, through the sync, the others. Its albums and photos stay. Not an undo step: ask first",

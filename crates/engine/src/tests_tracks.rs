@@ -108,6 +108,42 @@ fn a_recording_is_added_once_and_read_back() {
 }
 
 #[test]
+fn every_tracks_line_at_once_for_a_map_of_them_all() {
+    let mut s = Session::new();
+    let mut points = walk(300, T0);
+    points[150].as_array_mut().unwrap().push(json!(1));
+    let madrid = s.execute("track.create", &json!({"points": points})).unwrap()["session"].as_str().unwrap().to_string();
+    let far: Vec<Value> = (0..50).map(|i| json!([T0 + 86_400_000 + i * 5000, 48.85 + i as f64 * 1e-4, 2.35])).collect();
+    let paris = s.execute("track.create", &json!({"points": far})).unwrap()["session"].as_str().unwrap().to_string();
+    let all = s.execute("track.lines", &json!({"maxPoints": 20})).unwrap();
+    let rows = all["lines"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    let m = rows.iter().find(|r| r["session"] == madrid.as_str()).unwrap();
+    assert_eq!(m["lines"].as_array().unwrap().len(), 2, "the break is kept: no line drawn across it");
+    let n: usize = m["lines"].as_array().unwrap().iter().map(|l| l.as_array().unwrap().len()).sum();
+    assert!((4..=20).contains(&n), "{n}");
+    assert!(m["bbox"]["south"].as_f64().unwrap() > 40.0 && m["startMs"] == T0);
+    assert_eq!(all["skipped"], 0);
+    // only what the box shows
+    let box_paris = json!({"south": 48.0, "west": 2.0, "north": 49.0, "east": 3.0});
+    let some = s.execute("track.lines", &json!({"bbox": box_paris, "maxPoints": 2000})).unwrap();
+    assert_eq!(some["lines"].as_array().unwrap().iter().map(|r| r["session"].clone()).collect::<Vec<_>>(), vec![json!(paris)]);
+    assert_eq!(some["points"], 50, "fewer points than asked: all of them");
+    let one = s.execute("track.lines", &json!({"sessions": [madrid]})).unwrap();
+    assert_eq!(one["lines"].as_array().unwrap().len(), 1);
+    // bad parameters are errors, never crashes
+    for bad in [
+        json!({"maxPoints": 1}),
+        json!({"maxPoints": "x"}),
+        json!({"bbox": {"south": 50, "west": 0, "north": 40, "east": 1}}),
+        json!({"bbox": {"south": 1}}),
+        json!({"sessions": "s1"}),
+    ] {
+        assert!(s.execute("track.lines", &bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
 fn points_that_are_not_real_go_back_or_repeat_are_left_out() {
     let mut s = Session::new();
     let points = json!([

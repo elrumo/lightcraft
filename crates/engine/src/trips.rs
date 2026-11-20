@@ -3,13 +3,14 @@
 //!
 //! ```text
 //! trip  {id: "t…", name, createdMs, cover?: {key: content hash}, albums: [album reference], range?: {fromMs, toMs},
-//!        photosInRange, tracks: "range" | [session], overrides: [{atMs, mode}]}
+//!        photosInRange, tracks: "range" | [session], overrides: [{atMs, mode}], photos?: [content hash], people?: [name]}
 //! note  {id: "n…", trip, tMs, lat?, lon?, text, photo?: content hash, createdMs}
 //! ```
 //!
-//! A trip's photos are the members of the albums it links and, with `photosInRange`, the photos with a position
-//! captured inside its range ([`Session::trip_photos`]); it holds no photo of its own, so a change to an album reaches
-//! the trip with nothing copied. Its path comes from its photos and recorded tracks (`map.path {trip}`). Notes are one
+//! A trip's photos are the members of the albums it links, the photos added to it one by one (`photos`, by content
+//! hash, so they mean the same on every device) and, with `photosInRange`, the photos with a position captured inside
+//! its range ([`Session::trip_photos`]); an album is linked, not copied, so a change to it reaches the trip. `people`
+//! are names the person added (who came along); the people and cameras `trip.get` lists also come from its photos. Its path comes from its photos and recorded tracks (`map.path {trip}`). Notes are one
 //! item each, so notes added on two devices all survive. Times are milliseconds since 1970 (UTC).
 //!
 //! **Album references.** Album ids are a library's own, so a trip names an album by a reference that means the same on
@@ -64,8 +65,10 @@ const MODE_MAX: usize = 16;
 /// An album reference, a content key this long at most.
 const REF_MAX: usize = 80;
 const KEY_MAX: usize = 128;
-/// Albums, tracks and overrides of one trip at most.
+/// Albums, tracks, overrides and people of one trip at most.
 pub const LIST_MAX: usize = 1000;
+/// Photos added to one trip one by one at most (more go in an album, which the trip links).
+pub const PHOTOS_MAX: usize = 5000;
 /// The format of the items this build reads (an item without `fmt` is of this one).
 const FMT: u64 = 1;
 
@@ -193,7 +196,14 @@ fn check_trip(v: &Value) -> std::result::Result<bool, &'static str> {
     let tracks_ok = o.get("tracks").and_then(Value::as_str) == Some("range") || list_of(o.get("tracks"), |s| short(Some(s), ID_MAX));
     let overrides_ok = list_of(o.get("overrides"), |x| x.get("atMs").and_then(Value::as_i64).is_some() && short(x.get("mode"), MODE_MAX));
     let flag_ok = absent(o.get("photosInRange")) || o.get("photosInRange").is_some_and(Value::is_boolean);
-    if !cover_ok || !range_ok || !tracks_ok || !overrides_ok || !flag_ok || !list_of(o.get("albums"), |r| short(Some(r), REF_MAX)) {
+    let photos_ok = match o.get("photos") {
+        None | Some(Value::Null) => true,
+        Some(Value::Array(a)) => a.len() <= PHOTOS_MAX && a.iter().all(|k| short(Some(k), KEY_MAX)),
+        Some(_) => false,
+    };
+    let people_ok = list_of(o.get("people"), |n| short(Some(n), NAME_MAX));
+    let albums_ok = list_of(o.get("albums"), |r| short(Some(r), REF_MAX));
+    if !cover_ok || !range_ok || !tracks_ok || !overrides_ok || !flag_ok || !photos_ok || !people_ok || !albums_ok {
         return Err("a cover, range, list or flag that isn't one");
     }
     Ok(true)
@@ -271,6 +281,11 @@ pub(crate) fn refs_of(t: &Value) -> Vec<&str> {
     t.get("albums").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default()
 }
 
+/// The content hashes of the photos added to a trip one by one.
+pub(crate) fn keys_of(t: &Value) -> Vec<&str> {
+    t.get("photos").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default()
+}
+
 /// A trip's range (inclusive, ms).
 pub(crate) fn range_of(t: &Value) -> Option<(i64, i64)> {
     let r = t.get("range")?;
@@ -311,10 +326,20 @@ pub(crate) fn now_ms() -> i64 {
     web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX)).unwrap_or(0)
 }
 
-/// The located photos of a library by capture time, for the photos inside trips' ranges.
-pub(crate) struct Located(Vec<(i64, PhotoId)>);
+/// The located photos of a library by capture time, for the photos inside trips' ranges, and, when asked for, the
+/// photos by content hash (for trips that hold photos one by one).
+pub(crate) struct Located(Vec<(i64, PhotoId)>, Option<HashMap<String, PhotoId>>);
 
 impl Located {
+    /// [`Located::of`], with the photos by content hash when `keys`.
+    pub(crate) fn with_keys(s: &Session, keys: bool) -> Located {
+        let mut l = Located::of(s);
+        if keys {
+            l.1 = Some(crate::icloud::collections::index(s));
+        }
+        l
+    }
+
     /// The photos with a position and a capture time that a trip may show (Local records and virtual copies left out:
     /// they are this device's own, or the same picture again).
     pub(crate) fn of(s: &Session) -> Located {
@@ -325,7 +350,7 @@ impl Located {
             .filter_map(|p| Some((capture_ms(p)?, p.id)))
             .collect();
         v.sort_unstable();
-        Located(v)
+        Located(v, None)
     }
 
     fn inside(&self, (from, to): (i64, i64)) -> impl Iterator<Item = PhotoId> + '_ {
@@ -340,8 +365,10 @@ pub(crate) struct TripPhotos {
     pub ids: Vec<PhotoId>,
     /// Members of the linked albums.
     pub from_albums: usize,
-    /// Photos inside the range that no linked album holds.
+    /// Photos inside the range that no linked album holds and that were not added one by one.
     pub from_range: usize,
+    /// Photos added one by one that no linked album holds.
+    pub added: usize,
 }
 
 impl Session {
@@ -515,6 +542,23 @@ impl Session {
             }
         }
         let from_albums = ids.len();
+        let keys = keys_of(t);
+        if !keys.is_empty() {
+            let own;
+            let index = match located.and_then(|l| l.1.as_ref()) {
+                Some(i) => i,
+                None => {
+                    own = crate::icloud::collections::index(self);
+                    &own
+                }
+            };
+            for id in keys.iter().filter_map(|k| index.get(*k)) {
+                if self.catalog.photo(*id).is_some_and(|p| shown(p)) && seen.insert(*id) {
+                    ids.push(*id);
+                }
+            }
+        }
+        let added = ids.len().saturating_sub(from_albums);
         if t.get("photosInRange").and_then(Value::as_bool) == Some(true)
             && let Some(range) = range_of(t)
         {
@@ -528,11 +572,11 @@ impl Session {
             };
             ids.extend(located.inside(range).filter(|id| seen.insert(*id)).collect::<Vec<_>>());
         }
-        let from_range = ids.len().saturating_sub(from_albums);
+        let from_range = ids.len().saturating_sub(from_albums).saturating_sub(added);
         let mut timed: Vec<(Option<i64>, PhotoId)> = ids.iter().map(|id| (self.catalog.photo(*id).and_then(|p| capture_ms(p)), *id)).collect();
         // (by time, the photos without one after the others)
         timed.sort_unstable_by_key(|(t, id)| (t.is_none(), *t, *id));
-        TripPhotos { ids: timed.into_iter().map(|(_, id)| id).collect(), from_albums, from_range }
+        TripPhotos { ids: timed.into_iter().map(|(_, id)| id).collect(), from_albums, from_range, added }
     }
 
     /// The photos of trip `id`: the members of the albums it links (those this device has) and, when the trip says so,
@@ -558,6 +602,14 @@ impl Session {
     /// The recorded sessions of trip `id` this device has: those it lists, or with `tracks: "range"` every session of
     /// the `tracks` document that overlaps the trip's span (its range, else its photos' capture times; none without
     /// either), in the order the document has them.
+    /// When the tracks trip `t` lists by session were recorded, first to last (`None`: it lists none, or none is here).
+    pub(crate) fn listed_tracks_span(&self, t: &Value) -> Option<(i64, i64)> {
+        let listed: HashSet<&str> = t.get("tracks")?.as_array()?.iter().filter_map(Value::as_str).collect();
+        let times = self.tracks.items().iter().filter(|c| str_of(c, "session").is_some_and(|s| listed.contains(s)));
+        let times: Vec<(i64, i64)> = times.filter_map(|c| Some((c.get("startMs")?.as_i64()?, c.get("endMs")?.as_i64()?))).collect();
+        Some((times.iter().map(|t| t.0).min()?, times.iter().map(|t| t.1).max()?))
+    }
+
     pub fn trip_tracks(&self, id: &str) -> Result<Vec<String>> {
         let t = self.trip_item(id)?;
         let mut out: Vec<String> = Vec::new();

@@ -734,9 +734,9 @@ Recorded tracks ([map.md](map.md#recorded-tracks)) are the shared document `trac
 ### Trips
 
 A **trip** is a saved, named grouping of photos and paths with notes (`trip.*`, `crates/engine/src/trips.rs`, the
-commands in `crates/engine/src/cmd/trip.rs`). It holds no photo of its own: its photos are the members of the albums it
-links and, when it says so (`photosInRange`), the photos with a position captured inside its range, so a change to an
-album reaches the trip with nothing copied. Its path is `map.path {trip}` ([map.md](map.md)). A native (non-Rust)
+commands in `crates/engine/src/cmd/trip.rs`). Its photos are the members of the albums it links, the photos added to it
+one by one (`photos`, by content hash) and, when it says so (`photosInRange`), the photos with a position captured
+inside its range; an album is linked, not copied, so a change to it reaches the trip. `people` are names given to it. Its path is `map.path {trip}` ([map.md](map.md)). A native (non-Rust)
 frontend draws the trips; the core keeps them and syncs them.
 
 Two shared documents carry them, each in a file of its own in the library (like `tracks.json`: a damaged file or item
@@ -744,7 +744,7 @@ never costs the other document, and a damaged one is set aside as `<name>.corrup
 
 | Document | One item (by `id`) | File |
 |---|---|---|
-| `trips` | `{id: "t…", name, createdMs, cover?: {key: content hash}, albums: [album reference], range?: {fromMs, toMs}, photosInRange, tracks: "range" \| [session], overrides: [{atMs, mode}]}` | `trips.json` |
+| `trips` | `{id: "t…", name, createdMs, cover?: {key: content hash}, albums: [album reference], range?: {fromMs, toMs}, photosInRange, tracks: "range" \| [session], overrides: [{atMs, mode}], photos?: [content hash], people?: [name]}` | `trips.json` |
 | `trip-notes` | `{id: "n…", trip, tMs, lat?, lon?, text, photo?: content hash, createdMs}` | `trip-notes.json` |
 
 Times are milliseconds since 1970 (UTC). A cover and a note's photo are named by content, so they mean the same photo
