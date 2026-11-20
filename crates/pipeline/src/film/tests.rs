@@ -294,6 +294,36 @@ fn filed_and_instant_frames_border_the_photo() {
 }
 
 #[test]
+fn a_super8_gate_shows_the_frame_its_perforation_and_the_next_frames() {
+    let (w, h) = (1460, 1000);
+    let s = with(&[], FilmFrame::Super8);
+    let f = Setup::new(&s, 0, OutputSpace::Srgb, true).unwrap();
+    let win = f.window(w, h).unwrap();
+    // 5.79 × 4.01 mm with the gate round it
+    let (ww, wh) = (win.x1 - win.x0, win.y1 - win.y0);
+    assert!((ww as f32 / wh as f32 - S8_W / S8_H).abs() < 0.01, "{win:?}");
+    assert!(win.x0 > 0 && win.y0 > 0 && win.x1 < w && win.y1 < h, "{win:?}");
+    let px = draw(&s, 0, w, h);
+    assert!((luma(px[(h / 2) * w + w / 2]) - luma(GREY)).abs() < 1e-3, "the photo inside");
+    // the frame line above the window is black, the next frame's edge past it bright
+    // (pixels per millimetre)
+    let k = Setup::super8_scale(w, h) * w as f32;
+    let line = (h as f32 / 2.0 - (S8_H / 2.0 + 0.11) * k) as usize;
+    assert!(luma(px[line * w + w / 2]) < 0.02, "frame line {}", luma(px[line * w + w / 2]));
+    assert!(luma(px[2 * w + w / 2]) > 0.5, "the next frame {}", luma(px[2 * w + w / 2]));
+    // the perforation beside the middle: dark inside, its rim lit
+    let perf_x = |mm: f32| (w as f32 / 2.0 + (-S8_W / 2.0 + S8_PERF_INTO - mm) * k) as usize;
+    let mid = h / 2;
+    assert!(luma(px[mid * w + perf_x(0.2)]) < 0.02, "inside the hole");
+    let rim = (0..w / 8).map(|x| luma(px[mid * w + x])).fold(0.0f32, f32::max);
+    assert!(rim > 0.4, "the lit rim {rim}");
+    // a portrait output turns it
+    let f = Setup::new(&s, 0, OutputSpace::Srgb, true).unwrap();
+    let win = f.window(h, w).unwrap();
+    assert!(win.y1 - win.y0 > win.x1 - win.x0, "{win:?}");
+}
+
+#[test]
 fn hostile_numbers_and_tiny_pictures_draw_without_failing() {
     let mut s =
         with(&[(FilmKind::Leak, 1), (FilmKind::Streak, 2), (FilmKind::Burn, 3), (FilmKind::Dust, 4), (FilmKind::Scratches, 5)], FilmFrame::Strip);

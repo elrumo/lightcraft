@@ -898,10 +898,12 @@ pub enum FilmFrame {
     Filed,
     /// An instant print's frame, wider at the bottom.
     Instant,
+    /// A Super 8 frame in its gate: rounded corners, one perforation beside it, the next frames' edges past its frame lines.
+    Super8,
 }
 
 impl FilmFrame {
-    pub const ALL: [FilmFrame; 4] = [FilmFrame::None, FilmFrame::Strip, FilmFrame::Filed, FilmFrame::Instant];
+    pub const ALL: [FilmFrame; 5] = [FilmFrame::None, FilmFrame::Strip, FilmFrame::Filed, FilmFrame::Instant, FilmFrame::Super8];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -909,6 +911,7 @@ impl FilmFrame {
             FilmFrame::Strip => "35mm Strip",
             FilmFrame::Filed => "Filed Edge",
             FilmFrame::Instant => "Instant",
+            FilmFrame::Super8 => "Super 8",
         }
     }
 }

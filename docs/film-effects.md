@@ -3,7 +3,7 @@
 > **Last reviewed:** 2026-11-11 · **Status:** built (core settings, commands and renderer; `ctl:film.border`, `filmLayer.<i>.*`, `cmd:film.add`; grain styles; Film Effects presets); the editing UI is a native frontend's, not egui's · **Changes:** [revision history](#revision-history)
 
 Film effects put a photo on film and mark it as film gets marked: a **frame** the photo sits in (a 35mm strip with its
-sprocket holes, a filed-out negative carrier's black edge, an instant print's frame) and a **stack of marks** drawn over
+sprocket holes, a filed-out negative carrier's black edge, an instant print's frame, a Super 8 frame in its gate) and a **stack of marks** drawn over
 the finished picture, bottom to top: light leaks, light streaks, a burnt-out edge, dust with hairs, scratches, and the
 picture turned into a negative. All of it
 is procedural (no texture files): numbers, a seed and a hash. Nothing here is fitted to or taken from another
@@ -18,8 +18,8 @@ copy of a photo without film effects clears them on the photo it is pasted onto.
 
 | Setting | Values | Default | What it does |
 |---|---|---|---|
-| `film.frame` | `none`, `strip`, `filed`, `instant` | `none` | the frame; the photo shrinks into its window, the output keeps its size |
-| `film.frame_tone` | `dark`, `light` | `dark` | strip: black slide base or amber negative base; instant: black or white frame |
+| `film.frame` | `none`, `strip`, `filed`, `instant`, `super8` | `none` | the frame; the photo shrinks into its window, the output keeps its size |
+| `film.frame_tone` | `dark`, `light` | `dark` | strip and Super 8: black slide base or amber negative base; instant: black or white frame |
 | `film.border` (`ctl:film.border`) | 0..100 | 30 | filed edge and instant frame: how wide the border is |
 | `film.markings` | bool | true | strip: a frame number and an arrow along the edge |
 | `film.vary` | bool | true | each photo draws its own marks; off, the same marks on every photo ("Same on Every Photo") |
@@ -140,6 +140,13 @@ size. A windowed render with a frame works on the whole output and keeps its win
   the margin outside the holes on one side, orange on a slide, dark brown on a negative. The window has 0.3 mm corners.
 - **Filed edge**: a black border `0.012 + 0.10·border` wide, its inner edge filed by hand (a slow fBm wander and fine
   teeth reaching into the photo by up to about a third of the border).
+- **Super 8** (the public Super 8 camera aperture and pitch, millimetres): the frame 5.79 × 4.01 (its width along the
+  output's long edge) and the gate round it (0.16 past it across the film, 0.36 along it), on the side that fills first. The window has
+  0.12 corners, and its edge and the next frames' wander by up to 0.01 (`fbm` along the edge, seeds `0x297a2d39 ^ n`).
+  Past the 0.22 frame lines (pitch 4.234) the next frames' edges show bright `(0.80, 0.74, 0.60)`, varied ±10 %. The
+  perforation, 0.914 across × 1.143 along with 0.18 corners, sits beside the frame's middle on its left, reaching 0.07
+  into it: dark inside (the base), its rim 0.035 wide lit in the neighbours' colour at 85 %. Edges soften over at least
+  0.03 mm. Base and tone as the strip's, its density wandering ±6 % (seed `0x2c1b3c6d`).
 - **Instant**: sides and top `0.02 + 0.07·border`, the bottom 3.5 times that (the window keeps 30 % of the height),
   white `(0.80, 0.79, 0.76)` or black paper with a faint texture, and a soft shadow on the picture along its top and left.
 
@@ -199,5 +206,6 @@ Paste carrying or clearing the group).
 
 | Date | Change |
 |---|---|
+| 2026-11-19 | The Super 8 frame (`film.frame: super8`). |
 | 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
 | 2026-11-11 | Last change before the header rule (recorded in the old header, no note). |

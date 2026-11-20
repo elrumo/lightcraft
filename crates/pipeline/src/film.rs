@@ -147,6 +147,27 @@ const GLYPHS: [[u8; 7]; 12] = [
     [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
     [0x10, 0x18, 0x1c, 0x1e, 0x1c, 0x18, 0x10],
 ];
+// ---------- the Super 8 gate (millimetres, the public Super 8 camera aperture and pitch)
+
+/// The frame's aperture (across the film × along it) and its pitch along the film: frame lines of 0.22 mm.
+const S8_W: f32 = 5.79;
+const S8_H: f32 = 4.01;
+const S8_PITCH: f32 = 4.234;
+/// What the scan shows past the frame across the film and along it (enough for the next frames' edges past the 0.22 mm
+/// frame lines), and the window's corner radius.
+const S8_MARGIN_X: f32 = 0.16;
+const S8_MARGIN_Y: f32 = 0.36;
+const S8_RADIUS: f32 = 0.12;
+/// The perforation beside the frame's middle (across × along, corner radius), reaching into the frame's edge by
+/// `S8_PERF_INTO`, and its lit rim's width.
+const S8_PERF_ACROSS: f32 = 0.914;
+const S8_PERF_ALONG: f32 = 1.143;
+const S8_PERF_RADIUS: f32 = 0.18;
+const S8_PERF_INTO: f32 = 0.07;
+const S8_RIM: f32 = 0.035;
+/// The next frames past the frame lines: their bright, washed-out picture.
+const S8_NEIGHBOUR: [f32; 3] = [0.80, 0.74, 0.60];
+
 const GLYPH_A: usize = 10;
 const GLYPH_ARROW: usize = 11;
 
@@ -288,7 +309,21 @@ impl Setup {
                 let (side, bottom) = self.instant_borders(uh);
                 Some(rect(side, side, uw - side, uh - bottom))
             }
+            FilmFrame::Super8 => {
+                let k = Self::super8_scale(w, h);
+                let (ha, hc) = (S8_W / 2.0 * k, S8_H / 2.0 * k);
+                let (hx, hy) = if w >= h { (ha, hc) } else { (hc, ha) };
+                Some(rect(uw / 2.0 - hx, uh / 2.0 - hy, uw / 2.0 + hx, uh / 2.0 + hy))
+            }
         }
+    }
+
+    /// The long-edge units per millimetre of film of a Super 8 frame in a `w × h` output (long edge 1): the frame and
+    /// its margins fill the output on the side they reach first. The frame's width lies along the long edge.
+    fn super8_scale(w: usize, h: usize) -> f32 {
+        let long = w.max(h).max(1) as f32;
+        let short = w.min(h).max(1) as f32 / long;
+        (1.0 / (S8_W + 2.0 * S8_MARGIN_X)).min(short / (S8_H + 2.0 * S8_MARGIN_Y))
     }
 
     fn filed_border(&self) -> f32 {
@@ -360,7 +395,7 @@ impl Setup {
             pu: 1.0 / long,
             window: window.map(|r| [r.x0 as f32 / long, r.y0 as f32 / long, r.x1 as f32 / long, r.y1 as f32 / long]),
             landscape: full[0] >= full[1],
-            strip_k: Self::strip_scale(full[0], full[1]),
+            strip_k: if self.frame == FilmFrame::Super8 { Self::super8_scale(full[0], full[1]) } else { Self::strip_scale(full[0], full[1]) },
         };
         px.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
             let v = (origin[1] + y) as f32 + 0.5;
@@ -378,6 +413,7 @@ impl Setup {
             FilmFrame::Strip => self.strip(ctx, u, v, c),
             FilmFrame::Filed => self.filed(ctx, u, v, c),
             FilmFrame::Instant => self.instant(ctx, u, v, c),
+            FilmFrame::Super8 => self.super8(ctx, u, v, c),
         };
         let q = [u - ctx.uw / 2.0, v - ctx.uh / 2.0];
         for l in &self.layers {
@@ -509,6 +545,39 @@ impl Setup {
         let d = side(u - x0, v, 1).min(side(x1 - u, v, 2)).min(side(v - y0, u, 3)).min(side(y1 - v, u, 4));
         let inside = smoothstep(-ctx.pu * 0.75, ctx.pu * 0.75, d);
         mix3(self.out(FILED_BLACK), c, inside)
+    }
+
+    /// A Super 8 frame in its gate (`S8_*`): the frame's window with rounded, slightly uneven edges in the black film,
+    /// the bright edges of the frames before and after it past the frame lines, and the perforation beside its middle,
+    /// its rim lit, reaching a little into the frame.
+    fn super8(&self, ctx: &Ctx, u: f32, v: f32, c: [f32; 3]) -> [f32; 3] {
+        let k = ctx.strip_k;
+        let (du, dv) = (u - ctx.uw / 2.0, v - ctx.uh / 2.0);
+        // across the film (the frame's width, along the output's long edge) and along it, millimetres from the frame's centre
+        let (x, a) = if ctx.landscape { (du / k, dv / k) } else { (dv / k, du / k) };
+        let aa = (ctx.pu / k * 0.75).max(0.03);
+        let base = match self.tone {
+            FrameTone::Dark => SLIDE_BASE,
+            FrameTone::Light => NEGATIVE_BASE,
+        };
+        let density = fbm(x / 3.0, a / 3.0, 0x2c1b_3c6d, 2, ctx.pu / k / 3.0) - 0.5;
+        let mut f = base.map(|b| b * (1.0 + 0.12 * density));
+        // the gate's edges are never quite straight
+        let wobble = |along: f32, n: u32| 0.02 * (fbm(along / 0.8, n as f32 * 5.3, 0x297a_2d39 ^ n, 2, ctx.pu / k / 0.8) - 0.5);
+        // the next frames, before and after this one
+        let next = a.abs() - S8_PITCH;
+        let neighbour = rounded_rect(x, next, S8_W / 2.0, S8_H / 2.0, S8_RADIUS) + wobble(x, 2);
+        let light = S8_NEIGHBOUR.map(|n| n * (0.9 + 0.2 * fbm(x / 1.5, a / 1.5, 0x3d4d_51c3, 2, ctx.pu / k / 1.5)));
+        f = mix3(f, light, smoothstep(aa, -aa, neighbour));
+        let window = rounded_rect(x, a, S8_W / 2.0, S8_H / 2.0, S8_RADIUS) + wobble(if x.abs() > a.abs() { a } else { x }, 1);
+        let inside = smoothstep(aa, -aa, window) * self.in_window(ctx, u, v);
+        let mut out = mix3(self.out(f), c, inside);
+        // the perforation, over the frame's edge: dark inside, its rim lit
+        let px = x + S8_W / 2.0 - S8_PERF_INTO + S8_PERF_ACROSS / 2.0;
+        let hole = rounded_rect(px, a, S8_PERF_ACROSS / 2.0, S8_PERF_ALONG / 2.0, S8_PERF_RADIUS);
+        let rim = smoothstep(S8_RIM + aa, S8_RIM - aa, hole.abs() * 2.0) * 0.85;
+        out = mix3(out, self.out(base), smoothstep(aa, -aa, hole));
+        mix3(out, self.out(S8_NEIGHBOUR), rim)
     }
 
     fn instant(&self, ctx: &Ctx, u: f32, v: f32, c: [f32; 3]) -> [f32; 3] {
