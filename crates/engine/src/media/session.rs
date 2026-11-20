@@ -102,7 +102,7 @@ impl crate::Session {
                 sub.settings = Arc::new(d);
             }
             salt ^= sub.key.rotate_left((i as u32 + 1) * 11);
-            job.layers.push(super::render::LayerJob { layer: *l, aspect, job: Box::new(sub) });
+            job.layers.push(super::render::LayerJob { layer: l.clone(), aspect, job: Box::new(sub) });
         }
         job.key ^= salt;
         if let Some((_, k)) = job.cache.as_mut() {
