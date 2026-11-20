@@ -17,6 +17,7 @@ use crate::text::{TEXT_FONT as WATERMARK_FONT, cell_glyphs as watermark_cell_gly
 mod batch;
 mod border;
 mod encoding;
+pub mod host_pictures;
 mod options;
 mod params;
 mod place;
@@ -31,6 +32,7 @@ pub use encoding::{
     encode_deep, encode_deep_owned, encode_gain_map_jpeg, encode_image, encode_rendered, encode_with_metadata, export_metadata, named_space,
     output_sharpen, output_sharpen_deep, removes_location, srgb8_in,
 };
+pub use host_pictures::HostPicture;
 pub use options::{
     Conflict, DestinationMode, ExportFormat, ExportPreset, HdrCurve, MAX_ENLARGED_PIXELS, MetadataPolicy, Resize, ResizeMode, SharpenAmount,
     SharpenFor, builtin_presets,
@@ -43,7 +45,7 @@ pub use params::{
 use place::Placer;
 pub use place::{write_file, write_file_durable, write_file_new};
 pub use prepare::{
-    AfterExport, BatchPlacer, Destination, DngCompression, Exported, HostFile, HostPixels, ItemHead, PreparedExport, RenderParts,
+    AfterExport, BatchPlacer, Destination, DngCompression, Exported, HostFile, HostPixels, ItemHead, PixelSource, PreparedExport, RenderParts,
     encode_render_export, export_batch, export_photo, output_size, prepare_batch, prepare_batch_hosted, prepare_export,
 };
 #[cfg(test)]

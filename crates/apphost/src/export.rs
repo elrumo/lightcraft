@@ -10,13 +10,13 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
 use lightcraft_engine::activity::{Cancel, TaskGuard, TaskHandle};
 use lightcraft_engine::export::{
-    AfterExport, Destination, ExportFormat, ExportOptions, HostFile, HostPixels, OutputSpace, PreparedExport, Resize, prepare_batch_hosted,
-    prepare_export, run_batch,
+    AfterExport, Destination, ExportFormat, ExportOptions, HostFile, HostPixels, OutputSpace, PixelSource, PreparedExport, Resize,
+    prepare_batch_hosted, prepare_export, run_batch,
 };
 use serde_json::{Value, json};
 
 /// The parameters `app.export` takes (as `engine.commands` lists them).
-pub const PARAMS: &str = "{path?: output file (.jpg/.png/.tif/.webp/.avif/.jxl/.psd/.dng) | dir?, ids?, preset?, format?: jpeg|png|tiff|webp|avif|jxl|heic|psd|dng|original (heic is written by the Mac and iPhone apps only), longEdge?|shortEdge?|width?|height?|megapixels?|percent? (default longEdge 3000; longEdge 0 = full size), fit?: dimensions|widthHeight (with width + height: dimensions fits either orientation, widthHeight limits the width to `width` and the height to `height`), dontEnlarge?, ppi?, quality?: 1..100, jxlLossless?, jxlEffort?: fast|normal, jxlProgressive?, limitKb?, colorSpace?: srgb|displayP3|adobeRgb|proPhoto|rec2020, bitDepth?: 8|10|16|32, hdr? (HDR output for HDR edits: gain map JPEG, PQ AVIF / PNG / JPEG XL, float TIFF), sharpen?: none|screen|matte|glossy, sharpenAmount?: low|standard|high, metadata?: all|allExceptCamera|copyright|none, removeLocation?, sidecar?: bool (format original: false leaves out the XMP sidecar with the edits; default true), naming?, startNumber?, destinationMode?: specificFolder|sameAsOriginal (sameAsOriginal = each photo into its original's folder; `dir` unused), subfolder?, conflict?: unique|overwrite|skip, tiffCompression?: none|lzw|zip (default zip; lzw is usually larger and slower than zip, at 16 bit often larger than none: only for software that needs LZW), dngCompression?: lossless|deflate|uncompressed, addToPhotos?: bool (macOS: then add the files written to Apple Photos; outcome in `applePhotos`), photosAlbum?: top-level album name (made when missing), onServer?: render on the sync server, hostPixels?: {\"<photo id>\": {file: path of width × height pixels of opaque RGBA8 (4 bytes each) or RGBA16 (8 bytes, native byte order), width, height, depth?: 8|16 (8), space?: any colorSpace value (srgb)} (pictures a frontend's own renderer drew for some of the photos; the export encodes and places them as it does its own render, and renders any photo whose picture does not fit it: another size, another colour space or bit depth than the file is written in, HDR, an unreadable file; a photo given here or in hostFiles is not refused for the memory this device's own render of it would take, unless the export has to render it after all), hostFiles?: {\"<photo id>\": {file: path of the finished file in the export's format, width, height}} (files a frontend with an encoder of its own wrote for some of the photos, the pictures and everything done to them included: the export names and places them, and does nothing to their bytes. A photo with none is the export's own; for heic that is an error), watermark?: text | {text?, vertical? (upright columns, right to left), size? (text height, 0.005..0.5 of the short edge; default 0.035), opacity? (0..1; 0.7), anchor?: topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight, insetX? (margin from the left/right edge, 0..0.4 of the short edge; 0.025), insetY? (from the top/bottom edge; 0.025), inset? (sets both), rotation?: 0|90|180|270 (degrees clockwise; 0), color? [r,g,b] sRGB, shadow?, image? (graphic drawn instead of the text), imageWidth? (0.01..1 of the photo's width; 0.2)}}, border?: {width? (each side, 0..0.25 of the short edge; 0.05), color? [r,g,b] sRGB (white)} (a frame around the photo, drawn after the watermark: the file is larger than the export's size by it) — an unknown parameter, an out-of-range watermark size or a value of the wrong kind is an error, not a default";
+pub const PARAMS: &str = "{path?: output file (.jpg/.png/.tif/.webp/.avif/.jxl/.psd/.dng) | dir?, ids?, preset?, format?: jpeg|png|tiff|webp|avif|jxl|heic|psd|dng|original (heic is written by the Mac and iPhone apps only), longEdge?|shortEdge?|width?|height?|megapixels?|percent? (default longEdge 3000; longEdge 0 = full size), fit?: dimensions|widthHeight (with width + height: dimensions fits either orientation, widthHeight limits the width to `width` and the height to `height`), dontEnlarge?, ppi?, quality?: 1..100, jxlLossless?, jxlEffort?: fast|normal, jxlProgressive?, limitKb?, colorSpace?: srgb|displayP3|adobeRgb|proPhoto|rec2020, bitDepth?: 8|10|16|32, hdr? (HDR output for HDR edits: gain map JPEG, PQ AVIF / PNG / JPEG XL, float TIFF), sharpen?: none|screen|matte|glossy, sharpenAmount?: low|standard|high, metadata?: all|allExceptCamera|copyright|none, removeLocation?, sidecar?: bool (format original: false leaves out the XMP sidecar with the edits; default true), naming?, startNumber?, destinationMode?: specificFolder|sameAsOriginal (sameAsOriginal = each photo into its original's folder; `dir` unused), subfolder?, conflict?: unique|overwrite|skip, tiffCompression?: none|lzw|zip (default zip; lzw is usually larger and slower than zip, at 16 bit often larger than none: only for software that needs LZW), dngCompression?: lossless|deflate|uncompressed, addToPhotos?: bool (macOS: then add the files written to Apple Photos; outcome in `applePhotos`), photosAlbum?: top-level album name (made when missing), onServer?: render on the sync server, hostPixels?: {\"<photo id>\": {file: path of width × height pixels of opaque RGBA8 (4 bytes each) or RGBA16 (8 bytes, native byte order) | memory: the key the frontend hands those pixels over by while the export runs (lightcraft_engine::export::host_pictures; the photo's export waits for them, so each file is written as soon as its picture is drawn), width, height, depth?: 8|16 (8), space?: any colorSpace value (srgb)} (pictures a frontend's own renderer drew for some of the photos; the export encodes and places them as it does its own render, and renders any photo whose picture does not fit it: another size, another colour space or bit depth than the file is written in, HDR, an unreadable file, a picture the frontend says it does not draw after all; a photo given here or in hostFiles is not refused for the memory this device's own render of it would take, unless the export has to render it after all), hostFiles?: {\"<photo id>\": {file: path of the finished file in the export's format, width, height}} (files a frontend with an encoder of its own wrote for some of the photos, the pictures and everything done to them included: the export names and places them, and does nothing to their bytes. A photo with none is the export's own; for heic that is an error), watermark?: text | {text?, vertical? (upright columns, right to left), size? (text height, 0.005..0.5 of the short edge; default 0.035), opacity? (0..1; 0.7), anchor?: topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight, insetX? (margin from the left/right edge, 0..0.4 of the short edge; 0.025), insetY? (from the top/bottom edge; 0.025), inset? (sets both), rotation?: 0|90|180|270 (degrees clockwise; 0), color? [r,g,b] sRGB, shadow?, image? (graphic drawn instead of the text), imageWidth? (0.01..1 of the photo's width; 0.2)}}, border?: {width? (each side, 0..0.25 of the short edge; 0.05), color? [r,g,b] sRGB (white)} (a frame around the photo, drawn after the watermark: the file is larger than the export's size by it) — an unknown parameter, an out-of-range watermark size or a value of the wrong kind is an error, not a default";
 
 /// `app.export` as an entry of `engine.commands`.
 pub fn command_info(session: &Session) -> Value {
@@ -114,12 +114,14 @@ pub fn prepare(session: &mut Session, p: &Value) -> Result<Prepared, String> {
 /// Give each photo of `items` the picture `host` (`hostPixels`) holds for it, when it can use it
 /// ([`PreparedExport::with_host_pixels`]); the others are rendered by the export. A malformed entry is an error.
 fn apply_host_pixels(items: &mut [PreparedExport], host: &Value) -> Result<(), String> {
-    let entries = host.as_object().ok_or("`hostPixels` must be an object of photo id to {file, width, height}")?;
+    let entries = host.as_object().ok_or("`hostPixels` must be an object of photo id to {file or memory, width, height}")?;
     for item in items {
         let Some(entry) = entries.get(&item.photo.0.to_string()) else { continue };
         let size = |key: &str| entry.get(key).and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok());
-        let (Some(file), Some(width), Some(height)) = (entry.get("file").and_then(Value::as_str), size("width"), size("height")) else {
-            return Err(format!("`hostPixels` for photo {} needs file, width and height", item.photo.0));
+        let text = |key: &str| entry.get(key).and_then(Value::as_str).map(str::to_string);
+        let source = text("memory").map(PixelSource::Memory).or_else(|| text("file").map(PixelSource::File));
+        let (Some(source), Some(width), Some(height)) = (source, size("width"), size("height")) else {
+            return Err(format!("`hostPixels` for photo {} needs file or memory, width and height", item.photo.0));
         };
         let depth = match entry.get("depth") {
             None => 8,
@@ -133,7 +135,7 @@ fn apply_host_pixels(items: &mut [PreparedExport], host: &Value) -> Result<(), S
                 v.as_str().and_then(OutputSpace::parse).ok_or_else(|| format!("`hostPixels` for photo {}: unknown colour space", item.photo.0))?
             }
         };
-        item.with_host_pixels(HostPixels { file: file.to_string(), width, height, depth, space });
+        item.with_host_pixels(HostPixels { source, width, height, depth, space });
     }
     Ok(())
 }
@@ -441,6 +443,71 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // Pictures handed over in memory while the export runs (`hostPixels` {memory}): each photo waits for its own and its file is written
+    // as soon as it comes, before the later pictures are drawn; one the host does not draw after all is the export's own render, and one
+    // it says cannot be exported fails with what it says
+    #[test]
+    fn pictures_handed_over_in_memory_are_exported_as_they_come() {
+        use lightcraft_engine::export::{HostPicture, host_pictures};
+        let dir = std::env::temp_dir().join(format!("lc-apphost-host-memory-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = Session::with_demo();
+        let ids: Vec<u64> = s.visible_cloned().iter().take(2).map(|id| id.0).collect();
+        let base = json!({"ids": ids, "longEdge": 64, "format": "png"});
+        let plain =
+            export_now(&mut s, &json!({"ids": ids, "longEdge": 64, "format": "png", "dir": dir.join("plain").to_string_lossy()}), &mut |_, _, _| {
+                true
+            })
+            .unwrap();
+        let size = |i: usize| (plain["files"][i]["width"].as_u64().unwrap() as usize, plain["files"][i]["height"].as_u64().unwrap() as usize);
+        let prefix = format!("lc-apphost-memory-{}/", std::process::id());
+        let mut p = base.clone();
+        p["dir"] = json!(dir.join("memory").to_string_lossy());
+        p["hostPixels"] = json!(
+            ids.iter()
+                .enumerate()
+                .map(|(i, id)| (id.to_string(), json!({"memory": format!("{prefix}{id}"), "width": size(i).0, "height": size(i).1})))
+                .collect::<serde_json::Map<_, _>>()
+        );
+        let (first, out_dir, keys) = (size(0), dir.join("memory"), ids.iter().map(|id| format!("{prefix}{id}")).collect::<Vec<_>>());
+        let host = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            host_pictures::put(&keys[0], HostPicture::Pixels(std::iter::repeat_n([10u8, 200, 90, 255], first.0 * first.1).flatten().collect()));
+            // the first file is written before the other pictures come
+            let t0 = std::time::Instant::now();
+            let landed = loop {
+                if std::fs::read_dir(&out_dir).is_ok_and(|d| d.count() > 0) {
+                    break true;
+                }
+                if t0.elapsed().as_secs() > 30 {
+                    break false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            host_pictures::put(&keys[1], HostPicture::Render);
+            landed
+        });
+        let out = export_now(&mut s, &p, &mut |_, _, _| true);
+        assert!(host.join().unwrap(), "the first file was written before the other pictures were handed over");
+        let out = out.unwrap();
+        let pixels = |i: usize| {
+            let d = lightcraft_codecs::decode(&std::fs::read(out["files"][i]["path"].as_str().unwrap()).unwrap(), Default::default()).unwrap();
+            d.to_srgb8()
+        };
+        assert!(pixels(0).data.iter().all(|px| *px == [10, 200, 90, 255]), "the host's picture");
+        let own = lightcraft_codecs::decode(&std::fs::read(plain["files"][1]["path"].as_str().unwrap()).unwrap(), Default::default()).unwrap();
+        assert_eq!(pixels(1), own.to_srgb8(), "a photo the host does not draw is the export's own render");
+        // (and one it says cannot be exported is that photo's error)
+        host_pictures::put(&format!("{prefix}fail"), HostPicture::Fail("its layers are not drawn here".into()));
+        p["dir"] = json!(dir.join("fail").to_string_lossy());
+        p["ids"] = json!([ids[0]]);
+        p["hostPixels"] = json!({ids[0].to_string(): {"memory": format!("{prefix}fail"), "width": first.0, "height": first.1}});
+        let e = export_now(&mut s, &p, &mut |_, _, _| true).unwrap_err();
+        assert!(e.contains("its layers are not drawn here"), "{e}");
+        host_pictures::forget(&prefix);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // A photo whose picture the host drew is exported where this device's own render of it would not fit (card #456: an iPhone refused a 12 MP Lens Blur
     // export its native renderer had drawn); a host picture the export cannot use leaves the photo to that check, which refuses it
     #[test]
@@ -473,6 +540,13 @@ mod tests {
         assert_eq!(out["files"][0]["width"].as_u64(), Some(w as u64), "the host's picture is exported");
         let e = export_now(&mut s, &with(w + 5, "size"), &mut |_, _, _| true).unwrap_err();
         assert!(e.contains("more than this device can allow"), "a picture of another size leaves the photo to the check: {e}");
+        // a picture promised in memory that the host does not draw after all fails the photo, as the check would have, rather than being rendered past it
+        let key = format!("lc-apphost-limit-{}/{id}", std::process::id());
+        lightcraft_engine::export::host_pictures::put(&key, lightcraft_engine::export::HostPicture::Render);
+        let mut p = with(w, "late");
+        p["hostPixels"] = json!({id.to_string(): {"memory": key, "width": w, "height": h}});
+        let e = export_now(&mut s, &p, &mut |_, _, _| true).unwrap_err();
+        assert!(e.contains("more than this device can allow"), "{e}");
         s.set_export_limit(None);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -1634,10 +1634,10 @@ fn a_photo_a_frontend_draws_is_not_refused_for_this_devices_render() {
     let (w, h) = output_size(s.catalog.photo(one).unwrap(), &o);
     let space = o.effective_space();
     assert!(
-        !items[0].with_host_pixels(HostPixels { file: "/nowhere/p.rgba".into(), width: w + 9, height: h, depth: 8, space }),
+        !items[0].with_host_pixels(HostPixels { source: PixelSource::File("/nowhere/p.rgba".into()), width: w + 9, height: h, depth: 8, space }),
         "another size is not taken"
     );
-    assert!(items[0].with_host_pixels(HostPixels { file: "/nowhere/p.rgba".into(), width: w, height: h, depth: 8, space }));
+    assert!(items[0].with_host_pixels(HostPixels { source: PixelSource::File("/nowhere/p.rgba".into()), width: w, height: h, depth: 8, space }));
     assert!(items[0].is_hosted());
 }
 

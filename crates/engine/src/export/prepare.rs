@@ -84,18 +84,27 @@ struct RenderWork {
     /// `job` is rendered in bands of rows ([`crate::media::RenderJob::run_banded`]): the whole picture would not fit this
     /// device's memory.
     banded: bool,
+    /// For a photo a host draws: what this device's own render of it is refused with (an unhosted photo is refused it before
+    /// the export runs), so a picture that does not come fails the photo instead of a render past what the device allows.
+    refused: Option<String>,
+    /// The export's cancel flag ([`PreparedExport::set_cancel`]): it ends a wait for the host's picture.
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// The most pixels of a host's picture (it is read whole).
 const HOST_PIXELS_MAX: usize = 1 << 28;
 
-/// A picture a host drew for a photo, kept in a file of `width × height` pixels: RGBA8 (`depth` 8) or RGBA16 in native byte
+/// How long a photo's export waits for a picture promised in memory before it renders the photo itself: a host drawing a few
+/// pictures at a time hands each over within seconds, so this is only for one that never answers.
+const HOST_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// A picture a host drew for a photo: `width × height` pixels of RGBA8 (`depth` 8) or RGBA16 in native byte
 /// order (`depth` 16), opaque, upright, cropped, encoded in `space` (what a render of the photo at the export's size is). `app.export`'s
 /// `hostPixels` hands them over, one per photo, for a frontend with a renderer of its own; the export encodes and places them
 /// exactly as it does its own render (sharpening, watermark, metadata, the profile, the name), so only the pixels come from the host.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostPixels {
-    pub file: String,
+    pub source: PixelSource,
     pub width: usize,
     pub height: usize,
     /// 8 or 16 bits a channel.
@@ -103,19 +112,51 @@ pub struct HostPixels {
     pub space: OutputSpace,
 }
 
+/// Where a host's picture comes from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PixelSource {
+    /// A file the host wrote before the export ran.
+    File(String),
+    /// Memory, under this key, while the export runs ([`super::host_pictures`]): the host draws the pictures as the batch goes on,
+    /// and the photo's export waits for its own.
+    Memory(String),
+}
+
 impl HostPixels {
-    /// The picture as a render, or `None` when the file is gone, empty, too big or not `width × height × 4` (8 bit) or `× 8` (16 bit) bytes.
-    fn read(&self) -> Option<lightcraft_pipeline::Rendered> {
-        let n = self.width.checked_mul(self.height).filter(|n| (1..=HOST_PIXELS_MAX).contains(n))?;
+    /// The picture as a render. `Ok(None)` when the export renders the photo itself: the file is gone, empty, too big or not
+    /// `width × height × 4` (8 bit) or `× 8` (16 bit) bytes, or the host does not draw it after all (or never said, [`HOST_WAIT`]).
+    /// An error when the host says the photo cannot be exported, or `cancel` was set while this waited for the picture.
+    fn read(&self, cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<Option<lightcraft_pipeline::Rendered>, String> {
         let per_pixel = match self.depth {
             8 => 4,
             16 => 8,
-            _ => return None,
+            _ => return Ok(None),
         };
-        if std::fs::metadata(&self.file).ok()?.len() != u64::try_from(n.checked_mul(per_pixel)?).ok()? {
-            return None;
+        let Some(len) = self.width.checked_mul(self.height).filter(|n| (1..=HOST_PIXELS_MAX).contains(n)).and_then(|n| n.checked_mul(per_pixel))
+        else {
+            return Ok(None);
+        };
+        let bytes = match &self.source {
+            PixelSource::File(path) => {
+                if std::fs::metadata(path).ok().map(|m| m.len()) != u64::try_from(len).ok() {
+                    return Ok(None);
+                }
+                match std::fs::read(path) {
+                    Ok(b) => b,
+                    Err(_) => return Ok(None),
+                }
+            }
+            PixelSource::Memory(key) => match super::host_pictures::take(key, cancel, HOST_WAIT) {
+                Some(super::HostPicture::Pixels(b)) => b,
+                Some(super::HostPicture::Render) => return Ok(None),
+                Some(super::HostPicture::Fail(why)) => return Err(why),
+                None if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) => return Err("cancelled".into()),
+                None => return Ok(None),
+            },
+        };
+        if bytes.len() != len {
+            return Ok(None);
         }
-        let bytes = std::fs::read(&self.file).ok()?;
         // a photo has no transparency: whatever alpha the host wrote, the file is opaque
         let (data, deep) = if self.depth == 8 {
             let mut data = bytes.as_chunks::<4>().0.to_vec();
@@ -138,7 +179,7 @@ impl HostPixels {
             )
         };
         let image = Rgba8 { width: self.width, height: self.height, data };
-        Some(lightcraft_pipeline::Rendered { histogram: lightcraft_raster::Histogram::of_srgb8(&image), image, deep })
+        Ok(Some(lightcraft_pipeline::Rendered { histogram: lightcraft_raster::Histogram::of_srgb8(&image), image, deep }))
     }
 }
 
@@ -244,7 +285,8 @@ fn prepare_guarded(
         let whole = export_need_of(session, p, w, h, false);
         let need = if bands_ok { export_need_of(session, p, w, h, true) } else { whole };
         // (a picture a frontend draws is only encoded here: see `prepare_batch_hosted`)
-        let too_big = !hosted && session.export_limit().is_some_and(|limit| need > limit);
+        let over = session.export_limit().is_some_and(|limit| need > limit);
+        let too_big = !hosted && over;
         // (a picture that does not fit whole but does in bands is rendered in bands)
         let banded = bands_ok && !too_big && session.export_limit().is_some_and(|limit| whole > limit);
         if o.on_server || too_big {
@@ -309,16 +351,18 @@ fn prepare_guarded(
         let mut job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
         job.request.exact_size = true;
         job.key ^= 0x86e2_fadc_0917_b435;
+        let own_weight = if banded { need } else { render_weight(full_px, long, job.level, w.saturating_mul(h)) };
         // (a hosted picture weighs what its encode holds: the picture at up to 8 bytes a pixel and as much again for the encoder)
-        let weight = if hosted {
-            w.saturating_mul(h).saturating_mul(16)
-        } else if banded {
-            need
-        } else {
-            render_weight(full_px, long, job.level, w.saturating_mul(h))
-        };
-        if !hosted && let Some(why) = too_big_for_memory((w, h), native_px, weight, crate::memory::total_ram()) {
-            return Err(format!("{label}: {why}"));
+        let weight = if hosted { w.saturating_mul(h).saturating_mul(16) } else { own_weight };
+        // what this device's own render of the photo is refused with: an unhosted photo here, a hosted one if its picture does not come
+        let refused =
+            too_big_for_memory((w, h), native_px, own_weight, crate::memory::total_ram()).map(|why| format!("{label}: {why}")).or_else(|| {
+                over.then(|| {
+                    format!("{label}: a {w} × {h} export needs about {} MB, more than this device can allow, and the app did not draw it", need >> 20)
+                })
+            });
+        if !hosted && let Some(why) = refused {
+            return Err(why);
         }
         let hdr_job = if gain_map {
             let mut hdr = session.export_job(id, w, h, o.effective_space(), OutputDepth::F32Hdr)?;
@@ -328,7 +372,21 @@ fn prepare_guarded(
         } else {
             None
         };
-        (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone(), size: (w, h), host: None, host_file: None, banded })), weight)
+        (
+            Work::Render(Box::new(RenderWork {
+                job,
+                hdr_job,
+                meta,
+                opts: o.clone(),
+                size: (w, h),
+                host: None,
+                host_file: None,
+                banded,
+                refused,
+                cancel: None,
+            })),
+            weight,
+        )
     } else {
         let lightcraft_catalog::Source::File { path } = &p.source else {
             return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
@@ -556,10 +614,12 @@ impl PreparedExport {
         }
     }
 
-    /// Let `cancel` (the export's flag) end a wait for a busy sync server.
+    /// Let `cancel` (the export's flag) end a wait for a busy sync server, or for a host's picture.
     pub fn set_cancel(&mut self, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
-        if let Work::Server(w) = &mut self.work {
-            w.wait.cancel = cancel;
+        match &mut self.work {
+            Work::Server(w) => w.wait.cancel = cancel,
+            Work::Render(w) => w.cancel = Some(cancel),
+            Work::File { .. } => {}
         }
     }
 
@@ -567,7 +627,8 @@ impl PreparedExport {
         let file_name = self.file_name;
         match self.work {
             Work::Render(w) => {
-                let RenderWork { job, hdr_job, meta, opts, host, host_file, banded, .. } = *w;
+                let RenderWork { job, hdr_job, meta, opts, host, host_file, banded, refused, cancel, .. } = *w;
+                let hosted = host.is_some() || host_file.is_some();
                 if let Some(f) = &host_file {
                     match std::fs::read(&f.file) {
                         Ok(bytes) if !bytes.is_empty() => {
@@ -582,8 +643,14 @@ impl PreparedExport {
                         "{file_name}: HEIC files are written by the Mac and iPhone apps, and this photo was not drawn by them (see the app's log)"
                     ));
                 }
-                if let Some(r) = host.as_ref().and_then(HostPixels::read) {
-                    return encode_render_export(file_name, r, None, &opts, meta.as_ref());
+                match host.as_ref().map(|h| h.read(cancel.as_deref())).transpose() {
+                    Ok(Some(Some(r))) => return encode_render_export(file_name, r, None, &opts, meta.as_ref()),
+                    Ok(_) => {}
+                    Err(why) => return Err(format!("{file_name}: {why}")),
+                }
+                // (the host's picture or file did not come: the export's own render, unless this device could not make it)
+                if hosted && let Some(why) = refused {
+                    return Err(why);
                 }
                 // A gain map JPEG's SDR base and HDR rendition develop one load of the source, not one each: the HDR job's
                 // (in floats), which the SDR base renders from too. Each job read and decoded the raw again before (#375).
