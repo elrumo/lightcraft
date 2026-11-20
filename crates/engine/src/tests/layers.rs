@@ -189,3 +189,95 @@ fn hostile_layer_json_reads_without_a_panic() {
     s.render_now(id, 32, 32).unwrap();
     s.execute("layer.list", &json!({"id": id.0})).unwrap();
 }
+
+#[test]
+fn shape_and_drawing_layers_are_placed_listed_duplicated_and_undone() {
+    let mut s = Session::with_demo();
+    let ids: Vec<PhotoId> = s.catalog.photos().map(|p| p.id).take(6).collect();
+    let id = ids[0];
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    let plain = s.render_now(id, 48, 48).unwrap().image.data;
+
+    // a shape placed where it was drawn: kind, colour, fill, stroke, box shape, corner, all in range
+    s.execute("layer.addShape", &json!({"kind": "ellipse", "color": [0.2, 0.4, 2.0], "fill": false, "stroke": 900, "aspect": 2, "x": -30, "y": 250, "scale": 40, "angle": 15})).unwrap();
+    let l = s.develop_of(id).unwrap().exposure_layers[0].clone();
+    let sh = l.shape.clone().unwrap();
+    assert_eq!((sh.kind.as_str(), sh.color, sh.fill, sh.stroke, sh.aspect), ("ellipse", [0.2, 0.4, 1.0], false, 50.0, 2.0));
+    assert_eq!((l.x, l.y, l.scale, l.angle, l.photo, l.kind()), (-30.0, 100.0, 40.0, 15.0, 0, "shape"));
+    s.execute("layer.shape", &json!({"layer": 0, "kind": "arrow", "corner": 12})).unwrap();
+    let sh = s.develop_of(id).unwrap().exposure_layers[0].shape.clone().unwrap();
+    assert_eq!((sh.kind.as_str(), sh.fill, sh.corner), ("arrow", false, 12.0));
+    assert!(s.execute("layer.shape", &json!({"layer": 0, "kind": "star"})).is_err());
+    assert!(s.execute("layer.addShape", &json!({"scale": "big"})).is_err());
+
+    // a drawing keeps its PencilKit data as given, and refuses what is not base64
+    s.execute("layer.addDrawing", &json!({"pencil": "d3Jk", "aspect": 1.5})).unwrap();
+    let d = s.develop_of(id).unwrap().exposure_layers[1].drawing.clone().unwrap();
+    assert_eq!((d.pencil.as_str(), d.aspect), ("d3Jk", 1.5));
+    s.execute("layer.drawing", &json!({"layer": 1, "pencil": "bW9yZQ=="})).unwrap();
+    assert_eq!(s.develop_of(id).unwrap().exposure_layers[1].drawing.as_ref().unwrap().pencil, "bW9yZQ==");
+    assert!(s.execute("layer.drawing", &json!({"layer": 1, "pencil": "not base64!"})).is_err());
+    assert!(s.execute("layer.drawing", &json!({"layer": 0, "pencil": ""})).is_err(), "a shape is not a drawing");
+    assert_eq!(s.render_now(id, 48, 48).unwrap().image.data, plain, "the core draws no shapes or drawings");
+
+    let list = s.execute("layer.list", &json!({})).unwrap();
+    let kinds: Vec<&str> = list["layers"].as_array().unwrap().iter().filter_map(|l| l["kind"].as_str()).collect();
+    assert_eq!(kinds, ["shape", "drawing"]);
+    assert_eq!((list["layers"][0]["name"].as_str(), list["layers"][1]["name"].as_str()), (Some("arrow"), Some("drawing")));
+
+    // a duplicate goes just above, moved a little
+    s.execute("layer.duplicate", &json!({"layer": 0})).unwrap();
+    let layers = s.develop_of(id).unwrap().exposure_layers.clone();
+    assert_eq!((layers.len(), layers[1].kind(), layers[1].x), (3, "shape", -26.0));
+
+    // a picked image is a photo layer placed and mixed as asked
+    s.execute("layer.add", &json!({"photo": ids[1].0, "blend": "normal", "scale": 50, "x": 10})).unwrap();
+    let l = s.develop_of(id).unwrap().exposure_layers[3].clone();
+    assert_eq!((l.kind(), l.blend, l.scale, l.x), ("photo", lightcraft_develop::LayerBlend::Normal, 50.0, 10.0));
+
+    // at most four photo layers, among more layers of other kinds
+    for other in &ids[2..5] {
+        s.execute("layer.add", &json!({"photo": other.0})).unwrap();
+    }
+    assert!(s.execute("layer.add", &json!({"photo": ids[5].0})).is_err(), "a fifth photo layer");
+    s.execute("layer.addText", &json!({"text": "still room", "x": 20})).unwrap();
+    assert_eq!(s.develop_of(id).unwrap().exposure_layers.last().unwrap().x, 20.0);
+    while s.develop_of(id).unwrap().exposure_layers.len() < lightcraft_develop::MAX_LAYERS {
+        s.execute("layer.addShape", &json!({})).unwrap();
+    }
+    assert!(s.execute("layer.addShape", &json!({})).is_err(), "past the most layers a photo holds");
+
+    // one undo per step, back to no layers
+    while !s.develop_of(id).unwrap().exposure_layers.is_empty() {
+        s.execute("edit.undo", &json!({})).unwrap();
+    }
+}
+
+#[test]
+fn hostile_shape_and_drawing_json_reads_without_a_panic() {
+    let v = serde_json::to_value(lightcraft_develop::ExposureLayer::new(3)).unwrap();
+    assert!(v.get("shape").is_none() && v.get("drawing").is_none(), "{v}");
+    let d: lightcraft_develop::DevelopSettings = serde_json::from_value(json!({"exposure_layers": [
+        {"shape": {"kind": "hexagon", "color": [f64::MAX, -3, 0.5], "stroke": -1, "aspect": 0, "corner": 1e300}, "scale": 1e308},
+        {"drawing": {"pencil": "<script>", "aspect": -4}},
+        {"drawing": {"pencil": "A".repeat(lightcraft_develop::MAX_LAYER_DRAWING + 4)}},
+    ]}))
+    .unwrap_or_default();
+    for l in &d.exposure_layers {
+        assert!(!lightcraft_pipeline::layers::draws(l), "the core draws none of them");
+        if let Some(sh) = &l.shape {
+            let sh = sh.sane();
+            assert_eq!(sh.kind, "rectangle");
+            assert!(sh.color.iter().all(|c| (0.0..=1.0).contains(c)) && (0.5..=50.0).contains(&sh.stroke) && (0.05..=20.0).contains(&sh.aspect));
+        }
+        if let Some(dr) = &l.drawing {
+            let dr = dr.sane();
+            assert!(dr.pencil.is_empty() && (0.05..=20.0).contains(&dr.aspect));
+        }
+    }
+    let mut s = Session::with_demo();
+    let id = s.catalog.photos().map(|p| p.id).next().unwrap();
+    s.set_develop(id, d, "test").unwrap();
+    s.render_now(id, 32, 32).unwrap();
+    s.execute("layer.list", &json!({"id": id.0})).unwrap();
+}

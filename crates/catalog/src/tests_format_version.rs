@@ -445,13 +445,14 @@ fn op_variants_are_versioned() {
     /// v15 merged upstream's formats 10 to 13 into this fork, fields only: `Mask.on_photo`, `EmbeddedLens.source`,
     /// `Catalog.grids` / `SegMask.grid` and upstream's Lens Blur fields. Before it, v12 carried `DevelopSettings.video`,
     /// a clip's trim and poster frame, v13 wrote the snapshot's settings as what differs from its `defaults`
-    /// (`crate::compact`), v14 carried `Photo.origin` and v16 `ExposureLayer.text` / `behind`: none has an op of its own
+    /// (`crate::compact`), v14 carried `Photo.origin`, v16 `ExposureLayer.text` / `behind` and v17 `ExposureLayer.shape` /
+    /// `drawing`: none has an op of its own
     /// (v9 was upstream's `Photo.preview_checked`).
-    const NEWEST_FIELDS: u32 = 16;
+    const NEWEST_FIELDS: u32 = 17;
     let newest = since(&Op::SetHidden { id: PhotoId(1), hidden: true });
     assert_eq!(newest.max(NEWEST_FIELDS), VERSION, "the newest op's or fields' version must be the current format version");
-    /// The newest version whose ops or fields go over the sync protocol (v16's text and behind-the-subject layers; v13
+    /// The newest version whose ops or fields go over the sync protocol (v17's shape and drawing layers, v16's text and behind-the-subject layers; v13
     /// is only how `catalog.snap` is written, and so is v15's shared grid table).
-    const NEWEST_SYNCED_FIELDS: u32 = 16;
+    const NEWEST_SYNCED_FIELDS: u32 = 17;
     assert_eq!(newest.max(NEWEST_SYNCED_FIELDS), crate::journal::SYNC_VERSION, "a new op or synced field raises SYNC_VERSION");
 }

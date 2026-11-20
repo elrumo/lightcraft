@@ -1069,6 +1069,9 @@ impl Film {
 /// The most photos a double exposure draws over its base (each is one more photo rendered for every picture of it).
 pub const MAX_EXPOSURE_LAYERS: usize = 4;
 
+/// The most layers a photo holds: photos (at most [`MAX_EXPOSURE_LAYERS`] of them), words, shapes and drawings.
+pub const MAX_LAYERS: usize = 16;
+
 /// How a double exposure's layer mixes with what is under it, on display-encoded values (as an image editor's layer
 /// modes do). A name this build does not know (from a newer app) reads as Screen, the double exposure's own mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1154,9 +1157,86 @@ impl LayerText {
     }
 }
 
+/// The longest drawing a drawing layer keeps: its PencilKit data, base64, in characters (a longer one is not kept).
+pub const MAX_LAYER_DRAWING: usize = 4 << 20;
+
+/// The width of a drawing layer's space, in its own units: the frame's width (its height is this over the frame's aspect).
+pub const DRAWING_WIDTH: f64 = 1000.0;
+
+/// A shape layer's look (card #446): a rectangle, an ellipse, a line or an arrow, in one colour. At a scale of 100 its
+/// box is as wide as the frame.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayerShape {
+    /// `rectangle`, `ellipse`, `line` or `arrow` (a name this build does not know reads as `rectangle`).
+    pub kind: String,
+    /// sRGB, 0..1 each.
+    pub color: [f64; 3],
+    /// Filled; else an outline. A line and an arrow are strokes either way.
+    pub fill: bool,
+    /// The outline's or the line's thickness, in percent of the box's width, 0.5..50.
+    pub stroke: f64,
+    /// A rectangle's or an ellipse's width over its height, 0.05..20 (a line's box is as tall as its stroke).
+    pub aspect: f64,
+    /// A rectangle's corner radius, in percent of its short side, 0..50.
+    pub corner: f64,
+}
+
+impl Default for LayerShape {
+    fn default() -> Self {
+        LayerShape { kind: "rectangle".into(), color: [1.0, 1.0, 1.0], fill: true, stroke: 4.0, aspect: 1.0, corner: 0.0 }
+    }
+}
+
+impl LayerShape {
+    pub const KINDS: [&'static str; 4] = ["rectangle", "ellipse", "line", "arrow"];
+
+    /// `self` brought into range (from a file or another device any value can arrive).
+    pub fn sane(&self) -> LayerShape {
+        let kind = if Self::KINDS.contains(&self.kind.as_str()) { self.kind.clone() } else { "rectangle".into() };
+        let c = |v: f64| if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 };
+        let r = |v: f64, lo: f64, hi: f64, or: f64| if v.is_finite() { v.clamp(lo, hi) } else { or };
+        LayerShape {
+            kind,
+            color: [c(self.color[0]), c(self.color[1]), c(self.color[2])],
+            fill: self.fill,
+            stroke: r(self.stroke, 0.5, 50.0, 4.0),
+            aspect: r(self.aspect, 0.05, 20.0, 1.0),
+            corner: r(self.corner, 0.0, 50.0, 0.0),
+        }
+    }
+}
+
+/// A drawing layer's strokes (card #446): an Apple PencilKit drawing (its `dataRepresentation`, base64) in a space
+/// [`DRAWING_WIDTH`] units wide over the frame's width. A native frontend draws it; this core keeps it whole.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayerDrawing {
+    /// At most [`MAX_LAYER_DRAWING`] characters of standard base64; empty: no strokes yet.
+    pub pencil: String,
+    /// The frame's width over its height when it was drawn: the space is [`DRAWING_WIDTH`] by `DRAWING_WIDTH / aspect`.
+    pub aspect: f64,
+}
+
+impl Default for LayerDrawing {
+    fn default() -> Self {
+        LayerDrawing { pencil: String::new(), aspect: 1.5 }
+    }
+}
+
+impl LayerDrawing {
+    /// `self` brought into range: a drawing too long, or not base64, is dropped whole (a cut one would not decode).
+    pub fn sane(&self) -> LayerDrawing {
+        let base64 = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
+        let pencil = if self.pencil.len() <= MAX_LAYER_DRAWING && base64(&self.pencil) { self.pencil.clone() } else { String::new() };
+        LayerDrawing { pencil, aspect: if self.aspect.is_finite() { self.aspect.clamp(0.05, 20.0) } else { 1.5 } }
+    }
+}
+
 /// One layer of a double exposure (card #452) or a composite (card #446): another photo of the library, drawn with its
-/// own edits over this one's finished picture, or words ([`ExposureLayer::text`]). Only a photo's id is stored, never
-/// its pixels, so the layers stay an edit of the base photo.
+/// own edits over this one's finished picture, or words ([`ExposureLayer::text`]), a shape ([`ExposureLayer::shape`])
+/// or a drawing ([`ExposureLayer::drawing`]). Only a photo's id is stored, never its pixels, so the layers stay an edit
+/// of the base photo.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExposureLayer {
@@ -1167,6 +1247,12 @@ pub struct ExposureLayer {
     /// native frontend's renderer does (`docs/parity-checklist.md` → LR-EDIT-COMPOSITE).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<LayerText>,
+    /// A shape layer's look, drawn instead of a photo by a native frontend (not by this core). Not written for others.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<LayerShape>,
+    /// A drawing layer's strokes, drawn instead of a photo by a native frontend (not by this core). Not written for others.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drawing: Option<LayerDrawing>,
     /// Drawn behind the photo's subject (a person, a pet, the main object): the subject covers the layer, as a
     /// magazine's title sits behind a head. Not written while false. This core draws the layer over the subject.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1197,6 +1283,8 @@ impl ExposureLayer {
         ExposureLayer {
             photo,
             text: None,
+            shape: None,
+            drawing: None,
             behind: false,
             visible: true,
             blend: LayerBlend::Screen,
@@ -1211,6 +1299,34 @@ impl ExposureLayer {
     /// A new text layer: white bold words in the middle, as wide as half the frame, laid over it as they are.
     pub fn text(text: LayerText) -> Self {
         ExposureLayer { text: Some(text.sane()), blend: LayerBlend::Normal, scale: 50.0, ..ExposureLayer::new(0) }
+    }
+
+    /// A new shape layer: in the middle, a third of the frame wide, laid over it as it is.
+    pub fn shape(shape: LayerShape) -> Self {
+        ExposureLayer { shape: Some(shape.sane()), blend: LayerBlend::Normal, scale: 33.0, ..ExposureLayer::new(0) }
+    }
+
+    /// A new drawing layer: over the whole frame, as it is.
+    pub fn drawing(drawing: LayerDrawing) -> Self {
+        ExposureLayer { drawing: Some(drawing.sane()), blend: LayerBlend::Normal, ..ExposureLayer::new(0) }
+    }
+
+    /// It draws a library photo (not words, a shape or a drawing).
+    pub fn is_photo(&self) -> bool {
+        self.text.is_none() && self.shape.is_none() && self.drawing.is_none()
+    }
+
+    /// `photo`, `text`, `shape` or `drawing`.
+    pub fn kind(&self) -> &'static str {
+        if self.text.is_some() {
+            "text"
+        } else if self.shape.is_some() {
+            "shape"
+        } else if self.drawing.is_some() {
+            "drawing"
+        } else {
+            "photo"
+        }
     }
 }
 
