@@ -1114,13 +1114,63 @@ impl LayerBlend {
     }
 }
 
-/// One photo of a double exposure (card #452): another photo of the library, drawn with its own edits over this one's
-/// finished picture. Only its id is stored, never its pixels, so the double exposure stays an edit of the base photo.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// The longest text a text layer keeps, in characters (a longer one is cut by the commands and by a renderer).
+pub const MAX_LAYER_TEXT: usize = 500;
+
+/// The words of a text layer (card #446): set on lines of their own, centred, in one colour.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayerText {
+    /// At most [`MAX_LAYER_TEXT`] characters; `\n` starts a line.
+    pub text: String,
+    /// The type's look: `system`, `serif`, `rounded` or `mono` (a name this build does not know reads as `system`).
+    pub font: String,
+    pub bold: bool,
+    /// sRGB, 0..1 each.
+    pub color: [f64; 3],
+}
+
+impl Default for LayerText {
+    fn default() -> Self {
+        LayerText { text: String::new(), font: "system".into(), bold: true, color: [1.0, 1.0, 1.0] }
+    }
+}
+
+impl LayerText {
+    /// `self` brought into range: the text cut to [`MAX_LAYER_TEXT`] characters, a font name this build knows, colours
+    /// that are numbers in 0..1 (from a file or another device any value can arrive).
+    pub fn sane(&self) -> LayerText {
+        let font = match self.font.as_str() {
+            "serif" | "rounded" | "mono" => self.font.clone(),
+            _ => "system".into(),
+        };
+        let c = |v: f64| if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 };
+        LayerText {
+            text: self.text.chars().take(MAX_LAYER_TEXT).collect(),
+            font,
+            bold: self.bold,
+            color: [c(self.color[0]), c(self.color[1]), c(self.color[2])],
+        }
+    }
+}
+
+/// One layer of a double exposure (card #452) or a composite (card #446): another photo of the library, drawn with its
+/// own edits over this one's finished picture, or words ([`ExposureLayer::text`]). Only a photo's id is stored, never
+/// its pixels, so the layers stay an edit of the base photo.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExposureLayer {
-    /// The library photo drawn (a catalog photo id).
+    /// The library photo drawn (a catalog photo id); 0 for a text layer.
     pub photo: u64,
+    /// A text layer's words, drawn instead of a photo: at a scale of 100 its widest line is as wide as the frame. Not
+    /// written for a photo layer, so a double exposure keeps its JSON and `hash64`. This core does not draw text: a
+    /// native frontend's renderer does (`docs/parity-checklist.md` → LR-EDIT-COMPOSITE).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<LayerText>,
+    /// Drawn behind the photo's subject (a person, a pet, the main object): the subject covers the layer, as a
+    /// magazine's title sits behind a head. Not written while false. This core draws the layer over the subject.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub behind: bool,
     pub visible: bool,
     pub blend: LayerBlend,
     /// 0..100.
@@ -1144,7 +1194,23 @@ impl Default for ExposureLayer {
 impl ExposureLayer {
     /// A new layer of `photo`: screened over the base, whole, covering the frame.
     pub fn new(photo: u64) -> Self {
-        ExposureLayer { photo, visible: true, blend: LayerBlend::Screen, opacity: 100.0, x: 0.0, y: 0.0, scale: 100.0, angle: 0.0 }
+        ExposureLayer {
+            photo,
+            text: None,
+            behind: false,
+            visible: true,
+            blend: LayerBlend::Screen,
+            opacity: 100.0,
+            x: 0.0,
+            y: 0.0,
+            scale: 100.0,
+            angle: 0.0,
+        }
+    }
+
+    /// A new text layer: white bold words in the middle, as wide as half the frame, laid over it as they are.
+    pub fn text(text: LayerText) -> Self {
+        ExposureLayer { text: Some(text.sane()), blend: LayerBlend::Normal, scale: 50.0, ..ExposureLayer::new(0) }
     }
 }
 

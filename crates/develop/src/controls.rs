@@ -847,7 +847,7 @@ fn indexed_get(s: &DevelopSettings, id: &str) -> Option<f64> {
         "pointColor" => c.point_colors.push(*s.point_colors.get(i)?),
         "redEye" => c.red_eye.push(*s.red_eye.get(i)?),
         "filmLayer" => c.film.layers.push(s.film.layers.get(i)?.clone()),
-        "exposureLayer" => c.exposure_layers.push(*s.exposure_layers.get(i)?),
+        "exposureLayer" => c.exposure_layers.push(s.exposure_layers.get(i)?.clone()),
         _ => return None,
     }
     indexed_field(&mut c, &format!("{fam}.0.{field}")).map(|v| *v)

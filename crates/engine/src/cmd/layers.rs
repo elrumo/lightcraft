@@ -4,9 +4,13 @@
 //! (`exposureLayer.<i>.<opacity|x|y|scale|angle>` with `develop.set`). No pixels are written: a layer is a photo id.
 //! Every one takes the photos a call names (`ids`, `id`) over the selection and checks them itself (`explicit_targets`):
 //! a frontend's grid selection is not necessarily the engine's.
+//!
+//! Compositing (card #446) adds text layers (`layer.addText`, `layer.text`: words instead of a photo, on any photo, no
+//! copy made) and `layer.behind` (the photo's subject covers the layer). This core stores them and leaves both to a
+//! native frontend's renderer: it draws no text and draws a layer that is behind over the subject.
 
 use lightcraft_catalog::{MediaKind, PhotoId};
-use lightcraft_develop::{ExposureLayer, LayerBlend, MAX_EXPOSURE_LAYERS};
+use lightcraft_develop::{ExposureLayer, LayerBlend, LayerText, MAX_EXPOSURE_LAYERS, MAX_LAYER_TEXT};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, bool_or, cmd, has_active, has_selection, str_param};
@@ -78,6 +82,34 @@ fn at(layers: &[ExposureLayer], i: usize, c: &str) -> Result<()> {
     if i < layers.len() { Ok(()) } else { Err(bad(c, format!("no layer {i} (the photo has {})", layers.len()))) }
 }
 
+/// The text-layer fields a call sets (`text`, `font`, `bold`, `color`) over `t`, checked; the text cut to
+/// [`MAX_LAYER_TEXT`] characters.
+fn text_params(p: &Value, mut t: LayerText, c: &str) -> Result<LayerText> {
+    if let Some(v) = p.get("text").filter(|v| !v.is_null()) {
+        let text = v.as_str().ok_or_else(|| bad(c, "`text` must be a string"))?;
+        t.text = text.chars().take(MAX_LAYER_TEXT).collect();
+    }
+    if let Some(v) = p.get("font").filter(|v| !v.is_null()) {
+        let font = v.as_str().ok_or_else(|| bad(c, "`font` must be system, serif, rounded or mono"))?;
+        if !["system", "serif", "rounded", "mono"].contains(&font) {
+            return Err(bad(c, format!("no font `{font}`: system, serif, rounded or mono")));
+        }
+        t.font = font.into();
+    }
+    if let Some(v) = p.get("bold").filter(|v| !v.is_null()) {
+        t.bold = v.as_bool().ok_or_else(|| bad(c, "`bold` must be true or false"))?;
+    }
+    if let Some(v) = p.get("color").filter(|v| !v.is_null()) {
+        let rgb: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+        let [r, g, b] = rgb[..] else { return Err(bad(c, "`color` must be [r, g, b], sRGB 0..1")) };
+        if ![r, g, b].iter().all(|x| x.is_finite()) {
+            return Err(bad(c, "`color` must be numbers"));
+        }
+        t.color = [r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)];
+    }
+    Ok(t)
+}
+
 fn two_selected(s: &Session) -> std::result::Result<(), String> {
     has_selection(s)?;
     if s.selected().len() < 2 { Err("select two or more photos".into()) } else { Ok(()) }
@@ -124,17 +156,23 @@ fn list(s: &Session, p: &Value) -> Result<Value> {
         .enumerate()
         .map(|(i, l)| {
             let photo = s.catalog.photo(PhotoId(l.photo));
-            let name = photo.map(|ph| match &ph.copy_name {
-                Some(c) => format!("{} ({c})", ph.file_name),
-                None => ph.file_name.clone(),
-            });
+            let name = match &l.text {
+                // (a text layer is named by its first line)
+                Some(t) => Some(t.text.lines().next().unwrap_or_default().chars().take(60).collect::<String>()),
+                None => photo.map(|ph| match &ph.copy_name {
+                    Some(c) => format!("{} ({c})", ph.file_name),
+                    None => ph.file_name.clone(),
+                }),
+            };
+            let st = if l.text.is_some() { "ok" } else { state(s, PhotoId(l.photo)) };
             let mut v = serde_json::to_value(l).unwrap_or(Value::Null);
             if let Some(o) = v.as_object_mut() {
                 o.insert("index".into(), json!(i));
-                o.insert("state".into(), json!(state(s, PhotoId(l.photo))));
+                o.insert("kind".into(), json!(if l.text.is_some() { "text" } else { "photo" }));
+                o.insert("state".into(), json!(st));
                 o.insert("name".into(), json!(name));
                 // (past the most a picture draws: kept, not drawn)
-                o.insert("drawn".into(), json!(i < MAX_EXPOSURE_LAYERS && state(s, PhotoId(l.photo)) == "ok"));
+                o.insert("drawn".into(), json!(i < MAX_EXPOSURE_LAYERS && st == "ok"));
             }
             v
         })
@@ -198,6 +236,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     layers_edit(s, id, "Replace Layer Photo", |layers| {
                         at(layers, i, C)?;
                         layers[i].photo = photo.0;
+                        // (a text layer given a photo becomes a photo layer)
+                        layers[i].text = None;
                         Ok(())
                     })
                 }
@@ -289,11 +329,77 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec {
             explicit_targets: true,
             ..cmd!(
+                "layer.addText",
+                "Add Text",
+                [],
+                None,
+                "{text?, font?: system|serif|rounded|mono, bold?, color?: [r, g, b] (sRGB 0..1), id?} — a text layer on top of the photo (white bold words in the middle, half the frame wide, drawn by a native frontend), as one undo step; no copy is made",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.addText";
+                    let id = base_of(s, p, C)?;
+                    let text = text_params(p, LayerText { text: "Text".into(), ..LayerText::default() }, C)?;
+                    layers_edit(s, id, "Add Text", |layers| {
+                        if layers.len() >= MAX_EXPOSURE_LAYERS {
+                            return Err(bad(C, format!("a photo holds at most {MAX_EXPOSURE_LAYERS} layers")));
+                        }
+                        layers.push(ExposureLayer::text(text));
+                        Ok(())
+                    })
+                }
+            )
+        },
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "layer.text",
+                "Edit Text",
+                [],
+                None,
+                "{layer: index, text?, font?, bold?, color?, id?} — a text layer's words and type, the fields left out kept",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.text";
+                    let id = base_of(s, p, C)?;
+                    let i = layer_param(p, "layer", C)?;
+                    layers_edit(s, id, "Edit Text", |layers| {
+                        at(layers, i, C)?;
+                        let Some(t) = layers[i].text.clone() else { return Err(bad(C, format!("layer {i} is a photo, not text"))) };
+                        layers[i].text = Some(text_params(p, t.sane(), C)?);
+                        Ok(())
+                    })
+                }
+            )
+        },
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "layer.behind",
+                "Behind Subject",
+                [],
+                None,
+                "{layer: index, behind?: bool, id?} — the photo's subject covers the layer (toggles when `behind` is left out); drawn by a native frontend, this core draws the layer over the subject",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.behind";
+                    let id = base_of(s, p, C)?;
+                    let i = layer_param(p, "layer", C)?;
+                    layers_edit(s, id, "Behind Subject", |layers| {
+                        at(layers, i, C)?;
+                        layers[i].behind = bool_or(p, "behind", !layers[i].behind);
+                        Ok(())
+                    })
+                }
+            )
+        },
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
                 query "layer.list",
                 "List Layers",
                 [],
                 None,
-                "{id?} → {id, layers: [{index, photo, visible, blend, opacity, x, y, scale, angle, name, state: ok|missing|deleted|video|local, drawn}], max, shown} — the double exposure's layers, each with what its photo is now",
+                "{id?} → {id, layers: [{index, kind: photo|text, photo, text?, behind?, visible, blend, opacity, x, y, scale, angle, name, state: ok|missing|deleted|video|local, drawn}], max, shown} — the photo's layers, each with what its photo is now (a text layer is named by its first line)",
                 has_active,
                 |s, p| list(s, p)
             )

@@ -24,9 +24,10 @@ fn sane(l: &ExposureLayer) -> (f64, f64, f64, f64, f64) {
     )
 }
 
-/// Whether `l` draws anything: shown, with some opacity.
+/// Whether `l` draws anything here: a photo layer, shown, with some opacity. A text layer is a native frontend's to
+/// draw (card #446): this renderer leaves it out, as it leaves out a layer whose photo is gone.
 pub fn draws(l: &ExposureLayer) -> bool {
-    l.visible && sane(l).0 > 0.0
+    l.visible && l.text.is_none() && sane(l).0 > 0.0
 }
 
 /// The box to render a layer's photo into, of aspect `aspect` (width / height), so that it covers a `w × h` frame at
