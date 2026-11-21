@@ -81,6 +81,11 @@ const SLEEPY_TICK: Duration = Duration::from_secs(1);
 const SLEEPY_AFTER: u32 = 8;
 /// The least time between two `activity` events that only move progress (a row that starts or ends goes at once).
 const ACTIVITY_EVERY: Duration = Duration::from_millis(100);
+
+/// The same rows, but for how long each has run (`age_ms`, which moves on every tick).
+fn same_but_age(a: &[lightcraft_engine::activity::TaskInfo], b: &[lightcraft_engine::activity::TaskInfo]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| lightcraft_engine::activity::TaskInfo { age_ms: x.age_ms, ..y.clone() } == *x)
+}
 /// A step of the engine thread this long or longer is kept for `host.slow`: a frontend's request waits for it.
 const SLOW_STEP: Duration = Duration::from_millis(50);
 /// How many slow steps are kept between two asks (the oldest go).
@@ -1319,11 +1324,13 @@ impl Engine {
             self.events.push(Event::State { state: state.clone() }.to_value());
             self.state = Some(state);
         }
-        // a row that starts or ends is sent at once (a short export's row too); progress at most every ACTIVITY_EVERY
+        // a row that starts or ends is sent at once (a short export's row too); progress at most every ACTIVITY_EVERY; a row
+        // whose age alone moved is not sent again: every 100 ms for as long as any work ran, each event made the frontend
+        // lay its views out and animate them again (a held index run cost a frontend 20 % of a core, card #516)
         let now = Instant::now();
         let tasks = self.session.activity.list();
         let due = self.activity.as_ref().is_none_or(|(last, at)| {
-            *last != tasks && (now.duration_since(*at) >= ACTIVITY_EVERY || !last.iter().map(|t| t.id).eq(tasks.iter().map(|t| t.id)))
+            !same_but_age(last, &tasks) && (now.duration_since(*at) >= ACTIVITY_EVERY || !last.iter().map(|t| t.id).eq(tasks.iter().map(|t| t.id)))
         });
         if due {
             self.events.push(Event::Activity { tasks: tasks.clone() }.to_value());

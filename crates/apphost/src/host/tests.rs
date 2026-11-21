@@ -1485,7 +1485,8 @@ fn libraries_are_switched_made_and_listed_without_a_restart() {
 }
 
 /// A row that starts or ends is in the next tick's `activity` event, however soon after the last one, so a short
-/// export's row reaches the frontend's activity stack; progress alone still waits `ACTIVITY_EVERY`.
+/// export's row reaches the frontend's activity stack; progress alone still waits `ACTIVITY_EVERY`, and a row whose age alone
+/// moved is not sent again.
 #[test]
 fn an_activity_row_that_starts_or_ends_is_sent_at_once() {
     let root = std::env::temp_dir().join(format!("lc-host-activity-{}-{}", std::process::id(), lightcraft_preview::next_tick()));
@@ -1499,12 +1500,19 @@ fn an_activity_row_that_starts_or_ends_is_sent_at_once() {
     tick(&mut e);
     let task = e.session.activity.start("export", "Exporting", lightcraft_engine::activity::Cancel::No);
     let started = tick(&mut e);
-    let at = Instant::now();
     assert!(started.last().is_some_and(exporting), "the row is sent at once: {started:?}");
+    // (a row whose age alone moved is not sent again: the frontend redrew for every one, card #516)
+    std::thread::sleep(ACTIVITY_EVERY + Duration::from_millis(20));
+    let aged = tick(&mut e);
+    assert!(aged.is_empty(), "only its age moved: {aged:?}");
     task.progress(1, 2);
     let moved = tick(&mut e);
+    let at = Instant::now();
+    assert!(moved.last().is_some_and(|tasks| tasks[0]["done"] == 1), "progress goes once ACTIVITY_EVERY has passed: {moved:?}");
+    task.progress(2, 2);
+    let again = tick(&mut e);
     if at.elapsed() < ACTIVITY_EVERY {
-        assert!(moved.is_empty(), "progress alone waits: {moved:?}");
+        assert!(again.is_empty(), "progress alone waits: {again:?}");
     }
     drop(task);
     let ended = tick(&mut e);
