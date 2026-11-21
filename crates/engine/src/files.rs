@@ -31,7 +31,7 @@ pub use load::{load_bytes, load_bytes_decoded, load_bytes_for, load_bytes_with, 
 #[cfg(test)]
 use preview::PLAN_PREFIX;
 pub(crate) use preview::decode_raw_preview;
-pub use preview::{PreviewRead, embedded_preview_srgb, fs_preview_loader, load_embedded_preview, preview_window};
+pub use preview::{PreviewRead, embedded_preview_srgb, fs_preview_loader, load_embedded_preview, preview_window, set_host_preview_decoder};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use probe::load_video_poster;
 #[cfg(not(target_arch = "wasm32"))]

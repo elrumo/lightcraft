@@ -2338,3 +2338,28 @@ fn v6_extends_a_dng_tone_curve_past_white_in_stops() {
     let (white, beyond) = (at(Process::V6, 0.0), at(Process::V6, 1.0));
     assert!(beyond < 254.0 && beyond - white >= 3.0, "{white} then {beyond} a stop past the sensor's white");
 }
+
+// A frontend's decoder of embedded previews (ImageIO in a native frontend, HB-512) is asked first, and a file it gives
+// nothing for goes to this engine's decoder: the paths are made up, so only the decoder can answer for one.
+#[test]
+fn a_frontends_preview_decoder_is_asked_first() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let asked = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = asked.clone();
+    super::set_host_preview_decoder(Some(std::sync::Arc::new(move |path: &str, edge: usize| {
+        if !path.starts_with("/hb512-host-decoder/") {
+            return None;
+        }
+        counted.fetch_add(1, Ordering::Relaxed);
+        path.ends_with("given.raw").then(|| lightcraft_raster::Rgba8::from_fn(edge.min(4), 3, |_, _| [9, 8, 7, 255]))
+    })));
+    let load = super::fs_preview_loader();
+    let given = load("/hb512-host-decoder/given.raw", 512);
+    let declined = load("/hb512-host-decoder/declined.raw", 512);
+    super::set_host_preview_decoder(None);
+    let after = load("/hb512-host-decoder/given.raw", 512);
+    assert_eq!(given.map(|i| (i.width, i.height, i.data[0])), Some((4, 3, [9, 8, 7, 255])));
+    assert!(declined.is_none(), "no file there: this engine's decoder has nothing either");
+    assert_eq!(asked.load(Ordering::Relaxed), 2);
+    assert!(after.is_none(), "uninstalled: this engine's decoder only");
+}

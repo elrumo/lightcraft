@@ -139,8 +139,13 @@ pub(super) fn fit_box(max_edge: usize) -> lightcraft_codecs::DecodeOptions {
 /// (`lightcraft_raw::sparse::preview_plan`, the same module the import path probes with), and only a
 /// file the planner cannot describe falls back to the whole-file path. The memory gate still counts
 /// the whole file, which is what the decode of one can hold.
+///
+/// A decoder a frontend installed ([`set_host_preview_decoder`]) is asked first.
 pub fn fs_preview_loader() -> PreviewLoader {
     Arc::new(|path: &str, max_edge: usize| {
+        if let Some(image) = host_decoder().and_then(|decode| decode(path, max_edge)) {
+            return Some(image);
+        }
         let len = std::fs::metadata(path).map(|m| usize::try_from(m.len()).unwrap_or(usize::MAX)).unwrap_or(0);
         let gate = crate::memory::work_gate();
         let _permit = if crate::memory::is_background() { gate.acquire(len.saturating_mul(2)) } else { gate.acquire_urgent(len.saturating_mul(2)) };
@@ -153,6 +158,24 @@ pub fn fs_preview_loader() -> PreviewLoader {
         }
         embedded_preview_srgb(&std::fs::read(path).ok()?, max_edge)
     })
+}
+
+fn host_decoder_slot() -> &'static std::sync::RwLock<Option<PreviewLoader>> {
+    static SLOT: std::sync::OnceLock<std::sync::RwLock<Option<PreviewLoader>>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(Default::default)
+}
+
+fn host_decoder() -> Option<PreviewLoader> {
+    host_decoder_slot().read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+}
+
+/// Have a native frontend decode the embedded previews of raw files with the platform's own decoder (on Apple's
+/// systems ImageIO, which took a fifth of this engine's CPU energy for a folder of 60 raws' thumbnails): what the grid
+/// shows of an unedited raw, the loupe's stand-in, a face scan's picture. It is asked first, with the loader's arguments
+/// (the file's path, the long edge to fit into), and answers as [`fs_preview_loader`] does: sRGB, upright, no larger
+/// than asked. Its `None` for a file leaves that file to this engine's decoder; `None` here: this engine's for all.
+pub fn set_host_preview_decoder(decoder: Option<PreviewLoader>) {
+    *host_decoder_slot().write().unwrap_or_else(std::sync::PoisonError::into_inner) = decoder;
 }
 
 /// What [`preview_window`] read from a file, so a caller can see what a preview cost.
