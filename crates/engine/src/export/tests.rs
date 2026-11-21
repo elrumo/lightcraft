@@ -1534,6 +1534,60 @@ fn a_panic_in_progress_does_not_hang_the_lanes() {
     assert!(matches!(r, Ok(Err(_))), "the batch returns an error instead of hanging: {r:?}");
 }
 
+// Card #514: a lane does not sit on a picture still being drawn while later photos are ready. A photo the frontend hands back
+// (render it yourself) and a later picture that has come are started at once, before the first pictures come; the files are
+// still written in order, and the handed-back photo is the export's own render
+#[test]
+fn a_ready_picture_does_not_wait_for_an_earlier_one() {
+    let mut s = crate::Session::with_demo();
+    let ids: Vec<_> = s.visible().iter().copied().take(4).collect();
+    let o = ExportOptions::from_json(&json!({"format": "png", "width": 40}));
+    let plain = lanes_batch(&mut s, &ids, &o, 1, true, usize::MAX).1;
+    let prefix = format!("ready-test-{}/", std::process::id());
+    let keys: Vec<String> = (0..ids.len()).map(|i| format!("{prefix}{i}")).collect();
+    let mut items = prepare_batch(&mut s, &ids, &o).unwrap();
+    let mut sizes = Vec::new();
+    for (item, (id, key)) in items.iter_mut().zip(ids.iter().zip(&keys)) {
+        let (width, height) = output_size(s.catalog.photo(*id).unwrap(), &o);
+        sizes.push((width, height));
+        assert!(item.with_host_pixels(HostPixels { source: PixelSource::Memory(key.clone()), width, height, depth: 8, space: o.effective_space() }));
+    }
+    let picture = |(w, h): (usize, usize)| host_pictures::HostPicture::Pixels(vec![[30, 60, 90, 255]; w * h]);
+    let host = {
+        let (keys, sizes) = (keys.clone(), sizes.clone());
+        std::thread::spawn(move || {
+            host_pictures::put(&keys[2], picture(sizes[2]));
+            host_pictures::put(&keys[3], host_pictures::HostPicture::Render);
+            let t0 = std::time::Instant::now();
+            while host_pictures::has(&keys[2]) || host_pictures::has(&keys[3]) {
+                if t0.elapsed() > std::time::Duration::from_secs(30) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let early = !host_pictures::has(&keys[2]) && !host_pictures::has(&keys[3]);
+            host_pictures::put(&keys[0], picture(sizes[0]));
+            host_pictures::put(&keys[1], picture(sizes[1]));
+            early
+        })
+    };
+    let to = Destination { dir: "out".into(), exact: None };
+    let mut written = Vec::new();
+    let mut write = |p: &str, b: &[u8]| {
+        written.push((p.to_string(), b.to_vec()));
+        Ok(())
+    };
+    let files = run_batch_with(items, &mut Placer::new(&o, &to, &mut write, &|_| false, true), &mut |_, _| true, 2).unwrap();
+    assert!(host.join().unwrap(), "the later photos were started before the first pictures came");
+    assert_eq!(files.len(), 4);
+    let paths = |w: &[(String, Vec<u8>)]| w.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
+    assert_eq!(paths(&written), paths(&plain), "written in order");
+    assert_eq!(written[3].1, plain[3].1, "the handed-back photo is the export's own render");
+    let first = lightcraft_codecs::decode(&written[0].1, Default::default()).unwrap().to_srgb8();
+    assert_eq!(first.get(0, 0), [30, 60, 90, 255], "a hosted photo is the frontend's picture");
+    host_pictures::forget(&prefix);
+}
+
 // A photo that fails is reported in its place while the others are exported; with
 // stop_on_error the batch ends there and nothing after it is written
 #[test]

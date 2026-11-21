@@ -472,7 +472,7 @@ mod tests {
         let (first, out_dir, keys) = (size(0), dir.join("memory"), ids.iter().map(|id| format!("{prefix}{id}")).collect::<Vec<_>>());
         let host = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(100));
-            host_pictures::put(&keys[0], HostPicture::Pixels(std::iter::repeat_n([10u8, 200, 90, 255], first.0 * first.1).flatten().collect()));
+            host_pictures::put(&keys[0], HostPicture::Pixels(vec![[10u8, 200, 90, 255]; first.0 * first.1]));
             // the first file is written before the other pictures come
             let t0 = std::time::Instant::now();
             let landed = loop {

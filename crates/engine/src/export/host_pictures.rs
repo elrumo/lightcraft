@@ -14,8 +14,9 @@ use web_time::Instant;
 /// What a frontend says of a picture it promised an export.
 #[derive(Debug, PartialEq, Eq)]
 pub enum HostPicture {
-    /// The pixels, laid out as a `hostPixels` file holds them.
-    Pixels(Vec<u8>),
+    /// The pixels, laid out as a `hostPixels` file holds them, in groups of 4 bytes (an 8 bit pixel, half of a 16 bit one): an
+    /// 8 bit picture is the export's image as it is, with no copy (card #514).
+    Pixels(Vec<[u8; 4]>),
     /// It does not draw this photo after all: the export renders it itself.
     Render,
     /// The photo cannot be exported as asked (its error, said to the person).
@@ -37,7 +38,7 @@ fn slots() -> MutexGuard<'static, Slots> {
 
 fn size(p: &HostPicture) -> usize {
     match p {
-        HostPicture::Pixels(b) => b.len(),
+        HostPicture::Pixels(b) => b.len().saturating_mul(4),
         _ => 0,
     }
 }
@@ -70,6 +71,16 @@ pub fn forget(prefix: &str) {
             s.bytes = s.bytes.saturating_sub(size(&old));
         }
     }
+}
+
+/// Whether something was said of the picture under `key` (pixels, render it, or an error), so taking it does not wait.
+pub(super) fn has(key: &str) -> bool {
+    slots().pictures.contains_key(key)
+}
+
+/// Whether the frontend said it does not draw the picture under `key` after all (the export renders the photo).
+pub(super) fn is_render(key: &str) -> bool {
+    matches!(slots().pictures.get(key), Some(HostPicture::Render))
 }
 
 /// The picture under `key`, waiting for it up to `wait`; `None` when it did not come by then, or `cancel` was set meanwhile.
@@ -110,13 +121,17 @@ mod tests {
             let key = key.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(50));
-                put(&key, HostPicture::Pixels(vec![7; 16]))
+                put(&key, HostPicture::Pixels(vec![[7; 4]; 4]))
             })
         };
+        assert!(!has(&key));
         let got = take(&key, None, Duration::from_secs(30));
         assert!(late.join().unwrap() >= 16, "the bytes held are answered");
-        assert_eq!(got, Some(HostPicture::Pixels(vec![7; 16])));
+        assert_eq!(got, Some(HostPicture::Pixels(vec![[7; 4]; 4])));
         assert_eq!(take(&key, None, Duration::ZERO), None, "taken once");
+        put(&key, HostPicture::Render);
+        assert!(has(&key) && is_render(&key), "a picture said of is there to take");
+        assert_eq!(take(&key, None, Duration::ZERO), Some(HostPicture::Render));
 
         let cancel = Arc::new(AtomicBool::new(true));
         let t = Instant::now();
@@ -125,7 +140,7 @@ mod tests {
 
         let mine = format!("hp-test-{}-forget/", std::process::id());
         let other = format!("hp-test-{}-kept/", std::process::id());
-        put(&format!("{mine}1"), HostPicture::Pixels(vec![0; 8]));
+        put(&format!("{mine}1"), HostPicture::Pixels(vec![[0; 4]; 2]));
         put(&format!("{mine}2"), HostPicture::Render);
         put(&format!("{other}1"), HostPicture::Fail("no".into()));
         forget(&mine);

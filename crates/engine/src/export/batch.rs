@@ -58,9 +58,17 @@ pub(super) fn run_batch_with(
     }
     let heads: Vec<_> = items.iter().map(|i| (i.photo, i.file_name.clone(), i.guard.clone(), i.source_dir.clone())).collect();
     let queue = Queue {
-        lane: std::sync::Mutex::new(Lane { items: items.into_iter().map(Some).collect(), next: 0, placed: 0, stop: false, done: Default::default() }),
+        lane: std::sync::Mutex::new(Lane {
+            items: items.into_iter().map(Some).collect(),
+            next: 0,
+            placed: 0,
+            stop: false,
+            done: Default::default(),
+            waiting: 0,
+        }),
         cv: std::sync::Condvar::new(),
         ahead: lanes,
+        room: crate::memory::budget(),
     };
     std::thread::scope(|sc| {
         // stops the lanes however this thread leaves the scope: a panic in `progress` or the placer
@@ -100,7 +108,7 @@ impl Drop for StopOnDrop<'_> {
 /// Run one photo's export holding its working memory from [`crate::memory::export_gate`]; a panic
 /// becomes that photo's error, not the batch's end.
 fn run_gated(item: PreparedExport) -> Result<Exported, String> {
-    let _held = crate::memory::export_gate().acquire(item.weight);
+    let _held = crate::memory::export_gate().acquire(item.gate_weight());
     let what = format!("exporting {}", item.file_name);
     crate::guard::catch(&what, || item.run()).and_then(|r| r)
 }
@@ -108,28 +116,80 @@ fn run_gated(item: PreparedExport) -> Result<Exported, String> {
 /// The photos of a batch shared by its lanes: each lane takes the next one, at most
 /// [`Queue::ahead`] past the last placed. That bounds the finished files waiting in memory for
 /// their turn too (their working memory is given back to the gate as soon as they are encoded).
+///
+/// A lane with nothing else to do also starts a later photo whose frontend's picture has come
+/// ([`PreparedExport::host_ready`]): encoding it frees the picture (a JPEG is a tenth of its
+/// pixels), and a photo the frontend handed back is rendered beside the pictures still drawn, not
+/// when its turn comes, which held back every file after it (card #514). The files it makes wait for
+/// their turn in [`Lane::waiting`], at most [`Queue::room`] bytes of them.
 struct Queue {
     lane: std::sync::Mutex<Lane>,
     cv: std::sync::Condvar,
     ahead: usize,
+    room: usize,
 }
+
+/// How often a lane with nothing to do looks again for a frontend's picture that has come (one that
+/// comes does not wake the queue).
+const READY_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 struct Lane {
     items: Vec<Option<PreparedExport>>,
-    /// The next photo to start.
+    /// The next photo to start in turn (photos past it may have been started out of turn).
     next: usize,
     /// Photos handed to the placer so far.
     placed: usize,
     stop: bool,
     done: std::collections::HashMap<usize, Result<Exported, String>>,
+    /// Bytes of the files in `done`.
+    waiting: usize,
+}
+
+/// The bytes a finished photo holds until it is placed.
+fn held_bytes(r: &Result<Exported, String>) -> usize {
+    r.as_ref().map_or(0, |e| e.sidecars.iter().fold(e.bytes.len(), |n, (_, b)| n.saturating_add(b.len())))
 }
 
 impl Lane {
+    /// `next` past the photos already started out of turn.
+    fn skip_started(&mut self) {
+        while self.items.get(self.next).is_some_and(Option::is_none) {
+            self.next += 1;
+        }
+    }
+
     fn take_next(&mut self) -> Option<(usize, PreparedExport)> {
+        self.skip_started();
         let i = self.next;
         let item = self.items.get_mut(i)?.take()?;
         self.next += 1;
         Some((i, item))
+    }
+
+    /// The next photo, when it is within `ahead` of the last placed and, `ready`, not waiting for a
+    /// frontend's picture.
+    fn take_in_turn(&mut self, ahead: usize, ready: bool) -> Option<(usize, PreparedExport)> {
+        self.skip_started();
+        let pending = self.items.get(self.next).and_then(Option::as_ref).is_some_and(PreparedExport::host_pending);
+        if self.next >= self.placed.saturating_add(ahead) || (ready && pending) {
+            return None;
+        }
+        self.take_next()
+    }
+
+    /// The first photo past `next` whose frontend's picture has come, while the files waiting for
+    /// their turn hold less than `room` bytes.
+    fn take_ready(&mut self, room: usize) -> Option<(usize, PreparedExport)> {
+        if self.waiting >= room {
+            return None;
+        }
+        let i = (self.next..self.items.len()).find(|i| self.items.get(*i).and_then(Option::as_ref).is_some_and(PreparedExport::host_ready))?;
+        Some((i, self.items.get_mut(i)?.take()?))
+    }
+
+    /// Whether a photo not started yet waits for a frontend's picture that has not come.
+    fn awaits_host(&self) -> bool {
+        self.items.iter().skip(self.next).flatten().any(PreparedExport::host_pending)
     }
 }
 
@@ -143,25 +203,38 @@ impl Queue {
     }
 
     fn finish(&self, i: usize, r: Result<Exported, String>) {
-        self.lock().done.insert(i, r);
+        let mut l = self.lock();
+        l.waiting = l.waiting.saturating_add(held_bytes(&r));
+        l.done.insert(i, r);
+        drop(l);
         self.cv.notify_all();
     }
 
-    /// A lane thread: run photos until none is left or the batch stops.
+    /// A lane thread: run photos until none is left or the batch stops. The next photo first, unless
+    /// it waits for its frontend's picture; then a later one whose picture has come; then the next
+    /// one, waiting for its picture.
     fn work(&self) {
         loop {
             let mut l = self.lock();
             let (i, item) = loop {
+                l.skip_started();
                 if l.stop || l.next >= l.items.len() {
                     return;
                 }
-                if l.next < l.placed.saturating_add(self.ahead) {
-                    match l.take_next() {
-                        Some(t) => break t,
-                        None => return,
-                    }
+                if let Some(t) = l.take_in_turn(self.ahead, true) {
+                    break t;
                 }
-                l = self.wait(l);
+                if let Some(t) = l.take_ready(self.room) {
+                    break t;
+                }
+                if let Some(t) = l.take_in_turn(self.ahead, false) {
+                    break t;
+                }
+                l = if l.awaits_host() {
+                    self.cv.wait_timeout(l, READY_POLL).unwrap_or_else(std::sync::PoisonError::into_inner).0
+                } else {
+                    self.wait(l)
+                };
             };
             drop(l);
             self.finish(i, run_gated(item));
@@ -173,11 +246,14 @@ impl Queue {
         let mut l = self.lock();
         loop {
             if let Some(r) = l.done.remove(&i) {
+                l.waiting = l.waiting.saturating_sub(held_bytes(&r));
                 l.placed = i + 1;
                 drop(l);
                 self.cv.notify_all();
                 return r;
             }
+            // (a photo a lane started out of turn is that lane's to finish)
+            l.skip_started();
             if l.next == i {
                 let Some((_, item)) = l.take_next() else {
                     return Err("export: photo missing from the batch".into());

@@ -89,6 +89,8 @@ struct RenderWork {
     refused: Option<String>,
     /// The export's cancel flag ([`PreparedExport::set_cancel`]): it ends a wait for the host's picture.
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// The memory this device's own render holds ([`PreparedExport::gate_weight`]).
+    own_weight: usize,
 }
 
 /// The most pixels of a host's picture (it is read whole).
@@ -136,13 +138,14 @@ impl HostPixels {
         else {
             return Ok(None);
         };
-        let bytes = match &self.source {
+        // (in groups of 4 bytes: a picture in memory is an 8 bit export's image as it is)
+        let quads = match &self.source {
             PixelSource::File(path) => {
                 if std::fs::metadata(path).ok().map(|m| m.len()) != u64::try_from(len).ok() {
                     return Ok(None);
                 }
                 match std::fs::read(path) {
-                    Ok(b) => b,
+                    Ok(b) => b.as_chunks::<4>().0.to_vec(),
                     Err(_) => return Ok(None),
                 }
             }
@@ -154,17 +157,22 @@ impl HostPixels {
                 None => return Ok(None),
             },
         };
-        if bytes.len() != len {
+        if quads.len().saturating_mul(4) != len {
             return Ok(None);
         }
         // a photo has no transparency: whatever alpha the host wrote, the file is opaque
         let (data, deep) = if self.depth == 8 {
-            let mut data = bytes.as_chunks::<4>().0.to_vec();
+            let mut data = quads;
             data.iter_mut().for_each(|p| p[3] = 255);
             (data, None)
         } else {
-            let words: Vec<[u16; 4]> =
-                bytes.as_chunks::<8>().0.iter().map(|p| std::array::from_fn(|i| u16::from_ne_bytes([p[2 * i], p[2 * i + 1]]))).collect();
+            let words: Vec<[u16; 4]> = quads
+                .as_flattened()
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|p| std::array::from_fn(|i| u16::from_ne_bytes([p[2 * i], p[2 * i + 1]])))
+                .collect();
             let to8 = |v: u16| ((u32::from(v) * 255 + 32_767) / 65_535) as u8;
             let data = words.iter().map(|p| [to8(p[0]), to8(p[1]), to8(p[2]), 255]).collect();
             let samples = words.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
@@ -384,6 +392,7 @@ fn prepare_guarded(
                 banded,
                 refused,
                 cancel: None,
+                own_weight,
             })),
             weight,
         )
@@ -551,6 +560,35 @@ impl<'a> BatchPlacer<'a> {
 }
 
 impl PreparedExport {
+    /// The key of the picture a frontend promised this photo in memory (`hostPixels` `{memory}`).
+    fn host_key(&self) -> Option<&str> {
+        let Work::Render(w) = &self.work else { return None };
+        match w.host.as_ref().map(|h| &h.source) {
+            Some(PixelSource::Memory(key)) => Some(key),
+            _ => None,
+        }
+    }
+
+    /// The frontend has said what became of the picture it promised this photo in memory: running it does not wait.
+    pub(super) fn host_ready(&self) -> bool {
+        self.host_key().is_some_and(super::host_pictures::has)
+    }
+
+    /// The memory running this photo holds, taken from [`crate::memory::export_gate`]: a photo a frontend promised a picture for
+    /// weighs its encode, and its render once the frontend has handed it back to be rendered here (card #514: those run beside
+    /// the pictures still drawn, as soon as they are handed back).
+    pub(super) fn gate_weight(&self) -> usize {
+        match &self.work {
+            Work::Render(w) if self.host_key().is_some_and(super::host_pictures::is_render) => w.own_weight.max(self.weight),
+            _ => self.weight,
+        }
+    }
+
+    /// Running this photo would wait for the picture a frontend promised it in memory.
+    pub(super) fn host_pending(&self) -> bool {
+        self.host_key().is_some_and(|k| !super::host_pictures::has(k))
+    }
+
     /// What [`BatchPlacer::place`] needs of this photo.
     pub fn head(&self) -> ItemHead {
         ItemHead { photo: self.photo, name: self.file_name.clone(), source_dir: self.source_dir.clone(), guard: self.guard.clone() }
