@@ -180,7 +180,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Device Conditions for the Server Work",
             [],
             None,
-            "{idleSecs?: seconds since the person last used the device (a Mac: any app; a phone: this one), thermal?: 0 nominal | 1 fair | 2 serious | 3 critical, lowPower?: bool} — what the front end knows of the device, for the auto usage (vision.setHelperUsage); sent again as it changes, not kept → vision.helper",
+            "{idleSecs?: seconds since the person last used the device (a Mac: any app; a phone: this one), thermal?: 0 nominal | 1 fair | 2 serious | 3 critical, lowPower?: bool} — what the front end knows of the device, for the auto usage (vision.setHelperUsage); this device's own indexing also waits between photos while lowPower or thermal 2+. Sent again as it changes, not kept → vision.helper",
             always,
             |s, p| {
                 let conditions = crate::vision::HelperConditions {

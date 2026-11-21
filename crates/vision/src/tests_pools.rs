@@ -14,9 +14,10 @@ fn nice() -> i32 {
 fn background_work_is_the_threads_own_and_ends_with_it() {
     assert_eq!(BACKGROUND.get(), None);
     crate::in_background(3, || {
-        assert_eq!(BACKGROUND.get(), Some(3));
-        crate::in_background(0, || assert_eq!(BACKGROUND.get(), Some(1), "at least one thread"));
-        assert_eq!(BACKGROUND.get(), Some(3), "the outer one again");
+        assert_eq!(BACKGROUND.get(), Some((3, false)));
+        crate::in_background(0, || assert_eq!(BACKGROUND.get(), Some((1, false)), "at least one thread"));
+        crate::in_background_at(2, true, || assert_eq!(BACKGROUND.get(), Some((2, true)), "the lowest priority asked for"));
+        assert_eq!(BACKGROUND.get(), Some((3, false)), "the outer one again");
         // (another thread's models are not this thread's background work)
         assert_eq!(std::thread::spawn(|| BACKGROUND.get()).join().unwrap(), None);
     });
@@ -29,12 +30,12 @@ fn background_work_is_the_threads_own_and_ends_with_it() {
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
 #[test]
 fn background_models_get_lowered_threads_of_their_own() {
-    let pool = super::background_pool(2);
+    let pool = super::background_pool(2, false);
     let threads = pool.run(|| rayon::broadcast(|_| std::thread::current().name().map(str::to_owned)));
     assert_eq!(threads.len(), 2);
     assert!(threads.iter().all(|n| n.as_deref().is_some_and(|n| n.starts_with("rten-"))), "{threads:?}");
-    assert!(std::sync::Arc::ptr_eq(&pool, &super::background_pool(2)), "kept while the size stays");
-    assert!(!std::sync::Arc::ptr_eq(&pool, &super::background_pool(3)), "another size, another pool");
+    assert!(std::sync::Arc::ptr_eq(&pool, &super::background_pool(2, false)), "kept while the size stays");
+    assert!(!std::sync::Arc::ptr_eq(&pool, &super::background_pool(3, false)), "another size, another pool");
     #[cfg(target_os = "linux")]
     {
         let before = nice();
@@ -42,5 +43,24 @@ fn background_models_get_lowered_threads_of_their_own() {
         // rayon's own pool (the interactive work's) and this thread keep theirs
         assert!(rayon::broadcast(|_| nice()).iter().all(|n| *n == before));
         assert_eq!(nice(), before);
+    }
+    // Background work nobody waits for (a desktop indexing its library) asks for the lowest priority: a pool of its
+    // own, its threads at the lowest class (Apple's efficiency cores; nice 19 on Linux), the other pools left as they
+    // are. (Here, after the checks above: the pool is kept process-wide.)
+    let low = super::background_pool(2, true);
+    let utility = super::background_pool(2, false);
+    assert!(!std::sync::Arc::ptr_eq(&low, &utility), "a priority of its own, a pool of its own");
+    #[cfg(target_os = "linux")]
+    assert_eq!(low.run(|| rayon::broadcast(|_| nice())), [19, 19]);
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        let lowest = std::thread::spawn(|| {
+            lightcraft_sysmem::lower_thread_priority();
+            lightcraft_sysmem::Qos::current()
+        })
+        .join()
+        .unwrap();
+        assert!(low.run(|| rayon::broadcast(|_| lightcraft_sysmem::Qos::current())).iter().all(|q| *q == lowest));
+        assert!(utility.run(|| rayon::broadcast(|_| lightcraft_sysmem::Qos::current())).iter().all(|q| *q != lowest));
     }
 }

@@ -18,9 +18,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use web_time::{Duration, Instant};
 
 use lightcraft_catalog::PhotoId;
@@ -211,9 +211,82 @@ struct Shared {
     used: Mutex<Option<Instant>>,
     /// Indexing and searches running now.
     busy: AtomicUsize,
+    /// Why indexing waits between photos now ([`Hold`] as a number; 0: it doesn't), from what the front end knows of
+    /// the device (`vision.setHelperConditions`).
+    held: AtomicU8,
 }
 
+/// Why the device's own indexing waits between photos: it is work nobody is waiting for, so it gives way while the
+/// device saves power or cools down (card #516) and goes on by itself after.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Hold {
+    LowPower = 1,
+    Hot = 2,
+}
+
+impl Hold {
+    /// Why indexing should wait under `c`, if it should: Low Power Mode, or a thermal state of serious or worse.
+    pub fn of(c: &HelperConditions) -> Option<Hold> {
+        if c.low_power {
+            Some(Hold::LowPower)
+        } else if c.thermal >= 2 {
+            Some(Hold::Hot)
+        } else {
+            None
+        }
+    }
+
+    fn from_u8(v: u8) -> Option<Hold> {
+        [Hold::LowPower, Hold::Hot].into_iter().find(|h| *h as u8 == v)
+    }
+
+    /// The indexing row's detail while it waits.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Hold::LowPower => "Paused in Low Power Mode",
+            Hold::Hot => "Paused while the device cools down",
+        }
+    }
+}
+
+/// The text reader a native frontend supplies ([`set_host_text_reader`]), if any.
+static HOST_READER: RwLock<Option<Arc<dyn TextReader>>> = RwLock::new(None);
+
+/// Have `reader` read the text in this device's photos from now on (`None`: the engine's own reader, PP-OCRv6, which
+/// is downloaded). A frontend's reader runs on the system's own models (no download) and keys an index of its own
+/// ([`TextReader::engine`]): this device's text index is then its alone, and the server, which keeps the engine's
+/// reader's text, takes none of it. The work this device does for its server still reads with the engine's reader.
+pub fn set_host_text_reader(reader: Option<Arc<dyn TextReader>>) {
+    *HOST_READER.write().unwrap_or_else(PoisonError::into_inner) = reader;
+}
+
+impl Vision {
+    /// The frontend's text reader, when this session reads with it ([`Vision::use_host_reader`]) and there is one.
+    fn host_reader(&self) -> Option<Arc<dyn TextReader>> {
+        if !self.use_host_reader {
+            return None;
+        }
+        HOST_READER.read().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+}
+
+/// How often a held run looks again whether it may go on (or was stopped).
+const HOLD_LOOK: Duration = Duration::from_secs(1);
+
 impl Shared {
+    /// Why indexing waits now, if it does.
+    fn hold(&self) -> Option<Hold> {
+        Hold::from_u8(self.held.load(Ordering::Relaxed))
+    }
+
+    /// Waits while indexing is held, until it may go on or `job` is stopped. Between photos, never inside one.
+    fn wait_while_held(&self, job: &IndexJob) {
+        while self.hold().is_some() && !job.cancel.load(Ordering::Relaxed) {
+            std::thread::sleep(HOLD_LOOK);
+        }
+    }
+
     fn touch(&self) {
         *self.used.lock().unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
     }
@@ -340,6 +413,13 @@ pub struct Vision {
     /// models alike, so it leaves processors free and gives way to everything else. `None` (the default): on the
     /// pools the interactive work uses, as many threads as they have. A run that is waited for is never moved.
     pub index_threads: Option<usize>,
+    /// Run those threads (and the models they run) at the lowest priority instead of below the default: on Apple
+    /// silicon only the efficiency cores take them. For a host whose owner isn't waiting for the index (a desktop):
+    /// an M1 Max did a model's work there for a quarter of the energy, at seventeen times the time (card #516).
+    pub index_lowest: bool,
+    /// Read the text in photos with a frontend's reader when it supplies one ([`set_host_text_reader`]): the engine
+    /// host's sessions. Off (tests, the CLI), the process-wide reader is not looked at.
+    pub use_host_reader: bool,
     /// Send this library's search vectors to the server it syncs with, so the server and the
     /// user's other devices needn't compute them again. Off until the user turns it on
     /// (persisted in the library's prefs.json).
@@ -453,6 +533,8 @@ impl Default for Vision {
             helper_paused: Vec::new(),
             helper_once: Vec::new(),
             index_threads: None,
+            index_lowest: false,
+            use_host_reader: false,
             helper_usage: HelperUsage::Auto,
             helper_conditions: HelperConditions::default(),
             thin: false,
@@ -738,14 +820,17 @@ impl Vision {
     /// Whether this device can read the text in photos (this build has the readers, or a host
     /// supplied one).
     pub fn text_available(&self) -> bool {
-        (cfg!(feature = "vision") && !self.thin) || self.injected_reader.is_some()
+        (cfg!(feature = "vision") && !self.thin) || self.injected_reader.is_some() || self.host_reader().is_some()
     }
 
-    /// Whether the text-reading models' files are in place.
+    /// Whether the text-reading models' files are in place (a reader a host supplied needs none).
     pub fn text_installed(&self) -> bool {
-        if self.injected_reader.is_some() {
-            return true;
-        }
+        self.injected_reader.is_some() || self.host_reader().is_some() || self.engine_text_installed()
+    }
+
+    /// Whether the engine's own text-reading models' files are in place (a host's reader aside: the work for a server
+    /// reads with them).
+    fn engine_text_installed(&self) -> bool {
         #[cfg(feature = "vision")]
         if let Some(dir) = self.text_dir() {
             return lightcraft_vision::ocr::is_model_dir(&dir);
@@ -780,7 +865,8 @@ impl Vision {
         if !self.text_available() {
             return Err("reading the text in photos is not available in this build".into());
         }
-        if self.text_installed() {
+        // (the engine's own models, also while a host's reader reads this device's photos: the work for a server needs them)
+        if self.injected_reader.is_some() || self.engine_text_installed() {
             return Ok(false);
         }
         #[cfg(feature = "vision")]
@@ -805,15 +891,35 @@ impl Vision {
         false
     }
 
-    /// What reads the text and how to reach it from a worker thread, with the engine's id, or why
-    /// it can't be.
+    /// What reads the text of this device's photos and how to reach it from a worker thread, with the engine's id, or
+    /// why it can't be: a host's reader ([`set_host_text_reader`]) when there is one, else the engine's own.
     fn reader_provider(&self) -> Result<(ReaderProvider, String), String> {
+        if self.injected_reader.is_none()
+            && let Some(r) = self.host_reader()
+        {
+            let engine = r.engine().to_string();
+            return Ok((ReaderProvider { injected: Some(r), dir: None }, engine));
+        }
+        self.engine_reader_provider()
+    }
+
+    /// The name of what reads the text now, for the indexing row.
+    fn reader_label(&self) -> String {
+        match self.injected_reader.clone().or_else(|| self.host_reader()) {
+            Some(r) => r.label().to_string(),
+            None => "PP-OCRv6".into(),
+        }
+    }
+
+    /// [`Vision::reader_provider`] without a host's reader: the engine's own (or a test's), whose text the server
+    /// keeps, for the work this device does for its server.
+    fn engine_reader_provider(&self) -> Result<(ReaderProvider, String), String> {
         if let Some(r) = &self.injected_reader {
             return Ok((ReaderProvider { injected: Some(r.clone()), dir: None }, r.engine().to_string()));
         }
         #[cfg(feature = "vision")]
         {
-            if !self.text_installed() {
+            if !self.engine_text_installed() {
                 let d = self.text_download_status();
                 if d["running"].as_bool() == Some(true) {
                     return Err(format!("{TEXT_NOT_INSTALLED} yet: they are downloading."));
@@ -1207,7 +1313,8 @@ fn with_faces<R>(shared: &Shared, spec: &FaceSpec, f: impl FnOnce(&mut FaceIndex
 
 /// The pool one background indexing run with threads of its own works on ([`Vision::index_threads`]), and its size:
 /// at most `threads`, and never more than rayon's own pool has (a host that limits that one limits this). Its threads
-/// take a priority below the default as they start, and end with the run. `None` when the system gives no threads (the
+/// take a priority below the default as they start (the lowest with `lowest`, [`Vision::index_lowest`]), and end
+/// with the run. `None` when the system gives no threads (the
 /// run then works as one without threads of its own).
 ///
 /// The whole run is installed on it, so the parallel parts of each photo (decoding, developing) stay on these threads
@@ -1216,13 +1323,13 @@ fn with_faces<R>(shared: &Shared, spec: &FaceSpec, f: impl FnOnce(&mut FaceIndex
 /// (Two runs sharing a pool could: one waiting inside a decode would pick up the other's next photo, which then waits
 /// at the memory gate for what the first holds, as [`crate::faces_worker`]'s pools have to rule out.)
 #[cfg(not(target_arch = "wasm32"))]
-fn index_pool(threads: usize) -> Option<(usize, rayon::ThreadPool)> {
+fn index_pool(threads: usize, lowest: bool) -> Option<(usize, rayon::ThreadPool)> {
     let threads = threads.clamp(1, rayon::current_num_threads().max(1));
     let built = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .thread_name(|i| format!("lc-vision-index-{i}"))
-        .start_handler(|_| {
-            let _ = lightcraft_sysmem::utility_thread_priority();
+        .start_handler(move |_| {
+            let _ = if lowest { lightcraft_sysmem::lower_thread_priority() } else { lightcraft_sysmem::utility_thread_priority() };
         })
         .build();
     match built {
@@ -1311,6 +1418,10 @@ fn describe_photos(
     let model = acquire(shared, provider)?;
     let mut work = work.into_iter();
     while !job.cancel.load(Ordering::Relaxed) {
+        shared.wait_while_held(job);
+        if job.cancel.load(Ordering::Relaxed) {
+            break;
+        }
         let batch: Vec<(Key, RenderJob)> = work.by_ref().take(BATCH).collect();
         if batch.is_empty() {
             break;
@@ -1359,6 +1470,7 @@ fn read_photos(shared: &Arc<Shared>, provider: &ReaderProvider, spec: &TextSpec,
     let reader = acquire_reader(shared, provider)?;
     let mut failures = 0;
     for (key, render) in work {
+        shared.wait_while_held(job);
         if job.cancel.load(Ordering::Relaxed) {
             break;
         }
@@ -1399,6 +1511,7 @@ fn find_faces(shared: &Arc<Shared>, provider: &FinderProvider, spec: &FaceSpec, 
     let finder = acquire_finder(shared, provider)?;
     let mut failures = 0;
     for (key, render) in work {
+        shared.wait_while_held(job);
         if job.cancel.load(Ordering::Relaxed) {
             break;
         }
@@ -1606,6 +1719,8 @@ impl Session {
                 "available": v.text_available(),
                 "enabled": v.text,
                 "installed": v.text_installed(),
+                // (read by the frontend's reader: no download, no licence to agree to, an index of this device's own)
+                "host": v.host_reader().is_some(),
                 "dir": v.text_dir().map(|d| d.display().to_string()),
                 "indexed": v.shared.text_opened.load(Ordering::Relaxed).then(|| v.text_indexed()),
                 "sizeBytes": TEXT_BYTES,
@@ -1754,10 +1869,16 @@ impl Session {
                 task
             });
             let j = job.clone();
-            let own = self.vision.index_threads;
-            let started = std::thread::Builder::new().name("lc-vision-index".into()).spawn(move || match own.and_then(index_pool) {
-                Some((threads, pool)) => pool.install(|| lightcraft_vision::in_background(threads, || run_index(&shared, plan, &j))),
-                None => run_index(&shared, plan, &j),
+            let (own, lowest) = (self.vision.index_threads, self.vision.index_lowest);
+            let started = std::thread::Builder::new().name("lc-vision-index".into()).spawn(move || {
+                // (the run's own thread too: it decodes and hands the photos to the models)
+                if lowest {
+                    let _ = lightcraft_sysmem::lower_thread_priority();
+                }
+                match own.and_then(|t| index_pool(t, lowest)) {
+                    Some((threads, pool)) => pool.install(|| lightcraft_vision::in_background_at(threads, lowest, || run_index(&shared, plan, &j))),
+                    None => run_index(&shared, plan, &j),
+                }
             });
             if let Err(e) = started {
                 job.finished.store(true, Ordering::Relaxed);
@@ -1947,13 +2068,15 @@ impl Session {
         match (running, &self.vision.index_task) {
             (Some(job), Some(task)) => {
                 task.progress(job.done.load(Ordering::Relaxed) as u64, job.total as u64);
-                // (which model is at work: a name)
-                task.detail(match job.phase() {
-                    "reading" => "PP-OCRv6",
-                    "finding" => "YuNet + SFace",
-                    "coloring" => "Colours",
-                    "checking" => "NSFW Image Detection",
-                    _ => "SigLIP 2",
+                // (which model is at work: a name; or why the run waits)
+                let reader = self.vision.reader_label();
+                task.detail(match (self.vision.shared.hold(), job.phase()) {
+                    (Some(hold), _) => hold.detail(),
+                    (None, "reading") => reader.as_str(),
+                    (None, "finding") => "YuNet + SFace",
+                    (None, "coloring") => "Colours",
+                    (None, "checking") => "NSFW Image Detection",
+                    (None, _) => "SigLIP 2",
                 });
             }
             (None, Some(_)) => self.vision.index_task = None,

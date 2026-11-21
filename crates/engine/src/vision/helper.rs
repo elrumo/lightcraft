@@ -695,7 +695,7 @@ impl super::Vision {
         for part in HelperPart::ALL {
             let made = match part {
                 HelperPart::Search => self.provider().map(|_| ()),
-                HelperPart::Text => self.reader_provider().map(|_| ()),
+                HelperPart::Text => self.engine_reader_provider().map(|_| ()),
                 HelperPart::Faces => self.finder_provider().map(|_| ()),
                 HelperPart::Sensitive => self.classifier_provider().map(|_| ()),
                 // (it needs no model)
@@ -816,6 +816,8 @@ impl crate::Session {
     /// What the front end knows of the device, for the `auto` usage (`vision.setHelperConditions`; not kept).
     pub fn vision_helper_set_conditions(&mut self, conditions: HelperConditions) -> Value {
         self.vision.helper_conditions = conditions;
+        // (this device's own indexing waits too while it saves power or cools down)
+        self.vision.shared.held.store(super::Hold::of(&conditions).map_or(0, |h| h as u8), Ordering::Relaxed);
         self.vision_helper_pace();
         self.vision_helper_status()
     }
@@ -892,7 +894,7 @@ impl crate::Session {
             }
             let made = match part {
                 HelperPart::Search => v.provider().map(|(p, model, dim)| Runner::Search(p, model, dim)),
-                HelperPart::Text => v.reader_provider().map(|(p, e)| Runner::Text(p, e)),
+                HelperPart::Text => v.engine_reader_provider().map(|(p, e)| Runner::Text(p, e)),
                 HelperPart::Faces => v.finder_provider().map(|(p, e)| Runner::Faces(p, e)),
                 HelperPart::Sensitive => v.classifier_provider().map(|(p, e)| Runner::Sensitive(p, e)),
                 HelperPart::Previews => Ok(Runner::Previews),

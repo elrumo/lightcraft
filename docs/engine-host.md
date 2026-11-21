@@ -11,9 +11,13 @@ frontend that is not Rust. The egui apps call `apphost` directly; a native app r
   exports (`apphost::export::Batch`) and imports (`apphost::import`), all shared with egui. A photo-understanding model
   that is ready (search by description, text, faces, sensitive content; downloaded in AI Models and turned on) looks at
   the photos it hasn't yet by itself (`Session::vision_catch_up`, the rule egui follows for sensitive content), with an
-  `index` row in the activity stack; on a phone only while the app is in front, and there on half the processors, on
+  `index` row in the activity stack; on a phone only while the app is in front. It runs on half the processors, on
   threads of its own below the default priority (`apphost::startup::index_threads`, `Vision::index_threads`), so the
-  interface, the edit in hand and the system's own background work keep theirs. A phone's host keeps those models in
+  interface, the edit in hand and the system's own background work keep theirs; a desktop's at the lowest priority
+  (`index_lowest`), on Apple silicon its efficiency cores, for a quarter of the energy. It waits between photos while
+  the device is in Low Power Mode or hot (thermal state serious or worse), as the frontend reports with
+  `vision.setHelperConditions`. A frontend may read the text in photos with the system's own models
+  (`vision::set_host_text_reader`): that index is then the device's alone. A phone's host keeps those models in
   `Library/Caches/LightCraft/models/siglip2` (`apphost::startup::vision_models_dir`), for a build with their code.
 - **Messages, not calls.** The frontend sends JSON requests and reads JSON events from a queue it polls on a thread of
   its own. Commands go through `Session::execute`, the entry point every frontend uses, so a frontend gets every engine

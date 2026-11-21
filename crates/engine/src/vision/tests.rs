@@ -239,6 +239,49 @@ fn in_the_app_searching_and_indexing_run_in_the_background() {
     assert!(!s.vision.searching());
 }
 
+// A device in Low Power Mode or hot (thermal state serious or worse) holds its own indexing between photos, its row
+// says why, and the run goes on by itself once the device is back; a held run that is stopped ends (card #516)
+#[test]
+fn indexing_waits_while_the_device_saves_power_or_cools_down() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut s = demo();
+    s.vision.background = true;
+    s.execute("vision.setHelperConditions", &json!({"lowPower": true})).unwrap();
+    let total = s.execute("vision.index", &json!({})).unwrap()["total"].as_u64().unwrap();
+    assert!(total > 0);
+    std::thread::sleep(Duration::from_millis(400));
+    let job = s.vision.job().unwrap().clone();
+    assert_eq!(job.done.load(Relaxed), 0, "nothing while held");
+    s.vision_poll();
+    let detail = |s: &Session| s.activity.list().into_iter().find(|t| t.kind == "index").map(|t| t.detail);
+    assert_eq!(detail(&s).as_deref(), Some("Paused in Low Power Mode"));
+    // (out of Low Power Mode but hot: still held)
+    s.execute("vision.setHelperConditions", &json!({"thermal": 2})).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    s.vision_poll();
+    assert_eq!((job.done.load(Relaxed), detail(&s).as_deref()), (0, Some("Paused while the device cools down")));
+    s.execute("vision.setHelperConditions", &json!({"thermal": 1})).unwrap();
+    let end = Instant::now() + Duration::from_secs(120);
+    while !job.finished.load(Relaxed) {
+        assert!(Instant::now() < end, "the run went on by itself");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(job.done.load(Relaxed) as u64, total);
+
+    let mut s = demo();
+    s.vision.background = true;
+    s.execute("vision.setHelperConditions", &json!({"lowPower": true})).unwrap();
+    s.execute("vision.index", &json!({})).unwrap();
+    let job = s.vision.job().unwrap().clone();
+    job.cancel.store(true, Relaxed);
+    let end = Instant::now() + Duration::from_secs(10);
+    while !job.finished.load(Relaxed) {
+        assert!(Instant::now() < end, "a held run that is stopped ends");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(job.done.load(Relaxed), 0);
+}
+
 #[test]
 fn only_the_newest_search_is_applied() {
     let mut s = demo();

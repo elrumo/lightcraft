@@ -66,6 +66,11 @@ Traditional), Japanese and 46 other languages. It is a separate, opt-in step wit
 - **Reading is slow** (a second or so per photo on a laptop, more on a server): it runs in the background after the photos
   are described, from a 1280 px unedited rendering, and can be stopped (**Stop**) and resumed; photos that were read are
   never read again (kept by content hash in `<library>/search/text-<engine>.bin`, derived data like the vectors).
+- **A frontend's reader.** A native frontend can read the text with the system's own models instead
+  (`vision::set_host_text_reader`): nothing to download, a fraction of the energy (on an M1 Max, 0.12 J of CPU against
+  PP-OCRv6's 4.4 J for a photo with four lines of text), and an index of that reader's own (`text-<its engine>.bin`), so
+  the text is this device's alone: the server keeps PP-OCRv6's, takes none of it, and the work a device does for its
+  server still reads with PP-OCRv6. Photos read by another device are read again here once.
 - **Searching:** the photos that have *every* word of your query in their text come first (`text: true` in the result,
   score 2 and up), then the photos that look like it. Matching is forgiving, because OCR is: case, accents and full-width
   forms don't matter, hiragana and katakana are the same, one wrong letter in a word of five or more still matches, and

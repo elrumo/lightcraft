@@ -60,8 +60,9 @@ pub fn set_model_threads(threads: usize) {
 }
 
 thread_local! {
-    /// The threads the models this thread runs may take as background work ([`in_background`]), if it is doing some.
-    static BACKGROUND: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// The threads the models this thread runs may take as background work ([`in_background`]), and whether at the
+    /// lowest priority, if it is doing some.
+    static BACKGROUND: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
 }
 
 /// Run `f` as background work: the ONNX models it runs on this thread use a pool of their own, at most `threads`
@@ -70,30 +71,38 @@ thread_local! {
 /// library while the app is in use): it leaves processors free and gives way. A size set with [`set_model_threads`]
 /// still holds. Nested calls take the inner one's `threads`; a build without the ONNX models only runs `f`.
 pub fn in_background<R>(threads: usize, f: impl FnOnce() -> R) -> R {
+    in_background_at(threads, false, f)
+}
+
+/// [`in_background`], and with `lowest` its model threads take the lowest priority instead
+/// ([`lightcraft_sysmem::lower_thread_priority`]: on Apple silicon the efficiency cores, which did a model's work for a
+/// quarter of the energy and seventeen times the time on an M1 Max, card #516), for work nobody waits for.
+pub fn in_background_at<R>(threads: usize, lowest: bool, f: impl FnOnce() -> R) -> R {
     /// Puts the thread's state back, also when `f` unwinds.
-    struct Was(Option<usize>);
+    struct Was(Option<(usize, bool)>);
     impl Drop for Was {
         fn drop(&mut self) {
             BACKGROUND.set(self.0);
         }
     }
-    let _was = Was(BACKGROUND.replace(Some(threads.max(1))));
+    let _was = Was(BACKGROUND.replace(Some((threads.max(1), lowest))));
     f()
 }
 
-/// The pool background model runs of `threads` threads use: kept until another size is asked for, its threads
-/// lowered once.
+/// The pool background model runs of `threads` threads use: kept until another size or priority is asked for, its
+/// threads lowered once (to the lowest priority with `lowest`).
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
-fn background_pool(threads: usize) -> std::sync::Arc<rten::ThreadPool> {
-    static POOL: std::sync::Mutex<Option<(usize, std::sync::Arc<rten::ThreadPool>)>> = std::sync::Mutex::new(None);
+fn background_pool(threads: usize, lowest: bool) -> std::sync::Arc<rten::ThreadPool> {
+    type Kept = Option<((usize, bool), std::sync::Arc<rten::ThreadPool>)>;
+    static POOL: std::sync::Mutex<Kept> = std::sync::Mutex::new(None);
     /// Is this one of rten's own threads? (A pool rten could not build runs its work on the caller's thread, and a
     /// `broadcast` from there would reach rayon's global pool: those threads must keep their priority.)
     fn on_model_thread() -> bool {
         std::thread::current().name().is_some_and(|n| n.starts_with("rten-"))
     }
     let mut kept = POOL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((n, pool)) = kept.as_ref()
-        && *n == threads
+    if let Some((key, pool)) = kept.as_ref()
+        && *key == (threads, lowest)
     {
         return pool.clone();
     }
@@ -102,12 +111,12 @@ fn background_pool(threads: usize) -> std::sync::Arc<rten::ThreadPool> {
         if on_model_thread() {
             rayon::broadcast(|_| {
                 if on_model_thread() {
-                    let _ = lightcraft_sysmem::utility_thread_priority();
+                    let _ = if lowest { lightcraft_sysmem::lower_thread_priority() } else { lightcraft_sysmem::utility_thread_priority() };
                 }
             });
         }
     });
-    *kept = Some((threads, pool.clone()));
+    *kept = Some(((threads, lowest), pool.clone()));
     pool
 }
 
@@ -117,7 +126,7 @@ fn background_pool(threads: usize) -> std::sync::Arc<rten::ThreadPool> {
 pub(crate) fn run_options() -> Option<rten::RunOptions> {
     let sized = MODEL_POOL.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
     let pool = match BACKGROUND.get() {
-        Some(threads) => background_pool(sized.as_ref().map_or(threads, |(most, _)| threads.min(*most))),
+        Some((threads, lowest)) => background_pool(sized.as_ref().map_or(threads, |(most, _)| threads.min(*most)), lowest),
         None => sized?.1,
     };
     Some(rten::RunOptions::default().with_thread_pool(Some(pool)))

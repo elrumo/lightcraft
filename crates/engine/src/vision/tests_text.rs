@@ -152,6 +152,58 @@ fn the_choice_and_what_was_read_survive_a_restart() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A frontend's reader (the system's own models, card #516): its own engine id and index.
+struct Host;
+
+impl TextReader for Host {
+    fn engine(&self) -> &str {
+        "host-text-1"
+    }
+    fn label(&self) -> &str {
+        "The system's reader"
+    }
+    fn text(&self, img: &Rgba8) -> Result<String, Error> {
+        FakeReader.text(img)
+    }
+}
+
+// A frontend's text reader reads this device's photos, with no download, into an index named after it, but only in a
+// session that reads with it (the engine host's); the work done for a server keeps the engine's own reader, whose text
+// the server keeps. The process-wide reader is put back before any assertion, so it never outlives this test.
+#[test]
+fn a_frontends_text_reader_reads_this_devices_photos_into_an_index_of_its_own() {
+    let dir = temp_dir("host-reader");
+    let mut s = Session::with_demo();
+    s.vision.set_embedder(Arc::new(FakeEmbedder));
+    s.vision.dir = Some(dir.join("models"));
+    s.vision.text_edge = 192;
+    let before = (s.vision.text_installed(), s.vision.engine_reader_provider().is_ok());
+    crate::vision::set_host_text_reader(Some(Arc::new(Host)));
+    let ignored = s.vision.text_installed();
+    s.vision.use_host_reader = true;
+    let installed = s.vision.text_installed();
+    let label = s.vision.reader_label();
+    let host = text_status(&mut s)["host"].clone();
+    s.execute("vision.setText", &json!({"on": true})).unwrap();
+    let r = s.execute("vision.index", &json!({"wait": true})).unwrap();
+    let helper = s.vision.engine_reader_provider().map(|(_, e)| e);
+    let searched = s.execute("library.search", &json!({"q": "open hours", "wait": true}));
+    crate::vision::set_host_text_reader(None);
+    let after = s.vision.text_installed();
+
+    assert_eq!(before, (false, false), "no models downloaded here");
+    assert!(!ignored, "a session that doesn't read with it doesn't see it");
+    assert!(installed && !after, "nothing to download while the frontend reads");
+    assert_eq!(label, "The system's reader");
+    assert_eq!((r["error"].clone(), r["failed"].as_u64()), (Value::Null, Some(0)), "{r}");
+    assert_eq!(s.vision.text_indexed(), s.vision_keys().len());
+    assert_eq!(host, json!(true), "the frontend's app says so (no download, no licence)");
+    assert!(helper.is_err(), "the server's work still needs the engine's reader: {helper:?}");
+    let r = searched.unwrap();
+    assert!(found(&r).iter().any(|(_, text)| *text), "its words are found: {r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_damaged_text_index_is_started_over() {
     let dir = temp_dir("damaged");

@@ -149,16 +149,22 @@ pub fn budget_after_open(profile: Profile, launch: usize, left: Option<usize>) -
 }
 
 /// The threads a background indexing run takes on a machine of `profile` with `cores` processor threads
-/// (`Session::vision.index_threads`). A phone's library is indexed while its owner uses the app: with every processor
-/// at the default priority, the run left nothing for the system's own background work for seconds on end, and the
-/// interface waited with it (a phone's hang report: twelve threads of raw decoding and models on six cores, thermally
-/// limited). So a phone's run gets half its processors (two at least), on threads of its own below the default
-/// priority. A desktop's keeps the shared pools (`None`): it has processors to spare, and its panels show the run.
-pub fn index_threads(profile: Profile, cores: usize) -> Option<usize> {
-    match profile {
-        Profile::Mobile => Some((cores / 2).max(2)),
-        Profile::Desktop => None,
-    }
+/// (`Session::vision.index_threads`): half its processors (two at least), on threads of its own below the default
+/// priority ([`index_lowest`] says how far). A phone's library is indexed while its owner uses the app: with every
+/// processor at the default priority, the run left nothing for the system's own background work for seconds on end,
+/// and the interface waited with it (a phone's hang report: twelve threads of raw decoding and models on six cores,
+/// thermally limited). A desktop's used to share the interactive pools at the default priority, on its performance
+/// cores; nobody waits for it either (card #516).
+pub fn index_threads(_profile: Profile, cores: usize) -> Option<usize> {
+    Some((cores / 2).max(2))
+}
+
+/// Whether those threads take the lowest priority (`Session::vision.index_lowest`), on Apple silicon the efficiency
+/// cores alone: a desktop's do. On an M1 Max a model's work took a quarter of the CPU energy there (2.6 J against
+/// 10.9 J) for seventeen times the time; the class below the default that a phone's take ran it on the performance
+/// cores for the same energy as the default (card #516). A phone's stay there until it is measured on one.
+pub fn index_lowest(profile: Profile) -> bool {
+    matches!(profile, Profile::Desktop)
 }
 
 /// [`set_memory_budget`] for `profile` ([`budget_for`]).
@@ -195,10 +201,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_phones_indexing_gets_half_its_processors_and_a_desktops_the_shared_pools() {
+    fn indexing_gets_half_the_processors_and_a_desktops_the_lowest_priority() {
         let phone = [1, 2, 4, 6, 8, 10].map(|cores| index_threads(Profile::Mobile, cores));
         assert_eq!(phone, [Some(2), Some(2), Some(2), Some(3), Some(4), Some(5)]);
-        assert_eq!(index_threads(Profile::Desktop, 6), None);
+        assert_eq!(index_threads(Profile::Desktop, 10), Some(5));
+        assert!(index_lowest(Profile::Desktop) && !index_lowest(Profile::Mobile));
     }
 
     #[test]

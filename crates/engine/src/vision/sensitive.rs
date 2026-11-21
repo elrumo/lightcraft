@@ -529,6 +529,7 @@ pub(super) fn check_photos(
     let classifier = acquire_classifier(shared, provider)?;
     let mut failures = 0;
     for (key, render) in work {
+        shared.wait_while_held(job);
         if job.cancel.load(Ordering::Relaxed) {
             break;
         }

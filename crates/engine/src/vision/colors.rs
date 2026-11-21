@@ -82,6 +82,7 @@ pub(super) fn keep(shared: &Shared, spec: &ColorSpec, key: Key, img: &lightcraft
 pub(super) fn color_photos(shared: &Arc<Shared>, spec: &ColorSpec, work: Vec<(Key, crate::media::RenderJob)>, job: &IndexJob) {
     job.coloring.store(!work.is_empty(), Ordering::Relaxed);
     for (key, render) in work {
+        shared.wait_while_held(job);
         if job.cancel.load(Ordering::Relaxed) {
             break;
         }

@@ -10,6 +10,10 @@ pub trait TextReader: Send + Sync {
     /// Names the engine and its version, which names the text index (at most 16 ASCII bytes): text
     /// read by another engine is not mixed with this one's.
     fn engine(&self) -> &str;
+    /// Its name for a person (an activity row's detail); the engine's id unless it says otherwise.
+    fn label(&self) -> &str {
+        self.engine()
+    }
     /// The text in `img` (display-referred 8-bit RGBA, at least ~1280 px on the long side for small
     /// print), one line of text per line, in reading order. No text is `""`, not an error.
     fn text(&self, img: &Rgba8) -> Result<String, Error>;
