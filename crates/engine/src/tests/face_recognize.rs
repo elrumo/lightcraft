@@ -276,10 +276,12 @@ fn without_a_chosen_model_recognition_says_so() {
     let mut s = Session::with_demo();
     assert!(s.execute("faces.index", &json!({})).is_err(), "no models folder");
     s.face_models_dir = Some(d.join("models"));
-    for cmd in ["faces.index", "faces.suggest"] {
-        let e = s.execute(cmd, &json!({})).unwrap_err().to_string();
-        assert!(e.contains("no recognition model is chosen"), "{cmd}: {e}");
-    }
+    let e = s.execute("faces.index", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("no recognition model is chosen"), "{e}");
+    // asking for suggestions isn't an error (the loupe's face boxes ask on every photo, HB-492): it says why there are none
+    let r = s.execute("faces.suggest", &json!({})).unwrap();
+    assert_eq!(r["recognition"], false, "{r}");
+    assert!(r["why"].as_str().unwrap().contains("no recognition model is chosen"), "{r}");
     let _: Value = json!(null);
     let _ = std::fs::remove_dir_all(&d);
 }

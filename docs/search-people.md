@@ -139,6 +139,9 @@ the server's people on a device that finds none. A desktop that
 finds faces can send them instead (same opt-in as the vectors, `vision.share`). The user can always delete what the server
 found (`people.deleteData` asks it to, or `DELETE /api/index/faces`).
 
+Where recognition can't run (no recognition model chosen: a phone, the web), `faces.suggest` still names the face boxes:
+a box that is a face the finder put with a named person is suggested that person's name (`recognition: false`, no score).
+
 ```text
 GET    /api/people/status            {available, enabled (an admin allowed it), installed, engine, faces, photos, total}
 GET    /api/people/clusters          {engine, faces, photos, clusters: [{id, members: [[photo, face, x0, y0, x1, y1, score]]}]}   403 until allowed

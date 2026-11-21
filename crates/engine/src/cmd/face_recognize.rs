@@ -264,6 +264,43 @@ struct Similar {
     pending: usize,
 }
 
+/// `faces.suggest` where recognition can't run (no model chosen or none here, `why`): each unnamed face is suggested the name
+/// of the person the face finder put it with, here or on the sync server, when somebody named them. Same answer as
+/// recognition's, with `recognition: false` and `why`; no scores.
+fn suggest_from_people(s: &mut Session, p: &Value, why: &str) -> Result<Value> {
+    let targets = s.targets(p)?;
+    let mut asked: Vec<(lightcraft_catalog::PhotoId, usize, lightcraft_geom::Rect)> = Vec::new();
+    for id in &targets {
+        let Some(photo) = s.catalog.photo(*id) else { continue };
+        for (index, r) in photo.meta.regions.iter().enumerate() {
+            if r.kind == lightcraft_meta::RegionKind::Face && r.name.is_none() {
+                asked.push((*id, index, r.rect));
+            }
+        }
+    }
+    let names = s.people_suggestions(&asked.iter().map(|&(id, _, rect)| (id, rect)).collect::<Vec<_>>());
+    let photos: Vec<Value> = targets
+        .iter()
+        .filter(|id| s.catalog.photo(**id).is_some())
+        .map(|id| {
+            let faces: Vec<Value> = asked
+                .iter()
+                .zip(&names)
+                .filter(|((photo, _, _), _)| photo == id)
+                .map(|((_, index, _), name)| {
+                    json!({
+                        "index": index,
+                        "suggestion": name.as_ref().map(|n| json!({"name": n, "score": null, "runnerUp": null})),
+                        "candidates": name.iter().map(|n| json!({"name": n, "score": null, "faces": null})).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            json!({"id": id.0, "faces": faces})
+        })
+        .collect();
+    Ok(json!({"model": null, "recognition": false, "why": why, "galleryFaces": 0, "pendingPhotos": [], "photos": photos}))
+}
+
 fn rect_json(r: &lightcraft_geom::Rect) -> Value {
     json!({"x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1})
 }
@@ -862,7 +899,12 @@ mod imp {
 
     pub fn suggest(s: &mut Session, p: &Value) -> Result<Value> {
         const C: &str = "faces.suggest";
-        let embedder = current(s, C)?;
+        // (no recognition here, the usual case on a phone: the names the found people go by, HB-492)
+        let embedder = match current(s, C) {
+            Ok(e) => e,
+            Err(crate::EngineError::BadParams { msg, .. }) => return super::suggest_from_people(s, p, &msg),
+            Err(why) => return super::suggest_from_people(s, p, &why.to_string()),
+        };
         collect(s);
         let targets = s.targets(p)?;
         let model_threshold = embedder.manifest().thresholds.match_cosine;
@@ -1118,8 +1160,8 @@ mod imp {
         Err(bad("faces.index", "this build cannot run face recognition"))
     }
 
-    pub fn suggest(_: &mut Session, _: &Value) -> Result<Value> {
-        Err(bad("faces.suggest", "this build cannot run face recognition"))
+    pub fn suggest(s: &mut Session, p: &Value) -> Result<Value> {
+        super::suggest_from_people(s, p, "this build cannot run face recognition")
     }
 
     pub fn evaluate(_: &mut Session, _: &Value) -> Result<Value> {
@@ -1159,7 +1201,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Suggest Names for Faces",
             [],
             None,
-            "{ids?, threshold?, margin?, budgetMs?} → {photos: [{id, faces: [{index, suggestion: {name, score, runnerUp} | null, candidates: [{name, score}]}]}]} — who the unnamed faces in these photos might be, from the faces already named in the library. Only suggestions: nothing is named",
+            "{ids?, threshold?, margin?, budgetMs?} → {photos: [{id, faces: [{index, suggestion: {name, score, runnerUp} | null, candidates: [{name, score}]}]}]} — who the unnamed faces in these photos might be, from the faces already named in the library. Where recognition can't run (no model chosen, a phone, the web) the answer says `recognition: false` and `why`, and a face is suggested the name of the person the face finder put it with (here or on the sync server), without a score. Only suggestions: nothing is named",
             super::always,
             imp::suggest
         ),

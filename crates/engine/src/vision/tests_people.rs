@@ -440,6 +440,52 @@ fn confirming_some_of_a_person_s_faces_names_only_those_and_one_can_be_somebody_
     assert!(s.execute("people.faces", &json!({"cluster": "nonsense"})).is_err());
 }
 
+#[test]
+fn without_recognition_a_face_is_suggested_the_name_of_the_person_it_is_with() {
+    let mut s = demo();
+    scanned(&mut s);
+    let clusters = s.people_clusters(false).unwrap();
+    // a person with faces on two photos
+    let person = clusters.iter().find(|c| c.members.iter().any(|m| m.key != c.members[0].key)).expect("a person in two photos").clone();
+    let (best, other) = (&person.members[0], person.members.iter().find(|m| m.key != person.members[0].key).unwrap());
+    s.execute("people.name", &json!({"cluster": person.id, "name": "Ada", "faces": [best.id()]})).unwrap();
+    // the other face is a box on its photo (the loupe shows boxes), and so is a box no face was found in
+    let photo = s.vision_keys()[&other.key][0];
+    let [x0, y0, x1, y1] = other.rect;
+    let at = s.execute("photo.addRegion", &json!({"id": photo.0, "rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}})).unwrap()["index"].clone();
+    let nobody =
+        s.execute("photo.addRegion", &json!({"id": photo.0, "rect": {"x0": 0.9, "y0": 0.9, "x1": 0.97, "y1": 0.97}})).unwrap()["index"].clone();
+
+    // no recognition model here (a phone): this was a `badParams` error, and the face boxes had no names to suggest (HB-492)
+    assert!(s.face_models_dir.is_none());
+    let r = s.execute("faces.suggest", &json!({"ids": [photo.0], "budgetMs": 0})).unwrap();
+    assert_eq!(r["recognition"], false, "{r}");
+    assert_eq!(r["photos"][0]["id"], photo.0);
+    let faces = r["photos"][0]["faces"].as_array().unwrap();
+    let of = |i: &Value| faces.iter().find(|f| f["index"] == *i).unwrap_or_else(|| panic!("{i} in {r}"));
+    assert_eq!(of(&at)["suggestion"]["name"], "Ada", "{r}");
+    assert_eq!(of(&at)["candidates"][0]["name"], "Ada");
+    assert!(of(&nobody)["suggestion"].is_null(), "{r}");
+
+    // a device that finds no faces itself suggests from the people the sync server found
+    let mut thin = Session::with_demo();
+    thin.vision.text_edge = 192;
+    // (the same photos, with the same boxes and names: synced)
+    for id in [photo, s.vision_keys()[&best.key][0]] {
+        let meta = s.catalog.photo(id).unwrap().meta.clone();
+        thin.commit("Sync", lightcraft_catalog::Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+    }
+    let r = thin.execute("faces.suggest", &json!({"ids": [photo.0]})).unwrap();
+    assert!(r["photos"][0]["faces"].as_array().unwrap().iter().all(|f| f["suggestion"].is_null()), "nobody found yet: {r}");
+    thin.vision.remote.set_status(Some(json!({"available": true, "faces": {"enabled": true}})));
+    thin.vision.remote.people = Some((web_time::Instant::now(), clusters.clone()));
+    let r = thin.execute("faces.suggest", &json!({"ids": [photo.0]})).unwrap();
+    assert!(r["photos"][0]["faces"].as_array().unwrap().iter().any(|f| f["index"] == at && f["suggestion"]["name"] == "Ada"), "{r}");
+    // and photos that aren't there are left out, not an error
+    assert_eq!(thin.execute("faces.suggest", &json!({"ids": [987_654]})).unwrap()["photos"], json!([]));
+    assert!(thin.execute("faces.suggest", &json!({"ids": "x"})).is_err(), "bad ids are still an error");
+}
+
 /// A finder that fails, or panics, on every photo.
 struct Broken {
     panic: bool,

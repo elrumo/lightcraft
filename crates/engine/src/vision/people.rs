@@ -393,6 +393,50 @@ impl Session {
         Ok(json!({"id": c.id, "name": names.first().map(|(n, _)| n.clone()), "pending": pending, "faces": faces}))
     }
 
+    /// The name each of `faces` (a photo, a box on it) goes by among the people the face finder found, here or on the sync
+    /// server: the name somebody gave the person that face is with (the one most of their named faces have). `None` for a face
+    /// the finder didn't find, or of somebody nobody has named. What suggests names where recognition can't run.
+    pub(crate) fn people_suggestions(&mut self, faces: &[(PhotoId, lightcraft_geom::Rect)]) -> Vec<Option<String>> {
+        let mut out = vec![None; faces.len()];
+        // (faces found here, or that another device found and sent through iCloud: `portable`)
+        let local = (self.vision.faces_available() && self.vision.faces) || self.vision.faces_found() > 0;
+        if faces.is_empty() || !(local || self.people_from_server()) {
+            return out;
+        }
+        let Ok(clusters) = self.people_clusters(false) else { return out };
+        // the photos asked about, by content
+        let keys: Vec<Option<Key>> = faces.iter().map(|(id, _)| self.catalog.photo(*id).map(|p| Key::of(&crate::media::content_key(p)))).collect();
+        let asked: HashSet<Key> = keys.iter().flatten().copied().collect();
+        // every found face on those photos: (person, box)
+        let mut found: HashMap<Key, Vec<(usize, [f32; 4])>> = HashMap::new();
+        for (c, cluster) in clusters.iter().enumerate() {
+            for m in cluster.members.iter().filter(|m| asked.contains(&m.key)) {
+                found.entry(m.key).or_default().push((c, m.rect));
+            }
+        }
+        let mut people: HashMap<usize, Option<String>> = HashMap::new();
+        let mut photos: Option<HashMap<Key, Vec<PhotoId>>> = None;
+        for (i, ((_, rect), key)) in faces.iter().zip(&keys).enumerate() {
+            let r = [rect.x0 as f32, rect.y0 as f32, rect.x1 as f32, rect.y1 as f32];
+            let best = key
+                .and_then(|k| found.get(&k))
+                .into_iter()
+                .flatten()
+                .map(|&(c, m)| (c, iou(&m, &r)))
+                .filter(|f| f.1 >= SAME_FACE)
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            let Some((c, _)) = best else { continue };
+            let name = people.entry(c).or_insert_with(|| {
+                let photos = photos.get_or_insert_with(|| self.vision_keys());
+                clusters.get(c).and_then(|cluster| self.people_names(cluster, photos).0.into_iter().next()).map(|(n, _)| n)
+            });
+            if let Some(slot) = out.get_mut(i) {
+                slot.clone_from(name);
+            }
+        }
+        out
+    }
+
     /// Shows a person's photos (`people.show`): the view becomes those photos, oldest first.
     pub fn people_show(&mut self, cluster: &str) -> Result<Value, String> {
         let c = self.people_cluster(cluster)?;
