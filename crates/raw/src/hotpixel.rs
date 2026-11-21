@@ -84,13 +84,20 @@ impl Noise {
     }
 }
 
+/// The median, by selection rather than a sort: the noise model takes it of bins of 100 000 deviations and more.
 fn median(v: &mut [f32]) -> f32 {
-    if v.is_empty() {
+    let n = v.len();
+    if n == 0 {
         return 0.0;
     }
-    v.sort_by(f32::total_cmp);
-    let n = v.len();
-    if n % 2 == 1 { v[n / 2] } else { 0.5 * (v[n / 2 - 1] + v[n / 2]) }
+    let (lower, mid, _) = v.select_nth_unstable_by(n / 2, f32::total_cmp);
+    let mid = *mid;
+    if n % 2 == 1 {
+        return mid;
+    }
+    // (what a sort puts just before the middle: the largest of the lower part)
+    let below = lower.iter().copied().max_by(f32::total_cmp).unwrap_or(mid);
+    0.5 * (below + mid)
 }
 
 /// The sample view the passes work on: the u16 mosaic, its width, the active area, the CFA phases.
@@ -123,6 +130,19 @@ impl View<'_> {
             buf.push(v);
         }
         max
+    }
+    /// The smallest and largest same-colour neighbours of the photosite at index `i` of the mosaic, at `offsets`
+    /// from it (a phase's, as indices: [`candidates`]), with no buffer filled: what the candidate scan asks of every
+    /// photosite.
+    #[inline]
+    fn min_max(&self, i: isize, offsets: &[isize]) -> (f32, f32) {
+        let (mut min, mut max) = (f32::MAX, f32::MIN);
+        for &o in offsets {
+            let v = self.d[(i + o) as usize] as f32;
+            min = min.min(v);
+            max = max.max(v);
+        }
+        (min, max)
     }
 }
 
@@ -306,18 +326,31 @@ fn noise_model(v: &View<'_>, (x0, x1, y0, y1): (usize, usize, usize, usize), bla
 }
 
 /// Photosites far above every same-colour neighbour, with the value to replace them by.
+///
+/// σ never falls as the level rises, and the median is at least the smallest neighbour: a photosite no more than
+/// [`K_HOT`] σ(smallest) above the brightest can't pass the test below, so its median (a sort, for one site in nine
+/// in plain noise) isn't taken. That was most of the time a thumbnail of a raw without a usable preview took (HB-512).
 fn candidates(v: &View<'_>, (x0, x1, y0, y1): (usize, usize, usize, usize), black: f32, noise: Noise) -> Vec<(usize, usize, u16)> {
+    // each phase's same-colour neighbours as offsets of the index into the mosaic
+    let offsets: Vec<Vec<isize>> = v.phases.iter().map(|p| p.same.iter().map(|&(dx, dy)| dy * v.w as isize + dx).collect()).collect();
     (y0..y1)
         .into_par_iter()
         .flat_map_iter(|y| {
             let mut buf = Vec::with_capacity(8);
             let mut out = Vec::new();
+            // (the row's phases, stepped through without a division per photosite)
+            let row = offsets.get((y % v.ph) * v.pw..).unwrap_or_default();
+            let mut col = x0 % v.pw;
             for x in x0..x1 {
-                let s = v.at(x as isize, y as isize);
-                let max = v.neighbours(x, y, &mut buf);
-                if s <= max {
+                let Some(phase) = row.get(col) else { break };
+                col = if col + 1 == v.pw { 0 } else { col + 1 };
+                let i = y * v.w + x;
+                let s = v.d[i] as f32;
+                let (min, max) = v.min_max(i as isize, phase);
+                if s <= max || s - max <= K_HOT * noise.sigma(min - black) {
                     continue;
                 }
+                v.neighbours(x, y, &mut buf);
                 let m = median(&mut buf);
                 if s - max > K_HOT * noise.sigma(m - black) {
                     out.push((x, y, m.round().clamp(0.0, u16::MAX as f32) as u16));
@@ -502,6 +535,49 @@ mod tests {
         assert_eq!(r.data, before);
         assert_eq!(r.suppress_hot_pixels_with(1e-4), 4);
         assert_eq!(r.clone().suppress_hot_pixels_with(f64::NAN), 0, "a limit that is not a number replaces nothing");
+    }
+
+    // The scan skips the median where the smallest neighbour already rules a photosite out (HB-512): it must find
+    // exactly what taking the median at every photosite finds, with the fitted noise and with a floor-level one.
+    #[test]
+    fn the_candidate_scan_finds_what_a_median_everywhere_finds() {
+        let mut r = mosaic(256, 256);
+        for &(x, y) in &[(100, 100), (101, 60), (151, 151), (40, 200), (41, 201)] {
+            set(&mut r, x, y, 9000);
+        }
+        for y in 32..96 {
+            for x in 32..96 {
+                set(&mut r, x, y, 512 + 20 + ((x * 7 + y * 13) % 11) as u16);
+            }
+        }
+        set(&mut r, 64, 64, 1500);
+        for y in 150..250 {
+            for x in 100..200 {
+                set(&mut r, x, y, (600 + (x - 100) * 140 + (x * 31 + y * 17) % 97) as u16);
+            }
+        }
+        let cfa = r.cfa.clone().unwrap();
+        let phases = super::phases(&cfa);
+        let RawData::U16(d) = &r.data else { panic!("u16 mosaic") };
+        let v = super::View { d, w: r.width, pw: cfa.width, ph: cfa.height, phases: &phases };
+        let (area, black) = ((4, 252, 4, 252), 512.0);
+        let fitted = super::noise_model(&v, area, black, 16383.0 - black).unwrap();
+        for noise in [fitted, super::Noise { a: 0.0, b: 0.0 }] {
+            let mut want = Vec::new();
+            let mut buf = Vec::new();
+            for y in area.2..area.3 {
+                for x in area.0..area.1 {
+                    let s = v.at(x as isize, y as isize);
+                    let max = v.neighbours(x, y, &mut buf);
+                    let m = super::median(&mut buf);
+                    if s > max && s - max > super::K_HOT * noise.sigma(m - black) {
+                        want.push((x, y, m.round().clamp(0.0, u16::MAX as f32) as u16));
+                    }
+                }
+            }
+            assert!(want.len() >= 4, "{noise:?}: {} candidates", want.len());
+            assert_eq!(super::candidates(&v, area, black, noise), want, "{noise:?}");
+        }
     }
 
     #[test]
