@@ -394,6 +394,52 @@ fn unnamed_faces_of_one_found_person_are_one_group_here_and_from_the_server() {
     assert_eq!(unnamed_groups(&mut thin), groups, "the same people as the device that found them");
 }
 
+/// The faces `people.faces` lists of `id`: (face id, name).
+fn faces_of(s: &mut Session, id: &str) -> Vec<(String, Option<String>)> {
+    let r = s.execute("people.faces", &json!({"cluster": id})).unwrap();
+    r["faces"].as_array().unwrap().iter().map(|f| (f["id"].as_str().unwrap().to_string(), f["name"].as_str().map(str::to_string))).collect()
+}
+
+#[test]
+fn confirming_some_of_a_person_s_faces_names_only_those_and_one_can_be_somebody_else() {
+    let mut s = demo();
+    scanned(&mut s);
+    let person = people(&mut s, false).into_iter().find(|p| p["faces"].as_u64().unwrap() >= 3).expect("a person with three faces");
+    let id = person["id"].as_str().unwrap().to_string();
+    let listed = s.execute("people.faces", &json!({"cluster": id})).unwrap();
+    let faces = faces_of(&mut s, &id);
+    assert_eq!(faces.len() as u64, person["faces"].as_u64().unwrap(), "every face of theirs: {listed}");
+    assert_eq!(listed["pending"], person["pending"]);
+    assert!(faces.iter().all(|(_, name)| name.is_none()), "none confirmed yet");
+    let face = &listed["faces"][0];
+    assert!(face["photo"].as_u64().is_some() && face["rect"]["x1"].as_f64().unwrap() > face["rect"]["x0"].as_f64().unwrap(), "{face}");
+
+    // the sheet: the first face is them, the second somebody else, the rest left for later; one step
+    let undo = s.undo.len();
+    let r = s.execute("people.name", &json!({"cluster": id, "name": "Ada", "faces": [faces[0].0, {"id": faces[1].0, "name": "  Bob "}]})).unwrap();
+    assert!(r["faces"].as_u64().unwrap() >= 2, "{r}");
+    assert_eq!(s.undo.len(), undo + 1, "one step");
+    let after = faces_of(&mut s, &id);
+    assert_eq!(after[0].1.as_deref(), Some("Ada"));
+    assert_eq!(after[1].1.as_deref(), Some("Bob"));
+    assert!(after[2..].iter().all(|(_, name)| name.is_none()), "the rest still wait: {after:?}");
+    assert!(people(&mut s, false).iter().any(|p| p["id"] == id.as_str()), "listed: faces still wait for a Confirm");
+
+    // one undo takes both back
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(faces_of(&mut s, &id).iter().all(|(_, name)| name.is_none()));
+
+    // faces that are not the person's, a bad list, a bad name: errors, and nothing is written
+    let other = s.people_clusters(false).unwrap().iter().find(|c| c.id != id).map(|c| c.members[0].id()).expect("another person");
+    let e = s.execute("people.name", &json!({"cluster": id, "name": "Ada", "faces": [other]})).unwrap_err().to_string();
+    assert!(e.contains("no longer this person's"), "{e}");
+    for faces in [json!("x"), json!([3]), json!([{"name": "Bob"}]), json!([{"id": faces[0].0, "name": "a\u{7}b"}])] {
+        assert!(s.execute("people.name", &json!({"cluster": id, "name": "Ada", "faces": faces})).is_err(), "{faces}");
+    }
+    assert_eq!((named_faces(&s, "Ada"), named_faces(&s, "Bob")), (0, 0));
+    assert!(s.execute("people.faces", &json!({"cluster": "nonsense"})).is_err());
+}
+
 /// A finder that fails, or panics, on every photo.
 struct Broken {
     panic: bool,

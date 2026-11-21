@@ -27,6 +27,8 @@ const SAME_FACE: f32 = 0.4;
 const PHOTOS_LISTED: usize = 12;
 /// Longest name accepted, in characters.
 pub const MAX_NAME: usize = 120;
+/// Most faces `people.faces` lists of one person.
+const MAX_FACES_LISTED: usize = 5000;
 
 /// A face of a person.
 #[derive(Clone, Debug, PartialEq)]
@@ -286,15 +288,39 @@ impl Session {
 
     /// Names a person (`people.name`): their faces become face regions with that name on each of
     /// their photos, in one undoable step. A face that already has another name keeps it. Naming
-    /// a person that is already named confirms the faces added since.
-    pub fn people_name(&mut self, cluster: &str, name: &str) -> Result<Value, String> {
+    /// a person that is already named confirms the faces added since. `faces` (face ids, as `people.faces` lists them):
+    /// only those of the person's faces, each with the name it is given (somebody else's, or a new person's), else `name`.
+    pub fn people_name(&mut self, cluster: &str, name: &str, faces: Option<&[(String, Option<String>)]>) -> Result<Value, String> {
         let name = clean_name(name)?;
         let c = self.people_cluster(cluster)?;
+        // (each face asked for, with its own name when it has one)
+        let wanted: Option<HashMap<String, String>> = match faces {
+            None => None,
+            Some(list) => Some(
+                list.iter()
+                    .map(|(id, other)| -> Result<(String, String), String> {
+                        Ok((id.clone(), other.as_deref().map(clean_name).transpose()?.unwrap_or_else(|| name.clone())))
+                    })
+                    .collect::<Result<_, String>>()?,
+            ),
+        };
+        if let Some(w) = &wanted
+            && !c.members.iter().any(|m| w.contains_key(m.id().as_str()))
+        {
+            return Err("those faces are no longer this person's: look at the people again".into());
+        }
         let photos = self.vision_keys();
         // (a photo with several of this person's faces is edited once, with all of them)
         let mut edited: HashMap<PhotoId, lightcraft_catalog::Meta> = HashMap::new();
         let (mut named, mut kept) = (0, 0);
         for m in &c.members {
+            let name = match &wanted {
+                None => &name,
+                Some(w) => match w.get(m.id().as_str()) {
+                    Some(n) => n,
+                    None => continue,
+                },
+            };
             for id in photos.get(&m.key).into_iter().flatten() {
                 let Some(p) = self.catalog.photo(*id) else { continue };
                 let meta = edited.entry(*id).or_insert_with(|| p.meta.clone());
@@ -340,6 +366,31 @@ impl Session {
             self.skip_auto_write = true;
         }
         Ok(json!({"name": name, "faces": named, "photos": touched.len(), "keptOtherName": kept}))
+    }
+
+    /// A person's faces (`people.faces`), best first: the id of each (what `people.name` takes in `faces`), the photo it is
+    /// shown on and its box, and the name its photo gives it (none: not confirmed yet). Faces only on hidden photos are left
+    /// out, as `people.list` leaves them out.
+    pub fn people_faces(&mut self, cluster: &str) -> Result<Value, String> {
+        let c = self.people_cluster(cluster)?;
+        let photos = self.vision_keys_shown();
+        let (names, pending) = self.people_names(&c, &photos);
+        let mut faces = Vec::new();
+        for m in c.members.iter().take(MAX_FACES_LISTED) {
+            let Some(ids) = photos.get(&m.key) else { continue };
+            let Some(shown) = ids.first() else { continue };
+            let name = ids.iter().find_map(|id| {
+                let p = self.catalog.photo(*id)?;
+                name_of(p.meta.regions.get(region_at(&p.meta.regions, &m.rect)?)?).map(str::to_string)
+            });
+            faces.push(json!({
+                "id": m.id(),
+                "photo": shown.0,
+                "rect": {"x0": m.rect[0], "y0": m.rect[1], "x1": m.rect[2], "y1": m.rect[3]},
+                "name": name,
+            }));
+        }
+        Ok(json!({"id": c.id, "name": names.first().map(|(n, _)| n.clone()), "pending": pending, "faces": faces}))
     }
 
     /// Shows a person's photos (`people.show`): the view becomes those photos, oldest first.

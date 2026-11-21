@@ -480,13 +480,41 @@ pub fn specs() -> Vec<CommandSpec> {
             "Name a Person",
             [],
             None,
-            "{cluster: a person's id from people.list, name: text} — name a person: a face region with that name is added to each photo they are in (or named, when a box is there already), in one undoable step; faces that already have another name keep it. Naming an already named person confirms the faces found since → {name, faces, photos, keptOtherName}",
+            "{cluster: a person's id from people.list, name: text, faces?: [face id | {id, name?}]} — name a person: a face region with that name is added to each photo they are in (or named, when a box is there already), in one undoable step; faces that already have another name keep it. Naming an already named person confirms the faces found since. `faces` (ids from people.faces): only those of the person's faces, each named its own `name` when it has one (somebody else, or a new person), else `name` → {name, faces, photos, keptOtherName}",
             always,
             |s, p| {
                 let c = "people.name";
                 let cluster = str_param(p, "cluster").ok_or_else(|| bad(c, "missing `cluster`"))?;
                 let name = str_param(p, "name").ok_or_else(|| bad(c, "missing `name`"))?;
-                s.people_name(cluster, name).map_err(|e| bad(c, e))
+                let faces = match p.get("faces") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Array(list)) => Some(
+                        list.iter()
+                            .map(|f| match f {
+                                Value::String(id) => Some((id.clone(), None)),
+                                Value::Object(_) => {
+                                    Some((f.get("id")?.as_str()?.to_string(), f.get("name").and_then(Value::as_str).map(str::to_string)))
+                                }
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()
+                            .ok_or_else(|| bad(c, "each of `faces` is a face id or {id, name?}"))?,
+                    ),
+                    Some(_) => return Err(bad(c, "`faces` must be a list")),
+                };
+                s.people_name(cluster, name, faces.as_deref()).map_err(|e| bad(c, e))
+            }
+        ),
+        cmd!(
+            query "people.faces",
+            "A Person's Faces",
+            [],
+            None,
+            "{cluster: a person's id from people.list} — the faces of a person the face finder found, best first, on the photos shown → {id, name | null, pending, faces: [{id (what people.name takes in `faces`), photo, rect, name | null (not confirmed yet)}]}",
+            always,
+            |s, p| {
+                let c = "people.faces";
+                s.people_faces(str_param(p, "cluster").ok_or_else(|| bad(c, "missing `cluster`"))?).map_err(|e| bad(c, e))
             }
         ),
         cmd!(

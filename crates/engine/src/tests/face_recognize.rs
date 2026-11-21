@@ -471,9 +471,17 @@ fn many_faces_are_named_in_one_undo_step() {
         json!({"faces": [{"photo": a.0, "index": 0}], "name": 7}),
         json!({"faces": [{"photo": a.0, "index": 0}], "name": "bad\u{7}name"}),
         json!({"faces": vec![json!({"photo": a.0, "index": 0}); 5001], "name": "x"}),
+        json!({"faces": [{"photo": a.0, "index": 0, "name": 7}], "name": "x"}),
     ] {
         assert!(s.execute("faces.nameFaces", &bad).is_err(), "{bad}");
     }
+    // a face confirmed as somebody else gets their name, in the same step (the confirmation sheet's "Someone Else", HB-450)
+    let undo = s.undo.len();
+    s.execute("faces.nameFaces", &json!({"faces": [{"photo": a.0, "index": 0}, {"photo": a.0, "index": 1, "name": " Bob "}], "name": "Ann"}))
+        .unwrap();
+    let names: Vec<Option<&str>> = s.catalog.photo(a).unwrap().meta.regions.iter().map(|r| r.name.as_deref()).collect();
+    assert_eq!(names, [Some("Ann"), Some("Bob")]);
+    assert_eq!(s.undo.len(), undo + 1);
     let _ = std::fs::remove_dir_all(&d);
 }
 

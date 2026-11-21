@@ -35,8 +35,8 @@ fn apply_name(region: &mut lightcraft_meta::Region, name: &Option<String>) {
     }
 }
 
-/// `faces.nameFaces {faces: [{photo, index}], name}`: name (or clear) many face regions at once, as one undo step: what
-/// naming a group of look-alikes does.
+/// `faces.nameFaces {faces: [{photo, index, name?}], name}`: name (or clear) many face regions at once, as one undo step:
+/// what naming a group of look-alikes does. A face with a `name` of its own gets that one (somebody else).
 fn name_faces(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "faces.nameFaces";
     let name = name_param(p, C)?;
@@ -44,14 +44,15 @@ fn name_faces(s: &mut Session, p: &Value) -> Result<Value> {
     if list.len() > 5000 {
         return Err(bad(C, "at most 5000 faces at a time"));
     }
-    let mut by_photo: std::collections::BTreeMap<u64, Vec<usize>> = std::collections::BTreeMap::new();
+    let mut by_photo: std::collections::BTreeMap<u64, Vec<(usize, Option<String>)>> = std::collections::BTreeMap::new();
     for f in list {
         let (Some(photo), Some(index)) =
             (f.get("photo").and_then(Value::as_u64), f.get("index").and_then(Value::as_u64).and_then(|i| usize::try_from(i).ok()))
         else {
             return Err(bad(C, "each face needs a `photo` and an `index`"));
         };
-        by_photo.entry(photo).or_default().push(index);
+        let own = if f.get("name").is_some() { name_param(f, C)? } else { name.clone() };
+        by_photo.entry(photo).or_default().push((index, own));
     }
     let (mut ops, mut named) = (Vec::new(), 0usize);
     for (photo, indexes) in by_photo {
@@ -59,7 +60,7 @@ fn name_faces(s: &mut Session, p: &Value) -> Result<Value> {
         let Some(photo) = s.catalog.photo(id) else { continue };
         let mut meta = photo.meta.clone();
         let before = named;
-        for i in indexes {
+        for (i, name) in indexes {
             if let Some(region) = meta.regions.get_mut(i).filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
                 apply_name(region, &name);
                 named += 1;
@@ -1194,7 +1195,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Name Faces",
             [],
             None,
-            "{faces: [{photo, index}], name} → {named, photos} — name (or, with a null or empty name, clear) many face regions as one undoable step; the sidecar is not touched",
+            "{faces: [{photo, index, name?}], name} → {named, photos} — name (or, with a null or empty name, clear) many face regions as one undoable step; a face with a `name` of its own gets that one; the sidecar is not touched",
             super::always,
             name_faces
         ),
