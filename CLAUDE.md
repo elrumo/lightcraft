@@ -87,6 +87,22 @@ tool list, for the current parameters instead of trusting this file. Use the adm
   (Before 2026-10-27 the whole board came back in one 60k-character reply that was cut off, and cards past the cut
   could not be reached.)
 - If HelpBites can't be reached (no keys, offline), say so in one line and carry on; never block the task or the commit.
+- **Several cards or a whole column at once (user rule, 2026-11-21).** When asked to work on more than one card, or on
+  a column:
+  - Group the cards that touch the same part of the app into one child, and start **every group at once** as a child
+    session (`start_session`, `user_asked`, `fresh`, `use_worktree: false`, `wake_when_done: true`) in the main checkouts,
+    all coding in parallel. Each brief points at one shared brief: copy `apps/lightbites-swift/ci/batch-brief.md` and `apps/lightbites-swift/ci/batch-slot.sh` (as
+    `slot.sh`) into a `batch/` folder in the coordinator's scratchpad, with the children's names in `children.txt`.
+  - **Rust and Swift builds run one at a time and as few as possible.** Children write all their code before any build;
+    every heavy command (cargo, xcodebuild, swift build/test, `run.sh`, `tools`, `looks.sh`, the app on the simulator)
+    runs while holding `slot.sh take <name>` (the `/tmp/lightbites-xcode.lock` that `ci/once.sh` uses), which the batch's
+    first build holds back until every child's code is written (max 45 min), so one build carries everyone's edits.
+    Builds use the shared warm caches ("Queued builds share one warm cache" in the app's CLAUDE.md), one target each.
+  - As each child finishes, it commits its own hunks to `main` in both repos (never push), removes any worktree it made
+    once its commits are on main, comments on and moves its cards (above), and adds the HelpBites changelog entries for
+    its user-facing changes (`apps/lightbites-swift/ci/helpbites-changelog.py add`) right after its commit.
+  - The coordinator checks every child's commits are on `main` (`git merge-base --is-ancestor`), that no worktree of
+    theirs is left, and the cards and changelog, then reports.
 
 ## Never crash (outranks feature work)
 People trust LightCraft with their photo libraries and edits; a crash loses their work. A malformed raw/JPEG/XMP, a bad
