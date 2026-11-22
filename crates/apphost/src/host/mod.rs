@@ -268,6 +268,7 @@ impl Host {
         let control_tx = tx.clone();
         // the opener waits for it here and every caller waits on it after: at their class, not std's default
         let qos = lightcraft_sysmem::Qos::current();
+        lightcraft_engine::name_pool_threads();
         let thread = std::thread::Builder::new()
             .name("lc-engine".into())
             .spawn(move || {

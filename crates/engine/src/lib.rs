@@ -1863,6 +1863,18 @@ impl Session {
 /// Automatic versions kept per photo.
 pub const AUTO_VERSIONS: usize = 20;
 
+/// Starts rayon's global pool, where nothing has yet, with its threads named `lc-rayon-N`: a profile, and a frontend's list of its
+/// threads (a native frontend's `ui.inspect {threads}`), then tell its decodes and renders apart from the system's unnamed
+/// threads (card #521). Its size is rayon's own default; a pool already running (a server sized its own) stays as it is.
+/// Not on the web, where rayon falls back to the calling thread only when it builds the pool itself.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn name_pool_threads() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rayon::ThreadPoolBuilder::new().thread_name(|i| format!("lc-rayon-{i}")).build_global();
+    });
+}
+
 /// The parts of `new` that differ from `old` (objects recurse; anything else is taken whole).
 pub fn json_delta(old: &Value, new: &Value) -> Option<Value> {
     match (old, new) {

@@ -20,20 +20,26 @@ pub mod sample;
 pub use compact::{PixelView, Rgb16f, SourcePixels};
 pub use histogram::{HdrBins, Histogram};
 
-/// Run `f` over row chunks, in parallel when the `parallel` feature is on.
+/// The fewest elements a task of [`par_rows`] gets, and the size below which a pass runs on the calling thread. Every
+/// pool thread a pass wakes yields up to 32 times before it sleeps again, so a pass of a thumbnail's size (a 512 px
+/// picture is 174 K pixels, about a millisecond of work) spread over every core cost more in wakeups than it saved
+/// (card #521). ponytail: one size for every pass; give a pass its own if a cheap one ever needs a bigger floor.
+pub const PAR_MIN_ELEMENTS: usize = 1 << 15;
+
+/// Run `f` over row chunks, in parallel when the `parallel` feature is on and the data has more than
+/// [`PAR_MIN_ELEMENTS`]: each task takes whole rows, at least that many elements.
 pub fn par_rows<T: Send>(data: &mut [T], row_len: usize, f: impl Fn(usize, &mut [T]) + Sync + Send) {
     if row_len == 0 {
         return;
     }
     #[cfg(feature = "parallel")]
-    {
+    if data.len() > PAR_MIN_ELEMENTS {
         use rayon::prelude::*;
-        data.par_chunks_mut(row_len).enumerate().for_each(|(y, row)| f(y, row));
+        let rows = PAR_MIN_ELEMENTS.div_ceil(row_len);
+        data.par_chunks_mut(row_len).enumerate().with_min_len(rows).for_each(|(y, row)| f(y, row));
+        return;
     }
-    #[cfg(not(feature = "parallel"))]
-    {
-        data.chunks_mut(row_len).enumerate().for_each(|(y, row)| f(y, row));
-    }
+    data.chunks_mut(row_len).enumerate().for_each(|(y, row)| f(y, row));
 }
 
 /// Run `a` and `b` potentially in parallel (sequentially without the `parallel` feature). For
@@ -351,6 +357,28 @@ impl Rgba8 {
 mod tests {
     use super::*;
     use lightcraft_geom::Orientation;
+
+    /// A pass of a small picture stays on the calling thread (no pool thread woken, card #521); a big one is split, in
+    /// tasks of whole rows of at least `PAR_MIN_ELEMENTS`; both see every row once, with its index.
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn par_rows_keeps_small_passes_on_the_caller_and_visits_every_row() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for (w, h) in [(7usize, 5usize), (300, 109), (2048, 700), (1, 40_000)] {
+            let mut data = vec![0u32; w * h];
+            let pooled = AtomicUsize::new(0);
+            par_rows(&mut data, w, |y, row| {
+                if rayon::current_thread_index().is_some() {
+                    pooled.fetch_add(1, Ordering::Relaxed);
+                }
+                row.iter_mut().for_each(|v| *v += y as u32 + 1);
+            });
+            assert!(data.chunks(w).enumerate().all(|(y, row)| row.iter().all(|&v| v == y as u32 + 1)), "{w}x{h}");
+            if w * h <= PAR_MIN_ELEMENTS {
+                assert_eq!(pooled.load(Ordering::Relaxed), 0, "{w}x{h} went to the pool");
+            }
+        }
+    }
 
     /// `oriented`, `into_oriented` and `orient_map` are the EXIF composition: a horizontal flip, then clockwise turns.
     #[test]
