@@ -1321,6 +1321,66 @@ impl LayerStyle {
     }
 }
 
+/// What a layer behind the subject is covered by ([`ExposureLayer::behind`]): the photo's subject as a native frontend
+/// finds it (`auto`), its people (`people`), or the objects chosen with taps (`objects`: those under the `include`
+/// points, without those under the `exclude` points). Points are in the frame the layers are drawn over, 0..1 from its
+/// top left, so they hold at any size. `feather` softens the cut-out's edge and `shift` moves it out (positive) or in.
+/// A native frontend finds and draws it; this core keeps it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayerSubject {
+    /// `auto`, `people` or `objects` (a name this build does not know reads as `auto`).
+    pub kind: String,
+    /// Taps on the objects that cover the layer, at most [`MAX_SUBJECT_POINTS`].
+    pub include: Vec<[f64; 2]>,
+    /// Taps on what does not cover it, at most [`MAX_SUBJECT_POINTS`].
+    pub exclude: Vec<[f64; 2]>,
+    /// 0..100.
+    pub feather: f64,
+    /// −100..100.
+    pub shift: f64,
+}
+
+/// The most taps of each kind a layer's subject keeps.
+pub const MAX_SUBJECT_POINTS: usize = 16;
+/// The most characters of a layer's own name.
+pub const MAX_LAYER_NAME: usize = 80;
+
+impl Default for LayerSubject {
+    fn default() -> Self {
+        LayerSubject { kind: "auto".into(), include: Vec::new(), exclude: Vec::new(), feather: 0.0, shift: 0.0 }
+    }
+}
+
+impl LayerSubject {
+    pub const KINDS: [&'static str; 3] = ["auto", "people", "objects"];
+
+    /// `self` brought into range (from a file or another device any value can arrive).
+    pub fn sane(&self) -> LayerSubject {
+        let points = |list: &[[f64; 2]]| -> Vec<[f64; 2]> {
+            list.iter()
+                .filter(|p| p[0].is_finite() && p[1].is_finite())
+                .take(MAX_SUBJECT_POINTS)
+                .map(|p| [p[0].clamp(0.0, 1.0), p[1].clamp(0.0, 1.0)])
+                .collect()
+        };
+        let r = |v: f64, lo: f64, hi: f64| if v.is_finite() { v.clamp(lo, hi) } else { 0.0 };
+        LayerSubject {
+            kind: if Self::KINDS.contains(&self.kind.as_str()) { self.kind.clone() } else { "auto".into() },
+            include: points(&self.include),
+            exclude: points(&self.exclude),
+            feather: r(self.feather, 0.0, 100.0),
+            shift: r(self.shift, -100.0, 100.0),
+        }
+    }
+
+    /// The subject as a frontend finds it on its own, its edge untouched: a layer keeps none.
+    pub fn is_plain(&self) -> bool {
+        let s = self.sane();
+        s.kind == "auto" && s.include.is_empty() && s.exclude.is_empty() && s.feather == 0.0 && s.shift == 0.0
+    }
+}
+
 /// A drawing layer's strokes (card #446): an Apple PencilKit drawing (its `dataRepresentation`, base64) in a space
 /// [`DRAWING_WIDTH`] units wide over the frame's width. A native frontend draws it; this core keeps it whole.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1375,6 +1435,13 @@ pub struct ExposureLayer {
     /// plain layer, so the layers there were keep their JSON and `hash64`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub style: Option<LayerStyle>,
+    /// What covers the layer when it is behind the subject, where that is not the subject a frontend finds on its own.
+    /// Not written otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<LayerSubject>,
+    /// The name the layer was given (at most [`MAX_LAYER_NAME`] characters); without one a layer is named by what it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub visible: bool,
     pub blend: LayerBlend,
     /// 0..100.
@@ -1405,6 +1472,8 @@ impl ExposureLayer {
             drawing: None,
             behind: false,
             style: None,
+            subject: None,
+            name: None,
             visible: true,
             blend: LayerBlend::Screen,
             opacity: 100.0,

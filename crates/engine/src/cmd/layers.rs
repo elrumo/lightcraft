@@ -11,12 +11,14 @@
 //! This core stores them and leaves them to a native frontend's renderer: it draws no words, shapes or drawings, and
 //! draws a layer that is behind over the subject. A new layer can be placed where it goes (`x`, `y`, `scale`, `angle`).
 //! `layer.style` gives any layer a border, a shadow, rounded corners and an effect (a sticker, a holographic foil), kept
-//! here and drawn by a native frontend's renderer too.
+//! here and drawn by a native frontend's renderer too. `layer.subject` says what covers a layer behind the subject (the
+//! subject found, the people, or objects chosen with taps, added and taken away one at a time), `layer.rename` names a
+//! layer, and removing, showing, copying and putting behind take several layers at once (`layers`), as one undo step.
 
 use lightcraft_catalog::{MediaKind, PhotoId};
 use lightcraft_develop::{
-    ExposureLayer, LayerBlend, LayerDrawing, LayerShape, LayerStyle, LayerText, MAX_EXPOSURE_LAYERS, MAX_LAYER_DRAWING, MAX_LAYER_FAMILY,
-    MAX_LAYER_TEXT, MAX_LAYERS,
+    ExposureLayer, LayerBlend, LayerDrawing, LayerShape, LayerStyle, LayerSubject, LayerText, MAX_EXPOSURE_LAYERS, MAX_LAYER_DRAWING,
+    MAX_LAYER_FAMILY, MAX_LAYER_NAME, MAX_LAYER_TEXT, MAX_LAYERS, MAX_SUBJECT_POINTS,
 };
 use serde_json::{Value, json};
 
@@ -55,6 +57,75 @@ fn layer_param(p: &Value, key: &str, c: &str) -> Result<usize> {
         .and_then(Value::as_u64)
         .and_then(|v| usize::try_from(v).ok())
         .ok_or_else(|| bad(c, format!("`{key}` must be a layer's index (0 = bottom)")))
+}
+
+/// The layers a call names: `layers` (several indices) or `layer` (one), each once, bottom first, all of them there.
+fn layers_param(p: &Value, layers: &[ExposureLayer], c: &str) -> Result<Vec<usize>> {
+    let mut picked: Vec<usize> = match p.get("layers").filter(|v| !v.is_null()) {
+        Some(v) => {
+            let list = v.as_array().ok_or_else(|| bad(c, "`layers` must be a list of layer indices"))?;
+            let read = |i: &Value| {
+                i.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| bad(c, "`layers` must be a list of layer indices (0 = bottom)"))
+            };
+            list.iter().map(read).collect::<Result<Vec<_>>>()?
+        }
+        None => vec![layer_param(p, "layer", c)?],
+    };
+    picked.sort_unstable();
+    picked.dedup();
+    if picked.is_empty() {
+        return Err(bad(c, "`layers` names no layer"));
+    }
+    for i in &picked {
+        at(layers, *i, c)?;
+    }
+    Ok(picked)
+}
+
+/// A point of a call (`[x, y]`, 0..1 of the frame from its top left), in range.
+fn point(v: &Value, key: &str, c: &str) -> Result<[f64; 2]> {
+    let xy: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+    let [x, y] = xy[..] else { return Err(bad(c, format!("`{key}` must be [x, y], 0..1 of the frame"))) };
+    if !x.is_finite() || !y.is_finite() {
+        return Err(bad(c, format!("`{key}` must be numbers")));
+    }
+    Ok([x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
+}
+
+/// The subject fields a call sets over `su`: `kind`; `include` / `exclude` (the whole list of taps); `addInclude` /
+/// `addExclude` (one more tap, the oldest dropped past the most kept; an added tap makes the subject `objects`);
+/// `clear` (no taps); `feather`, `shift`. Checked and in range.
+fn subject_params(p: &Value, mut su: LayerSubject, c: &str) -> Result<LayerSubject> {
+    if bool_or(p, "clear", false) {
+        su.include.clear();
+        su.exclude.clear();
+    }
+    for (key, list) in [("include", &mut su.include), ("exclude", &mut su.exclude)] {
+        if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
+            let points = v.as_array().ok_or_else(|| bad(c, format!("`{key}` must be a list of [x, y] points")))?;
+            *list = points.iter().map(|xy| point(xy, key, c)).collect::<Result<Vec<_>>>()?;
+        }
+    }
+    for (key, list) in [("addInclude", &mut su.include), ("addExclude", &mut su.exclude)] {
+        if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
+            list.push(point(v, key, c)?);
+            if list.len() > MAX_SUBJECT_POINTS {
+                list.remove(0);
+            }
+            su.kind = "objects".into();
+        }
+    }
+    if let Some(v) = p.get("kind").filter(|v| !v.is_null()) {
+        let kind = v.as_str().filter(|k| LayerSubject::KINDS.contains(k)).ok_or_else(|| bad(c, "`kind` must be auto, people or objects"))?;
+        su.kind = kind.into();
+    }
+    if let Some(v) = num(p, "feather", c)? {
+        su.feather = v;
+    }
+    if let Some(v) = num(p, "shift", c)? {
+        su.shift = v;
+    }
+    Ok(su.sane())
 }
 
 /// The photo the layer commands change: `id`, else the active one.
@@ -309,11 +380,13 @@ fn list(s: &Session, p: &Value) -> Result<Value> {
         .enumerate()
         .map(|(i, l)| {
             let photo = s.catalog.photo(PhotoId(l.photo));
-            let name = match (&l.text, &l.shape, &l.drawing) {
+            let name = match (&l.name, &l.text, &l.shape, &l.drawing) {
+                // (the name it was given)
+                (Some(given), ..) => Some(given.clone()),
                 // (a text layer is named by its first line, a shape by its kind)
-                (Some(t), _, _) => Some(t.text.lines().next().unwrap_or_default().chars().take(60).collect::<String>()),
-                (_, Some(sh), _) => Some(sh.sane().kind),
-                (_, _, Some(_)) => Some("drawing".to_string()),
+                (_, Some(t), _, _) => Some(t.text.lines().next().unwrap_or_default().chars().take(60).collect::<String>()),
+                (_, _, Some(sh), _) => Some(sh.sane().kind),
+                (_, _, _, Some(_)) => Some("drawing".to_string()),
                 _ => photo.map(|ph| match &ph.copy_name {
                     Some(c) => format!("{} ({c})", ph.file_name),
                     None => ph.file_name.clone(),
@@ -401,13 +474,14 @@ pub fn specs() -> Vec<CommandSpec> {
         },
         CommandSpec {
             explicit_targets: true,
-            ..cmd!("layer.delete", "Remove Layer", [], None, "{layer: index, id?}", has_active, |s, p| {
+            ..cmd!("layer.delete", "Remove Layer", [], None, "{layer: index | layers: [index], id?} — one undo step", has_active, |s, p| {
                 const C: &str = "layer.delete";
                 let id = base_of(s, p, C)?;
-                let i = layer_param(p, "layer", C)?;
                 layers_edit(s, id, "Remove Layer", |layers| {
-                    at(layers, i, C)?;
-                    layers.remove(i);
+                    // (top first, so the places below stay as they were named)
+                    for i in layers_param(p, layers, C)?.into_iter().rev() {
+                        layers.remove(i);
+                    }
                     Ok(())
                 })
             })
@@ -419,15 +493,18 @@ pub fn specs() -> Vec<CommandSpec> {
                 "Show/Hide Layer",
                 [],
                 None,
-                "{layer: index, visible?: bool, id?} — toggles when `visible` is left out",
+                "{layer: index | layers: [index], visible?: bool, id?} — toggles when `visible` is left out (several: all shown unless all are, then all hidden)",
                 has_active,
                 |s, p| {
                     const C: &str = "layer.visible";
                     let id = base_of(s, p, C)?;
-                    let i = layer_param(p, "layer", C)?;
                     layers_edit(s, id, "Show/Hide Layer", |layers| {
-                        at(layers, i, C)?;
-                        layers[i].visible = bool_or(p, "visible", !layers[i].visible);
+                        let picked = layers_param(p, layers, C)?;
+                        let all_shown = picked.iter().all(|i| layers[*i].visible);
+                        let visible = bool_or(p, "visible", !all_shown);
+                        for i in picked {
+                            layers[i].visible = visible;
+                        }
                         Ok(())
                     })
                 }
@@ -615,19 +692,20 @@ pub fn specs() -> Vec<CommandSpec> {
                 "Duplicate Layer",
                 [],
                 None,
-                "{layer: index, id?} — a copy of the layer just above it, moved a little so both show",
+                "{layer: index | layers: [index], id?} — a copy of each layer just above it, moved a little so both show; one undo step",
                 has_active,
                 |s, p| {
                     const C: &str = "layer.duplicate";
                     let id = base_of(s, p, C)?;
-                    let i = layer_param(p, "layer", C)?;
                     layers_edit(s, id, "Duplicate Layer", |layers| {
-                        at(layers, i, C)?;
-                        room(layers, layers[i].is_photo(), C)?;
-                        let mut copy = layers[i].clone();
-                        copy.x = (copy.x + 4.0).clamp(-100.0, 100.0);
-                        copy.y = (copy.y + 4.0).clamp(-100.0, 100.0);
-                        layers.insert(i + 1, copy);
+                        // (top first, so a copy put in does not move the places still to copy)
+                        for i in layers_param(p, layers, C)?.into_iter().rev() {
+                            room(layers, layers[i].is_photo(), C)?;
+                            let mut copy = layers[i].clone();
+                            copy.x = (copy.x + 4.0).clamp(-100.0, 100.0);
+                            copy.y = (copy.y + 4.0).clamp(-100.0, 100.0);
+                            layers.insert(i + 1, copy);
+                        }
                         Ok(())
                     })
                 }
@@ -640,15 +718,71 @@ pub fn specs() -> Vec<CommandSpec> {
                 "Behind Subject",
                 [],
                 None,
-                "{layer: index, behind?: bool, id?} — the photo's subject covers the layer (toggles when `behind` is left out); drawn by a native frontend, this core draws the layer over the subject",
+                "{layer: index | layers: [index], behind?: bool, id?} — the photo's subject covers the layer (toggles when `behind` is left out); drawn by a native frontend, this core draws the layer over the subject",
                 has_active,
                 |s, p| {
                     const C: &str = "layer.behind";
                     let id = base_of(s, p, C)?;
-                    let i = layer_param(p, "layer", C)?;
                     layers_edit(s, id, "Behind Subject", |layers| {
+                        let picked = layers_param(p, layers, C)?;
+                        let all_behind = picked.iter().all(|i| layers[*i].behind);
+                        let behind = bool_or(p, "behind", !all_behind);
+                        for i in picked {
+                            layers[i].behind = behind;
+                        }
+                        Ok(())
+                    })
+                }
+            )
+        },
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "layer.subject",
+                "Layer Subject",
+                [],
+                None,
+                "{layer: index, kind?: auto|people|objects, include?: [[x, y]], exclude?: [[x, y]] (taps, 0..1 of the frame from its top left; the whole list), addInclude?: [x, y], addExclude?: [x, y] (one more tap: the subject becomes `objects`), clear?: bool (no taps), feather?: 0..100, shift?: -100..100, id?} — what covers the layer when it is behind the subject: the subject a native frontend finds, the people, or the objects under the included taps without those under the excluded ones; a tap added puts the layer behind. The fields left out are kept",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.subject";
+                    let id = base_of(s, p, C)?;
+                    let i = layer_param(p, "layer", C)?;
+                    layers_edit(s, id, "Layer Subject", |layers| {
                         at(layers, i, C)?;
-                        layers[i].behind = bool_or(p, "behind", !layers[i].behind);
+                        let subject = subject_params(p, layers[i].subject.clone().unwrap_or_default().sane(), C)?;
+                        // (an object tapped is something to sit behind)
+                        if p.get("addInclude").is_some_and(|v| !v.is_null()) {
+                            layers[i].behind = true;
+                        }
+                        layers[i].subject = if subject.is_plain() { None } else { Some(subject) };
+                        Ok(())
+                    })
+                }
+            )
+        },
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "layer.rename",
+                "Rename Layer",
+                [],
+                None,
+                "{layer: index, name: string (empty: named by what it is again), id?}",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.rename";
+                    let id = base_of(s, p, C)?;
+                    let i = layer_param(p, "layer", C)?;
+                    let name = str_param(p, "name")
+                        .ok_or_else(|| bad(C, "`name` must be a string"))?
+                        .trim()
+                        .chars()
+                        .take(MAX_LAYER_NAME)
+                        .collect::<String>();
+                    layers_edit(s, id, "Rename Layer", |layers| {
+                        at(layers, i, C)?;
+                        layers[i].name = if name.is_empty() { None } else { Some(name) };
                         Ok(())
                     })
                 }
@@ -684,7 +818,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 "List Layers",
                 [],
                 None,
-                "{id?} → {id, layers: [{index, kind: photo|text|shape|drawing, photo, text?, shape?, drawing?, behind?, style?, visible, blend, opacity, x, y, scale, angle, name, state: ok|missing|deleted|video|local, drawn}], max, maxPhotos, shown} — the photo's layers, each with what its photo is now (a text layer is named by its first line, a shape by its kind)",
+                "{id?} → {id, layers: [{index, kind: photo|text|shape|drawing, photo, text?, shape?, drawing?, behind?, style?, subject?, visible, blend, opacity, x, y, scale, angle, name, state: ok|missing|deleted|video|local, drawn}], max, maxPhotos, shown} — the photo's layers, each with what its photo is now (a text layer is named by its first line, a shape by its kind)",
                 has_active,
                 |s, p| list(s, p)
             )

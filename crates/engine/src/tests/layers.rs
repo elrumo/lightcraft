@@ -360,3 +360,84 @@ fn a_layers_style_is_set_kept_in_range_dropped_when_plain_and_undone() {
         assert!(st.border >= 0.0 && st.shadow <= 100.0 && st.radius <= 50.0 && st.effect == "none", "{st:?}");
     }
 }
+
+#[test]
+fn a_layers_subject_name_and_several_layers_at_once() {
+    let mut s = Session::with_demo();
+    let id = s.catalog.photos().map(|p| p.id).next().unwrap();
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    for _ in 0..4 {
+        s.execute("layer.addShape", &json!({})).unwrap();
+    }
+    let layer = |s: &Session, i: usize| s.develop_of(id).unwrap().exposure_layers[i].clone();
+
+    // a tap on an object: the layer goes behind it, and the subject is the objects tapped
+    s.execute("layer.subject", &json!({"layer": 0, "addInclude": [0.25, 7.0]})).unwrap();
+    s.execute("layer.subject", &json!({"layer": 0, "addInclude": [0.6, 0.4], "addExclude": [0.9, 0.9], "feather": 900, "shift": -900})).unwrap();
+    let su = layer(&s, 0).subject.unwrap();
+    assert!(layer(&s, 0).behind);
+    assert_eq!((su.kind.as_str(), su.include.clone(), su.exclude.clone()), ("objects", vec![[0.25, 1.0], [0.6, 0.4]], vec![[0.9, 0.9]]));
+    assert_eq!((su.feather, su.shift), (100.0, -100.0));
+    // no more than the most kept: the oldest go
+    for n in 0..40 {
+        s.execute("layer.subject", &json!({"layer": 0, "addInclude": [f64::from(n) / 40.0, 0.5]})).unwrap();
+    }
+    assert_eq!(layer(&s, 0).subject.unwrap().include.len(), lightcraft_develop::MAX_SUBJECT_POINTS);
+    // the whole lists set, the kind chosen, and all of it put back: no subject kept
+    s.execute("layer.subject", &json!({"layer": 0, "include": [[0.5, 0.5]], "exclude": [], "kind": "people"})).unwrap();
+    assert_eq!(layer(&s, 0).subject.unwrap().kind, "people");
+    s.execute("layer.subject", &json!({"layer": 0, "clear": true, "kind": "auto", "feather": 0, "shift": 0})).unwrap();
+    assert!(layer(&s, 0).subject.is_none());
+    for bad in [
+        json!({"layer": 0, "kind": "sky"}),
+        json!({"layer": 0, "addInclude": [1]}),
+        json!({"layer": 0, "include": [[0.1, "y"]]}),
+        json!({"layer": 9, "kind": "auto"}),
+    ] {
+        assert!(s.execute("layer.subject", &bad).is_err(), "{bad}");
+    }
+
+    // a name of its own is listed, cut to length, and taken away by an empty one
+    s.execute("layer.rename", &json!({"layer": 1, "name": format!("  Title {}  ", "x".repeat(200))})).unwrap();
+    let listed = s.execute("layer.list", &json!({})).unwrap();
+    let name = listed["layers"][1]["name"].as_str().unwrap().to_string();
+    assert!(name.starts_with("Title x") && name.chars().count() == lightcraft_develop::MAX_LAYER_NAME, "{name}");
+    assert_eq!(listed["layers"][2]["name"], "rectangle");
+    s.execute("layer.rename", &json!({"layer": 1, "name": " "})).unwrap();
+    assert!(layer(&s, 1).name.is_none());
+    assert!(s.execute("layer.rename", &json!({"layer": 1})).is_err());
+
+    // several layers at once, each one undo step
+    s.execute("layer.visible", &json!({"layers": [1, 3, 3]})).unwrap();
+    assert_eq!((0..4).map(|i| layer(&s, i).visible).collect::<Vec<_>>(), [true, false, true, false]);
+    s.execute("layer.visible", &json!({"layers": [0, 1]})).unwrap();
+    assert!(layer(&s, 0).visible && layer(&s, 1).visible, "some hidden: all shown");
+    s.execute("layer.behind", &json!({"layers": [2, 3], "behind": true})).unwrap();
+    assert!(layer(&s, 2).behind && layer(&s, 3).behind);
+    s.execute("layer.rename", &json!({"layer": 0, "name": "bottom"})).unwrap();
+    s.execute("layer.duplicate", &json!({"layers": [0, 3]})).unwrap();
+    let names: Vec<Option<String>> = s.develop_of(id).unwrap().exposure_layers.iter().map(|l| l.name.clone()).collect();
+    assert_eq!(names.len(), 6);
+    assert_eq!((names[0].as_deref(), names[1].as_deref()), (Some("bottom"), Some("bottom")), "the copy sits just above");
+    s.execute("layer.delete", &json!({"layers": [5, 0, 1]})).unwrap();
+    assert_eq!(s.develop_of(id).unwrap().exposure_layers.len(), 3);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.develop_of(id).unwrap().exposure_layers.len(), 6, "one undo brings all three back");
+    for bad in [json!({"layers": []}), json!({"layers": [0, 99]}), json!({"layers": "all"}), json!({})] {
+        assert!(s.execute("layer.delete", &bad).is_err(), "{bad}");
+    }
+
+    // from a file anything can arrive
+    let d: lightcraft_develop::DevelopSettings = serde_json::from_value(json!({"exposure_layers": [
+        {"subject": {"kind": 3, "include": [[2, -1], ["a", 1], [0.5]], "feather": "soft"}, "name": 12},
+        {"subject": {"kind": "moon", "include": [[9.0, -9.0]], "shift": 1e300}},
+    ]}))
+    .unwrap_or_default();
+    for l in &d.exposure_layers {
+        let su = l.subject.clone().unwrap_or_default().sane();
+        assert!(
+            su.kind == "auto" && su.shift <= 100.0 && su.include.iter().all(|p| (0.0..=1.0).contains(&p[0]) && (0.0..=1.0).contains(&p[1])),
+            "{su:?}"
+        );
+    }
+}

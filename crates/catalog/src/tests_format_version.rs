@@ -446,13 +446,13 @@ fn op_variants_are_versioned() {
     /// `Catalog.grids` / `SegMask.grid` and upstream's Lens Blur fields. Before it, v12 carried `DevelopSettings.video`,
     /// a clip's trim and poster frame, v13 wrote the snapshot's settings as what differs from its `defaults`
     /// (`crate::compact`), v14 carried `Photo.origin`, v16 `ExposureLayer.text` / `behind` and v17 `ExposureLayer.shape` /
-    /// `drawing`, v18 `LayerText`'s type options and v19 `ExposureLayer.style`: none has an op of its own
+    /// `drawing`, v18 `LayerText`'s type options, v19 `ExposureLayer.style` and v20 `ExposureLayer.subject` and `name`: none has an op of its own
     /// (v9 was upstream's `Photo.preview_checked`).
-    const NEWEST_FIELDS: u32 = 19;
+    const NEWEST_FIELDS: u32 = 20;
     let newest = since(&Op::SetHidden { id: PhotoId(1), hidden: true });
     assert_eq!(newest.max(NEWEST_FIELDS), VERSION, "the newest op's or fields' version must be the current format version");
-    /// The newest version whose ops or fields go over the sync protocol (v19's layer styles, v18's type options, v17's shape and drawing layers, v16's text and behind-the-subject layers; v13
+    /// The newest version whose ops or fields go over the sync protocol (v20's layer subjects and names, v19's layer styles, v18's type options, v17's shape and drawing layers, v16's text and behind-the-subject layers; v13
     /// is only how `catalog.snap` is written, and so is v15's shared grid table).
-    const NEWEST_SYNCED_FIELDS: u32 = 19;
+    const NEWEST_SYNCED_FIELDS: u32 = 20;
     assert_eq!(newest.max(NEWEST_SYNCED_FIELDS), crate::journal::SYNC_VERSION, "a new op or synced field raises SYNC_VERSION");
 }
