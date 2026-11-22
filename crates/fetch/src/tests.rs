@@ -80,6 +80,15 @@ fn handle(mut s: TcpStream, hits: &AtomicUsize) {
             b[1000] ^= 0xff;
             send(&mut s, "200 OK", &format!("Content-Length: {}\r\n", b.len()), &b)
         }
+        // `/wrongtag/<tag>/…`: the damaged file, `/goodtag/<tag>/…`: the right one, each with ETag `"<tag>"`
+        "wrongtag" | "goodtag" => {
+            let tag = path.trim_start_matches('/').split('/').nth(1).unwrap_or("");
+            let mut b = body.clone();
+            if mode == "wrongtag" {
+                b[1000] ^= 0xff;
+            }
+            send(&mut s, "200 OK", &format!("ETag: \"{tag}\"\r\nContent-Length: {}\r\n", b.len()), &b)
+        }
         "toolong" => {
             // no length announced, more bytes than the file can have
             let mut b = body.clone();
@@ -183,6 +192,33 @@ fn a_hash_mismatch_is_deleted_and_the_next_mirror_used() {
     assert!(e.contains("SHA-256"), "{e}");
     assert!(!dir.join("model.bin").exists() && !part_path(&dir, "model.bin").exists(), "a damaged file is never kept");
     run(&[pinned()], &[format!("{}/wrong", srv.base), format!("{}/good", srv.base)], &dir, &AtomicBool::new(false)).0.unwrap();
+    assert_eq!(std::fs::read(dir.join("model.bin")).unwrap(), payload());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A damaged file was downloaded whole again from the next mirror (two names for one bucket) and again at every try:
+/// 934 MB written for each tap on a 467 MB model whose mirror held a bad copy. A file that failed its check is not
+/// downloaded again while the server answers with the same ETag; once it holds another, it is.
+#[test]
+fn a_damaged_file_is_not_downloaded_again_while_its_etag_is_the_same() {
+    let srv = server();
+    let dir = tmp("badtag");
+    // a tag of this test's own: the list of damaged files is the process's
+    let tag = format!("hb-bad-{}", std::process::id());
+    let (first, alias) = (format!("{}/wrongtag/{tag}", srv.base), format!("{}/wrongtag/{tag}/alias", srv.base));
+    let fetched = |seen: &[Progress], mirror: &str| seen.iter().any(|p| p.done > 0 && p.mirror == Url::parse(mirror).unwrap().display());
+    let (r, seen) = run(&[pinned()], &[first.clone(), alias.clone()], &dir, &AtomicBool::new(false));
+    let e = r.unwrap_err().to_string();
+    assert!(e.contains("SHA-256") && e.contains("not downloaded again"), "{e}");
+    assert!(fetched(&seen, &first), "the first mirror's copy is downloaded and checked");
+    assert!(!fetched(&seen, &alias), "the same damaged copy is not downloaded from the next mirror: {seen:?}");
+    // the next try: nothing downloaded, nothing kept
+    let (r, seen) = run(&[pinned()], std::slice::from_ref(&first), &dir, &AtomicBool::new(false));
+    assert!(r.unwrap_err().to_string().contains("not downloaded again"));
+    assert!(!seen.iter().any(|p| p.done > 0), "{seen:?}");
+    assert!(!dir.join("model.bin").exists() && !part_path(&dir, "model.bin").exists());
+    // fixed on the server (another tag): downloaded
+    run(&[pinned()], &[format!("{}/goodtag/{tag}-fixed", srv.base)], &dir, &AtomicBool::new(false)).0.unwrap();
     assert_eq!(std::fs::read(dir.join("model.bin")).unwrap(), payload());
     let _ = std::fs::remove_dir_all(&dir);
 }

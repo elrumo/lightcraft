@@ -7,7 +7,9 @@
 //!
 //! Files are written to `<name>.part` next to their final place and renamed when verified, so a
 //! model folder never holds a half-written file under a real name, and an interrupted download
-//! resumes from where it stopped. A file that fails its check is deleted, never kept.
+//! resumes from where it stopped. A file that fails its check is deleted, never kept, and is not downloaded again
+//! while a mirror answers with the same `ETag` (the same damaged file, from another name for the same storage or at the
+//! next try).
 //!
 //! What to download and where from belongs to the caller: it passes the [`FileSpec`]s and the
 //! default mirrors (see [`mirrors`]). `lightcraft-segment` does so for the SAM 3 weights, which
@@ -315,6 +317,34 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// Most files remembered as failing their check (a server that sends a new tag with every damaged copy can't make the
+/// list grow without end).
+const MAX_BAD: usize = 64;
+
+/// The versions of pinned files (the SHA-256 wanted, the server's `ETag`) that were downloaded whole and failed their
+/// check, in this process. A mirror answering with one of them has the same damaged file: it is not downloaded again,
+/// neither from the next mirror (two names for one bucket) nor at the next try. A changed file has another tag.
+/// ponytail: kept in memory, so a relaunch downloads a still-damaged file once more; keep it on disk if that matters.
+static BAD: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+fn bad_list() -> std::sync::MutexGuard<'static, Vec<(String, String)>> {
+    BAD.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn known_bad(sha256: &str, etag: &str) -> bool {
+    bad_list().iter().any(|(s, t)| s == sha256 && t == etag)
+}
+
+fn remember_bad(sha256: &str, etag: &str) {
+    let mut bad = bad_list();
+    if !bad.iter().any(|(s, t)| s == sha256 && t == etag) {
+        if bad.len() >= MAX_BAD {
+            bad.remove(0);
+        }
+        bad.push((sha256.to_string(), etag.to_string()));
+    }
+}
+
 /// A new, empty partial download at `part`, created exclusively after removing whatever was there (a link itself,
 /// never its target).
 fn new_part(part: &Path) -> std::io::Result<File> {
@@ -345,6 +375,8 @@ fn fetch_file(f: &FileSpec<'_>, url: &str, dir: &Path, opts: &Options, cancel: &
         Err(_) => 0,
     };
     let fetched = f.size != Some(have) || have == 0;
+    // (the server's tag for the file this try fetched)
+    let mut etag = None;
     if fetched {
         let limits = Limits { connect: opts.connect_timeout, stall: opts.stall_timeout, cancel };
         let mut url = Url::parse(url).map_err(|e| Fail::NextMirror(e.to_string()))?;
@@ -372,6 +404,15 @@ fn fetch_file(f: &FileSpec<'_>, url: &str, dir: &Path, opts: &Options, cancel: &
                 _ => break r,
             }
         };
+        let tag = resp.header("etag").map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+        if matches!(resp.status, 200 | 206)
+            && let (Some(want), Some(tag)) = (f.sha256, tag.as_deref())
+            && known_bad(want, tag)
+        {
+            return Err(Fail::NextMirror("it still has the damaged file an earlier try got (the same ETag): not downloaded again".into()));
+        }
+        // (remembered only for a file this answer sends whole: a resumed one may fail for the part an earlier try kept)
+        etag = tag.filter(|_| resp.status == 200);
         let mut file = match resp.status {
             200 => {
                 // the whole file (from the start, also when a range was asked for)
@@ -444,6 +485,9 @@ fn fetch_file(f: &FileSpec<'_>, url: &str, dir: &Path, opts: &Options, cancel: &
     if let Some(want) = f.sha256 {
         let got = sha256_file(&part).map_err(Fail::Disk)?;
         if got != want {
+            if fetched && let Some(tag) = etag.as_deref() {
+                remember_bad(want, tag);
+            }
             std::fs::remove_file(&part).map_err(disk)?;
             let why = format!("the file is damaged or not the official one (SHA-256 {got})");
             // a damaged partial file from an earlier run isn't this mirror's fault
