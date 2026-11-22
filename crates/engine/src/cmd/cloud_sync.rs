@@ -274,6 +274,8 @@ fn shares_list(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn download_originals(s: &mut Session, p: &Value) -> Result<Value> {
+    // (a call that names its photos skipped `synced_selection`: the library must still be synced)
+    synced(s).map_err(|why| EngineError::Disabled("sync.downloadOriginals".into(), why))?;
     let ids = s.targets(p)?;
     let n = s.sync_want_originals(&ids);
     Ok(json!({"queued": n}))
@@ -441,15 +443,20 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "shares.list", "Shared Links", [], None,
             "{refresh?: bool} → {shares: [{id, album, name, url, created, expires, originals}], error}: this user's album links (asked of the server once, then kept up to date; `refresh` asks again)",
             signed_in, shares_list),
-        cmd!(
-            "sync.downloadOriginals",
-            "Download Originals",
-            ["Photo"],
-            None,
-            "{ids?}: download these photos' originals to this device (default: the selection)",
-            synced_selection,
-            download_originals
-        ),
+        // (`explicit_targets`: an export waits for the originals of the photos it names, whatever is selected, and was refused for an empty
+        // selection; `download_originals` checks the library is synced itself)
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "sync.downloadOriginals",
+                "Download Originals",
+                ["Photo"],
+                None,
+                "{ids?}: download these photos' originals to this device (default: the selection)",
+                synced_selection,
+                download_originals
+            )
+        },
         cmd!(
             "sync.rebuildPreviews",
             "Rebuild Previews",

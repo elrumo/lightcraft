@@ -410,7 +410,9 @@ fn two_devices_share_photos_edits_and_files() {
 
     // the active photo's smart preview comes down for the loupe
     assert!(smart_dir.join(crate::smart::file_name(b.catalog.photo(ids[1]).unwrap())).exists());
-    // and an original on request: the photo then points at the downloaded file (here only)
+    // and an original on request: the photo then points at the downloaded file (here only); asked by id with nothing
+    // selected, as an export waits for the originals of the photos it names
+    b.selection = crate::Selection::default();
     b.execute("sync.downloadOriginals", &json!({"ids": [ids[1].0]})).unwrap();
     sync(&mut b, &mut f);
     let p = b.catalog.photo(ids[1]).unwrap();
@@ -3216,4 +3218,14 @@ fn a_hostile_answer_to_a_held_pull_is_a_failure() {
     let held = a.sync_watch().unwrap();
     assert!(matches!(&held, Task::Http { url, .. } if url.ends_with("&wait=25")), "{held:?}");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+// A download asked by id skips the selection check, not the sync one: a library that isn't synced still refuses it
+#[test]
+fn originals_asked_by_id_need_a_synced_library() {
+    let mut s = Session::with_demo();
+    let id = s.visible_cloned()[0];
+    s.selection = crate::Selection::default();
+    let e = s.execute("sync.downloadOriginals", &json!({"ids": [id.0]})).unwrap_err().to_string();
+    assert!(e.contains("isn't synced"), "{e}");
 }

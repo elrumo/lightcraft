@@ -186,15 +186,21 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cmd!(
-        "photo.attachDecoded",
-        "Develop with System Decoder",
-        [],
-        None,
-        "{id, path, previewPath?, whiteXY?, baselineExposure?, compact?, force?} — a raw shown from its embedded preview (no decoder here) becomes a raw again: `path` is a float TIFF of its linear development by the host's own decoder (on Apple platforms: Core Image's), `previewPath` a JPEG of the same picture as the host renders it (the starting look), `whiteXY` the scene white it balanced for (the as-shot white), written as a LinearRaw DNG in the library's Derived folder and linked like Convert to DNG (the original stays). Refused for a photo with edits unless `force` → {id, path, original, width, height}",
-        has_selection,
-        attach
-    )]
+    // (`explicit_targets`: a call that names its photo is not refused for an empty selection, and `attach` checks that photo itself. A native
+    // frontend's export develops the preview-only raws it names before drawing them, whatever is selected: refused, a compressed ORF exported
+    // from a script, the control channel or a sheet given its photos went out at its embedded preview's 3200 x 2400, not its 5184 x 3888)
+    vec![CommandSpec {
+        explicit_targets: true,
+        ..cmd!(
+            "photo.attachDecoded",
+            "Develop with System Decoder",
+            [],
+            None,
+            "{id, path, previewPath?, whiteXY?, baselineExposure?, compact?, force?} — a raw shown from its embedded preview (no decoder here) becomes a raw again: `path` is a float TIFF of its linear development by the host's own decoder (on Apple platforms: Core Image's), `previewPath` a JPEG of the same picture as the host renders it (the starting look), `whiteXY` the scene white it balanced for (the as-shot white), written as a LinearRaw DNG in the library's Derived folder and linked like Convert to DNG (the original stays). Refused for a photo with edits unless `force` → {id, path, original, width, height}",
+            has_selection,
+            attach
+        )
+    }]
 }
 
 #[cfg(test)]
@@ -289,6 +295,25 @@ mod tests {
         let mut s = crate::Session::new().with_fs();
         s.open_library(dir.join("lib"), false).unwrap();
         assert!(s.catalog.photo(id).unwrap().develops_raw());
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A call that names its photo is taken with nothing selected (an export from a script or the control channel names its photos and
+    /// selects none); one that names none still needs a selection.
+    #[test]
+    fn a_photo_named_by_id_takes_a_stand_in_with_nothing_selected() {
+        let (mut s, dir, files) = library("stand-in-unselected");
+        let id = import_preview_only(&mut s, &files, "DSC_0004.cr3");
+        let tiff = dir.join("linear.tif");
+        std::fs::write(&tiff, linear_tiff(32, 32, 1.0)).unwrap();
+        s.selection.ids.clear();
+        s.selection.active = None;
+        let e = s.execute("photo.attachDecoded", &json!({"path": tiff.to_string_lossy()})).unwrap_err().to_string();
+        assert!(e.contains("no photos selected"), "{e}");
+        let r = s.execute("photo.attachDecoded", &json!({"id": id.0, "path": tiff.to_string_lossy()})).unwrap();
+        assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(32), Some(32)), "{r}");
+        assert!(s.catalog.photo(id).unwrap().preview_only.is_none());
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
     }
