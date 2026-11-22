@@ -229,6 +229,16 @@ fn point_color(k: u32, lch: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(l, c, h);
 }
 
+// `colorops::vibrance_scale`.
+fn vibrance_scale(vib: f32, c: f32, h: f32) -> f32 {
+    if (vib > 0.0) {
+        let protect = VIBRANCE_PROTECT
+            * (1.0 - sstep(0.5 * VIBRANCE_PROTECT_WIDTH, VIBRANCE_PROTECT_WIDTH, abs(wrap_angle(h - pf(F_SKIN)))));
+        return 1.0 + vib * VIBRANCE_UP * clamp(1.0 - c / VIBRANCE_CHROMA, 0.0, 1.0) * (1.0 - protect);
+    }
+    return exp(vib * VIBRANCE_DOWN);
+}
+
 // `ColorOps::apply`.
 fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     if (pu(F_OPS_IDENTITY) != 0u && local_sat == 0.0 && local_hue == 0.0) {
@@ -272,13 +282,7 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     }
     let vib = pf(F_VIBRANCE);
     if (vib != 0.0) {
-        let low = 1.0 - clamp(c / 0.22, 0.0, 1.0);
-        var skin = 1.0;
-        if (vib > 0.0) {
-            let q = wrap_angle(h - pf(F_SKIN)) / 0.35;
-            skin = 1.0 - 0.6 * exp(-(q * q));
-        }
-        c *= max(1.0 + vib * low * low * skin * 1.2, 0.0);
+        c *= vibrance_scale(vib, c, h);
     }
     let sat = pf(F_SATURATION);
     if (sat != 0.0 || local_sat != 0.0) {
@@ -307,16 +311,25 @@ fn color_ops(rgb: vec3<f32>, local_sat: f32, local_hue: f32) -> vec3<f32> {
     }
     var lab = vec3<f32>(l, c * cos(h), c * sin(h));
     if (pu(F_GRADING) != 0u) {
-        let m = GRADING_SPLIT - pf(F_BALANCE) * 0.25;
-        let width = 0.15 + pf(F_BLENDING) * GRADING_BLEND_WIDTH;
-        let ws = 1.0 - sstep(m - width, m + width * 0.25, lab.x);
-        let wh = sstep(m - width * 0.25, m + width, lab.x);
-        let wm = max(1.0 - ws - wh, 0.0);
+        // `colorops::grading_weights` and `grading_fade` (F_BLENDING: the wide windows' share, F_BALANCE: the
+        // exponent on lightness; a base of 0 is kept off `pow`)
+        let gl = clamp(lab.x, 0.0, 1.0);
+        let x = pow(max(gl, 1e-6), pf(F_BALANCE));
+        let wide = pf(F_BLENDING);
+        let ws = 1.0 - mix(sstep(GRADING_SN0, GRADING_SN1, x), sstep(GRADING_SW0, GRADING_SW1, x), wide);
+        let wh = mix(sstep(GRADING_HN0, GRADING_HN1, x), sstep(GRADING_HW0, GRADING_HW1, x), wide);
+        let wm = 1.0 - sstep(0.0, 1.0, abs(x - GRADING_MID) / GRADING_MID_WIDTH);
+        var fade = 1.0;
+        if (gl < GRADING_FADE_AT) {
+            fade = 1.0 - pow(max((GRADING_FADE_AT - gl) / GRADING_FADE_AT, 1e-6), GRADING_FADE_DARK);
+        } else {
+            fade = 1.0 - pow(max((gl - GRADING_FADE_AT) / (1.0 - GRADING_FADE_AT), 1e-6), GRADING_FADE_BRIGHT);
+        }
         let wts = array<f32, 4>(ws, wm, wh, 1.0);
         for (var k = 0u; k < 4u; k++) {
             let wt = wts[k];
-            lab.y += pf(F_WHEELS + 3u * k) * wt;
-            lab.z += pf(F_WHEELS + 3u * k + 1u) * wt;
+            lab.y += pf(F_WHEELS + 3u * k) * wt * fade;
+            lab.z += pf(F_WHEELS + 3u * k + 1u) * wt * fade;
             lab.x += pf(F_WHEELS + 3u * k + 2u) * wt;
         }
     }

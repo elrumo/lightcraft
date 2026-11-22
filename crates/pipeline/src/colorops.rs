@@ -211,10 +211,43 @@ pub struct ColorOps {
     /// Point Color samples that change something (applied after the mixer).
     pub points: Vec<PointK>,
     pub bw: Option<[f32; 8]>,
-    /// Wheels (shadows, midtones, highlights, global), blending, balance.
+    /// Wheels (shadows, midtones, highlights, global), then Blending and Balance as the per-pixel stage reads them:
+    /// the share of the wide windows ([`grading_mix`]) and the exponent on lightness ([`grading_gamma`]).
     pub grading: Option<([WheelK; 4], f32, f32)>,
-    /// OkLCh hue of skin tones (protected by vibrance).
+    /// OkLCh hue (radians) at the middle of the colours a raised Vibrance protects ([`VIBRANCE_PROTECT_HUE`]).
     pub skin: f32,
+}
+
+// Vibrance is fitted to Lightroom's exports of six cameras' raws with Vibrance alone at +50 and −50 (cards #386 / #388,
+// `docs/lightroom-preset-fit.md`). There −50 scales the chroma of every colour by about a half, weak or strong alike,
+// and +50 raises it by 30 to 45 % with reds to oranges held to 10 to 13 %; the earlier `1 ± v · 1.2 · (1 − c / 0.22)²`
+// left strong colours almost alone both ways (−50 kept 0.64 to 0.94 of the chroma). Lightroom's Vibrance also moves
+// lightness with the hue (−50 darkens yellows and greens by 3 to 5 L* and lightens blues by up to 6): not modelled.
+
+/// Chroma gain of a weak colour at Vibrance +100 (`1 + VIBRANCE_UP`), away from the protected hues.
+pub const VIBRANCE_UP: f32 = 0.66;
+/// OkLab chroma at which a raised Vibrance would no longer add anything (the gain falls linearly towards it: Lightroom's
+/// falls only a little with chroma, 1.41 for weak yellows against 1.30 for strong ones).
+pub const VIBRANCE_CHROMA: f32 = 1.0;
+/// Lowering Vibrance scales chroma by `exp(v · VIBRANCE_DOWN)`: 0.58 at −50, a third at −100.
+pub const VIBRANCE_DOWN: f32 = 1.1;
+/// Middle of the hues a raised Vibrance protects (OkLCh, radians: reds to oranges, skin among them).
+pub const VIBRANCE_PROTECT_HUE: f32 = 0.35;
+/// Half-width of the protected hues (radians): protected in full inside half of it, not at all outside it.
+pub const VIBRANCE_PROTECT_WIDTH: f32 = 1.2;
+/// How much of a raised Vibrance the protected hues lose.
+pub const VIBRANCE_PROTECT: f32 = 0.7;
+
+/// Vibrance's chroma scale (`vib` −1..1) for a colour of OkLab chroma `c` and hue `h` (radians), `skin` the middle of
+/// the protected hues.
+#[inline]
+pub fn vibrance_scale(vib: f32, c: f32, h: f32, skin: f32) -> f32 {
+    if vib > 0.0 {
+        let protect = VIBRANCE_PROTECT * (1.0 - smooth(0.5 * VIBRANCE_PROTECT_WIDTH, VIBRANCE_PROTECT_WIDTH, wrap(h - skin).abs()));
+        1.0 + vib * VIBRANCE_UP * (1.0 - c / VIBRANCE_CHROMA).clamp(0.0, 1.0) * (1.0 - protect)
+    } else {
+        (vib * VIBRANCE_DOWN).exp()
+    }
 }
 
 /// How much darker Density at +100 makes a fully colourful pixel (OkLab lightness × `1 − DENSITY_DEPTH`), and how far
@@ -232,18 +265,106 @@ pub fn deepen(l: f32, c: f32, density: f32) -> (f32, f32) {
     if k >= 0.0 { (l * (1.0 - DENSITY_DEPTH * k), c) } else { (l - (1.0 - l).max(0.0) * DENSITY_DEPTH * k, c * (1.0 + DENSITY_DEPTH * k)) }
 }
 
-/// OkLab chroma a colour grading wheel adds at saturation 100.
-pub const GRADING_CHROMA: f32 = 0.08;
-/// OkLab lightness where shadows and highlights part at Balance 0: display mid-grey (sRGB 0.5 is OkLab 0.6), where
-/// Lightroom's shadow wheel still tints most of the mids (its Phoenix 200 preset's yellow shadows reach the grass).
-pub const GRADING_SPLIT: f32 = 0.62;
-/// How far Blending (0..1) widens the transition between the ranges, in OkLab lightness.
-pub const GRADING_BLEND_WIDTH: f32 = 0.42;
+// Colour grading is fitted to Lightroom's exports of six cameras' raws (Sony ILCE-6000 and ILCE-6700, Canon EOS RP,
+// Fujifilm X-A5, Nikon D70, Olympus E-1) with one wheel at a time: the global wheel at four hues, shadows at Blending
+// 0 / 50 / 100 and Balance +50, highlights at Blending 50 / 100 and Balance −50, midtones, and Shadows Luminance
+// (cards #386 / #388, `docs/lightroom-preset-fit.md`). What they show, and the earlier model (an OkLab offset towards
+// the wheel's sRGB hue, the same at every lightness) did not have:
+// - a wheel's hue is an HSV hue on ProPhoto's primaries: the tint's direction matches that on seven hues within 3°
+//   (sRGB's are 10 to 30° away), and so does its strength from hue to hue ([`grading_tint`]);
+// - the tint fades towards black and white ([`grading_fade`]);
+// - Blending mixes two fixed windows per range, a narrow one (0) and a wide one (100), and at 50 the wide ones have
+//   under a quarter of the say; Balance moves the ranges like a gamma on lightness ([`grading_weights`]);
+// - the midtone window is a bump of its own, and the shadow and highlight wheels are stronger than the global one.
+// A file without `ColorGradeBlending` is Blending 100 there (the older Split Toning panel).
 
-fn wheel(w: &lightcraft_develop::Wheel) -> WheelK {
-    let h = oklch_hue_of_srgb_hue(w.hue);
-    let s = (w.sat / 100.0) as f32 * GRADING_CHROMA;
-    WheelK { a: s * h.cos(), b: s * h.sin(), lum: (w.lum / 100.0) as f32 * 0.12 }
+/// OkLab chroma the global wheel adds at saturation 100, averaged over the hues, where the tint is in full.
+pub const GRADING_CHROMA: f32 = 0.114;
+/// Strength of the shadows, midtones, highlights and global wheels against [`GRADING_CHROMA`].
+pub const GRADING_GAIN: [f32; 4] = [1.425, 0.686, 2.064, 1.0];
+/// The tint's fade towards black and white: in full at this OkLab lightness, and `1 − u^q` away from it, `u` the
+/// share of the way to black (exponent `.1`) or to white (`.2`).
+pub const GRADING_FADE: (f32, f32, f32) = (0.669, 1.634, 2.624);
+/// The shadows window's fall (smoothstep edges on lightness) at Blending 0 and at Blending 100.
+pub const GRADING_SHADOWS: [(f32, f32); 2] = [(0.072, 0.784), (0.408, 1.03)];
+/// The highlights window's rise at Blending 0 and at Blending 100.
+pub const GRADING_HIGHLIGHTS: [(f32, f32); 2] = [(0.542, 1.265), (0.108, 1.437)];
+/// The midtones window: its middle and half-width in lightness.
+pub const GRADING_MIDTONES: (f32, f32) = (0.634, 0.467);
+/// The wide windows' share is Blending (0..1) to this power.
+pub const GRADING_BLEND_POWER: f32 = 2.067;
+/// Balance (−1..1) raises lightness to `2^(−Balance · GRADING_BALANCE)` before the windows read it.
+pub const GRADING_BALANCE: f32 = 1.519;
+/// OkLab lightness a wheel's Luminance adds at ±100 (Lightroom's Shadows Luminance +50 lifts its range by 5 to 7 L*).
+pub const GRADING_LUM: f32 = 0.12;
+
+/// OkLab (a, b) of a small tint from grey towards a colour given on ProPhoto's primaries (row-major 2 × 3, applied to
+/// the wheel's HSV colour), scaled so that its mean length over the hues is 1.
+pub fn grading_tint() -> &'static [[f32; 3]; 2] {
+    static A: OnceLock<[[f32; 3]; 2]> = OnceLock::new();
+    A.get_or_init(|| {
+        let [to_lms, _, to_lab, _] = lightcraft_color::perceptual::oklab_matrices();
+        let (_, from_wide, _) = crate::finish::curve_space();
+        let mul = |a: &[[f32; 3]; 3], b: &[[f32; 3]; 3]| -> [[f32; 3]; 3] {
+            std::array::from_fn(|r| std::array::from_fn(|c| a[r][0] * b[0][c] + a[r][1] * b[1][c] + a[r][2] * b[2][c]))
+        };
+        // (at a grey the cube roots of L, M and S are equal, so the slope there is these matrices up to one factor)
+        let m = mul(&to_lab, &mul(&to_lms, &from_wide));
+        let mut a = [m[1], m[2]];
+        let len = |a: &[[f32; 3]; 2], deg: f32| {
+            let t = hsv_to_rgb(deg, 1.0, 1.0);
+            dot3(a[0], t).hypot(dot3(a[1], t))
+        };
+        let mean = (0..72).map(|i| len(&a, i as f32 * 5.0)).sum::<f32>() / 72.0;
+        if mean > 0.0 && mean.is_finite() {
+            a = a.map(|row| row.map(|v| v / mean));
+        }
+        a
+    })
+}
+
+#[inline]
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// The wide windows' share for a Blending slider (0..100), as [`grading_weights`] takes it.
+pub fn grading_mix(blending: f64) -> f32 {
+    let b = (blending / 100.0) as f32;
+    if b.is_finite() { b.clamp(0.0, 1.0).powf(GRADING_BLEND_POWER) } else { 0.0 }
+}
+
+/// The exponent on lightness for a Balance slider (−100..100), as [`grading_weights`] takes it.
+pub fn grading_gamma(balance: f64) -> f32 {
+    let b = (balance / 100.0) as f32;
+    if b.is_finite() { (-b.clamp(-1.0, 1.0) * GRADING_BALANCE).exp2() } else { 1.0 }
+}
+
+/// How much the shadows, midtones and highlights wheels act at OkLab lightness `l`: `mix` the wide windows' share
+/// ([`grading_mix`]), `gamma` the Balance exponent ([`grading_gamma`]).
+#[inline]
+pub fn grading_weights(l: f32, mix: f32, gamma: f32) -> [f32; 3] {
+    let x = l.clamp(0.0, 1.0).powf(gamma);
+    let ([sn, sw], [hn, hw]) = (GRADING_SHADOWS, GRADING_HIGHLIGHTS);
+    let ws = 1.0 - (smooth(sn.0, sn.1, x) * (1.0 - mix) + smooth(sw.0, sw.1, x) * mix);
+    let wh = smooth(hn.0, hn.1, x) * (1.0 - mix) + smooth(hw.0, hw.1, x) * mix;
+    let wm = 1.0 - smooth(0.0, 1.0, (x - GRADING_MIDTONES.0).abs() / GRADING_MIDTONES.1);
+    [ws, wm, wh]
+}
+
+/// How much of a wheel's tint a colour of OkLab lightness `l` takes: all of it in the mid tones, none at black or white.
+#[inline]
+pub fn grading_fade(l: f32) -> f32 {
+    let l = l.clamp(0.0, 1.0);
+    let (c, dark, bright) = GRADING_FADE;
+    if l < c { 1.0 - ((c - l) / c).powf(dark) } else { 1.0 - ((l - c) / (1.0 - c)).powf(bright) }
+}
+
+fn wheel(w: &lightcraft_develop::Wheel, gain: f32) -> WheelK {
+    let t = hsv_to_rgb(w.hue as f32, 1.0, 1.0);
+    let a = grading_tint();
+    let s = (w.sat / 100.0) as f32 * GRADING_CHROMA * gain;
+    WheelK { a: s * dot3(a[0], t), b: s * dot3(a[1], t), lum: (w.lum / 100.0) as f32 * GRADING_LUM }
 }
 
 impl ColorOps {
@@ -268,13 +389,14 @@ impl ColorOps {
             },
             bw: bw.then(|| s.bw_mix.bands().map(|v| (v / 100.0) as f32)),
             grading: (!g.is_neutral()).then(|| {
+                let [shadows, midtones, highlights, global] = GRADING_GAIN;
                 (
-                    [wheel(&g.shadows), wheel(&g.midtones), wheel(&g.highlights), wheel(&g.global)],
-                    (g.blending / 100.0) as f32,
-                    (g.balance / 100.0) as f32,
+                    [wheel(&g.shadows, shadows), wheel(&g.midtones, midtones), wheel(&g.highlights, highlights), wheel(&g.global, global)],
+                    grading_mix(g.blending),
+                    grading_gamma(g.balance),
                 )
             }),
-            skin: oklch_hue_of_srgb_hue(25.0),
+            skin: VIBRANCE_PROTECT_HUE,
         }
     }
 
@@ -302,9 +424,9 @@ impl ColorOps {
             let c0 = (lab[1] * lab[1] + lab[2] * lab[2]).sqrt();
             let mut c = c0;
             if self.vibrance != 0.0 {
-                let low = 1.0 - (c / 0.22).clamp(0.0, 1.0);
-                let skin = if self.vibrance > 0.0 { 1.0 - 0.6 * (-(wrap(lab[2].atan2(lab[1]) - self.skin) / 0.35).powi(2)).exp() } else { 1.0 };
-                c *= (1.0 + self.vibrance * low * low * skin * 1.2).max(0.0);
+                // (only a raised Vibrance reads the hue)
+                let h = if self.vibrance > 0.0 { lab[2].atan2(lab[1]) } else { 0.0 };
+                c *= vibrance_scale(self.vibrance, c, h, self.skin);
             }
             if self.saturation != 0.0 || local_sat != 0.0 {
                 c *= (1.0 + self.saturation + local_sat).max(0.0);
@@ -340,9 +462,7 @@ impl ColorOps {
             [l, c, h] = p.apply([l, c, h]);
         }
         if self.vibrance != 0.0 {
-            let low = 1.0 - (c / 0.22).clamp(0.0, 1.0);
-            let skin = if self.vibrance > 0.0 { 1.0 - 0.6 * (-(wrap(h - self.skin) / 0.35).powi(2)).exp() } else { 1.0 };
-            c *= (1.0 + self.vibrance * low * low * skin * 1.2).max(0.0);
+            c *= vibrance_scale(self.vibrance, c, h, self.skin);
         }
         if self.saturation != 0.0 || local_sat != 0.0 {
             c *= (1.0 + self.saturation + local_sat).max(0.0);
@@ -363,15 +483,12 @@ impl ColorOps {
     /// Colour grading on OkLab, then back to linear Rec.2020.
     #[inline]
     fn grade(&self, mut lab: [f32; 3]) -> [f32; 3] {
-        if let Some((wheels, blending, balance)) = &self.grading {
-            let m = GRADING_SPLIT - balance * 0.25;
-            let width = 0.15 + blending * GRADING_BLEND_WIDTH;
-            let ws = 1.0 - smooth(m - width, m + width * 0.25, lab[0]);
-            let wh = smooth(m - width * 0.25, m + width, lab[0]);
-            let wm = (1.0 - ws - wh).max(0.0);
+        if let Some((wheels, mix, gamma)) = &self.grading {
+            let [ws, wm, wh] = grading_weights(lab[0], *mix, *gamma);
+            let fade = grading_fade(lab[0]);
             for (k, wt) in wheels.iter().zip([ws, wm, wh, 1.0]) {
-                lab[1] += k.a * wt;
-                lab[2] += k.b * wt;
+                lab[1] += k.a * wt * fade;
+                lab[2] += k.b * wt * fade;
                 lab[0] += k.lum * wt;
             }
         }
@@ -379,61 +496,64 @@ impl ColorOps {
     }
 }
 
-/// Hue rotation of each calibration primary (red, green, blue) at ±100: radians about the white in CIE xy. Fitted, with
-/// [`CALIB_SAT`], to Lightroom's exports of a Canon EOS R6 raw with each Calibration slider alone at ±50 (median ΔE of the
-/// sliders' effects 3.60 with the earlier OkLCh model, 2.32 with this one): there Red and Blue Hue turn most colours by
-/// 10-25°, Green Hue less, and Blue Saturation raises the chroma of the colours it doesn't hold (the OkLCh model turned
-/// them instead, worse than no calibration at all).
-pub const CALIB_HUE: [f64; 3] = [0.55, 0.40, 0.55];
-/// Saturation of a calibration primary at ±100: its distance from the white in CIE xy scaled by `1 ± CALIB_SAT`.
-pub const CALIB_SAT: f64 = 0.6;
+// The Calibration primaries are fitted to Lightroom's exports of six cameras' raws with one slider at ±50 (and of an
+// EOS R6 raw with each slider at +50 and −50; cards #386 / #388, `docs/lightroom-preset-fit.md`). A white-preserving
+// matrix fitted to each export says the same on every camera once it is written on ProPhoto's primaries: a primary's
+// sliders leave its own channel alone and mix it into the other two. Red Saturation +50 is `G' = G + 0.18 (G − R)`,
+// `B' = B + 0.15 (B − R)`; Red Hue +50 moves green towards red and blue away from it by about as much; −50 is the
+// mirror image. So every Saturation slider raises the chroma of all colours (20 to 25 % at +50), and a Hue slider
+// turns most of them (Blue Hue +50: yellows by 20 to 27°, blues by 30°). The earlier model turned each Rec. 2020
+// primary's chromaticity about the white in CIE xy: its Hue sliders turned yellows and purples by 1 to 2° where
+// Lightroom's turn them by 6 to 14°, and its Saturation +50 added about half of Lightroom's chroma.
 
-/// The calibration panel's primaries as a white-preserving 3×3 matrix on linear Rec.2020 (row-major): each Rec. 2020
-/// primary's chromaticity is turned about the white and moved away from or towards it in CIE xy at its own luminance, then
-/// the columns are rescaled so that neutral (1, 1, 1) maps to itself. `None` when neutral.
+/// How far the red, green and blue primary's Saturation at +100 moves the other two channels away from its own, on
+/// linear ProPhoto (as a share of their distance to it). One value for red and green and one for blue fit the six
+/// cameras as well as a value per channel pair does (mean effect ΔE 1.56 against 1.54; 2.20 before).
+pub const CALIB_SAT: [f64; 3] = [0.31, 0.31, 0.41];
+/// How far a primary's Hue at +100 moves the next channel (green for red, blue for green, red for blue) towards its
+/// own and the one after away from it.
+pub const CALIB_HUE: [f64; 3] = [0.25, 0.25, 0.34];
+
+/// The calibration panel's primaries as a white-preserving 3×3 matrix on linear Rec.2020 (row-major): on ProPhoto's
+/// primaries each slider mixes its own channel `p` into the two others, `q' = q + k (q − p)` with `k` from
+/// [`CALIB_SAT`] and [`CALIB_HUE`], and the sliders' mixes add up. `None` when neutral.
 pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
     let prim = c.primaries();
     if prim.iter().all(|(h, s)| *h == 0.0 && *s == 0.0) {
         return None;
     }
-    let to_xyz = REC2020.to_xyz();
-    let from_xyz = to_xyz.inverse()?;
-    let w = REC2020.white;
-    let mut p = [[0.0f64; 3]; 3];
+    let mut m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0f64]];
     for (i, (hue, sat)) in prim.iter().enumerate() {
-        let mut e = [0.0f64; 3];
-        e[i] = 1.0;
-        let xyz = to_xyz.apply(e);
-        let sum = xyz[0] + xyz[1] + xyz[2];
-        if sum.abs() < 1e-12 {
-            return None;
-        }
-        let (dx, dy) = (xyz[0] / sum - w.x, xyz[1] / sum - w.y);
-        let a = hue.clamp(-100.0, 100.0) / 100.0 * CALIB_HUE[i];
-        let k = 1.0 + sat.clamp(-100.0, 100.0) / 100.0 * CALIB_SAT;
-        let (nx, ny) = (w.x + k * (dx * a.cos() - dy * a.sin()), w.y + k * (dx * a.sin() + dy * a.cos()));
-        if ny.abs() < 1e-9 {
-            return None;
-        }
-        let yy = xyz[1];
-        let q = from_xyz.apply([nx / ny * yy, yy, (1.0 - nx - ny) / ny * yy]);
-        for (r, row) in p.iter_mut().enumerate() {
-            row[i] = q[r];
-        }
+        let (h, s) = (hue.clamp(-100.0, 100.0) / 100.0, sat.clamp(-100.0, 100.0) / 100.0);
+        let (q, r) = ((i + 1) % 3, (i + 2) % 3);
+        let (sat_k, hue_k) = (CALIB_SAT.get(i)?, CALIB_HUE.get(i)?);
+        let kq = s * sat_k - h * hue_k;
+        let kr = s * sat_k + h * hue_k;
+        m[q][q] += kq;
+        m[q][i] -= kq;
+        m[r][r] += kr;
+        m[r][i] -= kr;
     }
-    let k = Mat3(p).inverse()?.apply([1.0, 1.0, 1.0]);
-    Some(std::array::from_fn(|r| std::array::from_fn(|col| (p[r][col] * k[col]) as f32)))
+    if !m.iter().flatten().all(|v| v.is_finite()) {
+        return None;
+    }
+    let to_wide = REC2020.to_space(&lightcraft_color::PROPHOTO);
+    let from_wide = to_wide.inverse()?;
+    Some(from_wide.mul(&Mat3(m)).mul(&to_wide).to_f32())
 }
 
 /// Shadows-tint strength at ±100: the green channel is scaled by `exp(∓SHADOW_TINT · w)` (luminance kept), `w` the
-/// weight of [`SHADOW_TINT_WINDOW`]. Fitted to Lightroom's exports of an EOS R6 raw with Shadows Tint alone at ±50
-/// (card #388, `docs/lightroom-preset-fit.md`): there it moves a* by 6 to 11 in every tone up to L* 70, both ways alike.
-/// The earlier linear `1 − 0.3 · t · w` over a window that ended half a stop below mid grey did a quarter of that
-/// (effect ΔE 7.0 against Lightroom's, now 3.2; the Apple renderer's display path, which applies it to Core Image's
-/// display-referred light, 8.0 → 3.6, which is why the window reaches two stops above mid grey).
-pub const SHADOW_TINT: f32 = 0.45;
-/// Where the shadows tint acts, in stops from scene mid grey (0.18): fully below the first, not at all above the second.
-pub const SHADOW_TINT_WINDOW: (f32, f32) = (-2.0, 2.0);
+/// weight of [`SHADOW_TINT_WINDOW`]. Fitted to Lightroom's exports of seven cameras' raws with Shadows Tint alone at
+/// ±50 (cards #386 / #388, `docs/lightroom-preset-fit.md`). Lightroom's own strength differs from raw to raw: at +50
+/// it moves a* in the dark tones by 10 on a Sony ILCE-6000 raw, 6 to 11 on an EOS R6's, 4 to 5 on a Nikon D70's, a
+/// Sony ILCE-6700's and a Canon EOS RP's, and 2 on a Fujifilm X-A5's and an Olympus E-1's, following the raw's white
+/// balance multipliers and exposure (it acts like an offset in the raw's own units). A fixed strength cannot follow
+/// that: this one sits in the middle (the 0.45 fitted to the EOS R6 alone did two to five times too much on five of
+/// the other six).
+pub const SHADOW_TINT: f32 = 0.25;
+/// Where the shadows tint acts, in stops from scene mid grey (0.18): fully below the first, not at all above the
+/// second. Lightroom's tint is strongest in the darkest tones and falls off evenly up to the highlights.
+pub const SHADOW_TINT_WINDOW: (f32, f32) = (-5.0, 3.0);
 
 /// Calibration in scene-linear light (before tone mapping): the primaries matrix, then the shadows
 /// tint (green ↔ magenta, weighted towards dark tones, luminance kept).
@@ -614,8 +734,8 @@ mod tests {
         }
     }
 
-    /// What Lightroom's Calibration does to a yellow (the R6 fit of [`CALIB_HUE`]): Blue Saturation raises its chroma
-    /// without turning it, Red Hue turns it towards orange-yellow by several degrees.
+    /// What Lightroom's Calibration does to colours a primary does not hold: Blue Saturation raises a yellow's chroma
+    /// without turning it, Red Hue turns an orange towards yellow.
     #[test]
     fn calibration_saturates_and_turns_the_colours_a_primary_doesnt_hold_like_lightroom() {
         let yellow = [0.45, 0.38, 0.06];
@@ -624,8 +744,11 @@ mod tests {
         let [_, c0, h0] = lch(yellow);
         let [_, c1, h1] = with(Calibration { blue_sat: 50.0, ..Default::default() });
         assert!(c1 > c0 * 1.03 && (h1 - h0).abs() < 0.03, "Blue Saturation +50: chroma {c0} -> {c1}, hue {h0} -> {h1}");
-        let [_, _, h2] = with(Calibration { red_hue: 50.0, ..Default::default() });
-        assert!(h2 - h0 > 0.05, "Red Hue +50: hue {h0} -> {h2}");
+        // (Lightroom's Red Hue +50 turns oranges by 13 to 18 degrees and yellows by 7 to 9; greenish yellows go the other way)
+        let orange = [0.5, 0.25, 0.08];
+        let turned =
+            lch(calibrate(orange, calibration_matrix(&Calibration { red_hue: 50.0, ..Default::default() }).as_ref(), 0.0))[2] - lch(orange)[2];
+        assert!(turned > 0.08, "Red Hue +50 turns an orange by {turned}");
     }
 
     #[test]
@@ -649,7 +772,7 @@ mod tests {
     #[test]
     fn shadow_tint_targets_shadows() {
         let dark = calibrate([0.01, 0.01, 0.01], None, 1.0);
-        let bright = calibrate([0.8, 0.8, 0.8], None, 1.0);
+        let bright = calibrate([1.5, 1.5, 1.5], None, 1.0);
         assert!(dark[1] < dark[0] * 0.85, "magenta shadows: {dark:?}");
         assert!((bright[1] - bright[0]).abs() < 1e-3, "{bright:?}");
         let y = |c: [f32; 3]| lightcraft_color::luminance_2020(c);
@@ -660,18 +783,22 @@ mod tests {
 
     #[test]
     fn shadow_tint_is_as_strong_as_lightroom_and_symmetric() {
-        // a grey almost two stops under mid grey: Lightroom's +-50 moves a* there by about 10 (card #388); the old
-        // linear tint changed green by 3 % here and pushed +50 further than -50
-        let ratio = |t: f32| {
-            let c = calibrate([0.05, 0.05, 0.05], None, t);
+        // Lightroom's +-50 on seven cameras' raws moves a* in the dark tones by 2 to 11 (4 to 5 on the middle ones), the
+        // same both ways, most in the darkest tones and less and less up to the highlights (cards #386 / #388). The
+        // first tint (linear, 3 % of green here) was under all of them; the one fitted to an EOS R6 alone (0.45 over
+        // -2..2 stops) was two to five times over five of the others
+        let ratio = |grey: f32, t: f32| {
+            let c = calibrate([grey; 3], None, t);
             c[1] / c[0]
         };
-        assert!(ratio(0.5) < 0.87, "magenta at +50: {}", ratio(0.5));
-        assert!((ratio(0.5) * ratio(-0.5) - 1.0).abs() < 1e-3, "{} {}", ratio(0.5), ratio(-0.5));
-        // mid tones are still tinted, bright ones not
-        let mid = calibrate([0.18, 0.18, 0.18], None, 0.5);
-        assert!(mid[1] / mid[0] < 0.98, "mid grey: {mid:?}");
-        let bright = calibrate([0.9, 0.9, 0.9], None, 1.0);
+        // (a grey almost two stops under mid grey: a* +4.5 is green down by about 8 %)
+        assert!(ratio(0.05, 0.5) < 0.95 && ratio(0.05, 0.5) > 0.88, "magenta at +50: {}", ratio(0.05, 0.5));
+        assert!((ratio(0.05, 0.5) * ratio(0.05, -0.5) - 1.0).abs() < 1e-3, "{} {}", ratio(0.05, 0.5), ratio(0.05, -0.5));
+        // strongest in the darkest tones, then mid grey, then the highlights
+        let (dark, mid, light) = (ratio(0.005, 0.5), ratio(0.18, 0.5), ratio(0.6, 0.5));
+        assert!(dark < ratio(0.05, 0.5) && ratio(0.05, 0.5) < mid && mid < light && light < 1.0, "{dark} {mid} {light}");
+        assert!(mid < 0.98, "mid grey: {mid}");
+        let bright = calibrate([1.5, 1.5, 1.5], None, 1.0);
         assert!((bright[1] / bright[0] - 1.0).abs() < 1e-3, "{bright:?}");
     }
 
@@ -721,5 +848,156 @@ mod tests {
         let bright = ops.apply([0.8, 0.8, 0.8], 0.0, 0.0);
         assert!(dark[2] > dark[0]);
         assert!((bright[2] - bright[0]).abs() < 0.02);
+    }
+
+    /// CIELAB (D65) a and b of a linear Rec. 2020 colour, as the Lightroom exports were measured.
+    fn cielab_ab(c: [f32; 3]) -> (f64, f64) {
+        let xyz = REC2020.to_xyz().apply(c.map(f64::from));
+        let f = |t: f64| if t > 0.008856 { t.cbrt() } else { 7.787 * t + 16.0 / 116.0 };
+        let (fx, fy, fz) = (f(xyz[0] / 0.9505), f(xyz[1]), f(xyz[2] / 1.089));
+        (500.0 * (fx - fy), 200.0 * (fy - fz))
+    }
+
+    /// A grey of CIE lightness `l` (0..100), linear.
+    fn grey(l: f32) -> [f32; 3] {
+        [((l + 16.0) / 116.0).powi(3); 3]
+    }
+
+    /// The chroma (CIELAB) a grading gives a grey of lightness `l`.
+    fn tint_of(s: &DevelopSettings, l: f32) -> f64 {
+        let (a, b) = cielab_ab(ColorOps::new(s).apply(grey(l), 0.0, 0.0));
+        a.hypot(b)
+    }
+
+    fn graded(set: impl Fn(&mut DevelopSettings)) -> DevelopSettings {
+        let mut s = DevelopSettings::default();
+        set(&mut s);
+        s
+    }
+
+    /// The direction of a wheel's tint on a mid grey, measured on Lightroom's exports of six cameras' raws (the CIELAB
+    /// hue of the change on near-neutral pixels): a wheel's hue is an HSV hue on ProPhoto's primaries. sRGB's hues,
+    /// which the wheels used before, land 10 to 30 degrees away (200 at 236, 220 at 271, 40 at 91).
+    #[test]
+    fn grading_wheel_hues_tint_where_lightroom_s_do() {
+        for (hue, measured) in [(200.0, 210.8), (120.0, 153.9), (300.0, 334.4), (0.0, 12.4), (220.0, 244.0), (50.0, 83.0), (40.0, 64.8f64)] {
+            let s = graded(|s| s.grading.global = lightcraft_develop::Wheel { hue, sat: 30.0, lum: 0.0 });
+            let (a, b) = cielab_ab(ColorOps::new(&s).apply(grey(50.0), 0.0, 0.0));
+            let angle = b.atan2(a).to_degrees().rem_euclid(360.0);
+            let off = (angle - measured + 180.0).rem_euclid(360.0) - 180.0;
+            assert!(off.abs() < 6.0, "wheel hue {hue}: tint at {angle:.1}, Lightroom's at {measured}");
+        }
+    }
+
+    /// Where and how strongly the wheels act, against Lightroom's exports of six cameras' raws (chroma of the change
+    /// on near-neutral pixels per lightness band, pooled over the six).
+    #[test]
+    fn grading_ranges_follow_lightroom_s() {
+        use lightcraft_develop::Wheel;
+        // the global wheel (hue 200, saturation 30): 9.7 in the mid tones, 2.6 near black and 2.9 near white
+        let global = graded(|s| s.grading.global = Wheel { hue: 200.0, sat: 30.0, lum: 0.0 });
+        let (dark, mid, bright) = (tint_of(&global, 5.0), tint_of(&global, 55.0), tint_of(&global, 95.0));
+        assert!((7.5..12.0).contains(&mid), "global, mid tones: {mid}");
+        assert!(dark > 0.1 * mid && dark < 0.6 * mid && bright > 0.1 * mid && bright < 0.6 * mid, "global: {dark} {mid} {bright}");
+        // the shadows wheel (hue 220, saturation 60) at lightness 55: 17.5 at Blending 100, 5.6 at 50, 1.4 at 0
+        let shadows = |blending: f64, balance: f64| {
+            tint_of(
+                &graded(|s| {
+                    s.grading.shadows = Wheel { hue: 220.0, sat: 60.0, lum: 0.0 };
+                    s.grading.blending = blending;
+                    s.grading.balance = balance;
+                }),
+                55.0,
+            )
+        };
+        let (b0, b50, b100) = (shadows(0.0, 0.0), shadows(50.0, 0.0), shadows(100.0, 0.0));
+        assert!((12.0..23.0).contains(&b100), "shadows, Blending 100: {b100}");
+        assert!(b50 > 0.2 * b100 && b50 < 0.45 * b100, "shadows, Blending 50 against 100: {b50} {b100}");
+        assert!(b0 < 0.3 * b100 && b0 < 0.75 * b50, "shadows, Blending 0 against 50 and 100: {b0} {b50} {b100}");
+        // Balance +50 halves it there (8.8 against 17.5)
+        let balanced = shadows(100.0, 50.0);
+        assert!(balanced > 0.3 * b100 && balanced < 0.7 * b100, "shadows, Balance +50: {balanced} {b100}");
+        // the highlights wheel (hue 50, saturation 60) at lightness 75: 21.1 at Blending 100, 13.9 at 50; 2.1 at lightness 35
+        let highlights = |blending: f64, l: f32| {
+            tint_of(
+                &graded(|s| {
+                    s.grading.highlights = Wheel { hue: 50.0, sat: 60.0, lum: 0.0 };
+                    s.grading.blending = blending;
+                }),
+                l,
+            )
+        };
+        assert!((15.0..27.0).contains(&highlights(100.0, 75.0)), "highlights, Blending 100: {}", highlights(100.0, 75.0));
+        let ratio = highlights(50.0, 75.0) / highlights(100.0, 75.0);
+        assert!((0.45..0.85).contains(&ratio), "highlights, Blending 50 against 100: {ratio}");
+        assert!(highlights(50.0, 35.0) < 0.25 * highlights(50.0, 75.0), "highlights reach the dark tones: {}", highlights(50.0, 35.0));
+        // the midtones wheel (hue 40, saturation 40): 9.9 at lightness 55, 2.9 at 25, 1.6 at 85
+        let midtones = graded(|s| s.grading.midtones = Wheel { hue: 40.0, sat: 40.0, lum: 0.0 });
+        let (low, mid, high) = (tint_of(&midtones, 25.0), tint_of(&midtones, 55.0), tint_of(&midtones, 85.0));
+        assert!((7.0..13.0).contains(&mid) && low < 0.5 * mid && high < 0.4 * mid, "midtones: {low} {mid} {high}");
+    }
+
+    /// Lightroom's Vibrance on six cameras' raws: −50 leaves every colour about half its chroma, weak or strong; +50
+    /// adds 30 to 45 % to greens and blues and 10 to 13 % to reds and oranges.
+    #[test]
+    fn vibrance_follows_lightroom_s() {
+        let chroma = |c: [f32; 3]| lab_to_lch(oklab_from_2020(c))[1];
+        let with = |v: f64, c: [f32; 3]| {
+            let mut s = DevelopSettings::default();
+            s.color.vibrance = v;
+            chroma(ColorOps::new(&s).apply(c, 0.0, 0.0)) / chroma(c)
+        };
+        let (weak_green, strong_green, sky, skin) = ([0.2, 0.26, 0.17], [0.1, 0.4, 0.08], [0.15, 0.25, 0.42], [0.42, 0.26, 0.18]);
+        for c in [weak_green, strong_green, sky, skin] {
+            let k = with(-50.0, c);
+            assert!((0.42..0.6).contains(&k), "Vibrance -50 on {c:?}: chroma x {k}");
+        }
+        for c in [weak_green, sky] {
+            let k = with(50.0, c);
+            assert!((1.22..1.5).contains(&k), "Vibrance +50 on {c:?}: chroma x {k}");
+        }
+        let k = with(50.0, skin);
+        assert!((1.03..1.22).contains(&k), "Vibrance +50 on skin: chroma x {k}");
+        // a strong colour still gains (Lightroom: 1.30 at CIELAB chroma over 30)
+        assert!(with(50.0, strong_green) > 1.12, "{}", with(50.0, strong_green));
+    }
+
+    /// Lightroom's Calibration on six cameras' raws, as the matrix fitted to each export on ProPhoto's primaries: a
+    /// primary's Saturation leaves its own channel alone and moves the two others away from it (Red +50: green by
+    /// 0.18, blue by 0.15 of their distance to red), so every colour gains chroma; Blue Hue +50 turns yellows by 20
+    /// to 27 degrees.
+    #[test]
+    fn calibration_mixes_channels_on_prophoto_s_primaries_like_lightroom() {
+        let (to_wide, _, _) = crate::finish::curve_space();
+        let wide = |c: [f32; 3]| -> [f32; 3] { std::array::from_fn(|r| dot3(to_wide[r], c)) };
+        let c = [0.2, 0.3, 0.12];
+        let m = calibration_matrix(&Calibration { red_sat: 50.0, ..Default::default() }).unwrap();
+        let (before, after) = (wide(c), wide(calibrate(c, Some(&m), 0.0)));
+        assert!((after[0] - before[0]).abs() < 1e-4, "red's own channel: {before:?} -> {after:?}");
+        let (green, blue) = ((after[1] - before[1]) / (before[1] - before[0]), (after[2] - before[2]) / (before[2] - before[0]));
+        assert!((0.13..0.24).contains(&green) && (0.1..0.22).contains(&blue), "green by {green}, blue by {blue}");
+        // every Saturation slider at +50 raises the chroma of a colour that is none of the primaries by 15 to 30 %
+        let lch = |c: [f32; 3]| lab_to_lch(oklab_from_2020(c));
+        let orange = [0.4, 0.25, 0.1];
+        for cal in [
+            Calibration { red_sat: 50.0, ..Default::default() },
+            Calibration { green_sat: 50.0, ..Default::default() },
+            Calibration { blue_sat: 50.0, ..Default::default() },
+        ] {
+            let k = lch(calibrate(orange, calibration_matrix(&cal).as_ref(), 0.0))[1] / lch(orange)[1];
+            assert!((1.08..1.4).contains(&k), "{cal:?}: chroma x {k}");
+        }
+        // and -50 is +50's mirror image
+        let up = calibration_matrix(&Calibration { green_hue: 50.0, ..Default::default() }).unwrap();
+        let down = calibration_matrix(&Calibration { green_hue: -50.0, ..Default::default() }).unwrap();
+        for (a, b) in
+            up.iter().flatten().zip(down.iter().flatten()).zip([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0f32]).map(|((a, b), i)| (a - i, b - i))
+        {
+            assert!((a + b).abs() < 1e-5, "{up:?} {down:?}");
+        }
+        let yellow = [0.45, 0.38, 0.06];
+        let turned =
+            lch(calibrate(yellow, calibration_matrix(&Calibration { blue_hue: 50.0, ..Default::default() }).as_ref(), 0.0))[2] - lch(yellow)[2];
+        assert!(turned > 0.15, "Blue Hue +50 turns a yellow by {turned}");
     }
 }

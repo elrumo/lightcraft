@@ -466,3 +466,19 @@ fn disabled_lens_profile_switch_keeps_embedded_corrections() {
     let on = props(&preset_packet("", "").replace(r#"crs:LensProfileEnable="0""#, r#"crs:LensProfileEnable="1""#));
     assert!(apply_partial(&DevelopSettings::default(), &to_partial(&on, Target::Any), 1.0).optics.lens_profile);
 }
+
+#[test]
+fn split_toning_without_blending_is_blending_100_as_lightroom_draws_it() {
+    // Lightroom's export of a sidecar with only a shadows tint is pixel for pixel its export of the same sidecar with
+    // Blending 100 (six cameras' raws): the older Split Toning panel had no Blending, and its files mean 100
+    let blending = |attrs: &str| {
+        let p = props(&preset_packet(attrs, ""));
+        apply_partial(&DevelopSettings::default(), &to_partial(&p, Target::Any), 1.0).grading.blending
+    };
+    assert_eq!(blending(r#"crs:SplitToningShadowHue="220" crs:SplitToningShadowSaturation="60""#), 100.0);
+    assert_eq!(blending(r#"crs:SplitToningHighlightHue="50" crs:SplitToningHighlightSaturation="60""#), 100.0);
+    // written out, it is what the file says; and a file that tones nothing keeps the default
+    assert_eq!(blending(r#"crs:SplitToningShadowHue="220" crs:SplitToningShadowSaturation="60" crs:ColorGradeBlending="30""#), 30.0);
+    assert_eq!(blending(r#"crs:SplitToningShadowHue="220" crs:SplitToningShadowSaturation="0""#), 50.0);
+    assert_eq!(blending(r#"crs:ColorGradeMidtoneHue="40" crs:ColorGradeMidtoneSat="40""#), 50.0);
+}

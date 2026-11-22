@@ -56,7 +56,7 @@ needs a Lightroom export of this raw with nothing applied to separate it from th
   Lightroom-to-dial factor is the next step; see the Lightroom scale below.
 - **Lightroom's Kelvin on this body's scale** (`kelvin_presets::lightroom_scale`, `crs::lightroom_white_to_dial`). An XMP's
   absolute Kelvin is marked in the settings JSON (`wb.lightroom`, never stored in a photo), and a preset applied
-  to, or a sidecar read for, an ILCE-6000 converts it: Kelvin x 1.02, tint - 18. Lightroom reads this file's as-shot white as
+  to, or a sidecar read for, an ILCE-6000 converts it: Kelvin x 1.06, tint - 11 (until 2026-11-22 x 1.02 and - 18, from the sweep below; refitted on five white-balance exports of that raw, see the section of that date). Lightroom reads this file's as-shot white as
   4800 K / +15 and Sony's dial as 5472 K / -1 (ratio 1.14, offset 16), but a sweep of Kelvin and tint against the export
   preferred 7000 K / -16 for the preset's 6900 K / +3, so the constants follow the sweep. Taking +3 as written costs about
   1 ΔE and leaves the greens too red. Presets saved in the app on the same body are in dial units and carry no marker, so
@@ -198,6 +198,206 @@ for raws; its scene path draws from the core's camera curve.
 | All fourteen exports, Rust renderer | 2.23 | 1.68 |
 | All fourteen exports, Apple display / scene path | 2.54 / – | 1.91 / 1.72 |
 
+## Colour Grading, Calibration and Vibrance on six cameras (2026-11-22, cards #386 / #388)
+
+Lightroom exported the six cameras' raws (ILCE-6000, ILCE-6700, EOS RP, X-A5, D70, E-1) with one change each: 18 in
+`test-raws/light/xcam4` (six Colour Grading, eight colour mixer, four Calibration) and 24 more in `xcam6` (Colour
+Grading with Blending written out, more wheel hues, Balance and Luminance; Vibrance and Saturation at ±50; a custom
+white at four values; the Calibration halves `xcam4` lacks; Point Color), and the Phoenix 200 preset split into its
+groups on the ILCE-6000 raw (`phx2`: each group alone, and the whole look without each group). Effects are measured as
+before (the export with the change minus the export without it, against the same difference of our renders, mean ΔE76
+at 150 px inside 0.8 of the half diagonal). Lightroom's own response was read from its exports first (the change per
+lightness band on near-neutral pixels, per hue and chroma band on the others, and a white-preserving matrix fitted
+to each Calibration export); the constants were then searched on a numpy stand-in of the colour stage applied to our
+own base renders (it follows the real renders within 0.3 to 0.8 ΔE per case) and checked with real renders.
+
+- **Colour Grading** (`colorops::grading_tint`, `grading_weights`, `grading_fade`). What the exports show:
+  - A wheel's hue is an HSV hue on **ProPhoto's primaries**. The CIELAB direction of the tint on greys is 211° for
+    hue 200, 154° for 120, 334° for 300, 12° for 0, 244° for 220, 83° for 50 and 65° for 40; ProPhoto's hues land at
+    211.5, 154, 334, 11.5, 246.5, 85 and 67, sRGB's (what the wheels used) at 236, 144, 325, 20, 271, 102 and 91. The
+    strength from hue to hue follows the same model within 2 % for the global wheel (a tint is a small step from grey
+    towards the wheel's colour in that space).
+  - The tint **fades towards black and white**: the global wheel at saturation 30 adds a chroma of 9.7 in the mid
+    tones, 2.6 at L\* 5 and 2.9 at L\* 95. Ours added the same offset at every lightness.
+  - **Blending** mixes two fixed windows per range: the shadows wheel (hue 220, saturation 60) at L\* 55 adds 17.5 at
+    Blending 100, 5.6 at 50 and 1.4 at 0, and the 50 window is 0.7 of the 0 window plus 0.3 of the 100 one at every
+    lightness. **Balance** moves the ranges like a gamma on lightness (+50 halves the shadows' reach at L\* 55).
+  - The midtones window is a bump of its own around L\* 55, and the shadows and highlights wheels are 1.4 and 2.1
+    times as strong as the global one at the same saturation.
+  - A sidecar **without `ColorGradeBlending`** is Blending 100 in Lightroom (the older Split Toning panel): its export
+    of `grade-sh` is pixel for pixel its export of the same sidecar with Blending 100. The import read it as our
+    default, 50 (`crs.rs`).
+  - Not modelled: the tint also shifts lightness a little (the midtones wheel at 40 / 40 lifts its range by 1.8 L\*,
+    the global wheel at hue 0 / 60 lowers the mid tones by 2.4), and Lightroom's tint is somewhat weaker on colourful
+    pixels than on greys.
+- **Calibration, the primaries** (`colorops::calibration_matrix`, `CALIB_SAT`, `CALIB_HUE`). A white-preserving 3 × 3
+  matrix fitted to each export is the same on every camera once it is written on linear ProPhoto: the primary's own
+  channel is untouched and the two others mix with it. Red Saturation +50 is `G' = G + 0.18 (G − R)`, `B' = B + 0.15
+  (B − R)`; Green and Blue Saturation likewise on their channels (blue 0.25); a Hue slider moves the next channel
+  towards the primary's and the one after away from it; the EOS R6's ±50 exports show −50 is +50's mirror image. So
+  every Saturation slider raises the chroma of all colours (20 to 25 % at +50) and Blue Hue +50 turns yellows by 20
+  to 27°. The model of 2026-11-08 (each Rec. 2020 primary's chromaticity turned about the white in CIE xy) is replaced
+  by that mix, with one strength for red and green and one for blue per slider kind.
+- **Calibration, Shadows Tint** (`colorops::SHADOW_TINT`, `SHADOW_TINT_WINDOW`). Lightroom's strength differs from
+  raw to raw: at +50 it moves a\* in the dark tones by 10.4 on the ILCE-6000 raw, 6 to 11 on the EOS R6's, 4.3 on the
+  D70's, 3.9 on the ILCE-6700's, 3.6 on the EOS RP's (with b\* −3.4), 1.8 on the X-A5's (b\* −2) and 1.7 on the
+  E-1's, the same at −50. Strength and direction follow the raws' white balance multipliers (red 2.75, 2.44, 2.17,
+  1.70, 1.64, 1.69 and blue 1.68, 1.71, 1.52, 2.17, 1.99, 1.12 for the six) and their exposure: it acts like an offset
+  in the raw's own units. Ours was one strength, fitted to the EOS R6 alone (about 9 to 11 on every camera). It now
+  sits in the middle (0.45 → 0.25) and reaches from 5 stops below mid grey to 3 above (Lightroom's is strongest in
+  the darkest tones). Following each raw needs its white balance gains in the finish stage: open.
+- **Vibrance** (`colorops::vibrance_scale`). Lightroom's −50 leaves every colour 0.46 to 0.56 of its chroma, weak or
+  strong; ours left 0.64 to 0.94. Its +50 adds 30 to 45 %, a little less on strong colours, and 10 to 13 % on reds
+  and oranges. Vibrance is now `exp(1.1 v)` below zero and `1 + 0.66 v (1 − c)` above, with 0.7 of it held back around
+  the reds and oranges. Not modelled: Lightroom's Vibrance moves lightness with the hue (−50 darkens yellows and
+  greens by 3 to 5 L\* and lightens blues by up to 6; +50 darkens blues by 1.4 to 5.6).
+- **Kept**: Saturation (Lightroom × 0.47 at −50, × 1.5 to 1.65 at +50 with blues at 1.2 to 1.4; ours × 0.5 and
+  × 1.5) and the colour mixer (table below).
+
+Effect ΔE against Lightroom's, mean of the six cameras, before → after (the Apple renderer's display path is the app's default for raws; its scene path draws from the core's camera curve):
+
+| Change | Lightroom's effect | Rust | Apple display | Apple scene |
+|---|---:|---:|---:|---:|
+| Global 200 / 30 | 7.8 | 6.33 → 1.75 | 6.31 → 1.80 | 6.31 → 1.74 |
+| Global 120 / 30 | 13.4 | 6.41 → 2.17 | 6.30 → 2.12 | 6.42 → 2.17 |
+| Global 300 / 30 | 13.1 | 5.70 → 2.14 | 5.56 → 2.04 | 5.73 → 2.17 |
+| Global 0 / 60 | 22.0 | 11.04 → 3.82 | 11.05 → 3.73 | 11.02 → 3.82 |
+| Shadows 220 / 60, Blending 100 | 13.4 | 10.10 → 3.88 | 10.27 → 4.15 | 10.03 → 3.87 |
+| Shadows, Blending 50 | 7.3 | 4.62 → 2.38 | 4.70 → 2.46 | 4.60 → 2.37 |
+| Shadows, Blending 0 | 5.3 | 4.45 → 2.28 | 4.32 → 2.33 | 4.47 → 2.27 |
+| Shadows, Blending 100, Balance +50 | 9.1 | 7.37 → 2.81 | 7.55 → 2.91 | 7.29 → 2.83 |
+| Highlights 50 / 60, Blending 100 | 11.3 | 8.23 → 4.24 | 7.91 → 4.66 | 8.25 → 4.26 |
+| Highlights, Blending 50 | 5.8 | 4.34 → 2.60 | 4.29 → 2.87 | 4.33 → 2.59 |
+| Highlights, Blending 50, Balance -50 | 3.2 | 2.36 → 1.45 | 2.40 → 1.59 | 2.35 → 1.41 |
+| Midtones 40 / 40 | 5.3 | 3.01 → 2.45 | 3.22 → 2.54 | 2.98 → 2.42 |
+| Shadows Luminance +50 | 2.8 | 2.12 → 2.10 | 2.07 → 2.05 | 2.15 → 2.13 |
+| Red Hue +50 | 3.6 | 2.06 → 1.63 | 1.86 → 1.38 | 2.08 → 1.65 |
+| Red Saturation +50 | 4.0 | 2.64 → 1.90 | 2.50 → 1.72 | 2.63 → 1.92 |
+| Green Hue -50 | 3.5 | 1.96 → 1.50 | 1.73 → 1.31 | 1.93 → 1.47 |
+| Green Saturation +50 | 4.2 | 2.76 → 1.65 | 2.60 → 1.48 | 2.73 → 1.65 |
+| Blue Hue +50 | 7.5 | 2.45 → 2.09 | 2.33 → 1.88 | 2.62 → 2.28 |
+| Blue Saturation +50 | 4.0 | 2.34 → 1.83 | 2.13 → 1.39 | 2.34 → 1.81 |
+| Shadows Tint +50 | 3.1 | 4.57 → 1.98 | 2.78 → 2.17 | 4.58 → 1.95 |
+| Shadows Tint -50 | 3.2 | 4.42 → 1.94 | 2.70 → 2.21 | 4.41 → 1.89 |
+| Vibrance +50 | 5.9 | 3.42 → 2.59 | 3.28 → 2.45 | 3.50 → 2.69 |
+| Vibrance -50 | 9.7 | 5.79 → 3.70 | 5.72 → 3.54 | 5.88 → 3.84 |
+| Saturation +50 | 9.7 | 4.27 | 3.78 | 4.40 |
+| Saturation -50 | 10.0 | 3.02 | 2.91 | 3.15 |
+| 4000 K / +10 | 10.0 | 7.66 → 7.64 | 6.43 → 6.44 | 6.46 → 6.45 |
+| 5500 K / +10 | 5.5 | 6.59 → 6.45 | 4.49 → 4.35 | 4.73 → 4.58 |
+| 7500 K / +10 | 14.8 | 8.06 → 7.97 | 9.53 → 9.45 | 9.35 → 9.27 |
+| 5500 K / +40 | 8.7 | 6.66 → 6.58 | 5.91 → 5.86 | 5.97 → 5.89 |
+| Point Color hue +0.5 | 1.1 | 0.92 | 0.81 | 1.00 |
+| Point Color saturation -0.5 | 0.8 | 0.63 | 0.73 | 0.63 |
+| Point Color luminance -0.5 | 1.1 | 0.81 | 0.78 | 0.89 |
+| Mixer: Aqua Hue +50 | 0.3 | 0.38 | 0.34 | 0.33 |
+| Mixer: Blue Luminance +50 | 2.9 | 1.57 | 1.94 | 1.71 |
+| Mixer: Green Saturation -50 | 3.2 | 1.40 | 1.61 | 1.40 |
+| Mixer: Magenta Saturation -50 | 0.0 | 0.11 | 0.08 | 0.09 |
+| Mixer: Orange Luminance +50 | 0.9 | 0.58 | 0.54 | 0.58 |
+| Mixer: Orange Saturation +50 | 1.0 | 0.94 | 0.71 | 0.98 |
+| Mixer: Red Hue +50 | 0.4 | 0.83 | 0.96 | 0.81 |
+| Mixer: Yellow Hue -50 | 1.4 | 1.25 | 1.14 | 1.18 |
+
+Per tool and camera:
+**Rust** (mean effect ΔE of the tool's cases, before → after)
+
+| Tool | ILCE-6000 | ILCE-6700 | EOS RP | X-A5 | D70 | E-1 | six |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Colour Grading | 5.29 → 2.19 | 5.79 → 2.86 | 6.38 → 3.69 | 5.53 → 2.11 | 6.73 → 2.82 | 5.39 → 2.05 | 5.85 → 2.62 |
+| Calibration primaries | 1.80 → 1.31 | 3.33 → 2.29 | 3.66 → 3.10 | 1.65 → 1.29 | 2.16 → 1.24 | 1.60 → 1.35 | 2.37 → 1.77 |
+| Shadows Tint | 3.29 → 4.21 | 4.41 → 1.30 | 5.21 → 2.19 | 5.41 → 1.50 | 3.90 → 1.19 | 4.75 → 1.38 | 4.50 → 1.96 |
+| Vibrance | 3.00 → 2.74 | 6.61 → 3.99 | 6.66 → 4.14 | 3.02 → 2.72 | 5.65 → 2.94 | 2.72 → 2.37 | 4.61 → 3.15 |
+| Saturation | 2.43 | 4.27 | 7.13 | 2.77 | 2.31 | 2.96 | 3.65 |
+| Colour mixer | 0.54 | 0.99 | 1.75 | 0.61 | 0.66 | 0.74 | 0.88 |
+| White balance | 3.14 → 2.64 | 10.29 | 7.21 | 10.01 | 8.37 | 4.43 | 7.24 → 7.16 |
+| Point Color | 1.72 | 0.50 | 0.23 | 1.54 | 0.11 | 0.64 | 0.79 |
+
+**Apple display** (mean effect ΔE of the tool's cases, before → after)
+
+| Tool | ILCE-6000 | ILCE-6700 | EOS RP | X-A5 | D70 | E-1 | six |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Colour Grading | 5.28 → 2.39 | 5.93 → 3.50 | 6.45 → 3.91 | 5.59 → 2.14 | 6.33 → 2.46 | 5.47 → 1.87 | 5.84 → 2.71 |
+| Calibration primaries | 1.84 → 1.29 | 3.30 → 2.44 | 3.16 → 2.55 | 1.48 → 1.06 | 2.05 → 1.00 | 1.33 → 0.82 | 2.19 → 1.53 |
+| Shadows Tint | 3.87 → 5.30 | 1.75 → 1.80 | 2.62 → 2.67 | 2.34 → 0.92 | 2.30 → 1.40 | 3.58 → 1.05 | 2.74 → 2.19 |
+| Vibrance | 2.96 → 2.73 | 7.29 → 4.86 | 6.25 → 3.34 | 2.80 → 2.36 | 5.34 → 2.67 | 2.38 → 1.99 | 4.50 → 2.99 |
+| Saturation | 2.45 | 5.55 | 5.74 | 2.93 | 1.75 | 1.65 | 3.35 |
+| Colour mixer | 0.49 | 1.54 | 1.74 | 0.67 | 0.56 | 0.49 | 0.91 |
+| White balance | 3.75 → 3.37 | 7.82 | 6.96 | 8.76 | 7.46 | 4.78 | 6.59 → 6.53 |
+| Point Color | 1.72 | 0.49 | 0.22 | 1.50 | 0.11 | 0.62 | 0.78 |
+
+**Apple scene** (mean effect ΔE of the tool's cases, before → after)
+
+| Tool | ILCE-6000 | ILCE-6700 | EOS RP | X-A5 | D70 | E-1 | six |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Colour Grading | 5.30 → 2.23 | 5.78 → 2.99 | 6.37 → 3.67 | 5.51 → 1.98 | 6.72 → 2.82 | 5.38 → 2.02 | 5.84 → 2.62 |
+| Calibration primaries | 1.87 → 1.40 | 3.41 → 2.43 | 3.63 → 3.06 | 1.66 → 1.27 | 2.17 → 1.27 | 1.60 → 1.37 | 2.39 → 1.80 |
+| Shadows Tint | 3.27 → 4.18 | 4.38 → 1.27 | 5.20 → 2.16 | 5.49 → 1.47 | 3.90 → 1.13 | 4.73 → 1.31 | 4.49 → 1.92 |
+| Vibrance | 3.16 → 2.96 | 6.75 → 4.28 | 6.65 → 4.12 | 3.02 → 2.74 | 5.76 → 3.04 | 2.78 → 2.43 | 4.69 → 3.26 |
+| Saturation | 2.74 | 4.79 | 7.15 | 2.35 | 2.52 | 3.08 | 3.77 |
+| Colour mixer | 0.55 | 0.99 | 1.73 | 0.57 | 0.66 | 0.81 | 0.88 |
+| White balance | 3.17 → 2.68 | 7.82 | 7.25 | 8.76 | 8.33 | 4.44 | 6.63 → 6.55 |
+| Point Color | 1.74 | 0.50 | 0.22 | 1.82 | 0.11 | 0.65 | 0.84 |
+
+The EOS R6's fourteen Calibration exports (`r6-xmp2`, the raw the earlier constants were fitted to), Rust renderer: the twelve primaries 1.44 → 1.74 and Shadows Tint +50 / −50 3.71 / 2.61 → 5.16 / 6.12: that one raw is worse off, the six are each better (table above).
+
+**Still off, with what would settle it** (measured, not changed):
+
+- **White balance from a Lightroom file.** A custom Kelvin on the six raws: effect ΔE 4 to 10 per camera (table above). The X-A5 and the
+  ILCE-6700 have no Kelvin scale of their own, so a preset's Kelvin is read around 6500 K and a sidecar's is dropped
+  on import; the EOS RP, D70 and E-1 read Lightroom's numbers on their own dial as written, but Lightroom's As Shot
+  for these raws (read from its four exports: 3924 K / +34, 5159 K / −12, 5284 K / +10) is not the dial's (3749 K /
+  +22, 6502 K / +10, 5300 K / 0). It needs Lightroom's own Kelvin for a raw's as-shot white (the DNG method, from
+  the camera's matrices and neutral), not one more body in `kelvin_presets::LIGHTROOM`.
+- **Point Color.** The Phoenix preset's blue sample with one shift at a time: Lightroom's hue shift +0.5 turns the
+  X-A5's sky by 24° (ours 7°) and the ILCE-6000's by 15° (ours 0°): our sample selects less and turns less.
+- **The colour mixer**, mean effect error per case 0.1 to 1.6; the worst cells are the EOS RP's Red Hue +50 (4.4 on an
+  effect of 2.1: ours turns its reds by 34°, Lightroom by 12°; no other raw has reds) and Green Saturation −50 on the
+  D70 and ILCE-6700 (3.6 and 2.4 on 8.9 and 7.2: Lightroom darkens the greens it desaturates by 1 to 2 L\*).
+- Lightroom's lens profile on the ILCE-6000's kit lens brightens the corners (the Phoenix sky by 3 L\*); ours applies
+  the distortion only.
+
+### The Phoenix 200 preset, group by group (card #386)
+
+Lightroom exported the preset on the ILCE-6000 raw split up (`test-raws/light/phx2`): nothing applied, each group alone
+(white balance, Vibrance and Saturation, the colour mixer, Colour Grading, Calibration, Point Color), every look group
+together (no grain, no lens profile), that without each group in turn, and the preset as it is. A group's effect alone
+is its export minus the one with nothing applied; in context it is the whole look minus the look without that group.
+Effect ΔE of ours against Lightroom's, before → after this work:
+
+| Group | Lightroom's effect (alone / in context) | Rust: alone | Rust: in context | Apple display: alone | Apple display: in context | Apple scene: alone | Apple scene: in context |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| White balance | 10.8 / 10.8 | 3.94 → 3.26 | 5.06 → 4.54 | 5.25 → 4.66 | 5.40 → 4.88 | 4.03 → 3.37 | 5.28 → 4.76 |
+| Light sliders | – / 8.1 | – | 5.85 → 5.12 | – | 4.98 → 4.35 | – | 6.35 → 5.60 |
+| Dehaze | – / 5.5 | – | 3.72 → 3.60 | – | 2.91 → 2.92 | – | 3.85 → 3.78 |
+| Vibrance and Saturation | 1.2 / 0.7 | 1.37 → 1.31 | 0.94 → 0.86 | 1.27 → 1.25 | 0.86 → 0.81 | 1.30 → 1.23 | 0.90 → 0.81 |
+| Tone curves | – / 10.2 | – | 5.41 → 5.28 | – | 5.37 → 5.26 | – | 5.79 → 5.66 |
+| Colour mixer | 8.5 / 1.5 | 4.29 → 4.29 | 0.83 → 0.80 | 4.26 → 4.26 | 0.58 → 0.65 | 4.35 → 4.35 | 0.77 → 0.77 |
+| Colour Grading | 12.0 / 8.2 | 5.07 → 4.35 | 5.31 → 5.53 | 4.90 → 3.85 | 5.34 → 4.94 | 5.17 → 4.50 | 5.25 → 5.68 |
+| Calibration | 3.7 / 3.9 | 2.11 → 2.29 | 2.62 → 2.61 | 2.03 → 2.82 | 2.97 → 3.28 | 2.16 → 2.19 | 2.69 → 2.54 |
+| Point Color | 1.2 / 0.3 | 1.03 → 1.03 | 0.25 → 0.25 | 1.03 → 1.03 | 0.25 → 0.25 | 1.04 → 1.04 | 0.25 → 0.25 |
+
+| Whole render against Lightroom's | Rust: ΔE | Rust: sky ΔE | Rust: sky L\* a\* b\* | Apple display: ΔE | Apple display: sky ΔE | Apple display: sky L\* a\* b\* | Apple scene: ΔE | Apple scene: sky ΔE | Apple scene: sky L\* a\* b\* |
+|---|---:|---:|---|---:|---:|---|---:|---:|---|
+| Nothing applied | 5.06 → 5.06 | 2.63 → 2.63 | 79.8 -3.7 -14.9 → 79.8 -3.7 -14.9 (Lightroom 79.1 -2.0 -14.6) | 6.23 → 6.23 | 3.64 → 3.64 | 81.0 -3.9 -14.8 → 81.0 -3.9 -14.8 (Lightroom 79.1 -2.0 -14.6) | 6.52 → 6.52 | 3.19 → 3.19 | 79.8 -3.8 -15.2 → 79.8 -3.8 -15.2 (Lightroom 79.1 -2.0 -14.6) |
+| Every look group (no grain, no lens profile) | 12.91 → 11.33 | 6.99 → 3.84 | 84.5 -14.0 -7.5 → 84.3 -9.1 -6.4 (Lightroom 85.2 -7.7 -8.9) | 10.78 → 10.05 | 6.92 → 5.18 | 87.2 -11.8 -7.5 → 87.2 -8.6 -6.0 (Lightroom 85.2 -7.7 -8.9) | 14.45 → 13.01 | 7.22 → 4.12 | 84.5 -14.0 -7.6 → 84.4 -9.0 -6.4 (Lightroom 85.2 -7.7 -8.9) |
+| The preset as it is | 15.56 → 13.99 | 8.75 → 5.16 | 84.5 -14.0 -7.5 → 84.3 -9.1 -6.4 (Lightroom 88.3 -6.3 -7.5) | 11.11 → 10.44 | 7.63 → 5.31 | 87.2 -11.8 -7.5 → 87.2 -8.6 -6.0 (Lightroom 88.3 -6.3 -7.5) | 16.76 → 15.23 | 8.80 → 5.12 | 84.5 -14.0 -7.6 → 84.4 -9.0 -6.4 (Lightroom 88.3 -6.3 -7.5) |
+
+The sky (the upper part of the frame that Lightroom's unedited render draws blue, a third of the measured pixels) was
+the visible difference: with every look group applied Lightroom's is L\* 85.2, a\* −7.7, b\* −8.9 and ours was 84.5 /
+−14.0 / −7.5 on the Rust renderer, more cyan-green and more saturated (chroma 16.0 against 11.8). In context that a\*
+gap of −6.3 came from white balance (−3.4), Colour Grading (−1.8) and the starting look (−1.7), with the curves and the
+light sliders adding −0.6 each and the colour mixer and Dehaze taking +1.2 and +1.5 back. With the wheels on ProPhoto's
+hues and the ILCE-6000's Lightroom white balance scale refitted to that raw's five custom-white exports (Kelvin × 1.06,
+tint − 11; mean effect ΔE 3.30 → 2.76, `kelvin_presets::LIGHTROOM`), ours is 84.3 / −9.1 / −6.4 (chroma 11.3). In the
+preset as it is, Lightroom's sky is another 3 L\* lighter (88.3): its lens profile corrects the kit lens's vignetting,
+and ours applies that lens's distortion only.
+
+What is left of the whole render, of which the starting look alone is 5.1: the light sliders, the tone curves and
+Colour Grading in context (about 5 each: with everything else applied their errors compound, and Lightroom's lift of
+the mid tones by the midtones wheel is part of the grading's), white balance (4.5: the far ends of the Kelvin scale)
+and Dehaze (3.6).
+
 ## What is left (ΔE about 8 here)
 
 Measured on the render of the shipped build against the export, by lightness and by hue:
@@ -240,5 +440,6 @@ constants are the ones named above. To re-measure, render with the CLI as in *Me
 
 | Date | Change |
 |---|---|
+| 2026-11-22 | Colour Grading, the Calibration primaries, Shadows Tint and Vibrance refitted on six cameras; the Phoenix 200 preset measured group by group; white balance, Point Color and Saturation measured (cards #386 / #388) |
 | 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
 | 2026-11-14 | positive Dehaze refitted, negative Dehaze checked at -50 and -100 (card #439); Calibration's Shadows Tint refitted; Colour Grading, HSL and Calibration checked against the exports there are |

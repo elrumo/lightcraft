@@ -501,6 +501,13 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
     n(o, "ColorGradeGlobalLum", "grading.global.lum");
     n(o, "ColorGradeBlending", "grading.blending");
     n(o, "SplitToningBalance", "grading.balance");
+    // A file with split toning and no Blending is from the older Split Toning panel, which Lightroom draws as
+    // Blending 100: its export of a sidecar with only a shadows tint is pixel for pixel its export of the same sidecar
+    // with `ColorGradeBlending="100"` (six cameras). Our own default is Lightroom's for new edits, 50.
+    let toned = |k: &str| num(props, k).is_some_and(|v| v != 0.0);
+    if num(props, "crs:ColorGradeBlending").is_none() && (toned("crs:SplitToningShadowSaturation") || toned("crs:SplitToningHighlightSaturation")) {
+        put(o, "grading.blending", json!(100.0));
+    }
 
     // ---- Detail
     n(o, "Sharpness", "detail.sharpen_amount");

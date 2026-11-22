@@ -410,14 +410,41 @@ fn constants() -> String {
         s += &format!("const DENSITY_DEPTH: f32 = {DENSITY_DEPTH:?};\nconst DENSITY_CHROMA: f32 = {DENSITY_CHROMA:?};\n");
     }
     {
-        use lightcraft_pipeline::colorops::GRADING_BLEND_WIDTH;
-        use lightcraft_pipeline::colorops::GRADING_SPLIT;
+        use lightcraft_pipeline::colorops::{
+            GRADING_FADE, GRADING_HIGHLIGHTS, GRADING_MIDTONES, GRADING_SHADOWS, VIBRANCE_CHROMA, VIBRANCE_DOWN, VIBRANCE_PROTECT,
+            VIBRANCE_PROTECT_WIDTH, VIBRANCE_UP,
+        };
+        let ([sn, sw], [hn, hw]) = (GRADING_SHADOWS, GRADING_HIGHLIGHTS);
+        for (name, v) in [
+            ("GRADING_SN0", sn.0),
+            ("GRADING_SN1", sn.1),
+            ("GRADING_SW0", sw.0),
+            ("GRADING_SW1", sw.1),
+            ("GRADING_HN0", hn.0),
+            ("GRADING_HN1", hn.1),
+            ("GRADING_HW0", hw.0),
+            ("GRADING_HW1", hw.1),
+            ("GRADING_MID", GRADING_MIDTONES.0),
+            ("GRADING_MID_WIDTH", GRADING_MIDTONES.1),
+            ("GRADING_FADE_AT", GRADING_FADE.0),
+            ("GRADING_FADE_DARK", GRADING_FADE.1),
+            ("GRADING_FADE_BRIGHT", GRADING_FADE.2),
+            ("VIBRANCE_UP", VIBRANCE_UP),
+            ("VIBRANCE_CHROMA", VIBRANCE_CHROMA),
+            ("VIBRANCE_DOWN", VIBRANCE_DOWN),
+            ("VIBRANCE_PROTECT", VIBRANCE_PROTECT),
+            ("VIBRANCE_PROTECT_WIDTH", VIBRANCE_PROTECT_WIDTH),
+        ] {
+            s += &format!("const {name}: f32 = {v:?};\n");
+        }
+    }
+    {
         use lightcraft_pipeline::finish::{
             HIGHLIGHTS_UP, NEG_DEHAZE_DESATURATE, NEG_DEHAZE_FLOOR, NEG_DEHAZE_GAMMA, NEG_DEHAZE_STRENGTH, NEG_DEHAZE_TARGET, POS_DEHAZE_FLOOR,
             POS_DEHAZE_STRENGTH, POS_DEHAZE_VEIL,
         };
         s += &format!(
-            "const NEG_DEHAZE_GAMMA: f32 = {NEG_DEHAZE_GAMMA:?};\nconst NEG_DEHAZE_STRENGTH: f32 = {NEG_DEHAZE_STRENGTH:?};\nconst NEG_DEHAZE_FLOOR: f32 = {NEG_DEHAZE_FLOOR:?};\nconst NEG_DEHAZE_TARGET: f32 = {NEG_DEHAZE_TARGET:?};\nconst NEG_DEHAZE_DESATURATE: f32 = {NEG_DEHAZE_DESATURATE:?};\nconst POS_DEHAZE_STRENGTH: f32 = {POS_DEHAZE_STRENGTH:?};\nconst POS_DEHAZE_FLOOR: f32 = {POS_DEHAZE_FLOOR:?};\nconst POS_DEHAZE_VEIL: f32 = {POS_DEHAZE_VEIL:?};\nconst HIGHLIGHTS_UP: f32 = {HIGHLIGHTS_UP:?};\nconst GRADING_SPLIT: f32 = {GRADING_SPLIT:?};\nconst GRADING_BLEND_WIDTH: f32 = {GRADING_BLEND_WIDTH:?};\n"
+            "const NEG_DEHAZE_GAMMA: f32 = {NEG_DEHAZE_GAMMA:?};\nconst NEG_DEHAZE_STRENGTH: f32 = {NEG_DEHAZE_STRENGTH:?};\nconst NEG_DEHAZE_FLOOR: f32 = {NEG_DEHAZE_FLOOR:?};\nconst NEG_DEHAZE_TARGET: f32 = {NEG_DEHAZE_TARGET:?};\nconst NEG_DEHAZE_DESATURATE: f32 = {NEG_DEHAZE_DESATURATE:?};\nconst POS_DEHAZE_STRENGTH: f32 = {POS_DEHAZE_STRENGTH:?};\nconst POS_DEHAZE_FLOOR: f32 = {POS_DEHAZE_FLOOR:?};\nconst POS_DEHAZE_VEIL: f32 = {POS_DEHAZE_VEIL:?};\nconst HIGHLIGHTS_UP: f32 = {HIGHLIGHTS_UP:?};\n"
         );
     }
     // an HDR histogram's bins (`lightcraft_raster::HdrBins`, as an HDR edit's histogram has them)
