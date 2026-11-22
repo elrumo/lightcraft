@@ -643,13 +643,23 @@ pub fn specs() -> Vec<CommandSpec> {
                     .collect(),
             ))
         }),
-        cmd!(query "presets.list", "List Presets", [], None, "{} → [{id, name, group, favorite, builtin (built-in or the sync server's: not editable), hidden (the preset itself, `preset.hide`)}]", always, |s, _| {
+        cmd!(query "presets.list", "List Presets", [], None, "{} → [{id, name, group, favorite, builtin (built-in or the sync server's: not editable), hidden (the preset itself, `preset.hide`), look?: the app pack profile it sets (`lut:pack-…`), absent?: true when that look's table is not on this device (`pack.set` `absent`)}]", always, |s, _| {
             // (an app pack's presets are never hidden: what a server or another device hides doesn't reach them)
             let hidden = |id: &String| s.hidden_presets.presets.contains(id) && !s.is_pack_preset(id);
             Ok(Value::Array(
                 s.presets
                     .iter()
-                    .map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": p.favorite, "builtin": p.builtin, "hidden": hidden(&p.id)}))
+                    .map(|p| {
+                        let mut v = json!({"id": p.id, "name": p.name, "group": p.group, "favorite": p.favorite, "builtin": p.builtin, "hidden": hidden(&p.id)});
+                        // (the pack look a preset sets: a frontend fetches an absent one's table before it applies the preset)
+                        if let Some(look) = p.settings.get("profile").and_then(|q| q.get("id")).and_then(Value::as_str).filter(|id| crate::cmd::packs::is_pack_profile(id)) {
+                            v["look"] = json!(look);
+                            if s.absent_look(look).is_some() {
+                                v["absent"] = json!(true);
+                            }
+                        }
+                        v
+                    })
                     .collect(),
             ))
         }),
@@ -688,7 +698,14 @@ pub fn specs() -> Vec<CommandSpec> {
             // imported LUT profiles too (#618), marked as in `profiles.menu`
             let imported =
                 s.lut_profiles.iter().map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": favorite(&p.id), "imported": true}));
-            let packs = s.pack_profiles().map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": favorite(&p.id), "pack": true}));
+            // (a pack's look whose table is not on this device, `pack.set` `absent`, says so)
+            let packs = s.pack_profiles().map(|p| {
+                let mut v = json!({"id": p.id, "name": p.name, "group": p.group, "favorite": favorite(&p.id), "pack": true});
+                if p.file.is_empty() {
+                    v["absent"] = json!(true);
+                }
+                v
+            });
             Ok(Value::Array(builtin.chain(packs).chain(imported).collect()))
         }),
         cmd!(query "profiles.menu", "Profile Menu", [], None, "{} — favourites, recent (newest first) and groups", always, |s, _| Ok(s.profile_menu())),

@@ -275,6 +275,10 @@ fn prepare_guarded(
     hosted: bool,
 ) -> Result<PreparedExport, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
+    // (a rendered file of a photo whose look's table is not on this device would be written without the look)
+    if o.format.is_rendered() {
+        session.look_here(p).map_err(|e| e.to_string())?;
+    }
     let file_name = o.file_name_for(p, seq);
     let source_dir = original_folder(&p.source);
     // HDR output only for photos edited in HDR; the rest of the batch exports as usual

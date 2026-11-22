@@ -31,6 +31,8 @@ pub enum ErrorKind {
     ModelMissing(AiModel),
     /// Hidden is locked: unlock it (password, Face ID) and try again.
     Locked,
+    /// The photo's look is an app pack's whose table is not on this device: fetch it and try again.
+    LookMissing,
     Other,
 }
 
@@ -48,6 +50,7 @@ impl EngineError {
             Self::Cancelled(_) => ErrorKind::Cancelled,
             Self::ModelMissing { model, .. } => ErrorKind::ModelMissing(*model),
             Self::Locked(_) => ErrorKind::Locked,
+            Self::LookMissing { .. } => ErrorKind::LookMissing,
             Self::Other(_) => ErrorKind::Other,
         }
     }

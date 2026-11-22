@@ -380,6 +380,17 @@ impl MediaCache {
         }
     }
 
+    /// The table of `id`'s look came (an app pack's look fetched after the photo was drawn without it): a host draws its
+    /// thumbnail again ([`MediaCache::take_rebuilt`]; its render key changed with the table, [`MediaCache::camera_profile_salt`]).
+    /// Past what is kept, every thumbnail a host remembers is asked for again.
+    pub fn note_look_arrived(&mut self, id: PhotoId) {
+        if self.rebuilt.len() < ARRIVED_MAX {
+            self.rebuilt.push(id);
+        } else {
+            self.arrived_all = true;
+        }
+    }
+
     /// The photos whose previews were built again since the last call.
     pub fn take_rebuilt(&mut self) -> Vec<PhotoId> {
         std::mem::take(&mut self.rebuilt)
@@ -554,8 +565,13 @@ impl MediaCache {
     }
 
     /// What a render with profile `profile_id` adds to its cache keys: the imported camera profile's fingerprint, 0
-    /// for any other profile and for a camera profile this library no longer has (it renders without it).
+    /// for any other profile and for a camera profile this library no longer has (it renders without it). A LUT
+    /// profile with no table registered (an app pack's look not fetched yet) has a value of its own: the picture drawn
+    /// without the table is not the one the profile makes once the table is here.
     pub fn camera_profile_salt(&self, profile_id: &str) -> u64 {
+        if lightcraft_pipeline::lut::is_lut_profile(profile_id) && !lightcraft_pipeline::lut::is_registered(profile_id) {
+            return crate::cmd::packs::NO_TABLE_SALT;
+        }
         if !crate::cmd::dcp_profiles::is_dcp_id(profile_id) {
             return 0;
         }

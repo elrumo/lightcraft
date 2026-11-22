@@ -773,6 +773,8 @@ impl crate::Session {
         depth: lightcraft_pipeline::OutputDepth,
     ) -> Result<RenderJob, String> {
         lightcraft_pipeline::check_output_size(max_w, max_h)?;
+        // (never a final picture without its look: an app pack's table not on this device yet, `Session::look_here`)
+        self.look_here(self.catalog.photo(id).ok_or("no such photo")?).map_err(|e| e.to_string())?;
         let mut job = self.render_job(id, max_w, max_h, false, true).ok_or("no such photo")?;
         // An export develops from a source at least twice its size, so it is resized down with a good filter
         // rather than made from a preview just covering it (for a raw, a binned and box-reduced image)

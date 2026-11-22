@@ -72,18 +72,7 @@ pub fn prepare(session: &mut Session, p: &Value) -> Result<Prepared, String> {
         opts.resize = Some(Resize::long_edge(3000));
     }
     let exact = p.get("path").and_then(Value::as_str);
-    let ids: Vec<PhotoId> = match p.get("ids").and_then(Value::as_array) {
-        Some(a) => a.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect(),
-        // like the desktop app: the selection (in grid order), else the given / active photo
-        None if p.get("id").is_none() && session.selection.ids.len() > 1 => {
-            let sel: std::collections::HashSet<_> = session.selection.ids.iter().copied().collect();
-            session.visible_cloned().into_iter().filter(|id| sel.contains(id)).collect()
-        }
-        None => {
-            let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(session.active());
-            vec![id.ok_or("no photo (import one or pass `id`)")?]
-        }
-    };
+    let ids = photos_of(session, p)?;
     let dir = p.get("dir").and_then(Value::as_str).unwrap_or("");
     // Add to Apple Photos: refused before anything is written when it can't be done
     let after = session.after_export(&opts)?;
@@ -109,6 +98,36 @@ pub fn prepare(session: &mut Session, p: &Value) -> Result<Prepared, String> {
         }
     }
     Ok(Prepared { items, opts, to: Destination { dir: dir.to_string(), exact: exact.map(str::to_string) }, after })
+}
+
+/// The photos an export with the parameters `p` writes: `ids`, else the selection when more than one photo is selected
+/// (in grid order, like the desktop app), else `id` or the active photo.
+fn photos_of(session: &mut Session, p: &Value) -> Result<Vec<PhotoId>, String> {
+    Ok(match p.get("ids").and_then(Value::as_array) {
+        Some(a) => a.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect(),
+        None if p.get("id").is_none() && session.selection.ids.len() > 1 => {
+            let sel: std::collections::HashSet<_> = session.selection.ids.iter().copied().collect();
+            session.visible_cloned().into_iter().filter(|id| sel.contains(id)).collect()
+        }
+        None => {
+            let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(session.active());
+            vec![id.ok_or("no photo (import one or pass `id`)")?]
+        }
+    })
+}
+
+/// The refusal of an export with the parameters `p` for a look that is not on this device (an app pack's table still
+/// to be fetched, `Session::look_here`), as the error a host answers under its own code (`lookMissing`): a frontend
+/// fetches the table and exports again. `None`: no photo of it lacks its look, or the export fails for another reason
+/// ([`prepare`] says which).
+pub fn lacking_look(session: &mut Session, p: &Value) -> Option<lightcraft_engine::EngineError> {
+    let p = session.export_params_or(p, ExportFormat::Png).ok()?;
+    let opts = ExportOptions::from_params_or(&p, ExportFormat::Png).ok()?;
+    if !opts.format.is_rendered() {
+        return None;
+    }
+    let ids = photos_of(session, &p).ok()?;
+    ids.into_iter().filter_map(|id| session.catalog.photo(id)).find_map(|photo| session.look_here(photo).err())
 }
 
 /// Give each photo of `items` the picture `host` (`hostPixels`) holds for it, when it can use it

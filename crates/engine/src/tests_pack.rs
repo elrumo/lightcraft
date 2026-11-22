@@ -310,3 +310,190 @@ fn a_retired_profile_keeps_rendering_through_its_alias() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&lib);
 }
+
+/// A demo library with pack `id` set: the look "Here" with its table, "Later" and "Unused" declared absent.
+fn with_absent_looks(tag: &str, id: &str) -> (Session, PathBuf, lightcraft_catalog::PhotoId, lightcraft_catalog::PhotoId) {
+    let dir = temp_dir(tag);
+    write_cube(&dir.join("Here.cube"), "Here", 0.3);
+    write_presets(&dir.join("looks.lcpreset"), &["Here", "Later"], id);
+    let mut s = Session::with_demo();
+    let r =
+        s.execute("pack.set", &json!({"id": id, "dir": dir.to_string_lossy(), "group": "Test +", "absent": ["Later", "Unused", "Here"]})).unwrap();
+    assert_eq!((r["profiles"].as_u64(), r["absent"].as_u64()), (Some(3), Some(2)), "a look with a table in the call is not absent: {r}");
+    let ids = s.visible_cloned();
+    (s, dir, ids[0], ids[1])
+}
+
+#[test]
+fn an_absent_look_is_a_listed_profile_with_no_file() {
+    let (mut s, dir, ..) = with_absent_looks("absent-list", "absentlist");
+    let later = super::cmd::packs::profile_id("absentlist", "Later");
+    assert_eq!(s.profile_info(&later), Some(("Later", "Test +")), "a photo that uses it still names its look");
+    assert_eq!(s.execute("profile.lutFile", &json!({"id": later})).unwrap()["file"], Value::Null);
+    assert!(lightcraft_pipeline::lut::get(&later).is_none() && !lightcraft_pipeline::lut::is_registered(&later));
+
+    // listed in its group by name, among the looks that are here, and marked
+    let menu = s.profile_menu();
+    let group = menu["groups"].as_array().unwrap().iter().find(|g| g["name"] == "Test +").unwrap().clone();
+    let listed: Vec<(String, bool)> =
+        group["profiles"].as_array().unwrap().iter().map(|p| (p["name"].as_str().unwrap().to_string(), p["absent"] == true)).collect();
+    assert_eq!(listed, [("Here".to_string(), false), ("Later".to_string(), true), ("Unused".to_string(), true)]);
+    let all = s.execute("profiles.list", &json!({})).unwrap();
+    let of = |name: &str| all.as_array().unwrap().iter().find(|p| p["name"] == name && p["pack"] == true).unwrap().clone();
+    assert_eq!((of("Later")["absent"].clone(), of("Here").get("absent").cloned()), (json!(true), None));
+    // a preset says which pack look it sets, and whether that look is still to be fetched
+    let presets = s.execute("presets.list", &json!({})).unwrap();
+    let preset = |name: &str| presets.as_array().unwrap().iter().find(|p| p["name"] == name && p["group"] == "Test +").unwrap().clone();
+    assert_eq!((preset("Later")["look"].clone(), preset("Later")["absent"].clone()), (json!(later), json!(true)));
+    assert_eq!(preset("Here").get("absent"), None, "{}", preset("Here"));
+    assert!(preset("Here")["look"].is_string());
+
+    // the same order once the table has come, from another folder
+    let other = temp_dir("absent-list-fetched");
+    write_cube(&other.join("Later.cube"), "Later", 0.5);
+    let r = s
+        .execute(
+            "pack.set",
+            &json!({"id": "absentlist", "dir": dir.to_string_lossy(), "files": [other.join("Later.cube").to_string_lossy()], "group": "Test +", "absent": ["Unused"]}),
+        )
+        .unwrap();
+    assert_eq!(r["arrived"], json!([later]), "the call says which tables are new: {r}");
+    let menu = s.profile_menu();
+    let group = menu["groups"].as_array().unwrap().iter().find(|g| g["name"] == "Test +").unwrap().clone();
+    let names: Vec<&str> = group["profiles"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
+    assert_eq!(names, ["Here", "Later", "Unused"]);
+    assert!(lightcraft_pipeline::lut::get(&later).is_some());
+
+    // wrong kinds are refused, and a pack of absent looks alone is a pack
+    assert!(s.execute("pack.set", &json!({"id": "absentlist", "absent": "Later"})).is_err());
+    assert!(s.execute("pack.set", &json!({"id": "absentlist", "absent": [1]})).is_err());
+    let r = s.execute("pack.set", &json!({"id": "absentlist", "absent": ["Later", " "]})).unwrap();
+    assert_eq!((r["profiles"].as_u64(), r["absent"].as_u64()), (Some(1), Some(1)), "{r}");
+    s.execute("pack.set", &json!({"id": "absentlist"})).unwrap();
+    assert!(s.packs.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&other);
+}
+
+#[test]
+fn pack_needed_names_the_absent_looks_photos_use() {
+    let (mut s, dir, a, b) = with_absent_looks("needed", "neededpack");
+    let (here, later) = (super::cmd::packs::profile_id("neededpack", "Here"), super::cmd::packs::profile_id("neededpack", "Later"));
+    assert_eq!(s.execute("pack.needed", &json!({})).unwrap(), json!({"profiles": []}), "nothing uses a look yet");
+    s.execute("library.select", &json!({"ids": [a.0]})).unwrap();
+    s.execute("develop.profile", &json!({"id": later})).unwrap();
+    s.execute("library.select", &json!({"ids": [b.0]})).unwrap();
+    s.execute("develop.profile", &json!({"id": here})).unwrap();
+    assert_eq!(s.execute("pack.needed", &json!({})).unwrap(), json!({"profiles": [later]}), "a look that is here is not needed");
+    assert_eq!(s.execute("pack.needed", &json!({"ids": [b.0]})).unwrap(), json!({"profiles": []}));
+    assert_eq!(s.execute("pack.needed", &json!({"ids": [a.0, 999_999, "x"]})).unwrap(), json!({"profiles": [later]}), "unknown ids are skipped");
+    assert!(s.execute("pack.needed", &json!({"ids": 3})).is_err());
+
+    // a version keeps its settings: its look is needed too, though the photo has moved on
+    s.execute("library.select", &json!({"ids": [a.0]})).unwrap();
+    s.execute("version.create", &json!({"name": "with the look"})).unwrap();
+    s.execute("develop.profile", &json!({"id": here})).unwrap();
+    assert_eq!(s.execute("pack.needed", &json!({"ids": [a.0]})).unwrap(), json!({"profiles": [later]}));
+
+    // a retired look whose table is not here is needed under its own id
+    s.execute(
+        "pack.set",
+        &json!({"id": "neededpack", "dir": dir.to_string_lossy(), "group": "Test +", "absent": ["Later"], "aliases": {"Old": null}}),
+    )
+    .unwrap();
+    let old = super::cmd::packs::profile_id("neededpack", "Old");
+    assert_eq!(s.profile_info(&old), Some(("Old", "Test +")));
+    assert!(!s.profile_menu().to_string().contains("\"Old\""), "a retired look is not offered");
+    s.execute("develop.profile", &json!({"id": old})).unwrap();
+    assert_eq!(s.execute("pack.needed", &json!({})).unwrap(), json!({"profiles": [later, old]}));
+    s.execute("pack.set", &json!({"id": "neededpack"})).unwrap();
+    assert_eq!(s.execute("pack.needed", &json!({})).unwrap(), json!({"profiles": []}), "a pack that is not set declares nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_final_output_is_refused_while_its_look_is_absent() {
+    use crate::export::{ExportOptions, export_photo};
+    let (mut s, dir, a, b) = with_absent_looks("refuse", "refusepack");
+    let later = super::cmd::packs::profile_id("refusepack", "Later");
+    s.execute("library.select", &json!({"ids": [a.0]})).unwrap();
+    s.execute("develop.profile", &json!({"id": later})).unwrap();
+    let small = ExportOptions { resize: Some(crate::export::Resize::long_edge(64)), ..Default::default() };
+
+    let photo = s.catalog.photo(a).unwrap().clone();
+    let refusal = s.look_here(&photo).unwrap_err();
+    assert_eq!(refusal.kind(), crate::ErrorKind::LookMissing, "a frontend tells it by its kind");
+    assert!(matches!(&refusal, crate::EngineError::LookMissing { profile, .. } if *profile == later));
+    assert!(refusal.to_string().contains("Later"), "and the message names the look: {refusal}");
+    let said = export_photo(&mut s, a, &small, 1).err().unwrap();
+    assert_eq!(said, refusal.to_string(), "the export is refused, not written without the look");
+    assert!(s.export_job(a, 64, 64, Default::default(), Default::default()).is_err(), "so is every other full render (print, contact sheet)");
+    assert!(export_photo(&mut s, b, &small, 1).is_ok(), "a photo without the look exports");
+    // (the original's bytes need no look)
+    let original = ExportOptions { format: crate::export::ExportFormat::Original, ..Default::default() };
+    assert!(crate::export::prepare_export(&mut s, a, &original, 1).err().is_none_or(|e| e != refusal.to_string()));
+
+    // a look nothing is declared about behaves as before: drawn without the table (the pack set without `absent`)
+    s.execute("pack.set", &json!({"id": "refusepack", "dir": dir.to_string_lossy(), "group": "Test +"})).unwrap();
+    assert!(s.absent_look(&later).is_none());
+    assert!(export_photo(&mut s, a, &small, 1).is_ok());
+    s.execute("pack.set", &json!({"id": "refusepack", "dir": dir.to_string_lossy(), "group": "Test +", "absent": ["Later"]})).unwrap();
+    assert!(export_photo(&mut s, a, &small, 1).is_err());
+
+    // once the table is here the photo exports
+    let fetched = temp_dir("refuse-fetched");
+    write_cube(&fetched.join("Later.cube"), "Later", 0.5);
+    s.execute(
+        "pack.set",
+        &json!({"id": "refusepack", "dir": dir.to_string_lossy(), "files": [fetched.join("Later.cube").to_string_lossy()], "group": "Test +"}),
+    )
+    .unwrap();
+    assert!(export_photo(&mut s, a, &small, 1).is_ok());
+    s.execute("pack.set", &json!({"id": "refusepack"})).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fetched);
+}
+
+#[test]
+fn a_picture_drawn_without_the_table_is_not_kept_for_the_look() {
+    let (mut s, dir, a, b) = with_absent_looks("salt", "saltpack");
+    let (here, later) = (super::cmd::packs::profile_id("saltpack", "Here"), super::cmd::packs::profile_id("saltpack", "Later"));
+    s.execute("library.select", &json!({"ids": [a.0]})).unwrap();
+    s.execute("develop.profile", &json!({"id": later})).unwrap();
+    s.execute("library.select", &json!({"ids": [b.0]})).unwrap();
+    s.execute("develop.profile", &json!({"id": here})).unwrap();
+    assert_eq!(s.media.camera_profile_salt(&here), 0, "a look whose table is here keeps the keys it had");
+    assert_ne!(s.media.camera_profile_salt(&later), 0);
+    assert_eq!(s.media.camera_profile_salt("lc.color"), 0);
+    let keys = |s: &mut Session| {
+        let thumb = s.thumb_job(a, 256).unwrap();
+        (s.render_job(a, 300, 300, false, true).unwrap().key, thumb.cache.map(|c| c.1), s.thumb_job(b, 256).unwrap().cache.map(|c| c.1))
+    };
+    let without = keys(&mut s);
+    assert!(s.media.take_rebuilt().is_empty());
+
+    let fetched = temp_dir("salt-fetched");
+    write_cube(&fetched.join("Later.cube"), "Later", 0.5);
+    s.execute(
+        "pack.set",
+        &json!({"id": "saltpack", "dir": dir.to_string_lossy(), "files": [fetched.join("Later.cube").to_string_lossy()], "group": "Test +"}),
+    )
+    .unwrap();
+    let with = keys(&mut s);
+    assert_ne!(without.0, with.0, "the loupe's render is asked for again");
+    assert_ne!(without.1, with.1, "and the thumbnail kept on disk is another one");
+    assert_eq!(without.2, with.2, "a photo whose look was here all along keeps its thumbnail");
+    assert_eq!(s.media.take_rebuilt(), [a], "a host draws the thumbnails of the photos that use the look again");
+
+    // setting the same pack again draws nothing again
+    s.execute(
+        "pack.set",
+        &json!({"id": "saltpack", "dir": dir.to_string_lossy(), "files": [fetched.join("Later.cube").to_string_lossy()], "group": "Test +"}),
+    )
+    .unwrap();
+    assert!(s.media.take_rebuilt().is_empty());
+    assert_eq!(keys(&mut s), with);
+    s.execute("pack.set", &json!({"id": "saltpack"})).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fetched);
+}

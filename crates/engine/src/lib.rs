@@ -172,6 +172,11 @@ pub enum EngineError {
     /// Hidden is locked: a frontend asks for the password (or Face ID) on [`ErrorKind::Locked`] and tries again.
     #[error("{0}")]
     Locked(String),
+    /// A final output (an export, a print) of a photo whose look is an app pack's with its table not on this device
+    /// (`pack.set` `absent`): nothing was written. A frontend fetches `profile`'s table on [`ErrorKind::LookMissing`],
+    /// sets the pack again and tries again.
+    #[error("{msg}")]
+    LookMissing { profile: String, msg: String },
     #[error("{0}")]
     Other(String),
 }

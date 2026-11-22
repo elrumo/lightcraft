@@ -206,6 +206,12 @@ pub fn get(id: &str) -> Option<Arc<Lut3d>> {
     lut
 }
 
+/// Whether a table is registered for profile `id` (read or not yet): `false` means a render with the profile draws
+/// without it. Cheap: nothing is read.
+pub fn is_registered(id: &str) -> bool {
+    matches!(registry().read().unwrap_or_else(|e| e.into_inner()).get(id), Some(Entry::Ready(_) | Entry::File(_)))
+}
+
 /// The size and title a `.cube` file's first lines (`head`) declare, without reading its table.
 pub fn cube_header(head: &str) -> Result<(usize, Option<String>), String> {
     let mut title = None;
@@ -265,6 +271,9 @@ mod tests {
         assert!(get("lut:lazy-test").is_some(), "read once");
         assert!(get("lut:lazy-bad").is_none() && get("lut:lazy-gone").is_none());
         assert!(get("lut:lazy-nothing").is_none());
+        // (registered: a table or a file not read yet, not a file that held no table, and nothing under an unknown id)
+        assert!(is_registered("lut:lazy-test") && is_registered("lut:lazy-gone"));
+        assert!(!is_registered("lut:lazy-bad") && !is_registered("lut:lazy-nothing"));
         for id in ["lut:lazy-test", "lut:lazy-bad", "lut:lazy-gone"] {
             unregister(id);
         }

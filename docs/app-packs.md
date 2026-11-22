@@ -1,7 +1,7 @@
 # App packs
 
 An app pack is a set of looks that ships inside an app, not in a library. A frontend hands the engine a folder at
-every start (`pack.set {id, dir?, files?, group?}`: a folder, a list of files, or both; the files of an app bundle need no
+every start (`pack.set {id, dir?, files?, group?, aliases?, absent?}`: a folder, a list of files, or both; the files of an app bundle need no
 copying); the engine reads them and keeps the result in memory:
 
 - every `.cube` file (a 3D LUT, see `crates/pipeline/src/lut.rs`) becomes a profile, named by the file's `TITLE`
@@ -21,8 +21,28 @@ users (`server-presets`, [sync](sync.md)) and other devices sync their own hide 
 them. `presets.list` and `presets.groups {details}` report them as not hidden, and `preset.hide` / `preset.hideGroup`
 refuse to hide them (taking a stale hide off is allowed). Connected to a server or not, the app's looks are in the panel.
 
+## Looks fetched when they are wanted
+
+An app need not carry every table. `pack.set {…, absent: [look name]}` declares the looks of the pack whose tables are
+not on the device: each is a profile like the others (`profiles.list` and `profiles.menu` list it in its group with
+`absent: true`, a photo that uses it names it, `presets.list` marks a preset that sets it with `look` and `absent`), but
+it has no file (`profile.lutFile` answers `null`) and a render with it draws without the table. A name that has a table
+in the same call is not absent, and a group's profiles are in one order, by name, wherever their tables come from. A
+retired look whose table is absent is declared as `aliases: {name: null}`.
+
+- `pack.needed {ids?}` names the absent looks the library's photos (or `ids`) are developed with, in their settings and
+  their versions: what an app fetches without being asked, at its start and after a sync.
+- When a table has been fetched, the app sets the pack again with the file. The answer's `arrived` lists the profiles
+  that have a table now and had none; the photos that use them are drawn again: a render's cache key differs between
+  "no table" and "table registered" for a LUT profile (`MediaCache::camera_profile_salt`), so a picture drawn without
+  the table is never reused for the look, and a host's thumbnails follow (`MediaCache::take_rebuilt`).
+- A final output is never written without its look: an export, a print, a contact sheet's file or a slideshow's
+  video of a photo whose look is absent is refused (`Session::look_here`, error kind `LookMissing`, the host's code
+  `lookMissing`), naming the look. The frontend fetches the table and tries again. A copy of the original needs no
+  look and is not refused, and a pack look nothing was declared about behaves as before (drawn without the table).
+
 `pack.set` again replaces the pack's earlier version (its tables and presets go first); without `dir` it takes the pack
-out. Files over 64 MB and folders over 500 files are not read. The profiles show in `profiles.menu` and `profiles.list`
+out (a pack of `absent` looks alone is a pack). Files over 64 MB and folders over 500 files are not read. The profiles show in `profiles.menu` and `profiles.list`
 (`pack: true`, not `imported`: `profile.deleteImported` refuses them).
 
 Profiles render on the GPU as well as the CPU for tables up to 65 points a side (`lut::GPU_MAX_SIZE`).

@@ -850,11 +850,15 @@ impl Session {
     pub fn profile_menu(&self) -> Value {
         let item = |p: &ProfileInfo| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.iter().any(|f| f == p.id), "amount": has_amount(p.id)});
         let imported = self.imported_profiles();
-        let pack_item = |id: &str| {
-            self.pack_profiles()
-                .find(|p| p.id == id)
-                .map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.contains(&p.id)}))
+        // (an absent one, `pack.set` `absent`, says so: its table is fetched when it is first wanted)
+        let pack_value = |p: &crate::cmd::lut_profiles::LutProfile| {
+            let mut v = json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.contains(&p.id)});
+            if p.file.is_empty() {
+                v["absent"] = json!(true);
+            }
+            v
         };
+        let pack_item = |id: &str| self.pack_profiles().find(|p| p.id == id).map(pack_value);
         let imported_item = |(id, name, group): &(String, String, String)| {
             let mut v = json!({"id": id, "name": name, "group": group, "favorite": self.profile_favorites.contains(id), "imported": true});
             if let Some(d) = self.dcp_profiles.iter().find(|d| &d.id == id) {
@@ -876,11 +880,7 @@ impl Session {
             }
         }
         for g in pack_groups {
-            let profiles: Vec<Value> = self
-                .pack_profiles()
-                .filter(|p| p.group == g)
-                .map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": self.profile_favorites.contains(&p.id)}))
-                .collect();
+            let profiles: Vec<Value> = self.pack_profiles().filter(|p| p.group == g).map(pack_value).collect();
             groups.push(json!({"name": g, "profiles": profiles}));
         }
         // imported LUT profiles by their groups, then camera profiles

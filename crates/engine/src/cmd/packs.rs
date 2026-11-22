@@ -6,9 +6,17 @@
 //!
 //! A pack's profile id is `lut:pack-<pack>-<name>` ([`profile_id`]), so presets in the same folder can name its
 //! profiles before the engine has read them.
+//!
+//! An app need not carry every table: a look whose table it fetches when it is first wanted is declared with
+//! `pack.set` `absent`. It is a profile like the others (listed, named on the photos that use it), with no file: a
+//! render with it draws without the table until the app sets the pack again with the file, `pack.needed` says which
+//! of them the library's photos use, and a final output (an export, a print) of such a photo is refused
+//! ([`Session::look_here`]) rather than written without its look.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
+
+use lightcraft_catalog::{Photo, PhotoId};
 
 use lightcraft_develop::Preset;
 use serde_json::{Value, json};
@@ -41,12 +49,17 @@ pub fn profile_id(pack: &str, name: &str) -> String {
 #[derive(Clone, Debug, Default)]
 pub struct Pack {
     pub id: String,
+    /// By name. One with an empty `file` is absent: its table is not on this device (`pack.set` `absent`).
     pub profiles: Vec<LutProfile>,
     pub presets: Vec<Preset>,
     /// Profiles the pack no longer offers, kept so photos edited with them still render: each draws another file's table.
-    /// Not listed (no browser entry, no preset), but `profile.lutFile` and the photo's profile name know them.
+    /// Not listed (no browser entry, no preset), but `profile.lutFile` and the photo's profile name know them. One with
+    /// an empty `file` is absent, like a profile.
     pub aliases: Vec<LutProfile>,
 }
+
+/// What a render key carries for a LUT profile with no table registered ([`crate::media::MediaCache::camera_profile_salt`]).
+pub(crate) const NO_TABLE_SALT: u64 = 0x6e6f_5f74_6162_6c65;
 
 impl Session {
     /// Whether `id` is a preset an app pack brought.
@@ -67,6 +80,53 @@ impl Session {
     /// Every pack's profiles.
     pub fn pack_profiles(&self) -> impl Iterator<Item = &LutProfile> {
         self.packs.iter().flat_map(|p| p.profiles.iter())
+    }
+
+    /// The pack look `id` names, when its table is not on this device (`pack.set` `absent`, or a retired look whose
+    /// table is). `None` for every other id, a pack look nothing was declared about included.
+    pub fn absent_look(&self, id: &str) -> Option<&LutProfile> {
+        if !is_pack_profile(id) {
+            return None;
+        }
+        self.pack_profiles().chain(self.pack_aliases()).find(|p| p.file.is_empty() && p.id == id)
+    }
+
+    /// Refuses a final output of `p` (an export, a print, a contact sheet's file) while the table of its look is not
+    /// on this device: it would be written without the look, and nothing would say so. A frontend tells the refusal
+    /// by its kind ([`crate::ErrorKind::LookMissing`]), fetches the table, sets the pack again and tries again.
+    pub fn look_here(&self, p: &Photo) -> Result<()> {
+        match self.absent_look(&p.develop.profile.id) {
+            Some(look) => Err(crate::EngineError::LookMissing {
+                profile: look.id.clone(),
+                msg: format!(
+                    "{}: its look, {}, has not been downloaded to this device yet. It is fetched once the device is online",
+                    p.file_name, look.name
+                ),
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// The absent pack looks `photos` are developed with (their settings now, and their versions'), sorted.
+    fn looks_needed<'a>(&self, photos: impl Iterator<Item = &'a std::sync::Arc<Photo>>) -> Vec<String> {
+        let absent: HashSet<&str> = self.pack_profiles().chain(self.pack_aliases()).filter(|p| p.file.is_empty()).map(|p| p.id.as_str()).collect();
+        if absent.is_empty() {
+            return Vec::new();
+        }
+        let mut needed = BTreeSet::new();
+        let mut note = |id: &str| {
+            // (the prefix first: nearly every photo of a big library fails it without a hash)
+            if is_pack_profile(id) && absent.contains(id) && !needed.contains(id) {
+                needed.insert(id.to_string());
+            }
+        };
+        for p in photos {
+            note(&p.develop.profile.id);
+            for v in &p.versions {
+                note(&v.settings.profile.id);
+            }
+        }
+        needed.into_iter().collect()
     }
 
     /// Remember which of the packs' presets are favourites now: the list holds that until a rebuild of the list
@@ -123,16 +183,20 @@ fn set_pack(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("files").is_some_and(|f| !f.is_null() && !f.as_array().is_some_and(|a| a.iter().all(Value::is_string))) {
         return Err(bad(C, "files must be a list of paths"));
     }
-    if p.get("aliases").is_some_and(|a| !a.is_null() && !a.as_object().is_some_and(|o| o.values().all(Value::is_string))) {
-        return Err(bad(C, "aliases must map profile names to .cube paths"));
+    if p.get("aliases").is_some_and(|a| !a.is_null() && !a.as_object().is_some_and(|o| o.values().all(|v| v.is_string() || v.is_null()))) {
+        return Err(bad(C, "aliases must map profile names to .cube paths (or null: the table is not on this device)"));
     }
+    if p.get("absent").is_some_and(|a| !a.is_null() && !a.as_array().is_some_and(|a| a.iter().all(Value::is_string))) {
+        return Err(bad(C, "absent must be a list of look names"));
+    }
+    let absent_names: Vec<&str> = p.get("absent").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).take(MAX_FILES).collect();
     let dir = str_param(p, "dir").map(Path::new);
     let listed: Vec<std::path::PathBuf> = p
         .get("files")
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_str).map(std::path::PathBuf::from).collect())
         .unwrap_or_default();
-    if dir.is_none() && listed.is_empty() {
+    if dir.is_none() && listed.is_empty() && absent_names.is_empty() {
         s.remove_pack(&id);
         return Ok(json!({"id": id, "profiles": 0, "presets": 0, "failed": []}));
     }
@@ -207,8 +271,14 @@ fn set_pack(s: &mut Session, p: &Value) -> Result<Value> {
     // retired profiles: an old name drawn with another file's table, unless the pack still has a profile of that name
     let mut aliases = Vec::<LutProfile>::new();
     for (alias, file) in p.get("aliases").and_then(Value::as_object).into_iter().flatten().take(MAX_FILES) {
-        let Some(file) = file.as_str() else { continue };
         let pid = profile_id(&id, alias);
+        let Some(file) = file.as_str().filter(|f| !f.is_empty()) else {
+            // (its table is not on this device: known, and asked for by `pack.needed`, like an absent look)
+            if !profiles.iter().chain(&aliases).any(|x| x.id == pid) {
+                aliases.push(LutProfile { id: pid, name: alias.clone(), group: group.clone(), file: String::new() });
+            }
+            continue;
+        };
         let path = Path::new(file);
         let usable =
             path.extension().is_some_and(|e| e.eq_ignore_ascii_case("cube")) && path.metadata().is_ok_and(|m| m.is_file() && m.len() <= MAX_FILE);
@@ -220,25 +290,71 @@ fn set_pack(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
 
+    // looks whose tables are not on this device: profiles with no file (a name that has a table here is not absent)
+    let mut absent = 0;
+    for name in absent_names {
+        let pid = profile_id(&id, name);
+        if name.trim().is_empty() || profiles.iter().chain(&aliases).any(|x| x.id == pid) {
+            continue;
+        }
+        profiles.push(LutProfile { id: pid, name: name.to_string(), group: group.clone(), file: String::new() });
+        absent += 1;
+    }
+    // one order whether a look's table is in the app, was fetched into another folder or is absent: by name
+    profiles.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+
     // swap the pack in: the old version's tables and presets out, the new ones registered
+    let arrived: Vec<String> = registered.iter().map(|(pid, _)| pid).filter(|pid| !lightcraft_pipeline::lut::is_registered(pid)).cloned().collect();
     s.remove_pack(&id);
     for (pid, file) in registered {
         lightcraft_pipeline::lut::register_file(&pid, file);
     }
-    let counts = json!({"id": id, "profiles": profiles.len(), "presets": presets.len(), "aliases": aliases.len(), "failed": failed});
+    // the photos drawn without a table that is here now are drawn again (their render keys changed with it:
+    // `MediaCache::camera_profile_salt`); a host's thumbnails of them follow (`MediaCache::take_rebuilt`)
+    if !arrived.is_empty() {
+        let redraw: Vec<PhotoId> =
+            s.catalog.photos().filter(|p| is_pack_profile(&p.develop.profile.id) && arrived.contains(&p.develop.profile.id)).map(|p| p.id).collect();
+        for photo in redraw {
+            s.media.note_look_arrived(photo);
+        }
+    }
+    let counts = json!({"id": id, "profiles": profiles.len(), "presets": presets.len(), "aliases": aliases.len(), "absent": absent, "arrived": arrived, "failed": failed});
     s.packs.push(Pack { id, profiles, presets, aliases });
     s.insert_pack_presets();
     Ok(counts)
 }
 
+/// `pack.needed`: the absent looks the library's photos (or `ids`) are developed with.
+fn needed(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("ids").is_some_and(|i| !i.is_null() && !i.is_array()) {
+        return Err(bad("pack.needed", "ids must be a list of photo ids"));
+    }
+    let profiles = match p.get("ids").and_then(Value::as_array) {
+        Some(ids) => s.looks_needed(ids.iter().filter_map(Value::as_u64).filter_map(|id| s.catalog.photo(PhotoId(id)))),
+        None => s.looks_needed(s.catalog.photos()),
+    };
+    Ok(json!({"profiles": profiles}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cmd!(
-        "pack.set",
-        "Set App Pack",
-        [],
-        None,
-        "{id: pack name, dir?: folder and/or files?: [paths] of .cube files (profiles `lut:pack-<id>-<name>`, named by their TITLE) and .lcpreset files (built-in presets), group?: the profiles' group (default the folder's name, else the pack's), aliases?: {old profile name: .cube path} (looks the pack no longer offers: photos edited with one keep rendering with that table; not listed)} → {id, profiles, presets, aliases, failed} — sets the app's own looks, replacing the pack's earlier version; nothing is saved or synced, so call it each time the app starts. Without `dir` and `files` the pack is taken out.",
-        always,
-        set_pack
-    )]
+    vec![
+        cmd!(
+            "pack.set",
+            "Set App Pack",
+            [],
+            None,
+            "{id: pack name, dir?: folder and/or files?: [paths] of .cube files (profiles `lut:pack-<id>-<name>`, named by their TITLE) and .lcpreset files (built-in presets), group?: the profiles' group (default the folder's name, else the pack's), aliases?: {old profile name: .cube path | null} (looks the pack no longer offers: photos edited with one keep rendering with that table; not listed; null: its table is not on this device), absent?: [look name] (looks of the pack whose tables are not on this device: profiles with no file, listed with `absent: true`; a name with a table in this call is not absent)} → {id, profiles (absent ones included), presets, aliases, absent, arrived: [profile ids that have a table now and had none], failed} — sets the app's own looks, replacing the pack's earlier version; nothing is saved or synced, so call it each time the app starts, and again when an absent look's table has been fetched. Without `dir`, `files` and `absent` the pack is taken out.",
+            always,
+            set_pack
+        ),
+        cmd!(
+            query "pack.needed",
+            "Looks To Fetch",
+            [],
+            None,
+            "{ids?: [photo]} → {profiles: [id]} — the absent pack looks (`pack.set` `absent`, and retired looks whose table is absent) that the library's photos, or `ids`, are developed with (their settings and their versions'), sorted: what an app fetches without being asked. Changes nothing",
+            always,
+            needed
+        ),
+    ]
 }

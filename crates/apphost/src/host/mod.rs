@@ -1348,6 +1348,10 @@ impl Engine {
         let mut params = params.clone();
         let remember = params.as_object_mut().and_then(|o| o.remove("remember")) != Some(Value::Bool(false));
         let params = &params;
+        // (a look still to be fetched: the answer has a code of its own, so the frontend fetches it and exports again)
+        if let Some(e) = crate::export::lacking_look(&mut self.session, params) {
+            return Some(Event::err(id, ErrorBody::engine(&e)));
+        }
         let started = crate::export::prepare(&mut self.session, params).and_then(|prepared| {
             let write: crate::export::SharedWrite = Arc::new(lightcraft_engine::export::write_file);
             crate::export::Batch::start(&self.session, prepared, write, "Adding to Apple Photos…".into())
