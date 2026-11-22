@@ -388,7 +388,7 @@ fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
     // the ILCE-6000: Lightroom's 6900 K / +3 is a warmer, greener white on Sony's dial
     let mut a6000 = marked();
     lightroom_white_to_dial(&mut a6000, "SONY ILCE-6000");
-    assert_eq!(a6000["wb"], json!({"mode": "custom", "temp": 6900.0 * 1.02, "tint": -15.0, "scale": "kelvin"}));
+    assert_eq!(a6000["wb"], json!({"mode": "custom", "temp": 6900.0 * 1.06, "tint": -8.0, "scale": "kelvin"}));
     assert_eq!(a6000["light"]["exposure"], 0.5);
     // the EOS R6: Lightroom's As Shot reads about 10 % above ours, so its Custom 5050 K / +27 (2V2A9273, As Shot 4700 K /
     // +27 there, 4285 K / +24 here) is the same small step from As Shot on our dial

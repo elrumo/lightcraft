@@ -174,13 +174,17 @@ pub struct LightroomScale {
 /// and 4800 K / +15 in Lightroom (its as-shot `AsShotTemperature` / `AsShotTint`), a Kelvin ratio of 1.14 and a tint
 /// offset of 16; a free fit of the Phoenix 200 preset's white balance against Lightroom's export (the ΔE sweep of
 /// Kelvin and tint, 500 px) wanted 7000 K / -16 for the preset's 6900 K / +3, a ratio of 1.02 and an offset of 19, so
-/// those are used rather than the one white measured: the as-shot white is not where a preset's look is judged.
+/// those were used until Lightroom exported that raw with a custom white alone at five values (4000, 5500 and 7500 K
+/// at tint +10, 5500 K at +40, and the preset's 6900 K / +3; cards #386 / #388): against those five the effect of the
+/// white balance is closest at a ratio of 1.06 and an offset of 11 (mean ΔE 2.76, against 3.30 for 1.02 / 18 and 4.42
+/// for the as-shot 1.14 / 16; the whole preset had other gaps leaking into its white). What is left is at the far
+/// ends (4000 and 7500 K stay about 4 off).
 /// The EOS R6's As Shot, read in Lightroom 7.5 next to ours on two raws: 4700 K / +27 against 4285 K / +24, and
 /// 5000 K / +12 against 4424 K / +6 (the corpus' `cr3-canon-r6-craw.cr3`), ratios 0.912 and 0.885: a Custom 5050 K
 /// read as written warmed that photo twice as far from As Shot as in Lightroom (35 mired against 15), and its
 /// shadows came out yellow where Lightroom's are blue.
 const LIGHTROOM: &[(&str, &str, LightroomScale)] = &[
-    ("SONY", "ILCE-6000", LightroomScale { kelvin_ratio: 1.02, tint_offset: 18.0 }),
+    ("SONY", "ILCE-6000", LightroomScale { kelvin_ratio: 1.06, tint_offset: 11.0 }),
     ("Canon", "Canon EOS R6", LightroomScale { kelvin_ratio: 0.90, tint_offset: 4.5 }),
 ];
 
