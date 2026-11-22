@@ -10,11 +10,13 @@
 //! a PencilKit drawing kept as its data), `layer.duplicate` and `layer.behind` (the photo's subject covers the layer).
 //! This core stores them and leaves them to a native frontend's renderer: it draws no words, shapes or drawings, and
 //! draws a layer that is behind over the subject. A new layer can be placed where it goes (`x`, `y`, `scale`, `angle`).
+//! `layer.style` gives any layer a border, a shadow, rounded corners and an effect (a sticker, a holographic foil), kept
+//! here and drawn by a native frontend's renderer too.
 
 use lightcraft_catalog::{MediaKind, PhotoId};
 use lightcraft_develop::{
-    ExposureLayer, LayerBlend, LayerDrawing, LayerShape, LayerText, MAX_EXPOSURE_LAYERS, MAX_LAYER_DRAWING, MAX_LAYER_FAMILY, MAX_LAYER_TEXT,
-    MAX_LAYERS,
+    ExposureLayer, LayerBlend, LayerDrawing, LayerShape, LayerStyle, LayerText, MAX_EXPOSURE_LAYERS, MAX_LAYER_DRAWING, MAX_LAYER_FAMILY,
+    MAX_LAYER_TEXT, MAX_LAYERS,
 };
 use serde_json::{Value, json};
 
@@ -171,6 +173,33 @@ fn shape_params(p: &Value, mut sh: LayerShape, c: &str) -> Result<LayerShape> {
         sh.corner = v;
     }
     Ok(sh.sane())
+}
+
+/// The style fields a call sets (`border`, `borderColor`, `shadow`, `shadowBlur`, `shadowX`, `shadowY`, `radius`,
+/// `effect`) over `st`, checked and in range.
+fn style_params(p: &Value, mut st: LayerStyle, c: &str) -> Result<LayerStyle> {
+    for (key, field) in [
+        ("border", &mut st.border),
+        ("shadow", &mut st.shadow),
+        ("shadowBlur", &mut st.shadow_blur),
+        ("shadowX", &mut st.shadow_x),
+        ("shadowY", &mut st.shadow_y),
+        ("radius", &mut st.radius),
+    ] {
+        if let Some(v) = num(p, key, c)? {
+            *field = v;
+        }
+    }
+    if let Some(v) = p.get("borderColor").filter(|v| !v.is_null()) {
+        let rgb: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+        let [r, g, b] = rgb[..] else { return Err(bad(c, "`borderColor` must be [r, g, b], sRGB 0..1")) };
+        st.border_color = [r, g, b];
+    }
+    if let Some(v) = p.get("effect").filter(|v| !v.is_null()) {
+        let effect = v.as_str().filter(|e| LayerStyle::EFFECTS.contains(e)).ok_or_else(|| bad(c, "`effect` must be none, sticker or holo"))?;
+        st.effect = effect.into();
+    }
+    Ok(st.sane())
 }
 
 /// The drawing fields a call sets (`pencil`: PencilKit data, base64; `aspect`) over `d`, checked.
@@ -628,11 +657,34 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec {
             explicit_targets: true,
             ..cmd!(
+                "layer.style",
+                "Layer Style",
+                [],
+                None,
+                "{layer: index, border?: width in % of the layer's short side (0: none), borderColor?: [r, g, b], shadow?: strength 0..100 (0: none), shadowBlur?, shadowX?, shadowY?: % of the short side, radius?: the corners' in % of the short side, effect?: none|sticker|holo, id?} — a layer's border, shadow, rounded corners and effect, the fields left out kept (drawn by a native frontend; this core draws the layer plain)",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.style";
+                    let id = base_of(s, p, C)?;
+                    let i = layer_param(p, "layer", C)?;
+                    layers_edit(s, id, "Layer Style", |layers| {
+                        at(layers, i, C)?;
+                        let style = style_params(p, layers[i].style.clone().unwrap_or_default().sane(), C)?;
+                        // (a layer with nothing of it showing keeps none: its settings are those of a plain layer again)
+                        layers[i].style = if style.is_plain() { None } else { Some(style) };
+                        Ok(())
+                    })
+                }
+            )
+        },
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
                 query "layer.list",
                 "List Layers",
                 [],
                 None,
-                "{id?} → {id, layers: [{index, kind: photo|text|shape|drawing, photo, text?, shape?, drawing?, behind?, visible, blend, opacity, x, y, scale, angle, name, state: ok|missing|deleted|video|local, drawn}], max, maxPhotos, shown} — the photo's layers, each with what its photo is now (a text layer is named by its first line, a shape by its kind)",
+                "{id?} → {id, layers: [{index, kind: photo|text|shape|drawing, photo, text?, shape?, drawing?, behind?, style?, visible, blend, opacity, x, y, scale, angle, name, state: ok|missing|deleted|video|local, drawn}], max, maxPhotos, shown} — the photo's layers, each with what its photo is now (a text layer is named by its first line, a shape by its kind)",
                 has_active,
                 |s, p| list(s, p)
             )

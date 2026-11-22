@@ -71,6 +71,7 @@
 //! | 16 | compositing (this fork, card #446): text layers and layers behind the photo's subject | `ExposureLayer.text`, `ExposureLayer.behind` (an older build would drop them, and its next edit of the photo would sync the layer back without them) |
 //! | 17 | compositing tools (this fork, card #446): shape and drawing layers | `ExposureLayer.shape`, `ExposureLayer.drawing` (as v16: an older build would turn them into empty photo layers and sync that back) |
 //! | 18 | type options (this fork, card #446): a text layer's font family, weight, italic, underline, strikethrough, alignment and spacing | `LayerText.family`, `weight`, `italic`, `underline`, `strike`, `align`, `tracking`, `leading` (an older build would drop them and sync the words back plain) |
+//! | 19 | layer styles (this fork): a layer's border, shadow, rounded corners and effect | `ExposureLayer.style` (an older build would drop it and sync the layer back plain) |
 //!
 //! Rules:
 //! - **Bump [`VERSION`]** (and add a row above) in the change that adds an [`Op`] variant or a
@@ -100,15 +101,15 @@ pub const LOG: &str = "catalog.log";
 const FORMAT: &str = "lightcraft-catalog";
 /// The catalog format this build writes (and the newest it reads). See the module docs →
 /// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
-pub const VERSION: u32 = 18;
+pub const VERSION: u32 = 19;
 
 /// The newest catalog format a sync peer must understand: what a server says it keeps (`format` of
 /// [`crate::sync::proto::Ops`]), which a device compares with its own before it sends changes. It moves with [`VERSION`]
 /// for a new op or field, which go over the sync protocol, and not for a change to how a file is written: v13 only
 /// changed `catalog.snap`, so it stayed 12 (a server saying 13 would have made every device of v12 stop sending);
 /// v14's `Photo.origin` goes over the protocol, so it is 14; v15's mask, lens and Lens Blur fields do too, so it is
-/// 15 (its shared grid table is only in `catalog.snap`); v16's text and behind-the-subject layers do too, v17's shape and drawing layers and v18's type options, so it is 18.
-pub const SYNC_VERSION: u32 = 18;
+/// 15 (its shared grid table is only in `catalog.snap`); v16's text and behind-the-subject layers do too, v17's shape and drawing layers, v18's type options and v19's layer styles, so it is 19.
+pub const SYNC_VERSION: u32 = 19;
 
 /// How far into `catalog.snap` its header may reach: `"catalog":` comes after the develop defaults (a few KB).
 pub(crate) const HEADER_BYTES: usize = 64 << 10;

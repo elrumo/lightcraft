@@ -310,3 +310,53 @@ fn a_text_layers_type_options_are_set_checked_and_kept() {
     let t = d.exposure_layers[0].text.as_ref().unwrap().sane();
     assert_eq!((t.family.as_str(), t.weight.as_str(), t.align.as_str(), t.tracking, t.leading), ("AB", "", "center", 800.0, 0.5));
 }
+
+#[test]
+fn a_layers_style_is_set_kept_in_range_dropped_when_plain_and_undone() {
+    let mut s = Session::with_demo();
+    let id = s.catalog.photos().map(|p| p.id).next().unwrap();
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("layer.addShape", &json!({})).unwrap();
+    let plain = serde_json::to_value(&s.develop_of(id).unwrap().exposure_layers[0]).unwrap();
+    assert!(plain.get("style").is_none(), "a plain layer writes no style: {plain}");
+
+    // set in parts, the rest kept; every number in range, whatever is asked
+    s.execute("layer.style", &json!({"layer": 0, "border": 900, "borderColor": [0.2, 4.0, -1.0], "radius": 12})).unwrap();
+    s.execute("layer.style", &json!({"layer": 0, "shadow": 60, "shadowBlur": 1e9, "shadowX": -900, "effect": "holo"})).unwrap();
+    let st = s.develop_of(id).unwrap().exposure_layers[0].style.clone().unwrap();
+    assert_eq!((st.border, st.border_color, st.radius), (25.0, [0.2, 1.0, 0.0], 12.0));
+    assert_eq!((st.shadow, st.shadow_blur, st.shadow_x, st.shadow_y, st.effect.as_str()), (60.0, 25.0, -50.0, 3.0, "holo"));
+    let listed = s.execute("layer.list", &json!({})).unwrap();
+    assert_eq!(listed["layers"][0]["style"]["effect"], "holo");
+    // a copy has it too
+    s.execute("layer.duplicate", &json!({"layer": 0})).unwrap();
+    assert_eq!(s.develop_of(id).unwrap().exposure_layers[1].style.as_ref().map(|c| c.effect.as_str()), Some("holo"));
+
+    // refused: an effect there is none of, a colour that is not three numbers, a layer that is not there
+    for bad in [
+        json!({"layer": 0, "effect": "glitter"}),
+        json!({"layer": 0, "borderColor": [1, 2]}),
+        json!({"layer": 0, "border": "wide"}),
+        json!({"layer": 9, "border": 1}),
+    ] {
+        assert!(s.execute("layer.style", &bad).is_err(), "{bad}");
+    }
+
+    // everything put back: the layer is a plain one again, its settings as before the style
+    s.execute("layer.style", &json!({"layer": 0, "border": 0, "shadow": 0, "radius": 0, "effect": "none"})).unwrap();
+    assert_eq!(serde_json::to_value(&s.develop_of(id).unwrap().exposure_layers[0]).unwrap(), plain);
+    // one undo a step
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.develop_of(id).unwrap().exposure_layers[0].style.as_ref().map(|c| c.effect.as_str()), Some("holo"));
+
+    // from a file or another device anything can arrive: read and brought into range, never a panic
+    let d: lightcraft_develop::DevelopSettings = serde_json::from_value(json!({"exposure_layers": [
+        {"style": {"border": -5, "shadow": 1e300, "shadow_blur": null, "radius": "round", "effect": 7, "border_color": [9]}},
+        {"style": {"effect": "foil", "radius": 80}},
+    ]}))
+    .unwrap_or_default();
+    for l in &d.exposure_layers {
+        let st = l.style.clone().unwrap_or_default().sane();
+        assert!(st.border >= 0.0 && st.shadow <= 100.0 && st.radius <= 50.0 && st.effect == "none", "{st:?}");
+    }
+}

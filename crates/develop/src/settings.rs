@@ -1257,6 +1257,70 @@ impl LayerShape {
     }
 }
 
+/// A layer's dressing: a border round it, a shadow under it, rounded corners and an effect over it (a sticker's cut
+/// edge and gloss, a holographic foil's colours). Lengths are in percent of the layer's short side, so a layer looks
+/// the same at any size. A native frontend draws it; this core keeps it and draws the layer plain.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayerStyle {
+    /// The border's width, 0..25 (0: none).
+    pub border: f64,
+    /// sRGB, 0..1 each.
+    pub border_color: [f64; 3],
+    /// The shadow's strength, 0..100 (0: none).
+    pub shadow: f64,
+    /// How soft the shadow is, 0..25.
+    pub shadow_blur: f64,
+    /// Where the shadow falls from the layer, right (`shadow_x`) and down (`shadow_y`), −50..50.
+    pub shadow_x: f64,
+    pub shadow_y: f64,
+    /// The corners' radius, 0..50 (a photo's and a shape's; words and drawings have no corners).
+    pub radius: f64,
+    /// `none`, `sticker` or `holo` (a name this build does not know reads as `none`).
+    pub effect: String,
+}
+
+impl Default for LayerStyle {
+    fn default() -> Self {
+        LayerStyle {
+            border: 0.0,
+            border_color: [1.0, 1.0, 1.0],
+            shadow: 0.0,
+            shadow_blur: 4.0,
+            shadow_x: 0.0,
+            shadow_y: 3.0,
+            radius: 0.0,
+            effect: "none".into(),
+        }
+    }
+}
+
+impl LayerStyle {
+    pub const EFFECTS: [&'static str; 3] = ["none", "sticker", "holo"];
+
+    /// `self` brought into range (from a file or another device any value can arrive).
+    pub fn sane(&self) -> LayerStyle {
+        let c = |v: f64| if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 };
+        let r = |v: f64, lo: f64, hi: f64, or: f64| if v.is_finite() { v.clamp(lo, hi) } else { or };
+        LayerStyle {
+            border: r(self.border, 0.0, 25.0, 0.0),
+            border_color: [c(self.border_color[0]), c(self.border_color[1]), c(self.border_color[2])],
+            shadow: r(self.shadow, 0.0, 100.0, 0.0),
+            shadow_blur: r(self.shadow_blur, 0.0, 25.0, 4.0),
+            shadow_x: r(self.shadow_x, -50.0, 50.0, 0.0),
+            shadow_y: r(self.shadow_y, -50.0, 50.0, 3.0),
+            radius: r(self.radius, 0.0, 50.0, 0.0),
+            effect: if Self::EFFECTS.contains(&self.effect.as_str()) { self.effect.clone() } else { "none".into() },
+        }
+    }
+
+    /// Nothing of it shows: the layer is drawn as it is (and keeps no style).
+    pub fn is_plain(&self) -> bool {
+        let s = self.sane();
+        s.border == 0.0 && s.shadow == 0.0 && s.radius == 0.0 && s.effect == "none"
+    }
+}
+
 /// A drawing layer's strokes (card #446): an Apple PencilKit drawing (its `dataRepresentation`, base64) in a space
 /// [`DRAWING_WIDTH`] units wide over the frame's width. A native frontend draws it; this core keeps it whole.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1307,6 +1371,10 @@ pub struct ExposureLayer {
     /// magazine's title sits behind a head. Not written while false. This core draws the layer over the subject.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub behind: bool,
+    /// The layer's border, shadow, corners and effect, drawn by a native frontend (not by this core). Not written for a
+    /// plain layer, so the layers there were keep their JSON and `hash64`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<LayerStyle>,
     pub visible: bool,
     pub blend: LayerBlend,
     /// 0..100.
@@ -1336,6 +1404,7 @@ impl ExposureLayer {
             shape: None,
             drawing: None,
             behind: false,
+            style: None,
             visible: true,
             blend: LayerBlend::Screen,
             opacity: 100.0,
