@@ -1068,6 +1068,8 @@ pub fn encode(data: &[u16], width: usize, height: usize, components: usize, prec
     }
     out.extend_from_slice(&[predictor, 0, 0]);
     let codes: Vec<[(u32, u8); 17]> = tables.iter().map(|(c, v)| canonical_codes(c, v)).collect();
+    // (room for two bytes a sample, about what 16-bit linear light compresses to, so the output is not copied as it grows)
+    out.reserve(data.len().saturating_mul(2));
     let mut bw = BitWriter { out, acc: 0, n: 0 };
     let mut mark_iter = marks.iter().peekable();
     let mut rst = 0u8;
@@ -1082,10 +1084,12 @@ pub fn encode(data: &[u16], width: usize, height: usize, components: usize, prec
         let c = i % components;
         let s = ssss_of(d);
         let (code, len) = codes[c][s as usize];
-        bw.put(code, len as u32);
+        // (the code and the difference's bits in one write: at most 16 + 15 bits)
         if s > 0 && s < 16 {
             let v = if d < 0 { d - 1 } else { d };
-            bw.put(v as u32 & ((1 << s) - 1), s as u32);
+            bw.put((code << s) | (v as u32 & ((1 << s) - 1)), len as u32 + s as u32);
+        } else {
+            bw.put(code, len as u32);
         }
     }
     bw.flush();

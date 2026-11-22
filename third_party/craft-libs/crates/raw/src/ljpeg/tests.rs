@@ -424,3 +424,62 @@ fn code_lengths_are_limited_to_16() {
     assert_eq!(values.len(), 17);
     assert!(Huffman::new(&counts, &values).is_ok());
 }
+
+/// The encoder's exact bytes (FNV-1a of each output) for a fixed pattern: a faster encoder must write the same file
+/// (card #522: stand-in DNGs). Ramps, noise and full-range jumps, so every code length and the 16-bit category occur.
+#[test]
+fn encoder_output_is_unchanged() {
+    let fnv = |b: &[u8]| b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ x as u64).wrapping_mul(0x100_0000_01b3));
+    let mut seed = 0x2545_f491u32;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed
+    };
+    let mut hashes = Vec::new();
+    for (components, restart) in [(1usize, 0usize), (3, 0), (2, 37)] {
+        let (w, h) = (61usize, 23usize);
+        let data: Vec<u16> = (0..w * h * components)
+            .map(|i| match i % 7 {
+                0 => (i * 37) as u16,
+                1 => (next() & 0xffff) as u16,
+                2 => {
+                    if next() & 1 == 0 {
+                        0
+                    } else {
+                        u16::MAX
+                    }
+                }
+                _ => ((i as u32 * 131 + (next() & 0xff)) & 0xffff) as u16,
+            })
+            .collect();
+        for predictor in 1..=7u8 {
+            hashes.push(fnv(&encode(&data, w, h, components, 16, predictor, restart)));
+        }
+    }
+    assert_eq!(hashes, GOLDEN);
+}
+const GOLDEN: [u64; 21] = [
+    0x601c295a57a08d5d,
+    0x24c9308162f0427,
+    0x68fc2f144e118577,
+    0x842cd4e757383c0,
+    0xaa39ba6ad65b6ea5,
+    0x490eb29771c8fe8,
+    0x808fa7230c2b69fa,
+    0x9585fce1e2c144,
+    0x49234f2abd839ea2,
+    0x8036e936196ebf17,
+    0xcc1f1091d66a2543,
+    0x15f3dbd1c4c84261,
+    0x74b026cfabc7650,
+    0x3687315a002356ed,
+    0x52b1c6ba27df9a2e,
+    0xd751f4d79e5a2ffb,
+    0xa6b0104e43021958,
+    0xcbc9d5361b30bfdf,
+    0x958c119eb572fbb5,
+    0xd970cbf9c61d5e4,
+    0x2df69d36242144e4,
+];
