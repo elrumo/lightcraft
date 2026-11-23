@@ -1,7 +1,7 @@
 use super::colour::stream_bin_factor;
 use super::load::{load_vec, load_vec_compact, load_vec_pair, load_vec_reduced};
 use super::preview::{fit_box, fs_preview_loader, preview_orientation};
-use super::probe::{head_of, probe_bytes, split_time};
+use super::probe::{head_of, probe_bytes_in, split_time};
 #[cfg(not(target_arch = "wasm32"))]
 use super::probe::{load_video, probe_video_path};
 use super::{Arc, DenoiseSpec, FileLoader, FileProbe, Filter, PairLoader, ReducedLoader, fit};
@@ -218,8 +218,8 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize, with: RawDecode<'_>| {
         fs_load(path, max_edge, false, |bytes| load_vec(bytes, max_edge, with), |img, info| (img, info))
     });
-    let probe: FileProbe = Arc::new(|path: &str| {
-        if let Some(r) = probe_video_path(path) {
+    let probe: FileProbe = Arc::new(|path: &str, known: &lightcraft_preview::KnownHashes| {
+        if let Some(r) = probe_video_path(path, known) {
             let mut info = r?;
             let meta = std::fs::metadata(path).ok();
             info.file_modified = meta.as_ref().and_then(modified_iso);
@@ -233,7 +233,7 @@ pub fn fs_hooks() -> (FileLoader, FileProbe) {
         let len = meta.as_ref().map_or(0, |m| usize::try_from(m.len()).unwrap_or(usize::MAX));
         let _permit = crate::memory::work_gate().acquire(len);
         let bytes = crate::read_file::read_open(file, crate::read_file::MAX_MEDIA_BYTES).map_err(|e| format!("{path}: {e}"))?;
-        let mut info = probe_bytes(path, &bytes)?;
+        let mut info = probe_bytes_in(path, &bytes, known)?;
         info.file_modified = meta.as_ref().and_then(modified_iso);
         info.locked = meta.as_ref().is_some_and(file_locked);
         Ok(info)
@@ -247,7 +247,7 @@ pub(crate) fn load_video(_: &str, _: usize, _: Option<f64>) -> Result<(Rgb32f, S
 }
 
 #[cfg(target_arch = "wasm32")]
-fn probe_video_path(_: &str) -> Option<Result<crate::media::ProbeInfo, String>> {
+fn probe_video_path(_: &str, _: &lightcraft_preview::KnownHashes) -> Option<Result<crate::media::ProbeInfo, String>> {
     None
 }
 

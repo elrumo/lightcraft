@@ -418,7 +418,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(C, format!("{path}: not a photo LightCraft reads")));
     }
     let probe = s.media.file_probe.clone().ok_or_else(|| bad(C, "this build can't read files"))?;
-    let info = probe(path).map_err(|e| bad(C, format!("{path}: {e}")))?;
+    let info = probe(path, &s.known_hashes_for(path)).map_err(|e| bad(C, format!("{path}: {e}")))?;
     // a photo the library already has (imported before through the picker, or on another device)
     let hash = info.content_hash.clone();
     let existing =
@@ -498,7 +498,8 @@ fn copy_again(s: &mut Session, id: PhotoId, src: &Path) -> Result<()> {
     const C: &str = "photoLibrary.open";
     let p = s.catalog.photo(id).cloned().ok_or(lightcraft_catalog::CatalogError::NoPhoto(id))?;
     let probe = s.media.file_probe.clone().ok_or_else(|| bad(C, "this build can't read files"))?;
-    let read = probe(&src.to_string_lossy()).map_err(|e| bad(C, format!("{}: {e}", src.display())));
+    let src_path = src.to_string_lossy();
+    let read = probe(&src_path, &s.known_hashes_for(&src_path)).map_err(|e| bad(C, format!("{}: {e}", src.display())));
     if read.as_ref().map_or(true, |info| info.content_hash.is_none() || info.content_hash != p.content_hash) {
         drop_staged(s, src);
         read?;

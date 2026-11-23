@@ -199,7 +199,7 @@ fn real() {
     let mut session = Session::new().with_fs();
     for (i, path) in paths.iter().enumerate() {
         let path = path.to_string_lossy().into_owned();
-        let probe = session.media.file_probe.as_ref().unwrap()(&path).unwrap();
+        let probe = session.media.file_probe.as_ref().unwrap()(&path, &session.known_hashes()).unwrap();
         let mut p =
             Photo::new(PhotoId(i as u64 + 1), Source::File { path: path.clone() }, "photo", &probe.format, probe.width, probe.height, "2026-01-01");
         p.file_size = probe.file_size;

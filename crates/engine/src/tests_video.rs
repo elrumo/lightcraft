@@ -32,8 +32,8 @@ fn a_clip_imports_as_a_video_with_its_length_and_a_poster() {
     assert_eq!(p.format, "MP4");
     assert_eq!(p.file_size, bytes.len() as u64);
     assert!(p.duration.is_some_and(|d| (d - 2.0).abs() < 0.01), "{:?}", p.duration);
-    // the hash is that of the whole file, however it was read (the copy check and sync dedupe rely on it)
-    assert_eq!(p.content_hash.as_deref(), Some(lightcraft_preview::hash_bytes(&bytes).to_string().as_str()));
+    // the hash is that of the whole file, however it was read (the copy check and sync dedupe rely on it): the new one
+    assert_eq!(p.content_hash.as_deref(), Some(lightcraft_preview::content_hash(&bytes).to_string().as_str()));
     // it is in the Videos filter and not in Photos
     s.execute("library.filter", &json!({"kind": "video"})).unwrap();
     assert_eq!(s.visible(), &[id]);
@@ -52,7 +52,7 @@ fn a_clip_probed_from_its_bytes_matches_the_one_probed_from_its_file() {
     std::fs::write(&path, &bytes).unwrap();
     let from_bytes = crate::files::probe_bytes("a.mov", &bytes).unwrap();
     let (_, probe) = crate::files::fs_hooks();
-    let from_file = probe(&path.to_string_lossy()).unwrap();
+    let from_file = probe(&path.to_string_lossy(), &Default::default()).unwrap();
     assert_eq!((from_bytes.kind, from_file.kind), (MediaKind::Video, MediaKind::Video));
     assert_eq!((from_bytes.width, from_bytes.height, from_bytes.duration), (from_file.width, from_file.height, from_file.duration));
     assert_eq!((from_bytes.content_hash, from_bytes.file_size), (from_file.content_hash, from_file.file_size));

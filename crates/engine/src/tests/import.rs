@@ -508,7 +508,7 @@ fn a_browse_scan_lists_new_files_first_and_reads_none() {
     // a probe that counts: the listing must read no file
     let read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = read.clone();
-    s.media.file_probe = Some(std::sync::Arc::new(move |_: &str| {
+    s.media.file_probe = Some(std::sync::Arc::new(move |_: &str, _: &lightcraft_preview::KnownHashes| {
         counted.fetch_add(1, Relaxed);
         Err("not read in a listing".into())
     }));
@@ -2928,9 +2928,9 @@ fn import_preview_reports_what_the_scan_skipped() {
     // a second preview reuses them: a file that has not changed is not read again
     let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (counted, probe) = (reads.clone(), s.media.file_probe.clone().unwrap());
-    s.media.file_probe = Some(std::sync::Arc::new(move |path: &str| {
+    s.media.file_probe = Some(std::sync::Arc::new(move |path: &str, known: &lightcraft_preview::KnownHashes| {
         counted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        probe(path)
+        probe(path, known)
     }));
     let again = s.execute("library.importPreview", &json!({"paths": [src.to_string_lossy()]})).unwrap();
     assert_eq!(again["scanned"], 2, "{again}");
@@ -3999,8 +3999,8 @@ fn recipe_values_are_clamped_like_a_slider() {
 fn session_with_raw_probe() -> Session {
     let mut s = Session::new().with_fs();
     let real = s.media.file_probe.clone().unwrap();
-    s.media.file_probe = Some(std::sync::Arc::new(move |path: &str| {
-        let mut info = real(path)?;
+    s.media.file_probe = Some(std::sync::Arc::new(move |path: &str, known: &lightcraft_preview::KnownHashes| {
+        let mut info = real(path, known)?;
         info.kind = lightcraft_catalog::MediaKind::Raw;
         info.format = "DNG".into();
         info.as_shot_wb = Some((4800.0, 12.0));

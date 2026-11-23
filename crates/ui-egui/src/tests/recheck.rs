@@ -166,8 +166,8 @@ fn an_older_reload_does_not_replace_a_newer_one() {
     // (the first probe has read its file, the first probe may return)
     let gate = Arc::new((Mutex::new((false, false)), Condvar::new()));
     let (worker_gate, worker_calls) = (gate.clone(), calls.clone());
-    app.session.media.file_probe = Some(Arc::new(move |path| {
-        let info = native(path);
+    app.session.media.file_probe = Some(Arc::new(move |path, known: &lightcraft_preview::KnownHashes| {
+        let info = native(path, known);
         if worker_calls.fetch_add(1, Ordering::SeqCst) == 0 {
             let mut state = worker_gate.0.lock().unwrap();
             state.0 = true;
@@ -216,8 +216,8 @@ fn a_background_reload_writes_the_sidecar_with_auto_write_on() {
     let sidecar = dir.0.join("files/one.xmp");
     assert!(!std::fs::read_to_string(&sidecar).unwrap().contains("GPSLatitude"));
     let native = app.session.media.file_probe.clone().unwrap();
-    app.session.media.file_probe = Some(Arc::new(move |path| {
-        let mut info = native(path)?;
+    app.session.media.file_probe = Some(Arc::new(move |path, known: &lightcraft_preview::KnownHashes| {
+        let mut info = native(path, known)?;
         // GPS the catalog doesn't have yet (as for a photo catalogued by an older version)
         info.meta.gps = Some((41.0, 2.0));
         Ok(info)
@@ -255,13 +255,13 @@ fn a_cancelled_reload_reports_only_what_it_did() {
         let gate = Arc::new((Mutex::new((false, false)), Condvar::new()));
         let worker_gate = gate.clone();
         let native = native.clone();
-        app.session.media.file_probe = Some(Arc::new(move |path| {
+        app.session.media.file_probe = Some(Arc::new(move |path, known: &lightcraft_preview::KnownHashes| {
             let mut state = worker_gate.0.lock().unwrap();
             state.0 = true;
             worker_gate.1.notify_all();
             let _ = worker_gate.1.wait_timeout_while(state, Duration::from_secs(10), |s| !s.1).unwrap();
             // a read the cancel stopped comes back as an error, as a file not reached does
-            if read { native(path) } else { Err(format!("{path}: cancelled")) }
+            if read { native(path, known) } else { Err(format!("{path}: cancelled")) }
         }));
         app.ui.toast = None;
         app.run("photo.reload", json!({"ids": [id.0]})).unwrap();

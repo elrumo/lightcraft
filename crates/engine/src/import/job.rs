@@ -43,6 +43,9 @@ pub struct ImportJob {
     /// content hash → the photo that has it (`None`: a file earlier in this import)
     pub(super) by_hash: HashMap<String, Option<PhotoId>>,
     pub(super) probe: Option<crate::media::FileProbe>,
+    /// The library's content hashes the probe checks a file against ([`super::known_hashes`]), from the library when it
+    /// is looked up; new files get the old hash when they say so ([`Session::new_files_get_old_hash`]).
+    known: lightcraft_preview::KnownHashes,
     file_bytes: Option<crate::merge::ByteReader>,
     /// Probes from a preceding scan (not read again).
     pub(super) cache: HashMap<String, ProbeInfo>,
@@ -201,6 +204,7 @@ impl ImportJob {
             by_path: HashMap::new(),
             by_hash: HashMap::new(),
             probe: s.media.file_probe.clone(),
+            known: lightcraft_preview::KnownHashes::new(std::iter::empty(), s.new_files_get_old_hash()),
             file_bytes: s.media.file_bytes.clone(),
             cache: std::mem::take(&mut s.import_probes),
             naming: s.xmp.naming,
@@ -240,6 +244,8 @@ impl ImportJob {
     /// of the shared stem sidecars they read ([`crate::sidecar::ImportStems`]).
     fn look_up_library(&mut self) -> Option<lightcraft_catalog::Catalog> {
         let (library, fresh) = self.library.take()?;
+        // (trashed photos too: a file imported again over one gets its hash, and replaces it as before)
+        self.known = super::known_hashes(&library, self.known.prefer_old(), |_| true);
         for p in library.photos() {
             // a trashed photo is replaced by a fresh import, so it doesn't count as a duplicate
             if p.deleted && fresh {
@@ -290,7 +296,7 @@ impl ImportJob {
         // Reading the files is the slow part of adding them where they are: it is counted on its
         // own, and `cancel` stops it too (a large library takes long enough to want both).
         self.read_total.fetch_add(missing.len(), Relaxed);
-        let mut fresh = probe_all(self.probe.as_ref(), &missing, &self.read_done, cancel).into_iter();
+        let mut fresh = probe_all(self.probe.as_ref(), &self.known, &missing, &self.read_done, cancel).into_iter();
         let probed: Vec<Result<ProbeInfo, String>> =
             cached.into_iter().map(|c| c.map(Ok).unwrap_or_else(|| fresh.next().unwrap_or_else(|| Err("not probed".into())))).collect();
         crate::memory::release();

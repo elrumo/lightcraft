@@ -532,6 +532,20 @@ control channel) and part of `sync.status`; `ui.inspect` and `ui.widgets` list t
 
 Each device keeps the **whole catalog** (it's small) and **downloads pixels as needed**, by content hash:
 
+**Two content hashes (HB-532).** A file hashed from HB-532 on gets XXH3-128 (`lightcraft_preview::content_hash`, the
+reference function: `xxh128sum` prints the same 32 hex digits); every photo hashed before keeps its SipHash-1-3 hash
+forever, so nothing is hashed again, renamed or rebuilt. Both are 32 hex digits, and every check of a file against a
+stored hash takes either: the server's check of an upload, a device's check of a download, the copy check after an
+import, Find Missing Photos, a web backup. A file the library already has keeps the hash it has there
+(`lightcraft_preview::KnownHashes`): when a file has the size of a photo in the library, it is hashed the old way too
+and takes whichever hash a photo has, so a file is always found and only a size match costs the second hash. While
+signed in to a server that doesn't say it checks the new hash (the `hash` field of the answer to `GET /api/ops`: 2 from
+HB-532 on; also before its first answer), new files get the old hash, as that server checks uploads only against
+it. An older app can't download an original an updated device added (its check knows only the old hash; previews
+show). When a library joins a server's, a photo here and one there of the same size under different hashes have
+their file here hashed both ways: the same file is one photo, the server's, with what this library knew about it. The
+web app keeps giving new files the old hash (its browser storage is keyed by it).
+
 | What | When | Used for |
 |---|---|---|
 | mini preview (≤ 512 px) | a photo whose original isn't here, when the grid or filmstrip shows it (the cells on screen first, then a screen either side; a cell that stays drawn keeps its place in the line however long the ones before it take, one scrolled past before its turn isn't downloaded) — or every such photo with *Download all small previews* | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |

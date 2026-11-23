@@ -277,7 +277,8 @@ pub fn verify(entry: &ZipEntry, data: &[u8]) -> Result<(), String> {
 /// under their content hash, and a restore that kept bytes under another photo's hash would
 /// give that photo's catalog record a different image (the zip checksum can't tell).
 pub fn verify_original(entry: &ZipEntry, hash: &str, data: &[u8]) -> Result<(), String> {
-    if crate::store::content_hash(data) != hash {
+    // (either content hash: one hashed before HB-532 by the old function)
+    if !lightcraft_preview::content_is(data, hash) {
         return Err(format!("{}: the file doesn't match its content hash (damaged or altered backup)", entry.name));
     }
     Ok(())
@@ -344,6 +345,9 @@ mod tests {
         let err = verify_original(entry, key_hash, blue).unwrap_err();
         assert!(err.contains(&name), "{err}");
         verify_original(entry, key_hash, red).unwrap();
+        // a backup made before HB-532 names its originals by the old content hash
+        verify_original(entry, &lightcraft_preview::hash_bytes(red).to_string(), red).unwrap();
+        assert!(verify_original(entry, &lightcraft_preview::hash_bytes(red).to_string(), blue).is_err());
     }
 
     #[test]

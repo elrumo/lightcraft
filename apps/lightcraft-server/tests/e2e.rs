@@ -112,7 +112,7 @@ fn api_refuses_what_it_should() {
     let png = root.join("x.png");
     write_png(&png, 7);
     let bytes = std::fs::read(&png).unwrap();
-    // (the hash an import gives a file)
+    // (the hash an import gave a file before HB-532, which its photo keeps)
     let h = lightcraft_preview::hash_bytes(&bytes).to_string();
     assert_eq!(call("PUT", &format!("{base}/api/blobs/original/..%2f..%2fusers.json"), &token, Some(&bytes), &[]).0, 400);
     assert_eq!(call("PUT", &format!("{base}/api/blobs/original/{}", "0".repeat(32)), &token, Some(&bytes), &[]).0, 422);
@@ -126,6 +126,7 @@ fn api_refuses_what_it_should() {
     assert_eq!(call("GET", &format!("{base}/api/blobs/original/{h}"), &token, None, &[("Range", "bytes=999999-")]).0, 416);
     let (s, all, _) = call("GET", &format!("{base}/api/blobs/original/{h}"), &token, None, &[]);
     assert_eq!((s, all), (200, bytes.clone()));
+    an_original_named_by_the_new_hash_is_kept_too(&base, &token, &bytes);
     // pushes are validated: device-local ops and garbage are refused, nothing applied
     let push = |body: Value| call("POST", &format!("{base}/api/ops"), &token, Some(body.to_string().as_bytes()), &[]);
     let local = lightcraft_engine::catalog::Op::SetBrowsed { folder: "/x".into(), at: None };
@@ -145,6 +146,15 @@ fn api_refuses_what_it_should() {
     assert_eq!(call("GET", &format!("{base}/api/me"), &token, None, &[]).0, 401);
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A device that hashed the file after HB-532 names it by the new content hash: kept as well, and still checked.
+fn an_original_named_by_the_new_hash_is_kept_too(base: &str, token: &str, bytes: &[u8]) {
+    let h2 = lightcraft_preview::content_hash(bytes).to_string();
+    let other = lightcraft_preview::content_hash(b"other").to_string();
+    assert_eq!(call("PUT", &format!("{base}/api/blobs/original/{other}"), token, Some(bytes), &[]).0, 422);
+    assert_eq!(call("PUT", &format!("{base}/api/blobs/original/{h2}"), token, Some(bytes), &[]).0, 200);
+    assert_eq!(call("GET", &format!("{base}/api/blobs/original/{h2}"), token, None, &[]).1, bytes);
 }
 
 #[test]

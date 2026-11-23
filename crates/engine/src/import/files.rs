@@ -371,22 +371,41 @@ pub fn launch_path_until(
     Some(LaunchPath::Import(shown))
 }
 
+/// The content hashes of `c`'s photos whose file size `keep` takes ([`lightcraft_preview::KnownHashes`]): what a file
+/// probed now is checked against, so a file the library had before HB-532 keeps its old hash. `prefer_old`: new files
+/// get the old hash too ([`Session::new_files_get_old_hash`]).
+pub fn known_hashes(c: &lightcraft_catalog::Catalog, prefer_old: bool, keep: impl Fn(u64) -> bool) -> lightcraft_preview::KnownHashes {
+    let photos = c.photos().filter(|p| keep(p.file_size)).filter_map(|p| Some((p.file_size, p.content_hash.as_deref()?)));
+    lightcraft_preview::KnownHashes::new(photos, prefer_old)
+}
+
 /// Probe files (headers + content hash) as an import would.
 pub(crate) fn probe_paths(s: &Session, paths: &[String]) -> Vec<Result<ProbeInfo, String>> {
     let progress = ScanProgress::default();
-    probe_all(s.media.file_probe.as_ref(), paths, &progress.done, &progress.cancel)
+    // (only the photos of these files' sizes: a library may hold millions. A file whose size can't be asked, as
+    // on the web, is checked against them all)
+    let sizes: Vec<u64> = paths.iter().filter_map(|p| std::fs::metadata(p).ok().map(|m| m.len())).collect();
+    let all = sizes.len() < paths.len();
+    let known = known_hashes(&s.catalog, s.new_files_get_old_hash(), |n| all || sizes.contains(&n));
+    probe_all(s.media.file_probe.as_ref(), &known, paths, &progress.done, &progress.cancel)
 }
 
-/// Probe files with `probe` (a clone of the session's file probe), off the session: on a worker thread.
-pub(crate) fn probe_with(probe: &crate::media::FileProbe, paths: &[String]) -> Vec<Result<ProbeInfo, String>> {
+/// Probe files with `probe` (a clone of the session's file probe), off the session: on a worker thread. `known`: the
+/// library's content hashes ([`Session::known_hashes`]).
+pub(crate) fn probe_with(
+    probe: &crate::media::FileProbe,
+    known: &lightcraft_preview::KnownHashes,
+    paths: &[String],
+) -> Vec<Result<ProbeInfo, String>> {
     let progress = ScanProgress::default();
-    probe_all(Some(probe), paths, &progress.done, &progress.cancel)
+    probe_all(Some(probe), known, paths, &progress.done, &progress.cancel)
 }
 
-/// Probe `paths` (several at once), counting each in `done`. Stops before the next file once
-/// `cancel` is set: the files not reached come back as errors.
+/// Probe `paths` (several at once), counting each in `done`, each file's content hash the one it has in the library
+/// `known` describes. Stops before the next file once `cancel` is set: the files not reached come back as errors.
 pub(crate) fn probe_all(
     probe: Option<&crate::media::FileProbe>,
+    known: &lightcraft_preview::KnownHashes,
     paths: &[String],
     done: &std::sync::atomic::AtomicUsize,
     cancel: &std::sync::atomic::AtomicBool,
@@ -423,7 +442,7 @@ pub(crate) fn probe_all(
                             if cancel.load(Relaxed) {
                                 break;
                             }
-                            let r = probe(&paths[i]);
+                            let r = probe(&paths[i], known);
                             done.fetch_add(1, Relaxed);
                             out.lock().unwrap_or_else(|e| e.into_inner())[i] = Some(r);
                         }
@@ -439,7 +458,7 @@ pub(crate) fn probe_all(
             if cancel.load(Relaxed) {
                 return Err("cancelled".into());
             }
-            let r = probe(p);
+            let r = probe(p, known);
             done.fetch_add(1, Relaxed);
             r
         })
@@ -736,7 +755,7 @@ mod prepared_tests {
         let (seen_in_probe, done_in_probe) = (seen.clone(), std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
         let mut job = ImportJob::new(&mut s, ImportOptions { mode: ImportMode::Add, ..ImportOptions::default() }).unwrap();
         let (done, last) = (job.read_done.clone(), done_in_probe.clone());
-        job.probe = Some(std::sync::Arc::new(move |_: &str| {
+        job.probe = Some(std::sync::Arc::new(move |_: &str, _: &lightcraft_preview::KnownHashes| {
             seen_in_probe.fetch_add(1, Relaxed);
             last.fetch_max(done.load(Relaxed), Relaxed);
             Ok(ProbeInfo { format: "JPEG".into(), ..ProbeInfo::default() })
@@ -758,7 +777,7 @@ mod prepared_tests {
         let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut job = ImportJob::new(&mut s, ImportOptions { mode: ImportMode::Add, ..ImportOptions::default() }).unwrap();
         let (seen_in_probe, cancel_in_probe) = (seen.clone(), cancel.clone());
-        job.probe = Some(std::sync::Arc::new(move |_: &str| {
+        job.probe = Some(std::sync::Arc::new(move |_: &str, _: &lightcraft_preview::KnownHashes| {
             seen_in_probe.fetch_add(1, Relaxed);
             cancel_in_probe.store(true, Relaxed);
             Ok(ProbeInfo { format: "JPEG".into(), ..ProbeInfo::default() })
@@ -837,7 +856,7 @@ mod prepared_tests {
         job.cache.insert(gone.clone(), probed(10));
         let read = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let read_in_probe = read.clone();
-        job.probe = Some(std::sync::Arc::new(move |p: &str| {
+        job.probe = Some(std::sync::Arc::new(move |p: &str, _: &lightcraft_preview::KnownHashes| {
             read_in_probe.lock().unwrap().push(p.to_string());
             Ok(probed(10))
         }));
@@ -891,7 +910,7 @@ mod prepared_tests {
         std::fs::write(dir.join("c.xmp"), xmp).unwrap();
         let mut s = Session::new();
         let mut job = ImportJob::new(&mut s, ImportOptions { mode: ImportMode::Add, ..ImportOptions::default() }).unwrap();
-        job.probe = Some(std::sync::Arc::new(|p: &str| {
+        job.probe = Some(std::sync::Arc::new(|p: &str, _: &lightcraft_preview::KnownHashes| {
             if p.ends_with("broken.jpg") {
                 Err("unreadable".into())
             } else {

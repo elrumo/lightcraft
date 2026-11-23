@@ -27,11 +27,19 @@ pub struct Stale {
     pub path: String,
     preview_only: Option<String>,
     preview_checked: String,
+    /// The photo's file size and content hash, which its file keeps when it is what it was ([`known_of`]).
+    known: (u64, Option<String>),
 }
 
 impl Stale {
     fn of(p: &Photo, path: &str) -> Stale {
-        Stale { id: p.id, path: path.to_string(), preview_only: p.preview_only.clone(), preview_checked: p.preview_checked.clone() }
+        Stale {
+            id: p.id,
+            path: path.to_string(),
+            preview_only: p.preview_only.clone(),
+            preview_checked: p.preview_checked.clone(),
+            known: (p.file_size, p.content_hash.clone()),
+        }
     }
 
     /// The photo is still as it was listed: same file, flag and stamp.
@@ -61,7 +69,16 @@ pub fn file_probe(s: &Session) -> Option<FileProbe> {
 /// Probe each listed photo's file as Reload would. Doesn't touch the session.
 pub fn probe(probe: &FileProbe, stale: Vec<Stale>) -> Vec<(Stale, std::result::Result<ProbeInfo, String>)> {
     let paths: Vec<String> = stale.iter().map(|x| x.path.clone()).collect();
-    stale.into_iter().zip(crate::import::probe_with(probe, &paths)).collect()
+    let known = known_of(stale.iter().map(|x| &x.known));
+    stale.into_iter().zip(crate::import::probe_with(probe, &known, &paths)).collect()
+}
+
+/// The content hashes listed photos' files are checked against: theirs, so a file that is what it was keeps its
+/// photo's hash, whichever function made it (HB-532).
+// ponytail: a file whose content changed gets the new hash, even while signed in to a server that knows only the old
+// one (its original then waits for that server's update); pass the session's choice if rechecks start finding those
+pub(crate) fn known_of<'a>(photos: impl Iterator<Item = &'a (u64, Option<String>)>) -> lightcraft_preview::KnownHashes {
+    lightcraft_preview::KnownHashes::new(photos.filter_map(|(size, h)| Some((*size, h.as_deref()?))), false)
 }
 
 /// What a recheck changed.

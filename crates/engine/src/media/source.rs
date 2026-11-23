@@ -629,8 +629,8 @@ pub struct ProbeInfo {
     pub locked: bool,
     pub meta: lightcraft_catalog::Meta,
     pub as_shot_wb: Option<(f64, f64)>,
-    /// Hash of the file's bytes (hex), for duplicate detection. When it is a 32-digit
-    /// [`lightcraft_preview::hash_bytes`] of the whole file (as the native probe computes it),
+    /// Hash of the file's bytes (hex), for duplicate detection. When it is a 32-digit content hash of the whole file
+    /// (as the native probe computes it: the old or the new, [`lightcraft_preview::KnownHashes`]),
     /// Import → Copy verifies each copy against it instead of reading the source again.
     pub content_hash: Option<String>,
     /// Lens corrections embedded in the file (DNG opcodes).
@@ -684,4 +684,7 @@ impl ProbeInfo {
     }
 }
 
-pub type FileProbe = Arc<dyn Fn(&str) -> Result<ProbeInfo, String> + Send + Sync>;
+/// Describes the file at a path. The content hash it gives is the one the file has in the library the
+/// [`lightcraft_preview::KnownHashes`] describe ([`crate::Session::known_hashes`]): pass them, so a file the library had
+/// before HB-532 keeps its old hash.
+pub type FileProbe = Arc<dyn Fn(&str, &lightcraft_preview::KnownHashes) -> Result<ProbeInfo, String> + Send + Sync>;

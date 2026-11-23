@@ -370,6 +370,9 @@ impl Job {
 struct Conflict {
     snapshot: proto::Snapshot,
     info: ConflictInfo,
+    /// Files this library and the server's have under different content hashes ([`same_files`]), found when the
+    /// choice came up: joined, they are one photo.
+    same: HashMap<String, String>,
 }
 
 /// What the sign-in choice is about: this library and the server's.
@@ -431,6 +434,8 @@ pub struct SyncState {
     login: Option<proto::Login>,
     /// The catalog format the server keeps, from its last answer to a pull (`Some(0)`: a server older than the field).
     pub(crate) server_format: Option<u32>,
+    /// The content hashes the server checks originals against ([`proto::Ops::hash`]), from its last answer to a pull.
+    pub(crate) server_hash: Option<u32>,
     control: Option<(u64, Control)>,
     jobs: HashMap<u64, Job>,
     /// Requests beside the library's own sync (search by description through the server): what
@@ -567,6 +572,28 @@ impl Session {
         self.keep_in_place && !old_server
     }
 
+    /// Do files hashed now get the old content hash (HB-532)? While signed in to a server that checks originals only
+    /// against it ([`proto::Ops::hash`]; also before its first answer), which would refuse an original named by the new
+    /// one, as Keep Originals Where They Are keeps to an older server's ways.
+    pub fn new_files_get_old_hash(&self) -> bool {
+        self.sync.as_ref().is_some_and(|st| st.signed_in() && st.server_hash.is_none_or(|h| h < proto::HASH_XXH3))
+    }
+
+    /// This library's content hashes, for hashing a file now ([`crate::import::known_hashes`]): a file the library has
+    /// keeps the hash it has here.
+    pub fn known_hashes(&self) -> lightcraft_preview::KnownHashes {
+        crate::import::known_hashes(&self.catalog, self.new_files_get_old_hash(), |_| true)
+    }
+
+    /// [`Session::known_hashes`] for probing the file at `path` alone: only the photos of its size (a library may hold
+    /// millions; all of them when its size can't be asked).
+    pub fn known_hashes_for(&self, path: &str) -> lightcraft_preview::KnownHashes {
+        match std::fs::metadata(path) {
+            Ok(m) => crate::import::known_hashes(&self.catalog, self.new_files_get_old_hash(), |n| n == m.len()),
+            Err(_) => self.known_hashes(),
+        }
+    }
+
     /// The origin a photo of `kind` added now gets ([`Session::keeps_in_place`]; `None` = the library takes care of
     /// its original as before).
     pub(crate) fn new_origin(&self, kind: lightcraft_catalog::OriginKind, cloud: Option<String>) -> Option<lightcraft_catalog::Origin> {
@@ -602,6 +629,7 @@ impl SyncState {
             uploaded: HashSet::new(),
             login: None,
             server_format: None,
+            server_hash: None,
             control: None,
             jobs: HashMap::new(),
             aux: HashMap::new(),
@@ -1061,23 +1089,77 @@ pub(crate) fn scratch_ext(p: &Photo) -> String {
     if (1..=8).contains(&ext.len()) && ext.bytes().all(|b| b.is_ascii_alphanumeric()) { format!(".{ext}") } else { String::new() }
 }
 
-/// Does the file at `path` hash to `key` (a [`blob_key`])? A file that can't be read doesn't.
-fn file_has_hash(path: &str, key: &str) -> bool {
-    use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else { return false };
-    let mut hasher = lightcraft_preview::Hasher128::new();
-    let mut buf = vec![0u8; 1 << 20];
-    loop {
-        match f.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                hasher.update(buf.get(..n).unwrap_or(&[]));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => return false,
+/// The same file here under one content hash and in `server` under the other (HB-532: hashed before on one side, after
+/// on the other). For each photo of this library that `server` has no photo of the same hash for but one of the same
+/// file size, its file here is hashed both ways. Returns this library's hash → the server's, so that joining the two
+/// libraries ([`same_files_joined`]) keeps them as one photo, as for the same hash. Reads only those files; one that
+/// can't be read here (offline, gone, or no longer what the photo was) stays two photos, as before.
+// ponytail: read on the session's thread while signing in (files of a size the server has whose hash it hasn't: few,
+// except for cameras writing raws of one size); move it to a worker with an activity row if a sign-in waits on it
+fn same_files(local: &Catalog, server: &Catalog) -> HashMap<String, String> {
+    use lightcraft_catalog::sync::content_key;
+    let mut theirs: HashMap<u64, HashSet<String>> = HashMap::new();
+    for p in server.photos().filter(|p| !p.local && p.copy_of.is_none()) {
+        if let Some(k) = content_key(p) {
+            theirs.entry(p.file_size).or_default().insert(k);
         }
     }
-    hasher.finish().to_string() == key
+    let mut same = HashMap::new();
+    for p in local.photos().filter(|p| join::is_shareable(p) && p.copy_of.is_none()) {
+        let (Some(k), Some(sizes)) = (content_key(p), theirs.get(&p.file_size)) else { continue };
+        if sizes.contains(&k) || same.contains_key(&k) {
+            continue;
+        }
+        let Some(file) = crate::cmd::missing::checked_path(p) else { continue };
+        let mut h = lightcraft_preview::ContentHasher::both();
+        // (the file must still be the photo: its own hash is one of the two)
+        if lightcraft_preview::read_file_into(Path::new(file), &mut h).is_err() || !h.is(&k) {
+            continue;
+        }
+        let other = [Some(h.finish()), h.finish_old()].into_iter().flatten().map(|x| x.to_string()).find(|x| *x != k && sizes.contains(x));
+        if let Some(other) = other {
+            same.insert(k, other);
+        }
+    }
+    same
+}
+
+/// `local` with the content hashes [`same_files`] found replaced by the server's (each photo's and its virtual copies'),
+/// to join from: the joined photo has the server's hash, which its file here has too. `local` itself when none.
+fn same_files_joined<'a>(local: &'a Catalog, same: &HashMap<String, String>) -> std::borrow::Cow<'a, Catalog> {
+    if same.is_empty() {
+        return std::borrow::Cow::Borrowed(local);
+    }
+    let ops: Vec<Op> = local
+        .photos()
+        .filter_map(|p| {
+            let h = p.content_hash.as_deref()?;
+            let base = h.split(':').next()?;
+            let to = same.get(&base.to_ascii_lowercase())?;
+            Some(Op::SetContent {
+                id: p.id,
+                width: p.width,
+                height: p.height,
+                file_size: p.file_size,
+                content_hash: Some(format!("{to}{}", h.get(base.len()..).unwrap_or(""))),
+                preview_only: p.preview_only.clone(),
+                preview_checked: p.preview_checked.clone(),
+            })
+        })
+        .collect();
+    let mut c = local.clone();
+    for op in ops {
+        if let Err(e) = c.apply(op) {
+            log::warn!("sync: joining a file under both content hashes: {e}");
+        }
+    }
+    std::borrow::Cow::Owned(c)
+}
+
+/// Does the file at `path` hash to `key` (a [`blob_key`]), by either content hash ([`lightcraft_preview::file_is`])? A
+/// file that can't be read doesn't.
+fn file_has_hash(path: &str, key: &str) -> bool {
+    lightcraft_preview::file_is(std::path::Path::new(path), key).unwrap_or(false)
 }
 
 /// Is `key` (a [`blob_key`]) the content hash of `p`'s file? (No allocation: scans every photo.)
@@ -2280,6 +2362,7 @@ impl Session {
                     Ok(ops) => {
                         let (more, any) = (ops.ops.len() >= PULL_LIMIT, !ops.ops.is_empty());
                         st.server_format = Some(ops.format);
+                        st.server_hash = Some(ops.hash);
                         st.watch.wait = ops.wait;
                         st.presets_remote = ops.presets;
                         st.note_docs(&ops.docs);
@@ -2594,14 +2677,15 @@ impl Session {
                 }
                 // two libraries that never met: the user chooses ([`Session::sync_resolve`]); nothing is
                 // pulled or pushed meanwhile
+                let same = same_files(&self.catalog, &snap.catalog);
                 let info = ConflictInfo {
                     server: st.config.server.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_string(),
                     user: st.config.user.clone(),
                     here: join::counts(&self.catalog),
                     there: join::counts(&snap.catalog),
-                    shared: join::shared_photos(&self.catalog, &snap.catalog),
+                    shared: join::shared_photos(&same_files_joined(&self.catalog, &same), &snap.catalog),
                 };
-                st.conflict = Some(Conflict { snapshot: snap, info });
+                st.conflict = Some(Conflict { snapshot: snap, info, same });
                 return Ok(());
             }
             st.config.library = snap.library;
@@ -2640,7 +2724,8 @@ impl Session {
     /// reach the server (and every other device) like any edit; what belongs to this device alone — where its
     /// files are, History, Local records — is carried over under the new ids.
     fn join_by_merging(&mut self, st: &mut SyncState, snap: proto::Snapshot) -> std::result::Result<(), String> {
-        let merged = lightcraft_catalog::merge::merge(&self.catalog, snap.catalog, st.config.space);
+        let same = same_files(&self.catalog, &snap.catalog);
+        let merged = lightcraft_catalog::merge::merge(&same_files_joined(&self.catalog, &same), snap.catalog, st.config.space);
         let r = merged.report.clone();
         st.merge = false;
         let mut c = merged.catalog;
@@ -2719,12 +2804,12 @@ impl Session {
                 return Err(e);
             }
         };
-        let Conflict { snapshot, .. } = conflict;
+        let Conflict { snapshot, same, .. } = conflict;
         let mut c = snapshot.catalog;
         lightcraft_catalog::sync::sanitize(&mut c);
         let joined = match how {
             Resolution::Upload => {
-                let joined = join::join_libraries(&self.catalog, &mut c, st.config.space, &mut st.outbox);
+                let joined = join::join_libraries(&same_files_joined(&self.catalog, &same), &mut c, st.config.space, &mut st.outbox);
                 st.outbox_changed();
                 Some(joined)
             }

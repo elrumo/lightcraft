@@ -90,6 +90,8 @@ proptest = "1"
 bytemuck = { version = "1", features = ["derive"] }
 crc32fast = "1"
 siphasher = "1"
+# a file's content hash from HB-532 on (XXH3-128): MIT, pure Rust (NEON / SSE2 / AVX2 through std::arch), no build script
+twox-hash = { version = "2", default-features = false, features = ["std", "xxhash3_128"] }
 libm = "0.2" # pure-Rust maths for lightcraft-film (target-independent results)
 libc = "0.2" # dev-only: process CPU time in benches
 dhat = "0.3" # opt-in heap profiling (lightcraft-cli --features dhat-heap) and heap tests; never in product builds

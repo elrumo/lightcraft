@@ -1,6 +1,6 @@
 //! Previews: everything that makes a big library show up instantly.
 //!
-//! - [`hash`]: 128-bit content hashes (file bytes → duplicate detection and cache keys).
+//! - [`hash`]: 128-bit hashes: a file's content hash (its identity: duplicate detection, the server's blob names) and cache keys.
 //! - [`Lru`]: a cost-bounded memory LRU (decoded sources, rendered thumbnails).
 //! - [`DiskCache`]: rendered thumbnails as JPEG files keyed by `(content hash, settings hash,
 //!   size, renderer version)`, bounded in bytes (least recently used files are pruned).
@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use disk::{DiskCache, WriteGate, decode_jpeg, encode_jpeg, jpeg_dims};
-pub use hash::{Hash128, Hasher128, hash_bytes};
+pub use hash::{ContentHasher, Hash128, Hasher128, KnownHashes, content_hash, content_is, file_is, hash_bytes, read_file_into, read_into};
 use lightcraft_raster::Rgba8;
 pub use lru::{Lru, next_tick};
 pub use pool::JobPool;

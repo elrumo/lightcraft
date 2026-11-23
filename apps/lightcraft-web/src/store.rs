@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use lightcraft_engine::files::{load_bytes_decoded, probe_bytes};
+use lightcraft_engine::files::{load_bytes_decoded, probe_bytes_in};
 use lightcraft_engine::media::{FileLoader, FileProbe};
 
 pub use lightcraft_engine::catalog::sync::{PATH_PREFIX, hash_of_path, original_path};
@@ -27,7 +27,8 @@ pub fn storage_key(hash: &str) -> String {
     format!("originals/{hash}")
 }
 
-/// Hash of a file's bytes (the same as the catalog's `content_hash`).
+/// Hash of a file's bytes (the same as the catalog's `content_hash`): the old content hash, which the web app keeps
+/// giving new files (its storage is keyed by it; HB-532 left the web app as it was).
 pub fn content_hash(bytes: &[u8]) -> String {
     lightcraft_preview::hash_bytes(bytes).to_string()
 }
@@ -255,9 +256,11 @@ impl Originals {
             load_bytes_decoded(&bytes, max_edge, lightcraft_engine::media::RawDecode { dcp: None, ..with })
         });
         let s = self.clone();
-        let probe: FileProbe = Arc::new(move |path: &str| {
+        // (new files get the old content hash here: browser storage keeps an original under the hash [`content_hash`] gave
+        // it when it was added; a file the library has keeps the hash it has, HB-532)
+        let probe: FileProbe = Arc::new(move |path: &str, known: &lightcraft_preview::KnownHashes| {
             let bytes = s.get(path).ok_or_else(|| format!("{path}: not loaded"))?;
-            probe_bytes(path, &bytes)
+            probe_bytes_in(path, &bytes, &known.preferring_old())
         });
         (loader, probe)
     }

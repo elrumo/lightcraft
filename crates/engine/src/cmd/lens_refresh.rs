@@ -23,6 +23,9 @@ use crate::{Result, Session};
 pub struct Missing {
     pub id: PhotoId,
     pub path: String,
+    /// The photo's file size and content hash, which its file keeps when it is what it was
+    /// ([`crate::cmd::recheck::known_of`]).
+    pub(crate) known: (u64, Option<String>),
 }
 
 /// Library raws with a file, no lens profile and a lens the database `db` knows by name (`ids`: only these; virtual
@@ -46,7 +49,13 @@ pub fn missing(cat: &Catalog, db: &lightcraft_lensdb::LensDb, ids: Option<&[Phot
                 Some(_) => again && from_database(p),
             }
         })
-        .filter_map(|p| crate::cmd::missing::checked_path(p).map(|path| Missing { id: p.id, path: path.to_string() }))
+        .filter_map(|p| {
+            crate::cmd::missing::checked_path(p).map(|path| Missing {
+                id: p.id,
+                path: path.to_string(),
+                known: (p.file_size, p.content_hash.clone()),
+            })
+        })
         .filter(|m| seen.insert(m.id))
         .collect()
 }
@@ -54,7 +63,8 @@ pub fn missing(cat: &Catalog, db: &lightcraft_lensdb::LensDb, ids: Option<&[Phot
 /// Probe each listed photo's file as Reload would. Doesn't touch the session.
 pub fn probe(probe: &FileProbe, list: Vec<Missing>) -> Vec<(Missing, std::result::Result<ProbeInfo, String>)> {
     let paths: Vec<String> = list.iter().map(|x| x.path.clone()).collect();
-    list.into_iter().zip(crate::import::probe_with(probe, &paths)).collect()
+    let known = crate::cmd::recheck::known_of(list.iter().map(|x| &x.known));
+    list.into_iter().zip(crate::import::probe_with(probe, &known, &paths)).collect()
 }
 
 /// Apply [`probe`]'s results: each photo and its virtual copies get the lens data their file gives now, in one batch

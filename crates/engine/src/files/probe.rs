@@ -183,8 +183,18 @@ fn unrecognized(bytes: &[u8]) -> String {
 /// raws are described from their headers ([`lightcraft_raw::probe_info`]), other images too
 /// ([`lightcraft_codecs::read_header`], which refuses truncated files but can't see damage inside
 /// compressed data that is all there: such a file imports and shows as unreadable when rendered).
+///
+/// A file probed on its own, for no library: its content hash is the new one ([`lightcraft_preview::content_hash`]). A
+/// file probed for a library goes through [`probe_bytes_in`].
 pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
-    let content_hash = Some(lightcraft_preview::hash_bytes(bytes).to_string());
+    probe_bytes_in(name, bytes, &lightcraft_preview::KnownHashes::default())
+}
+
+/// [`probe_bytes`] for the library `known` describes: the content hash is the one the file has there
+/// ([`lightcraft_preview::KnownHashes`]: a file the library had before HB-532 keeps the old hash, a new one gets the
+/// new, or the old while the library says so).
+pub fn probe_bytes_in(name: &str, bytes: &[u8], known: &lightcraft_preview::KnownHashes) -> Result<ProbeInfo, String> {
+    let content_hash = Some(known.hash(bytes).to_string());
     if lightcraft_video::is_video(bytes) {
         return probe_video(name, bytes, bytes.len() as u64, content_hash);
     }
@@ -377,30 +387,20 @@ pub(super) fn head_of(path: &str) -> Option<[u8; 12]> {
     Some(head)
 }
 
-/// [`probe_video`] for a file on disk when it is a video clip (`None` when it is not): the file is hashed in chunks and
-/// its header read in place, never held whole.
+/// [`probe_video`] for a file on disk when it is a video clip (`None` when it is not): the file is hashed in chunks (its
+/// content hash in the library `known` describes) and its header read in place, never held whole.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn probe_video_path(path: &str) -> Option<Result<ProbeInfo, String>> {
-    use std::io::Read;
+pub(super) fn probe_video_path(path: &str, known: &lightcraft_preview::KnownHashes) -> Option<Result<ProbeInfo, String>> {
+    use std::io::Read as _;
     if !lightcraft_video::is_video(&head_of(path)?) {
         return None;
     }
     Some((|| {
         let mut f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
         let size = f.metadata().map_err(|e| format!("{path}: {e}"))?.len();
-        let mut hasher = lightcraft_preview::Hasher128::new();
-        let mut buf = vec![0u8; 1 << 20];
-        loop {
-            match f.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    hasher.update(buf.get(..n).unwrap_or(&[]));
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(format!("{path}: {e}")),
-            }
-        }
-        probe_video(path, f, size, Some(hasher.finish().to_string()))
+        let mut hasher = known.hasher(size);
+        lightcraft_preview::read_into((&mut f).take(size), &mut hasher).map_err(|e| format!("{path}: {e}"))?;
+        probe_video(path, f, size, Some(known.finish(&hasher, size).to_string()))
     })())
 }
 

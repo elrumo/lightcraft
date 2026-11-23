@@ -276,7 +276,8 @@ fn crop_needs_frame(v: &Value) -> bool {
 /// (the one import uses, inside its memory budget; never recorded: a file can change): `None` when
 /// it can't be read.
 pub fn probe_frame(probe: Option<&crate::media::FileProbe>, path: &str) -> Option<StoredFrame> {
-    probe?(path).ok()?.stored_frame()
+    // (no library's hashes: only the orientation is used)
+    probe?(path, &lightcraft_preview::KnownHashes::default()).ok()?.stored_frame()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1444,13 +1445,7 @@ impl Session {
     /// oriented. Without it (no file, or one that can't be read) the photo's crop is kept, and a warning says so.
     fn frame_sidecar(&self, orig: Option<&str>, sc: &mut SidecarData) {
         if sc.needs_frame() {
-            let frame = orig.and_then(|orig| {
-                crate::import::probe_paths(self, &[orig.to_string()])
-                    .into_iter()
-                    .next()
-                    .and_then(std::result::Result::ok)
-                    .and_then(|i| i.stored_frame())
-            });
+            let frame = orig.and_then(|orig| probe_frame(self.media.file_probe.as_ref(), orig));
             sc.set_frame(frame);
             sc.hold_unframed_crop();
         }
@@ -1478,9 +1473,7 @@ impl Session {
             return;
         }
         let p = self.catalog.photo(id);
-        let frame = p.and_then(|p| file_path(p)).and_then(|orig| {
-            crate::import::probe_paths(self, &[orig.to_string()]).into_iter().next().and_then(std::result::Result::ok).and_then(|i| i.stored_frame())
-        });
+        let frame = p.and_then(|p| file_path(p)).and_then(|orig| probe_frame(self.media.file_probe.as_ref(), orig));
         match (frame, p) {
             (Some(f), Some(p)) => crate::crs::crop_in_frame(partial, f.orientation.then(p.develop.orientation), f.width / f.height),
             _ => {

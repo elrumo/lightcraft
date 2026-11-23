@@ -26,7 +26,7 @@ fn setup(tag: &str, n: usize, ms: u64) -> (Headless, Vec<String>, std::path::Pat
         })
         .collect();
     let mut s = lightcraft_engine::Session::new();
-    s.media.file_probe = Some(Arc::new(move |p: &str| {
+    s.media.file_probe = Some(Arc::new(move |p: &str, _: &lightcraft_preview::KnownHashes| {
         std::thread::sleep(Duration::from_millis(ms));
         Ok(lightcraft_engine::media::ProbeInfo {
             width: 60,

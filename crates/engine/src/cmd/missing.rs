@@ -166,61 +166,17 @@ fn stored_hash(p: &Photo) -> Option<&str> {
     p.content_hash.as_deref().map(|h| h.split(':').next().unwrap_or(h)).filter(|h| !h.is_empty())
 }
 
-/// The content hash of the file at `path` (as import computes it), if it can be read. Read in
-/// pieces: the file is whatever is on the disk, of any size.
-fn file_hash(path: &str) -> Option<String> {
-    use std::io::Read;
-    // the opened file must be regular (a FIFO or device would never end), and no more than its size at open is read
-    let file = std::fs::File::open(path).ok()?;
-    let meta = file.metadata().ok().filter(|m| m.is_file())?;
-    hash_reader(file.take(meta.len()))
-}
-
-/// The content hash of what `r` gives, read in pieces (the hash import computes of the whole).
-fn hash_reader(mut r: impl std::io::Read) -> Option<String> {
-    let mut hasher = lightcraft_preview::Hasher128::new();
-    let mut piece = vec![0u8; 1 << 16];
-    loop {
-        match r.read(&mut piece) {
-            Ok(0) => return Some(hasher.finish().to_string()),
-            Ok(n) => {
-                hasher.update(piece.get(..n)?);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(_) => return None,
-        }
-    }
+/// Both content hashes of the file at `path` ([`lightcraft_preview::ContentHasher::both`]: a photo's stored hash may
+/// be either), if it can be read. Read in pieces: the file is whatever is on the disk, of any size (a regular file,
+/// no further than its size at open).
+fn file_hash(path: &str) -> Option<lightcraft_preview::ContentHasher> {
+    let mut h = lightcraft_preview::ContentHasher::both();
+    lightcraft_preview::read_file_into(Path::new(path), &mut h).ok().map(|()| h)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A reader that gives its bytes a few at a time, and an interruption in between.
-    struct Trickle<'a>(&'a [u8], bool);
-
-    impl std::io::Read for Trickle<'_> {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.1 = !self.1;
-            if self.1 {
-                return Err(std::io::ErrorKind::Interrupted.into());
-            }
-            let n = self.0.len().min(buf.len()).min(7);
-            buf[..n].copy_from_slice(&self.0[..n]);
-            self.0 = &self.0[n..];
-            Ok(n)
-        }
-    }
-
-    #[test]
-    fn a_hash_read_in_pieces_is_the_hash_of_the_whole() {
-        // longer than one piece, so the read loop runs more than once
-        let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
-        let whole = lightcraft_preview::hash_bytes(&bytes).to_string();
-        assert_eq!(hash_reader(bytes.as_slice()).as_deref(), Some(whole.as_str()));
-        assert_eq!(hash_reader(Trickle(&bytes[..1000], false)).as_deref(), Some(lightcraft_preview::hash_bytes(&bytes[..1000]).to_string().as_str()));
-        assert_eq!(hash_reader(std::io::empty()).as_deref(), Some(lightcraft_preview::hash_bytes(&[]).to_string().as_str()));
-    }
 
     /// A scratch folder that goes away with the test, however it ends.
     struct Scratch(std::path::PathBuf);
@@ -238,11 +194,15 @@ mod tests {
         std::fs::create_dir_all(&dir.0).unwrap();
         let f = dir.0.join("a.bin");
         std::fs::write(&f, b"pixels").unwrap();
-        assert_eq!(file_hash(f.to_str().unwrap()), Some(lightcraft_preview::hash_bytes(b"pixels").to_string()));
-        assert_eq!(file_hash(dir.0.join("nope").to_str().unwrap()), None);
-        assert_eq!(file_hash(dir.0.to_str().unwrap()), None, "a folder has no content hash");
+        // a photo hashed before HB-532 or after: either hash finds its file
+        let h = file_hash(f.to_str().unwrap()).unwrap();
+        assert!(h.is(&lightcraft_preview::hash_bytes(b"pixels").to_string()));
+        assert!(h.is(&lightcraft_preview::content_hash(b"pixels").to_string()));
+        assert!(!h.is(&lightcraft_preview::content_hash(b"other").to_string()));
+        assert!(file_hash(dir.0.join("nope").to_str().unwrap()).is_none());
+        assert!(file_hash(dir.0.to_str().unwrap()).is_none(), "a folder has no content hash");
         #[cfg(unix)]
-        assert_eq!(file_hash("/dev/zero"), None, "a device never ends");
+        assert!(file_hash("/dev/zero").is_none(), "a device never ends");
     }
 }
 
@@ -396,8 +356,9 @@ pub fn plan_find_missing(candidates: &[FindCandidate], folder: &str) -> std::res
         }
     }
     let mut by_size: Option<HashMap<u64, Vec<String>>> = None;
-    let mut hashes: HashMap<String, Option<String>> = HashMap::new();
-    let mut hash_of = |f: &str| hashes.entry(f.to_string()).or_insert_with(|| file_hash(f)).clone();
+    let mut hashes: HashMap<String, Option<lightcraft_preview::ContentHasher>> = HashMap::new();
+    // (is the file at `f` the one hash `h` names?)
+    let mut hash_is = |f: &str, h: &str| hashes.entry(f.to_string()).or_insert_with(|| file_hash(f)).as_ref().is_some_and(|c| c.is(h));
     let size_of = |f: &str| std::fs::metadata(f).map(|m| m.len()).ok();
     let mut used: HashSet<String> = HashSet::new();
     let mut plan = FindPlan::default();
@@ -410,8 +371,7 @@ pub fn plan_find_missing(candidates: &[FindCandidate], folder: &str) -> std::res
             .map(|v| v.iter().filter(|f| !used.contains(*f) && (size == 0 || size_of(f) == Some(size))).collect())
             .unwrap_or_default();
         // 1. same name and size, confirmed by the content hash
-        let mut hit: Option<(String, MatchBy)> =
-            hash.and_then(|h| named.iter().find(|f| hash_of(f).as_deref() == Some(h))).map(|f| (f.to_string(), MatchBy::Name));
+        let mut hit: Option<(String, MatchBy)> = hash.and_then(|h| named.iter().find(|f| hash_is(f, h))).map(|f| (f.to_string(), MatchBy::Name));
         // 2. renamed: same content, and same size when one is on record
         if hit.is_none()
             && let Some(h) = hash
@@ -426,12 +386,9 @@ pub fn plan_find_missing(candidates: &[FindCandidate], folder: &str) -> std::res
                     }
                     m
                 });
-                hit = sizes
-                    .get(&size)
-                    .and_then(|v| v.iter().find(|f| !used.contains(*f) && hash_of(f).as_deref() == Some(h)))
-                    .map(|f| (f.clone(), MatchBy::Content));
+                hit = sizes.get(&size).and_then(|v| v.iter().find(|f| !used.contains(*f) && hash_is(f, h))).map(|f| (f.clone(), MatchBy::Content));
             } else {
-                hit = files.iter().find(|f| !used.contains(*f) && hash_of(f).as_deref() == Some(h)).map(|f| (f.clone(), MatchBy::Content));
+                hit = files.iter().find(|f| !used.contains(*f) && hash_is(f, h)).map(|f| (f.clone(), MatchBy::Content));
             }
         }
         // 3. same name and size only (no hash, or the file was edited in place): one candidate

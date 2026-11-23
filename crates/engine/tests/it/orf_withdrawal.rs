@@ -145,7 +145,7 @@ fn legacy_orf(name: &str, preview_only: Option<String>) -> OrfLibrary {
     };
     s.commit("Legacy ORF", Op::AddPhoto { photo: Box::new(p) }).unwrap();
     s.selection = lightcraft_engine::Selection::single(id);
-    s.media.file_probe = Some(Arc::new(move |_| Ok(info.clone())));
+    s.media.file_probe = Some(Arc::new(move |_, _| Ok(info.clone())));
     OrfLibrary { s, dir, lib, id }
 }
 
@@ -198,7 +198,7 @@ fn legacy_uncompressed_orf_is_stamped_once_without_a_false_recovery_notice() {
 #[test]
 fn unavailable_legacy_orf_is_unchanged_and_retried() {
     let mut x = legacy_orf("offline", None);
-    x.s.media.file_probe = Some(std::sync::Arc::new(|_| Err("offline".into())));
+    x.s.media.file_probe = Some(std::sync::Arc::new(|_, _| Err("offline".into())));
     let before = x.s.catalog.photo(x.id).unwrap().clone();
     let r = x.s.execute("library.recheckPreviewOnly", &json!({})).unwrap();
     assert_eq!(r, json!({"checked": 1, "updated": [], "cleared": []}));

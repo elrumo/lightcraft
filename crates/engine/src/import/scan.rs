@@ -6,6 +6,8 @@ use super::{HashMap, Path, PathBuf, PhotoId, ProbeInfo, Session, Source};
 /// share can take minutes to read).
 pub struct ScanInput {
     probe: Option<crate::media::FileProbe>,
+    /// New files get the old content hash ([`Session::new_files_get_old_hash`]).
+    old_hash: bool,
     skip: Option<PathBuf>,
     ignore: Vec<String>,
     /// The library as it is now (photos are shared with the session, not copied): looked up for
@@ -94,6 +96,7 @@ impl ScanInput {
         let library = std::sync::Arc::new(s.catalog.clone());
         let input = ScanInput {
             probe: s.media.file_probe.clone(),
+            old_hash: s.new_files_get_old_hash(),
             skip,
             ignore: s.import_defaults.ignore.clone(),
             library,
@@ -367,7 +370,9 @@ pub(crate) fn scan_files(mut input: ScanInput, files: Vec<String>, progress: &Sc
     });
     let missing: Vec<String> = todo.iter().zip(&cached).filter(|(_, c)| c.is_none()).map(|(f, _)| f.clone()).collect();
     progress.done.store(todo.len() - missing.len(), Relaxed);
-    let mut fresh = probe_all(input.probe.as_ref(), &missing, &progress.done, &progress.cancel).into_iter();
+    // (the library's content hashes, worked out here and not on the session's thread: it may hold millions of photos)
+    let known = super::known_hashes(&input.library, input.old_hash, |_| true);
+    let mut fresh = probe_all(input.probe.as_ref(), &known, &missing, &progress.done, &progress.cancel).into_iter();
     let probed: Vec<Result<ProbeInfo, String>> =
         cached.into_iter().map(|c| c.map(Ok).unwrap_or_else(|| fresh.next().unwrap_or_else(|| Err("not probed".into())))).collect();
     crate::memory::release();

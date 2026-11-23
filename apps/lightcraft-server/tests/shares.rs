@@ -566,7 +566,7 @@ fn visitors_add_photos_to_an_album_whose_link_takes_them() {
     assert_eq!(trip.photos.len(), 4, "a wasn't put in twice");
     assert_eq!(cat.photos().filter(|p| p.file_name.ends_with("c.png")).count(), 1, "the copy of c is c");
     // its original is on the server by its content, and its previews are built there
-    let hash = lightcraft_preview::hash_bytes(&d).to_string();
+    let hash = lightcraft_preview::content_hash(&d).to_string();
     assert_eq!(call("GET", &format!("{}/api/blobs/original/{hash}", fx.base), &fx.token, None, &[]).1, d);
     let mut built = false;
     for _ in 0..200 {

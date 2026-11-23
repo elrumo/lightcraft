@@ -3565,7 +3565,7 @@ fn browsing_the_same_folder_again_does_not_restart() {
     let gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let started = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let (g, n) = (gate.clone(), started.clone());
-    h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str| {
+    h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str, _: &lightcraft_preview::KnownHashes| {
         n.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         while !g.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(5));
@@ -3694,7 +3694,7 @@ fn folder_scan_cancel_and_busy() {
     // a scan that can't finish until the test lets it: the probe waits on a flag
     let gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let g = gate.clone();
-    h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str| {
+    h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str, _: &lightcraft_preview::KnownHashes| {
         while !g.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(5));
         }

@@ -82,7 +82,7 @@ fn each_result_reaches_its_photos_virtual_copies_and_no_others() {
         s.catalog.apply(Op::AddPhoto { photo: Box::new(copy) }).unwrap();
     }
     let probed = [1, 2].map(|id| {
-        let m = crate::cmd::lens_refresh::Missing { id: PhotoId(id), path: format!("/photos/{id}.cr3") };
+        let m = crate::cmd::lens_refresh::Missing { id: PhotoId(id), path: format!("/photos/{id}.cr3"), known: Default::default() };
         (m, Ok(crate::media::ProbeInfo { embedded_lens: Some(lens(-0.01)), ..Default::default() }))
     });
     let mut found = crate::cmd::lens_refresh::apply(&mut s, probed.into()).unwrap();
@@ -146,7 +146,7 @@ fn photos_get_their_profile_when_the_database_arrives() {
     let mut copy = raw(5, "300mm F4", false);
     copy.copy_of = Some(PhotoId(3));
     s.catalog.apply(Op::AddPhoto { photo: Box::new(copy) }).unwrap();
-    let stale = crate::cmd::lens_refresh::Missing { id: PhotoId(3), path: "/elsewhere/3.cr3".into() };
+    let stale = crate::cmd::lens_refresh::Missing { id: PhotoId(3), path: "/elsewhere/3.cr3".into(), known: Default::default() };
     let ok = crate::media::ProbeInfo { embedded_lens: Some(lens(-0.01)), ..Default::default() };
     assert!(crate::cmd::lens_refresh::apply(&mut s, vec![(stale, Ok(ok))]).unwrap().is_empty());
     assert!(s.catalog.photo(PhotoId(3)).unwrap().embedded_lens.is_none(), "a stale probe changes nothing");

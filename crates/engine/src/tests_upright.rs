@@ -1318,9 +1318,9 @@ fn synchronize_folder_probes_files_through_the_session() {
     let (_, fs_probe) = crate::files::fs_hooks();
     let probes = std::sync::Arc::new(AtomicUsize::new(0));
     let counted = probes.clone();
-    s.media.file_probe = Some(std::sync::Arc::new(move |p: &str| {
+    s.media.file_probe = Some(std::sync::Arc::new(move |p: &str, known: &lightcraft_preview::KnownHashes| {
         counted.fetch_add(1, Ordering::Relaxed);
-        fs_probe(p)
+        fs_probe(p, known)
     }));
     let crop = r#"crs:HasCrop="True" crs:CropLeft="0.206655" crs:CropTop="0" crs:CropRight="1" crs:CropBottom="1" crs:CropAngle="0""#;
     let packet = |exposure: &str| lightroom(1).replace(r#"crs:Exposure2012="+0.30""#, &format!(r#"crs:Exposure2012="{exposure}" {crop}"#));

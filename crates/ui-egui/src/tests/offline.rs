@@ -190,7 +190,7 @@ fn import_reads_files_off_the_ui_thread_and_can_be_cancelled() {
     let nas = Nas::asleep();
     let mut s = Session::new();
     let (c, drive, ui_thread) = (calls.clone(), nas.clone(), std::thread::current().id());
-    s.media.file_probe = Some(Arc::new(move |p: &str| {
+    s.media.file_probe = Some(Arc::new(move |p: &str, _: &lightcraft_preview::KnownHashes| {
         c.record();
         // on the UI thread: answered at once, so a regression fails the thread check, not by hanging
         if std::thread::current().id() != ui_thread {

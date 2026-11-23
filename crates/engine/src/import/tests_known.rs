@@ -63,7 +63,7 @@ fn a_scan_finds_what_the_library_has_by_path_and_by_content() {
     // (the probe: every file is a picture whose content is its name; `copy.jpg` has the content of a library photo)
     let had = s.catalog.photos().find(|p| p.file_name == "b.jpg").map(|p| (p.id, p.content_hash.clone().unwrap())).unwrap();
     let shared = had.1.clone();
-    s.media.file_probe = Some(std::sync::Arc::new(move |path: &str| {
+    s.media.file_probe = Some(std::sync::Arc::new(move |path: &str, _: &lightcraft_preview::KnownHashes| {
         let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let content_hash = Some(if name == "copy.jpg" { shared.clone() } else { format!("hash-of-{name}") });
         Ok(ProbeInfo { format: "JPEG".into(), width: 6, height: 4, file_size: 8, content_hash, ..Default::default() })

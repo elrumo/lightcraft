@@ -24,6 +24,9 @@ pub struct Item {
     pub path: String,
     /// The [`plan`] it came from, in the order reloads were started (see [`Tickets`]).
     pub ticket: u64,
+    /// The photo's file size and content hash, which its file keeps when it is what it was
+    /// ([`crate::cmd::recheck::known_of`]).
+    known: (u64, Option<String>),
 }
 
 /// Which reload each photo last took its file information from, so a reload started earlier but
@@ -42,9 +45,10 @@ pub fn plan(s: &mut Session, p: &Value) -> Result<Vec<Item>> {
     let ticket = s.reload_tickets.last;
     Ok(ids
         .into_iter()
-        .filter_map(|id| match s.catalog.photo(id).map(|ph| &ph.source) {
-            Some(Source::File { path }) => Some(Item { id, path: path.clone(), ticket }),
-            _ => None,
+        .filter_map(|id| {
+            let ph = s.catalog.photo(id)?;
+            let Source::File { path } = &ph.source else { return None };
+            Some(Item { id, path: path.clone(), ticket, known: (ph.file_size, ph.content_hash.clone()) })
         })
         .collect())
 }
@@ -65,6 +69,8 @@ pub fn probe(
     progress: &dyn Fn(usize),
 ) -> Vec<std::result::Result<ProbeInfo, String>> {
     let paths: Vec<String> = items.iter().map(|i| i.path.clone()).collect();
+    let known = crate::cmd::recheck::known_of(items.iter().map(|i| &i.known));
+    let known = &known;
     let done = AtomicUsize::new(0);
     #[cfg(not(target_arch = "wasm32"))]
     let qos = lightcraft_sysmem::Qos::current();
@@ -72,7 +78,7 @@ pub fn probe(
     let r = std::thread::scope(|sc| {
         let h = sc.spawn(|| {
             qos.apply();
-            crate::import::probe_all(probe, &paths, &done, cancel)
+            crate::import::probe_all(probe, known, &paths, &done, cancel)
         });
         while !h.is_finished() {
             progress(done.load(Ordering::Relaxed));
@@ -82,7 +88,7 @@ pub fn probe(
         h.join().unwrap_or_else(|_| paths.iter().map(|p| Err(format!("{p}: could not be read"))).collect())
     });
     #[cfg(target_arch = "wasm32")]
-    let r = crate::import::probe_all(probe, &paths, &done, cancel);
+    let r = crate::import::probe_all(probe, known, &paths, &done, cancel);
     progress(done.load(Ordering::Relaxed));
     r
 }

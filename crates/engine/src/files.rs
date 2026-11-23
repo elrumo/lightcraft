@@ -36,7 +36,7 @@ pub use preview::{PreviewRead, embedded_preview_srgb, fs_preview_loader, load_em
 pub(crate) use probe::load_video_poster;
 #[cfg(not(target_arch = "wasm32"))]
 pub use probe::probe_video_at;
-pub use probe::{at_time, embedded_lens, is_video_file, probe_bytes, probe_video, split_time};
+pub use probe::{at_time, embedded_lens, is_video_file, probe_bytes, probe_bytes_in, probe_video, split_time};
 #[cfg(test)]
 use probe::{meta_of, preview_reason};
 

@@ -167,7 +167,8 @@ fn lab_with(tag: &str, clips: Vec<(&str, Vec<u8>)>, extra: Vec<(&str, Vec<u8>)>,
     let (s, b, _) = call("POST", &format!("{base}/api/login"), "", Some(body.as_bytes()), &[]);
     assert_eq!(s, 200);
     let token = json_of(&b)["token"].as_str().unwrap().to_string();
-    let clips = clips.into_iter().map(|(n, b)| (n.to_string(), lightcraft_preview::hash_bytes(&b).to_string(), b)).collect();
+    // (the hash the server's scan gives a file new to the library: the new content hash, HB-532)
+    let clips = clips.into_iter().map(|(n, b)| (n.to_string(), lightcraft_preview::content_hash(&b).to_string(), b)).collect();
     Lab { root, data, server, base, admin, token, clips }
 }
 
@@ -788,6 +789,6 @@ fn clips_are_never_given_to_a_device_to_build_previews_of() {
     );
     assert_eq!(s, 200, "{}", String::from_utf8_lossy(&b));
     let keys: Vec<String> = json_of(&b)["items"].as_array().unwrap().iter().map(|i| i["key"].as_str().unwrap().to_string()).collect();
-    assert_eq!(keys, vec![digest_of(&png)], "the picture, and neither clip");
+    assert_eq!(keys, vec![lightcraft_preview::content_hash(&png).to_string()], "the picture, and neither clip");
     lab.finish();
 }

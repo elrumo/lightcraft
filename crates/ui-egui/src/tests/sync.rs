@@ -371,7 +371,7 @@ fn the_folders_scan_shows_a_row_and_its_cross_closes_the_dialog() {
     // a scan that can't finish until the test lets it: reading the new file waits on a flag
     let gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let g = gate.clone();
-    h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str| {
+    h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str, _: &lightcraft_preview::KnownHashes| {
         while !g.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -445,7 +445,7 @@ fn a_local_folder_with_library_photos_offers_synchronize() {
 fn gated(h: &mut Headless) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
     let gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let g = gate.clone();
-    h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str| {
+    h.app.session.media.file_probe = Some(std::sync::Arc::new(move |_: &str, _: &lightcraft_preview::KnownHashes| {
         while !g.load(std::sync::atomic::Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(5));
         }

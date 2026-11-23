@@ -72,8 +72,11 @@ struct Fake {
     presence_status: Option<u16>,
     /// A server from before held pulls (`GET /api/ops?wait=`): its answers don't say `wait`.
     no_wait: bool,
+    /// A server from before HB-532: it checks originals only against the old content hash, and says nothing of it.
+    old_hash: bool,
 }
 
+mod content_hash;
 mod keep_in_place;
 mod old_builds;
 mod presence;
@@ -114,6 +117,7 @@ impl Fake {
             no_presence: false,
             presence_status: None,
             no_wait: false,
+            old_hash: false,
         }
     }
 
@@ -193,6 +197,7 @@ impl Fake {
                             docs,
                             format: self.format.unwrap_or(lightcraft_catalog::journal::SYNC_VERSION),
                             wait: if self.no_wait { 0 } else { 25 },
+                            hash: if self.old_hash { 0 } else { lightcraft_catalog::sync::proto::HASH_XXH3 },
                         })
                         .unwrap())
                     }

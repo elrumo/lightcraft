@@ -1255,7 +1255,15 @@ pub mod proto {
         /// 0: a server older than held pulls, which answers at once).
         #[serde(default)]
         pub wait: u64,
+        /// The content hashes the server checks an uploaded original against: [`HASH_XXH3`] when it knows the one files
+        /// get from HB-532 on as well as the old one; 0: a server older than the field, which knows only the old one and
+        /// refuses an original named by the new.
+        #[serde(default)]
+        pub hash: u32,
     }
+
+    /// [`Ops::hash`] of a server that checks originals against both content hashes (HB-532).
+    pub const HASH_XXH3: u32 = 2;
 
     /// `POST /api/ops`: ops made on top of op `base`. `200` [`Head`]; `409` [`Head`] (behind:
     /// pull first); `422` [`Refused`] (nothing was applied).

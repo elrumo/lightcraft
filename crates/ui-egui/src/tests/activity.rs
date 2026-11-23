@@ -291,7 +291,7 @@ fn gated_import(tag: &str, n: usize, gate: Option<std::sync::Arc<std::sync::atom
         std::fs::write(dir.join(format!("IMG_{i:03}.jpg")), format!("not really a jpeg {i}")).unwrap();
     }
     let mut s = lightcraft_engine::Session::new();
-    s.media.file_probe = Some(std::sync::Arc::new(move |p: &str| {
+    s.media.file_probe = Some(std::sync::Arc::new(move |p: &str, _: &lightcraft_preview::KnownHashes| {
         std::thread::sleep(Duration::from_millis(100));
         let index = p.rsplit_once("IMG_").and_then(|(_, n)| n.strip_suffix(".jpg")).and_then(|n| n.parse::<usize>().ok());
         if let (Some(gate), Some(index)) = (&gate, index)

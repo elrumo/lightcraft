@@ -625,6 +625,7 @@ fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str, held: &mut Durati
                 docs,
                 format: lightcraft_catalog::journal::SYNC_VERSION,
                 wait: WAIT_MAX,
+                hash: proto::HASH_XXH3,
             });
             drop(l);
             match body {
@@ -1056,7 +1057,8 @@ pub(crate) fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, pa
     let r = (|| -> Result<Option<Value>, (u16, String)> {
         let io = |e: std::io::Error| (500, e.to_string());
         std::fs::create_dir_all(&tmp_dir).map_err(io)?;
-        let mut hasher = lightcraft_preview::Hasher128::new();
+        // (both content hashes: a device names a file it hashed before HB-532 by the old one, and one after by the new)
+        let mut hasher = lightcraft_preview::ContentHasher::both();
         let mut buf = vec![0u8; 1 << 20];
         let mut f = if start > 0 {
             // the first part is hashed again: the hash is of the whole file
@@ -1102,10 +1104,9 @@ pub(crate) fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, pa
             keep = original && f.sync_data().is_ok();
             return Err((400, format!("the upload ended after {got} of {} bytes", expected.unwrap_or(0))));
         }
-        let digest = hasher.finish().to_string();
         match check {
-            Check::Hash if digest != hash => return Err((422, "the file isn't the one its hash names".into())),
-            Check::Digest(d) if digest != d => return Err((422, "the file isn't the one its digest names".into())),
+            Check::Hash if !hasher.is(&hash) => return Err((422, "the file isn't the one its hash names".into())),
+            Check::Digest(d) if !hasher.is(d) => return Err((422, "the file isn't the one its digest names".into())),
             Check::Magic if head != PREVIEW_MAGIC => return Err((422, "not a LightCraft preview".into())),
             _ => {}
         }

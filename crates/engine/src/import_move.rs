@@ -196,7 +196,7 @@ pub(crate) fn place(src: &Path, dir: &Path, name: &str) -> Result<Placed, String
 /// of it. Returns the new path.
 ///
 /// `expect` is the content hash the import's probe computed from its full read of the source
-/// ([`lightcraft_preview::hash_bytes`]): the copy is read back and checked against it, which spares
+/// (either function, [`lightcraft_preview::file_is`]): the copy is read back and checked against it, which spares
 /// a third read of the card (issue #134). It also catches a source that changed since the probe
 /// (whose recorded metadata and hash would be stale). Without one the copy is compared byte for
 /// byte with the source.
@@ -320,7 +320,7 @@ pub(crate) fn copy_verified(src: &Path, dst: &Path, expect: Option<lightcraft_pr
                 let _ = out.set_modified(m);
             }
             match expect {
-                Some(h) if hash_file(dst)? != h => Err(io::Error::other(
+                Some(h) if !lightcraft_preview::file_is(dst, &h.to_string())? => Err(io::Error::other(
                     "the copy differs from the original as it was read for the import (a bad copy, or the file changed meanwhile)",
                 )),
                 Some(_) => Ok(()),
@@ -333,20 +333,6 @@ pub(crate) fn copy_verified(src: &Path, dst: &Path, expect: Option<lightcraft_pr
         let _ = fs::remove_file(dst);
     }
     r
-}
-
-/// [`lightcraft_preview::hash_bytes`] of a file's content, read in chunks.
-fn hash_file(path: &Path) -> io::Result<lightcraft_preview::Hash128> {
-    let mut f = File::open(path)?;
-    let mut h = lightcraft_preview::Hasher128::new();
-    let mut buf = vec![0u8; 1 << 20];
-    loop {
-        let n = fill(&mut f, &mut buf)?;
-        if n == 0 {
-            return Ok(h.finish());
-        }
-        h.update(buf.get(..n).unwrap_or(&[]));
-    }
 }
 
 /// Do two files hold the same bytes?

@@ -333,7 +333,7 @@ fn a_content_duplicate_keeps_the_rights_metadata_and_capture_time_in_its_file() 
         ..Default::default()
     };
     let probed = file_meta.clone();
-    s.media.file_probe = Some(Arc::new(move |_| {
+    s.media.file_probe = Some(Arc::new(move |_, _| {
         Ok(crate::media::ProbeInfo {
             format: "ARW".into(),
             width: 20,
@@ -1759,7 +1759,7 @@ fn preparation_skips_missing_original_probes_but_keeps_catalog_records() {
     let mut s = crate::Session::new();
     let probes = Arc::new(AtomicUsize::new(0));
     let calls = probes.clone();
-    s.media.file_probe = Some(Arc::new(move |_| {
+    s.media.file_probe = Some(Arc::new(move |_, _| {
         calls.fetch_add(1, Ordering::Relaxed);
         Err("a known-missing original must not be probed".into())
     }));
@@ -1788,7 +1788,7 @@ fn probed_original_is_counted_once_and_reimport_adds_nothing() {
     let mut s = crate::Session::new();
     let probes = Arc::new(AtomicUsize::new(0));
     let calls = probes.clone();
-    s.media.file_probe = Some(Arc::new(move |_| {
+    s.media.file_probe = Some(Arc::new(move |_, _| {
         calls.fetch_add(1, Ordering::Relaxed);
         Ok(crate::media::ProbeInfo { format: "ARW".into(), width: 20, height: 10, ..Default::default() })
     }));
@@ -1844,7 +1844,7 @@ fn originals_on_other_computers_are_never_looked_at_or_added() {
         let mut s = crate::Session::new();
         let probes = Arc::new(AtomicUsize::new(0));
         let calls = probes.clone();
-        s.media.file_probe = Some(Arc::new(move |_| {
+        s.media.file_probe = Some(Arc::new(move |_, _| {
             calls.fetch_add(1, Ordering::Relaxed);
             Err("a refused original must not be probed".into())
         }));

@@ -49,6 +49,7 @@ pub use defaults::{
     CameraDefault, DEFAULT_COLOR_NOISE_REDUCTION, ImportDefaults, apply_default_crop, apply_default_look, apply_import_defaults, has_import_look,
     import_defaults,
 };
+pub use files::known_hashes;
 pub use files::{
     EXTENSIONS, Expansion, LAUNCH_PROBE_LIMIT, LaunchPath, RAW_EXTENSIONS, accept_list, clean_ignore, expand, expand_report, expand_report_ignoring,
     expand_within, is_ignored, is_supported, launch_deadline, launch_path, launch_path_until,

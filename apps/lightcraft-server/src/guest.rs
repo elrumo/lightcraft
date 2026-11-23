@@ -44,7 +44,10 @@ const NAME_MAX: usize = 64;
 struct Received {
     tmp: PathBuf,
     name: String,
+    /// Its content hash (the new one, HB-532; the old one when the library has the file by that).
     hash: String,
+    /// The old content hash, which names the file if the library has had it since before.
+    old: Option<String>,
     size: u64,
 }
 
@@ -139,7 +142,7 @@ pub fn upload(st: &State, req: &mut Request, token: &str, user: &str, link: &Lin
                             return failed(500, token, "The server couldn't keep the photos.");
                         }
                     };
-                    let mut hasher = lightcraft_preview::Hasher128::new();
+                    let mut hasher = lightcraft_preview::ContentHasher::both();
                     let mut size = 0u64;
                     let r = form.read_body(&mut |chunk| {
                         size += chunk.len() as u64;
@@ -157,7 +160,8 @@ pub fn upload(st: &State, req: &mut Request, token: &str, user: &str, link: &Lin
                         skipped += 1;
                         continue;
                     }
-                    files.push(Received { tmp, name: clean_name(&f), hash: hasher.finish().to_string(), size });
+                    let old = hasher.finish_old().map(|h| h.to_string());
+                    files.push(Received { tmp, name: clean_name(&f), hash: hasher.finish().to_string(), old, size });
                 }
                 _ => {
                     if let Err(e) = form.read_body(&mut |_| Ok(())) {
@@ -199,8 +203,22 @@ pub fn upload(st: &State, req: &mut Request, token: &str, user: &str, link: &Lin
             return failed(500, token, "The server couldn't open the album.");
         }
     };
+    // a file the library has had since before HB-532 is named by its old content hash there
+    let olds: HashSet<String> = {
+        let asked: HashSet<&str> = probed.iter().filter_map(|(f, _)| f.old.as_deref()).collect();
+        let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut olds: HashSet<String> =
+            l.core.catalog().photos().filter_map(|q| lightcraft_catalog::sync::content_key(q)).filter(|k| asked.contains(k.as_str())).collect();
+        olds.extend(asked.iter().filter(|h| l.index.has(h)).map(|h| h.to_string()));
+        olds
+    };
     let mut kept: Vec<(Received, Photo, PathBuf)> = Vec::new();
-    for (f, p) in probed {
+    for (mut f, mut p) in probed {
+        if let Some(old) = f.old.take().filter(|o| olds.contains(o)) {
+            p.source = Source::File { path: original_path(&old, &f.name) };
+            p.content_hash = Some(old.clone());
+            f.hash = old;
+        }
         let Some(dest) = blob_path(&blobs, "original", &f.hash) else { continue };
         let in_folder = l.lock().unwrap_or_else(PoisonError::into_inner).index.has(&f.hash);
         if !dest.is_file() && !in_folder {

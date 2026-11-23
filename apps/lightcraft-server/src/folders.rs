@@ -354,22 +354,11 @@ struct FileRead {
     probed: Option<Result<(Photo, Option<SidecarData>), String>>,
 }
 
-/// Stream a file through the content hash.
-fn hash_file(path: &Path) -> Result<String, String> {
-    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut h = lightcraft_preview::Hasher128::new();
-    let mut buf = vec![0u8; 1 << 20];
-    loop {
-        match f.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                h.update(buf.get(..n).unwrap_or(&[]));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-    Ok(h.finish().to_string())
+/// Stream a file through its content hash in the library `known` describes.
+fn hash_file(path: &Path, known: &lightcraft_preview::KnownHashes, size: u64) -> Result<String, String> {
+    let mut h = known.hasher(size);
+    lightcraft_preview::read_file_into(path, &mut h).map_err(|e| e.to_string())?;
+    Ok(known.finish(&h, size).to_string())
 }
 
 /// A photo for a new file (its id is given when it goes into the library).
@@ -419,11 +408,14 @@ struct Known {
     by_hash: HashMap<String, Vec<Option<String>>>,
     /// Each library-folder photo's content hash, by its place.
     places: HashMap<String, String>,
+    /// The library's content hashes, which a file it has keeps (HB-532: one hashed before keeps the old one).
+    hashes: lightcraft_preview::KnownHashes,
 }
 
 impl Known {
     fn of(l: &UserLib) -> Known {
-        let mut k = Known::default();
+        let photos = l.core.catalog().photos().filter_map(|p| Some((p.file_size, p.content_hash.as_deref()?)));
+        let mut k = Known { hashes: lightcraft_preview::KnownHashes::new(photos, false), ..Known::default() };
         for p in l.core.catalog().photos().filter(|p| p.copy_of.is_none()) {
             if let Some(h) = &p.content_hash {
                 k.by_hash.entry(h.clone()).or_default().push(p.server_path.clone());
@@ -453,9 +445,9 @@ fn read(file: Found, known: &Known, found: &HashSet<String>, now: &str) -> FileR
     }
     let whole = if file.size <= READ_WHOLE { Some(std::fs::read(&file.path)) } else { None };
     let (hash, bytes) = match whole {
-        Some(Ok(b)) => (Ok(lightcraft_preview::hash_bytes(&b).to_string()), Some(b)),
+        Some(Ok(b)) => (Ok(known.hashes.hash(&b).to_string()), Some(b)),
         Some(Err(e)) => (Err(e.to_string()), None),
-        None => (hash_file(&file.path), None),
+        None => (hash_file(&file.path, &known.hashes, file.size), None),
     };
     let probed = match &hash {
         // a clip is described from its header in place, whatever its size: it is never read whole

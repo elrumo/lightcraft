@@ -188,12 +188,12 @@ mod tests {
         let held = Arc::new(AtomicBool::new(true));
         let probe = s.media.file_probe.clone().unwrap();
         let holding = held.clone();
-        s.media.file_probe = Some(Arc::new(move |path: &str| {
+        s.media.file_probe = Some(Arc::new(move |path: &str, known: &lightcraft_preview::KnownHashes| {
             let start = std::time::Instant::now();
             while path.ends_with(&last) && holding.load(Relaxed) && start.elapsed() < std::time::Duration::from_secs(30) {
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
-            probe(path)
+            probe(path, known)
         }));
         let mut b = Browse::start(&mut s, &dir.to_string_lossy(), Some(false)).unwrap();
         let mut early = 0;
