@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use lightcraft_catalog::{Album, AlbumId, Op, PhotoId};
 use serde_json::{Map, Value, json};
 
-use super::{CommandSpec, always, bad, cmd, str_param};
+use super::{CommandSpec, always, bad, bool_or, cmd, str_param};
 use crate::trips::{
     self as store, Doc, LIST_MAX, Located, MODES, NAME_MAX, PHOTOS_MAX, TEXT_MAX, capture_ms, id_ok, keys_of, readable, refs_of, str_of,
 };
@@ -476,15 +476,25 @@ fn unlink(s: &mut Session, p: &Value) -> Result<Value> {
     answer_for(s, &id)
 }
 
-fn list(s: &mut Session, _: &Value) -> Result<Value> {
+/// Photos a trip's peek shows ([`peek_of`]): its cover, then others spread over the trip.
+const PEEK_PHOTOS: usize = 5;
+/// Points a peek lists, the first by time.
+const PEEK_POINTS: usize = 100;
+/// Characters of the note a peek quotes.
+const PEEK_NOTE_CHARS: usize = 300;
+/// Photos looked at, from the first, for where a trip begins.
+const PEEK_PLACE_PHOTOS: usize = 200;
+
+fn list(s: &mut Session, p: &Value) -> Result<Value> {
     s.trips_follow_mode();
+    let peek = bool_or(p, "peek", false);
     let trips = s.trips.items(Doc::Trips);
     let located = Located::with_keys(s, trips.iter().any(|t| !keys_of(t).is_empty()));
     let index = if trips.iter().any(|t| t.get("cover").is_some()) { crate::icloud::collections::index(s) } else { HashMap::new() };
-    let mut notes: HashMap<&str, usize> = HashMap::new();
+    let mut notes: HashMap<&str, Vec<&Value>> = HashMap::new();
     for n in s.trips.items(Doc::Notes) {
         if let Some(t) = str_of(n, "trip") {
-            *notes.entry(t).or_default() += 1;
+            notes.entry(t).or_default().push(n);
         }
     }
     let mut rows: Vec<(i64, Value)> = Vec::new();
@@ -494,7 +504,7 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
         o.insert("id".into(), json!(id));
         o.insert("name".into(), t.get("name").cloned().unwrap_or(Value::Null));
         o.insert("createdMs".into(), t.get("createdMs").cloned().unwrap_or(Value::Null));
-        o.insert("notes".into(), json!(notes.get(id).copied().unwrap_or(0)));
+        o.insert("notes".into(), json!(notes.get(id).map_or(0, Vec::len)));
         let created = t.get("createdMs").and_then(Value::as_i64).unwrap_or(0);
         if !readable(t) {
             o.insert("unreadable".into(), json!(true));
@@ -516,11 +526,62 @@ fn list(s: &mut Session, _: &Value) -> Result<Value> {
             o.insert("endMs".into(), json!(end));
         }
         o.insert("unreadable".into(), json!(false));
+        if peek {
+            let cover = o.get("cover").and_then(Value::as_u64);
+            o.insert("peek".into(), peek_of(s, id, &photos, cover, notes.get(id).map_or(&[][..], Vec::as_slice)));
+        }
         rows.push((span.map_or(created, |(start, _)| start), Value::Object(o)));
     }
     // (the latest first)
     rows.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
     Ok(json!({"trips": rows.into_iter().map(|(_, v)| v).collect::<Vec<_>>()}))
+}
+
+/// What a list shows of a trip beyond its counts (`trip.list {peek}`), so a frontend draws every row from one command: a
+/// few of its photos (`photos`: `cover` first, then the others spread over the trip), the note it opens with (`note`), its
+/// points (`points`: the notes with a place, by time), where it begins (`place`: as `photo.place` names its first photo
+/// with a place) and whether `map.path {trip}` has anything to draw (`map`).
+fn peek_of(s: &Session, id: &str, photos: &[PhotoId], cover: Option<u64>, notes: &[&Value]) -> Value {
+    let rest: Vec<u64> = photos.iter().map(|p| p.0).filter(|p| Some(*p) != cover).collect();
+    let shown: Vec<u64> = cover.into_iter().chain(spread(&rest, PEEK_PHOTOS - usize::from(cover.is_some()))).collect();
+    let mut notes = notes.to_vec();
+    notes.sort_by_key(|n| (n.get("tMs").and_then(Value::as_i64), n.get("createdMs").and_then(Value::as_i64), str_of(n, "id")));
+    let note = notes
+        .iter()
+        .filter_map(|n| str_of(n, "text"))
+        .map(str::trim)
+        .find(|t| !t.is_empty())
+        .map(|t| t.chars().take(PEEK_NOTE_CHARS).collect::<String>());
+    let points: Vec<Value> = notes
+        .iter()
+        .filter_map(|n| Some((n.get("lat")?.as_f64()?, n.get("lon")?.as_f64()?)))
+        .filter(|(lat, lon)| lat.is_finite() && lon.is_finite() && lat.abs() <= 90.0 && lon.abs() <= 180.0)
+        .take(PEEK_POINTS)
+        .map(|(lat, lon)| json!([lat, lon]))
+        .collect();
+    let place = photos.iter().take(PEEK_PLACE_PHOTOS).filter_map(|p| s.catalog.photo(*p)).find_map(|ph| crate::map::place_of(ph));
+    let map = !points.is_empty()
+        || photos.iter().any(|p| s.catalog.photo(*p).is_some_and(|ph| ph.meta.gps.is_some()))
+        || s.trip_tracks(id).is_ok_and(|t| !t.is_empty());
+    json!({
+        "photos": shown,
+        "note": note,
+        "points": points,
+        "place": place.map(|pl| json!({"display": pl.display, "city": pl.city, "region": pl.region, "country": pl.country})),
+        "map": map,
+    })
+}
+
+/// Up to `n` of `items`, spread evenly from the first to the last.
+fn spread<T: Copy>(items: &[T], n: usize) -> Vec<T> {
+    if items.len() <= n {
+        return items.to_vec();
+    }
+    match n {
+        0 => Vec::new(),
+        1 => items.first().copied().into_iter().collect(),
+        _ => (0..n).filter_map(|i| items.get(i * (items.len() - 1) / (n - 1)).copied()).collect(),
+    }
 }
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
@@ -738,7 +799,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id, album: album id | ref: an album reference trip.get lists (for one whose album is gone)} → as trip.get",
             always, unlink),
         cmd!(query "trip.list", "Trips", [], None,
-            "{} → {trips: [{id, name, createdMs, cover: photo id | null (the chosen cover, else its first photo), photos: n, albums: n, notes: n, range?, startMs?, endMs?, unreadable}]}, the latest first. startMs/endMs: the range, else the span of the photos' capture times, else of the tracks it lists; unreadable: saved by a newer version (kept, not read)",
+            "{peek?: bool} → {trips: [{id, name, createdMs, cover: photo id | null (the chosen cover, else its first photo), photos: n, albums: n, notes: n, range?, startMs?, endMs?, unreadable, peek?}]}, the latest first. startMs/endMs: the range, else the span of the photos' capture times, else of the tracks it lists; unreadable: saved by a newer version (kept, not read). With `peek`, each readable trip also has what a list shows of it, so one command draws every row: peek: {photos: [photo id] (at most 5: the cover, then others spread over the trip), note: the first note's words (300 characters at most) | null, points: [[lat, lon]] (its notes with a place, by time, at most 100), place: {display, city, region, country} (as photo.place names its first photo with a place) | null, map: bool (map.path {trip} has something to draw)}",
             always, list),
         cmd!(query "trip.get", "Trip", [], None,
             "{id} → {trip: as stored, linked: [{ref, album: {id, name} | null (deleted, or not here yet)}], coverPhoto: photo id | null, photos: n, added: n (added one by one, not in a linked album), notes: n, sessions: [session] (its recorded tracks, as map.path takes them), people: [{name, photos: n, added: bool}] (the names it was given, then those on the faces of its photos), cameras: [{name, photos: n}], unreadable}",

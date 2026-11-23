@@ -344,6 +344,42 @@ fn a_trip_from_an_album_and_an_album_from_a_trip() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// A list draws every row from one command: `trip.list {peek}` brings a few photos of each trip, the note it opens with,
+/// its points, where it begins and whether it has a map.
+#[test]
+fn the_list_peeks_at_each_trip() {
+    let Alps { mut s, root, alps, p } = alps("peek");
+    let many: Vec<PhotoId> = (0..12).map(|i| photo(&mut s, 100 + i, Some(&format!("2026-08-{:02}T10:00:00Z", i + 1)), None)).collect();
+    let summer = album(&mut s, "Summer", &many);
+    let a = s.execute("trip.create", &json!({"name": "Alps", "albums": [alps.0], "cover": p[1].0})).unwrap()["trip"]["id"].clone();
+    let b = s.execute("trip.create", &json!({"name": "Summer", "albums": [summer.0]})).unwrap()["trip"]["id"].clone();
+    let empty = s.execute("trip.create", &json!({"name": "Someday"})).unwrap()["trip"]["id"].clone();
+    s.execute("trip.note.add", &json!({"trip": a, "text": "  ", "tMs": 5})).unwrap();
+    s.execute("trip.note.add", &json!({"trip": a, "text": "Lunch", "tMs": 30})).unwrap();
+    s.execute("trip.note.add", &json!({"trip": a, "text": format!(" {}", "é".repeat(400)), "tMs": 20, "lat": 46.5, "lon": 7.9})).unwrap();
+    let rows = s.execute("trip.list", &json!({"peek": true})).unwrap()["trips"].as_array().unwrap().clone();
+    let row = |id: &Value| rows.iter().find(|r| r["id"] == *id).unwrap()["peek"].clone();
+    // the cover, then the others (the album's: p[0] and p[7], the one without a time last)
+    let alps = row(&a);
+    assert_eq!(ids(&alps["photos"]), vec![p[1].0, p[0].0, p[7].0]);
+    assert_eq!(alps["note"].as_str().unwrap().chars().count(), 300, "the first with words, by time, cut");
+    assert_eq!(alps["points"], json!([[46.5, 7.9]]));
+    assert_eq!(alps["map"], true);
+    assert!(alps["place"]["display"].as_str().is_some_and(|d| !d.is_empty()), "{alps}");
+    // no cover chosen: its first photo, then four more spread to its last
+    let summer = row(&b);
+    assert_eq!(ids(&summer["photos"]), [0, 1, 4, 7, 11].iter().map(|i: &usize| many[*i].0).collect::<Vec<_>>());
+    assert_eq!(
+        (summer["note"].clone(), summer["points"].clone(), summer["place"].clone(), summer["map"].clone()),
+        (Value::Null, json!([]), Value::Null, json!(false))
+    );
+    assert_eq!(row(&empty), json!({"photos": [], "note": null, "points": [], "place": null, "map": false}));
+    // without it, as before
+    let plain = s.execute("trip.list", &json!({})).unwrap();
+    assert!(plain["trips"].as_array().unwrap().iter().all(|r| r.get("peek").is_none()));
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn notes_are_kept_by_time_and_go_with_their_trip() {
     let Alps { mut s, root, p, .. } = alps("notes");

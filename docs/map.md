@@ -254,7 +254,7 @@ GeoNames dumps (`cities15000.txt`, `countryInfo.txt`, `admin1CodesASCII.txt`) an
 | `trip.create {name, albums?, photos?, people?, range?, photosInRange?, tracks?, cover?}`, `trip.fromAlbum {album, name?}` | a new [trip](#trips) (`limit:` past 500); answers as `trip.get` |
 | `trip.update {id, …}`, `trip.link`, `trip.unlink {id, album \| ref}`, `trip.delete {id}` | change a trip (`null` clears a field), link or unlink an album, delete it with its notes |
 | `trip.addPhotos {id, photos}`, `trip.removePhotos {id, photos}` | photos added to a trip one by one, or taken out (by photo id; kept by content hash) |
-| `trip.list`, `trip.get {id}`, `trip.photos {id}` | the trips (photos, albums and notes counted, the span), one trip with its linked albums resolved, its tracks, people and cameras, a trip's photos |
+| `trip.list {peek?}`, `trip.get {id}`, `trip.photos {id}` | the trips (photos, albums and notes counted, the span; with `peek`, what a list shows of each: a few photos, the note it opens with, its points, where it begins and whether it has a map, so one command draws every row), one trip with its linked albums resolved, its tracks, people and cameras, a trip's photos |
 | `trip.toAlbum {id, name?}` | a new album with the trip's photos (one undo step) |
 | `trip.note.add {trip, text, tMs?, lat?, lon?, photo?}`, `trip.note.update`, `trip.note.delete`, `trip.notes {trip}` | a trip's notes (`limit:` past 1500), by time |
 | `album.ref {id}`, `album.resolve {ref}`, `album.trips {id}` | an album's sync-stable reference, the album a reference names here (or `{id: null}`), the trips that link an album |
