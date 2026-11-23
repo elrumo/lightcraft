@@ -8287,6 +8287,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/twox-hash/twox-hash-2.1.5.crate",
+        "sha256": "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2",
+        "dest": "cargo/vendor/twox-hash-2.1.5"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2\", \"files\": {}}",
+        "dest": "cargo/vendor/twox-hash-2.1.5",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/type-map/type-map-0.5.1.crate",
         "sha256": "cb30dbbd9036155e74adad6812e9898d03ec374946234fbcebd5dfc7b9187b90",
         "dest": "cargo/vendor/type-map-0.5.1"
