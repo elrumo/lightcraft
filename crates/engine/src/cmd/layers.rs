@@ -14,11 +14,16 @@
 //! here and drawn by a native frontend's renderer too. `layer.subject` says what covers a layer behind the subject (the
 //! subject found, the people, or objects chosen with taps, added and taken away one at a time), `layer.rename` names a
 //! layer, and removing, showing, copying and putting behind take several layers at once (`layers`), as one undo step.
+//!
+//! Groups: `layer.group` puts layers in a group, whose header is a layer of its own just above them (kind `group`: a
+//! name, an eye that hides them all and an opacity for them together); `layer.ungroup` takes a layer out or dissolves a
+//! group. A group moves, is copied and is removed whole by its header, and every edit leaves each group's layers just
+//! under its header (`tidy_layers`), so a layer is still named by its place. Groups hold layers, not groups.
 
 use lightcraft_catalog::{MediaKind, PhotoId};
 use lightcraft_develop::{
     ExposureLayer, LayerBlend, LayerDrawing, LayerShape, LayerStyle, LayerSubject, LayerText, MAX_EXPOSURE_LAYERS, MAX_LAYER_DRAWING,
-    MAX_LAYER_FAMILY, MAX_LAYER_NAME, MAX_LAYER_TEXT, MAX_LAYERS, MAX_SUBJECT_POINTS,
+    MAX_LAYER_FAMILY, MAX_LAYER_NAME, MAX_LAYER_TEXT, MAX_LAYERS, MAX_SUBJECT_POINTS, layer_header, next_group_id, tidy_layers,
 };
 use serde_json::{Value, json};
 
@@ -151,6 +156,8 @@ fn new_layer(s: &Session, base: PhotoId, photo: PhotoId, c: &str) -> Result<Expo
 fn layers_edit(s: &mut Session, id: PhotoId, label: &str, f: impl FnOnce(&mut Vec<ExposureLayer>) -> Result<()>) -> Result<Value> {
     let mut d = (*s.develop_of(id).unwrap_or_default()).clone();
     f(&mut d.exposure_layers)?;
+    // (every group's layers just under its header again, whatever moved)
+    tidy_layers(&mut d.exposure_layers);
     let n = d.exposure_layers.len();
     s.set_develop(id, d, label)?;
     Ok(json!({"id": id.0, "count": n}))
@@ -162,13 +169,31 @@ fn at(layers: &[ExposureLayer], i: usize, c: &str) -> Result<()> {
 
 /// Room for one more layer (`photo`: a photo layer, of which a photo holds fewer).
 fn room(layers: &[ExposureLayer], photo: bool, c: &str) -> Result<()> {
-    if layers.len() >= MAX_LAYERS {
+    room_for(layers, 1, usize::from(photo), c)
+}
+
+/// Room for `n` more layers (a group's header is one), `photos` of them photo layers.
+fn room_for(layers: &[ExposureLayer], n: usize, photos: usize, c: &str) -> Result<()> {
+    if layers.len().saturating_add(n) > MAX_LAYERS {
         return Err(bad(c, format!("a photo holds at most {MAX_LAYERS} layers")));
     }
-    if photo && layers.iter().filter(|l| l.is_photo()).count() >= MAX_EXPOSURE_LAYERS {
+    if photos > 0 && layers.iter().filter(|l| l.is_photo()).count().saturating_add(photos) > MAX_EXPOSURE_LAYERS {
         return Err(bad(c, format!("a photo holds at most {MAX_EXPOSURE_LAYERS} photo layers")));
     }
     Ok(())
+}
+
+/// Layer `i` is a layer, not a group's header (which has no picture to mix, dress or put behind).
+fn plain(layers: &[ExposureLayer], i: usize, c: &str) -> Result<()> {
+    at(layers, i, c)?;
+    if layers[i].is_group() { Err(bad(c, format!("layer {i} is a group"))) } else { Ok(()) }
+}
+
+/// The group a call names by its header's place (`key`), as its id.
+fn group_param(p: &Value, key: &str, layers: &[ExposureLayer], c: &str) -> Result<u32> {
+    let h = layer_param(p, key, c)?;
+    at(layers, h, c)?;
+    layers[h].group.ok_or_else(|| bad(c, format!("layer {h} is not a group")))
 }
 
 /// A number field of a call, `None` when left out.
@@ -383,6 +408,7 @@ fn list(s: &Session, p: &Value) -> Result<Value> {
             let name = match (&l.name, &l.text, &l.shape, &l.drawing) {
                 // (the name it was given)
                 (Some(given), ..) => Some(given.clone()),
+                _ if l.is_group() => Some("group".to_string()),
                 // (a text layer is named by its first line, a shape by its kind)
                 (_, Some(t), _, _) => Some(t.text.lines().next().unwrap_or_default().chars().take(60).collect::<String>()),
                 (_, _, Some(sh), _) => Some(sh.sane().kind),
@@ -402,6 +428,13 @@ fn list(s: &Session, p: &Value) -> Result<Value> {
                 o.insert("state".into(), json!(st));
                 o.insert("name".into(), json!(name));
                 o.insert("drawn".into(), json!((!l.is_photo() || photos_below < MAX_EXPOSURE_LAYERS) && st == "ok"));
+                // (a group's header: how many layers it holds; a layer in a group: where its header is)
+                if let Some(g) = l.group {
+                    o.insert("members".into(), json!(d.exposure_layers.iter().filter(|m| m.parent == Some(g) && !m.is_group()).count()));
+                }
+                if let Some(h) = layer_header(&d.exposure_layers, l) {
+                    o.insert("header".into(), json!(h));
+                }
             }
             v
         })
@@ -461,7 +494,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     let photo = photo_param(p, "photo", C)?;
                     new_layer(s, id, photo, C)?;
                     layers_edit(s, id, "Replace Layer Photo", |layers| {
-                        at(layers, i, C)?;
+                        plain(layers, i, C)?;
                         layers[i].photo = photo.0;
                         // (words, a shape or a drawing given a photo become a photo layer)
                         layers[i].text = None;
@@ -474,17 +507,31 @@ pub fn specs() -> Vec<CommandSpec> {
         },
         CommandSpec {
             explicit_targets: true,
-            ..cmd!("layer.delete", "Remove Layer", [], None, "{layer: index | layers: [index], id?} — one undo step", has_active, |s, p| {
-                const C: &str = "layer.delete";
-                let id = base_of(s, p, C)?;
-                layers_edit(s, id, "Remove Layer", |layers| {
-                    // (top first, so the places below stay as they were named)
-                    for i in layers_param(p, layers, C)?.into_iter().rev() {
-                        layers.remove(i);
-                    }
-                    Ok(())
-                })
-            })
+            ..cmd!(
+                "layer.delete",
+                "Remove Layer",
+                [],
+                None,
+                "{layer: index | layers: [index], id?} — one undo step; a group goes with its layers (`layer.ungroup` keeps them)",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.delete";
+                    let id = base_of(s, p, C)?;
+                    layers_edit(s, id, "Remove Layer", |layers| {
+                        let mut picked = layers_param(p, layers, C)?;
+                        // (a group goes with what is in it)
+                        let groups: Vec<u32> = picked.iter().filter_map(|i| layers[*i].group).collect();
+                        picked.extend(layers.iter().enumerate().filter(|(_, l)| l.parent.is_some_and(|g| groups.contains(&g))).map(|(i, _)| i));
+                        picked.sort_unstable();
+                        picked.dedup();
+                        // (top first, so the places below stay as they were named)
+                        for i in picked.into_iter().rev() {
+                            layers.remove(i);
+                        }
+                        Ok(())
+                    })
+                }
+            )
         },
         CommandSpec {
             explicit_targets: true,
@@ -517,17 +564,57 @@ pub fn specs() -> Vec<CommandSpec> {
                 "Reorder Layers",
                 [],
                 None,
-                "{layer: index, to: index (0 = bottom), id?} — layers draw bottom to top",
+                "{layer: index, to: index (0 = bottom), group?: a group's index (the layer joins it) or -1 (it is in none), id?} — layers draw bottom to top; a group moves whole, its header landing on `to`; without `group` a layer stays in its group, at the nearest place in it",
                 has_active,
                 |s, p| {
                     const C: &str = "layer.move";
                     let id = base_of(s, p, C)?;
                     let i = layer_param(p, "layer", C)?;
                     let to = layer_param(p, "to", C)?;
+                    let group = match p.get("group").filter(|v| !v.is_null()) {
+                        None => None,
+                        Some(v) => Some(v.as_i64().ok_or_else(|| bad(C, "`group` must be a group's index, or -1 for none"))?),
+                    };
                     layers_edit(s, id, "Reorder Layers", |layers| {
                         at(layers, i, C)?;
-                        let l = layers.remove(i);
-                        layers.insert(to.min(layers.len()), l);
+                        let joins = match group {
+                            None => None,
+                            Some(g) if g < 0 => Some(None),
+                            Some(_) => Some(Some(group_param(p, "group", layers, C)?)),
+                        };
+                        // what moves: a layer, or a group whole (its layers under its header, which lands on `to`)
+                        let block: Vec<ExposureLayer> = if let Some(gid) = layers[i].group {
+                            if matches!(joins, Some(Some(_))) {
+                                return Err(bad(C, format!("layer {i} is a group: a group holds layers, not groups")));
+                            }
+                            let inside = |l: &ExposureLayer| l.parent == Some(gid) && !l.is_group();
+                            let mut block: Vec<ExposureLayer> = layers.iter().filter(|l| inside(l)).cloned().collect();
+                            block.push(layers[i].clone());
+                            layers.retain(|l| !inside(l) && l.group != Some(gid));
+                            block
+                        } else {
+                            let mut l = layers.remove(i);
+                            if let Some(parent) = joins {
+                                l.parent = parent;
+                            }
+                            vec![l]
+                        };
+                        let n = block.len();
+                        let start = to.saturating_sub(n.saturating_sub(1)).min(layers.len());
+                        let free = block.last().is_some_and(|l| l.parent.is_none());
+                        layers.splice(start..start, block);
+                        // Among another group's layers without joining it, going up: on past that group, over its header
+                        // (going down, `tidy_layers` puts it under the group).
+                        let among = |below: Option<&ExposureLayer>, above: Option<&ExposureLayer>| {
+                            let g = below.and_then(|l| l.parent)?;
+                            above.filter(|a| a.parent == Some(g) || a.group == Some(g)).map(|_| g)
+                        };
+                        let below = start.checked_sub(1).and_then(|b| layers.get(b));
+                        if let Some(g) = among(below, layers.get(start + n)).filter(|_| free && to > i) {
+                            let moved: Vec<ExposureLayer> = layers.drain(start..start + n).collect();
+                            let over = layers.iter().position(|l| l.group == Some(g)).map_or(layers.len(), |h| h + 1);
+                            layers.splice(over..over, moved);
+                        }
                         Ok(())
                     })
                 }
@@ -548,7 +635,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     let i = layer_param(p, "layer", C)?;
                     let blend = blend_param(p.get("blend").unwrap_or(&Value::Null), C)?;
                     layers_edit(s, id, "Layer Blend Mode", |layers| {
-                        at(layers, i, C)?;
+                        plain(layers, i, C)?;
                         layers[i].blend = blend;
                         Ok(())
                     })
@@ -692,19 +779,38 @@ pub fn specs() -> Vec<CommandSpec> {
                 "Duplicate Layer",
                 [],
                 None,
-                "{layer: index | layers: [index], id?} — a copy of each layer just above it, moved a little so both show; one undo step",
+                "{layer: index | layers: [index], id?} — a copy of each layer just above it (in its group, if it is in one), moved a little so both show; a group is copied with its layers; one undo step",
                 has_active,
                 |s, p| {
                     const C: &str = "layer.duplicate";
                     let id = base_of(s, p, C)?;
                     layers_edit(s, id, "Duplicate Layer", |layers| {
+                        let nudged = |mut l: ExposureLayer| {
+                            l.x = (l.x + 4.0).clamp(-100.0, 100.0);
+                            l.y = (l.y + 4.0).clamp(-100.0, 100.0);
+                            l
+                        };
+                        let picked = layers_param(p, layers, C)?;
+                        let groups: Vec<u32> = picked.iter().filter_map(|i| layers[*i].group).collect();
                         // (top first, so a copy put in does not move the places still to copy)
-                        for i in layers_param(p, layers, C)?.into_iter().rev() {
-                            room(layers, layers[i].is_photo(), C)?;
-                            let mut copy = layers[i].clone();
-                            copy.x = (copy.x + 4.0).clamp(-100.0, 100.0);
-                            copy.y = (copy.y + 4.0).clamp(-100.0, 100.0);
-                            layers.insert(i + 1, copy);
+                        for i in picked.into_iter().rev() {
+                            if let Some(gid) = layers[i].group {
+                                // (a group: its layers and its header, as a group of its own just above)
+                                let new = next_group_id(layers);
+                                let mut block: Vec<ExposureLayer> = layers
+                                    .iter()
+                                    .filter(|l| l.parent == Some(gid))
+                                    .cloned()
+                                    .map(|l| ExposureLayer { parent: Some(new), ..nudged(l) })
+                                    .collect();
+                                room_for(layers, block.len() + 1, block.iter().filter(|l| l.is_photo()).count(), C)?;
+                                block.push(ExposureLayer { group: Some(new), ..layers[i].clone() });
+                                layers.splice(i + 1..i + 1, block);
+                            } else if !layers[i].parent.is_some_and(|g| groups.contains(&g)) {
+                                // (not one copied with its group already)
+                                room(layers, layers[i].is_photo(), C)?;
+                                layers.insert(i + 1, nudged(layers[i].clone()));
+                            }
                         }
                         Ok(())
                     })
@@ -724,7 +830,11 @@ pub fn specs() -> Vec<CommandSpec> {
                     const C: &str = "layer.behind";
                     let id = base_of(s, p, C)?;
                     layers_edit(s, id, "Behind Subject", |layers| {
-                        let picked = layers_param(p, layers, C)?;
+                        // (a group's header has no picture to put behind: its layers are named themselves)
+                        let picked: Vec<usize> = layers_param(p, layers, C)?.into_iter().filter(|i| !layers[*i].is_group()).collect();
+                        if picked.is_empty() {
+                            return Err(bad(C, "a group can't go behind the subject: name its layers"));
+                        }
                         let all_behind = picked.iter().all(|i| layers[*i].behind);
                         let behind = bool_or(p, "behind", !all_behind);
                         for i in picked {
@@ -749,7 +859,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     let id = base_of(s, p, C)?;
                     let i = layer_param(p, "layer", C)?;
                     layers_edit(s, id, "Layer Subject", |layers| {
-                        at(layers, i, C)?;
+                        plain(layers, i, C)?;
                         let subject = subject_params(p, layers[i].subject.clone().unwrap_or_default().sane(), C)?;
                         // (an object tapped is something to sit behind)
                         if p.get("addInclude").is_some_and(|v| !v.is_null()) {
@@ -802,10 +912,74 @@ pub fn specs() -> Vec<CommandSpec> {
                     let id = base_of(s, p, C)?;
                     let i = layer_param(p, "layer", C)?;
                     layers_edit(s, id, "Layer Style", |layers| {
-                        at(layers, i, C)?;
+                        plain(layers, i, C)?;
                         let style = style_params(p, layers[i].style.clone().unwrap_or_default().sane(), C)?;
                         // (a layer with nothing of it showing keeps none: its settings are those of a plain layer again)
                         layers[i].style = if style.is_plain() { None } else { Some(style) };
+                        Ok(())
+                    })
+                }
+            )
+        },
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "layer.group",
+                "Group Layers",
+                [],
+                None,
+                "{layer: index | layers: [index], into?: a group's index, name?, id?} — the layers become a group, whose header (a layer of kind `group`: its name, its eye and an opacity for them together) goes just above the topmost of them; with `into` they join that group instead. One undo step; groups hold layers, not groups",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.group";
+                    let id = base_of(s, p, C)?;
+                    let name = str_param(p, "name").map(|n| n.trim().chars().take(MAX_LAYER_NAME).collect::<String>()).filter(|n| !n.is_empty());
+                    layers_edit(s, id, "Group Layers", |layers| {
+                        let picked = layers_param(p, layers, C)?;
+                        if let Some(i) = picked.iter().find(|i| layers[**i].is_group()) {
+                            return Err(bad(C, format!("layer {i} is a group: a group holds layers, not groups")));
+                        }
+                        let gid = if p.get("into").is_some_and(|v| !v.is_null()) {
+                            group_param(p, "into", layers, C)?
+                        } else {
+                            room(layers, false, C)?;
+                            let gid = next_group_id(layers);
+                            // (above the topmost of them: the places named are all below it, and stay)
+                            let top = picked.last().copied().unwrap_or(0);
+                            layers.insert(top + 1, ExposureLayer { name, ..ExposureLayer::group(gid) });
+                            gid
+                        };
+                        for i in picked {
+                            layers[i].parent = Some(gid);
+                        }
+                        Ok(())
+                    })
+                }
+            )
+        },
+        CommandSpec {
+            explicit_targets: true,
+            ..cmd!(
+                "layer.ungroup",
+                "Ungroup Layers",
+                [],
+                None,
+                "{layer: index | layers: [index], id?} — a group named by its header is dissolved (its layers stay where they are, in no group); a layer in a group leaves it, to just under the group. One undo step",
+                has_active,
+                |s, p| {
+                    const C: &str = "layer.ungroup";
+                    let id = base_of(s, p, C)?;
+                    layers_edit(s, id, "Ungroup Layers", |layers| {
+                        let picked = layers_param(p, layers, C)?;
+                        if let Some(i) = picked.iter().find(|i| !layers[**i].is_group() && layers[**i].parent.is_none()) {
+                            return Err(bad(C, format!("layer {i} is in no group")));
+                        }
+                        let groups: Vec<u32> = picked.iter().filter_map(|i| layers[*i].group).collect();
+                        for i in &picked {
+                            layers[*i].parent = None;
+                        }
+                        // (a header gone leaves its layers in no group: `tidy_layers`)
+                        layers.retain(|l| !l.group.is_some_and(|g| groups.contains(&g)));
                         Ok(())
                     })
                 }
@@ -818,7 +992,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 "List Layers",
                 [],
                 None,
-                "{id?} → {id, layers: [{index, kind: photo|text|shape|drawing, photo, text?, shape?, drawing?, behind?, style?, subject?, visible, blend, opacity, x, y, scale, angle, name, state: ok|missing|deleted|video|local, drawn}], max, maxPhotos, shown} — the photo's layers, each with what its photo is now (a text layer is named by its first line, a shape by its kind)",
+                "{id?} → {id, layers: [{index, kind: photo|text|shape|drawing|group, photo, text?, shape?, drawing?, behind?, style?, subject?, group?: its id (a group's header), members?: how many layers it holds, parent?: its group's id, header?: its group's index, visible, blend, opacity, x, y, scale, angle, name, state: ok|missing|deleted|video|local, drawn}], max, maxPhotos, shown} — the photo's layers, each with what its photo is now (a text layer is named by its first line, a shape by its kind); a group's layers are the ones just under its header",
                 has_active,
                 |s, p| list(s, p)
             )

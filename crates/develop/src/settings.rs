@@ -1442,6 +1442,15 @@ pub struct ExposureLayer {
     /// The name the layer was given (at most [`MAX_LAYER_NAME`] characters); without one a layer is named by what it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// A group's header: this layer draws nothing and is the group of that id (never 0). Its `name`, `visible` (off:
+    /// none of its layers show) and `opacity` (of its layers together) are the group's; the rest is not read. Its layers
+    /// are the ones just under it in the stack ([`tidy_layers`]). Not written for a layer, so the layers there were keep
+    /// their JSON and `hash64`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<u32>,
+    /// The group this layer is in (a header's `group`). Groups hold layers, not groups. Not written outside a group.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<u32>,
     pub visible: bool,
     pub blend: LayerBlend,
     /// 0..100.
@@ -1474,6 +1483,8 @@ impl ExposureLayer {
             style: None,
             subject: None,
             name: None,
+            group: None,
+            parent: None,
             visible: true,
             blend: LayerBlend::Screen,
             opacity: 100.0,
@@ -1499,14 +1510,26 @@ impl ExposureLayer {
         ExposureLayer { drawing: Some(drawing.sane()), blend: LayerBlend::Normal, ..ExposureLayer::new(0) }
     }
 
-    /// It draws a library photo (not words, a shape or a drawing).
-    pub fn is_photo(&self) -> bool {
-        self.text.is_none() && self.shape.is_none() && self.drawing.is_none()
+    /// A new group's header, of id `id`.
+    pub fn group(id: u32) -> Self {
+        ExposureLayer { group: Some(id.max(1)), blend: LayerBlend::Normal, ..ExposureLayer::new(0) }
     }
 
-    /// `photo`, `text`, `shape` or `drawing`.
+    /// It is a group's header (it draws nothing itself).
+    pub fn is_group(&self) -> bool {
+        self.group.is_some()
+    }
+
+    /// It draws a library photo (not words, a shape or a drawing, and not a group's header).
+    pub fn is_photo(&self) -> bool {
+        self.text.is_none() && self.shape.is_none() && self.drawing.is_none() && self.group.is_none()
+    }
+
+    /// `group`, `photo`, `text`, `shape` or `drawing`.
     pub fn kind(&self) -> &'static str {
-        if self.text.is_some() {
+        if self.group.is_some() {
+            "group"
+        } else if self.text.is_some() {
             "text"
         } else if self.shape.is_some() {
             "shape"
@@ -1516,6 +1539,70 @@ impl ExposureLayer {
             "photo"
         }
     }
+}
+
+/// The place of the header of the group `l` is in, among `layers`; `None` outside a group (or in one whose header is gone).
+pub fn layer_header(layers: &[ExposureLayer], l: &ExposureLayer) -> Option<usize> {
+    let id = l.parent.filter(|_| !l.is_group())?;
+    layers.iter().position(|h| h.group == Some(id))
+}
+
+/// `l` as it draws among `layers`: hidden when its group is, its opacity times its group's. A renderer that mixes one
+/// layer at a time draws this.
+// ponytail: the group's opacity is spread over its layers, so where two of them overlap the lower one shows through the
+// upper more than a group mixed in as one picture would let it. The Apple renderer mixes the group as one; do the same
+// here (keep the picture under the group, mix the result back) if this core's pictures of groups matter.
+pub fn layer_in_group(layers: &[ExposureLayer], l: &ExposureLayer) -> ExposureLayer {
+    let mut out = l.clone();
+    if let Some(h) = layer_header(layers, l).and_then(|i| layers.get(i)) {
+        let of = |v: f64| if v.is_finite() { v.clamp(0.0, 100.0) } else { 100.0 };
+        out.visible = l.visible && h.visible;
+        out.opacity = of(l.opacity) * of(h.opacity) / 100.0;
+    }
+    out
+}
+
+/// The id a new group takes.
+pub fn next_group_id(layers: &[ExposureLayer]) -> u32 {
+    layers.iter().filter_map(|l| l.group).max().map_or(1, |m| m.saturating_add(1))
+}
+
+/// `layers` with every group whole: a group's layers sit just under its header, in the order they had; a header is in
+/// no group and its id is its own (a second header of an id takes a new one, and that id's layers stay with the first);
+/// a layer whose group has no header is in none. Whatever an edit, a file or another device left, this is a stack the
+/// commands and a renderer can read by place. A stack with no groups comes back as it was.
+pub fn tidy_layers(layers: &mut Vec<ExposureLayer>) {
+    if layers.iter().all(|l| l.group.is_none() && l.parent.is_none()) {
+        return;
+    }
+    // a header is in no group, and a layer whose group has no header is in none
+    let known: Vec<u32> = layers.iter().filter_map(|l| l.group).filter(|g| *g != 0).collect();
+    for l in layers.iter_mut() {
+        if l.group.is_some() || l.parent.is_some_and(|p| !known.contains(&p)) {
+            l.parent = None;
+        }
+    }
+    // each header's id is its own (the layers of an id two headers share stay with the first)
+    let mut seen: Vec<u32> = Vec::new();
+    for i in 0..layers.len() {
+        let Some(id) = layers.get(i).and_then(|l| l.group) else { continue };
+        let id = if id == 0 || seen.contains(&id) { next_group_id(layers) } else { id };
+        seen.push(id);
+        if let Some(l) = layers.get_mut(i) {
+            l.group = Some(id);
+        }
+    }
+    // a group's layers just under its header (once: ids that still repeat, there being no number left, add nothing twice)
+    let mut placed: Vec<u32> = Vec::new();
+    let mut out = Vec::with_capacity(layers.len());
+    for l in layers.iter().filter(|l| l.parent.is_none()) {
+        if let Some(id) = l.group.filter(|id| !placed.contains(id)) {
+            placed.push(id);
+            out.extend(layers.iter().filter(|m| m.parent == Some(id)).cloned());
+        }
+        out.push(l.clone());
+    }
+    *layers = out;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

@@ -85,6 +85,8 @@ impl crate::Session {
         let mut salt = 0u64;
         // (the first photo layers: words, shapes and drawings among them are a native frontend's)
         for (i, l) in s.exposure_layers.iter().enumerate().filter(|(_, l)| l.is_photo()).take(lightcraft_develop::MAX_EXPOSURE_LAYERS) {
+            // (in a group: hidden with it, at its opacity too)
+            let l = &lightcraft_develop::layer_in_group(&s.exposure_layers, l);
             if !lightcraft_pipeline::layers::draws(l) {
                 continue;
             }

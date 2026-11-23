@@ -441,3 +441,160 @@ fn a_layers_subject_name_and_several_layers_at_once() {
         );
     }
 }
+
+/// The stack of photo `id` as names (a header as `[name]`, a layer in a group as `name.`), bottom first.
+fn stack(s: &Session, id: PhotoId) -> String {
+    let d = s.develop_of(id).unwrap();
+    let names = d.exposure_layers.iter().map(|l| {
+        let n = l.name.clone().unwrap_or_default();
+        if l.is_group() {
+            format!("[{n}]")
+        } else if l.parent.is_some() {
+            format!("{n}.")
+        } else {
+            n
+        }
+    });
+    names.collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn groups_hold_their_layers_through_every_edit() {
+    let mut s = Session::with_demo();
+    let ids: Vec<PhotoId> = s.catalog.photos().map(|p| p.id).take(2).collect();
+    let (id, other) = (ids[0], ids[1]);
+    s.execute("library.select", &json!({"ids": [id.0]})).unwrap();
+    for n in 0..5 {
+        s.execute("layer.addShape", &json!({})).unwrap();
+        s.execute("layer.rename", &json!({"layer": n, "name": format!("s{n}")})).unwrap();
+    }
+    groups_gather_and_move(&mut s, id);
+    a_group_hides_and_fades_its_layers(&mut s, id, other);
+    a_header_is_no_layer(&mut s, id, other);
+    groups_are_copied_and_removed_whole(&mut s, id);
+}
+
+fn groups_gather_and_move(s: &mut Session, id: PhotoId) {
+    // a group's header goes just above the topmost of its layers, which gather under it
+    s.execute("layer.group", &json!({"layers": [0, 2], "name": "G"})).unwrap();
+    assert_eq!(stack(s, id), "s1 s0. s2. [G] s3 s4");
+    let listed = s.execute("layer.list", &json!({})).unwrap();
+    let g = &listed["layers"][3];
+    assert_eq!((g["kind"].as_str(), g["members"].as_u64(), g["name"].as_str(), g["state"].as_str()), (Some("group"), Some(2), Some("G"), Some("ok")));
+    assert_eq!((listed["layers"][1]["header"].as_u64(), listed["layers"][0].get("header")), (Some(3), None));
+
+    // a layer stays in its group unless the move says otherwise; a group moves whole
+    s.execute("layer.move", &json!({"layer": 1, "to": 5})).unwrap();
+    assert_eq!(stack(s, id), "s1 s2. s0. [G] s3 s4");
+    s.execute("layer.move", &json!({"layer": 1, "to": 5, "group": -1})).unwrap();
+    assert_eq!(stack(s, id), "s1 s0. [G] s3 s4 s2");
+    s.execute("layer.move", &json!({"layer": 3, "to": 1, "group": 2})).unwrap();
+    assert_eq!(stack(s, id), "s1 s3. s0. [G] s4 s2");
+    s.execute("layer.move", &json!({"layer": 3, "to": 5})).unwrap();
+    assert_eq!(stack(s, id), "s1 s4 s2 s3. s0. [G]");
+    s.execute("layer.move", &json!({"layer": 5, "to": 0})).unwrap();
+    assert_eq!(stack(s, id), "s3. s0. [G] s1 s4 s2");
+    // a layer stepping up into a group's layers without joining goes on over the group; stepping down, under it
+    s.execute("layer.move", &json!({"layer": 3, "to": 0})).unwrap();
+    assert_eq!(stack(s, id), "s1 s3. s0. [G] s4 s2");
+    s.execute("layer.move", &json!({"layer": 0, "to": 1})).unwrap();
+    assert_eq!(stack(s, id), "s3. s0. [G] s1 s4 s2");
+    s.execute("layer.move", &json!({"layer": 3, "to": 2})).unwrap();
+    assert_eq!(stack(s, id), "s1 s3. s0. [G] s4 s2");
+    s.execute("layer.move", &json!({"layer": 0, "to": 1})).unwrap();
+    s.execute("layer.group", &json!({"layer": 4, "into": 2})).unwrap();
+    assert_eq!(stack(s, id), "s3. s0. s4. [G] s1 s2");
+}
+
+fn a_group_hides_and_fades_its_layers(s: &mut Session, id: PhotoId, other: PhotoId) {
+    // hidden, a group hides its layers; its opacity is theirs too
+    s.execute("layer.add", &json!({"photo": other.0})).unwrap();
+    s.execute("layer.group", &json!({"layer": 6, "into": 3})).unwrap();
+    let plain = {
+        let mut d = (*s.develop_of(id).unwrap()).clone();
+        d.exposure_layers.clear();
+        d
+    };
+    let shown = mean(s, id);
+    s.execute("develop.set", &json!({"control": "exposureLayer.4.opacity", "value": 40})).unwrap();
+    let faint = mean(s, id);
+    s.execute("layer.visible", &json!({"layer": 4, "visible": false})).unwrap();
+    let hidden = s.render_now(id, 64, 64).unwrap().image.data;
+    let layered = s.develop_of(id).unwrap();
+    s.set_develop(id, plain, "plain").unwrap();
+    let bare = s.render_now(id, 64, 64).unwrap().image.data;
+    let base = mean(s, id);
+    s.set_develop(id, (*layered).clone(), "layered").unwrap();
+    assert!(shown > faint + 0.5 && faint > base + 0.5, "a screened photo in a group at 40: {base} < {faint} < {shown}");
+    assert_eq!(hidden, bare, "a hidden group draws none of its layers");
+}
+
+fn a_header_is_no_layer(s: &mut Session, id: PhotoId, other: PhotoId) {
+    // a header has no picture: nothing to mix, dress or put behind
+    for (cmd, args) in [
+        ("layer.blend", json!({"layer": 4, "blend": "multiply"})),
+        ("layer.style", json!({"layer": 4, "border": 5})),
+        ("layer.subject", json!({"layer": 4, "kind": "people"})),
+        ("layer.behind", json!({"layer": 4})),
+        ("layer.replace", json!({"layer": 4, "photo": other.0})),
+        ("layer.group", json!({"layers": [4, 5]})),
+        ("layer.group", json!({"layer": 5, "into": 5})),
+        ("layer.move", json!({"layer": 4, "to": 0, "group": 4})),
+        ("layer.move", json!({"layer": 5, "to": 0, "group": 99})),
+        ("layer.ungroup", json!({"layer": 5})),
+    ] {
+        assert!(s.execute(cmd, &args).is_err(), "{cmd} {args}");
+    }
+    s.execute("layer.behind", &json!({"layers": [3, 4], "behind": true})).unwrap();
+    assert!(s.develop_of(id).unwrap().exposure_layers[3].behind && !s.develop_of(id).unwrap().exposure_layers[4].behind);
+}
+
+fn groups_are_copied_and_removed_whole(s: &mut Session, id: PhotoId) {
+    // copied and removed whole; a layer copied inside stays inside
+    s.execute("layer.delete", &json!({"layer": 3})).unwrap();
+    assert_eq!(stack(s, id), "s3. s0. s4. [G] s1 s2");
+    s.execute("layer.duplicate", &json!({"layers": [0, 3]})).unwrap();
+    assert_eq!(stack(s, id), "s3. s0. s4. [G] s3. s0. s4. [G] s1 s2", "a layer named with its group is copied once, with it");
+    let d = s.develop_of(id).unwrap();
+    assert_ne!(d.exposure_layers[3].group, d.exposure_layers[7].group, "the copy is a group of its own");
+    assert_eq!(d.exposure_layers[4].parent, d.exposure_layers[7].group);
+    s.execute("layer.duplicate", &json!({"layer": 4})).unwrap();
+    assert_eq!(stack(s, id), "s3. s0. s4. [G] s3. s3. s0. s4. [G] s1 s2");
+    s.execute("layer.duplicate", &json!({"layer": 8})).unwrap();
+    assert_eq!(s.develop_of(id).unwrap().exposure_layers.len(), lightcraft_develop::MAX_LAYERS);
+    assert!(s.execute("layer.duplicate", &json!({"layer": 3})).is_err(), "no room for another group of four");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("layer.ungroup", &json!({"layer": 5})).unwrap();
+    assert_eq!(stack(s, id), "s3. s0. s4. [G] s3 s3. s0. s4. [G] s1 s2", "a layer that leaves goes just under its group");
+    s.execute("layer.ungroup", &json!({"layer": 3})).unwrap();
+    assert_eq!(stack(s, id), "s3 s0 s4 s3 s3. s0. s4. [G] s1 s2");
+    s.execute("layer.delete", &json!({"layers": [7, 9]})).unwrap();
+    assert_eq!(stack(s, id), "s3 s0 s4 s3 s1");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(stack(s, id), "s3 s0 s4 s3 s3. s0. s4. [G] s1 s2", "one undo brings the group back");
+}
+
+#[test]
+fn a_stack_of_groups_from_a_file_is_made_whole() {
+    // from a file anything can arrive; a stack with no groups is left as it is
+    let mut d: lightcraft_develop::DevelopSettings = serde_json::from_value(json!({"exposure_layers": [
+        {"name": "a", "parent": 7}, {"name": "h", "group": 7, "parent": 7}, {"name": "b", "parent": 9}, {"name": "c", "parent": 7},
+        {"name": "h2", "group": 7}, {"name": "z", "group": 0, "parent": 0}, {"name": "d", "parent": 4294967295u32},
+    ]}))
+    .unwrap();
+    lightcraft_develop::tidy_layers(&mut d.exposure_layers);
+    let l = &d.exposure_layers;
+    assert_eq!(l.len(), 7, "none is lost");
+    assert_eq!(l.iter().filter(|m| m.parent.is_some()).count(), 2, "a and c are h's; b's and d's groups have no header");
+    let ids: Vec<u32> = l.iter().filter_map(|h| h.group).collect();
+    assert!(ids.iter().all(|g| *g != 0 && ids.iter().filter(|o| *o == g).count() == 1), "{ids:?}");
+    for (i, m) in l.iter().enumerate().filter(|(_, m)| m.parent.is_some()) {
+        let h = lightcraft_develop::layer_header(l, m).unwrap();
+        assert!(h > i && l[i..h].iter().all(|o| o.parent == m.parent), "layer {i} is not just under its header {h}");
+    }
+    let flat = vec![lightcraft_develop::ExposureLayer::new(3), lightcraft_develop::ExposureLayer::new(1)];
+    let mut same = flat.clone();
+    lightcraft_develop::tidy_layers(&mut same);
+    assert_eq!(same, flat);
+    assert_eq!(serde_json::to_value(&flat[0]).unwrap().get("group"), None, "a layer outside a group keeps its JSON");
+}
