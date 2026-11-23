@@ -141,6 +141,36 @@ pub fn browse_queue_until(
     browse_order_until(&mut files, sort, cancel).then_some(files)
 }
 
+/// A browse of `root` (Local) as a scan's result, with nothing read: the candidates are the files
+/// the library has no photo at, in the order the view will show them ([`browse_queue_until`]), then
+/// the ones it knows, marked as duplicates by path (the folder's bookkeeping, browse times and
+/// records of files gone, needs the whole listing; only the first are imported). The probes of
+/// earlier scans go back with it, for the import that follows. `progress` counts the queue as done.
+///
+/// `Ok(None)`: `progress.cancel` was set meanwhile (another folder was chosen). An error: the folder
+/// can't be listed ([`browse_files`]). Either way [`ScanInput::take_probes`] still has the probes.
+pub fn browse_scan(
+    input: &mut ScanInput,
+    root: &str,
+    subfolders: bool,
+    sort: &lightcraft_catalog::Sort,
+    progress: &ScanProgress,
+) -> std::io::Result<Option<ScanOutput>> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let files = browse_files(input, root, subfolders)?;
+    let Some(queue) = browse_queue_until(input, files.clone(), sort, &progress.cancel) else { return Ok(None) };
+    progress.total.store(queue.len(), Relaxed);
+    progress.done.store(queue.len(), Relaxed);
+    let queued: std::collections::HashSet<&String> = queue.iter().collect();
+    let known: Vec<ImportCandidate> = files
+        .iter()
+        .filter(|f| !queued.contains(f))
+        .map(|path| ImportCandidate { path: path.clone(), duplicate: Some("path".into()), ..Default::default() })
+        .collect();
+    let candidates = queue.iter().map(|path| ImportCandidate { path: path.clone(), ..Default::default() }).chain(known).collect();
+    Ok(Some(ScanOutput { candidates, probes: input.take_probes(), truncated: false, unreadable: 0, unsupported: 0 }))
+}
+
 /// The files browsing `root` (Local) lists: the supported, non-hidden files in it, or below it
 /// with `subfolders`, never inside the library's own folder (as [`scan_with`] skips it).
 ///

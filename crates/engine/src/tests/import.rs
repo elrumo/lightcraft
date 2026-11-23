@@ -489,6 +489,51 @@ fn a_cancelled_browse_stops_ordering_and_keeps_earlier_probes() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A browse's listing as a scan's result (`browse_scan`): the files the library lacks first, in the view's order, then the
+/// ones it has, marked as there by path; no file is read, the probes of earlier scans come back with it, a cancel gives
+/// nothing, and a folder that can't be listed is an error.
+#[test]
+fn a_browse_scan_lists_new_files_first_and_reads_none() {
+    use crate::import::{ScanInput, ScanProgress, browse_scan};
+    use lightcraft_catalog::{Sort, SortKey};
+    use std::sync::atomic::Ordering::Relaxed;
+    let dir = temp_dir("browse-scan");
+    for (name, seed) in [("a.png", 1u8), ("b.png", 2), ("c.png", 3)] {
+        write_png(&dir.join(name), seed);
+    }
+    let mut s = Session::new().with_fs();
+    let known = dir.join("b.png").to_string_lossy().to_string();
+    s.execute("library.import", &json!({"paths": [known.clone()]})).unwrap();
+    s.import_probes.insert("earlier".into(), crate::media::ProbeInfo { file_size: 1, ..Default::default() });
+    // a probe that counts: the listing must read no file
+    let read = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = read.clone();
+    s.media.file_probe = Some(std::sync::Arc::new(move |_: &str| {
+        counted.fetch_add(1, Relaxed);
+        Err("not read in a listing".into())
+    }));
+    let root = dir.to_string_lossy().to_string();
+    let sort = Sort { key: SortKey::FileName, ascending: false, ..Sort::default() };
+    let (mut input, _) = ScanInput::new(&mut s, &[]);
+    let progress = ScanProgress::default();
+    let out = browse_scan(&mut input, &root, false, &sort, &progress).unwrap().unwrap();
+    let rows: Vec<(String, Option<String>)> =
+        out.candidates.iter().map(|c| (Path::new(&c.path).file_name().unwrap().to_string_lossy().to_string(), c.duplicate.clone())).collect();
+    assert_eq!(rows, [("c.png".to_string(), None), ("a.png".to_string(), None), ("b.png".to_string(), Some("path".to_string()))]);
+    assert_eq!(read.load(Relaxed), 0, "nothing is read");
+    assert!(out.probes.contains_key("earlier"), "the earlier scan's probe comes back");
+    assert_eq!((progress.total.load(Relaxed), progress.done.load(Relaxed)), (2, 2));
+    // another folder chosen meanwhile: no listing
+    let (mut input, _) = ScanInput::new(&mut s, &[]);
+    let stopped = ScanProgress::default();
+    stopped.cancel.store(true, Relaxed);
+    assert!(browse_scan(&mut input, &root, false, &sort, &stopped).unwrap().is_none());
+    // a folder that isn't there is an error, never an empty listing (its records would be taken for files gone)
+    let gone = dir.join("nothing").to_string_lossy().to_string();
+    assert!(browse_scan(&mut input, &gone, false, &sort, &ScanProgress::default()).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Browsing a folder with its subfolders lists nothing inside the library's own folder (the
 /// import that follows would read it as photos), as the import's scan skips it.
 #[test]

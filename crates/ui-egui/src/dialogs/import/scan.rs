@@ -232,41 +232,22 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
             }
         };
         let _ = resolved_tx.send(root.clone());
-        // (never the library's own folder, which the import would otherwise read as photos)
-        let files = match lightcraft_engine::import::browse_files(&input, &root, subfolders) {
-            Ok(files) => files,
+        // Nothing is read here: the import that follows reads the files and adds them batch by
+        // batch, first screen first, so the view fills while the rest is read (PERF-CULL-1).
+        // (never the library's own folder, which the import would otherwise read as photos; the files the
+        // library knows come too, marked as such, for the folder bookkeeping; the probes of earlier scans go
+        // back to the session however it ends, for the import that follows)
+        let end = match lightcraft_engine::import::browse_scan(&mut input, &root, subfolders, &sort, &p) {
+            Ok(Some(out)) => ScanEnd::Done(out),
+            // another folder chosen meanwhile (`p.cancel`) stopped the ordering: no listing is sent
+            Ok(None) => ScanEnd::Stopped { probes: input.take_probes(), failed: false },
             Err(e) => {
                 // no listing is sent: the scan ends as failed, and no record is taken for a file gone
                 log::warn!("browse: can't list {root}: {e}");
-                let _ = tx.send(ScanEnd::Stopped { probes: input.take_probes(), failed: true });
-                return;
+                ScanEnd::Stopped { probes: input.take_probes(), failed: true }
             }
         };
-        // Nothing is read here: the import that follows reads the files and adds them batch by
-        // batch, first screen first, so the view fills while the rest is read (PERF-CULL-1).
-        // Another folder chosen meanwhile (`p.cancel`) stops the ordering, and no listing is sent.
-        let Some(queue) = lightcraft_engine::import::browse_queue_until(&input, files.clone(), &sort, &p.cancel) else {
-            let _ = tx.send(ScanEnd::Stopped { probes: input.take_probes(), failed: false });
-            return;
-        };
-        p.total.store(queue.len(), Ordering::Relaxed);
-        p.done.store(queue.len(), Ordering::Relaxed);
-        // the files the library knows come too, marked as such: the folder bookkeeping (browse
-        // times, records of files gone) needs the whole listing; only the queue is imported
-        let queued: std::collections::HashSet<&String> = queue.iter().collect();
-        let known: Vec<String> = files.iter().filter(|f| !queued.contains(f)).cloned().collect();
-        let known =
-            known.into_iter().map(|path| lightcraft_engine::import::ImportCandidate { path, duplicate: Some("path".into()), ..Default::default() });
-        let candidates =
-            queue.iter().cloned().map(|path| lightcraft_engine::import::ImportCandidate { path, ..Default::default() }).chain(known).collect();
-        // the probes of earlier scans go back to the session with the result, for the import that follows
-        let _ = tx.send(ScanEnd::Done(lightcraft_engine::import::ScanOutput {
-            candidates,
-            probes: input.take_probes(),
-            truncated: false,
-            unreadable: 0,
-            unsupported: 0,
-        }));
+        let _ = tx.send(end);
     };
     #[cfg(not(target_arch = "wasm32"))]
     std::thread::spawn(job);

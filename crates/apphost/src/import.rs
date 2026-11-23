@@ -9,14 +9,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use lightcraft_engine::Session;
 use lightcraft_engine::activity::{Cancel, TaskGuard};
-use lightcraft_engine::import::{ImportJob, ImportOptions, ImportWarning, Prepared, ScanInput, ScanOutput, ScanProgress, scan_with};
+use lightcraft_engine::import::{ImportJob, ImportOptions, ImportWarning, Prepared, ScanInput, ScanOutput, ScanProgress, browse_scan, scan_with};
 use serde_json::{Value, json};
 
 /// A scan of files and folders for the import review, on a worker thread (a network share can take
 /// minutes to read), with its row in the activity stack (✕ stops it).
 pub struct Scan {
     pub progress: Arc<ScanProgress>,
-    rx: std::sync::mpsc::Receiver<ScanOutput>,
+    rx: std::sync::mpsc::Receiver<Result<ScanOutput, String>>,
     /// Its row in the activity stack (its ✕ and `activity.cancel` set `progress.cancel`).
     pub guard: TaskGuard,
 }
@@ -29,7 +29,7 @@ impl Scan {
         let (tx, rx) = std::sync::mpsc::channel();
         let p = progress.clone();
         let job = move || {
-            let _ = tx.send(scan_with(input, &paths, &p));
+            let _ = tx.send(Ok(scan_with(input, &paths, &p)));
         };
         #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(job);
@@ -39,12 +39,44 @@ impl Scan {
         Scan { progress, rx, guard }
     }
 
+    /// Start listing the folder `root` (with the folders inside it when `subfolders`) for a browse (Local): what the
+    /// library has no photo at comes first, in the order the view shows it, and nothing is read
+    /// ([`browse_scan`]), so the import that follows shows the photos batch by batch as it reads them instead of
+    /// after the whole folder was read. A folder that can't be listed is [`Scan::poll`]'s error.
+    pub fn browse(session: &mut Session, root: &str, subfolders: bool, label: &str) -> Scan {
+        let (mut input, _) = ScanInput::new(session, &[]);
+        let progress = Arc::new(ScanProgress::default());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (p, root, sort) = (progress.clone(), root.to_string(), session.sort);
+        let job = move || {
+            let out = match browse_scan(&mut input, &root, subfolders, &sort, &p) {
+                Ok(Some(out)) => Ok(out),
+                // (another folder was chosen: nothing to add, and the probes of earlier scans go back)
+                Ok(None) => Ok(ScanOutput { candidates: Vec::new(), probes: input.take_probes(), truncated: false, unreadable: 0, unsupported: 0 }),
+                // ponytail: a folder that can't be listed drops the probes of earlier scans (an import after it reads
+                // those files again); send them back with the error if that ever costs
+                Err(e) => Err(format!("{root}: {e}")),
+            };
+            let _ = tx.send(out);
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(job);
+        // (the job takes the probes out of `input`, so it is an FnMut where it runs in place)
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut job = job;
+            job();
+        }
+        let guard = session.activity.start("scan", label, Cancel::Flag(progress.cancel.clone()));
+        Scan { progress, rx, guard }
+    }
+
     /// The scan's outcome once it has ended (`None` while it runs; `Some(Err)` when its worker
     /// died). Keeps the activity row current meanwhile: `looking` is its detail while folders are
     /// still being listed (the total isn't known yet), in the frontend's language.
     pub fn poll(&self, looking: &str) -> Option<Result<ScanOutput, String>> {
         match self.rx.try_recv() {
-            Ok(o) => Some(Ok(o)),
+            Ok(o) => Some(o),
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 let (total, done) = (self.progress.total.load(Ordering::Relaxed), self.progress.done.load(Ordering::Relaxed));
                 self.guard.progress(done as u64, total as u64);

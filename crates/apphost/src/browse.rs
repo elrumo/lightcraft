@@ -1,9 +1,9 @@
 //! Showing a folder in Local (`library.browse`) without stalling the frontend's thread, shared by the egui app and
 //! the engine host: the view switches at once (the photos the library already knows from the folder show), the
-//! folder is listed and its new files probed on a worker thread (a network share can take minutes), they join the
-//! view as Local records in batches, and then the sidecars another app changed are read again and the folder is noted
-//! as browsed. One activity row says so the whole time (✕ stops it). The engine's `library.browse` does the same in one
-//! go (CLI, MCP).
+//! folder is listed on a worker thread, its new files are read there in the view's order (a network share can take
+//! minutes) and join the view as Local records batch by batch as they are read, and then the sidecars another app
+//! changed are read again and the folder is noted as browsed. One activity row says so the whole time (✕ stops it).
+//! The engine's `library.browse` does the same in one go (CLI, MCP).
 
 use lightcraft_engine::activity::{Cancel, TaskGuard};
 use lightcraft_engine::{LibrarySource, Session};
@@ -16,7 +16,7 @@ pub const LABEL: &str = "Reading folder";
 
 #[allow(clippy::large_enum_variant)] // one per browse, never in a collection
 enum Stage {
-    /// Listing the folder and probing what is new in it.
+    /// Listing the folder: what is new in it, in the view's order (nothing is read yet).
     Scan(Scan),
     /// Adding the new files as Local records.
     Add { run: Run, guard: TaskGuard },
@@ -38,7 +38,8 @@ pub struct Browse {
 impl Browse {
     /// Show `path` (with the folders inside it when `subfolders`; default: as the last browse did).
     pub fn start(session: &mut Session, path: &str, subfolders: Option<bool>) -> Result<Browse, String> {
-        let dir = std::path::absolute(std::path::Path::new(path)).map_err(|e| e.to_string())?;
+        // (one spelling for the view, the listing and the records: `a/lib/../outside` is `a/outside`)
+        let dir = lightcraft_engine::import::browse_path(std::path::Path::new(path)).map_err(|e| e.to_string())?;
         if !dir.is_dir() {
             return Err(format!("{path}: not a folder"));
         }
@@ -47,10 +48,7 @@ impl Browse {
         session.browse = Some(lightcraft_engine::Browse { path: dir_s.clone(), subfolders });
         session.source = LibrarySource::Folder;
         session.keep_active_in_view();
-        // the folder itself (the scan lists everything below it), or just its own files
-        // ponytail: the files of one folder are listed on this thread; on the worker too if a share is slow to list
-        let paths = if subfolders { vec![dir_s.clone()] } else { own_files(&dir) };
-        let scan = Scan::start(session, &paths, LABEL);
+        let scan = Scan::browse(session, &dir_s, subfolders, LABEL);
         Ok(Browse {
             path: dir_s,
             subfolders,
@@ -64,7 +62,8 @@ impl Browse {
 
     /// Whether it shows `path` the same way (asked again: nothing to restart).
     pub fn same(&self, path: &str, subfolders: Option<bool>) -> bool {
-        std::path::absolute(path).is_ok_and(|d| d.to_string_lossy().trim_end_matches(['/', '\\']) == self.path)
+        lightcraft_engine::import::browse_spelling(std::path::Path::new(path))
+            .is_ok_and(|d| d.to_string_lossy().trim_end_matches(['/', '\\']) == self.path)
             && subfolders.is_none_or(|s| s == self.subfolders)
     }
 
@@ -146,23 +145,6 @@ impl Browse {
     }
 }
 
-/// The picture files directly in `dir` (not hidden), sorted.
-fn own_files(dir: &std::path::Path) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.path())
-                .filter(|f| {
-                    f.is_file() && lightcraft_engine::import::is_supported(f) && !f.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'))
-                })
-                .map(|f| f.to_string_lossy().to_string())
-                .collect()
-        })
-        .unwrap_or_default();
-    v.sort();
-    v
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +165,80 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         panic!("the browse never ended");
+    }
+
+    // The photos join the view while the folder is still being read: the first batch is in the catalog before the last
+    // file has been read. (Every file was read, and hashed, before any photo showed.)
+    #[test]
+    fn photos_show_while_the_rest_of_the_folder_is_read() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+        let dir = std::env::temp_dir().join(format!("lc-apphost-browse-stream-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // (more than one batch)
+        let n = lightcraft_engine::import::batch_size() + 4;
+        for i in 0..n {
+            png(&dir.join(format!("p{i:02}.png")), i as u8);
+        }
+        let mut s = Session::new().with_fs();
+        // by name, so the last file is in the last batch
+        s.sort = lightcraft_catalog::Sort { key: lightcraft_catalog::SortKey::FileName, ascending: true, ..Default::default() };
+        // the last file's read waits until the test lets it go (30 s at most, so a failing run ends)
+        let last = format!("p{:02}.png", n - 1);
+        let held = Arc::new(AtomicBool::new(true));
+        let probe = s.media.file_probe.clone().unwrap();
+        let holding = held.clone();
+        s.media.file_probe = Some(Arc::new(move |path: &str| {
+            let start = std::time::Instant::now();
+            while path.ends_with(&last) && holding.load(Relaxed) && start.elapsed() < std::time::Duration::from_secs(30) {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            probe(path)
+        }));
+        let mut b = Browse::start(&mut s, &dir.to_string_lossy(), Some(false)).unwrap();
+        let mut early = 0;
+        for _ in 0..1000 {
+            assert!(b.poll(&mut s).is_none(), "it can't end while a file is unread");
+            early = s.catalog.len();
+            if early > 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(early > 0 && early < n, "the first photos are there before the last file was read: {early} of {n}");
+        held.store(false, Relaxed);
+        let r = run(&mut s, &mut b);
+        assert_eq!((r["photos"].as_u64(), r["new"].as_u64()), (Some(n as u64), Some(n as u64)), "{r}");
+        assert_eq!(s.undo.len(), 1, "one step");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A folder that can't be listed (gone since it was chosen) is an error, not an empty folder.
+    #[test]
+    fn a_folder_gone_before_it_is_listed_is_an_error() {
+        let dir = std::env::temp_dir().join(format!("lc-apphost-browse-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::new().with_fs();
+        let mut b = Browse::start(&mut s, &dir.to_string_lossy(), Some(false)).unwrap();
+        // (gone before the worker lists it, or right after: either way the browse must not panic, and an error names the folder)
+        std::fs::remove_dir_all(&dir).unwrap();
+        let mut end = None;
+        for _ in 0..2000 {
+            end = b.poll(&mut s);
+            if end.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        match end.expect("the browse ended") {
+            Err(e) => assert!(e.contains("lc-apphost-browse-gone"), "{e}"),
+            // (the worker listed it before it went: an empty folder)
+            Ok(v) => assert_eq!(v["photos"].as_u64(), Some(0), "{v}"),
+        }
+        // (a frontend lets an answered browse go, and its row with it)
+        drop(b);
+        assert!(s.activity.list().iter().all(|t| t.label != LABEL), "the row goes with it");
     }
 
     #[test]
