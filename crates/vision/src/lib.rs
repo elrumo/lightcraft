@@ -18,6 +18,8 @@ pub mod embedder;
 pub mod faces;
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;
+// (models a native frontend runs itself: builds everywhere, no runtime)
+pub mod host;
 pub mod index;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod models;

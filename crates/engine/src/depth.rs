@@ -148,13 +148,26 @@ impl Session {
         self.depth_gpu_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == GPU_FILE_SIZE))
     }
 
+    /// The folder of Depth Anything 3 Small in the frontend's format, when a frontend runs models, it is downloaded and
+    /// on, and the choice is automatic: it estimates for a fraction of the energy ([`lightcraft_depth::HOST_ID`]).
+    fn depth_host_dir(&self) -> Option<std::path::PathBuf> {
+        let id = lightcraft_depth::HOST_ID;
+        (self.depth_backend() == "auto"
+            && lightcraft_vision::host::available()
+            && !self.enhancer.disabled.contains(id)
+            && self.enhancer.installed(id))
+        .then(|| self.enhancer.model_dir(id))
+        .flatten()
+    }
+
     /// Whether depth can be estimated now: the model is loaded, or a file of it is in place, and the
     /// user hasn't turned it off.
     pub fn depth_model_ready(&self) -> bool {
-        !self.enhancer.disabled.contains(self.depth_size().id())
-            && (self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner).is_some()
-                || self.depth_cpu_installed()
-                || (self.depth_gpu_available() && self.depth_gpu_installed()))
+        self.depth_host_dir().is_some()
+            || (!self.enhancer.disabled.contains(self.depth_size().id())
+                && (self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner).is_some()
+                    || self.depth_cpu_installed()
+                    || (self.depth_gpu_available() && self.depth_gpu_installed())))
     }
 
     /// Which weights estimate: `auto`, `cpu` or `gpu`.
@@ -184,6 +197,7 @@ impl Session {
             "cpuInstalled": self.depth_cpu_installed(),
             "gpuInstalled": self.depth_gpu_installed(),
             "gpuAvailable": self.depth_gpu_available(),
+            "hostInstalled": self.depth_host_dir().is_some(),
         })
     }
 
@@ -202,11 +216,21 @@ impl Session {
     /// The model, loaded once (from the models folder the first time).
     fn depth_model(&self) -> Result<Arc<Estimator>, String> {
         let size = self.depth_size();
+        let host = self.depth_host_dir();
+        let mut slot = self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner);
+        // (the frontend's model, when it is here: before the engine's, and in place of one loaded before it came)
+        if let Some(dir) = host {
+            if let Some(e) = slot.as_ref().filter(|e| e.backend() == "host") {
+                return Ok(e.clone());
+            }
+            let e = Arc::new(Estimator::host(dir));
+            *slot = Some(e.clone());
+            return Ok(e);
+        }
         if self.enhancer.disabled.contains(size.id()) {
             return Err("Depth estimation is turned off: turn its model on in Settings → AI Models.".into());
         }
-        let mut slot = self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(e) = slot.as_ref() {
+        if let Some(e) = slot.as_ref().filter(|e| e.backend() != "host") {
             return Ok(e.clone());
         }
         let missing = || {

@@ -178,9 +178,32 @@ impl Session {
         self.enhancer.model_dir(lightcraft_erase::ID).map(|d| d.join(lightcraft_erase::FILE))
     }
 
+    /// The folder of MI-GAN in the frontend's format, when a frontend runs models and it is downloaded and on: it paints
+    /// for a tenth of the energy ([`lightcraft_erase::HOST_ID`]).
+    fn host_eraser_dir(&self) -> Option<std::path::PathBuf> {
+        let id = lightcraft_erase::HOST_ID;
+        (lightcraft_vision::host::available() && !self.enhancer.disabled.contains(id) && self.enhancer.installed(id))
+            .then(|| self.enhancer.model_dir(id))
+            .flatten()
+    }
+
+    /// What paints AI Remove's Fast quality and Generative Expand's MI-GAN: the frontend's MI-GAN when it is here, else
+    /// the engine's ([`Session::eraser`]).
+    pub(crate) fn fast_painter(&self) -> Result<Arc<dyn Painter>, String> {
+        match self.host_eraser_dir() {
+            Some(dir) => Ok(Arc::new(lightcraft_erase::HostEraser { dir })),
+            None => Ok(self.eraser()? as Arc<dyn Painter>),
+        }
+    }
+
     /// Whether AI Remove can run now: the model is loaded, or its file is in place, and the user
     /// hasn't turned it off.
     pub fn eraser_ready(&self) -> bool {
+        self.host_eraser_dir().is_some() || self.eraser_ready_here()
+    }
+
+    /// [`Session::eraser_ready`] for the engine's own MI-GAN.
+    fn eraser_ready_here(&self) -> bool {
         !self.enhancer.disabled.contains(lightcraft_erase::ID)
             && (self.eraser.loaded.lock().unwrap_or_else(PoisonError::into_inner).is_some()
                 || self.eraser_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == lightcraft_erase::FILE_SIZE)))
@@ -264,7 +287,7 @@ impl Session {
     /// What paints at `quality`: a network, loaded once, or the folder of a diffusion model.
     fn erase_brush(&self, quality: RemoveQuality) -> Result<Brush, String> {
         match quality {
-            RemoveQuality::Fast => Ok(Brush::Net(self.eraser()? as Arc<dyn Painter>)),
+            RemoveQuality::Fast => Ok(Brush::Net(self.fast_painter()?)),
             RemoveQuality::High => {
                 if !self.expand_available(ExpandModel::Lama) {
                     return Err(format!("High quality AI Remove (LaMa) doesn't run on this device ({})", self.device.describe()));

@@ -154,3 +154,44 @@ fn the_gpu_and_the_cpu_see_the_same_depth() {
         assert!(r > 0.99, "the GPU's depth differs from the full-precision model's: correlation {r}");
     }
 }
+
+#[test]
+fn a_frontends_model_takes_the_fixed_size_nearest_the_photos_shape() {
+    assert_eq!(host_net_size(6000, 4000), (756, 504), "3:2");
+    assert_eq!(host_net_size(4000, 6000), (504, 756));
+    assert_eq!(host_net_size(4032, 3024), (672, 504), "4:3");
+    assert_eq!(host_net_size(1920, 1080), (896, 504), "16:9");
+    assert_eq!(host_net_size(1000, 1000), (504, 504));
+    assert_eq!(host_net_size(10_000, 100), (896, 504), "past 16:9, the widest");
+    assert_eq!(host_function(756, 504), "w756h504");
+    assert_eq!(host_net_size(0, 0), (504, 504));
+    assert!(HOST_SIZES.iter().all(|(w, h)| w % PATCH == 0 && h % PATCH == 0));
+}
+
+// The frontend runs the model on the size nearest the photo's shape and its depth comes back as nearness; without a
+// frontend that runs models it is an error, not a panic (one test: the runner is process-wide)
+#[test]
+fn a_frontend_runs_the_model_and_its_depth_comes_back_as_nearness() {
+    use lightcraft_vision::host::{Request, Units, set_runner};
+    let img = Rgb32f::from_fn(300, 200, |x, _| [x as f32 / 300.0; 3]);
+    let est = Estimator::host(std::path::PathBuf::from("/models/depth-anything-3-small-coreml"));
+    assert_eq!(est.backend(), "host");
+    set_runner(None);
+    assert!(est.estimate(&img).is_err());
+    set_runner(Some(std::sync::Arc::new(|r: &Request<'_>| {
+        let ok = r.model == HOST_ID
+            && r.function == Some("w756h504")
+            && r.units == Units::All
+            && r.output == "depth"
+            && r.inputs.first().is_some_and(|i| i.shape == [1, 1, 3, 504, 756]);
+        if !ok {
+            return Err("not the request expected".into());
+        }
+        Ok(vec![2.0; r.output_len])
+    })));
+    let plane = est.estimate(&img);
+    set_runner(None);
+    let plane = plane.unwrap();
+    assert_eq!((plane.width, plane.height), (756, 504));
+    assert!(plane.data.iter().all(|v| (v - 0.5).abs() < 1e-6));
+}

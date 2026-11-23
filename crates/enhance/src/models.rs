@@ -325,9 +325,86 @@ pub const DDCOLOR_ARTISTIC: ModelSpec = ddcolor_spec!(
     (466_715_420, "09f2ce82017271423c1ef7f0f6e746ebc8a709e19ae11574226033a1af51f8a2")
 );
 
+/// MI-GAN converted to Core ML (fp16, 512 × 512; `tools/coreml_convert.py`) for a frontend that runs it itself on the GPU
+/// (`lightcraft_erase::HostEraser`, card #516): 18 ms and 0.44 J a pass on an M1 Max against rten's 0.40 s and 4.5 J,
+/// within 3 levels of 255 of onnxruntime's answer. The weights' MIT licence travels with them (`LICENSE.txt` beside the
+/// files on the mirror).
+pub const MIGAN_COREML: ModelSpec = ModelSpec {
+    id: lightcraft_erase::HOST_ID,
+    label: "MI-GAN (Core ML)",
+    purpose: "AI Remove and Generative Expand, run by this device's own machine-learning hardware (the quickest, for a tenth of the energy)",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("22619b6152c6aa4d448aeffc95bef7707956468c71089ead184cff4cb82dbac4"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(199_491),
+            sha256: Some("6983610b53949884f024035ac1134b987f82226adb966532fa2f82230d189595"),
+            max: 199_491,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(13_954_944),
+            sha256: Some("8b696ff75c01c902cf210a0d42355760587179ad43da22a8dee3470e80c06588"),
+            max: 13_954_944,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_MIGAN_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: lightcraft_erase::LICENCE,
+    licence_url: lightcraft_erase::LICENCE_URL,
+    credit: lightcraft_erase::CREDIT,
+    home_url: lightcraft_erase::HOME_URL,
+    diffusion: None,
+    restricted: false,
+};
+
+/// Depth Anything 3 Small converted to Core ML (`tools/coreml/convert_depth.py` in the native frontend's repository: the
+/// camera heads removed, fp16, one function per input size of `lightcraft_depth::HOST_SIZES`, the weights shared) for a
+/// frontend that runs it itself on its neural accelerator (`lightcraft_depth::Estimator::host`, card #516): 0.10 s and
+/// 0.03 J of CPU on an M1 Max against rten's 0.47 s and 10.8 J, its nearness within 1 % of the range of onnxruntime's
+/// fp32 answer. The weights' Apache-2.0 licence travels with them (`LICENSE.txt` beside the files on the mirror).
+pub const DEPTH_COREML: ModelSpec = ModelSpec {
+    id: lightcraft_depth::HOST_ID,
+    label: "Depth Anything 3 Small (Core ML)",
+    purpose: "Lens Blur and Depth Range masks: depth estimated by this device's own machine-learning hardware (the quickest, for a fraction of the energy)",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("0da54ad96c9a5f38bb77f680f188de7df5931722d5c434312f091d92570e0756"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(2_493_515),
+            sha256: Some("3c9600d7c043278b578ebace8f1fe0b24ecd83beb55185339f9033557c7beb19"),
+            max: 2_493_515,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(65_696_512),
+            sha256: Some("c4d29451cd717ec6e0569ab1e1a5a6c0597b6a9bea9eaef88fe8969714525f7c"),
+            max: 65_696_512,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_DEPTH_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: lightcraft_depth::LICENCE,
+    licence_url: lightcraft_depth::LICENCE_URL,
+    credit: lightcraft_depth::CREDIT,
+    home_url: lightcraft_depth::HOME_URL,
+    diffusion: None,
+    restricted: false,
+};
+
 /// Models the engine downloads but never runs: a frontend runs them (Core ML) and lists them in its open options
 /// (`hostModels`), with where to download them. Elsewhere they are not offered.
-pub const HOST_RUN: &[&str] = &[DDCOLOR_TINY.id, DDCOLOR_LARGE.id, DDCOLOR_ARTISTIC.id];
+pub const HOST_RUN: &[&str] = &[DDCOLOR_TINY.id, DDCOLOR_LARGE.id, DDCOLOR_ARTISTIC.id, MIGAN_COREML.id, DEPTH_COREML.id];
 
 /// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's, as are the
 /// Core ML conversions).
@@ -346,6 +423,8 @@ pub const ALL: &[&ModelSpec] = &[
     &DDCOLOR_TINY,
     &DDCOLOR_LARGE,
     &DDCOLOR_ARTISTIC,
+    &MIGAN_COREML,
+    &DEPTH_COREML,
 ];
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &SURFACE, &SD15, &KANDINSKY, &SDXL];

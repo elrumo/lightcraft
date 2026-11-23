@@ -56,6 +56,13 @@ agree. The Large and Giant models are non-commercial (or, for the 1.1 Large, 1.4
 loader takes) and are not offered. The network answers with depth (larger is farther), which LightCraft
 inverts to the nearness the rest of Lens Blur uses.
 
+A native frontend can run Depth Anything 3 Small itself instead, on its system's machine-learning hardware
+(`lightcraft_vision::host`): a Core ML conversion (`depth-anything-3-small-coreml`, Apache-2.0, downloaded like the
+others from the mirror the frontend names in `hostModels`), one function per input size (504 on the short side, 1:1,
+4:3, 3:2 and 16:9 both ways: an accelerator wants shapes fixed, and a photo goes to the nearest, `host_net_size`). The
+`auto` choice prefers it once it is downloaded. On an M1 Max it took 0.10 s and 0.03 J of CPU on the Neural Engine
+against rten's 0.47 s and 10.8 J, its nearness within 1 % of the range of onnxruntime's fp32 answer (0.1 % on average; card #516).
+
 It runs on [rten](https://github.com/robertknight/rten) (pure Rust) on every platform, at about
 672 × 504 pixels; on the CPU it takes about three times as long as the Depth Anything V2 Small it
 replaces. The V2 Small GPU weights (Apple platforms) stay as a fallback: `auto` uses them only while no

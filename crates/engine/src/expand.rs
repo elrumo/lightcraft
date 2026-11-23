@@ -566,7 +566,7 @@ impl Session {
         }
         let brush = match model {
             ExpandModel::Classic => Brush::Classic,
-            ExpandModel::MiGan => Brush::Net(self.eraser().map_err(|e| e.replace("AI Remove", "Generative Expand"))?),
+            ExpandModel::MiGan => Brush::Net(self.fast_painter().map_err(|e| e.replace("AI Remove", "Generative Expand"))?),
             ExpandModel::Lama => {
                 if self.enhancer.disabled.contains(lightcraft_erase::lama::ID) {
                     return Err("LaMa is turned off: turn it on in Settings → AI Models.".into());

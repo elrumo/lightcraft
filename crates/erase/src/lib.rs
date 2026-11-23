@@ -207,33 +207,79 @@ impl Eraser {
     }
 }
 
-impl Painter for Eraser {
-    fn paint(&self, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f> {
-        check_side(img, hole)?;
-        let n = SIDE * SIDE;
-        let mut pixels = vec![0f32; 3 * n];
-        for (i, p) in img.data.iter().enumerate() {
-            for (c, v) in p.iter().enumerate() {
-                if let Some(o) = pixels.get_mut(c * n + i) {
-                    *o = (v.clamp(0.0, 1.0) * 255.0).round();
-                }
+/// MI-GAN's inputs for `img` and `hole` (planar RGB in 0..=255, and 255 = keep, 0 = fill), checked.
+fn inputs(img: &Rgb32f, hole: &[bool]) -> Result<(Vec<f32>, Vec<f32>)> {
+    check_side(img, hole)?;
+    let n = SIDE * SIDE;
+    let mut pixels = vec![0f32; 3 * n];
+    for (i, p) in img.data.iter().enumerate() {
+        for (c, v) in p.iter().enumerate() {
+            if let Some(o) = pixels.get_mut(c * n + i) {
+                *o = (v.clamp(0.0, 1.0) * 255.0).round();
             }
         }
-        // 255 = keep, 0 = fill
-        let mask: Vec<f32> = hole.iter().map(|&b| if b { 0.0 } else { 255.0 }).collect();
+    }
+    let mask: Vec<f32> = hole.iter().map(|&b| if b { 0.0 } else { 255.0 }).collect();
+    Ok((pixels, mask))
+}
+
+/// MI-GAN's answer (planar RGB in 0..=255) as a picture.
+fn answer(v: &[f32]) -> Result<Rgb32f> {
+    let n = SIDE * SIDE;
+    if v.len() != 3 * n {
+        return Err(Error::Model(format!("its answer has {} numbers, not {}", v.len(), 3 * n)));
+    }
+    Ok(Rgb32f::from_fn(SIDE, SIDE, |x, y| {
+        let i = y * SIDE + x;
+        [0, 1, 2].map(|c| v.get(c * n + i).map_or(0.0, |u| (u / 255.0).clamp(0.0, 1.0)))
+    }))
+}
+
+impl Painter for Eraser {
+    fn paint(&self, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f> {
+        let (pixels, mask) = inputs(img, hole)?;
         let bad = |e: &dyn std::fmt::Display| Error::Model(e.to_string());
         let image = ValueView::from_shape([1, 3, SIDE, SIDE], &pixels[..]).map_err(|e| bad(&e))?;
         let mask = ValueView::from_shape([1, 1, SIDE, SIDE], &mask[..]).map_err(|e| bad(&e))?;
         let out = self.model.run(vec![(self.image, image.into()), (self.mask, mask.into())], &[self.output], None).map_err(|e| bad(&e))?;
         let t = out.first().and_then(|v| v.as_tensor_view::<f32>()).ok_or_else(|| bad(&"its answer isn't numbers"))?;
-        let v = t.to_vec();
-        if v.len() != 3 * n {
-            return Err(bad(&format!("its answer has {} numbers, not {}", v.len(), 3 * n)));
-        }
-        Ok(Rgb32f::from_fn(SIDE, SIDE, |x, y| {
-            let i = y * SIDE + x;
-            [0, 1, 2].map(|c| v.get(c * n + i).map_or(0.0, |u| (u / 255.0).clamp(0.0, 1.0)))
-        }))
+        answer(&t.to_vec())
+    }
+
+    fn label(&self) -> &'static str {
+        LABEL
+    }
+}
+
+/// The id of MI-GAN converted for a native frontend's runtime (Core ML on Apple's systems), which the frontend runs
+/// ([`lightcraft_vision::host`]) on the GPU: 18 ms and 0.44 J a pass on an M1 Max against rten's 0.40 s and 4.5 J, its
+/// answers within 3 levels of 255 of onnxruntime's. (Its fp16 answers on the neural accelerator are wrong.)
+pub const HOST_ID: &str = "migan-coreml";
+
+/// MI-GAN run by the frontend, from the files in `dir` (the [`HOST_ID`] model's folder).
+pub struct HostEraser {
+    pub dir: std::path::PathBuf,
+}
+
+impl Painter for HostEraser {
+    fn paint(&self, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f> {
+        use lightcraft_vision::host::{Input, Request, Units, run};
+        let (pixels, mask) = inputs(img, hole)?;
+        let inputs = [
+            Input { name: "image", shape: vec![1, 3, SIDE, SIDE], data: &pixels },
+            Input { name: "mask", shape: vec![1, 1, SIDE, SIDE], data: &mask },
+        ];
+        let req = Request {
+            model: HOST_ID,
+            dir: &self.dir,
+            function: None,
+            units: Units::CpuAndGpu,
+            inputs: &inputs,
+            output: "output",
+            output_len: 3 * SIDE * SIDE,
+        };
+        let out = run(&req).map_err(Error::Model)?;
+        answer(&out)
     }
 
     fn label(&self) -> &'static str {

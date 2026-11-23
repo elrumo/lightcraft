@@ -84,6 +84,12 @@ Against onnxruntime on the GPU path the answers differ by at most 1.7 (MI-GAN) a
   folder, so a zip; the code and weights are MIT and Apache-2.0, which allow a mirror with their licence text; the
   Places2 terms are still unverified; LightCraft hosts nothing today).
 
+**Shipped 2026-11-22 for a native frontend** (`lightcraft_vision::host`: the engine prepares the inputs and reads the
+answer, the frontend runs the network): MI-GAN as `migan-coreml` (fp16, 512 x 512, on the GPU: 18 ms and 0.44 J a pass
+on an M1 Max against rten's 0.40 s and 4.5 J) and Depth Anything 3 Small as `depth-anything-3-small-coreml` (Lens Blur,
+on the Neural Engine). Both are listed in `crates/enhance`'s `HOST_RUN` and downloaded from the frontend's own mirror with
+their licence text beside them; `fast_painter` and the depth model's `auto` choice prefer them once downloaded.
+
 Verdict: **go** for Core ML on the GPU as a faster backend for both models (and LaMa on iPhone), after an iPhone
 timing. Not scheduled.
 

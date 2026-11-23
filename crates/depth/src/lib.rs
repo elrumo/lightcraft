@@ -186,6 +186,35 @@ pub fn net_size(w: usize, h: usize) -> (usize, usize) {
     net_size_at(SHORT_SIDE, MAX_LONG, w, h)
 }
 
+/// The id of Depth Anything 3 Small converted for a native frontend's runtime (Core ML on Apple's systems), which the
+/// frontend runs ([`lightcraft_vision::host`]) on its neural accelerator: 0.10 s and 0.03 J of CPU on an M1 Max against
+/// rten's 0.47 s and 10.8 J, its nearness within 1 % of the range of onnxruntime's fp32 answer (0.1 % on average).
+pub const HOST_ID: &str = "depth-anything-3-small-coreml";
+
+/// The sizes the frontend's model takes, width by height (an accelerator wants shapes fixed in advance; the model holds
+/// one function per size, [`host_function`], sharing one copy of the weights): the short side at [`SHORT_SIDE`], the
+/// long one at 1:1, 4:3, 3:2 and 16:9, landscape and portrait. A photo goes to the one nearest its shape (a 3:2 photo
+/// exactly, a 5:4 one stretched 7 %); the map is read back by its own corners.
+pub const HOST_SIZES: [(usize, usize); 7] = [(504, 504), (672, 504), (756, 504), (896, 504), (504, 672), (504, 756), (504, 896)];
+
+/// The name of the frontend model's function for `w` × `h` (one of [`HOST_SIZES`]).
+pub fn host_function(w: usize, h: usize) -> String {
+    format!("w{w}h{h}")
+}
+
+/// The [`HOST_SIZES`] size nearest `w` × `h` in shape.
+pub fn host_net_size(w: usize, h: usize) -> (usize, usize) {
+    let aspect = (w.max(1) as f64 / h.max(1) as f64).ln();
+    HOST_SIZES
+        .iter()
+        .copied()
+        .min_by(|a, b| {
+            let d = |(x, y): (usize, usize)| ((x as f64 / y as f64).ln() - aspect).abs();
+            d(*a).total_cmp(&d(*b))
+        })
+        .unwrap_or((SHORT_SIDE, SHORT_SIDE))
+}
+
 fn net_size_at(short: usize, long: usize, w: usize, h: usize) -> (usize, usize) {
     let (w, h) = (w.max(1) as f64, h.max(1) as f64);
     let k = (short as f64 / w.min(h)).min(long as f64 / w.max(h));
@@ -206,6 +235,8 @@ enum Backend {
     },
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     Gpu(Box<gpu::Gpu>),
+    /// Run by a native frontend from the [`HOST_ID`] model's folder.
+    Host(std::path::PathBuf),
 }
 
 impl Estimator {
@@ -230,10 +261,16 @@ impl Estimator {
         Ok(gpu::Gpu::load(file)?.map(|g| Estimator { backend: Backend::Gpu(Box::new(g)) }))
     }
 
-    /// What it runs on: `cpu` or `gpu`.
+    /// Depth Anything 3 Small run by a native frontend ([`HOST_ID`]) from the model's folder `dir`.
+    pub fn host(dir: std::path::PathBuf) -> Estimator {
+        Estimator { backend: Backend::Host(dir) }
+    }
+
+    /// What it runs on: `cpu`, `gpu` or `host` (the frontend's runtime).
     pub fn backend(&self) -> &'static str {
         match self.backend {
             Backend::Onnx { .. } => "cpu",
+            Backend::Host(_) => "host",
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Backend::Gpu(_) => "gpu",
         }
@@ -249,6 +286,7 @@ impl Estimator {
         }
         let (nw, nh) = match self.backend {
             Backend::Onnx { .. } => net_size(w, h),
+            Backend::Host(_) => host_net_size(w, h),
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Backend::Gpu(_) => net_size_at(V2_SHORT_SIDE, V2_MAX_LONG, w, h),
         };
@@ -266,6 +304,15 @@ impl Estimator {
         let v: Vec<f32> = match &self.backend {
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Backend::Gpu(g) => g.run(&pixels, nw, nh)?,
+            Backend::Host(dir) => {
+                use lightcraft_vision::host::{Input, Request, Units, run};
+                let inputs = [Input { name: "pixel_values", shape: vec![1, 1, 3, nh, nw], data: &pixels }];
+                let function = host_function(nw, nh);
+                let req =
+                    Request { model: HOST_ID, dir, function: Some(&function), units: Units::All, inputs: &inputs, output: "depth", output_len: n };
+                // depth, larger is farther: nearness is its inverse
+                run(&req).map_err(Error::Model)?.into_iter().map(|d| if d > 1e-6 { 1.0 / d } else { 0.0 }).collect()
+            }
             Backend::Onnx { model, input, output } => {
                 // (batch, pictures, channels, height, width: one picture)
                 let value = ValueView::from_shape([1, 1, 3, nh, nw], &pixels[..]).map_err(|e| bad(&e))?;
