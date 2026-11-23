@@ -6,7 +6,7 @@ Four crates from [storytold/craft-libs](https://github.com/storytold/craft-libs)
 
 Upstream LightCraft moved its raw decoders, TIFF, HEIF and metadata code into these crates (2026-11). This fork had
 its own work in that code (Olympus ORF, Sony lens corrections, HEIC gain maps, the GPX writer, binned linear-raw
-decode, partial big-TIFF reads and more), so the crates live here with that work preserved, and the root
+decode, partial big-TIFF reads, `craft_metadata::embedded_parts` and more), so the crates live here with that work preserved, and the root
 `Cargo.toml` replaces the git dependencies with them through `[patch."https://github.com/storytold/craft-libs"]`.
 
 This is its own Cargo workspace (excluded from LightCraft's), so it keeps craft-libs' lints and conventions.

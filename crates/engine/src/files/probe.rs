@@ -188,7 +188,8 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     if lightcraft_video::is_video(bytes) {
         return probe_video(name, bytes, bytes.len() as u64, content_hash);
     }
-    let m = lightcraft_meta::extract(bytes);
+    // (with the XMP packet from the same pass: asked for again, a TIFF-based raw was copied whole each time)
+    let (m, xmp) = lightcraft_meta::extract_with_xmp(bytes);
     let (meta, captured) = meta_of(&m);
     if let Some(found) = lightcraft_raw::probe(bytes) {
         let raw = match lightcraft_raw::probe_info(bytes).map_err(|e| preview_reason(bytes, e)) {
@@ -206,7 +207,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
                     meta,
                     as_shot_wb: None,
                     content_hash,
-                    xmp: lightcraft_meta::embedded(bytes).xmp,
+                    xmp,
                     preview_only: Some(preview_only_reason(name, why)),
                     // the preview's own frame: Lightroom's crop edges in a sidecar refer to it, like a decoded raw's
                     orientation: Some(orientation),
@@ -255,7 +256,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             meta,
             as_shot_wb,
             content_hash,
-            xmp: lightcraft_meta::embedded(bytes).xmp,
+            xmp,
             preview_only: None,
             orientation: Some(raw.orientation),
             duration: None,
@@ -278,7 +279,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     let mut meta = meta;
     if o.swaps_axes()
         && !meta.regions.is_empty()
-        && let Some(xmp) = lightcraft_meta::embedded(bytes).xmp.and_then(|x| lightcraft_meta::parse_xmp(&x).ok())
+        && let Some(xmp) = xmp.and_then(|x| lightcraft_meta::parse_xmp(&x).ok())
         && let Some(drawn_on) = xmp.regions_drawn_on()
         && !xmp.metadata.regions.is_empty()
     {

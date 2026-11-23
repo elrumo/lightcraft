@@ -50,6 +50,18 @@ pub fn embedded(bytes: &[u8]) -> Embedded {
     }
     craft_metadata::embedded(bytes)
 }
+
+/// [`embedded`] without the copy of a TIFF-based file, whose Exif block is the whole file: `true` then, with
+/// [`Embedded::exif`] unset ([`craft_metadata::embedded_parts`]).
+fn embedded_parts(bytes: &[u8]) -> (Embedded, bool) {
+    if bytes.starts_with(b"8BPS") {
+        return (psd::parse(bytes).unwrap_or_default(), false);
+    }
+    if heif::is_heif(bytes) {
+        return (heif::metadata(bytes), false);
+    }
+    craft_metadata::embedded_parts(bytes)
+}
 pub use exif::{from_tiff, read_exif, strip_exif_header, try_read_exif, try_read_exif_with, write_exif};
 pub use focus::FocusPoint;
 pub use iptc::parse_iptc;
@@ -316,10 +328,19 @@ impl Metadata {
 /// Read everything we understand from a whole file (JPEG, PNG, WebP, TIFF-based incl. DNG/raw).
 /// Precedence: EXIF, then IPTC fills gaps, then XMP overrides user fields and fills the rest.
 pub fn extract(bytes: &[u8]) -> Metadata {
-    let e = embedded(bytes);
-    let exif = e.exif.as_deref().map(read_exif).unwrap_or_default();
+    extract_with_xmp(bytes).0
+}
+
+/// [`extract`], and the file's XMP packet as it is embedded ([`Embedded::xmp`]): one pass over the container where
+/// [`extract`] and [`embedded`] take one each. A TIFF-based file (DNG and most raws) is read where it is: its Exif block is
+/// the whole file, which [`embedded`] copies (describing a folder of raws to show it copied every file twice).
+pub fn extract_with_xmp(bytes: &[u8]) -> (Metadata, Option<String>) {
+    let (e, whole) = embedded_parts(bytes);
+    let block = if whole { Some(bytes) } else { e.exif.as_deref() };
+    let exif = block.map(read_exif).unwrap_or_default();
     let xmp = e.xmp.as_deref().and_then(|xmp| parse_xmp(xmp).ok());
-    extract_embedded(e, exif, xmp)
+    let m = extract_embedded(block, e.iptc.as_deref(), exif, xmp);
+    (m, e.xmp)
 }
 
 /// Read metadata while reporting malformed PSD/PSB containers, embedded EXIF, or embedded XMP instead of treating
@@ -337,16 +358,17 @@ pub fn try_extract(bytes: &[u8]) -> Result<Metadata, ExtractError> {
         Some(xmp) => parse_xmp(xmp).ok(),
         None => None,
     };
-    Ok(extract_embedded(e, exif, xmp))
+    Ok(extract_embedded(e.exif.as_deref(), e.iptc.as_deref(), exif, xmp))
 }
 
-fn extract_embedded(e: Embedded, mut m: Metadata, xmp: Option<XmpData>) -> Metadata {
+/// `m` (read from the Exif block `exif`) with the IPTC block's fields where it has none, then the XMP packet's.
+fn extract_embedded(exif: Option<&[u8]>, iptc: Option<&[u8]>, mut m: Metadata, xmp: Option<XmpData>) -> Metadata {
     // the size the Exif states: a size only the XMP states may be the upright one, so it can't tell how the photo is stored
     let stored = m.width.zip(m.height);
     // and the orientation the Exif states: the photo is displayed by that alone, so an orientation only the XMP
     // states ([`Metadata::fill_missing`] reports it below) can't tell how the photo is stored either
-    let exif_orientation = e.exif.as_deref().and_then(exif::ifd0_orientation);
-    if let Some(i) = e.iptc.as_deref() {
+    let exif_orientation = exif.and_then(exif::ifd0_orientation);
+    if let Some(i) = iptc {
         m.fill_missing(&parse_iptc(i));
     }
     if let Some(xmp) = xmp {
@@ -696,6 +718,36 @@ mod tests {
         let m = extract(&craft_tiff::TiffWriter::default().write(&[ifd0]).unwrap());
         assert_eq!((m.orientation, m.width, m.height), (Some(Orientation::Rotate90), Some(4000), Some(6000)));
         assert!(near(m.regions[0].rect, DRAWN), "TIFF: {:?}", m.regions[0].rect);
+    }
+
+    /// A folder of raws is described with [`extract_with_xmp`], which reads a TIFF-based file where it is instead of
+    /// copying it as its own Exif block: it answers what the copying route ([`try_extract`], [`embedded`]) answers.
+    #[test]
+    fn a_tiff_read_in_place_gives_what_its_copy_gives() {
+        let packet = regions_packet(4000, 6000, "").replace(r#"rdf:about="""#, r#"rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/""#);
+        let mut ifd0 = craft_tiff::IfdBuilder::new();
+        ifd0.set(craft_tiff::tags::IMAGE_WIDTH, craft_tiff::Value::Long(vec![6000]));
+        ifd0.set(craft_tiff::tags::IMAGE_LENGTH, craft_tiff::Value::Long(vec![4000]));
+        ifd0.set(craft_tiff::tags::ORIENTATION, craft_tiff::Value::Short(vec![6]));
+        ifd0.set(craft_tiff::tags::MODEL, craft_tiff::Value::Ascii("Model X".into()));
+        ifd0.set(craft_tiff::tags::XMP, craft_tiff::Value::Byte(packet.clone().into_bytes()));
+        let tiff = craft_tiff::TiffWriter::default().write(&[ifd0]).unwrap();
+        let (m, xmp) = extract_with_xmp(&tiff);
+        assert_eq!((m.model.as_deref(), m.orientation, m.regions.len()), (Some("Model X"), Some(Orientation::Rotate90), 1));
+        assert_eq!(m, try_extract(&tiff).unwrap(), "the same as from the file's copy");
+        assert_eq!(extract(&tiff), m);
+        assert_eq!((xmp.as_deref(), embedded(&tiff).xmp.as_deref()), (Some(packet.as_str()), Some(packet.as_str())));
+        // a JPEG carries its Exif as a block of its own: nothing changes for it
+        let exif = write_exif(&Metadata { orientation: Some(Orientation::Rotate90), iso: Some(400), ..Default::default() });
+        let block = [b"Exif\0\0".as_slice(), strip_exif_header(&exif)].concat();
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe1];
+        jpeg.extend(u16::try_from(block.len() + 2).unwrap().to_be_bytes());
+        jpeg.extend(&block);
+        jpeg.extend([0xff, 0xd9]);
+        let (m, xmp) = extract_with_xmp(&jpeg);
+        assert_eq!((m.iso, m.orientation, xmp), (Some(400), Some(Orientation::Rotate90), None));
+        assert_eq!(m, try_extract(&jpeg).unwrap());
+        assert_eq!(extract_with_xmp(b"not an image"), (Metadata::default(), None));
     }
 
     /// A photo whose Exif has a size but no orientation, and whose XMP says `tiff:Orientation=6`: LightCraft

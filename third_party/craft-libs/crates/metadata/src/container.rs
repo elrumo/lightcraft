@@ -41,30 +41,43 @@ pub struct Embedded {
 
 /// Sniff the container and collect its metadata blocks. Unknown containers yield an empty result.
 pub fn embedded(bytes: &[u8]) -> Embedded {
+    let (mut e, whole) = embedded_parts(bytes);
+    if whole {
+        e.exif = Some(bytes.to_vec());
+    }
+    e
+}
+
+/// [`embedded`] without the copy of a TIFF-based file (TIFF, DNG and most raws), whose Exif block is the whole file:
+/// `true` then, with [`Embedded::exif`] left unset for the caller to read from `bytes` (a raw is tens of megabytes,
+/// and a folder of them is read file by file).
+pub fn embedded_parts(bytes: &[u8]) -> (Embedded, bool) {
     if bytes.starts_with(b"FUJIFILMCCD-RAW") {
         // Fujifilm RAF: metadata lives in the embedded JPEG whose (offset, length) are big-endian u32s at byte 84
         let be = |i: usize| bytes.get(i..i + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as usize);
-        return match (be(84), be(88)) {
+        let e = match (be(84), be(88)) {
             (Some(o), Some(l)) if o > 0 => bytes.get(o..o.saturating_add(l).min(bytes.len())).map(jpeg_segments).unwrap_or_default(),
             _ => Embedded::default(),
         };
+        return (e, false);
     }
     if let Some(c) = crate::cr3::parse_cr3(bytes) {
-        return Embedded { exif: crate::cr3::merged_exif(&c), xmp: c.xmp.map(|b| String::from_utf8_lossy(b).into_owned()), ..Default::default() };
+        let e = Embedded { exif: crate::cr3::merged_exif(&c), xmp: c.xmp.map(|b| String::from_utf8_lossy(b).into_owned()), ..Default::default() };
+        return (e, false);
     }
     if crate::jxl::is_jxl_container(bytes) {
-        return crate::jxl::metadata(bytes);
+        return (crate::jxl::metadata(bytes), false);
     }
     if bytes.starts_with(&[0xff, 0xd8]) {
-        jpeg_segments(bytes)
+        (jpeg_segments(bytes), false)
     } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        png_chunks(bytes)
+        (png_chunks(bytes), false)
     } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        webp_chunks(bytes)
+        (webp_chunks(bytes), false)
     } else if let Ok(t) = Tiff::parse(bytes) {
         let ifd0 = &t.ifds[0];
-        Embedded {
-            exif: Some(bytes.to_vec()),
+        let e = Embedded {
+            exif: None,
             xmp: ifd0.bytes(tags::XMP).map(|b| String::from_utf8_lossy(b).into_owned()),
             xmp_extended: None,
             xmp_extended_guid: None,
@@ -75,9 +88,10 @@ pub fn embedded(bytes: &[u8]) -> Embedded {
             }),
             chunk_walk_incomplete: false,
             xmp_extended_error: None,
-        }
+        };
+        (e, true)
     } else {
-        Embedded::default()
+        (Embedded::default(), false)
     }
 }
 
@@ -942,6 +956,21 @@ mod tests {
         let t = sample_exif(ByteOrder::Big);
         assert_eq!(crate::extract(&t).model.as_deref(), Some("Model X"));
         assert_eq!(embedded(b"not an image"), Embedded::default());
+    }
+
+    #[test]
+    fn the_parts_of_a_tiff_leave_its_copy_to_the_caller() {
+        let t = sample_exif(ByteOrder::Big);
+        let (parts, whole) = embedded_parts(&t);
+        assert!(whole && parts.exif.is_none(), "the Exif block is the file itself: not copied");
+        let all = embedded(&t);
+        assert_eq!(all.exif.as_deref(), Some(&t[..]));
+        assert_eq!(Embedded { exif: Some(t.clone()), ..parts }, all, "every other block is the same");
+        // any other container carries its Exif as a block of its own, copied either way
+        let j = sample_jpeg();
+        assert_eq!(embedded_parts(&j), (embedded(&j), false));
+        assert!(embedded(&j).exif.is_some());
+        assert_eq!(embedded_parts(b"not an image"), (Embedded::default(), false));
     }
 
     #[test]
