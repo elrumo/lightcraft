@@ -213,8 +213,9 @@ pub fn rel_to_kelvin(r: f64) -> f64 {
 }
 
 /// Convert the white balance of a settings partial that Lightroom wrote (marked `wb.lightroom`, absolute Kelvin and tint) to
-/// the scale of `camera` (make and model joined by a space) when it was measured against Lightroom
-/// ([`lightcraft_raw::kelvin_presets::lightroom_scale`]); the marker is removed whatever the camera.
+/// the scale of `camera` (make and model joined by a space) where that scale is not Lightroom's: a body measured against
+/// Lightroom, or one whose Kelvin comes from its own presets ([`lightcraft_raw::kelvin_presets::lightroom_scale`]); the
+/// marker is removed whatever the camera.
 pub fn lightroom_white_to_dial(partial: &mut Value, camera: &str) {
     let Some(wb) = partial.get_mut("wb").and_then(Value::as_object_mut) else { return };
     if wb.remove("lightroom") != Some(json!(true)) {

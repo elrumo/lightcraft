@@ -21,6 +21,25 @@ use craft_tiff::tags::{self as t, photometric};
 use craft_tiff::{ByteOrder, Ifd, Tiff, makernote};
 
 const WB_RB_LEVELS: u16 = 0x000c;
+/// Maker note ColorBalance (ExifTool's Nikon tag documentation): a 4-character version, then the camera's white
+/// balance record. Version `0103` (D70, D70s) is plain data with `WB_RGBGLevels` as four `u16` at byte 20; the
+/// D70's file here reads `555 256 388 256`, the multipliers `exiftool` (run as a black-box tool) prints for it.
+/// These bodies write no `0x000c`, so without this record the as-shot white was unknown and read as D65.
+const COLOR_BALANCE: u16 = 0x0097;
+const COLOR_BALANCE_0103_RGBG_AT: usize = 20;
+
+/// The as-shot multipliers `[red, 1, blue]` of a version `0103` ColorBalance record; `None` for another version,
+/// a short record, or levels outside what a white balance can be.
+fn color_balance_0103(mn: &makernote::MakerNote) -> Option<[f32; 3]> {
+    let record = mn.ifd.bytes(COLOR_BALANCE).filter(|r| r.starts_with(b"0103"))?;
+    let at = |i: usize| Some(f32::from(mn.order.u16(record.get(COLOR_BALANCE_0103_RGBG_AT + 2 * i..)?.get(..2)?.try_into().ok()?)));
+    let (r, g, b, g2) = (at(0)?, at(1)?, at(2)?, at(3)?);
+    if !(g > 0.0 && g == g2) {
+        return None;
+    }
+    let (red, blue) = (r / g, b / g);
+    (red > 0.1 && blue > 0.1 && red < 10.0 && blue < 10.0).then_some([red, 1.0, blue])
+}
 const BLACK_LEVEL: u16 = 0x003d;
 const LINEARIZATION_TABLE: u16 = 0x0096;
 const CROP_AREA: u16 = 0x0045;
@@ -327,7 +346,8 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode, limits: &Limits) -> Result<RawIma
         .as_ref()
         .and_then(|m| m.ifd.f64s(WB_RB_LEVELS))
         .filter(|v| v.len() >= 2 && v[0] > 0.1 && v[1] > 0.1 && v[0] < 10.0 && v[1] < 10.0)
-        .map(|v| [v[0] as f32, 1.0, v[1] as f32]);
+        .map(|v| [v[0] as f32, 1.0, v[1] as f32])
+        .or_else(|| mn.as_ref().and_then(color_balance_0103));
     // the converted CYGM data is already balanced
     let wb = if cygm { Some([1.0; 3]) } else { wb };
     let (cfa, assumed_cfa) = match (raw.u64s(t::CFA_REPEAT_PATTERN_DIM).as_deref(), raw.bytes(t::CFA_PATTERN_EP)) {
@@ -1101,6 +1121,38 @@ mod tests {
         let black = |bits| crate::decode(&nef_with_note(1, bits, vec![words.clone()], w as u32, h as u32, h as u32, Some(note()))).unwrap().black;
         assert_eq!(black(12).values, vec![100.0, 101.0, 102.0, 103.0]);
         assert_eq!(black(14).values, vec![400.0, 404.0, 408.0, 412.0]);
+    }
+
+    /// The D70 writes its as-shot white only in the ColorBalance record (version `0103`, `WB_RGBGLevels` at byte
+    /// 20): without it the white was unknown and the photo's Kelvin read as D65. Another version, a short record or
+    /// levels no white balance has give nothing, and `0x000c` wins when a body writes it.
+    #[test]
+    fn d70_color_balance_record_gives_the_as_shot_multipliers() {
+        let (w, h) = (16usize, 6usize);
+        let words: Vec<u8> = (0..w * h).flat_map(|i| ((i * 131 % 4096) as u16).to_be_bytes()).collect();
+        let record = |version: &[u8; 4], levels: [u16; 4], len: usize| {
+            let mut b = version.to_vec();
+            b.resize(COLOR_BALANCE_0103_RGBG_AT, 0);
+            b.extend(levels.iter().flat_map(|v| v.to_be_bytes()));
+            b.resize(len, 0);
+            b
+        };
+        let wb = |record: Vec<u8>, rb: Option<[f64; 2]>| {
+            let mut note = IfdBuilder::new();
+            note.set(COLOR_BALANCE, Value::Undefined(record));
+            if let Some(rb) = rb {
+                note.set(WB_RB_LEVELS, Value::Rational(rb.iter().map(|v| ((v * 256.0) as u32, 256)).collect()));
+            }
+            crate::decode(&nef_with_note(1, 12, vec![words.clone()], w as u32, h as u32, h as u32, Some(note))).unwrap().wb_multipliers
+        };
+        // the D70 file's own record: 555 256 388 256
+        assert_eq!(wb(record(b"0103", [555, 256, 388, 256], 140), None), Some([555.0 / 256.0, 1.0, 388.0 / 256.0]));
+        assert_eq!(wb(record(b"0102", [555, 256, 388, 256], 140), None), None, "another version's layout");
+        assert_eq!(wb(record(b"0103", [555, 256, 388, 256], 140)[..26].to_vec(), None), None, "cut short");
+        assert_eq!(wb(record(b"0103", [555, 0, 388, 0], 140), None), None, "no green level");
+        assert_eq!(wb(record(b"0103", [555, 256, 388, 300], 140), None), None, "two greens that differ");
+        assert_eq!(wb(record(b"0103", [60000, 256, 388, 256], 140), None), None, "no white balance is this far");
+        assert_eq!(wb(record(b"0103", [555, 256, 388, 256], 140), Some([2.0, 1.5])), Some([2.0, 1.0, 1.5]), "0x000c first");
     }
 
     #[test]

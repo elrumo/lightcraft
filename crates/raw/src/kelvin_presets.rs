@@ -62,6 +62,9 @@ const MODELS: &[(&str, &str)] = &[
     // the user's own raw (E PZ 16-50mm, Auto white balance): presets 2500 to 8500 K, the as-shot white (R 2.75, B 1.68)
     // between its 4500 K and 6000 K ones
     ("SONY", "ILCE-6000"),
+    // the user's own raw (Auto white balance, R 2.44, B 1.71): presets 2500 to 8500 K, read at 4940 K / +3 where
+    // Lightroom's As Shot is 4850 K / +11 (card #535)
+    ("SONY", "ILCE-6700"),
     ("SONY", "ILCE-7S"),
     ("SONY", "SLT-A33"),
     ("CANON", "PowerShot G1 X Mark III"),
@@ -69,8 +72,9 @@ const MODELS: &[(&str, &str)] = &[
 
 /// Fujifilm's X-Trans III bodies, whose raws carry the camera's own neutral multipliers for Illuminant A and D65
 /// (`vendor::raf`, tag `0xf00c`; see [`KelvinPresets::from_neutral_pair`]): checked on the files of each (X-T20,
-/// X-T2, X-Pro2, X-E3, X-H1, X100F), the Exif model as Fujifilm writes it.
-const FUJI_MODELS: &[&str] = &["X-T20", "X-T2", "X-Pro2", "X-E3", "X-H1", "X100F"];
+/// X-T2, X-Pro2, X-E3, X-H1, X100F), the Exif model as Fujifilm writes it. The X-A5 (a Bayer body) writes the same
+/// pair (the user's own raw: `256 285 807 17 256 556 414 21`, card #535).
+const FUJI_MODELS: &[&str] = &["X-T20", "X-T2", "X-Pro2", "X-E3", "X-H1", "X100F", "X-A5"];
 
 /// Olympus bodies whose maker note carries the twelve `WB_RBLevels<K>` entries (`vendor::orf`), the Exif model as the
 /// files write it (the spelling differs from body to body: `E-M10MarkII`, but `E-M10 Mark III`): one CC0 file of each
@@ -162,18 +166,39 @@ pub fn covers(make: Option<&str>, model: &str) -> bool {
     listed || fuji || olympus || om
 }
 
-/// How Lightroom's white balance reads a body's white next to the camera's own dial ([`KelvinPresets`]): a Kelvin
-/// value Lightroom wrote becomes `kelvin * kelvin_ratio` on the dial and its tint `tint - tint_offset`.
+/// How Lightroom's white balance reads a body's white next to the photo's own Kelvin scale (its presets,
+/// [`KelvinPresets`], or its measured matrices, [`crate::spectral`]): a Kelvin value Lightroom wrote becomes
+/// `kelvin * kelvin_ratio` on that scale and its tint `tint - tint_offset`. Measured at the photo's As Shot: the
+/// scale's reading over Lightroom's, and Lightroom's tint minus the scale's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LightroomScale {
     pub kelvin_ratio: f64,
     pub tint_offset: f64,
 }
 
-/// Bodies measured against Lightroom: make, model, and the scale. The ILCE-6000's raw reads 5472 K / -1 on Sony's dial
-/// and 4800 K / +15 in Lightroom (its as-shot `AsShotTemperature` / `AsShotTint`), a Kelvin ratio of 1.14 and a tint
-/// offset of 16; a free fit of the Phoenix 200 preset's white balance against Lightroom's export (the ΔE sweep of
-/// Kelvin and tint, 500 px) wanted 7000 K / -16 for the preset's 6900 K / +3, a ratio of 1.02 and an offset of 19, so
+/// A scale made of a camera's white-balance presets ([`MODELS`], the Olympus and OM tables, [`crate::kelvin_builtin`])
+/// against Lightroom's, when the body was not measured: the same Kelvin, and a tint 10 lower. The presets above
+/// tungsten are daylight settings, and daylight sits about 10 tint units on the green side of the Planckian locus
+/// that Lightroom's tint counts from (D65 reads +9.5), while the preset curve itself is tint 0 here. Lightroom's As
+/// Shot against these scales, from the metadata of its own exports of one raw each (card #535): ILCE-6000 5150 K /
+/// +11 against 5472 K / -1, ILCE-6700 4850 K / +11 against 4940 K / +3, E-1 5350 K / +11 against 5300 K / 0. The
+/// Kelvin differs by -2 to +6 % from body to body, which only a measurement of the body settles ([`LIGHTROOM`]).
+// ponytail: one offset at every temperature. A tungsten white sits on the Planckian locus on both scales, so a custom
+// white near 3000 K may want none; no Lightroom export of such a white was measured.
+const PRESET_CURVE: LightroomScale = LightroomScale { kelvin_ratio: 1.0, tint_offset: 10.0 };
+
+/// Bodies measured against Lightroom: make, model, and the scale. A scale read through matrices fitted to the
+/// camera's spectral sensitivities and Lightroom's agree where they were calibrated (the D70's raw: 5076 K / -10
+/// against Lightroom's 5150 K / -3, used as written) but drift apart between the two calibration lights, and a
+/// maker's own neutrals are the maker's reading of them, so these bodies are converted:
+/// - EOS RP: its raw reads 3749 K / +22 through its measured matrices (Canon's own `ColorTempAsShot` says 3800 K) and
+///   4100 K / +25 in Lightroom, the ratio the EOS R6 below has.
+/// - X-A5: 4430 K / -5 through Fujifilm's neutral pair, 4850 K / +1 in Lightroom.
+///
+/// The ILCE-6000's raw reads 5472 K / -1 on Sony's dial and 4800 K / +15 in Lightroom (its as-shot
+/// `AsShotTemperature` / `AsShotTint`, of an earlier look at it; the exports of card #535 say 5150 K / +11), a Kelvin
+/// ratio of 1.14 and a tint offset of 16; a free fit of the Phoenix 200 preset's white balance against Lightroom's
+/// export (the ΔE sweep of Kelvin and tint, 500 px) wanted 7000 K / -16 for the preset's 6900 K / +3, a ratio of 1.02 and an offset of 19, so
 /// those were used until Lightroom exported that raw with a custom white alone at five values (4000, 5500 and 7500 K
 /// at tint +10, 5500 K at +40, and the preset's 6900 K / +3; cards #386 / #388): against those five the effect of the
 /// white balance is closest at a ratio of 1.06 and an offset of 11 (mean ΔE 2.76, against 3.30 for 1.02 / 18 and 4.42
@@ -186,15 +211,22 @@ pub struct LightroomScale {
 const LIGHTROOM: &[(&str, &str, LightroomScale)] = &[
     ("SONY", "ILCE-6000", LightroomScale { kelvin_ratio: 1.06, tint_offset: 11.0 }),
     ("Canon", "Canon EOS R6", LightroomScale { kelvin_ratio: 0.90, tint_offset: 4.5 }),
+    ("Canon", "Canon EOS RP", LightroomScale { kelvin_ratio: 0.914, tint_offset: 3.0 }),
+    ("FUJIFILM", "X-A5", LightroomScale { kelvin_ratio: 0.913, tint_offset: 5.5 }),
 ];
 
-/// The Lightroom scale of this camera (make and model joined by a space), when it was measured.
+/// The Lightroom scale of this camera (make and model joined by a space): the measured one ([`LIGHTROOM`]), else
+/// [`PRESET_CURVE`] for a body whose Kelvin scale is a curve through its presets. `None` for a scale used as
+/// Lightroom wrote it (measured matrices, a Fujifilm neutral pair, a file's own matrices) or a body without one.
 pub fn lightroom_scale(camera: &str) -> Option<LightroomScale> {
     let words: Vec<&str> = camera.split_whitespace().collect();
-    (1..words.len()).find_map(|i| {
+    let measured = (1..words.len()).find_map(|i| {
         let (make, model) = (words[..i].join(" "), words[i..].join(" "));
         LIGHTROOM.iter().find(|(m, name, _)| make.eq_ignore_ascii_case(m) && model.eq_ignore_ascii_case(name)).map(|(_, _, scale)| *scale)
-    })
+    });
+    // (the matrices come first where a body has both, as in the engine's choice of scale)
+    let pair = words.last().is_some_and(|w| FUJI_MODELS.iter().any(|m| w.eq_ignore_ascii_case(m)));
+    measured.or_else(|| (covers_camera(camera) && !pair && crate::spectral::find_camera(camera).is_none()).then_some(PRESET_CURVE))
 }
 
 /// [`covers`] for make and model joined by a space, as the catalog keeps them (`"SONY ILCA-99M2"`).
@@ -509,9 +541,73 @@ mod tests {
         assert_eq!(KelvinPresets::from_neutral_pair([0.0, 1.0, 1.0], [2.0, 1.0, 1.5]), None);
     }
 
+    /// Lightroom's As Shot for the six raws of card #535 (the `crs:Temperature` / `crs:Tint` its exports carry) against
+    /// what each raw's own scale reads times its Lightroom scale: within 150 K and 8 tint units, which is what a white
+    /// balance written by Lightroom needs to land on Lightroom's white (a wrong As Shot moves every custom white by
+    /// that much; before, the D70 read 6502 K / +10 and the ILCE-6700 and X-A5 had no scale at all).
+    #[test]
+    fn each_measured_raw_reads_as_lightroom_does_through_its_lightroom_scale() {
+        let g = |r: f32, b: f32, unit: f32| [r / unit, 1.0, b / unit];
+        let sony = |p: [(f32, f32); 5]| KelvinPresets::new(POINT_KELVIN.iter().zip(p).map(|(k, (r, b))| (*k, g(r, b, 1024.0)))).unwrap();
+        let through = |make: &str, model: &str, m: [f32; 3]| {
+            let camera = crate::spectral::find(Some(make), model).unwrap();
+            cct::xy_to_temp_tint(crate::spectral::as_shot_white_through(camera, &ColorData::default(), Some(m)).unwrap())
+        };
+        // camera, what its own scale reads at As Shot, Lightroom's As Shot
+        let rows = [
+            (
+                "SONY ILCE-6000",
+                sony([(1536.0, 3788.0), (1952.0, 2736.0), (2512.0, 1980.0), (2948.0, 1632.0), (3400.0, 1376.0)])
+                    .temp_tint(g(2812.0, 1720.0, 1024.0))
+                    .unwrap(),
+                (5150.0, 11.0),
+            ),
+            (
+                "SONY ILCE-6700",
+                sony([(1412.0, 3462.0), (1807.0, 2534.0), (2348.0, 1853.0), (2769.0, 1527.0), (3174.0, 1262.0)])
+                    .temp_tint(g(2499.0, 1756.0, 1024.0))
+                    .unwrap(),
+                (4850.0, 11.0),
+            ),
+            (
+                "FUJIFILM X-A5",
+                KelvinPresets::from_neutral_pair(g(285.0, 807.0, 256.0), g(556.0, 414.0, 256.0)).unwrap().temp_tint(g(421.0, 510.0, 256.0)).unwrap(),
+                (4850.0, 1.0),
+            ),
+            ("Canon Canon EOS RP", through("Canon", "Canon EOS RP", g(1736.0, 2217.0, 1024.0)), (4100.0, 25.0)),
+            ("NIKON CORPORATION NIKON D70", through("NIKON CORPORATION", "NIKON D70", g(555.0, 388.0, 256.0)), (5150.0, -3.0)),
+            // (its twelve presets are in the file's maker note: the reading the engine shows for it)
+            ("OLYMPUS CORPORATION E-1", (5300.0, 0.0), (5350.0, 11.0)),
+        ];
+        for (camera, (t, tint), (lr_t, lr_tint)) in rows {
+            let scale = lightroom_scale(camera).unwrap_or(LightroomScale { kelvin_ratio: 1.0, tint_offset: 0.0 });
+            let (as_lr_t, as_lr_tint) = (t / scale.kelvin_ratio, tint + scale.tint_offset);
+            assert!(
+                (as_lr_t - lr_t).abs() < 150.0 && (as_lr_tint - lr_tint).abs() < 8.0,
+                "{camera}: {t:.0} / {tint:.1} reads as {as_lr_t:.0} / {as_lr_tint:.1}"
+            );
+            assert!(covers_camera(camera) || crate::spectral::find_camera(camera).is_some(), "{camera} has a Kelvin scale");
+        }
+    }
+
+    /// Which bodies a Lightroom white is converted for: the measured ones, and by the preset rule any body whose scale
+    /// is its presets; a scale through measured matrices or a Fujifilm neutral pair is used as Lightroom wrote it.
+    #[test]
+    fn lightroom_scale_of_measured_preset_and_other_bodies() {
+        assert_eq!(lightroom_scale("SONY ILCE-6000"), Some(LightroomScale { kelvin_ratio: 1.06, tint_offset: 11.0 }));
+        assert_eq!(lightroom_scale("canon canon eos rp").map(|s| s.kelvin_ratio), Some(0.914));
+        assert_eq!(lightroom_scale("FUJIFILM X-A5").map(|s| s.tint_offset), Some(5.5));
+        for c in ["SONY ILCE-6700", "OLYMPUS CORPORATION E-1", "NIKON CORPORATION NIKON Z5_2", "Canon Canon PowerShot G1 X Mark III"] {
+            assert_eq!(lightroom_scale(c), Some(PRESET_CURVE), "{c}");
+        }
+        for c in ["FUJIFILM X-T20", "DxO X-T2", "NIKON CORPORATION NIKON D70", "Canon Canon EOS R5", "SONY ILCE-7M2", "SONY", ""] {
+            assert_eq!(lightroom_scale(c), None, "{c}");
+        }
+    }
+
     #[test]
     fn fujifilm_x_trans_iii_models_are_covered() {
-        for c in ["FUJIFILM X-T20", "Fujifilm X-T2", "FUJIFILM X100F", "FUJIFILM X-H1", "FUJIFILM X-Pro2", "FUJIFILM X-E3"] {
+        for c in ["FUJIFILM X-T20", "Fujifilm X-T2", "FUJIFILM X100F", "FUJIFILM X-H1", "FUJIFILM X-Pro2", "FUJIFILM X-E3", "FUJIFILM X-A5"] {
             assert!(covers_camera(c), "{c}");
         }
         for c in ["FUJIFILM X-T3", "FUJIFILM X-T30", "SONY X-T20", "FUJIFILM GFX 100"] {

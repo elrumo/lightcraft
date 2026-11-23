@@ -398,6 +398,109 @@ Colour Grading in context (about 5 each: with everything else applied their erro
 the mid tones by the midtones wheel is part of the grading's), white balance (4.5: the far ends of the Kelvin scale)
 and Dehaze (3.6).
 
+## White balance written by Lightroom, on six cameras (2026-11-23, card #535)
+
+A custom Kelvin and tint from a Lightroom preset or sidecar did not give Lightroom's white on most cameras (effect ΔE
+2.6 to 10.3 in the section above). Measured again here on the same 24 exports (`xcam6`: 4000, 5500 and 7500 K at tint
++10, 5500 K at +40, per camera), with two things the earlier work did not have.
+
+**Lightroom's own As Shot for each raw.** Its exports carry the white it used (`crs:Temperature` / `crs:Tint` in the
+JPEG's XMP, also when the white balance is As Shot), so the six values are read, not estimated (the earlier
+interpolation of four exports was up to 180 K and 9 tint units off):
+
+| Raw | Lightroom's As Shot | The raw's own scale read | Through |
+|---|---|---|---|
+| ILCE-6000 | 5150 K / +11 | 5472 K / −1 | Sony's presets in the file |
+| ILCE-6700 | 4850 K / +11 | 4940 K / +3 | Sony's presets in the file (the body had no Kelvin scale before) |
+| EOS RP | 4100 K / +25 | 3749 K / +22 | its measured matrices (Canon's own `ColorTempAsShot`: 3800 K) |
+| X-A5 | 4850 K / +1 | 4430 K / −5 | Fujifilm's neutral pair in the file (no Kelvin scale before) |
+| D70 | 5150 K / −3 | 5076 K / −10 (was 6502 K / +10) | its measured matrices |
+| E-1 | 5350 K / +11 | 5300 K / 0 | Olympus's presets in the file |
+
+**A sweep of our own white balance.** Each raw rendered at 105 whites of its own scale (mired 60 to 340 in steps of
+20, tint −30 to +60 in steps of 15, one `lightcraft-cli run` per camera), the 150 px Lab pictures interpolated between
+them, so the error of any conversion can be scored without another render, and the best white per export found: the
+floor a conversion of two numbers can reach on today's renderer.
+
+What the sweep says:
+
+- **The white that matches is the same step from As Shot as Lightroom's.** For every camera the best white on our scale
+  is, within the floor, Lightroom's mired and tint difference from *its* As Shot applied to *our* As Shot. So a
+  Lightroom white is only as good as our idea of Lightroom's As Shot for that raw: an As Shot read 20 mired off moves
+  every custom white by 20 mired (about 4 ΔE here), 10 tint units by about 2.
+- **The absolute route through matrices works where the matrices are the camera's own and its white is read.** The
+  D70's As Shot through its measured matrices is 74 K and 7 tint units from Lightroom's. It read 6502 K / +10 before
+  because the D70's NEF keeps its as-shot multipliers only in the maker note's ColorBalance record (version `0103`),
+  which the decoder did not read: the white was unknown and stood for D65, so every Lightroom white was 40 mired off.
+- **It does not work through anyone else's matrices.** The X-A5's multipliers through the typical camera's matrices
+  read 3655 K (Lightroom 4850 K), the E-1's read a tint of −98, the ILCE-6000's through the typical Sony a tint of
+  +37: a worse start than leaving the white as shot. Even a camera's own matrices drift between their two calibration
+  lights: the EOS RP reads 3749 K where Lightroom says 4100 K (the EOS R6 has the same ratio, 0.90 to 0.91).
+- **A camera's own presets are the better start.** Sony's and Olympus's Kelvin presets put the As Shot within 2 to
+  6 % of Lightroom's Kelvin, and always about 10 tint units below it: the presets above tungsten are daylight
+  settings, daylight sits about 10 units on the green side of the Planckian locus Lightroom's tint counts from (D65
+  is +9.5), and our preset curve is tint 0.
+
+What changed (`crates/raw/src/kelvin_presets.rs`, `third_party/craft-libs/crates/raw/src/nef.rs`):
+
+- The **D70** (and any body writing ColorBalance `0103`) has its as-shot white read. Its Kelvin is used as Lightroom
+  writes it.
+- The **ILCE-6700** and the **X-A5** edit white balance in Kelvin through the presets their files carry
+  (`MODELS`, `FUJI_MODELS`), like the ILCE-6000 and the X-Trans III bodies. A sidecar's custom Kelvin is no longer
+  dropped for them, and a preset's Kelvin is no longer read as a shift around 6500 K.
+- **A body whose scale is a curve through its own presets** (the listed Sony, Canon, Olympus, OM System and Nikon
+  bodies) and that nobody measured reads Lightroom's Kelvin as written and its tint 10 lower (`PRESET_CURVE`).
+- **Measured bodies** (`LIGHTROOM`, the scale's As Shot over Lightroom's): the EOS RP (Kelvin × 0.914, tint − 3) and
+  the X-A5 (× 0.913, − 5.5) join the ILCE-6000 (× 1.06, − 11, unchanged: it is what its As Shot gives, 1.0625 and 12)
+  and the EOS R6.
+- A body with no Kelvin scale of its own still keeps As Shot for a sidecar's custom Kelvin and says so: with nothing
+  of the camera's own to read its white through, a guessed As Shot is not better than none (above).
+
+Effect ΔE of a custom white against Lightroom's export (mean of the four whites per camera; the floor is the best any Kelvin and tint of our scale reaches on the Rust renderer):
+
+| Camera | Lightroom's effect | Rust | Apple display | Apple scene | Floor |
+|---|---:|---:|---:|---:|---:|
+| ILCE-6000 | 8.2 | 2.6 | 3.4 | 2.7 | 2.4 |
+| ILCE-6700 | 7.8 | 10.3 → 2.9 | 7.8 → 3.1 | 7.8 → 3.0 | 2.8 |
+| EOS RP | 14.5 | 7.2 → 5.7 | 7.0 → 5.0 | 7.2 → 5.7 | 5.5 |
+| X-A5 | 8.8 | 10.0 → 4.0 | 8.8 → 4.4 | 8.8 → 3.9 | 2.3 |
+| D70 | 10.6 | 8.4 → 4.6 | 7.5 → 3.9 | 8.3 → 4.6 | 3.4 |
+| E-1 | 8.7 | 4.4 → 3.8 | 4.8 → 4.0 | 4.4 → 3.8 | 2.9 |
+| Mean | | 7.2 → 3.9 | 6.5 → 4.0 | 6.5 → 3.9 | 3.2 |
+
+Per white, Rust renderer, before → after:
+
+| Camera | 4000 K / +10 | 5500 K / +10 | 7500 K / +10 | 5500 K / +40 |
+|---|---:|---:|---:|---:|
+| ILCE-6000 | 4.2 → 4.2 | 1.1 → 1.1 | 3.7 → 3.7 | 1.5 → 1.5 |
+| ILCE-6700 | 12.2 → 3.3 | 10.0 → 2.0 | 9.6 → 4.9 | 9.3 → 1.6 |
+| EOS RP | 5.0 → 1.6 | 7.5 → 6.5 | 9.2 → 9.1 | 7.0 → 5.4 |
+| X-A5 | 12.0 → 5.1 | 9.7 → 2.1 | 8.9 → 6.4 | 9.5 → 2.3 |
+| D70 | 5.2 → 5.5 | 8.3 → 1.9 | 11.3 → 6.2 | 8.7 → 4.8 |
+| E-1 | 7.1 → 5.6 | 2.1 → 0.9 | 5.1 → 5.9 | 3.4 → 3.0 |
+
+(Before, the ILCE-6700's and X-A5's Apple columns are a sidecar import, which kept As Shot, so the whole effect was the error; their Rust column is a preset applied, read as a shift around 6500 K.)
+
+What is left, and why a conversion cannot remove it:
+
+- **EOS RP, 5.5 at best.** Lightroom takes this raw from 4100 K to 5500 and 7500 K, 62 and 111 mired. Its picture
+  gets lighter and more saturated than ours as it warms (at 7500 K: L\* +4.0 and chroma +19.9 against +0.7 and
+  +15.4 at the best white of our scale), which no Kelvin or tint reaches, and neither does a lighter picture (Exposure
+  raised until the mean lightness matches leaves 6.5 at 5500 K and 9.4 at 7500 K, from 6.4 and 9.1): each colour moves
+  differently.
+  That is the renderer's white balance (`pipeline::local::wb_matrix_for`) against Lightroom's on a large step, to be
+  measured on its own; the small step (4000 K) is 1.6.
+- **The developed picture is adapted, not re-developed.** On the other five the tint that matches drifts with the
+  temperature step, by about −0.05 (the two Sonys) to −0.3 (E-1, X-A5, D70) tint units per mired, and the step that
+  matches is 15 % short (ILCE-6000) to 40 % long (E-1) at the far ends. Lightroom rebalances the raw in the camera's
+  own space; we adapt the developed picture from its as-shot white (Bradford). The floors are 2.3 to 3.4; the
+  conversion lands 0.1 (ILCE-6700) to 1.7 (X-A5) above them, most on the 4000 and 7500 K whites. A rule for the drift
+  from the camera's own data was tried (the colour Lightroom's white makes neutral, through typical matrices): it
+  gains 0.4 on the X-A5 and nothing elsewhere, so it is not in.
+- **Bodies nobody measured**: the Kelvin of a maker's presets is 2 % below to 6 % above Lightroom's from body to
+  body (Fujifilm's neutral pair 9 % below), so their Lightroom whites stay up to about 15 mired off until the body's
+  As Shot is read next to Lightroom's (one export of one raw is enough: `crs:Temperature` of an As Shot export).
+
 ## What is left (ΔE about 8 here)
 
 Measured on the render of the shipped build against the export, by lightness and by hue:
@@ -440,6 +543,7 @@ constants are the ones named above. To re-measure, render with the CLI as in *Me
 
 | Date | Change |
 |---|---|
+| 2026-11-23 | White balance written by Lightroom measured against its own As Shot on six cameras: the D70's as-shot white read, the ILCE-6700 and X-A5 on a Kelvin scale from their own presets, the EOS RP and X-A5 measured, a tint rule for preset scales (card #535) |
 | 2026-11-22 | Colour Grading, the Calibration primaries, Shadows Tint and Vibrance refitted on six cameras; the Phoenix 200 preset measured group by group; white balance, Point Color and Saturation measured (cards #386 / #388) |
 | 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
 | 2026-11-14 | positive Dehaze refitted, negative Dehaze checked at -50 and -100 (card #439); Calibration's Shadows Tint refitted; Colour Grading, HSL and Calibration checked against the exports there are |

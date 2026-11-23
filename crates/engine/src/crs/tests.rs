@@ -378,6 +378,28 @@ fn channel_curves_need_the_master_and_all_channel_curves() {
     assert!(["/curve/master", "/curve/red", "/curve/green", "/curve/blue"].iter().all(|p| all.pointer(p).is_some()), "{all}");
 }
 
+/// A sidecar's custom Kelvin on the ILCE-6700 and the X-A5 was dropped (the photo stayed As Shot) while they had no
+/// Kelvin scale; with their presets they have one, so the white is read, marked as Lightroom's and converted. A body
+/// that still has none keeps As Shot and says so.
+#[test]
+fn a_sidecar_custom_kelvin_is_kept_on_a_body_with_presets_and_reported_on_one_without_a_scale() {
+    use lightcraft_catalog::MediaKind;
+    let x = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+      crs:WhiteBalance="Custom" crs:Temperature="5500" crs:Tint="+10"/></rdf:RDF>"#;
+    for (format, camera, temp, tint) in [("ARW", "SONY ILCE-6700", 5500.0, 0.0), ("RAF", "FUJIFILM X-A5", 5500.0 * 0.913, 4.5)] {
+        let target = Target::for_file(MediaKind::Raw, format, false, camera);
+        assert_eq!(target, Target::RawAbsolute, "{camera}");
+        let (mut v, skipped) = to_partial_report(&props(x), None, target, 1.5);
+        assert!(skipped.iter().all(|s| !s.contains("Temperature")), "{camera}: {skipped:?}");
+        lightroom_white_to_dial(&mut v, camera);
+        assert_eq!(v["wb"], json!({"mode": "custom", "temp": temp, "tint": tint, "scale": "kelvin"}), "{camera}");
+    }
+    let target = Target::for_file(MediaKind::Raw, "ARW", false, "SONY ILCE-7M2");
+    let (v, skipped) = to_partial_report(&props(x), None, target, 1.5);
+    assert_eq!((target, &v["wb"]), (Target::RawRelative, &json!({"mode": "asShot"})));
+    assert!(skipped.iter().any(|s| s.contains("kept As Shot")), "{skipped:?}");
+}
+
 fn unmapped(x: &str) -> Vec<String> {
     to_partial_report(&props(x), None, Target::Any, 1.5).1
 }
@@ -395,7 +417,18 @@ fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
     let mut r6 = json!({"wb": {"mode": "custom", "temp": 5050.0, "tint": 27.0, "scale": "kelvin", "lightroom": true}});
     lightroom_white_to_dial(&mut r6, "Canon Canon EOS R6");
     assert_eq!(r6["wb"], json!({"mode": "custom", "temp": 5050.0 * 0.9, "tint": 22.5, "scale": "kelvin"}));
-    // a body nobody measured keeps the values as written, and the marker never stays
+    // the EOS RP, measured on the six-camera exports of card #535 (As Shot 4100 K / +25 in Lightroom, 3749 K / +22 here)
+    let mut rp = json!({"wb": {"mode": "custom", "temp": 5500.0, "tint": 10.0, "scale": "kelvin", "lightroom": true}});
+    lightroom_white_to_dial(&mut rp, "Canon Canon EOS RP");
+    assert_eq!(rp["wb"], json!({"mode": "custom", "temp": 5500.0 * 0.914, "tint": 7.0, "scale": "kelvin"}));
+    // a body whose scale is its own presets and that nobody measured (ILCE-6700, E-1): the same Kelvin, and Lightroom's
+    // tint counted from the daylight presets (10 lower)
+    for camera in ["SONY ILCE-6700", "OLYMPUS CORPORATION E-1"] {
+        let mut preset_dial = json!({"wb": {"mode": "custom", "temp": 5500.0, "tint": 10.0, "scale": "kelvin", "lightroom": true}});
+        lightroom_white_to_dial(&mut preset_dial, camera);
+        assert_eq!(preset_dial["wb"], json!({"mode": "custom", "temp": 5500.0, "tint": 0.0, "scale": "kelvin"}), "{camera}");
+    }
+    // a body read through measured matrices keeps the values as written, and the marker never stays
     let mut other = marked();
     lightroom_white_to_dial(&mut other, "Canon Canon EOS R5");
     assert_eq!(other["wb"], json!({"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin"}));
