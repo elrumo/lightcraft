@@ -47,6 +47,8 @@ mod errors;
 pub mod expand;
 pub mod export;
 pub mod face_download;
+#[cfg(not(target_arch = "wasm32"))]
+mod face_host;
 pub mod face_tiles;
 #[cfg(not(target_arch = "wasm32"))]
 mod faces_index;

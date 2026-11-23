@@ -9,6 +9,11 @@
 //! The **large** model ([`LARGE_DIR`]: AdamCodd's `vit-base-nsfw-detector`, Apache-2.0) is the same ViT-B/16
 //! trained on more pictures and reading 384×384 instead of 224×224. Installed, it is what `Auto` runs, on the
 //! CPU (int8); its scores are kept apart (its own [`LARGE_ENGINE`]), so a photo is checked again by it.
+//!
+//! A native frontend can run either itself ([`Nsfw::host`], [`crate::host`]): a Core ML conversion of each ([`HOST_ID`],
+//! [`LARGE_HOST_ID`], fp16) on the system's neural accelerator. On 34 photos their probabilities stayed within 0.0001
+//! (compact) and 0.0005 (large) of the fp32 models', none crossing the line that flags a photo, at 15 and 43 ms a photo on
+//! an M1 Max (card #516), so they keep the models' own scores.
 
 use std::path::Path;
 
@@ -36,6 +41,10 @@ pub const LARGE_DIR: &str = "large";
 const LARGE_SIDE: usize = 384;
 /// Largest photo accepted, in pixels.
 const MAX_PIXELS: usize = 64 << 20;
+/// The compact model's Core ML conversion, run by a native frontend (its id among the downloads).
+pub const HOST_ID: &str = "falconsai-nsfw-coreml";
+/// The large model's.
+pub const LARGE_HOST_ID: &str = "adamcodd-nsfw-384-coreml";
 
 /// Which weights to run: the user's choice.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -104,6 +113,11 @@ enum Backend {
     },
     #[cfg(feature = "siglip")]
     Gpu(gpu::Vit),
+    /// Run by a native frontend: the conversion's id and its folder.
+    Host {
+        model: &'static str,
+        dir: std::path::PathBuf,
+    },
 }
 
 /// Whether the large model's int8 file (the CPU's) is in `dir`.
@@ -183,6 +197,12 @@ impl Nsfw {
         Self::load_with(dir, Variant::Auto, Prefer::Auto)
     }
 
+    /// The large or the compact model run by a native frontend from the conversion in `dir` (nothing is loaded here).
+    pub fn host(dir: std::path::PathBuf, large: bool) -> Nsfw {
+        let (model, side, engine) = if large { (LARGE_HOST_ID, LARGE_SIDE, LARGE_ENGINE) } else { (HOST_ID, SIDE, ENGINE) };
+        Nsfw { backend: Backend::Host { model, dir }, side, engine }
+    }
+
     /// Loads the `model` named (see [`Model`]) with the weights `prefer` names (see [`Prefer`]).
     pub fn load_with(dir: &Path, model: Variant, prefer: Prefer) -> Result<Nsfw, Error> {
         if !is_model_dir(dir) {
@@ -240,6 +260,16 @@ impl Nsfw {
                     .map_err(|e| Error::Model(format!("sensitive-content model: {e}")))?;
                 out.first().and_then(|v| v.as_tensor_view::<f32>()).map(|t| t.to_vec()).unwrap_or_default()
             }
+            Backend::Host { model, dir } => crate::host::run(&crate::host::Request {
+                model,
+                dir,
+                function: None,
+                units: crate::host::Units::All,
+                inputs: &[crate::host::Input { name: "pixel_values", shape: vec![1, 3, self.side, self.side], data }],
+                output: "logits",
+                output_len: 2,
+            })
+            .map_err(|e| Error::Model(format!("sensitive-content model: {e}")))?,
         };
         if logits.len() == 2 { Ok(logits) } else { Err(Error::Model("the sensitive-content model's answer isn't two numbers".into())) }
     }
@@ -285,6 +315,7 @@ impl Classifier for Nsfw {
             Backend::Onnx { .. } => "cpu",
             #[cfg(feature = "siglip")]
             Backend::Gpu(_) => "gpu",
+            Backend::Host { .. } => "host",
         }
     }
     fn score(&self, img: &Rgba8) -> Result<f32, Error> {

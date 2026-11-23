@@ -153,6 +153,23 @@ struct Provider {
     /// A model the host supplied (tests, other hosts); otherwise SigLIP 2 is loaded from `dir`.
     injected: Option<Arc<dyn Embedder>>,
     dir: Option<PathBuf>,
+    /// The folder of the image tower's conversion a native frontend runs, when it does ([`SigLip::with_host_images`]).
+    host: Option<PathBuf>,
+}
+
+/// The session's models folder and the models turned off there, kept in step by [`Session::sync_host_models`]: for the
+/// models a native frontend runs in place of these ones (card #516).
+#[derive(Clone, Debug, Default)]
+pub struct HostModels {
+    pub root: Option<PathBuf>,
+    pub disabled: std::collections::BTreeSet<String>,
+}
+
+impl HostModels {
+    /// The folder of the frontend's model `id`, when a frontend runs models, it is downloaded and it is on.
+    pub fn dir(&self, id: &str) -> Option<PathBuf> {
+        crate::enhance::host_dir_in(self.root.as_deref(), &self.disabled, id)
+    }
 }
 
 /// How a worker thread gets the text reader.
@@ -174,6 +191,8 @@ struct FaceSpec {
 struct FinderProvider {
     injected: Option<Arc<dyn FaceEngine>>,
     dir: Option<PathBuf>,
+    /// The folders of the detector's and the recogniser's conversions a native frontend runs, when it does.
+    host: (Option<PathBuf>, Option<PathBuf>),
 }
 
 /// What worker threads and the session share.
@@ -516,6 +535,8 @@ pub struct Vision {
     pub sensitive_backend: String,
     /// Which model checks photos: `auto` (the large one when it is downloaded), `compact` or `large`.
     pub sensitive_model: String,
+    /// What runs in place of these models when a native frontend runs them.
+    pub host_models: HostModels,
 }
 
 impl Default for Vision {
@@ -540,6 +561,7 @@ impl Default for Vision {
             thin: false,
             unfit: None,
             text_edge: TEXT_EDGE,
+            host_models: HostModels::default(),
             injected: None,
             injected_reader: None,
             injected_finder: None,
@@ -1034,7 +1056,7 @@ impl Vision {
     /// can't be.
     fn finder_provider(&self) -> Result<(FinderProvider, String), String> {
         if let Some(f) = &self.injected_finder {
-            return Ok((FinderProvider { injected: Some(f.clone()), dir: None }, f.engine().to_string()));
+            return Ok((FinderProvider { injected: Some(f.clone()), dir: None, host: (None, None) }, f.engine().to_string()));
         }
         #[cfg(feature = "vision")]
         {
@@ -1047,7 +1069,19 @@ impl Vision {
                     FACE_BYTES as f64 / 1e6
                 ));
             }
-            Ok((FinderProvider { injected: None, dir: self.faces_dir() }, lightcraft_vision::faces::ENGINE.to_string()))
+            // (the frontend's twins only of the files they were converted from: the pinned downloads, known by their size)
+            let pinned = self.faces_dir().is_some_and(|d| {
+                lightcraft_vision::models::FACE_PARTS
+                    .iter()
+                    .flat_map(|p| p.files)
+                    .all(|f| std::fs::metadata(d.join(f.name)).is_ok_and(|m| Some(m.len()) == f.size))
+            });
+            let host = if pinned {
+                (self.host_models.dir(lightcraft_vision::faces::HOST_DETECTOR), self.host_models.dir(lightcraft_vision::faces::HOST_RECOGNISER))
+            } else {
+                (None, None)
+            };
+            Ok((FinderProvider { injected: None, dir: self.faces_dir(), host }, lightcraft_vision::faces::ENGINE.to_string()))
         }
         #[cfg(not(feature = "vision"))]
         Err("finding people in photos is not available in this build".into())
@@ -1067,7 +1101,7 @@ impl Vision {
     /// What the model is and how to reach it from a worker thread, or why it can't be.
     fn provider(&self) -> Result<(Provider, String, usize), String> {
         if let Some(m) = &self.injected {
-            return Ok((Provider { injected: Some(m.clone()), dir: None }, m.model_id().to_string(), m.dim()));
+            return Ok((Provider { injected: Some(m.clone()), dir: None, host: None }, m.model_id().to_string(), m.dim()));
         }
         #[cfg(feature = "vision")]
         {
@@ -1078,7 +1112,13 @@ impl Vision {
             if !self.installed() {
                 return Err(self.not_installed());
             }
-            Ok((Provider { injected: None, dir: self.dir.clone() }, lightcraft_vision::siglip::MODEL_ID.to_string(), lightcraft_vision::siglip::DIM))
+            // (the photos described by the frontend's image tower when it is here: the same vectors, card #516)
+            let host = self.host_models.dir(lightcraft_vision::siglip::HOST_ID);
+            Ok((
+                Provider { injected: None, dir: self.dir.clone(), host },
+                lightcraft_vision::siglip::MODEL_ID.to_string(),
+                lightcraft_vision::siglip::DIM,
+            ))
         }
         #[cfg(not(feature = "vision"))]
         Err("natural-language search is not available in this build".into())
@@ -1118,7 +1158,7 @@ fn acquire(shared: &Shared, provider: &Provider) -> Result<Arc<dyn Embedder>, St
         return Ok(m.clone());
     }
     shared.loading.store(true, Ordering::SeqCst);
-    let loaded = load_model(provider.dir.as_deref());
+    let loaded = load_model(provider.dir.as_deref(), provider.host.clone());
     shared.loading.store(false, Ordering::SeqCst);
     let m = loaded?;
     *slot = Some(m.clone());
@@ -1127,16 +1167,19 @@ fn acquire(shared: &Shared, provider: &Provider) -> Result<Arc<dyn Embedder>, St
     Ok(m)
 }
 
-fn load_model(dir: Option<&std::path::Path>) -> Result<Arc<dyn Embedder>, String> {
+fn load_model(dir: Option<&std::path::Path>, host: Option<PathBuf>) -> Result<Arc<dyn Embedder>, String> {
     #[cfg(feature = "vision")]
     {
         let dir = dir.ok_or("no folder is set for the search model")?;
         let model = guard::catch("loading the search model", || lightcraft_vision::siglip::SigLip::load(dir))?.map_err(|e| e.to_string())?;
-        Ok(Arc::new(model))
+        Ok(Arc::new(match host {
+            Some(h) => model.with_host_images(h),
+            None => model,
+        }))
     }
     #[cfg(not(feature = "vision"))]
     {
-        let _ = dir;
+        let _ = (dir, host);
         Err("natural-language search is not available in this build".into())
     }
 }
@@ -1255,7 +1298,7 @@ fn acquire_finder(shared: &Shared, provider: &FinderProvider) -> Result<Arc<dyn 
         return Ok(f.clone());
     }
     shared.loading.store(true, Ordering::SeqCst);
-    let loaded = load_finder(provider.dir.as_deref());
+    let loaded = load_finder(provider.dir.as_deref(), provider.host.clone());
     shared.loading.store(false, Ordering::SeqCst);
     let f = loaded?;
     *slot = Some(f.clone());
@@ -1264,16 +1307,16 @@ fn acquire_finder(shared: &Shared, provider: &FinderProvider) -> Result<Arc<dyn 
     Ok(f)
 }
 
-fn load_finder(dir: Option<&std::path::Path>) -> Result<Arc<dyn FaceEngine>, String> {
+fn load_finder(dir: Option<&std::path::Path>, host: (Option<PathBuf>, Option<PathBuf>)) -> Result<Arc<dyn FaceEngine>, String> {
     #[cfg(feature = "vision")]
     {
         let dir = dir.ok_or("no folder is set for the search models")?;
         let faces = guard::catch("loading the face models", || lightcraft_vision::faces::model::Faces::load(dir))?.map_err(|e| e.to_string())?;
-        Ok(Arc::new(faces))
+        Ok(Arc::new(faces.with_host(host.0, host.1)))
     }
     #[cfg(not(feature = "vision"))]
     {
-        let _ = dir;
+        let _ = (dir, host);
         Err("finding people in photos is not available in this build".into())
     }
 }
@@ -1734,6 +1777,7 @@ impl Session {
     /// Embed the library's photos that aren't in the index yet (`vision.index`): all of them, or
     /// `ids`. Runs on a thread (progress by [`IndexJob`], cancel by flag) or, with `wait`, here.
     pub fn vision_index(&mut self, ids: Option<Vec<PhotoId>>, wait: bool) -> std::result::Result<Value, String> {
+        self.sync_host_models();
         if self.vision.job.as_ref().is_some_and(|j| !j.finished.load(Ordering::Relaxed)) {
             return Err("photos are already being indexed".into());
         }
@@ -2049,7 +2093,16 @@ impl Session {
 
     /// Applies finished background work and unloads an idle model: call it often (the app does
     /// each frame). Cheap when nothing happened.
+    /// Give the vision models the enhancer's models folder and the models turned off there, for what a native frontend
+    /// runs in their place ([`HostModels`]).
+    pub(crate) fn sync_host_models(&mut self) {
+        if self.vision.host_models.root != self.enhancer.dir || self.vision.host_models.disabled != self.enhancer.disabled {
+            self.vision.host_models = HostModels { root: self.enhancer.dir.clone(), disabled: self.enhancer.disabled.clone() };
+        }
+    }
+
     pub fn vision_poll(&mut self) -> VisionPolled {
+        self.sync_host_models();
         let mut out = VisionPolled::default();
         while let Ok(done) = self.vision.results.1.try_recv() {
             // only the newest search counts: an older one is already out of date

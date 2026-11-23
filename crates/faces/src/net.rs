@@ -118,7 +118,17 @@ pub trait Accelerator: Send + Sync {
     fn run_program(&self, _program: &program::Program, _inputs: &[&[f32]]) -> std::result::Result<Option<Vec<Vec<Vec<f32>>>>, String> {
         Ok(None)
     }
+    /// It computes in half precision (a neural accelerator): [`Net::attach_checked`] then allows [`HALF_TOLERANCE`] and
+    /// judges each output against its range (at least 1) instead of its own largest value, which for a detector's scores
+    /// on a picture without faces is close to zero (the CPU's 0.00002 is half precision's 0).
+    fn half_precision(&self) -> bool {
+        false
+    }
 }
+
+/// How far a half-precision accelerator's outputs may stray from the CPU's on the test input, of their range (the face
+/// models' Core ML conversions stray 0.4 % to 0.7 %; an accelerator that is wrong strays far more, card #516).
+pub const HALF_TOLERANCE: f32 = 2e-2;
 
 /// A loaded network, ready to run.
 pub struct Net {
@@ -160,13 +170,14 @@ impl Net {
         let started = web_time::Instant::now();
         let cpu = self.run(probe.clone()).map_err(|e| e.to_string())?;
         let cpu_time = started.elapsed();
+        let (tolerance, floor) = if accelerator.half_precision() { (tolerance.max(HALF_TOLERANCE), 1.0) } else { (tolerance, 1e-6) };
         *self.accelerator.write().unwrap_or_else(PoisonError::into_inner) = Some(accelerator);
         // the first run also uploads the weights and builds the kernels: time a second one
         let fast = self.run(probe.clone()).map_err(|e| e.to_string());
         let mut verdict = match fast {
             Err(e) => Err(e),
             Ok(_) if self.accelerator().is_none() => Err("the device failed on the test input".into()),
-            Ok(fast) => agree(&cpu, &fast, tolerance),
+            Ok(fast) => agree(&cpu, &fast, tolerance, floor),
         };
         if verdict.is_ok() && require_faster {
             let started = web_time::Instant::now();
@@ -360,8 +371,8 @@ impl Net {
 }
 
 /// Whether two runs' outputs agree: same names and shapes, values within `tolerance` of each other relative to the
-/// output's largest magnitude.
-fn agree(a: &[(String, Tensor)], b: &[(String, Tensor)], tolerance: f32) -> std::result::Result<(), String> {
+/// output's largest magnitude, or to `floor` when that is smaller.
+fn agree(a: &[(String, Tensor)], b: &[(String, Tensor)], tolerance: f32, floor: f32) -> std::result::Result<(), String> {
     if a.len() != b.len() {
         return Err("the device gave a different number of outputs".into());
     }
@@ -369,7 +380,7 @@ fn agree(a: &[(String, Tensor)], b: &[(String, Tensor)], tolerance: f32) -> std:
         if name != other || x.shape != y.shape {
             return Err(format!("the device gave `{other}` a different shape"));
         }
-        let scale = x.data.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-6);
+        let scale = x.data.iter().fold(0f32, |m, v| m.max(v.abs())).max(floor);
         let worst = x.data.iter().zip(&y.data).fold(0f32, |m, (p, q)| m.max((p - q).abs()));
         if worst.is_nan() || worst > tolerance * scale {
             return Err(format!("the device's `{name}` differs from the CPU's by {:.2e} (of {scale:.2e})", worst));

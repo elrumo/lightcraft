@@ -10,6 +10,12 @@
 //! text tower reads its result from the last position.
 //!
 //! Outputs are raw (not unit length); the [`crate::EmbeddingIndex`] normalises what it stores.
+//!
+//! A native frontend can describe the photos itself ([`SigLip::with_host_images`], [`crate::host`]): a Core ML conversion
+//! of the image tower ([`HOST_ID`], fp16) on the system's neural accelerator, the text tower staying here. On 34 photos its
+//! vectors were at a cosine of 0.9994 or more to the fp32 model's; of 16 queries every one found the same best photo and
+//! 15 the same five (the other swapped two that tied within 0.0002), 15 ms a photo on an M1 Max (card #516), so the index
+//! keeps the vectors it has.
 
 use std::path::Path;
 
@@ -29,6 +35,8 @@ pub const MODEL_ID: &str = "siglip2-b16-224";
 pub const DIM: usize = 768;
 pub const WEIGHTS_FILE: &str = "model.safetensors";
 pub const TOKENIZER_FILE: &str = "tokenizer.json";
+/// The image tower's Core ML conversion, run by a native frontend (its id among the downloads).
+pub const HOST_ID: &str = "siglip2-b16-224-image-coreml";
 
 /// Side of the square model input.
 const SIDE: usize = 224;
@@ -73,6 +81,8 @@ pub struct SigLip {
     model: siglip::Model,
     tokenizer: Tokenizer,
     device: Device,
+    /// The image tower's conversion a native frontend runs, when it does ([`SigLip::with_host_images`]).
+    host_images: Option<std::path::PathBuf>,
 }
 
 impl SigLip {
@@ -91,7 +101,7 @@ impl SigLip {
         cfg.text_config.vocab_size = 256_000;
         let model = siglip::Model::new(&cfg, vb)?;
         let tokenizer = Tokenizer::from_file(dir.join(TOKENIZER_FILE)).map_err(|e| Error::Model(format!("{TOKENIZER_FILE}: {e}")))?;
-        let model = SigLip { model, tokenizer, device };
+        let model = SigLip { model, tokenizer, device, host_images: None };
         // On Metal the first text pass compiles the tower's kernels (~12 s, measured); do it here,
         // where loading already runs on a worker, so the first search is as fast as the rest.
         model.encode_text("")?;
@@ -100,6 +110,18 @@ impl SigLip {
 
     pub fn device(&self) -> &Device {
         &self.device
+    }
+
+    /// Have a native frontend describe the photos from now on, with the image tower's conversion in `dir` (the text tower
+    /// stays here). A photo it fails on is described here.
+    pub fn with_host_images(mut self, dir: std::path::PathBuf) -> SigLip {
+        self.host_images = Some(dir);
+        self
+    }
+
+    /// Whether a native frontend describes the photos.
+    pub fn host_images(&self) -> bool {
+        self.host_images.is_some()
     }
 
     /// The tokens the text tower reads for `text`: lower-cased, `<eos>`-terminated, padded or
@@ -138,6 +160,25 @@ impl SigLip {
     pub fn encode_images(&self, imgs: &[&Rgba8]) -> Result<Vec<Vec<f32>>, Error> {
         if imgs.is_empty() {
             return Ok(Vec::new());
+        }
+        if let Some(dir) = &self.host_images {
+            let on_host = imgs.iter().map(|img| {
+                let data = preprocess(img)?;
+                crate::host::run(&crate::host::Request {
+                    model: HOST_ID,
+                    dir,
+                    function: None,
+                    units: crate::host::Units::All,
+                    inputs: &[crate::host::Input { name: "pixel_values", shape: vec![1, 3, SIDE, SIDE], data: &data }],
+                    output: "embedding",
+                    output_len: DIM,
+                })
+                .map_err(Error::Model)
+            });
+            // (the frontend failing is no reason to fail the photos: they are described here instead)
+            if let Ok(rows) = on_host.collect::<Result<Vec<_>, Error>>() {
+                return Ok(rows);
+            }
         }
         let mut all = Vec::with_capacity(imgs.len() * 3 * SIDE * SIDE);
         for img in imgs {

@@ -87,7 +87,8 @@ pub(crate) fn detector(s: &Session) -> std::result::Result<Arc<Detector>, NoDete
     #[cfg(not(target_arch = "wasm32"))]
     {
         let net = d.clone();
-        offer_gpu(s, "detection", move |gpu| net.accelerate(gpu, true));
+        let twin = crate::face_host::twin(s, Some(&crate::profile_db::sha256_hex(&bytes)));
+        offer_gpu(s, "detection", twin, move |gpu| net.accelerate(gpu, true));
     }
     *loaded = Some((path, d.clone()));
     Ok(d)
@@ -127,11 +128,13 @@ pub(crate) fn cpu_only(s: &Session) -> bool {
 
 /// Check in the background whether the GPU runs a face model faster than the CPU and gives its results; the model
 /// runs on the CPU meanwhile, and stays there when the GPU is off, missing, wrong or slower, or the user chose the CPU.
-/// The check shows in the activity stack while it runs.
+/// The check shows in the activity stack while it runs. `twin`: the frontend's conversion of the model
+/// (`crate::face_host`), checked in place of the GPU when there is one (under the same activity row).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn offer_gpu(
     s: &Session,
     what: &'static str,
+    twin: Option<Arc<dyn lightcraft_faces::net::Accelerator>>,
     attach: impl FnOnce(Arc<dyn lightcraft_faces::net::Accelerator>) -> std::result::Result<(), String> + Send + 'static,
 ) {
     if cpu_only(s) {
@@ -143,7 +146,8 @@ pub(crate) fn offer_gpu(
     set_gpu_state(what, GpuState { checking: true, ..GpuState::default() });
     let spawned = std::thread::Builder::new().name(format!("faces-gpu-{what}")).spawn(move || {
         let _task = task;
-        let gpu = match lightcraft_gpu::faces::accelerator() {
+        let gpu = match twin.map(Ok).unwrap_or_else(|| lightcraft_gpu::faces::accelerator().map(|g| g as Arc<dyn lightcraft_faces::net::Accelerator>))
+        {
             Ok(gpu) => gpu,
             Err(why) => {
                 log::info!("faces: {what} runs on the CPU ({why})");
@@ -191,10 +195,17 @@ fn gpu(s: &mut Session, p: &Value) -> Result<Value> {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 if let Some(d) = detector {
-                    offer_gpu(s, "detection", move |gpu| d.accelerate(gpu, true));
+                    // (the frontend's twin only of the file it was converted from)
+                    let file = LOADED.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map(|(p, _)| p.clone());
+                    let sha = file.and_then(|f| std::fs::read(f).ok()).map(|b| crate::profile_db::sha256_hex(&b));
+                    let twin = crate::face_host::twin(s, sha.as_deref());
+                    offer_gpu(s, "detection", twin, move |gpu| d.accelerate(gpu, true));
                 }
                 if let Some(e) = embedder {
-                    offer_gpu(s, "recognition", move |gpu| e.accelerate(gpu, true).map_err(|e| e.to_string()));
+                    // (the tag is `id@sha256` of the model's file)
+                    let sha = s.faces.embedder.as_ref().and_then(|(tag, _)| tag.rsplit_once('@').map(|(_, sha)| sha.to_string()));
+                    let twin = crate::face_host::twin(s, sha.as_deref());
+                    offer_gpu(s, "recognition", twin, move |gpu| e.accelerate(gpu, true).map_err(|e| e.to_string()));
                 }
             }
         }

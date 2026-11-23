@@ -80,6 +80,12 @@ pub struct Enhancer {
     fetching: std::sync::Mutex<Option<&'static str>>,
 }
 
+/// [`Enhancer::host_dir`] for the models folder `root` and the models turned off there.
+pub fn host_dir_in(root: Option<&std::path::Path>, disabled: &std::collections::BTreeSet<String>, id: &str) -> Option<PathBuf> {
+    let dir = root?.join(id);
+    (lightcraft_vision::host::available() && !disabled.contains(id) && Enhancer::installed_at(&dir, id)).then_some(dir)
+}
+
 impl Enhancer {
     /// Whether this build can enlarge photos at all.
     pub const AVAILABLE: bool = cfg!(feature = "enhance");
@@ -117,16 +123,27 @@ impl Enhancer {
     /// Whether the model's files are in place, in every folder it has (a hand-placed file is
     /// checked when it is loaded).
     pub fn installed(&self, id: &str) -> bool {
+        self.model_dir(id).is_some_and(|dir| Self::installed_at(&dir, id))
+    }
+
+    /// [`Enhancer::installed`] for the folder `dir` of model `id`.
+    pub fn installed_at(dir: &std::path::Path, id: &str) -> bool {
         #[cfg(feature = "enhance")]
-        if let (Some(dir), Ok(spec)) = (self.model_dir(id), Self::spec(id)) {
+        if let Ok(spec) = Self::spec(id) {
             let ok = |d: &std::path::Path, f: &lightcraft_fetch::FileSpec<'_>| {
                 std::fs::metadata(d.join(f.name)).is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= f.max)
             };
             let parts = spec.parts();
             return !parts.is_empty() && parts.iter().all(|p| p.files.iter().all(|f| ok(&dir.join(p.dir), f)));
         }
-        let _ = id;
+        let _ = (dir, id);
         false
+    }
+
+    /// The folder of model `id` when it is one a native frontend runs in place of the engine's own
+    /// ([`lightcraft_vision::host`]): a frontend runs models now, it is downloaded and it is on.
+    pub fn host_dir(&self, id: &str) -> Option<PathBuf> {
+        host_dir_in(self.dir.as_deref(), &self.disabled, id)
     }
 
     /// The model's first (for these models: only) file.

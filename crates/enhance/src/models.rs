@@ -402,9 +402,205 @@ pub const DEPTH_COREML: ModelSpec = ModelSpec {
     restricted: false,
 };
 
+/// Falconsai's sensitive-content classifier (`lightcraft_vision::nsfw`, a ViT-B/16 at 224 px) converted to Core ML
+/// (`tools/coreml/convert_vision.py` in the native frontend's repository: fp16, the logits out) for a frontend that runs it
+/// on its neural accelerator (`Nsfw::host`, card #516). On 34 photos its probability stayed within 0.0001 of the fp32
+/// model's (15 ms a photo on an M1 Max), so its scores are the model's own (`falconsai-nsfw`) and nothing is checked again.
+pub const NSFW_COREML: ModelSpec = ModelSpec {
+    id: "falconsai-nsfw-coreml",
+    label: "Falconsai NSFW (Core ML)",
+    purpose: "Sensitive Content: photos checked by this device's own machine-learning hardware (the quickest, for a fraction of the energy)",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("4bd1b4d978b81c3805febbb25389124c74a93bfaed8ad4fa567c5cc6e35eeb7f"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(132_728),
+            sha256: Some("fc35f829f00c728caee7cfd6c155ceea421c174ad62361e8727077f063d3253b"),
+            max: 132_728,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(171_613_184),
+            sha256: Some("244aa506b0bff91c8f976e5c89527660a97385dc1a0d9ac079cddb4803c5558a"),
+            max: 171_613_184,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_NSFW_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: "Apache License 2.0",
+    licence_url: "https://huggingface.co/Falconsai/nsfw_image_detection",
+    credit: "Falconsai",
+    home_url: "https://huggingface.co/Falconsai/nsfw_image_detection",
+    diffusion: None,
+    restricted: false,
+};
+
+/// AdamCodd's larger sensitive-content classifier (384 px) converted likewise: within 0.0005 of the fp32 model's
+/// probability on 34 photos, 43 ms a photo; its scores are the model's own (`adamcodd-nsfw-384`).
+pub const NSFW_LARGE_COREML: ModelSpec = ModelSpec {
+    id: "adamcodd-nsfw-384-coreml",
+    label: "AdamCodd NSFW 384 (Core ML)",
+    purpose: "Sensitive Content, more accurate: photos checked by this device's own machine-learning hardware",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("ed6a0b03cf1d663e8cca264abcef22859e97c1622cd48c9a2563429ce94bada5"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(132_728),
+            sha256: Some("71e2b30754658586735bb68a239b1782e79b61d01e96ccc540ffae308df8542a"),
+            max: 132_728,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(172_196_864),
+            sha256: Some("b8446884bfb8ab757bf3c06ad8e1ab11ece61c61208ae965abde2c9b619c61ee"),
+            max: 172_196_864,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_NSFW_LARGE_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: "Apache License 2.0",
+    licence_url: "https://huggingface.co/AdamCodd/vit-base-nsfw-detector",
+    credit: "AdamCodd",
+    home_url: "https://huggingface.co/AdamCodd/vit-base-nsfw-detector",
+    diffusion: None,
+    restricted: false,
+};
+
+/// SigLIP 2 B/16's image tower converted likewise, for indexing photos for search beside the full model (whose text
+/// tower reads the queries): on 34 photos its embeddings were at a cosine of 0.9994 or more to the fp32 model's, every
+/// one of 16 queries found the same best photo and 15 the same five (the other swapped two that tied within 0.0002),
+/// 15 ms a photo; the index keeps the vectors it has (`siglip2-b16-224`).
+pub const SIGLIP_IMAGE_COREML: ModelSpec = ModelSpec {
+    id: "siglip2-b16-224-image-coreml",
+    label: "SigLIP 2 image encoder (Core ML)",
+    purpose: "Search: photos described by this device's own machine-learning hardware (with SigLIP 2, which reads the queries)",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("51ffc716f8745542d3f192ab2bf0794c7f66467ecc382da45e033aaf06256940"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(143_280),
+            sha256: Some("abec5fba08db1fa73417572080eaec034315898a9c3f0d57b54d0ec8917c1f98"),
+            max: 143_280,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(184_600_640),
+            sha256: Some("3bec6f05f9ee51d1285ed0b97aa0fde6e912bdf4eb308f17ba3bb00f1824a0ac"),
+            max: 184_600_640,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_SIGLIP_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: "Apache License 2.0",
+    licence_url: "https://huggingface.co/google/siglip2-base-patch16-224",
+    credit: "Google",
+    home_url: "https://huggingface.co/google/siglip2-base-patch16-224",
+    diffusion: None,
+    restricted: false,
+};
+
+/// The YuNet face detector converted likewise (`tools/coreml/convert_faces.py`: its twelve outputs one after another),
+/// run in place of the interpreter's kernels for the pinned YuNet: over 44 photos it found the same 109 of 110 faces
+/// (the other sat on the score line), boxes within 1.7 pixels of the 640 square, 9 ms a photo.
+pub const YUNET_COREML: ModelSpec = ModelSpec {
+    id: "yunet-2023mar-coreml",
+    label: "YuNet face detector (Core ML)",
+    purpose: "People: faces found by this device's own machine-learning hardware (with YuNet)",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("0ad9c2fa85ffde3b68e175fcdee84da8a4c9b7da718b525e8a6c10a648c9633c"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(86_370),
+            sha256: Some("3aa1abd36d74f135f8be81ad4029b6ac06899c1ee985a400fb50a91db5e5e43e"),
+            max: 86_370,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(112_020),
+            sha256: Some("d6296bc3ae3048bf3815ef7df8ee934fde48018276c0b2278f93ba359556103b"),
+            max: 112_020,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_YUNET_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: "MIT License",
+    licence_url: "https://huggingface.co/opencv/face_detection_yunet",
+    credit: "Shiqi Yu",
+    home_url: "https://huggingface.co/opencv/face_detection_yunet",
+    diffusion: None,
+    restricted: false,
+};
+
+/// The SFace face recogniser converted likewise, for the pinned SFace: its embeddings at a cosine of 0.99998 to the CPU's
+/// (3 of 5,886 pairs of faces moved across the same-person line, all on it), 4 ms a face.
+pub const SFACE_COREML: ModelSpec = ModelSpec {
+    id: "sface-2021dec-coreml",
+    label: "SFace face recogniser (Core ML)",
+    purpose: "People: faces told apart by this device's own machine-learning hardware (with SFace)",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("7841bb8e31615d92cb6d7f376362819e6c01af2acece01f6006162db10e56ae8"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(53_315),
+            sha256: Some("8d73c36f525578dd6db37b262f8b718400745b40dc3fe655fdc562679ede10d8"),
+            max: 53_315,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(19_296_256),
+            sha256: Some("da6e1df3d429ce35e63cca8e4d8cc1b977545e46dd52333a8ff9238d96e04b95"),
+            max: 19_296_256,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_SFACE_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: "Apache License 2.0",
+    licence_url: "https://huggingface.co/opencv/face_recognition_sface",
+    credit: "BUPT",
+    home_url: "https://huggingface.co/opencv/face_recognition_sface",
+    diffusion: None,
+    restricted: false,
+};
+
 /// Models the engine downloads but never runs: a frontend runs them (Core ML) and lists them in its open options
 /// (`hostModels`), with where to download them. Elsewhere they are not offered.
-pub const HOST_RUN: &[&str] = &[DDCOLOR_TINY.id, DDCOLOR_LARGE.id, DDCOLOR_ARTISTIC.id, MIGAN_COREML.id, DEPTH_COREML.id];
+pub const HOST_RUN: &[&str] = &[
+    DDCOLOR_TINY.id,
+    DDCOLOR_LARGE.id,
+    DDCOLOR_ARTISTIC.id,
+    MIGAN_COREML.id,
+    DEPTH_COREML.id,
+    NSFW_COREML.id,
+    NSFW_LARGE_COREML.id,
+    SIGLIP_IMAGE_COREML.id,
+    YUNET_COREML.id,
+    SFACE_COREML.id,
+];
 
 /// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's, as are the
 /// Core ML conversions).
@@ -425,6 +621,11 @@ pub const ALL: &[&ModelSpec] = &[
     &DDCOLOR_ARTISTIC,
     &MIGAN_COREML,
     &DEPTH_COREML,
+    &NSFW_COREML,
+    &NSFW_LARGE_COREML,
+    &SIGLIP_IMAGE_COREML,
+    &YUNET_COREML,
+    &SFACE_COREML,
 ];
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &SURFACE, &SD15, &KANDINSKY, &SDXL];

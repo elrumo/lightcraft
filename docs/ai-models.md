@@ -90,6 +90,23 @@ on an M1 Max against rten's 0.40 s and 4.5 J) and Depth Anything 3 Small as `dep
 on the Neural Engine). Both are listed in `crates/enhance`'s `HOST_RUN` and downloaded from the frontend's own mirror with
 their licence text beside them; `fast_painter` and the depth model's `auto` choice prefer them once downloaded.
 
+**And the per-photo models, 2026-11-23** (card #516), all fp16 on the Neural Engine, each checked against its fp32
+original on photos before it was pinned:
+- the sensitive-content classifiers, `falconsai-nsfw-coreml` and `adamcodd-nsfw-384-coreml` (`Nsfw::host`): on 34 photos
+  their probability stayed within 0.0001 and 0.0005 of the fp32 models' and none crossed the line that flags a photo, 15
+  and 43 ms a photo on an M1 Max. They keep the models' own scores and stand in for their files on the automatic choice
+  of weights;
+- SigLIP 2's image tower, `siglip2-b16-224-image-coreml` (`SigLip::with_host_images`), beside the full model, whose text
+  tower reads the queries: its vectors at a cosine of 0.9994 or more; of 16 queries every one found the same best photo
+  and 15 the same five (the other swapped two that tied within 0.0002); 15 ms a photo. The index keeps the vectors it has;
+- YuNet and SFace, `yunet-2023mar-coreml` and `sface-2021dec-coreml`, only for the files they were converted from: in
+  People's index (`Faces::with_host`, in place of rten; a photo the frontend fails on is read on rten) and in
+  `faces.detect` (`crates/engine/src/face_host.rs`, through the face nets' accelerator seam, so the interpreter still
+  checks them against the CPU at half precision's tolerance, `HALF_TOLERANCE`, and falls back on the first error). Over
+  44 photos the same 109 of
+  110 faces (the other sat on the score line), boxes within 1.7 pixels of the 640 square; the embeddings at a cosine of
+  0.99998 (3 of 5,886 pairs of faces moved across SFace's same-person line, all on it); 9 ms a photo and 4 ms a face.
+
 Verdict: **go** for Core ML on the GPU as a faster backend for both models (and LaMa on iPhone), after an iPhone
 timing. Not scheduled.
 

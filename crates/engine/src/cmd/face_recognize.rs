@@ -395,7 +395,8 @@ mod imp {
         }
         let embedder = Arc::new(Embedder::load(&dir.join(&id).join("model.onnx"), &installed.manifest).map_err(|e| bad(cmd, e.to_string()))?);
         let net = embedder.clone();
-        super::super::face_detect::offer_gpu(s, "recognition", move |gpu| net.accelerate(gpu, true).map_err(|e| e.to_string()));
+        let twin = crate::face_host::twin(s, installed.manifest.sha256.as_deref());
+        super::super::face_detect::offer_gpu(s, "recognition", twin, move |gpu| net.accelerate(gpu, true).map_err(|e| e.to_string()));
         let dim = match installed.manifest.output {
             lightcraft_faces::OutputSpec::Embedding { dim } => dim as usize,
             _ => return Err(bad(cmd, "the chosen model is not a recognition model")),

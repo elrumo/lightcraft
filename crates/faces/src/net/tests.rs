@@ -172,6 +172,34 @@ fn an_accelerator_is_used_only_when_it_agrees_with_the_cpu() {
     assert_eq!(net.run(x).unwrap(), cpu);
 }
 
+/// [`Fake`] saying it computes in half precision, or not.
+struct Half(Fake, bool);
+impl Accelerator for Half {
+    fn device(&self) -> String {
+        "half test".into()
+    }
+    fn conv(&self, j: &ConvJob) -> std::result::Result<Option<Vec<f32>>, String> {
+        self.0.conv(j)
+    }
+    fn half_precision(&self) -> bool {
+        self.1
+    }
+}
+
+#[test]
+fn a_half_precision_accelerator_is_judged_by_its_outputs_range_and_a_wrong_one_still_is_not_used() {
+    let (g, x) = two_convs();
+    let net = Net::new(g).unwrap();
+    let close = |half| Arc::new(Half(Fake { skew: 0.002, fail_after: usize::MAX.into() }, half));
+    // half precision's rounding: too far for a full-precision device, fine for a half-precision one
+    assert!(net.attach_checked(close(false), &x, 1e-4, false).is_err());
+    net.attach_checked(close(true), &x, 1e-4, false).unwrap();
+    assert!(net.accelerator().is_some());
+    let wrong = Arc::new(Half(Fake { skew: 0.5, fail_after: usize::MAX.into() }, true));
+    assert!(net.attach_checked(wrong, &x, 1e-4, false).is_err());
+    assert!(net.accelerator().is_none());
+}
+
 #[test]
 fn a_failing_accelerator_falls_back_to_the_cpu_mid_run() {
     let (g, x) = two_convs();
@@ -341,7 +369,7 @@ fn a_program_of_every_operator_gives_what_the_interpreter_gives() {
     net.detach();
     for (x, got) in inputs.into_iter().zip(&together) {
         let want = net.run(x).unwrap();
-        agree(&want, got, 1e-5).unwrap();
+        agree(&want, got, 1e-5, 1e-6).unwrap();
     }
     assert_eq!(cpu.len(), 2);
 }

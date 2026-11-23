@@ -151,13 +151,7 @@ impl Session {
     /// The folder of Depth Anything 3 Small in the frontend's format, when a frontend runs models, it is downloaded and
     /// on, and the choice is automatic: it estimates for a fraction of the energy ([`lightcraft_depth::HOST_ID`]).
     fn depth_host_dir(&self) -> Option<std::path::PathBuf> {
-        let id = lightcraft_depth::HOST_ID;
-        (self.depth_backend() == "auto"
-            && lightcraft_vision::host::available()
-            && !self.enhancer.disabled.contains(id)
-            && self.enhancer.installed(id))
-        .then(|| self.enhancer.model_dir(id))
-        .flatten()
+        (self.depth_backend() == "auto").then(|| self.enhancer.host_dir(lightcraft_depth::HOST_ID)).flatten()
     }
 
     /// Whether depth can be estimated now: the model is loaded, or a file of it is in place, and the

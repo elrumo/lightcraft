@@ -26,6 +26,11 @@ pub const DIM: usize = 128;
 pub const DETECTOR_FILE: &str = "face_detection_yunet_2023mar.onnx";
 /// The recogniser's file in the model folder.
 pub const RECOGNISER_FILE: &str = "face_recognition_sface_2021dec.onnx";
+/// The detector's Core ML conversion, run by a native frontend (its id among the downloads): its twelve outputs one after
+/// another, in the ONNX graph's order.
+pub const HOST_DETECTOR: &str = "yunet-2023mar-coreml";
+/// The recogniser's.
+pub const HOST_RECOGNISER: &str = "sface-2021dec-coreml";
 /// Most faces kept from one photo.
 pub const MAX_FACES: usize = 64;
 

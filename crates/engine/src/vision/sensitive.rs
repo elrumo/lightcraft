@@ -54,6 +54,8 @@ pub(super) struct ClassifierProvider {
     backend: String,
     /// The user's choice of model (`auto`, `compact`, `large`).
     model: String,
+    /// The frontend's conversion that checks photos instead, when it does: its folder, and whether it is the large model's.
+    host: Option<(PathBuf, bool)>,
 }
 
 /// What the list of possibly sensitive photos was worked out from (the library, the scores here, the server's).
@@ -98,9 +100,9 @@ impl Vision {
         (cfg!(feature = "vision") && !self.thin) || self.injected_classifier.is_some()
     }
 
-    /// Whether the classifier's file is in place.
+    /// Whether the classifier's file is in place (or the frontend's conversion of it).
     pub fn sensitive_installed(&self) -> bool {
-        if self.injected_classifier.is_some() {
+        if self.injected_classifier.is_some() || self.sensitive_host().is_some() {
             return true;
         }
         #[cfg(feature = "vision")]
@@ -149,6 +151,25 @@ impl Vision {
             return dir.join(lightcraft_vision::nsfw::GPU_WEIGHTS_FILE).is_file();
         }
         false
+    }
+
+    /// The frontend's conversion of the model that checks photos (the user's, or the large one when `auto` and either of
+    /// its files is here), when the weights are the automatic choice and it is downloaded and on: its folder, and whether it
+    /// is the large model's. It gives the model's own scores, so it stands in for the model's files (card #516).
+    pub(super) fn sensitive_host(&self) -> Option<(PathBuf, bool)> {
+        #[cfg(feature = "vision")]
+        if self.sensitive_backend == "auto" {
+            use lightcraft_vision::nsfw::{self, Variant};
+            let large = match Variant::from_name(&self.sensitive_model).unwrap_or_default() {
+                Variant::Large => true,
+                Variant::Compact => false,
+                Variant::Auto => {
+                    self.sensitive_dir().is_some_and(|d| nsfw::large_installed(&d)) || self.host_models.dir(nsfw::LARGE_HOST_ID).is_some()
+                }
+            };
+            return self.host_models.dir(if large { nsfw::LARGE_HOST_ID } else { nsfw::HOST_ID }).map(|d| (d, large));
+        }
+        None
     }
 
     /// Checking photos is wanted (the user's choice) and this device can do it.
@@ -372,6 +393,8 @@ impl Vision {
             "largeInstalled": self.sensitive_large_installed() || self.sensitive_large_gpu_installed(),
             "largeCpuInstalled": self.sensitive_large_installed(),
             "largeGpuInstalled": self.sensitive_large_gpu_installed(),
+            // (the frontend's conversion, which checks photos in place of the files above once it is here)
+            "hostInstalled": self.sensitive_host().is_some(),
         })
     }
 
@@ -400,7 +423,7 @@ impl Vision {
     pub(super) fn classifier_provider(&self) -> Result<(ClassifierProvider, String), String> {
         if let Some(c) = &self.injected_classifier {
             return Ok((
-                ClassifierProvider { injected: Some(c.clone()), dir: None, backend: String::new(), model: String::new() },
+                ClassifierProvider { injected: Some(c.clone()), dir: None, backend: String::new(), model: String::new(), host: None },
                 c.engine().to_string(),
             ));
         }
@@ -416,13 +439,18 @@ impl Vision {
                 ));
             }
             let model = lightcraft_vision::nsfw::Variant::from_name(&self.sensitive_model).unwrap_or_default();
-            let engine = self.sensitive_dir().map_or(lightcraft_vision::nsfw::ENGINE, |d| lightcraft_vision::nsfw::engine_for(&d, model));
+            let host = self.sensitive_host();
+            let engine = match &host {
+                Some((_, large)) => host_engine(*large),
+                None => self.sensitive_dir().map_or(lightcraft_vision::nsfw::ENGINE, |d| lightcraft_vision::nsfw::engine_for(&d, model)),
+            };
             Ok((
                 ClassifierProvider {
                     injected: None,
                     dir: self.sensitive_dir(),
                     backend: self.sensitive_backend.clone(),
                     model: self.sensitive_model.clone(),
+                    host,
                 },
                 engine.to_string(),
             ))
@@ -439,11 +467,17 @@ pub(super) fn acquire_classifier(shared: &Shared, provider: &ClassifierProvider)
         return Ok(c.clone());
     }
     let mut slot = shared.classifier.lock().unwrap_or_else(PoisonError::into_inner);
-    // (a model downloaded or deleted since it was loaded changes which one `Auto` runs)
+    // (a model downloaded or deleted since it was loaded changes which one `Auto` runs, and the frontend's conversion
+    // takes over from the model's own files once it is here)
     #[cfg(feature = "vision")]
-    if let (Some(c), Some(dir)) = (slot.as_ref(), provider.dir.as_deref()) {
+    if let Some(c) = slot.as_ref() {
         let model = lightcraft_vision::nsfw::Variant::from_name(&provider.model).unwrap_or_default();
-        if c.engine() != lightcraft_vision::nsfw::engine_for(dir, model) {
+        let engine = match (&provider.host, provider.dir.as_deref()) {
+            (Some((_, large)), _) => Some(host_engine(*large)),
+            (None, Some(dir)) => Some(lightcraft_vision::nsfw::engine_for(dir, model)),
+            (None, None) => None,
+        };
+        if engine.is_some_and(|e| c.engine() != e) || provider.host.is_some() != (c.backend() == "host") {
             *slot = None;
         }
     }
@@ -452,7 +486,7 @@ pub(super) fn acquire_classifier(shared: &Shared, provider: &ClassifierProvider)
         return Ok(c.clone());
     }
     shared.loading.store(true, Ordering::SeqCst);
-    let loaded = load_classifier(provider.dir.as_deref(), &provider.model, &provider.backend);
+    let loaded = load_classifier(provider.dir.as_deref(), &provider.model, &provider.backend, provider.host.clone());
     shared.loading.store(false, Ordering::SeqCst);
     let c = loaded?;
     *slot = Some(c.clone());
@@ -461,9 +495,18 @@ pub(super) fn acquire_classifier(shared: &Shared, provider: &ClassifierProvider)
     Ok(c)
 }
 
-fn load_classifier(dir: Option<&std::path::Path>, model: &str, backend: &str) -> Result<Arc<dyn Classifier>, String> {
+/// The scores' id of the frontend's conversion: the model's own.
+#[cfg(feature = "vision")]
+fn host_engine(large: bool) -> &'static str {
+    if large { lightcraft_vision::nsfw::LARGE_ENGINE } else { lightcraft_vision::nsfw::ENGINE }
+}
+
+fn load_classifier(dir: Option<&std::path::Path>, model: &str, backend: &str, host: Option<(PathBuf, bool)>) -> Result<Arc<dyn Classifier>, String> {
     #[cfg(feature = "vision")]
     {
+        if let Some((d, large)) = host {
+            return Ok(Arc::new(lightcraft_vision::nsfw::Nsfw::host(d, large)));
+        }
         let dir = dir.ok_or("no folder is set for the search models")?;
         let prefer = lightcraft_vision::nsfw::Prefer::from_name(backend).unwrap_or_default();
         let which = lightcraft_vision::nsfw::Variant::from_name(model).unwrap_or_default();
@@ -473,7 +516,7 @@ fn load_classifier(dir: Option<&std::path::Path>, model: &str, backend: &str) ->
     }
     #[cfg(not(feature = "vision"))]
     {
-        let _ = (dir, model, backend);
+        let _ = (dir, model, backend, host);
         Err("checking photos for sensitive content is not available in this build".into())
     }
 }
@@ -747,5 +790,48 @@ mod backend_tests {
         assert!(ids.iter().any(|i| i == "nsfw-large"), "the large model is always listed: {ids:?}");
         assert_eq!((st["largeInstalled"].as_bool(), st["largeGpuInstalled"].as_bool()), (Some(false), Some(false)));
         assert_eq!(ids.iter().any(|i| i == "nsfw-large-gpu"), s.vision.sensitive_gpu_available(), "{ids:?}");
+    }
+
+    /// A native frontend's conversion checks photos by itself, with the model's own scores, on the automatic choice of
+    /// weights only (card #516). (One test: the runner is process-wide.)
+    #[cfg(feature = "vision")]
+    #[test]
+    fn a_frontends_conversion_checks_photos_with_the_models_own_scores() {
+        use lightcraft_vision::host::{Request, set_runner};
+        use lightcraft_vision::nsfw::HOST_ID;
+        let root = std::env::temp_dir().join(format!("lc-sensitive-host-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(HOST_ID)).unwrap();
+        for f in ["Manifest.json", "model.mlmodel", "weight.bin"] {
+            std::fs::write(root.join(HOST_ID).join(f), b"x").unwrap();
+        }
+        let mut s = Session::new();
+        // (none of the model's own files)
+        s.vision.dir = Some(root.join("vision"));
+        s.enhancer.dir = Some(root.clone());
+        // (offered, as the app's `hostModels` does)
+        s.enhancer.host_models.insert(HOST_ID.into(), Vec::new());
+        s.sync_host_models();
+        set_runner(None);
+        assert!(!s.vision.sensitive_installed(), "no frontend runs models");
+        set_runner(Some(std::sync::Arc::new(|r: &Request<'_>| {
+            assert_eq!((r.model, r.output, r.inputs[0].shape.as_slice()), (HOST_ID, "logits", &[1, 3, 224, 224][..]));
+            Ok(vec![0.0, 5.0])
+        })));
+        assert!(s.vision.sensitive_installed(), "the conversion stands in for the model's files");
+        assert_eq!(s.vision.sensitive_backend_status()["hostInstalled"], true);
+        let (provider, engine) = s.vision.classifier_provider().unwrap();
+        assert_eq!(engine, "falconsai-nsfw", "the model's own scores");
+        let c = super::acquire_classifier(&s.vision.shared, &provider).unwrap();
+        assert_eq!(c.backend(), "host");
+        let photo = lightcraft_raster::Image { width: 6, height: 4, data: vec![[200u8, 120, 60, 255]; 24] };
+        assert!((c.score(&photo).unwrap() - 0.99331).abs() < 1e-4);
+        // turned off, or other weights chosen: the model's own files again (none here)
+        s.execute("models.setEnabled", &json!({"id": HOST_ID, "enabled": false})).unwrap();
+        assert!(!s.vision.sensitive_installed());
+        s.execute("models.setEnabled", &json!({"id": HOST_ID, "enabled": true})).unwrap();
+        s.vision.set_sensitive_backend("cpu").unwrap();
+        assert!(!s.vision.sensitive_installed());
+        set_runner(None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

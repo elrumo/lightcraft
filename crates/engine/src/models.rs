@@ -644,6 +644,7 @@ impl Session {
         } else {
             self.enhancer.disabled.insert(id.to_string());
         }
+        self.sync_host_models();
         Ok(())
     }
 
@@ -667,5 +668,6 @@ impl Session {
         }
         #[cfg(not(feature = "enhance"))]
         self.enhancer.disabled.clear();
+        self.sync_host_models();
     }
 }

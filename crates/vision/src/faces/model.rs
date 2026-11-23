@@ -85,6 +85,9 @@ impl Net {
 pub struct Faces {
     det: Net,
     rec: Net,
+    /// The folders of the detector's and the recogniser's conversions a native frontend runs, when it does
+    /// ([`Faces::with_host`]).
+    host: (Option<std::path::PathBuf>, Option<std::path::PathBuf>),
 }
 
 /// Whether `dir` holds the files [`Faces::load`] reads.
@@ -102,9 +105,41 @@ impl Faces {
         let det = Net::load(read(DETECTOR_FILE)?, "face detector", &names)?;
         // (SFace's export needs a few fixes to run; the file on disk is untouched, see `onnxfix`)
         let rec = Net::load(crate::onnxfix::inference_only(&read(RECOGNISER_FILE)?)?, "face recogniser", &[])?;
-        let faces = Faces { det, rec };
+        let faces = Faces { det, rec, host: (None, None) };
         faces.warm_up()?;
         Ok(faces)
+    }
+
+    /// Have a native frontend run the detector, the recogniser or both from now on ([`crate::host`]), with their
+    /// conversions in `det` and `rec` ([`super::HOST_DETECTOR`], [`super::HOST_RECOGNISER`], fp16 on its neural
+    /// accelerator). Only for the files they were converted from (the pinned downloads). A photo the frontend fails on is
+    /// read here. Over 44 photos the conversions found the same 109 of 110 faces (the other sat on the score line), boxes
+    /// within 1.7 pixels of the 640 square, and their vectors were at a cosine of 0.99998 to these; 9 ms a photo and 4 ms
+    /// a face on an M1 Max (card #516).
+    pub fn with_host(mut self, det: Option<std::path::PathBuf>, rec: Option<std::path::PathBuf>) -> Faces {
+        self.host = (det, rec);
+        self
+    }
+
+    /// The detector's twelve answers from the frontend: its one answer, cut into them.
+    fn host_detect(dir: &Path, input: &[f32]) -> Result<Vec<Vec<f32>>, String> {
+        let lens: Vec<usize> = [1, 1, 4, 10].into_iter().flat_map(|parts| STRIDES.map(|s| (SIDE / s) * (SIDE / s) * parts)).collect();
+        let flat = crate::host::run(&crate::host::Request {
+            model: super::HOST_DETECTOR,
+            dir,
+            function: None,
+            units: crate::host::Units::All,
+            inputs: &[crate::host::Input { name: "input", shape: vec![1, 3, SIDE, SIDE], data: input }],
+            output: "output",
+            output_len: lens.iter().sum(),
+        })?;
+        let mut at = 0;
+        let mut outs = Vec::with_capacity(lens.len());
+        for n in lens {
+            outs.push(flat.get(at..at + n).ok_or("the detector's answer is short")?.to_vec());
+            at += n;
+        }
+        Ok(outs)
     }
 
     /// Runs each network once on blank input, so the first real photo doesn't pay for preparing
@@ -144,7 +179,11 @@ impl Faces {
                 }
             }
         }
-        let outs = self.det.run([1, 3, SIDE, SIDE], &input)?;
+        let host = self.host.0.as_deref().and_then(|dir| Self::host_detect(dir, &input).ok());
+        let outs = match host {
+            Some(outs) => outs,
+            None => self.det.run([1, 3, SIDE, SIDE], &input)?,
+        };
         let mut found = decode(&outs)?;
         found = nms(found);
         for d in &mut found {
@@ -162,7 +201,22 @@ impl Faces {
     /// What a detected face looks like: 128 numbers of unit length.
     pub fn embed(&self, img: &Rgba8, d: &Detection) -> Result<Vec<f32>, Error> {
         let crop = align(img, &d.landmarks).ok_or(Error::Invalid("face landmarks"))?;
-        let mut out = self.rec.run([1, 3, CROP, CROP], &crop)?;
+        let host = self.host.1.as_deref().and_then(|dir| {
+            crate::host::run(&crate::host::Request {
+                model: super::HOST_RECOGNISER,
+                dir,
+                function: None,
+                units: crate::host::Units::All,
+                inputs: &[crate::host::Input { name: "data", shape: vec![1, 3, CROP, CROP], data: &crop }],
+                output: "output",
+                output_len: DIM,
+            })
+            .ok()
+        });
+        let mut out = match host {
+            Some(v) => vec![v],
+            None => self.rec.run([1, 3, CROP, CROP], &crop)?,
+        };
         let v = out.pop().filter(|v| v.len() == DIM).ok_or_else(|| Error::Model("the recogniser's answer has the wrong size".into()))?;
         let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         if !n.is_finite() || n < 1e-6 || v.iter().any(|x| !x.is_finite()) {
