@@ -203,6 +203,10 @@ fn uploads_are_filed_into_the_imports_folder_and_the_servers_copy_goes() {
     sync(&mut dev);
     // filed as <year>/<date>/<name>, and the photo's place on the server is that file
     until(30, "the upload to be filed", || tree(&incoming).iter().any(|f| f.ends_with("x.png")));
+    // (the copy is linked into place before its temporary name goes: the server's own copy going, filing's last
+    // step, says the filing is over)
+    let blobs = data.join("users/ann/blobs");
+    until(10, "the server's copy to go", || tree(&blobs.join("original")).is_empty());
     let files = tree(&incoming);
     let filed = files.iter().find(|f| f.ends_with("x.png")).unwrap().clone();
     let parts: Vec<&str> = filed.split('/').collect();
@@ -210,8 +214,6 @@ fn uploads_are_filed_into_the_imports_folder_and_the_servers_copy_goes() {
     assert!(parts[1].starts_with(parts[0]) && parts[1].len() == 10, "year, then the date: {filed}");
     assert_eq!(std::fs::read(incoming.join(&filed)).unwrap(), bytes, "the same bytes");
     assert_eq!(files.len(), 1, "nothing else is left: {files:?}");
-    let blobs = data.join("users/ann/blobs");
-    until(10, "the server's copy to go", || tree(&blobs.join("original")).is_empty());
     assert!(!tree(&blobs.join("smart")).is_empty() && !tree(&blobs.join("mini")).is_empty(), "previews stay in the server's store");
 
     // another device sees it as a photo in the folder, and can download the original from there

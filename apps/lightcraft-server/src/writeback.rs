@@ -11,7 +11,8 @@
 //!   the user has an *imports* folder, the server instead files it there as `<year>/<date>/<name>` (by the
 //!   photo's capture date), makes that file the photo's place on the server, and drops its own copy. It is
 //!   copied under a temporary name and linked into place, never over a file that is there; a crash between the
-//!   steps leaves a file the next scan recognises by its content.
+//!   steps leaves a file the next scan recognises by its content, or a temporary copy the next filing into that
+//!   date's folder removes.
 //!
 //! One worker thread does both, off the request threads.
 
@@ -273,14 +274,39 @@ struct Filing {
     date: String,
 }
 
+/// The temporary name a copy is filed under: this and eight hex digits.
+const FILING_TEMP: &str = ".lightcraft-filing-";
+
+fn is_filing_temp(name: &str) -> bool {
+    name.strip_prefix(FILING_TEMP).is_some_and(|r| r.len() == 8 && r.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+}
+
+/// Remove the temporary copies a filing that was cut short (the server stopped between the copy and the link) left
+/// in `dir`. The one worker files one photo at a time and removes its temporary name before the next, so any there
+/// now is such a leftover. (One of another server filing into the same folder would only make that filing fail and
+/// be tried again.)
+fn remove_leftovers(dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        if e.file_type().is_ok_and(|t| t.is_file()) && e.file_name().to_str().is_some_and(is_filing_temp) {
+            match std::fs::remove_file(e.path()) {
+                Ok(()) => log::info!("removed {}, left by a filing that was cut short", e.path().display()),
+                Err(err) => log::warn!("{}: {err}", e.path().display()),
+            }
+        }
+    }
+}
+
 /// Put the file at `src` into `<folder>/<year>/<date>/` under a name no file there has: copied to a temporary name,
-/// synced, then linked (or, where the disk can't link, renamed) into place. Returns the path inside the folder
+/// synced, then linked (or, where the disk can't link, renamed) into place, and the temporary name removed. (So for
+/// a moment the folder has both names: the filing is over when this returns.) Returns the path inside the folder
 /// (`2026/2026-04-12/IMG_1.CR3`), the file's size and its modification time.
 fn file_into(folder: &Path, src: &Path, name: &str, date: &str) -> Result<(String, u64, u64), String> {
     let year = date.get(..4).ok_or("no date")?;
     let dir = folder.join(year).join(date);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let temp = dir.join(format!(".lightcraft-filing-{}", accounts::random_hex(4)?));
+    remove_leftovers(&dir);
+    let temp = dir.join(format!("{FILING_TEMP}{}", accounts::random_hex(4)?));
     let copied = (|| -> std::io::Result<u64> {
         let n = std::fs::copy(src, &temp)?;
         // (through a handle that may write: Windows refuses to flush a read-only one)
@@ -394,6 +420,8 @@ fn file_uploads(st: &State, user: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     #[test]
@@ -428,6 +456,29 @@ mod tests {
             std::fs::read_dir(folder.join("2026/2026-04-12")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
         assert_eq!(left.len(), 2, "{left:?}");
         assert!(file_into(&folder, &src, "x.png", "xx").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_copy_left_by_a_filing_cut_short_is_removed_by_the_next() {
+        let d = std::env::temp_dir().join(format!("lc-writeback-leftover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let folder = d.join("in");
+        let day = folder.join("2026/2026-04-12");
+        std::fs::create_dir_all(day.join(".lightcraft-filing-00000000")).unwrap();
+        let src = d.join("src.bin");
+        std::fs::write(&src, b"one").unwrap();
+        // a server stopped between the copy and the link left its temporary copy; the other files are the user's own
+        std::fs::write(day.join(".lightcraft-filing-0871ce7c"), b"o").unwrap();
+        let own = [".lightcraft-filing-notes.txt", ".lightcraft-filing-0871ce7", ".lightcraft-filing-0871ce7g", "lightcraft-filing-0871ce7c"];
+        for n in own {
+            std::fs::write(day.join(n), b"mine").unwrap();
+        }
+        let (a, ..) = file_into(&folder, &src, "x.png", "2026-04-12").unwrap();
+        assert_eq!(a, "2026/2026-04-12/x.png");
+        let left: BTreeSet<String> = std::fs::read_dir(&day).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        let want: BTreeSet<String> = own.iter().chain(&["x.png", ".lightcraft-filing-00000000"]).map(|s| s.to_string()).collect();
+        assert_eq!(left, want, "only the leftover goes (a folder of that name is not one)");
         let _ = std::fs::remove_dir_all(&d);
     }
 
