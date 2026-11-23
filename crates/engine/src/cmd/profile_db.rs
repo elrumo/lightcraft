@@ -256,7 +256,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Lens Profile",
             [],
             None,
-            "{id?, decode?: bool} → {id, raw, lens, origin: file|measured|database|null, serial, distortion, vignetting, profile: {maker, model, mounts}|null, enabled, correction: {warp?, stages?, vignette?: {k: [×5], center: {x, y}, radius}, origin?}|null} — the photo's lens correction (Enable Profile Corrections applies it) and where it comes from; `correction` is the data a render applies, in the EXIF-oriented photo (the vignette's gain is `1 + k0 r² + … + k4 r¹⁰`, `r` the distance from `center · (w, h)` over `radius · long edge`; the user's rotation and flips come on top). `decode: true` first decodes a raw not yet decoded (at thumbnail size, changing no edit), which records the vignetting measured from a CR3's camera JPEG",
+            "{id?, decode?: bool} → {id, raw, lens, origin: file|measured|database|null, serial, distortion, vignetting, profile: {maker, model, mounts}|null, enabled, correction: {warp?, stages?, vignette?: {k: [×5], center: {x, y}, radius}, origin?}|null} — the photo's lens correction (Enable Profile Corrections applies it) and where it comes from; `correction` is the data a render applies, in the EXIF-oriented photo (the vignette's gain is `1 + k0 r² + … + k4 r¹⁰`, `r` the distance from `center · (w, h)` over `radius · long edge`; the user's rotation and flips come on top). `decode: true` first decodes a raw not yet decoded (at thumbnail size, changing no edit; what an earlier session's decode of the file found, which the library keeps in `decode-facts/`, stands in for it), which records the vignetting measured from a CR3's camera JPEG",
             always,
             lens_profile
         ),

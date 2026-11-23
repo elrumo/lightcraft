@@ -957,6 +957,10 @@ impl Session {
             let thumbs = self.thumbs_dir.clone().unwrap_or_else(|| dir.join("thumbs"));
             self.media.attach_disk_cache(&thumbs, self.cache_bytes(), self.thumbs_dir.is_some(), disk_gate(folder.as_ref()));
             self.tidy_thumbnail_cache();
+            // (what decodes of its raws found: in the library itself, not the thumbnail folder the user may have chosen)
+            self.media.facts.attach(dir.join(crate::media::facts_store::FOLDER), disk_gate(folder.as_ref()));
+        } else {
+            self.media.facts.detach();
         }
         let view_written = self.view_json();
         self.library = Some(Library {

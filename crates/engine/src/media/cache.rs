@@ -84,6 +84,7 @@ impl Default for MediaCache {
             thumb_seq: 0,
             denoise: DenoiseIndex::default(),
             kept: Lru::new(KEPT_FACTS_BYTES),
+            facts: Default::default(),
             camera_profiles: HashMap::new(),
         }
     }
@@ -142,6 +143,7 @@ impl MediaCache {
     pub fn clear_sources(&mut self) {
         self.release_sources();
         self.kept = Lru::new(KEPT_FACTS_BYTES);
+        self.facts.clear_memo();
     }
 
     /// Drop every decoded picture (memory is short), keeping what the decodes of recently asked photos found (their
@@ -354,6 +356,7 @@ impl MediaCache {
     /// Forget a photo's decoded sources and what they found (e.g. after its file changed).
     pub fn forget(&mut self, id: PhotoId) {
         self.kept.remove(&id);
+        self.facts.forget(id);
         self.thumbs.remove(&id);
         self.previews.retain(|e| e.0 != id);
         self.full.retain(|e| e.0 != id);

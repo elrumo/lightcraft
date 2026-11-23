@@ -28,6 +28,7 @@ pub use lightcraft_raw::dcp::DcpProfile;
 use serde::{Deserialize, Serialize};
 
 mod cache;
+pub(crate) mod facts_store;
 mod quick;
 mod render;
 mod session;
@@ -119,6 +120,9 @@ pub struct MediaCache {
     /// What the decodes of recently asked photos found besides their pixels, kept when the pixels go
     /// ([`MediaCache::release_sources`]).
     kept: Lru<PhotoId, cache::KeptFacts>,
+    /// What decodes of raws found, kept on disk in the library ([`facts_store`]): a frontend that asks for it in a later
+    /// session decodes nothing.
+    pub(crate) facts: facts_store::FactsStore,
     /// Imported camera profiles by id ([`crate::cmd::dcp_profiles`]), handed to the decoder of photos using them.
     pub camera_profiles: std::collections::HashMap<String, LoadedCameraProfile>,
 }
