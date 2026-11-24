@@ -1089,6 +1089,41 @@ fn albums_and_stacks_travel_to_a_device_that_has_the_same_photos() {
     }
 }
 
+// Given an album and a stack that went to the cloud, when one device turns sync off and on again, then it still knows
+// them as the cloud's: neither comes back as a second copy, there or on the other device (before the fix the device
+// lost their uids, took the cloud's as new ones and sent its own under new uids)
+#[test]
+fn turning_it_off_and_on_again_doubles_no_album_or_stack() {
+    use lightcraft_catalog::{Op, Stack};
+    let root = temp_dir("collections-again");
+    let mut cloud = Cloud::default();
+    let (mut a, mut b) = (Device::new(&root, "a"), Device::new(&root, "b"));
+    let on_a: Vec<PhotoId> = (1..=2).map(|s| import(&mut a, s)).collect();
+    let on_b: Vec<PhotoId> = (1..=2).map(|s| import(&mut b, s)).collect();
+    make_album(&mut a, "Trips", &on_a, None, false);
+    let stack = a.s.catalog.alloc_stack_id();
+    a.s.apply_system(Op::AddStack { stack: Stack { id: stack, photos: on_a.clone(), collapsed: false } }).unwrap();
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    let records = cloud.records.len();
+    assert!(album_named(&b, "Trips").is_some() && b.s.catalog.stack_of(on_b[0]).is_some());
+
+    for d in [&mut a, &mut b] {
+        d.s.execute("icloud.enable", &json!({"on": false})).unwrap();
+        d.s.execute("icloud.enable", &json!({"on": true})).unwrap();
+        d.sync(&mut cloud);
+    }
+    a.sync(&mut cloud);
+    for d in [&a, &b] {
+        assert_eq!(d.s.catalog.albums().filter(|x| x.name == "Trips").count(), 1);
+        assert_eq!(d.s.catalog.stacks().count(), 1);
+    }
+    assert_eq!(cloud.records.len(), records, "nothing new in the cloud");
+    for d in [&mut a, &mut b] {
+        assert_eq!(d.s.icloud_changes(), Default::default());
+    }
+}
+
 #[test]
 fn members_a_device_has_no_photo_for_are_kept_and_join_when_the_photo_comes() {
     let root = temp_dir("collections-waiting");

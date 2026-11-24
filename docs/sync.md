@@ -897,15 +897,17 @@ device hasn't seen and hands back its own, which the engine merges like a fetche
 same. A record taken from the cloud that this version stores a little differently is not sent back.
 
 **Turning it off** forgets what the cloud has (the cloud keeps it for the other devices, and this device keeps its
-presets, settings and edits); turning it on again merges as a new device does: nothing is deleted. Signing out of
-iCloud or switching accounts does the same.
+presets, settings and edits); turning it on again merges as a new device does: nothing is deleted. The uids its albums
+and stacks were sent under stay with the library, so they meet the cloud's copies again rather than doubling. Signing
+out of iCloud or switching accounts does the same.
 
 ### The same photo on two devices (not there yet)
 
 iCloud has no "also open on" badge and no fast pickup yet. A change travels by CloudKit's own push, so it reaches the
-other device in seconds when the push is delivered (not measured on real devices yet: the CloudKit code has not been
-run against a live container), and an edit record is the photo's whole edit, so two devices changing different settings
-of one photo within moments of each other keep the later edit, not both. The plan: a small per-device presence record
+other device in seconds when the push is delivered (not measured on real devices yet: a native frontend has fetched
+from a live container, but no save has been seen reaching another device), and an edit record is the photo's whole
+edit, so two devices changing different settings of one photo within moments of each other keep the later edit, not
+both. The plan: a small per-device presence record
 (written when a photo opens or closes and about every minute, never faster, backing off on CloudKit's own limits), and a
 field-by-field merge of same-photo edit records like the server's.
 

@@ -130,7 +130,8 @@ pub struct Saved {
     device: String,
     /// The folder this library syncs through ([`folder`]; `icloud.useFolder`).
     folder: Option<String>,
-    /// The uid of each album (`a<id>`) and stack (`s<id>`) of this library that has been sent ([`collections`]).
+    /// The uid of each album (`a<id>`) and stack (`s<id>`) of this library that has been sent ([`collections`]); kept
+    /// when sync is turned off and on.
     uids: BTreeMap<String, String>,
     /// Members of an album the cloud has that this device has no photo for yet, by album uid.
     pending: BTreeMap<String, Vec<String>>,
@@ -450,8 +451,16 @@ impl Session {
                 // went back, and the host would not fetch everything again)
                 let last = lib.files_mut().read(STATE).ok().flatten().and_then(|b| serde_json::from_slice::<Saved>(&b).ok());
                 let epoch = last.as_ref().map_or(0, |s| s.epoch).wrapping_add(1).max(now_ms().unsigned_abs());
-                let device = last.map(|s| s.device).unwrap_or_default();
-                let mut ic = ICloud::new(Saved { on: true, epoch, device, ..Saved::default() }, BTreeMap::new());
+                // (the uids its albums and stacks went to the cloud under: without them the cloud's copies would come
+                // back as other albums, and these go up again as new ones)
+                let (device, mut uids) = last.map(|s| (s.device, s.uids)).unwrap_or_default();
+                // (of those still here: one removed while sync was off comes back from the cloud, as on a new device)
+                uids.retain(|k, _| match (k.get(..1), k.get(1..).and_then(|n| n.parse().ok())) {
+                    (Some("a"), Some(n)) => self.catalog.album(lightcraft_catalog::AlbumId(n)).is_some(),
+                    (Some("s"), Some(n)) => self.catalog.stack(lightcraft_catalog::StackId(n)).is_some(),
+                    _ => false,
+                });
+                let mut ic = ICloud::new(Saved { on: true, epoch, device, uids, ..Saved::default() }, BTreeMap::new());
                 ic.saved_dirty = true;
                 ic.held_dirty = true;
                 ic.save(lib.files_mut());
