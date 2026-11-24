@@ -156,6 +156,10 @@ are not a concern for it, so the file never has to be re-derived elsewhere. Sync
   cleared renders. Not an undo step. Refused (and left untouched) for a photo with edits unless `force`, for anything
   that isn't a preview-only raw, and for a missing, empty or hostile file (tests: `cmd::stand_in::tests`,
   `rendered_dng`).
+- `lensCorrected: true` says the host's decoder corrected the lens (Core Image does, for a camera whose file says how: a
+  Micro Four Thirds lens). The DNG's XMP then carries `lc:LensCorrected`, every read of its metadata has
+  `Metadata::lens_corrected`, and `lens_profiles::lookup` gives it no database profile, which would correct the lens a second
+  time (card #538: an OM-5 stand-in exported about 3 % enlarged). A DNG written without it keeps the old behaviour.
 - The host also sends its default rendering as `previewPath`. With it the engine's existing DNG tone fit
   (`fit_dng_tone`, "DNGTONE accepted") gives the raw Apple's starting look; without it the raw renders flat and dark
   (mean luma 108 against 135 on an OM-1 file).

@@ -180,6 +180,11 @@ pub fn database() -> Option<Arc<LensDb>> {
 /// The database profile for a photo with metadata `m`, for its `w × h` (unoriented, default-cropped) image,
 /// re-expressed after `orientation`. `None` without a database, lens name, focal length or matching profile.
 pub fn lookup(db: &LensDb, m: &lightcraft_meta::Metadata, w: f64, h: f64, orientation: lightcraft_geom::Orientation) -> Option<EmbeddedLens> {
+    // another decoder corrected this lens already (a stand-in DNG of Core Image's development, which corrects a Micro Four
+    // Thirds lens from the file's own data): a profile would correct it twice (card #538: an OM-5's export came out 3 % enlarged)
+    if m.lens_corrected {
+        return None;
+    }
     let focal = m.focal_length.filter(|f| f.is_finite() && *f > 0.0)?;
     let camera = db.find_camera(m.make.as_deref().unwrap_or_default(), m.model.as_deref().unwrap_or_default());
     let lens = match m.lens_model.as_deref() {
@@ -273,6 +278,23 @@ mod tests {
         assert!(lookup(&db, &lightcraft_meta::Metadata { focal_length: None, ..meta() }, 6000.0, 4000.0, Orientation::Normal).is_none());
         let other = lightcraft_meta::Metadata { lens_model: Some("70-200mm F4".into()), ..meta() };
         assert!(lookup(&db, &other, 6000.0, 4000.0, Orientation::Normal).is_none());
+    }
+
+    /// A picture whose lens another decoder corrected (a stand-in DNG of Core Image's development) gets no profile: it would
+    /// correct the lens a second time (card #538: an OM-5's stand-in exported 3 % enlarged). The DNG says so in its XMP
+    /// (`lc:LensCorrected`), which every read of the file's metadata carries.
+    #[test]
+    fn a_lens_corrected_already_gets_no_profile() {
+        let db = LensDb::parse(DB).unwrap();
+        let px = [0.5f32; 4 * 4 * 3];
+        let marked = lightcraft_meta::write_xmp_lc(&meta(), &[("LensCorrected", "True")]);
+        for (xmp, corrected) in [(Some(marked), true), (None, false)] {
+            let dng = lightcraft_raw::write_rendered_dng(4, 4, &px, &lightcraft_color::REC2020, &meta(), xmp).unwrap();
+            let read = lightcraft_meta::extract(&dng);
+            assert_eq!(read.lens_corrected, corrected);
+            let m = lightcraft_meta::Metadata { lens_corrected: read.lens_corrected, ..meta() };
+            assert_eq!(lookup(&db, &m, 6000.0, 4000.0, Orientation::Normal).is_none(), corrected);
+        }
     }
 
     /// A Nikon DSLR raw names no lens, only its specification (maker note `0x0084`): it is looked up by the name

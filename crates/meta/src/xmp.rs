@@ -41,7 +41,10 @@ fn applied_to(regions: &XmpValue) -> Option<(f64, f64)> {
 }
 
 pub fn parse_xmp(s: &str) -> Result<XmpData, XmpError> {
-    parse_xmp_with(s, LC_NAMESPACES).map(xmp_from_craft)
+    parse_xmp_with(s, LC_NAMESPACES).map(xmp_from_craft).map(|mut d| {
+        d.metadata.lens_corrected = d.properties.get("lc:LensCorrected").and_then(|v| v.first()).is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        d
+    })
 }
 
 pub fn write_xmp(meta: &Metadata, lc_settings: Option<&str>) -> String {

@@ -30,6 +30,7 @@ fn fitted_tone(
     white: Option<lightcraft_color::Xy>,
     baseline: f64,
     preview: &[u8],
+    xmp: Option<&str>,
 ) -> Option<lightcraft_raw::profile::ToneCurve> {
     for edge in FIT_EDGES {
         let small = if rgb.width.max(rgb.height) > edge {
@@ -46,9 +47,15 @@ fn fitted_tone(
             as_shot_white: white,
             tone_curve: None,
         };
-        let Ok(bytes) =
-            lightcraft_raw::write_linear_dng(small.width, small.height, small.data.as_flattened(), &lightcraft_color::REC2020, meta, None, look)
-        else {
+        let Ok(bytes) = lightcraft_raw::write_linear_dng(
+            small.width,
+            small.height,
+            small.data.as_flattened(),
+            &lightcraft_color::REC2020,
+            meta,
+            xmp.map(str::to_string),
+            look,
+        ) else {
             continue;
         };
         let Ok(mut raw) = lightcraft_raw::decode(&bytes) else { continue };
@@ -71,8 +78,9 @@ fn derived_dir(library: &Path, id_part: &str) -> std::path::PathBuf {
 /// starting look: the engine fits its default tone to it, as it does for a DNG with a preview. The host deletes
 /// both afterwards. `whiteXY` is the scene white `[x, y]` the host balanced the picture for (its as-shot white): the
 /// DNG then holds the picture as the raw it came from, so white balance edits work as on any raw (true Kelvin and tint,
-/// As Shot, Auto). Photos with edits are refused unless `force` (their settings were made on the camera's JPEG,
-/// a display-referred picture, and mean something else on a linear one).
+/// As Shot, Auto). `lensCorrected`: the host's decoder corrected the lens (Core Image does, for a camera whose file says how):
+/// the DNG says so (`lc:LensCorrected`), and no lens profile corrects that lens again. Photos with edits are refused unless
+/// `force` (their settings were made on the camera's JPEG, a display-referred picture, and mean something else on a linear one).
 fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.attachDecoded";
     let src = super::str_param(p, "path").ok_or_else(|| bad(C, "`path`: the linear picture the host developed (a float TIFF)"))?;
@@ -133,7 +141,11 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     if rgb.width == 0 || rgb.height == 0 {
         return Err(bad(C, format!("{src}: an empty picture")));
     }
-    let curve = preview.as_deref().and_then(|jpeg| fitted_tone(&rgb, &meta, white, baseline, jpeg));
+    // (the packet the DNG would get anyway, and the mark: card #538, Core Image had corrected an OM-5's lens and the lens
+    // database's profile corrected it again, 3 % enlarged)
+    let lens_corrected = p.get("lensCorrected").and_then(Value::as_bool).unwrap_or(false);
+    let xmp = lens_corrected.then(|| lightcraft_meta::write_xmp_lc(&meta, &[("LensCorrected", "True")]));
+    let curve = preview.as_deref().and_then(|jpeg| fitted_tone(&rgb, &meta, white, baseline, jpeg, xmp.as_deref()));
     // (16-bit integers under lossless JPEG, or half floats under deflate: which is smaller depends on the picture)
     let compact = p.get("compact").and_then(Value::as_bool).unwrap_or(true);
     let look = lightcraft_raw::LinearDngLook {
@@ -145,7 +157,7 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
         as_shot_white: white,
         tone_curve: curve.as_ref(),
     };
-    let dng = lightcraft_raw::write_linear_dng(rgb.width, rgb.height, rgb.data.as_flattened(), &lightcraft_color::REC2020, &meta, None, look)
+    let dng = lightcraft_raw::write_linear_dng(rgb.width, rgb.height, rgb.data.as_flattened(), &lightcraft_color::REC2020, &meta, xmp, look)
         .map_err(|e| bad(C, e.to_string()))?;
     let (width, height) = (rgb.width, rgb.height);
     drop(rgb);
@@ -196,7 +208,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Develop with System Decoder",
             [],
             None,
-            "{id, path, previewPath?, whiteXY?, baselineExposure?, compact?, force?} — a raw shown from its embedded preview (no decoder here) becomes a raw again: `path` is a float TIFF of its linear development by the host's own decoder (on Apple platforms: Core Image's), `previewPath` a JPEG of the same picture as the host renders it (the starting look), `whiteXY` the scene white it balanced for (the as-shot white), written as a LinearRaw DNG in the library's Derived folder and linked like Convert to DNG (the original stays). Refused for a photo with edits unless `force` → {id, path, original, width, height}",
+            "{id, path, previewPath?, whiteXY?, baselineExposure?, compact?, lensCorrected?, force?} — a raw shown from its embedded preview (no decoder here) becomes a raw again: `path` is a float TIFF of its linear development by the host's own decoder (on Apple platforms: Core Image's), `previewPath` a JPEG of the same picture as the host renders it (the starting look), `whiteXY` the scene white it balanced for (the as-shot white), `lensCorrected` that its decoder corrected the lens (then no lens profile corrects it again), written as a LinearRaw DNG in the library's Derived folder and linked like Convert to DNG (the original stays). Refused for a photo with edits unless `force` → {id, path, original, width, height}",
             has_selection,
             attach
         )
@@ -295,6 +307,30 @@ mod tests {
         let mut s = crate::Session::new().with_fs();
         s.open_library(dir.join("lib"), false).unwrap();
         assert!(s.catalog.photo(id).unwrap().develops_raw());
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A host whose decoder corrected the lens says so (`lensCorrected`): the DNG carries it (`lc:LensCorrected`), which keeps a lens
+    /// profile from correcting that lens again (card #538). A host that doesn't say: no mark.
+    #[test]
+    fn a_lens_the_host_corrected_is_marked_in_the_dng() {
+        let (mut s, dir, files) = library("stand-in-lens");
+        let tiff = dir.join("linear.tif");
+        std::fs::write(&tiff, linear_tiff(32, 32, 1.0)).unwrap();
+        let preview = dir.join("preview.jpg");
+        std::fs::write(&preview, jpeg(32, 32)).unwrap();
+        for (name, corrected) in [("DSC_0005.cr3", Some(true)), ("DSC_0006.cr3", None), ("DSC_0007.cr3", Some(false))] {
+            let id = import_preview_only(&mut s, &files, name);
+            let mut p = json!({"id": id.0, "path": tiff.to_string_lossy(), "previewPath": preview.to_string_lossy()});
+            if let Some(c) = corrected {
+                p["lensCorrected"] = json!(c);
+            }
+            let r = s.execute("photo.attachDecoded", &p).unwrap();
+            let dng = std::fs::read(r["path"].as_str().unwrap()).unwrap();
+            let read = lightcraft_meta::extract(&dng);
+            assert_eq!(read.lens_corrected, corrected == Some(true), "{name}");
+        }
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
     }

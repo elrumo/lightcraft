@@ -173,6 +173,10 @@ pub struct Metadata {
     /// Where the camera focused, from its maker notes ([`focus`]; Sony only for now), on the upright photo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<FocusPoint>,
+    /// The picture's lens is corrected already (`lc:LensCorrected` in its XMP): another decoder's development that applied
+    /// the lens's corrections (a stand-in DNG, `photo.attachDecoded`), which a lens profile must not correct a second time.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lens_corrected: bool,
 }
 
 macro_rules! fill {
@@ -374,6 +378,7 @@ fn extract_embedded(exif: Option<&[u8]>, iptc: Option<&[u8]>, mut m: Metadata, x
     if let Some(xmp) = xmp {
         m.overlay_user_fields(&xmp.metadata);
         m.fill_missing(&xmp.metadata);
+        m.lens_corrected |= xmp.metadata.lens_corrected;
         // boxes another app drew on the photo as stored go where the upright photo has them (#2674)
         if let (Some(drawn_on), Some(orientation), Some(stored)) = (xmp.regions_drawn_on(), exif_orientation, stored) {
             upright_regions(&mut m.regions, drawn_on, orientation, stored);

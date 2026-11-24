@@ -76,6 +76,8 @@ pub(crate) fn from_craft(m: craft_metadata::Metadata) -> Metadata {
         label: m.label,
         regions: m.regions.into_iter().map(region_from_craft).collect(),
         focus: m.focus.map(focus_from_craft),
+        // (LightCraft's own property, read from the packet's `lc:` properties: `xmp::parse_xmp`)
+        lens_corrected: false,
     }
 }
 
