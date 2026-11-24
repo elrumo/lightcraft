@@ -503,6 +503,165 @@ What is left, and why a conversion cannot remove it:
   body (Fujifilm's neutral pair 9 % below), so their Lightroom whites stay up to about 15 mired off until the body's
   As Shot is read next to Lightroom's (one export of one raw is enough: `crs:Temperature` of an As Shot export).
 
+## White balance: Lightroom's lightness, blown highlights and more bodies (2026-11-24, card #535)
+
+The section above left three things open: the EOS RP's large warm steps, a tint that drifts with the step and
+highlights that take the tint, and the bodies nobody had measured. Measured again on the same 24 exports, per pixel
+and per brightness band this time.
+
+**Lightroom's white balance changes the lightness, ours did not.** Lightroom's 7500 K is lighter than its As Shot
+and its 4000 K darker, on every camera, where ours kept the luminance of a neutral:
+
+| Camera | 4000 K | 5500 K | 7500 K | 5500 K / +40 |
+|---|---:|---:|---:|---:|
+| ILCE-6000 (As Shot 5150 K) | −1.8 (ours +0.1) | +0.5 (0.0) | +2.1 (−0.1) | −0.1 (0.0) |
+| ILCE-6700 (4850 K) | −1.1 (−0.1) | +0.7 (0.0) | +2.0 (+0.1) | +0.3 (−0.1) |
+| EOS RP (4100 K) | −0.2 (0.0) | +2.1 (+0.4) | +3.9 (+0.7) | +2.5 (+0.5) |
+| X-A5 (4850 K) | −0.7 (+0.1) | +0.5 (0.0) | +1.7 (−0.1) | +0.4 (−0.1) |
+| D70 (5150 K) | −1.3 (−0.3) | +0.5 (−0.1) | +1.9 (0.0) | +0.9 (−0.2) |
+| E-1 (5350 K) | −0.7 (−0.1) | 0.0 (0.0) | +3.0 (+0.1) | +0.8 (0.0) |
+
+(mean L\* of the white balance's effect, variant minus As Shot, 150 px.) That is what a raw developer does: it
+balances a new white by scaling the sensor's channels and holds the one with the smallest gain, green, so nothing
+unclipped clips; more red and less blue then adds light, the reverse takes it away. Scaling the channels of the
+typical camera (`lightcraft_raw::spectral::generic`) with green held predicts Lightroom's shift on all six raws
+(a mid grey at 7500 K: +1.9 L\* on the ILCE-6000, +2.4 on the ILCE-6700, +2.8 on the X-A5, +2.1 on the D70, +4.6 on
+the EOS RP).
+
+**Blown highlights stay white in Lightroom.** The D70 raw's overcast sky (18 % of the frame) is clipped in the
+file. Lightroom shows it white at every white (a\* +0.4 to +0.6, b\* +0.5 to +1.6 across the four); ours tinted it
+with everything else (a\* +6 to +13 at the tint steps, b\* −10 to +11 at the Kelvin steps), which is the pink sky of
+the section above. Lightroom balances the sensor's values before it clips them; we balance a picture whose clipped
+pixels are already white.
+
+**What was tried**, on the Rust renderer, as mean effect ΔE of the 24 exports (the six bodies' new rows in, so the
+D70 and the two Olympus / Sony preset bodies start a little off the section above):
+
+| Variant | ILCE-6000 | ILCE-6700 | EOS RP | X-A5 | D70 | E-1 | Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Bradford, a neutral's luminance kept (before) | 2.65 | 2.93 | 5.68 | 3.97 | 5.09 | 3.84 | 4.02 |
+| The typical camera's channels scaled, green held | 2.60 | 2.52 | 7.06 | 4.03 | 4.70 | 3.76 | 4.11 |
+| The same, a neutral's luminance kept | 2.86 | 3.13 | 6.29 | 4.20 | 5.04 | 3.95 | 4.24 |
+| The photo's own developed matrix, its smallest gain held | 2.57 | 3.02 | 7.05 | 4.24 | 4.84 | 3.27 | 4.16 |
+| The typical camera, green held, blown pixels white | 2.60 | 2.52 | 7.06 | 4.03 | 3.54 | 3.76 | 3.92 |
+| Bradford, the camera's green of a grey kept, blown pixels white (what is in) | 2.37 | 2.56 | 6.42 | 3.74 | 3.83 | 3.71 | 3.77 |
+
+Scaling a camera's channels instead of adapting with Bradford is not closer in colour: with the lightness taken
+out it is worse on every body (row 3 against row 1), and whether the camera is the typical one or the photo's own
+fit changes which body gains (rows 2 and 4). What helps is the lightness (row 2 against row 3: five bodies gain 0.2
+to 0.6) and the blown pixels (the D70, 4.70 to 3.54; no other raw here has a blown area). So the colours stay
+Bradford's, and two things are added (last row; the D70's 3.83 becomes 3.21 with its row below).
+
+**What changed** (`crates/pipeline/src/local.rs`: `balance_for`, `camera_green`, `Balance`; the GPU kernel
+`wb_k`; the Apple renderer's `CameraWhite` and `WhiteBalanceStage`):
+
+- **A raw's white in Kelvin keeps the camera's green of a grey.** The adaptation was scaled so that a grey of the
+  picture kept its luminance; it is now scaled so that the grey keeps its green in the typical camera (the same
+  normalisation with the camera's green weights, 0.003 / 0.745 / 0.252 on linear Rec. 2020, in place of the
+  luminance weights). Holding the green of the colour the new white makes neutral instead, which looks like the
+  same thing, overshot on large steps (EOS RP 7.8, its 7500 K 5 L\* too light). A white on the relative scale (a
+  rendered photo, a raw whose camera has no Kelvin scale, settings written before a raw had one) is unchanged:
+  there the white balance is a colour correction of a finished picture, and old edits keep their look.
+- **Blown highlights stay white.** A pixel whose darkest channel is at the sensor's clip before the white balance
+  (0.9 to 1 of it, as a ramp) goes to its brightest balanced channel.
+
+**Before → now** (effect ΔE against Lightroom's 24 exports, mean of the four whites; before is the state of the
+section above; the Apple columns are the app's own renderer, `tools/apple_parity`):
+
+| Camera | Rust | Apple display | Apple scene |
+|---|---:|---:|---:|
+| ILCE-6000 | 2.6 → 2.4 | 3.4 → 3.1 | 2.7 → 2.4 |
+| ILCE-6700 | 2.9 → 2.6 | 3.1 → 2.7 | 3.0 → 2.6 |
+| EOS RP | 5.7 → 6.4 | 5.0 → 6.7 | 5.7 → 6.4 |
+| X-A5 | 4.0 → 3.7 | 4.4 → 4.0 | 3.9 → 3.7 |
+| D70 | 4.6 → 3.2 | 3.9 → 3.5 | 4.6 → 3.3 |
+| E-1 | 3.8 → 3.7 | 4.0 → 3.9 | 3.8 → 3.7 |
+| Mean | 3.9 → 3.7 | 4.0 → 4.0 | 3.9 → 3.7 |
+
+Per white, Rust renderer, before → now:
+
+| Camera | 4000 K / +10 | 5500 K / +10 | 7500 K / +10 | 5500 K / +40 |
+|---|---:|---:|---:|---:|
+| ILCE-6000 | 4.2 → 4.2 | 1.1 → 1.0 | 3.7 → 2.7 | 1.5 → 1.6 |
+| ILCE-6700 | 3.3 → 2.5 | 2.0 → 1.8 | 4.9 → 4.0 | 1.6 → 1.9 |
+| EOS RP | 1.6 → 1.7 | 6.5 → 7.5 | 9.1 → 10.3 | 5.4 → 6.1 |
+| X-A5 | 5.1 → 4.9 | 2.1 → 2.0 | 6.4 → 5.9 | 2.3 → 2.1 |
+| D70 | 5.5 → 4.5 | 1.9 → 1.1 | 6.2 → 4.6 | 4.8 → 2.7 |
+| E-1 | 5.6 → 6.1 | 0.9 → 0.9 | 5.9 → 4.9 | 3.0 → 3.0 |
+
+Five bodies gain on every renderer, most on the warm whites (the lightness) and the D70 (its sky, and its row).
+The lightness itself is a wash in ΔE on the Apple display path (the mean stays 4.0) because of one photo, the
+EOS RP, which loses on all three. Its mean L\* is right now or a little over (Lightroom +3.9 at 7500 K, ours +0.7
+before and +5.4 now), and the cooler whites overshoot by about 1 L\* (4000 K: Lightroom −0.7 to −1.8, ours −1.7 to
+−2.8): the linear change is the camera's, how much L\* it makes is the tone curve's. The GPU kernel gives the CPU's
+picture (mean ΔE 0.001 on the D70 at 7395 K / +40), and the unedited pictures did not move.
+
+**What is left, and what would settle it:**
+
+- **EOS RP: its highlights, not its white balance.** By brightness band, the error of its 7500 K white is 7 in the
+  dark tones and 16 in the brightest (11 and 16 with the lightness right). The raw is a bright still life at
+  4100 K; warming it by 111 mired pushes red and green past white. Lightroom keeps those areas yellow (b\* +21 on
+  the brightest pixels), ours roll off to a pale pink (b\* +4): the tone map of the neutral look these CR3s start
+  from desaturates light above white where Lightroom's keeps the lower channel, and the unedited pictures already
+  differ there (the apple's lit side holds detail in Lightroom's As Shot, ours is near white; base ΔE 8.1). Adding
+  the lightness makes this photo's number worse (5.7 to 6.4 on the Rust renderer, 5.0 to 6.7 on the Apple display path) although its lightness is now right (L\* +3.9 in
+  Lightroom, +0.7 before): there is more light for the roll-off to lose. What settles it is the highlight roll-off
+  of that tone map against Lightroom's on this raw, which is tone work, not white balance.
+- **The tint that drifts with the step** (about −0.05 to −0.3 tint units per mired) is not the operator: neither
+  camera space above moves it. Lightroom reads a white through matrices that change with the temperature (two
+  calibration lights), so its Kelvin axis bends against ours. A constant per body would be fitted on four exports
+  each; it needs a temperature series per body (five whites at tint 0, two bodies with matrices of their own)
+  before it is worth a rule.
+- **Bodies on the relative scale** (below).
+
+**More bodies measured against Lightroom, from exports that already existed.** Every export Lightroom writes carries the
+white it used, so the accuracy sets (`acc-lr`, `acc2-lr`: one default export per body) give Lightroom's As Shot for 40
+more bodies without another export. Next to it, what the raw's own scale reads (one raw per body):
+
+| Body | Lightroom's As Shot | The raw's own scale | Kelvin ratio | Tint offset |
+|---|---|---|---|---|
+| EOS 600D | 4850 K / +12 | 4787 K / +24 (measured matrices) | 0.987 | −12 |
+| EOS R5 | 3750 K / +16 | 3576 K / +15 (measured matrices) | 0.954 | +1 |
+| EOS R50 | 5150 K / +9 | 4793 K / +6 (measured matrices) | 0.931 | +3 |
+| EOS R8 | 4850 K / +12 | 4512 K / +16 (measured matrices) | 0.930 | −4 |
+| X-T3 | 5150 K / +40 | 4832 K / +34 (measured matrices) | 0.938 | +6 |
+| X100V | 5200 K / +26 | 4591 K / +2 (the X-T3's matrices) | 0.883 | +24 |
+| LEICA CL | 5000 K / +5 | 5551 K / +9 (the DNG's own matrices) | 1.110 | −4 |
+| LEICA M10 | 5300 K / +9 | 5175 K / +4 (the DNG's own matrices) | 0.976 | +5 |
+| D70 | 5150 K / −3 | 5076 K / −10 (measured matrices) | 0.986 | 0 (As Shot says +7) |
+| E-1 | 5350 K / +11 | 5300 K / 0 (Olympus's presets) | 0.991 | +11 |
+| PENTAX KP | 5200 K / +17 | 4650 K / +2 (the DNG's own matrices) | 0.894 | +15 |
+| RICOH GR III | 4950 K / +6 | 4953 K / +10 (the DNG's own matrices) | 1.000 | −4 |
+| ILCE-6400 | 5850 K / +17 | 5226 K / +10 (measured matrices) | 0.893 | +7 |
+| ILCE-6700 | 4850 K / +11 | 4940 K / +3 (Sony's presets) | 1.019 | +8 |
+| ILCE-7M3 | 5050 K / +13 | 4268 K / +7 (measured matrices) | 0.845 | +6 |
+| Galaxy S22 (SM-S901U) | 5550 K / +16 | 5127 K / −13 (the DNG's own matrices) | 0.924 | +29 |
+
+Each is a row of `LIGHTROOM` now (and of the Swift copy, `CRSMapping.lightroomScales`). The D70 is the one body of these with exports of custom whites, and they overrule its As Shot tint: with Lightroom's tint as written the four are 3.2 off, with the offset of 7 its As Shot gives 3.8 (the Kelvin ratio helps: 3.3 without it). So an As Shot tint offset of a body read through matrices is the best single number there is for it, not a measured one; the two preset bodies with both (ILCE-6700, E-1) come out the same either way. Three bodies read the same
+both ways and need none (DJI FC6310 4506 K / +13 against 4500 K / +13, Pixel 8 Pro 6017 K / −8 against 6000 K / −8,
+Mi 9 Lite 4382 K / −9 against 4400 K / −9: Lightroom reads these DNGs through their own matrices, as we do). What
+the exports could not settle:
+
+- **Three readings of ours are broken, not offset**, so they get no row: the EOS 5D Mark IV sample reads 1785 K / −189
+  (Lightroom 5050 K / +13), the Pixel 6 Pro DNG 3376 K / −95 (5800 K / +11) and the LEICA Q (Typ 116) DNG 8557 K / +16
+  (5750 K / +14). A ratio from one such point would be wrong at every other white; the as-shot reading of those
+  files is its own bug.
+- **A body on the relative scale has nothing to convert to.** Eighteen of the exported bodies have neither measured
+  matrices nor presets here (EOS 80D, 90D and R3, X-H2S, D500, D5600, D750, Z 5, Z f, Z6III, E-M1 Mark II, OM-5,
+  GH5, S1, GX8, RX100 VII, ILCE-7C, ZV-E10): a custom Kelvin from Lightroom still keeps As Shot on them. Lightroom's
+  As Shot for one photo does not give the next photo's, so they need a scale first (the camera's presets where the
+  file has them, else measured matrices), then one export each.
+- **Lightroom's tint depends on its profile.** The X-T3 raw exports as 5150 K / +40 with the default profile and
+  5150 K / +79 with Adobe Standard picked by hand. The rows are for the default profile.
+
+**The D100 and the D2H have their as-shot white read.** Their NEFs keep the as-shot levels only in the maker note's
+ColorBalance record, like the D70, in two more layouts: version `0100` (D100) with red, blue, green, green at byte
+72, version `0102` (D2H) with red, green, green, blue at byte 10 (ExifTool's tag documentation; checked on
+raw.pixls.us's `DSC_2376.NEF`, `744 368 256 256`, and `D2A_0005.NEF`, `466 256 256 463`, both added to
+`test-raws/MANIFEST.tsv`). Both bodies are on the relative scale and their look is fitted to the camera's preview,
+so the picture hardly moves; what changes is every step that needs the real multipliers (the highlights rebuilt at
+load, a DNG written from the raw). The D1, D1H, D1X and D2Hs samples write `0x000c` and were read before.
+
 ## Point Color on six cameras (2026-11-23, card #536)
 
 Lightroom exported the six cameras' raws with one Point Color sample each (`test-raws/light/xcam7`, 35 cases per camera:
@@ -710,6 +869,7 @@ constants are the ones named above. To re-measure, render with the CLI as in *Me
 
 | Date | Change |
 |---|---|
+| 2026-11-24 | White balance: a raw's white in Kelvin keeps the camera's green channel (lighter when warmer, as Lightroom) and blown highlights stay white; 16 more bodies measured against Lightroom from existing exports; the D100's and D2H's as-shot white read (card #535) |
 | 2026-11-23 | Shadows Tint in Lightroom's form (light taken away before the primaries, following Exposure) with a strength per camera body applied where a Lightroom value is read (card #534) |
 | 2026-11-23 | Point Color fitted to Lightroom's exports of one sample on six cameras: the sample read on linear Rec. 2020, the range box and the three shifts refitted, Luminance scales the whole colour (card #536) |
 | 2026-11-23 | White balance written by Lightroom measured against its own As Shot on six cameras: the D70's as-shot white read, the ILCE-6700 and X-A5 on a Kelvin scale from their own presets, the EOS RP and X-A5 measured, a tint rule for preset scales (card #535) |

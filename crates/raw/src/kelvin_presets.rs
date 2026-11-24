@@ -189,8 +189,8 @@ const PRESET_CURVE: LightroomScale = LightroomScale { kelvin_ratio: 1.0, tint_of
 
 /// Bodies measured against Lightroom: make, model, and the scale. A scale read through matrices fitted to the
 /// camera's spectral sensitivities and Lightroom's agree where they were calibrated (the D70's raw: 5076 K / -10
-/// against Lightroom's 5150 K / -3, used as written) but drift apart between the two calibration lights, and a
-/// maker's own neutrals are the maker's reading of them, so these bodies are converted:
+/// against Lightroom's 5150 K / -3) but drift apart between the two calibration lights, and a maker's own neutrals
+/// are the maker's reading of them, so these bodies are converted:
 /// - EOS RP: its raw reads 3749 K / +22 through its measured matrices (Canon's own `ColorTempAsShot` says 3800 K) and
 ///   4100 K / +25 in Lightroom, the ratio the EOS R6 below has.
 /// - X-A5: 4430 K / -5 through Fujifilm's neutral pair, 4850 K / +1 in Lightroom.
@@ -208,11 +208,35 @@ const PRESET_CURVE: LightroomScale = LightroomScale { kelvin_ratio: 1.0, tint_of
 /// 5000 K / +12 against 4424 K / +6 (the corpus' `cr3-canon-r6-craw.cr3`), ratios 0.912 and 0.885: a Custom 5050 K
 /// read as written warmed that photo twice as far from As Shot as in Lightroom (35 mired against 15), and its
 /// shadows came out yellow where Lightroom's are blue.
+///
+/// The other rows are one raw each (`apps/lightbites-swift/test-raws`, `docs/lightroom-preset-fit.md` lists the two
+/// readings): the As Shot Lightroom wrote into its export of the raw (`crs:Temperature`, `crs:Tint`) against what the
+/// raw's own scale reads, whichever that scale is (presets, measured matrices, a DNG's own matrices, which Lightroom
+/// replaces with its own for the Leica CL and M10, the PENTAX KP and the Galaxy S22). A body whose two readings agree
+/// (the DJI FC6310, the Pixel 8 Pro and the Mi 9 Lite: within 20 K and 0 tint) needs no row.
 const LIGHTROOM: &[(&str, &str, LightroomScale)] = &[
     ("SONY", "ILCE-6000", LightroomScale { kelvin_ratio: 1.06, tint_offset: 11.0 }),
     ("Canon", "Canon EOS R6", LightroomScale { kelvin_ratio: 0.90, tint_offset: 4.5 }),
     ("Canon", "Canon EOS RP", LightroomScale { kelvin_ratio: 0.914, tint_offset: 3.0 }),
     ("FUJIFILM", "X-A5", LightroomScale { kelvin_ratio: 0.913, tint_offset: 5.5 }),
+    ("Canon", "Canon EOS 600D", LightroomScale { kelvin_ratio: 0.987, tint_offset: -12.0 }),
+    ("Canon", "Canon EOS R5", LightroomScale { kelvin_ratio: 0.954, tint_offset: 1.0 }),
+    ("Canon", "Canon EOS R50", LightroomScale { kelvin_ratio: 0.931, tint_offset: 3.0 }),
+    ("Canon", "Canon EOS R8", LightroomScale { kelvin_ratio: 0.930, tint_offset: -4.0 }),
+    ("FUJIFILM", "X-T3", LightroomScale { kelvin_ratio: 0.938, tint_offset: 6.0 }),
+    ("FUJIFILM", "X100V", LightroomScale { kelvin_ratio: 0.883, tint_offset: 24.0 }),
+    ("LEICA CAMERA AG", "LEICA CL", LightroomScale { kelvin_ratio: 1.110, tint_offset: -4.0 }),
+    ("LEICA CAMERA AG", "LEICA M10", LightroomScale { kelvin_ratio: 0.976, tint_offset: 5.0 }),
+    // (its As Shot tint reads 7 lower here, but Lightroom's four custom whites of this raw are closer with the tint as
+    // written: effect ΔE 3.2 against 3.8)
+    ("NIKON CORPORATION", "NIKON D70", LightroomScale { kelvin_ratio: 0.986, tint_offset: 0.0 }),
+    ("OLYMPUS CORPORATION", "E-1", LightroomScale { kelvin_ratio: 0.991, tint_offset: 11.0 }),
+    ("RICOH IMAGING COMPANY, LTD.", "PENTAX KP", LightroomScale { kelvin_ratio: 0.894, tint_offset: 15.0 }),
+    ("RICOH IMAGING COMPANY, LTD.", "RICOH GR III", LightroomScale { kelvin_ratio: 1.0, tint_offset: -4.0 }),
+    ("SONY", "ILCE-6400", LightroomScale { kelvin_ratio: 0.893, tint_offset: 7.0 }),
+    ("SONY", "ILCE-6700", LightroomScale { kelvin_ratio: 1.019, tint_offset: 8.0 }),
+    ("SONY", "ILCE-7M3", LightroomScale { kelvin_ratio: 0.845, tint_offset: 6.0 }),
+    ("samsung", "SM-S901U", LightroomScale { kelvin_ratio: 0.924, tint_offset: 29.0 }),
 ];
 
 /// The Lightroom scale of this camera (make and model joined by a space): the measured one ([`LIGHTROOM`]), else
@@ -597,11 +621,25 @@ mod tests {
         assert_eq!(lightroom_scale("SONY ILCE-6000"), Some(LightroomScale { kelvin_ratio: 1.06, tint_offset: 11.0 }));
         assert_eq!(lightroom_scale("canon canon eos rp").map(|s| s.kelvin_ratio), Some(0.914));
         assert_eq!(lightroom_scale("FUJIFILM X-A5").map(|s| s.tint_offset), Some(5.5));
-        for c in ["SONY ILCE-6700", "OLYMPUS CORPORATION E-1", "NIKON CORPORATION NIKON Z5_2", "Canon Canon PowerShot G1 X Mark III"] {
+        for c in ["SONY ILCA-99M2", "OLYMPUS CORPORATION E-3", "NIKON CORPORATION NIKON Z5_2", "Canon Canon PowerShot G1 X Mark III"] {
             assert_eq!(lightroom_scale(c), Some(PRESET_CURVE), "{c}");
         }
-        for c in ["FUJIFILM X-T20", "DxO X-T2", "NIKON CORPORATION NIKON D70", "Canon Canon EOS R5", "SONY ILCE-7M2", "SONY", ""] {
+        for c in ["FUJIFILM X-T20", "DxO X-T2", "NIKON CORPORATION NIKON D200", "Canon Canon EOS 5D Mark III", "SONY ILCE-7M2", "SONY", ""] {
             assert_eq!(lightroom_scale(c), None, "{c}");
+        }
+        // a DNG's make as its file writes it, in either case
+        assert_eq!(lightroom_scale("Leica Camera AG LEICA M10").map(|s| s.kelvin_ratio), Some(0.976));
+        assert_eq!(lightroom_scale("RICOH IMAGING COMPANY, LTD. PENTAX KP").map(|s| s.tint_offset), Some(15.0));
+    }
+
+    /// Every row is a body once, with a scale a white balance can have: one photo's reading that came out far from
+    /// Lightroom's (a white the scale cannot read, as the EOS 5D Mark IV sample's 1785 K) is a broken reading, not a scale.
+    #[test]
+    fn lightroom_rows_are_one_per_body_and_plausible() {
+        for (i, (make, model, scale)) in LIGHTROOM.iter().enumerate() {
+            assert!((0.8..=1.2).contains(&scale.kelvin_ratio) && scale.tint_offset.abs() <= 30.0, "{make} {model}: {scale:?}");
+            assert!(!LIGHTROOM[..i].iter().any(|(m, n, _)| m.eq_ignore_ascii_case(make) && n.eq_ignore_ascii_case(model)), "{make} {model} twice");
+            assert_eq!(lightroom_scale(&format!("{make} {model}")), Some(*scale));
         }
     }
 

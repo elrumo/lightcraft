@@ -22,12 +22,58 @@ pub fn white_balance(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings) {
     wb_gain(img, info, s, 1.0);
 }
 
-/// The white-balance matrix (linear Rec.2020) for the settings, or `None` when the as-shot white
-/// is kept. A raw source with its camera colour model ([`crate::CameraColor`]) is re-developed for
-/// the new white in camera space, as Lightroom does (so a neutral under the chosen white renders
-/// neutral and saturated colours move as the camera's matrices say); other sources are adapted
-/// with Bradford, luminance-preserving.
+/// The white-balance matrix (linear Rec.2020) for the settings, or `None` when the as-shot white is kept
+/// ([`balance_for`], which also says what happens to blown highlights).
 pub fn wb_matrix_for(info: &SourceInfo, s: &DevelopSettings) -> Option<[[f32; 3]; 3]> {
+    balance_for(info, s).map(|b| b.matrix)
+}
+
+/// A white balance as the per-pixel step applies it ([`balance_for`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Balance {
+    /// On linear Rec.2020.
+    pub matrix: [[f32; 3]; 3],
+    /// Blown highlights stay white ([`Balance::BLOWN`]): a raw's white in Kelvin.
+    pub keeps_white: bool,
+}
+
+impl Balance {
+    /// Where a pixel is blown: its darkest channel before the white balance, from not at all to wholly (1 is where
+    /// the sensor clipped, as the raw is developed). Such a pixel is the sensor's clip, not a colour: the camera
+    /// recorded no more in any channel, so a white balance has nothing to tint, and Lightroom, which balances the
+    /// sensor's values before it clips them, shows it white at every white (the D70's overcast sky of
+    /// `docs/lightroom-preset-fit.md`: a* +0.4 there at 5500 K / +40, +13 here before this).
+    pub const BLOWN: [f32; 2] = [0.9, 1.0];
+
+    /// The white balance of one pixel (it may come out negative: the caller floors it).
+    #[inline]
+    pub fn apply(&self, p: [f32; 3]) -> [f32; 3] {
+        let m = &self.matrix;
+        let c = [
+            m[0][0] * p[0] + m[0][1] * p[1] + m[0][2] * p[2],
+            m[1][0] * p[0] + m[1][1] * p[1] + m[1][2] * p[2],
+            m[2][0] * p[0] + m[2][1] * p[1] + m[2][2] * p[2],
+        ];
+        let t = (p[0].min(p[1]).min(p[2]) - Self::BLOWN[0]) / (Self::BLOWN[1] - Self::BLOWN[0]);
+        if !(self.keeps_white && t > 0.0) {
+            return c;
+        }
+        let (t, top) = (t.min(1.0), c[0].max(c[1]).max(c[2]));
+        c.map(|v| v + (top - v) * t)
+    }
+}
+
+/// The white balance for the settings, or `None` when the as-shot white is kept.
+///
+/// A raw source with its camera colour model ([`crate::CameraColor`]) is re-developed for the new white in camera
+/// space, as Lightroom does (so a neutral under the chosen white renders neutral and saturated colours move as the
+/// camera's matrices say). Any other source is adapted with Bradford from its as-shot white. How bright the result
+/// is depends on the scale the white is on:
+/// - a white on the relative scale (a rendered photo's, a raw's whose camera has no Kelvin scale, settings written
+///   before a raw had one) keeps the luminance of a neutral, as a colour correction of a finished picture does;
+/// - a raw's white in Kelvin keeps what the camera's green channel recorded of a grey ([`camera_green`]), as a raw developer
+///   does, and blown highlights stay white ([`Balance::BLOWN`]).
+pub fn balance_for(info: &SourceInfo, s: &DevelopSettings) -> Option<Balance> {
     let (t, tint) = effective_wb(info, s);
     if (t - info.as_shot_temp).abs() < 1e-6 && (tint - info.as_shot_tint).abs() < 1e-6 {
         return None;
@@ -35,30 +81,56 @@ pub fn wb_matrix_for(info: &SourceInfo, s: &DevelopSettings) -> Option<[[f32; 3]
     if let Some(cc) = info.camera_color.as_deref().filter(|_| info.raw && !info.relative_wb)
         && let Some(m) = lightcraft_raw::color::rebalance(&cc.tags, cc.developed_for, temp_tint_to_xy(t, tint))
     {
-        return Some(m.to_f32());
+        return Some(Balance { matrix: m.to_f32(), keeps_white: false });
     }
     let set = wb_matrix(&REC2020, effective_white(info, s));
     let shot = wb_matrix(&REC2020, temp_tint_to_xy(info.as_shot_temp, info.as_shot_tint));
     let m = set.mul(&shot.inverse().unwrap_or(lightcraft_color::Mat3::IDENTITY));
-    // Normalize so neutral luminance is preserved (WB shouldn't change exposure).
-    let g = m.apply([1.0, 1.0, 1.0]);
-    let y = g[0] * 0.2627 + g[1] * 0.6780 + g[2] * 0.0593;
-    Some(m.mul(&lightcraft_color::Mat3::diag(1.0 / y, 1.0 / y, 1.0 / y)).to_f32())
+    let in_kelvin = info.raw && !info.relative_wb && !legacy_wb(info, s);
+    let scale = in_kelvin.then(|| camera_green(&m)).flatten().unwrap_or_else(|| {
+        // Normalize so neutral luminance is preserved (WB shouldn't change exposure).
+        let g = m.apply([1.0, 1.0, 1.0]);
+        1.0 / (g[0] * 0.2627 + g[1] * 0.6780 + g[2] * 0.0593)
+    });
+    Some(Balance { matrix: m.mul(&lightcraft_color::Mat3::diag(scale, scale, scale)).to_f32(), keeps_white: in_kelvin })
+}
+
+/// The green channel of the typical camera (`lightcraft_raw::spectral::generic`: the mean of the measured ones, its
+/// daylight matrix), as weights on linear Rec.2020 of a picture developed for its white: they add up to 1.
+/// `None` if that camera's matrix cannot be inverted.
+pub fn typical_green() -> Option<[f64; 3]> {
+    static GREEN: std::sync::OnceLock<Option<[f64; 3]>> = std::sync::OnceLock::new();
+    *GREEN.get_or_init(|| {
+        let mut tags = lightcraft_raw::ColorData::default();
+        lightcraft_raw::spectral::generic(None).fill(&mut tags);
+        let to_camera = lightcraft_raw::color::camera_transform_of(&tags, lightcraft_color::D65).matrix.inverse()?;
+        to_camera.0.get(1).copied()
+    })
+}
+
+/// The scale of `adapted` (the Bradford adaptation of a raw from its as-shot white to the chosen one) that keeps what
+/// the camera's green channel recorded of a grey.
+///
+/// A raw developer balances a new white by scaling the sensor's channels, and it holds the one with the smallest
+/// gain, which is green under every light a camera meets, so nothing unclipped clips. A warmer white (more red, less
+/// blue) then comes out lighter and a cooler one darker: Lightroom's 7500 K is 2 to 4 L* lighter than its As Shot on
+/// the six raws of `docs/lightroom-preset-fit.md` and its 4000 K 1 to 2 darker, where keeping the luminance of a
+/// neutral moved nothing. So a grey of the picture keeps its green in the typical camera ([`typical_green`]) where
+/// the relative scale keeps its luminance: the same normalisation with the camera's weights. The picture's colours
+/// stay Bradford's: scaling the typical camera's three channels instead was no closer to Lightroom (same section).
+/// `None` when the numbers have nowhere to go; the caller keeps the luminance then.
+fn camera_green(adapted: &lightcraft_color::Mat3) -> Option<f64> {
+    let (grey, green) = (adapted.apply([1.0; 3]), typical_green()?);
+    let kept = green[0] * grey[0] + green[1] * grey[1] + green[2] * grey[2];
+    (kept.is_finite() && (0.05..20.0).contains(&kept)).then(|| 1.0 / kept)
 }
 
 fn wb_gain(img: &mut Rgb32f, info: &SourceInfo, s: &DevelopSettings, gain: f32) {
-    let m = wb_matrix_for(info, s);
+    let balance = balance_for(info, s);
     let w = img.width;
     for_rows(&mut img.data, w, |_, row| {
         for p in row.iter_mut() {
-            let mut c = *p;
-            if let Some(m) = &m {
-                c = [
-                    m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2],
-                    m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
-                    m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2],
-                ];
-            }
+            let c = balance.map_or(*p, |b| b.apply(*p));
             *p = [(c[0] * gain).max(0.0), (c[1] * gain).max(0.0), (c[2] * gain).max(0.0)];
         }
     });

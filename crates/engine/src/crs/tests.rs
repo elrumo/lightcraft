@@ -386,7 +386,7 @@ fn a_sidecar_custom_kelvin_is_kept_on_a_body_with_presets_and_reported_on_one_wi
     use lightcraft_catalog::MediaKind;
     let x = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
       crs:WhiteBalance="Custom" crs:Temperature="5500" crs:Tint="+10"/></rdf:RDF>"#;
-    for (format, camera, temp, tint) in [("ARW", "SONY ILCE-6700", 5500.0, 0.0), ("RAF", "FUJIFILM X-A5", 5500.0 * 0.913, 4.5)] {
+    for (format, camera, temp, tint) in [("ARW", "SONY ILCE-6700", 5500.0 * 1.019, 2.0), ("RAF", "FUJIFILM X-A5", 5500.0 * 0.913, 4.5)] {
         let target = Target::for_file(MediaKind::Raw, format, false, camera);
         assert_eq!(target, Target::RawAbsolute, "{camera}");
         let (mut v, skipped) = to_partial_report(&props(x), None, target, 1.5);
@@ -421,16 +421,21 @@ fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
     let mut rp = json!({"wb": {"mode": "custom", "temp": 5500.0, "tint": 10.0, "scale": "kelvin", "lightroom": true}});
     lightroom_white_to_dial(&mut rp, "Canon Canon EOS RP");
     assert_eq!(rp["wb"], json!({"mode": "custom", "temp": 5500.0 * 0.914, "tint": 7.0, "scale": "kelvin"}));
-    // a body whose scale is its own presets and that nobody measured (ILCE-6700, E-1): the same Kelvin, and Lightroom's
-    // tint counted from the daylight presets (10 lower)
-    for camera in ["SONY ILCE-6700", "OLYMPUS CORPORATION E-1"] {
+    // a body whose scale is its own presets and that nobody measured: the same Kelvin, and Lightroom's tint counted from
+    // the daylight presets (10 lower)
+    for camera in ["SONY ILCA-99M2", "OLYMPUS CORPORATION E-3"] {
         let mut preset_dial = json!({"wb": {"mode": "custom", "temp": 5500.0, "tint": 10.0, "scale": "kelvin", "lightroom": true}});
         lightroom_white_to_dial(&mut preset_dial, camera);
         assert_eq!(preset_dial["wb"], json!({"mode": "custom", "temp": 5500.0, "tint": 0.0, "scale": "kelvin"}), "{camera}");
     }
-    // a body read through measured matrices keeps the values as written, and the marker never stays
+    // a body measured on one raw (the EOS R8: As Shot 4850 K / +12 in Lightroom, 4512 K / +16 here)
+    let mut r8 = json!({"wb": {"mode": "custom", "temp": 4850.0, "tint": 12.0, "scale": "kelvin", "lightroom": true}});
+    lightroom_white_to_dial(&mut r8, "Canon Canon EOS R8");
+    assert_eq!(r8["wb"], json!({"mode": "custom", "temp": 4850.0 * 0.930, "tint": 16.0, "scale": "kelvin"}));
+    // a body read through measured matrices that nobody measured against Lightroom keeps the values as written, and the
+    // marker never stays
     let mut other = marked();
-    lightroom_white_to_dial(&mut other, "Canon Canon EOS R5");
+    lightroom_white_to_dial(&mut other, "Canon Canon EOS 5D Mark III");
     assert_eq!(other["wb"], json!({"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin"}));
     // values that are not Lightroom's (a preset saved on that body, in dial units) are left alone
     let mut own = json!({"wb": {"mode": "custom", "temp": 6900.0, "tint": 3.0, "scale": "kelvin"}});

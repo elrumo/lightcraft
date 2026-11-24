@@ -140,20 +140,27 @@ fn xguided_apply(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workg
     }
 }
 
-// White balance: 3×3 matrix (P[1] = has matrix, P[2..11] row-major), clamped at 0.
+// White balance: 3×3 matrix (P[1] = has matrix, P[2..11] row-major), clamped at 0. P[11] != 0: blown highlights stay
+// white, a pixel whose darkest channel is between P[12] and P[13] going to its brightest balanced channel
+// (`local::Balance::apply`).
 @compute @workgroup_size(256)
 fn wb_k(@builtin(global_invocation_id) g: vec3<u32>, @builtin(num_workgroups) nw: vec3<u32>) {
     let i = lin_index(g, nw);
     if (i >= pu(0u)) {
         return;
     }
-    var c = rgb_a(i);
+    let src = rgb_a(i);
+    var c = src;
     if (pu(1u) != 0u) {
         c = vec3<f32>(
-            pf(2u) * c.x + pf(3u) * c.y + pf(4u) * c.z,
-            pf(5u) * c.x + pf(6u) * c.y + pf(7u) * c.z,
-            pf(8u) * c.x + pf(9u) * c.y + pf(10u) * c.z,
+            pf(2u) * src.x + pf(3u) * src.y + pf(4u) * src.z,
+            pf(5u) * src.x + pf(6u) * src.y + pf(7u) * src.z,
+            pf(8u) * src.x + pf(9u) * src.y + pf(10u) * src.z,
         );
+        let t = (min(src.x, min(src.y, src.z)) - pf(12u)) / (pf(13u) - pf(12u));
+        if (pu(11u) != 0u && t > 0.0) {
+            c = c + (vec3<f32>(max(c.x, max(c.y, c.z))) - c) * min(t, 1.0);
+        }
     }
     put_rgb(i, max(c * 1.0, vec3<f32>(0.0)));
 }

@@ -1028,9 +1028,12 @@ fn linear(
         lightcraft_pipeline::lin_cpu(&mut img, info, plan);
         cx.gpu.upload(rgb_words(&img))
     } else {
-        let m = local::wb_matrix_for(info, s);
-        let mut p = vec![m.is_some() as u32];
-        p.extend(m.unwrap_or_default().iter().flatten().map(|v| v.to_bits()));
+        let b = local::balance_for(info, s);
+        let mut p = vec![b.is_some() as u32];
+        p.extend(b.map(|b| b.matrix).unwrap_or_default().iter().flatten().map(|v| v.to_bits()));
+        // (blown highlights stay white: `local::Balance::apply`)
+        p.push(b.is_some_and(|b| b.keeps_white) as u32);
+        p.extend(local::Balance::BLOWN.map(f32::to_bits));
         let out = cx.gpu.buffer(n * 3);
         map(cx, "wb_k", n, &p, [Some(sampled), None, None], &out);
         if plan.eyes.is_empty() {

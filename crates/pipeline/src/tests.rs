@@ -838,21 +838,24 @@ fn legacy_relative_white_balance_renders_as_before_on_a_kelvin_raw() {
             };
             // the same matrix to f32 precision: the white is composed, not read back through Kelvin / tint
             assert!(near(old, new, 2e-6), "as shot {as_t}/{as_tint}, {temp}/{tint}: {old:?} vs {new:?}");
-            // the converted Kelvin values, once written, render the same again to the precision of the Kelvin /
-            // tint parametrisation (whose seam at 4000 K costs up to 0.01 %)
+            // the converted Kelvin values, once written, name the same white to the precision of the Kelvin / tint
+            // parametrisation (whose seam at 4000 K costs up to 0.01 %): the same colours, at the brightness a white in
+            // Kelvin has (`local::balance_for`: the camera's green channel kept, not a neutral's luminance)
             let (kt, ktint) = legacy_to_kelvin(temp, tint, (as_t, as_tint));
             assert_eq!(effective_wb(&new_info, &s), (kt, ktint));
             let mut k = s.clone();
             (k.wb.temp, k.wb.tint, k.wb.scale) = (kt, ktint, WbScale::Kelvin);
-            assert!(near(old, wb_matrix_for(&new_info, &k), 3e-4), "as shot {as_t}/{as_tint}, {temp}/{tint} → {kt}/{ktint}");
-            // and the rendered pixels agree
+            let unit = |m: Option<[[f32; 3]; 3]>| {
+                m.map(|m| {
+                    let white: [f32; 3] = std::array::from_fn(|r| m[r][0] + m[r][1] + m[r][2]);
+                    m.map(|row| row.map(|v| v / lightcraft_color::luminance_2020(white)))
+                })
+            };
+            assert!(near(old, unit(wb_matrix_for(&new_info, &k)), 3e-4), "as shot {as_t}/{as_tint}, {temp}/{tint} → {kt}/{ktint}");
+            // and the rendered pixels of the settings as they were written agree
             let a = render(&src, &old_info, &s, &RenderRequest::fit(16, 16)).image;
             let b = render(&src, &new_info, &s, &RenderRequest::fit(16, 16)).image;
-            let c = render(&src, &new_info, &k, &RenderRequest::fit(16, 16)).image;
-            for (x, (y, z)) in a.data.iter().zip(b.data.iter().zip(&c.data)) {
-                assert_eq!(x, y, "as shot {as_t}/{as_tint}, {temp}/{tint}");
-                assert!(x.iter().zip(z).all(|(p, q)| p.abs_diff(*q) <= 1), "{x:?} {z:?}");
-            }
+            assert_eq!(a.data, b.data, "as shot {as_t}/{as_tint}, {temp}/{tint}");
         }
         // as shot on the relative scale is as shot on the Kelvin scale, exactly
         assert_eq!(legacy_to_kelvin(6500.0, 0.0, (as_t, as_tint)), (as_t, as_tint));
@@ -948,12 +951,13 @@ fn custom_white_balance_redevelops_in_camera_space() {
     let m = wb_matrix_for(&info, &s).unwrap();
     let out = apply(m, card);
     assert!(out.iter().all(|v| (v / out[1] - 1.0).abs() < 1e-4), "{card:?} -> {out:?}");
-    // the adaptation path for sources without a colour model, and for relative white balance
+    // the adaptation path for sources without a colour model, and for relative white balance (which keeps the
+    // luminance of a neutral)
     let luma = |c: [f32; 3]| lightcraft_color::luminance_2020(c);
     for other in [SourceInfo { camera_color: None, ..info.clone() }, SourceInfo { relative_wb: true, ..info.clone() }] {
         let b = wb_matrix_for(&other, &s).unwrap();
         assert_ne!(b, m);
-        assert!((luma(apply(b, [1.0; 3])) - 1.0).abs() < 1e-4);
+        assert!(other.relative_wb != ((luma(apply(b, [1.0; 3])) - 1.0).abs() > 1e-4));
     }
     // the white-balance picker / auto white balance invert the same model: the card names its white
     let picked = crate::auto::auto_wb(&Rgb32f::filled(4, 4, card), &info);
@@ -961,6 +965,64 @@ fn custom_white_balance_redevelops_in_camera_space() {
     // the as-shot white needs nothing
     s.wb.mode = WbMode::AsShot;
     assert!(wb_matrix_for(&info, &s).is_none());
+}
+
+/// A raw's white in Kelvin, without a colour model of its own: the picture's colours are adapted as on the relative
+/// scale, at the brightness that keeps the camera's green of a grey (a warmer white lighter, a cooler one darker, as
+/// Lightroom's are), and a blown highlight stays white. A white on the relative scale, a rendered photo's and settings
+/// written before the raw had a Kelvin scale keep the luminance of a neutral and tint everything.
+#[test]
+fn a_raws_white_in_kelvin_keeps_the_cameras_green_and_blown_highlights_white() {
+    use crate::local::{Balance, balance_for, typical_green};
+    use lightcraft_develop::{WbMode, WbScale};
+    let green = typical_green().unwrap();
+    // (what the Apple renderer's copy of these weights holds, `CameraWhite.typicalGreen`)
+    for (v, expected) in green.iter().zip([0.00325, 0.74503, 0.25172]) {
+        assert!((v - expected).abs() < 5e-4, "{green:?}");
+    }
+    let raw = SourceInfo { raw: true, as_shot_temp: 5200.0, as_shot_tint: 5.0, ..Default::default() };
+    let relative = SourceInfo { relative_wb: true, ..raw.clone() };
+    let luma = |b: &Balance| lightcraft_color::luminance_2020(b.apply([0.2; 3]));
+    let white = |temp: f64, tint: f64| {
+        let mut s = DevelopSettings::default();
+        (s.wb.mode, s.wb.temp, s.wb.tint, s.wb.scale) = (WbMode::Custom, temp, tint, WbScale::Kelvin);
+        s
+    };
+    // (a tint moves red and blue together against the green that is kept, so it changes the lightness little)
+    for (temp, tint, lighter) in [(7500.0, 5.0, Some(true)), (4000.0, 5.0, Some(false)), (5200.0, 45.0, None), (5200.0, -35.0, None)] {
+        let (k, r) = (balance_for(&raw, &white(temp, tint)).unwrap(), balance_for(&relative, &white(temp, tint)).unwrap());
+        assert!(k.keeps_white && !r.keeps_white);
+        // the same colours: one matrix is a multiple of the other
+        let ratio = k.matrix[1][1] / r.matrix[1][1];
+        assert!(k.matrix.iter().flatten().zip(r.matrix.iter().flatten()).all(|(a, b)| (a - b * ratio).abs() < 1e-5), "{temp} / {tint}");
+        assert!((luma(&r) - 0.2).abs() < 1e-5, "the relative scale keeps a neutral's luminance");
+        match lighter {
+            Some(lighter) => assert_eq!(luma(&k) > 0.2, lighter, "{temp} / {tint}: {}", luma(&k)),
+            None => assert!((luma(&k) / 0.2 - 1.0).abs() < 0.06, "{temp} / {tint}: {}", luma(&k)),
+        }
+        // a grey of the picture keeps its green in the typical camera
+        let grey = k.apply([0.5; 3]);
+        let kept: f64 = (0..3).map(|i| green[i] * f64::from(grey[i])).sum();
+        assert!((kept - 0.5).abs() < 1e-4, "{temp} / {tint}: {kept}");
+        // a blown pixel stays white, one below the ramp takes the whole tint, the relative scale tints both
+        let spread = |c: [f32; 3]| c.iter().fold(f32::MIN, |a, v| a.max(*v)) - c.iter().fold(f32::MAX, |a, v| a.min(*v));
+        let blown = k.apply([1.4; 3]);
+        assert!(spread(blown) == 0.0 && blown[0] >= 1.4 * ratio.min(1.0), "{blown:?}");
+        assert!(spread(k.apply([0.5; 3])) > 0.02, "{temp} / {tint}");
+        assert!(spread(r.apply([1.4; 3])) > 0.05, "{temp} / {tint}");
+    }
+    // 7500 K from 5200 K is about a tenth lighter, as Lightroom's exports are (a mid grey's L* +2)
+    let warm = luma(&balance_for(&raw, &white(7500.0, 5.0)).unwrap()) / 0.2;
+    assert!((1.05..1.15).contains(&warm), "{warm}");
+    // settings written on the relative scale for a raw that has a Kelvin scale since keep their look
+    let since = SourceInfo { legacy_relative_wb: true, ..raw.clone() };
+    let mut old = white(7500.0, 5.0);
+    old.wb.scale = WbScale::Legacy;
+    let b = balance_for(&since, &old).unwrap();
+    assert!(!b.keeps_white && (luma(&b) - 0.2).abs() < 1e-5);
+    // the as-shot white needs nothing, and a rendered photo is adapted
+    assert!(balance_for(&raw, &DevelopSettings::default()).is_none());
+    assert!(!balance_for(&SourceInfo::default(), &white(7500.0, 5.0)).unwrap().keeps_white);
 }
 
 /// Every stored process number renders with a process this build knows: settings saved before
