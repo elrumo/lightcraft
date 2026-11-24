@@ -169,7 +169,12 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 sign "$app/Contents/MacOS/lightbites-server"
 # unsigned: an ad-hoc seal still, so a downloaded copy gets macOS's "Open Anyway" and not "damaged"
-if [ "$signed" = 1 ]; then codesign --force --timestamp --options runtime --sign "$identity" "$app"; else codesign --force --sign - "$app"; fi
+# (lipo's universal binaries lose the linker's ad-hoc signature: the nested server needs its own first)
+if [ "$signed" = 1 ]; then
+  codesign --force --timestamp --options runtime --sign "$identity" "$app"
+else
+  codesign --force --sign - "$app/Contents/MacOS/lightbites-server" && codesign --force --sign - "$app"
+fi
 codesign --verify --strict "$app"
 ln -s /Applications "$src/_pkg/dmg/Applications"
 dmg="$out/LightBites-Server.dmg"
