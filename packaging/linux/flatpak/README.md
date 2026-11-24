@@ -89,17 +89,38 @@ different destinations.
 
 ## Offline validation performed
 
-The committed inventory was generated from the current `Cargo.lock` and then
-validated without contacting the network: every git/archive/shell/inline entry
-was materialized as Flatpak would, crate archives were checked against their
-recorded SHA-256 values, and the generated Cargo config was pointed at the
-materialized vendor directory. With an isolated `CARGO_HOME` and
-`CARGO_NET_OFFLINE=true`, `cargo --config <generated-config> metadata --offline
---locked --format-version 1` exited 0. The two craft-libs revisions
-(`82a24b006eefa036b43c09a67fb9a3fbd17ffe63` and
-`25da1314d443171b4adeaad2cd9454b273f35c6f`) are present as separate git sources
-and `[source]` entries. The checked-in `cargo-sources.json` has SHA-256
-`c7f515d1178bb79b2cabdfd419ad375a04ff5d84ba9d08b1b34970a460cd0f2c`.
+An earlier inventory was validated without contacting the network: every
+git/archive/shell/inline entry was materialized as Flatpak would, crate archives
+were checked against their recorded SHA-256 values, and the generated Cargo
+config was pointed at the materialized vendor directory. With an isolated
+`CARGO_HOME` and `CARGO_NET_OFFLINE=true`, `cargo --config <generated-config>
+metadata --offline --locked --format-version 1` exited 0.
+
+The checked-in `cargo-sources.json` was regenerated from the `Cargo.lock` of
+commit `8b6a81d0b` and has SHA-256
+`03f7ea5d24ff7c07784d465c36ec176a49948a7321396962a52a1a6a0c575d6a`. For it, every
+registry package of that `Cargo.lock` was checked to have an archive with its
+checksum (877, and no others), and every git revision a git source: craft-libs
+`010702ee9b030844c852939095b1da0d0656a890`,
+`23acc704933a9a5619a5cd1cddc9bb1fb5a9b2d3` and
+`94777dcf7f8962476e96b049d08d22e25b9330c2`, egui
+`6d518fc799681571963842f95b55a6b68431b15a`, filmcraft
+`d643a886650bfbf16f24762274054575aa1e8f20` and winit
+`a517b3846ee8457d84ee4975110bfda6797c44dc`. The offline `cargo metadata` check
+above was not rerun for it.
+
+The egui fork keeps its images in Git LFS. Where git has an LFS filter
+configured but `git-lfs` is not installed, its checkout fails and the generator
+stops; the generator only needs the manifests, so turn the filter off for the
+run:
+
+```sh
+GIT_CONFIG_COUNT=4 GIT_CONFIG_KEY_0=filter.lfs.process GIT_CONFIG_VALUE_0= \
+  GIT_CONFIG_KEY_1=filter.lfs.smudge GIT_CONFIG_VALUE_1=cat \
+  GIT_CONFIG_KEY_2=filter.lfs.clean GIT_CONFIG_VALUE_2=cat \
+  GIT_CONFIG_KEY_3=filter.lfs.required GIT_CONFIG_VALUE_3=false \
+  ./packaging/linux/flatpak/generate-cargo-sources.py
+```
 
 This validates the source inventory and offline metadata resolution only. A
 full `flatpak-builder` build against the `org.freedesktop.Sdk` 25.08 runtime and
