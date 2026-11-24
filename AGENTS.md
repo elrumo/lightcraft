@@ -204,8 +204,9 @@ of it.
   (`assets/camera-profiles/Canon_EOS_R6.neutral.json`) is fitted to Lightroom's default exports of the maintainer's
   own photos (rendered output only, no Adobe file read; `docs/camera-preview-colour.md`). So are the Olympus E-1's and
   Nikon D70's (`E-1.neutral.json`, `NIKON_D70.neutral.json`, maintainer decision 2026-11-23), each fitted to the
-  maintainer's Lightroom default export of one CC0 raw.pixls.us photo. Fitting anything else to Adobe output needs the
-  maintainer's go-ahead first.
+  maintainer's Lightroom default export of one CC0 raw.pixls.us photo, and the Canon EOS RP's
+  (`Canon_EOS_RP.neutral.json`, maintainer decision 2026-11-24), fitted the same way. Fitting anything else to Adobe
+  output needs the maintainer's go-ahead first.
 - **Pure Rust** in the product. No C/C++ dependencies.
 - **craft-libs, patched here:** `craft-raw`, `craft-tiff`, `craft-heif` and `craft-metadata` (upstream's raw decoders,
   TIFF, HEIF and metadata) come from `third_party/craft-libs`, a copy with this fork's own decoder and metadata work on
