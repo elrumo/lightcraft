@@ -6,6 +6,8 @@
 #   tools/release-server.sh --upload              # and puts them on a DRAFT GitHub release server-v<version>
 #   tools/release-server.sh --upload --publish    # and publishes it (the release the macOS installer downloads)
 #   tools/release-server.sh --docker              # and builds + pushes the Docker image (amd64 + arm64) to Docker Hub
+#   Also builds LightBites-Server.dmg (LightBites Server.app: opening it installs the server, as install.sh does).
+#   --generate-notes                             # generate GitHub release notes via LiteLLM (needs --upload)
 #   --version 0.14.0   --image user/name (default elrumo/lightbites-server)   --skip-linux   --skip-intel
 #
 # Builds: macOS arm64 and x86_64 (cargo, here), Linux x86_64 and aarch64 (cross-built in Docker, the image's own
@@ -13,7 +15,7 @@
 # wasm-bindgen-cli, as for `cargo xtask web`), docker (OrbStack/Docker Desktop) for Linux and --docker, gh for --upload.
 set -eu
 
-version="" image=elrumo/lightbites-server upload=0 publish=0 docker_push=0 linux=1 intel=1
+version="" image=elrumo/lightbites-server upload=0 publish=0 docker_push=0 linux=1 intel=1 generate_notes=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version=$2; shift ;;
@@ -21,6 +23,7 @@ while [ $# -gt 0 ]; do
     --upload) upload=1 ;;
     --publish) publish=1 ;;
     --docker) docker_push=1 ;;
+    --generate-notes) generate_notes=1 ;;
     --skip-linux) linux=0 ;;
     --skip-intel) intel=0 ;;
     *) echo "unknown option $1 (see the top of this file)" >&2; exit 1 ;;
@@ -28,6 +31,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ "$publish" = 0 ] || [ "$upload" = 1 ] || { echo "--publish needs --upload" >&2; exit 1; }
+[ "$generate_notes" = 0 ] || [ "$upload" = 1 ] || { echo "--generate-notes needs --upload" >&2; exit 1; }
 
 # this checkout has several remotes (origin, upstream): tell gh which repository the release is on
 export GH_REPO=${GH_REPO:-elrumo/lightbites-server}
@@ -42,6 +46,11 @@ out="$root/dist/release/server"
 
 src=$(mktemp -d)
 trap 'rm -rf "$src"' EXIT
+if [ "$generate_notes" = 1 ]; then
+  echo "== generating release notes"
+  python3 "$root/tools/server-release-notes.py" --version "$version" > "$src/release-notes.md"
+  printf '\nDocker: `docker pull %s:%s`\n\nSetup and troubleshooting: https://lightbites.app/server\n' "$image" "$version" >> "$src/release-notes.md"
+fi
 git archive HEAD | tar -x -C "$src"
 cp .dockerignore "$src"/ 2>/dev/null || true
 rm -rf "$out" && mkdir -p "$out" "$src/_pkg"
@@ -119,6 +128,55 @@ if [ "$(uname -m)" = arm64 ]; then
   [ "$ok" = 1 ] || { echo "the smoke test failed" >&2; exit 1; }
 fi
 
+# LightBites Server.app on a DMG, for people who don't use Terminal: opening the app installs the server it carries
+# as the one-line installer does (apps/lightbites-menubar, `run_app`). Universal unless --skip-intel. The name has no
+# version, so https://github.com/<repo>/releases/latest/download/LightBites-Server.dmg is always the newest.
+echo "== LightBites Server.app + DMG"
+app="$src/_pkg/dmg/LightBites Server.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+for bin in lightcraft-server:lightbites-server lightbites-menubar:lightbites-menubar; do
+  from=${bin%%:*} to=${bin#*:}
+  set -- "$target_dir/aarch64-apple-darwin/release/$from"
+  [ "$intel" = 0 ] || set -- "$@" "$target_dir/x86_64-apple-darwin/release/$from"
+  lipo -create "$@" -output "$app/Contents/MacOS/$to"
+done
+cp -R "$web" "$app/Contents/Resources/web"
+iconset="$src/_pkg/AppIcon.iconset"
+mkdir -p "$iconset"
+for px in 16 32 128 256; do
+  sips -z $px $px apps/lightbites-menubar/assets/dock-256.png --out "$iconset/icon_${px}x${px}.png" >/dev/null
+  [ $px = 256 ] || sips -z $((px * 2)) $((px * 2)) apps/lightbites-menubar/assets/dock-256.png --out "$iconset/icon_${px}x${px}@2x.png" >/dev/null
+done
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
+cat > "$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>LightBites Server</string>
+  <key>CFBundleDisplayName</key><string>LightBites Server</string>
+  <key>CFBundleIdentifier</key><string>com.elrumo.lightbites.server</string>
+  <key>CFBundleExecutable</key><string>lightbites-menubar</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$version</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHumanReadableCopyright</key><string>MIT OR Apache-2.0</string>
+</dict>
+</plist>
+PLIST
+sign "$app/Contents/MacOS/lightbites-server"
+[ "$signed" = 0 ] || codesign --force --timestamp --options runtime --sign "$identity" "$app"
+ln -s /Applications "$src/_pkg/dmg/Applications"
+dmg="$out/LightBites-Server.dmg"
+hdiutil create -volname "LightBites Server" -srcfolder "$src/_pkg/dmg" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$dmg" >/dev/null
+sign "$dmg"
+notarise "$dmg"
+[ "$signed" = 0 ] || xcrun stapler staple "$dmg"
+echo "   $dmg"
+
 if [ "$linux" = 1 ]; then
   echo "== linux (in Docker)"
   lin=$(mktemp -d)
@@ -132,7 +190,7 @@ if [ "$linux" = 1 ]; then
   rm -rf "$lin"
 fi
 
-(cd "$out" && shasum -a 256 ./*.zip | sed 's| \./| |' > SHA256SUMS-server.txt && cat SHA256SUMS-server.txt)
+(cd "$out" && shasum -a 256 ./*.zip ./*.dmg | sed 's| \./| |' > SHA256SUMS-server.txt && cat SHA256SUMS-server.txt)
 
 if [ "$docker_push" = 1 ]; then
   echo "== Docker Hub: $image"
@@ -160,12 +218,17 @@ if [ "$upload" = 1 ]; then
     cat "$out/SHA256SUMS-server.txt" >> "$mergedsums"
     sort -k2 "$mergedsums" > "$out/SHA256SUMS-server.txt"
     gh release upload "$tag" "$out"/* --clobber --repo "$GH_REPO"
+    if [ "$generate_notes" = 1 ]; then gh release edit "$tag" --notes-file "$src/release-notes.md" --repo "$GH_REPO"; fi
   else
     notes="Self-hosted LightBites sync server. Docker: \`docker pull $image:$version\`. Mac: \`curl -fsSL https://raw.githubusercontent.com/elrumo/lightcraft/main/apps/lightcraft-server/install.sh | sh\`. Setup and troubleshooting: https://lightbites.app/server"
     flags="--draft"
     case "$version" in *-*) flags="$flags --prerelease" ;; esac
     # shellcheck disable=SC2086
-    gh release create "$tag" "$out"/* $flags --title "LightBites Server v$version" --notes "$notes" --repo "$GH_REPO"
+    if [ "$generate_notes" = 1 ]; then
+      gh release create "$tag" "$out"/* $flags --title "LightBites Server v$version" --notes-file "$src/release-notes.md" --repo "$GH_REPO"
+    else
+      gh release create "$tag" "$out"/* $flags --title "LightBites Server v$version" --notes "$notes" --repo "$GH_REPO"
+    fi
   fi
   rm -f "$mergedsums"
   if [ "$publish" = 1 ] && [ "$signed" = 0 ]; then echo "release-server.sh: the Mac zips are not signed and notarised: not publishing" >&2; exit 1; fi

@@ -1,6 +1,6 @@
 //! The macOS menu-bar icon: a `tao` event loop (no window) with a `tray-icon` menu.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -46,6 +46,52 @@ fn open(target: &str) {
     let _ = Command::new("open").arg(target).stdin(Stdio::null()).status();
 }
 
+/// A dialog from the app (no window of its own). The text goes in through the environment, never into the script.
+fn alert(title: &str, text: &str) {
+    let script = format!(
+        "display dialog (system attribute \"LB_TEXT\") with title \"{}\" buttons {{\"OK\"}} default button 1 with icon note",
+        title.replace(['"', '\\'], "")
+    );
+    let _ = Command::new("osascript").args(["-e", &script]).env("LB_TEXT", text).stdin(Stdio::null()).output();
+}
+
+fn version(program: &Path) -> Option<String> {
+    let out = Command::new(program).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// LightBites Server.app: installs the server it carries (`Contents/MacOS/lightbites-server`, the web app in
+/// `Contents/Resources/web`) the way the one-line installer does, when none is installed or it is another version;
+/// that copy then runs at every login with its own menu-bar icon. Otherwise it starts the installed server. Either way
+/// it opens the admin page and quits.
+fn run_app(bin: &Path, resources: &Path, home: Option<&Path>, port: u16) -> Result<(), String> {
+    let bundled = bin.join("lightbites-server");
+    let Some(bundled_version) = version(&bundled) else {
+        alert("LightBites Server", "The server program in this app does not start. Download the app again from lightbites.app/server.");
+        return Err(format!("{} does not run", bundled.display()));
+    };
+    let installed = home.map(state::installed_program).filter(|p| p.is_file());
+    if state::needs_install(installed.as_deref().and_then(version).as_deref(), &bundled_version) {
+        let out =
+            Command::new(&bundled).arg("install").arg("--web").arg(resources.join("web")).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            alert("LightBites Server could not be installed", &why);
+            return Err(why);
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let code = state::setup_code_line(&stdout).map(|l| format!("\n\n{l}")).unwrap_or_default();
+        alert(
+            "LightBites Server is running",
+            &format!("It starts at every login, and its icon in the menu bar starts and stops it.{code}\n\nThe admin page opens next."),
+        );
+    } else if let Some(installed) = installed {
+        let _ = Command::new(installed).arg("start").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+    open(&state::admin_url(port));
+    Ok(())
+}
+
 /// The LightBites icon for the Dock (the app is a bare executable, so macOS would show a generic "exec" tile).
 fn set_dock_icon() {
     let Some(mtm) = MainThreadMarker::new() else { return };
@@ -68,6 +114,10 @@ pub fn run() -> Result<(), String> {
     let port = args.iter().position(|a| a == "--port").and_then(|i| args.get(i + 1)).and_then(|p| p.parse().ok()).unwrap_or(8080);
     let home = std::env::var("HOME").ok().filter(|h| !h.is_empty()).map(PathBuf::from);
     let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
+    // opened as LightBites Server.app (the DMG): install or update the server it carries, then hand over to that copy
+    if let Some((bin, resources)) = beside.as_deref().and_then(|b| state::app_resources(b).map(|r| (b, r))) {
+        return run_app(bin, &resources, home.as_deref(), port);
+    }
     let server = std::sync::Arc::new(Server { program: state::server_program(home.as_deref(), beside.as_deref()) });
     let log = home.as_deref().map(state::log_path);
 

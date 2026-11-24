@@ -107,6 +107,26 @@ pub fn server_program(home: Option<&Path>, beside: Option<&Path>) -> PathBuf {
     candidates.into_iter().flatten().find(|p| p.is_file()).unwrap_or_else(|| PathBuf::from("lightbites-server"))
 }
 
+/// The bundle's `Contents/Resources` when this program runs as `LightBites Server.app` (`Contents/MacOS/<exe>`): the
+/// DMG's app, which installs the server beside it on launch (`mac::run_app`).
+pub fn app_resources(exe_dir: &Path) -> Option<PathBuf> {
+    let contents = exe_dir.parent()?;
+    let in_app = exe_dir.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && contents.parent()?.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"));
+    in_app.then(|| contents.join("Resources"))
+}
+
+/// Whether the app's server must be (re)installed: none installed yet, or another version than the bundled one.
+pub fn needs_install(installed_version: Option<&str>, bundled_version: &str) -> bool {
+    installed_version.map(str::trim) != Some(bundled_version.trim())
+}
+
+/// The line of `install`'s output that holds the one-time setup code, if the server printed one.
+pub fn setup_code_line(install_output: &str) -> Option<&str> {
+    install_output.lines().map(str::trim).find(|l| l.contains("setup code"))
+}
+
 /// The admin page's address for a listen port.
 pub fn admin_url(port: u16) -> String {
     format!("http://localhost:{port}/admin")
@@ -162,6 +182,31 @@ mod tests {
         std::fs::write(&installed, b"").unwrap();
         assert_eq!(server_program(Some(&dir), Some(&beside)), installed);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_app_bundle_is_found_only_from_contents_macos() {
+        let app = Path::new("/Applications/LightBites Server.app/Contents");
+        assert_eq!(app_resources(&app.join("MacOS")), Some(app.join("Resources")));
+        assert_eq!(app_resources(Path::new("/Users/a/lightbites-server-0.14.4-macos-arm64")), None);
+        assert_eq!(app_resources(Path::new("/tmp/Contents/MacOS")), None, "not inside a .app");
+        assert_eq!(app_resources(Path::new("MacOS")), None);
+    }
+
+    #[test]
+    fn the_server_is_installed_when_missing_or_another_version() {
+        assert!(needs_install(None, "lightbites-server 0.14.5"));
+        assert!(needs_install(Some("lightbites-server 0.14.4\n"), "lightbites-server 0.14.5"));
+        assert!(!needs_install(Some("lightbites-server 0.14.5\n"), "lightbites-server 0.14.5"));
+    }
+
+    #[test]
+    fn the_setup_code_line_is_picked_from_the_install_output() {
+        let out =
+            "LightCraft Server is installed and running.\n  admin page: http://localhost:8080/admin\n  setup code: 123-456 (enter it at /admin)\n";
+        assert_eq!(setup_code_line(out), Some("setup code: 123-456 (enter it at /admin)"));
+        assert_eq!(setup_code_line("(no setup code yet"), Some("(no setup code yet"));
+        assert_eq!(setup_code_line("installed"), None);
     }
 
     #[test]
