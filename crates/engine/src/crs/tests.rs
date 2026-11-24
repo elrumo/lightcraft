@@ -455,7 +455,7 @@ fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
 }
 
 /// Lightroom's Shadows Tint is as strong as the camera body makes it (card #534): a value from Lightroom is scaled to
-/// this app's slider for the photo's body, once, up to the slider's end.
+/// this app's slider for the photo's body, once, and may pass the slider's own range.
 #[test]
 fn lightroom_shadow_tint_is_scaled_for_the_body() {
     let x = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
@@ -480,10 +480,17 @@ fn lightroom_shadow_tint_is_scaled_for_the_body() {
     let mut own = json!({"calibration": {"shadows_tint": 20.0}});
     lightroom_shadow_tint_to_slider(&mut own, "SONY ILCE-6000");
     assert_eq!(own, json!({"calibration": {"shadows_tint": 20.0}}));
-    // a value past the slider's range stops at its end
+    // a value past the slider's range reaches the settings as it is, on a merge too
     let mut strong = json!({"calibration": {"shadows_tint": -50.0, "lightroom": true}});
     lightroom_shadow_tint_to_slider(&mut strong, "SONY ILCE-6000");
-    assert_eq!(strong, json!({"calibration": {"shadows_tint": -100.0}}));
+    assert_eq!(strong, json!({"calibration": {"shadows_tint": -144.5}}));
+    assert_eq!(apply_partial(&DevelopSettings::default(), &strong, 1.0).calibration.shadows_tint, -144.5);
+    // a number Lightroom cannot have written is held to Lightroom's own range first, whatever the body
+    for (camera, want) in [("SONY ILCE-6000", 289.0), ("Canon Canon EOS R5", 100.0), ("", 100.0)] {
+        let mut wild = json!({"calibration": {"shadows_tint": 255.0, "lightroom": true}});
+        lightroom_shadow_tint_to_slider(&mut wild, camera);
+        assert_eq!(wild, json!({"calibration": {"shadows_tint": want}}), "{camera}");
+    }
     // a file without the slider is not marked
     let plain = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:RedHue="+10"/></rdf:RDF>"#;
     assert!(to_partial(&props(plain), Target::Any)["calibration"].get("lightroom").is_none());

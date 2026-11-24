@@ -110,9 +110,19 @@ pub struct ControlSpec {
     pub track: Track,
 }
 
+/// How far Shadows Tint is stored, past its slider's ±100: a value read from a Lightroom file is scaled for the camera
+/// body (`crs::lightroom_shadow_tint_to_slider` in the engine), and Lightroom's ±100 on the strongest body measured is
+/// ±289 here (card #534). The slider's track stays ±100: a value beyond it shows the slider at its end.
+pub const SHADOWS_TINT_STORED: f64 = 300.0;
+
 impl ControlSpec {
     pub fn clamp(&self, v: f64) -> f64 {
         if v.is_finite() { v.clamp(self.min, self.max) } else { self.default }
+    }
+    /// `v` within the range the control is stored in: the slider's own ([`ControlSpec::clamp`]), and
+    /// ±[`SHADOWS_TINT_STORED`] for Shadows Tint.
+    pub fn stored(&self, v: f64) -> f64 {
+        if self.id == "calibration.shadowsTint" && v.is_finite() { v.clamp(-SHADOWS_TINT_STORED, SHADOWS_TINT_STORED) } else { self.clamp(v) }
     }
     pub fn format(&self, v: f64) -> String {
         let s = format!("{:.*}", self.decimals as usize, v);
@@ -176,10 +186,11 @@ macro_rules! controls {
             }
         }
 
-        /// Write a control value by id (clamped to the spec range). Returns false for unknown ids.
+        /// Write a control value by id (clamped to the range it is stored in, [`ControlSpec::stored`]). Returns false
+        /// for unknown ids.
         pub fn set(s: &mut DevelopSettings, id: &str, v: f64) -> bool {
             let Some(spec) = find(id) else { return false };
-            let v = spec.clamp(v);
+            let v = spec.stored(v);
             match id {
                 $( $id => { s.$($field).+ = v as _; true } )*
                 _ => indexed_set(s, id, v),
@@ -1062,7 +1073,10 @@ mod tests {
         for c in CONTROLS {
             assert!(seen.insert(c.id), "duplicate {}", c.id);
             assert!(set(&mut s, c.id, c.max + 1000.0));
-            assert_eq!(get(&s, c.id), Some(c.max), "{}", c.id);
+            // (Shadows Tint is stored past its slider's end, for a Lightroom value scaled for the camera body)
+            let stored = if c.id == "calibration.shadowsTint" { SHADOWS_TINT_STORED } else { c.max };
+            assert_eq!(get(&s, c.id), Some(stored), "{}", c.id);
+            assert_eq!(c.position(stored), 1.0, "{}", c.id);
             assert!(set(&mut s, c.id, f64::NAN));
             assert_eq!(get(&s, c.id), Some(c.default));
         }

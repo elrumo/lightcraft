@@ -778,54 +778,54 @@ balance at 3500 K and 8000 K (`test-raws/light/xcam7`; the ±50 are `xcam4` / `x
   Lightroom file (a sidecar, a preset: `calibration.lightroom` marks it on the way, as `wb.lightroom` does a white
   balance) is multiplied for the photo's body where it is applied: ILCE-6000 × 2.89, D70 × 1.5, EOS RP × 1.35,
   EOS R6 × 1, ILCE-6700 × 0.86, E-1 × 0.82, X-A5 × 0.77; any other body × 1. The renderers need no fact of the
-  photo. The result stops at the slider's ±100 (every merge clamps through the control specs), so an ILCE-6000
-  value past ±35, a D70's past ±67 and an EOS RP's past ±74 are weaker than Lightroom's; the presets of the test
-  set carry −2 to −28.
+  photo. The slider keeps its ±100 and the value is stored up to ±300 (2026-11-24: `controls::SHADOWS_TINT_STORED`,
+  `ControlSpec::stored`; the renderers clamp there), so an ILCE-6000 value past ±35, a D70's past ±67 and an EOS
+  RP's past ±74 keep Lightroom's strength: the slider then stands at its end, and dragging it brings the value back
+  inside ±100. The presets of the test set carry −2 to −28.
 
-Effect error against Lightroom per camera, before → now; \* marks a value that stops at the slider's end:
+Effect error against Lightroom per camera, before → now:
 
 Rust renderer:
 
 | Case | Lightroom's effect | a6000 | a6700 | rp | xa5 | d70 | e1 | mean |
 |---|---|---|---|---|---|---|---|---|
-| Shadows Tint +50 | 3.1 | 4.08 → 2.36 \* | 1.41 → 1.44 | 2.09 → 2.13 | 1.59 → 1.30 | 1.32 → 0.92 | 1.42 → 0.79 | 1.98 → 1.49 |
-| Shadows Tint −50 | 3.2 | 4.34 → 2.32 \* | 1.19 → 1.55 | 2.30 → 2.49 | 1.41 → 1.20 | 1.06 → 0.83 | 1.34 → 0.80 | 1.94 → 1.53 |
-| +25 | 1.6 | 2.20 → 1.16 | 0.91 → 0.90 | 1.21 → 1.22 | 0.95 → 0.81 | 1.01 → 0.83 | 0.91 → 0.68 | 1.20 → 0.93 |
-| +100 | 5.9 | 7.27 → 7.67 \* | 2.38 → 2.73 | 3.79 → 3.78 \* | 3.01 → 2.35 | 1.98 → 2.32 \* | 2.62 → 1.09 | 3.51 → 3.32 |
-| −100 | 6.3 | 8.28 → 8.48 \* | 1.93 → 2.52 | 4.20 → 4.53 \* | 2.59 → 2.04 | 1.33 → 2.05 \* | 2.39 → 1.04 | 3.45 → 3.44 |
-| +50 at Exposure +1 | 4.4 | 6.53 → 3.20 \* | 2.91 → 1.53 | 3.98 → 3.15 | 1.46 → 1.59 | 3.02 → 2.14 | 1.35 → 1.02 | 3.21 → 2.10 |
-| +50 at Exposure −1 | 2.1 | 2.08 → 1.78 \* | 1.70 → 1.24 | 2.17 → 1.44 | 2.53 → 1.11 | 1.36 → 0.78 | 1.73 → 0.77 | 1.93 → 1.19 |
-| +50 at 3500 K | 3.9 | 5.75 → 4.05 \* | 2.15 → 2.21 | 2.66 → 2.54 | 2.25 → 2.35 | 2.04 → 2.23 | 1.70 → 1.45 | 2.76 → 2.47 |
-| −50 at 3500 K | 3.6 | 4.46 → 3.07 \* | 1.47 → 2.15 | 2.63 → 2.78 | 1.24 → 1.68 | 1.79 → 2.28 | 1.47 → 1.37 | 2.18 → 2.22 |
-| +50 at 8000 K | 3.4 | 4.85 → 3.64 \* | 2.15 → 1.63 | 1.69 → 1.53 | 1.44 → 0.81 | 3.01 → 2.78 | 2.11 → 1.78 | 2.54 → 2.03 |
-| −50 at 8000 K | 3.3 | 4.80 → 3.53 \* | 1.54 → 1.60 | 1.24 → 1.43 | 1.31 → 0.85 | 2.40 → 2.43 | 1.78 → 1.59 | 2.18 → 1.91 |
-| **mean** | | 4.97 → 3.75 | 1.79 → 1.77 | 2.54 → 2.46 | 1.80 → 1.46 | 1.85 → 1.78 | 1.71 → 1.12 | 2.44 → 2.06 |
-
-Without the 14 cells marked \* (the value stops at the slider's end): 1.88 → 1.60 (52 cells).
+| Shadows Tint +50 | 3.1 | 4.08 → 2.07 | 1.41 → 1.44 | 2.09 → 2.26 | 1.59 → 1.30 | 1.32 → 0.85 | 1.42 → 0.89 | 1.98 → 1.47 |
+| Shadows Tint −50 | 3.2 | 4.34 → 1.92 | 1.19 → 1.55 | 2.30 → 2.46 | 1.41 → 1.20 | 1.06 → 0.82 | 1.34 → 0.88 | 1.94 → 1.47 |
+| +25 | 1.6 | 2.20 → 1.16 | 0.91 → 0.90 | 1.21 → 1.28 | 0.95 → 0.81 | 1.01 → 0.75 | 0.91 → 0.71 | 1.20 → 0.93 |
+| +100 | 5.9 | 7.27 → 3.90 | 2.38 → 2.73 | 3.79 → 4.20 | 3.01 → 2.35 | 1.98 → 1.27 | 2.62 → 1.43 | 3.51 → 2.65 |
+| −100 | 6.3 | 8.28 → 2.85 | 1.93 → 2.52 | 4.20 → 4.69 | 2.59 → 2.04 | 1.33 → 1.30 | 2.39 → 1.28 | 3.45 → 2.45 |
+| +50 at Exposure +1 | 4.4 | 6.53 → 2.44 | 2.91 → 1.53 | 3.98 → 3.17 | 1.46 → 1.59 | 3.02 → 1.98 | 1.35 → 0.99 | 3.21 → 1.95 |
+| +50 at Exposure −1 | 2.1 | 2.08 → 1.99 | 1.70 → 1.24 | 2.17 → 1.64 | 2.53 → 1.11 | 1.36 → 0.82 | 1.73 → 0.78 | 1.93 → 1.27 |
+| +50 at 3500 K | 3.9 | 5.75 → 3.61 | 2.15 → 2.21 | 2.66 → 2.75 | 2.25 → 2.37 | 2.04 → 2.33 | 1.70 → 1.63 | 2.76 → 2.48 |
+| −50 at 3500 K | 3.6 | 4.46 → 2.46 | 1.47 → 2.16 | 2.63 → 2.83 | 1.24 → 1.66 | 1.79 → 2.40 | 1.47 → 1.58 | 2.18 → 2.18 |
+| +50 at 8000 K | 3.4 | 4.85 → 3.38 | 2.15 → 1.64 | 1.69 → 1.47 | 1.44 → 0.82 | 3.01 → 2.69 | 2.11 → 1.81 | 2.54 → 1.97 |
+| −50 at 8000 K | 3.3 | 4.80 → 2.95 | 1.54 → 1.60 | 1.24 → 1.51 | 1.31 → 0.87 | 2.40 → 2.39 | 1.78 → 1.62 | 2.18 → 1.82 |
+| **mean** | | 4.97 → 2.61 | 1.79 → 1.78 | 2.54 → 2.57 | 1.80 → 1.47 | 1.85 → 1.60 | 1.71 → 1.24 | 2.44 → 1.88 |
 
 The Apple renderer's display path, on the five cases rendered:
 
 | Case | Lightroom's effect | a6000 | a6700 | rp | xa5 | d70 | e1 | mean |
 |---|---|---|---|---|---|---|---|---|
 | +25 | 1.6 | 2.69 → 1.88 | 1.00 → 1.01 | 1.38 → 1.39 | 0.68 → 0.77 | 1.03 → 0.86 | 0.74 → 0.60 | 1.26 → 1.08 |
-| +100 | 5.9 | 9.57 → 9.84 \* | 3.02 → 3.42 | 4.79 → 5.15 \* | 1.88 → 2.47 | 2.22 → 2.70 \* | 2.04 → 1.35 | 3.92 → 4.16 |
-| −100 | 6.3 | 10.58 → 10.82 \* | 3.53 → 4.06 | 5.30 → 5.57 \* | 1.28 → 2.20 | 2.06 → 2.52 \* | 1.76 → 1.31 | 4.08 → 4.42 |
-| +50 at Exposure +1 | 4.4 | 7.39 → 5.39 \* | 3.70 → 2.62 | 4.66 → 3.89 | 1.60 → 1.71 | 3.13 → 1.98 | 1.31 → 1.06 | 3.63 → 2.77 |
-| +50 at Exposure −1 | 2.1 | 2.76 → 2.91 \* | 0.86 → 1.28 | 1.38 → 1.66 | 1.29 → 1.02 | 1.00 → 0.87 | 1.53 → 0.82 | 1.47 → 1.43 |
-| **mean** | | 6.60 → 6.17 | 2.43 → 2.48 | 3.50 → 3.53 | 1.35 → 1.63 | 1.89 → 1.79 | 1.48 → 1.03 | 2.87 → 2.77 |
+| +100 | 5.9 | 9.57 → 6.33 | 3.02 → 3.42 | 4.79 → 4.79 | 1.88 → 2.47 | 2.22 → 2.04 | 2.04 → 1.35 | 3.92 → 3.40 |
+| −100 | 6.3 | 10.58 → 6.76 | 3.53 → 4.06 | 5.30 → 5.17 | 1.28 → 2.20 | 2.06 → 1.80 | 1.76 → 1.31 | 4.08 → 3.55 |
+| +50 at Exposure +1 | 4.4 | 7.39 → 4.39 | 3.70 → 2.62 | 4.66 → 3.89 | 1.60 → 1.71 | 3.13 → 1.98 | 1.31 → 1.06 | 3.63 → 2.61 |
+| +50 at Exposure −1 | 2.1 | 2.76 → 2.54 | 0.86 → 1.28 | 1.38 → 1.66 | 1.29 → 1.02 | 1.00 → 0.87 | 1.53 → 0.82 | 1.47 → 1.36 |
+| **mean** | | 6.60 → 4.38 | 2.43 → 2.48 | 3.50 → 3.38 | 1.35 → 1.63 | 1.89 → 1.51 | 1.48 → 1.03 | 2.87 → 2.40 |
 
-Without the 8 cells marked \* (the value stops at the slider's end): 1.89 → 1.74 (22 cells).
+In 14 of the 66 cells (8 of the Apple path's 30) the scaled value lies past the slider's ±100. Until 2026-11-24 it
+stopped there, and those cells stayed weak: 4.55 → 3.77 with the cut and 2.79 stored in full on the Rust renderer
+(all 66: 2.06 with the cut), 5.58 → 5.64 and 4.23 on the Apple path (all 30: 2.77 with the cut). The numpy stand-in
+of the finish stage the constants were fitted on reaches 1.70 on the 66 cells, and 0.8 to 1.5 on the six EOS R6
+photos. The "now" renders also carry other cards' later changes to the base rendering (the neutral looks of the
+EOS RP, E-1 and D70, white balance); every case is measured against its own base.
 
-The stand-in follows the real renders within 0.1 on the mean (1.96 against 2.06 with the cut); with the values
-uncut it reaches 1.70 on the 66 cells (the ILCE-6000's ±100 3.6 and 3.5 instead of 7.7 and 8.5), and 0.8 to 1.5 on
-the six EOS R6 photos.
-
-- **Left.** A wider stored range for the slider, for strong values on the three strongest bodies. Under a custom
-  white balance Lightroom's minus direction changes (red and blue in proportion to the white balance's gains) and
-  ours does not: the four cases at 3500 K and 8000 K 2.42 → 2.16. A body nobody measured gets the EOS R6's strength,
-  and the measured ones differ 3.7 times. The Apple renderer's display path gains less (it takes the light from
-  display-referred values). A Shadows Tint set before this change renders differently (light taken away where it
-  was a green gain), and a value imported from Lightroom before it keeps its unscaled number.
+- **Left.** Under a custom white balance Lightroom's minus direction changes (red and blue in proportion to the
+  white balance's gains) and ours does not: the four cases at 3500 K and 8000 K 2.42 → 2.11. The EOS RP gains
+  nothing (2.54 → 2.57, its ±100 3.79 → 4.20 and 4.20 → 4.69), not explained. A body nobody measured gets the EOS
+  R6's strength, and the measured ones differ 3.7 times. The Apple renderer's display path gains less (it takes the
+  light from display-referred values). A Shadows Tint set before this change renders differently (light taken away
+  where it was a green gain), and a value imported from Lightroom before it keeps its unscaled number.
 
 ## White balance: per-body maps from a series of whites, more Kelvin scales, and the EOS RP (2026-11-24, card #535)
 
@@ -976,6 +976,7 @@ constants are the ones named above. To re-measure, render with the CLI as in *Me
 |---|---|
 | 2026-11-24 | White balance, the five things left open: per-body maps from a series of 14 Lightroom whites (five bodies within 3 ΔE), five more bodies on a Kelvin scale from their own presets, sRAW's recorded white, rows for two DNGs, the Apple renderer told which raws the core re-develops, and the EOS RP's gap narrowed to its scene or its saturated colours (card #535) |
 | 2026-11-24 | White balance: a raw's white in Kelvin keeps the camera's green channel (lighter when warmer, as Lightroom) and blown highlights stay white; 16 more bodies measured against Lightroom from existing exports; the D100's and D2H's as-shot white read (card #535) |
+| 2026-11-24 | Shadows Tint: a value scaled for a strong body is stored past the slider's ±100, up to ±300 (card #534): effect error 2.06 → 1.88 on the Rust renderer, 2.77 → 2.40 on the Apple renderer's display path |
 | 2026-11-23 | Shadows Tint in Lightroom's form (light taken away before the primaries, following Exposure) with a strength per camera body applied where a Lightroom value is read (card #534) |
 | 2026-11-23 | Point Color fitted to Lightroom's exports of one sample on six cameras: the sample read on linear Rec. 2020, the range box and the three shifts refitted, Luminance scales the whole colour (card #536) |
 | 2026-11-23 | White balance written by Lightroom measured against its own As Shot on six cameras: the D70's as-shot white read, the ILCE-6700 and X-A5 on a Kelvin scale from their own presets, the EOS RP and X-A5 measured, a tint rule for preset scales (card #535) |

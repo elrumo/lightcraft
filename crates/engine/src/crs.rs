@@ -252,25 +252,23 @@ const LIGHTROOM_SHADOW_TINT: &[(&str, &str, f64)] = &[
 
 /// Scale the Shadows Tint of a settings partial that Lightroom wrote (marked `calibration.lightroom`) to this app's
 /// slider for `camera` (make and model joined by a space, [`LIGHTROOM_SHADOW_TINT`]); the marker is removed whatever
-/// the camera.
-// ponytail: the result is cut at the slider's ±100 (every merge clamps through the control specs), so an ILCE-6000
-// value past ±35 is weaker than Lightroom's; a wider stored range for the control if a preset ever needs it.
+/// the camera. Lightroom's value is held to its own ±100 first; scaled, it may pass this app's slider (Lightroom's +50
+/// on an ILCE-6000 is 144), which stores up to ±300 (`controls::SHADOWS_TINT_STORED`).
 pub fn lightroom_shadow_tint_to_slider(partial: &mut Value, camera: &str) {
     let Some(cal) = partial.get_mut("calibration").and_then(Value::as_object_mut) else { return };
     if cal.remove("lightroom") != Some(json!(true)) {
         return;
     }
+    let Some(t) = cal.get("shadows_tint").and_then(Value::as_f64) else { return };
     let mut words = camera.split_whitespace();
-    let (Some(make), model) = (words.next(), words.collect::<Vec<_>>().join(" ")) else { return };
+    let (make, model) = (words.next().unwrap_or_default(), words.collect::<Vec<_>>().join(" "));
     // (the make can be several words, "NIKON CORPORATION NIKON D70": its first word and the end of the name tell the body)
     let body = |m: &str, name: &str| {
         make.eq_ignore_ascii_case(m)
             && (model.eq_ignore_ascii_case(name) || model.to_ascii_lowercase().ends_with(&format!(" {}", name.to_ascii_lowercase())))
     };
-    let Some(k) = LIGHTROOM_SHADOW_TINT.iter().find(|(m, name, _)| body(m, name)).map(|(_, _, k)| *k) else { return };
-    if let Some(t) = cal.get("shadows_tint").and_then(Value::as_f64) {
-        cal.insert("shadows_tint".into(), json!((t * k).clamp(-100.0, 100.0)));
-    }
+    let k = LIGHTROOM_SHADOW_TINT.iter().find(|(m, name, _)| body(m, name)).map_or(1.0, |(_, _, k)| *k);
+    cal.insert("shadows_tint".into(), json!(t.clamp(-100.0, 100.0) * k));
 }
 
 /// Parse a point curve stored as an `rdf:Seq` of `"x, y"` strings in 0..255.

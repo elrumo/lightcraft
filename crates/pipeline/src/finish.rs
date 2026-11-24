@@ -541,7 +541,8 @@ impl FinishParams {
         FinishParams {
             peak,
             calib: if calibration { crate::colorops::calibration_matrix(&s.calibration) } else { None },
-            shadow_tint: if calibration { (s.calibration.shadows_tint / 100.0) as f32 } else { 0.0 },
+            // (past the slider's own range for a body whose Lightroom tint is stronger: `controls::SHADOWS_TINT_STORED`)
+            shadow_tint: if calibration { (s.calibration.shadows_tint / 100.0).clamp(-3.0, 3.0) as f32 } else { 0.0 },
             tone: base_tone(s, info, peak),
             lut: crate::lut::get(&s.profile.id).map(|l| (l, (s.profile.amount / 100.0).clamp(0.0, 2.0) as f32)),
             ops: ColorOps::new(s),
