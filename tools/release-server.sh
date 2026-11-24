@@ -168,7 +168,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 sign "$app/Contents/MacOS/lightbites-server"
-[ "$signed" = 0 ] || codesign --force --timestamp --options runtime --sign "$identity" "$app"
+# unsigned: an ad-hoc seal still, so a downloaded copy gets macOS's "Open Anyway" and not "damaged"
+if [ "$signed" = 1 ]; then codesign --force --timestamp --options runtime --sign "$identity" "$app"; else codesign --force --sign - "$app"; fi
+codesign --verify --strict "$app"
 ln -s /Applications "$src/_pkg/dmg/Applications"
 dmg="$out/LightBites-Server.dmg"
 hdiutil create -volname "LightBites Server" -srcfolder "$src/_pkg/dmg" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$dmg" >/dev/null
