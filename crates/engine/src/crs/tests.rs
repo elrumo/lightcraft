@@ -386,13 +386,18 @@ fn a_sidecar_custom_kelvin_is_kept_on_a_body_with_presets_and_reported_on_one_wi
     use lightcraft_catalog::MediaKind;
     let x = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
       crs:WhiteBalance="Custom" crs:Temperature="5500" crs:Tint="+10"/></rdf:RDF>"#;
-    for (format, camera, temp, tint) in [("ARW", "SONY ILCE-6700", 5500.0 * 1.019, 2.0), ("RAF", "FUJIFILM X-A5", 5500.0 * 0.913, 4.5)] {
+    for (format, camera, temp, tint) in [("ARW", "SONY ILCE-6700", 5526.0, 4.1), ("RAF", "FUJIFILM X-A5", 4891.0, 6.9)] {
         let target = Target::for_file(MediaKind::Raw, format, false, camera);
         assert_eq!(target, Target::RawAbsolute, "{camera}");
         let (mut v, skipped) = to_partial_report(&props(x), None, target, 1.5);
         assert!(skipped.iter().all(|s| !s.contains("Temperature")), "{camera}: {skipped:?}");
         lightroom_white_to_dial(&mut v, camera);
-        assert_eq!(v["wb"], json!({"mode": "custom", "temp": temp, "tint": tint, "scale": "kelvin"}), "{camera}");
+        let (t, ti) = (v["wb"]["temp"].as_f64().unwrap(), v["wb"]["tint"].as_f64().unwrap());
+        assert!(
+            (t - temp).abs() < 5.0 && (ti - tint).abs() < 0.1 && v["wb"]["mode"] == "custom" && v["wb"]["scale"] == "kelvin",
+            "{camera}: {}",
+            v["wb"]
+        );
     }
     let target = Target::for_file(MediaKind::Raw, "ARW", false, "SONY ILCE-7M2");
     let (v, skipped) = to_partial_report(&props(x), None, target, 1.5);
@@ -410,7 +415,9 @@ fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
     // the ILCE-6000: Lightroom's 6900 K / +3 is a warmer, greener white on Sony's dial
     let mut a6000 = marked();
     lightroom_white_to_dial(&mut a6000, "SONY ILCE-6000");
-    assert_eq!(a6000["wb"], json!({"mode": "custom", "temp": 6900.0 * 1.06, "tint": -8.0, "scale": "kelvin"}));
+    // (its whole map, from a series of Lightroom whites: a mired offset next to the ratio, and a tint that follows the temperature)
+    let (temp, tint) = (a6000["wb"]["temp"].as_f64().unwrap(), a6000["wb"]["tint"].as_f64().unwrap());
+    assert!((temp - 7107.0).abs() < 5.0 && (tint + 5.2).abs() < 0.1 && a6000["wb"].get("lightroom").is_none(), "{}", a6000["wb"]);
     assert_eq!(a6000["light"]["exposure"], 0.5);
     // the EOS R6: Lightroom's As Shot reads about 10 % above ours, so its Custom 5050 K / +27 (2V2A9273, As Shot 4700 K /
     // +27 there, 4285 K / +24 here) is the same small step from As Shot on our dial

@@ -163,6 +163,7 @@ pub(crate) fn color(c: craft_raw::ColorData) -> ColorData {
         baseline_sharpness: c.baseline_sharpness,
         profile: c.profile,
         kelvin_presets: c.kelvin_presets.as_ref().and_then(kelvin_presets),
+        recorded_wb: c.recorded_wb,
     }
 }
 

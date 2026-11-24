@@ -1084,6 +1084,11 @@ pub struct ColorData {
     /// matrices a Kelvin scale ([`kelvin`]). Not a DNG tag: the DNG writer does not write it.
     #[serde(default)]
     pub kelvin_presets: Option<kelvin::KelvinPresets>,
+    /// The as-shot white-balance multipliers `[red, 1, blue]` of a file whose samples are stored white-balanced
+    /// (Canon sRAW / mRAW, where [`RawImage::wb_multipliers`] is 1): what a Kelvin scale reads the as-shot white
+    /// from. Not a DNG tag: the DNG writer does not write it.
+    #[serde(default)]
+    pub recorded_wb: Option<[f32; 3]>,
 }
 
 /// Bounded diagnostics for decisions actually made by a raw decoder. An absent optional tag

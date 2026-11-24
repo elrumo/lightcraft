@@ -827,6 +827,111 @@ the six EOS R6 photos.
   display-referred values). A Shadows Tint set before this change renders differently (light taken away where it
   was a green gain), and a value imported from Lightroom before it keeps its unscaled number.
 
+## White balance: per-body maps from a series of whites, more Kelvin scales, and the EOS RP (2026-11-24, card #535)
+
+The section above left five things. Each was taken up the same day.
+
+**A series of Lightroom whites per body.** Four whites per camera cannot tell a tint that drifts from a Kelvin ratio,
+so Lightroom exported ten more of each of the six raws (`xcam9`: 3000, 4000, 5000, 6500, 8000 and 10000 K at its As
+Shot tint; tints −30, 0, +30 and +60 at its As Shot Kelvin). Each raw's own white balance was swept again (105
+whites) and the best white found per export:
+
+- **The two scales are not a ratio apart.** In mired, the dial's white is a line of Lightroom's with a slope that is
+  not the inverse of the As Shot ratio: 0.85 (ILCE-6000), 0.92 (ILCE-6700) and 0.86 (X-A5) with offsets of +14 to +48
+  mired, 1.09 (D70) and 1.08 (E-1) with offsets of −14.
+- **The tint drifts with the temperature**, by −0.06 (ILCE-6000, ILCE-6700), −0.15 (X-A5), −0.18 (D70) and −0.31
+  (E-1) tint units per mired of Lightroom's white: its Kelvin axis bends against ours, as the first section here
+  guessed from four whites.
+- **It holds across the two sets.** A map fitted on the ten new whites reads the four old ones as well as one fitted
+  on all fourteen, and the other way round (within 0.1 to 0.4 ΔE).
+
+So `LightroomScale` has two more numbers for a body with such a series (`mired_offset`, `tint_per_mired`; 0 for a body
+measured at one white), and five bodies have their map. Effect ΔE, Rust renderer, a ratio and an offset → the map:
+
+| Camera | The 4 whites of `xcam6` | The 10 of `xcam9` | 3000 K alone |
+|---|---:|---:|---:|
+| ILCE-6000 | 2.4 → 2.1 | 3.0 → 2.8 | 7.6 → 8.3 |
+| ILCE-6700 | 2.6 → 2.4 | 3.2 → 3.2 | 6.9 → 7.4 |
+| X-A5 | 3.7 → 2.2 | 4.6 → 2.8 | 10.7 → 7.0 |
+| D70 | 2.7 → 2.3 | 3.4 → 3.1 | 6.7 → 9.5 |
+| E-1 | 3.3 → 2.0 | 4.4 → 3.3 | 13.0 → 12.6 |
+| EOS RP (no map) | 6.4 → 6.5 | 6.5 → 6.6 | 10.8 → 11.2 |
+| Mean | 3.5 → 2.9 | 4.2 → 3.7 | |
+
+(The "before" column is on the core as it was that morning: the D70 and E-1 had got their own neutral look the night
+before, card #447, which alone took them from 3.2 and 3.7 to 2.7 and 3.3.) Five of the six are within 3 ΔE on the
+four whites the work started from. 3000 K is the white no map reaches (7 to 13 off on every body; it was left out of
+the fits): a daylight raw taken to tungsten is beyond what adapting the developed picture does well.
+
+**More bodies on a Kelvin scale.** Of the 18 exported bodies that had none:
+
+- **Five have one now, from the camera's own data in the file**, and a row from their As Shot: the RX100 VII, ILCE-7C
+  and ZV-E10 (Sony's five presets), the X-H2S (Fujifilm's neutral pair), and the EOS 80D, whose sample is an sRAW
+  (below). Their readings against Lightroom's: 5292 K / 0 against 5400 K / +15, 5698 K / +27 against 5400 K / +30,
+  7045 K / +21 against 6350 K / +32, 5045 K / +7 against 5100 K / +16, 5655 K / −1 against 5700 K / +4.
+- **The E-M1 Mark II and OM-5 samples are not developed at all**: compressed ORF is not decoded, the photo shows its
+  embedded preview, so its white balance is a rendered picture's. Their gap is the decoder, not the scale.
+- **The EOS 90D and R3** (CR3) carry Canon's presets in a `ColorData` version (19, 34) whose layout is not read; the
+  CR2 reader knows versions −4 and 13 to 15. A table of the two layouts, checked on a file each, would give them one.
+- **The GH5, S1 and GX8** (RW2) carry named presets (Fine Weather, Cloudy, Shade…) without temperatures, and **the
+  D500, D5600, D750, Z 5, Z f and Z6III** carry none readable (Nikon's are encrypted): these need measured matrices
+  (a spectral measurement of the body) or the maker's stated temperatures per preset (as the Z5II has).
+
+**The three readings that looked broken.**
+
+- **The EOS 5D Mark IV sample is an sRAW.** Its samples are stored white-balanced, so its multipliers are 1 and the
+  measured matrices read 1785 K / −189 from them. The file records the white it was balanced for (`2036 1024 1024
+  1509`); a Kelvin scale reads that now (`ColorData::recorded_wb`): 4847 K / +9, Lightroom 5050 K / +13. The same fix
+  gives the EOS 80D sRAW its presets.
+- **The Pixel 6 Pro and LEICA Q DNGs are not misread.** Recomputed from the files' tags by hand, their own matrices
+  give exactly what we show (3376 K / −95 and 8557 K / +16); Lightroom develops these files with matrices of its
+  own and shows 5800 K / +11 and 5750 K / +14. They get rows, so a Lightroom white lands on the photo's own, exact at
+  As Shot; one photo each cannot say how the two scales run apart from there.
+
+**The Apple renderer and raws the core re-develops.** A DNG (an iPhone ProRAW among them) is re-developed by the core
+through its own matrices for a new white; the Apple renderer adapts its development instead and could not tell such a
+raw from another, so it gave it the new lightness and highlight rule too (two ProRAW files with a cooler white moved 2
+to 3 ΔE away from Lightroom). It is told now (`RenderSettings.ownColourModel`, from the photo's format) and keeps the
+adaptation it had for them.
+
+**The EOS RP.** Its gap at a strongly changed white was taken for a highlight roll-off. It is not one thing that was
+tried:
+
+| What was tried on the EOS RP raw | Effect ΔE, 4 whites | 7500 K |
+|---|---:|---:|
+| As it is | 6.4 | 10.3 |
+| The best white of our scale for each export (no conversion can beat it) | 5.9 | 10.0 |
+| A neutral-look table fitted to Lightroom's export of the raw (`calibrate --min 1`) | 6.5 | 10.7 |
+| The raw re-developed for the new white through its measured matrices, as a DNG is | 6.2 | 10.5 |
+| Saturation +10 to +40 on top (its chroma is 5 short at 7500 K) | | 10.2 to 12.9 |
+
+The table is in all the same (maintainer decision, 2026-11-24): it brings the unedited picture closer to
+Lightroom's (7.8 → 5.8, the bright tones 11.1 → 5.9, `docs/camera-preview-colour.md`), which is what it can do. What
+the series shows instead is that this raw's error grows with the size of the change in every direction, tint
+included (floors: 0.9 at 4000 K, 4.6 at 5000 K, 8.3 at 6500 K, 11.7 at 10000 K, 8.0 at 3000 K; 6.1 at tint −30), and
+that matching the mean chroma does not help: colours move differently, not less. It is the one raw of the six with
+large saturated areas (fruit, a red and gold tin, a green bag under warm light). What would settle whether that is
+the scene or the camera: the same series for a second EOS RP raw of an ordinary scene, and for a saturated scene
+from one of the five bodies that are within 3. If it is the scene, the gap is how saturated colours take a white
+balance (Bradford on the developed picture against Lightroom's camera-space gains through its own profile), and the
+fix is in the renderer's white balance for saturated colours, not in a table.
+
+**Where the six stand** (effect ΔE against the 24 exports of `xcam6`, mean of four whites; the section above → now.
+In between, the D70 and E-1 also got their neutral look, card #447, which the Rust and Apple scene columns include):
+
+| Camera | Rust | Apple display | Apple scene |
+|---|---:|---:|---:|
+| ILCE-6000 | 2.4 → 2.1 | 3.1 → 2.9 | 2.4 → 2.1 |
+| ILCE-6700 | 2.6 → 2.4 | 2.7 → 2.4 | 2.6 → 2.4 |
+| EOS RP | 6.4 → 6.5 | 6.7 → 6.7 | 6.4 → 6.5 |
+| X-A5 | 3.7 → 2.2 | 4.0 → 3.2 | 3.7 → 2.2 |
+| D70 | 3.2 → 2.3 | 3.5 → 3.3 | 3.3 → 2.3 |
+| E-1 | 3.7 → 2.0 | 3.9 → 3.1 | 3.7 → 1.9 |
+| Mean | 3.7 → 2.9 | 4.0 → 3.6 | 3.7 → 2.9 |
+
+The Apple display path (Core Image's own look of the raw) keeps more of a gap on the X-A5, D70 and E-1 than the two
+paths that develop on the core's scale; its conversion is the same, so what is left there is that look's.
+
 ## What is left (ΔE about 8 here)
 
 Measured on the render of the shipped build against the export, by lightness and by hue:
@@ -869,6 +974,7 @@ constants are the ones named above. To re-measure, render with the CLI as in *Me
 
 | Date | Change |
 |---|---|
+| 2026-11-24 | White balance, the five things left open: per-body maps from a series of 14 Lightroom whites (five bodies within 3 ΔE), five more bodies on a Kelvin scale from their own presets, sRAW's recorded white, rows for two DNGs, the Apple renderer told which raws the core re-develops, and the EOS RP's gap narrowed to its scene or its saturated colours (card #535) |
 | 2026-11-24 | White balance: a raw's white in Kelvin keeps the camera's green channel (lighter when warmer, as Lightroom) and blown highlights stay white; 16 more bodies measured against Lightroom from existing exports; the D100's and D2H's as-shot white read (card #535) |
 | 2026-11-23 | Shadows Tint in Lightroom's form (light taken away before the primaries, following Exposure) with a strength per camera body applied where a Lightroom value is read (card #534) |
 | 2026-11-23 | Point Color fitted to Lightroom's exports of one sample on six cameras: the sample read on linear Rec. 2020, the range box and the three shifts refitted, Luminance scales the whole colour (card #536) |

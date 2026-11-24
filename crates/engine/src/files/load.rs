@@ -448,6 +448,8 @@ impl WbScaleOf {
         wb_multipliers: Option<[f32; 3]>,
         meta: &lightcraft_meta::Metadata,
     ) -> Self {
+        // (samples stored white-balanced, a Canon sRAW's: the multipliers are 1, the white is the one the file records)
+        let wb_multipliers = color.recorded_wb.or(wb_multipliers);
         let own_matrix = lightcraft_raw::color::has_matrix(color);
         let fitted = crate::camera_preview::file_local_look(format) && !own_matrix;
         let model = meta.model.as_deref().filter(|_| fitted);

@@ -47,6 +47,7 @@ impl DcpProfile {
             baseline_sharpness: color.baseline_sharpness,
             profile: crate::profile::ProfileLook { gain_table_map: color.profile.gain_table_map.clone(), ..self.color.profile.clone() },
             kelvin_presets: color.kelvin_presets.clone(),
+            recorded_wb: color.recorded_wb,
         }
     }
 }
@@ -210,6 +211,7 @@ fn color_data(ifd0: &Ifd, raw: &Ifd, order: ByteOrder) -> ColorData {
         baseline_sharpness: get(t::BASELINE_SHARPNESS).and_then(|v| v.first().copied()).filter(|v| v.is_finite() && *v > 0.0 && *v <= 16.0),
         profile: profile_look(ifd0, raw, order),
         kelvin_presets: None,
+        recorded_wb: None,
     }
 }
 

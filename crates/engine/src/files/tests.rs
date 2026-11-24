@@ -86,6 +86,14 @@ fn white_balance_scale_follows_the_files_matrices_then_the_cameras() {
     let (t, tint) = a7m3.as_shot(d65);
     assert!((3500.0..7000.0).contains(&t) && t != 6500.0 && tint.abs() < 30.0 && t.fract() == 0.0 && tint.fract() == 0.0, "{t} {tint}");
     assert!(!lightcraft_catalog::relative_wb_camera("ARW", "SONY ILCE-7M3"));
+    // samples stored white-balanced (a Canon sRAW: multipliers of 1): the white is the one the file records, here the
+    // 5D Mark IV sample's `2036 1024 1024 1509` (about 5150 K by Canon; 1785 K / -189 was read from the ones)
+    let recorded = ColorData { recorded_wb: Some([2036.0 / 1024.0, 1.0, 1509.0 / 1024.0]), ..Default::default() };
+    let sraw = WbScaleOf::new(RawFormat::Cr2, &recorded, Some([1.0; 3]), &meta("Canon", "Canon EOS 5D Mark IV"));
+    let (t, tint) = sraw.as_shot(d65);
+    assert!((4500.0..5600.0).contains(&t) && tint.abs() < 30.0, "{t} {tint}");
+    let cfa = WbScaleOf::new(RawFormat::Cr2, &ColorData::default(), recorded.recorded_wb, &meta("Canon", "Canon EOS 5D Mark IV"));
+    assert_eq!(sraw.as_shot(d65), cfa.as_shot(d65));
     // the same camera without multipliers: the scale is Kelvin still, the white falls back to the tags' (D65)
     let bare = WbScaleOf::new(RawFormat::Arw, &ColorData::default(), None, &meta("SONY", "ILCE-7M3"));
     assert!(bare.legacy_relative && bare.scale_white.is_none());

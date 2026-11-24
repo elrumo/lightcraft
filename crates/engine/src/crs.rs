@@ -222,11 +222,14 @@ pub fn lightroom_white_to_dial(partial: &mut Value, camera: &str) {
         return;
     }
     let Some(scale) = lightcraft_raw::kelvin_presets::lightroom_scale(camera) else { return };
-    if let Some(t) = wb.get("temp").and_then(Value::as_f64) {
-        wb.insert("temp".into(), json!((t * scale.kelvin_ratio).clamp(2000.0, 50000.0)));
+    let (temp, tint) = (wb.get("temp").and_then(Value::as_f64), wb.get("tint").and_then(Value::as_f64));
+    // (a white that names only one of the two: the other is read at 5000 K / 0, where a tint drift is none)
+    let (on_temp, on_tint) = scale.dial(temp.unwrap_or(5000.0), tint.unwrap_or(0.0));
+    if temp.is_some() {
+        wb.insert("temp".into(), json!(on_temp.clamp(2000.0, 50000.0)));
     }
-    if let Some(t) = wb.get("tint").and_then(Value::as_f64) {
-        wb.insert("tint".into(), json!((t - scale.tint_offset).clamp(-150.0, 150.0)));
+    if tint.is_some() {
+        wb.insert("tint".into(), json!(on_tint.clamp(-150.0, 150.0)));
     }
 }
 

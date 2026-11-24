@@ -110,7 +110,8 @@ use tone::{HighlightCheck, ToneFit, fit_tone, fit_tone_conditional, highlights};
 /// spacing or the Z8 alias, so previews made without the profile are rebuilt.
 /// 26: the Olympus E-1's and Nikon D70's neutral look adds a hue/saturation table, exposure and contrast fitted to
 /// Lightroom's default export (`camera_profiles::NEUTRAL_BUNDLED`).
-pub const LOOK_VERSION: u32 = 26;
+/// 27: the EOS RP's neutral look gets its own table, exposure and contrast the same way.
+pub const LOOK_VERSION: u32 = 27;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {

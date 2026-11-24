@@ -67,14 +67,20 @@ const MODELS: &[(&str, &str)] = &[
     ("SONY", "ILCE-6700"),
     ("SONY", "ILCE-7S"),
     ("SONY", "SLT-A33"),
+    // one raw each of the Lightroom accuracy set (card #535): the same five presets, 2500 to 8500 K
+    ("SONY", "DSC-RX100M7"),
+    ("SONY", "ILCE-7C"),
+    ("SONY", "ZV-E10"),
     ("CANON", "PowerShot G1 X Mark III"),
+    // `ColorData` version 13, the EOS 5D Mark IV's layout (a body with measured matrices, read through those)
+    ("CANON", "EOS 80D"),
 ];
 
 /// Fujifilm's X-Trans III bodies, whose raws carry the camera's own neutral multipliers for Illuminant A and D65
 /// (`vendor::raf`, tag `0xf00c`; see [`KelvinPresets::from_neutral_pair`]): checked on the files of each (X-T20,
 /// X-T2, X-Pro2, X-E3, X-H1, X100F), the Exif model as Fujifilm writes it. The X-A5 (a Bayer body) writes the same
 /// pair (the user's own raw: `256 285 807 17 256 556 414 21`, card #535).
-const FUJI_MODELS: &[&str] = &["X-T20", "X-T2", "X-Pro2", "X-E3", "X-H1", "X100F", "X-A5"];
+const FUJI_MODELS: &[&str] = &["X-T20", "X-T2", "X-Pro2", "X-E3", "X-H1", "X100F", "X-A5", "X-H2S"];
 
 /// Olympus bodies whose maker note carries the twelve `WB_RBLevels<K>` entries (`vendor::orf`), the Exif model as the
 /// files write it (the spelling differs from body to body: `E-M10MarkII`, but `E-M10 Mark III`): one CC0 file of each
@@ -174,6 +180,33 @@ pub fn covers(make: Option<&str>, model: &str) -> bool {
 pub struct LightroomScale {
     pub kelvin_ratio: f64,
     pub tint_offset: f64,
+    /// Mired added to the scale's reading after the ratio. 0 for a body measured at one white (its As Shot); a body
+    /// with a series of Lightroom whites has both, because the two scales are not a ratio apart over the whole range
+    /// (on the six bodies of `docs/lightroom-preset-fit.md` a mired of Lightroom's is 0.85 to 0.92 of one here).
+    pub mired_offset: f64,
+    /// Tint added per mired of Lightroom's white away from 200 mired (5000 K): Lightroom's Kelvin axis bends against
+    /// the scale's (its matrices change with the temperature). 0 for a body measured at one white.
+    pub tint_per_mired: f64,
+}
+
+impl LightroomScale {
+    /// A body measured at one white: the scale's reading over Lightroom's, and Lightroom's tint minus the scale's.
+    const fn at(kelvin_ratio: f64, tint_offset: f64) -> Self {
+        LightroomScale { kelvin_ratio, tint_offset, mired_offset: 0.0, tint_per_mired: 0.0 }
+    }
+
+    /// The scale's Kelvin and tint for a white Lightroom wrote. A Kelvin that is not one comes back multiplied, as
+    /// before the offsets existed.
+    pub fn dial(&self, kelvin: f64, tint: f64) -> (f64, f64) {
+        let mired = 1e6 / kelvin;
+        let on_scale = self.mired_offset + mired / self.kelvin_ratio;
+        // (a ratio alone is applied as one: exactly `kelvin * kelvin_ratio`)
+        if self.mired_offset == 0.0 || !(kelvin.is_finite() && kelvin > 0.0 && on_scale.is_finite() && on_scale > 0.0) {
+            let drift = if mired.is_finite() { self.tint_per_mired * (mired - 200.0) } else { 0.0 };
+            return (kelvin * self.kelvin_ratio, tint - self.tint_offset + drift);
+        }
+        (1e6 / on_scale, tint - self.tint_offset + self.tint_per_mired * (mired - 200.0))
+    }
 }
 
 /// A scale made of a camera's white-balance presets ([`MODELS`], the Olympus and OM tables, [`crate::kelvin_builtin`])
@@ -185,7 +218,7 @@ pub struct LightroomScale {
 /// Kelvin differs by -2 to +6 % from body to body, which only a measurement of the body settles ([`LIGHTROOM`]).
 // ponytail: one offset at every temperature. A tungsten white sits on the Planckian locus on both scales, so a custom
 // white near 3000 K may want none; no Lightroom export of such a white was measured.
-const PRESET_CURVE: LightroomScale = LightroomScale { kelvin_ratio: 1.0, tint_offset: 10.0 };
+const PRESET_CURVE: LightroomScale = LightroomScale::at(1.0, 10.0);
 
 /// Bodies measured against Lightroom: make, model, and the scale. A scale read through matrices fitted to the
 /// camera's spectral sensitivities and Lightroom's agree where they were calibrated (the D70's raw: 5076 K / -10
@@ -209,34 +242,57 @@ const PRESET_CURVE: LightroomScale = LightroomScale { kelvin_ratio: 1.0, tint_of
 /// read as written warmed that photo twice as far from As Shot as in Lightroom (35 mired against 15), and its
 /// shadows came out yellow where Lightroom's are blue.
 ///
+/// Five bodies have a series of Lightroom whites (14 exports of one raw each: 3000 to 10000 K, tints -30 to +60;
+/// card #535, `xcam6` and `xcam9`), and with it the whole map: a mired offset next to the ratio, and a tint that
+/// drifts with the temperature. Fitted on all of a body's exports (each half predicts the other within 0.1 to 0.4),
+/// the effect of a custom white is 2.1 to 2.5 ΔE from Lightroom's on them, from 2.4 to 3.7 with a ratio and an offset
+/// alone: ILCE-6000, ILCE-6700, X-A5, D70, E-1. The EOS RP's series gains nothing from any map (its gap is the
+/// renderer's), so it keeps its As Shot row.
+///
 /// The other rows are one raw each (`apps/lightbites-swift/test-raws`, `docs/lightroom-preset-fit.md` lists the two
 /// readings): the As Shot Lightroom wrote into its export of the raw (`crs:Temperature`, `crs:Tint`) against what the
 /// raw's own scale reads, whichever that scale is (presets, measured matrices, a DNG's own matrices, which Lightroom
 /// replaces with its own for the Leica CL and M10, the PENTAX KP and the Galaxy S22). A body whose two readings agree
 /// (the DJI FC6310, the Pixel 8 Pro and the Mi 9 Lite: within 20 K and 0 tint) needs no row.
 const LIGHTROOM: &[(&str, &str, LightroomScale)] = &[
-    ("SONY", "ILCE-6000", LightroomScale { kelvin_ratio: 1.06, tint_offset: 11.0 }),
-    ("Canon", "Canon EOS R6", LightroomScale { kelvin_ratio: 0.90, tint_offset: 4.5 }),
-    ("Canon", "Canon EOS RP", LightroomScale { kelvin_ratio: 0.914, tint_offset: 3.0 }),
-    ("FUJIFILM", "X-A5", LightroomScale { kelvin_ratio: 0.913, tint_offset: 5.5 }),
-    ("Canon", "Canon EOS 600D", LightroomScale { kelvin_ratio: 0.987, tint_offset: -12.0 }),
-    ("Canon", "Canon EOS R5", LightroomScale { kelvin_ratio: 0.954, tint_offset: 1.0 }),
-    ("Canon", "Canon EOS R50", LightroomScale { kelvin_ratio: 0.931, tint_offset: 3.0 }),
-    ("Canon", "Canon EOS R8", LightroomScale { kelvin_ratio: 0.930, tint_offset: -4.0 }),
-    ("FUJIFILM", "X-T3", LightroomScale { kelvin_ratio: 0.938, tint_offset: 6.0 }),
-    ("FUJIFILM", "X100V", LightroomScale { kelvin_ratio: 0.883, tint_offset: 24.0 }),
-    ("LEICA CAMERA AG", "LEICA CL", LightroomScale { kelvin_ratio: 1.110, tint_offset: -4.0 }),
-    ("LEICA CAMERA AG", "LEICA M10", LightroomScale { kelvin_ratio: 0.976, tint_offset: 5.0 }),
-    // (its As Shot tint reads 7 lower here, but Lightroom's four custom whites of this raw are closer with the tint as
-    // written: effect ΔE 3.2 against 3.8)
-    ("NIKON CORPORATION", "NIKON D70", LightroomScale { kelvin_ratio: 0.986, tint_offset: 0.0 }),
-    ("OLYMPUS CORPORATION", "E-1", LightroomScale { kelvin_ratio: 0.991, tint_offset: 11.0 }),
-    ("RICOH IMAGING COMPANY, LTD.", "PENTAX KP", LightroomScale { kelvin_ratio: 0.894, tint_offset: 15.0 }),
-    ("RICOH IMAGING COMPANY, LTD.", "RICOH GR III", LightroomScale { kelvin_ratio: 1.0, tint_offset: -4.0 }),
-    ("SONY", "ILCE-6400", LightroomScale { kelvin_ratio: 0.893, tint_offset: 7.0 }),
-    ("SONY", "ILCE-6700", LightroomScale { kelvin_ratio: 1.019, tint_offset: 8.0 }),
-    ("SONY", "ILCE-7M3", LightroomScale { kelvin_ratio: 0.845, tint_offset: 6.0 }),
-    ("samsung", "SM-S901U", LightroomScale { kelvin_ratio: 0.924, tint_offset: 29.0 }),
+    ("SONY", "ILCE-6000", LightroomScale { kelvin_ratio: 1.183, tint_offset: 12.1, mired_offset: 18.2, tint_per_mired: -0.070 }),
+    ("Canon", "Canon EOS R6", LightroomScale::at(0.90, 4.5)),
+    ("Canon", "Canon EOS RP", LightroomScale::at(0.914, 3.0)),
+    ("FUJIFILM", "X-A5", LightroomScale { kelvin_ratio: 1.160, tint_offset: 5.9, mired_offset: 47.7, tint_per_mired: -0.152 }),
+    ("Canon", "Canon EOS 600D", LightroomScale::at(0.987, -12.0)),
+    ("Canon", "Canon EOS R5", LightroomScale::at(0.954, 1.0)),
+    ("Canon", "Canon EOS R50", LightroomScale::at(0.931, 3.0)),
+    ("Canon", "Canon EOS R8", LightroomScale::at(0.930, -4.0)),
+    ("FUJIFILM", "X-T3", LightroomScale::at(0.938, 6.0)),
+    ("FUJIFILM", "X100V", LightroomScale::at(0.883, 24.0)),
+    ("LEICA CAMERA AG", "LEICA CL", LightroomScale::at(1.110, -4.0)),
+    ("LEICA CAMERA AG", "LEICA M10", LightroomScale::at(0.976, 5.0)),
+    ("NIKON CORPORATION", "NIKON D70", LightroomScale { kelvin_ratio: 0.917, tint_offset: 4.3, mired_offset: -14.3, tint_per_mired: -0.179 }),
+    ("OLYMPUS CORPORATION", "E-1", LightroomScale { kelvin_ratio: 0.929, tint_offset: 13.7, mired_offset: -13.8, tint_per_mired: -0.309 }),
+    ("RICOH IMAGING COMPANY, LTD.", "PENTAX KP", LightroomScale::at(0.894, 15.0)),
+    ("RICOH IMAGING COMPANY, LTD.", "RICOH GR III", LightroomScale::at(1.0, -4.0)),
+    ("SONY", "ILCE-6400", LightroomScale::at(0.893, 7.0)),
+    ("SONY", "ILCE-6700", LightroomScale { kelvin_ratio: 1.089, tint_offset: 6.9, mired_offset: 14.0, tint_per_mired: -0.055 }),
+    ("SONY", "ILCE-7M3", LightroomScale::at(0.845, 6.0)),
+    ("samsung", "SM-S901U", LightroomScale::at(0.924, 29.0)),
+    // bodies that got a Kelvin scale for this (their presets, `MODELS` / `FUJI_MODELS`; the two Canon files are sRAW,
+    // whose white is the one the file records): RX100 VII 5292 K / 0 against Lightroom's 5400 K / +15, ILCE-7C
+    // 5698 K / +27 against 5400 K / +30, ZV-E10 7045 K / +21 against 6350 K / +32, X-H2S 5045 K / +7 against
+    // 5100 K / +16, EOS 80D 5655 K / -1 against 5700 K / +4, EOS 5D Mark IV 4847 K / +9 against 5050 K / +13
+    ("SONY", "DSC-RX100M7", LightroomScale::at(0.980, 15.0)),
+    ("SONY", "ILCE-7C", LightroomScale::at(1.055, 3.0)),
+    ("SONY", "ZV-E10", LightroomScale::at(1.109, 11.0)),
+    ("FUJIFILM", "X-H2S", LightroomScale::at(0.989, 9.0)),
+    ("Canon", "Canon EOS 80D", LightroomScale::at(0.992, 5.0)),
+    ("Canon", "Canon EOS 5D Mark IV", LightroomScale::at(0.960, 4.0)),
+    // Two DNGs whose own matrices read daylight far from where Lightroom, which develops them with its own, shows it
+    // (recomputed from the files' tags: the readings are the matrices', not a decoding error): the Pixel 6 Pro's
+    // 3376 K / -95 against 5800 K / +11 (its CameraCalibration scales red and blue by 0.45 to 0.73), the LEICA Q's
+    // 8557 K / +16 against 5750 K / +14. Without a row a Lightroom white landed 124 and 57 mired from the photo's own.
+    // ponytail: a ratio from one photo each; this far from 1 it is exact at As Shot only, and a second photo at another
+    // light would say whether these two want a mired offset instead.
+    ("Google", "Pixel 6 Pro", LightroomScale::at(0.582, 106.0)),
+    ("LEICA CAMERA AG", "LEICA Q (Typ 116)", LightroomScale::at(1.488, -2.0)),
 ];
 
 /// The Lightroom scale of this camera (make and model joined by a space): the measured one ([`LIGHTROOM`]), else
@@ -604,11 +660,11 @@ mod tests {
             ("OLYMPUS CORPORATION E-1", (5300.0, 0.0), (5350.0, 11.0)),
         ];
         for (camera, (t, tint), (lr_t, lr_tint)) in rows {
-            let scale = lightroom_scale(camera).unwrap_or(LightroomScale { kelvin_ratio: 1.0, tint_offset: 0.0 });
-            let (as_lr_t, as_lr_tint) = (t / scale.kelvin_ratio, tint + scale.tint_offset);
+            let scale = lightroom_scale(camera).unwrap_or(LightroomScale::at(1.0, 0.0));
+            let (on_t, on_tint) = scale.dial(lr_t, lr_tint);
             assert!(
-                (as_lr_t - lr_t).abs() < 150.0 && (as_lr_tint - lr_tint).abs() < 8.0,
-                "{camera}: {t:.0} / {tint:.1} reads as {as_lr_t:.0} / {as_lr_tint:.1}"
+                (on_t - t).abs() < 150.0 && (on_tint - tint).abs() < 8.0,
+                "{camera}: Lightroom's As Shot lands at {on_t:.0} / {on_tint:.1}, the raw reads {t:.0} / {tint:.1}"
             );
             assert!(covers_camera(camera) || crate::spectral::find_camera(camera).is_some(), "{camera} has a Kelvin scale");
         }
@@ -618,9 +674,19 @@ mod tests {
     /// is its presets; a scale through measured matrices or a Fujifilm neutral pair is used as Lightroom wrote it.
     #[test]
     fn lightroom_scale_of_measured_preset_and_other_bodies() {
-        assert_eq!(lightroom_scale("SONY ILCE-6000"), Some(LightroomScale { kelvin_ratio: 1.06, tint_offset: 11.0 }));
+        assert_eq!(lightroom_scale("Canon Canon EOS R6"), Some(LightroomScale::at(0.90, 4.5)));
         assert_eq!(lightroom_scale("canon canon eos rp").map(|s| s.kelvin_ratio), Some(0.914));
-        assert_eq!(lightroom_scale("FUJIFILM X-A5").map(|s| s.tint_offset), Some(5.5));
+        assert_eq!(lightroom_scale("FUJIFILM X-A5").map(|s| s.tint_offset), Some(5.9));
+        // a body with a series of whites: the ILCE-6000's 6900 K / +3 (the Phoenix 200 preset's white) and its
+        // 4000 K / +10 are warmer and cooler than a ratio alone puts them, and the tint follows the temperature
+        let a6000 = lightroom_scale("SONY ILCE-6000").unwrap();
+        let (warm, cool) = (a6000.dial(6900.0, 3.0), a6000.dial(4000.0, 10.0));
+        assert!((warm.0 - 7107.0).abs() < 5.0 && (warm.1 + 5.2).abs() < 0.1, "{warm:?}");
+        assert!((cool.0 - 4354.0).abs() < 5.0 && (cool.1 + 5.6).abs() < 0.1, "{cool:?}");
+        // a ratio alone is applied exactly, and a Kelvin that is not one comes back without a panic
+        assert_eq!(LightroomScale::at(0.914, 3.0).dial(5500.0, 10.0), (5500.0 * 0.914, 7.0));
+        assert_eq!(a6000.dial(0.0, 0.0), (0.0, -12.1));
+        assert!(a6000.dial(f64::NAN, 0.0).0.is_nan() && a6000.dial(f64::NAN, 0.0).1.is_finite());
         for c in ["SONY ILCA-99M2", "OLYMPUS CORPORATION E-3", "NIKON CORPORATION NIKON Z5_2", "Canon Canon PowerShot G1 X Mark III"] {
             assert_eq!(lightroom_scale(c), Some(PRESET_CURVE), "{c}");
         }
@@ -632,12 +698,13 @@ mod tests {
         assert_eq!(lightroom_scale("RICOH IMAGING COMPANY, LTD. PENTAX KP").map(|s| s.tint_offset), Some(15.0));
     }
 
-    /// Every row is a body once, with a scale a white balance can have: one photo's reading that came out far from
-    /// Lightroom's (a white the scale cannot read, as the EOS 5D Mark IV sample's 1785 K) is a broken reading, not a scale.
+    /// Every row is a body once, with a scale a white balance can have. A reading far outside these bounds is a broken
+    /// one, not a scale (the EOS 5D Mark IV sRAW's 1785 K / -189 was: its samples are stored white-balanced).
     #[test]
     fn lightroom_rows_are_one_per_body_and_plausible() {
         for (i, (make, model, scale)) in LIGHTROOM.iter().enumerate() {
-            assert!((0.8..=1.2).contains(&scale.kelvin_ratio) && scale.tint_offset.abs() <= 30.0, "{make} {model}: {scale:?}");
+            assert!((0.5..=1.6).contains(&scale.kelvin_ratio) && scale.tint_offset.abs() <= 120.0, "{make} {model}: {scale:?}");
+            assert!(scale.mired_offset.abs() <= 60.0 && scale.tint_per_mired.abs() <= 0.5, "{make} {model}: {scale:?}");
             assert!(!LIGHTROOM[..i].iter().any(|(m, n, _)| m.eq_ignore_ascii_case(make) && n.eq_ignore_ascii_case(model)), "{make} {model} twice");
             assert_eq!(lightroom_scale(&format!("{make} {model}")), Some(*scale));
         }

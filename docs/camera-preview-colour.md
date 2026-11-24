@@ -294,6 +294,18 @@ exposure and contrast (E-1 0.58 EV, 1.80; D70 0.70 EV, 1.68). Against those expo
 (HB-535): fitted on the D65 stand-in it left the grass 14° yellower than Lightroom's. The Pentax KP has no table: its only Lightroom-exported raw is a
 DNG, whose own matrices come first. Other models get no table until someone fits one the same way.
 
+**The Canon EOS RP's table (maintainer decision, 2026-11-24, card #535).** Fitted the same way from the one EOS RP
+photo with a Lightroom export, the CC0 raw.pixls.us sample `Canon_EOS_RP_CRAW_ISO_100_crop_nodual.CR3` (a still life
+under warm light, As Shot 4100 K in Lightroom) against Lightroom's export of it with nothing changed (Adobe Standard):
+3,719 colour pairs, exposure 1.42 EV and contrast 1.58 for the model (the Canon defaults are 1.30 and 1.80). Against
+that export, on the photo it was fitted to (nothing held out; mean CIE76 ΔE of the whole frame at 150 px, not aligned
+for the lens correction): 7.8 → 5.8, and by Lightroom's lightness the bright tones gain most (L\* 70 to 85: 8.3 →
+5.3; above 85: 11.1 → 5.9), where the lit side of the fruit was near white and now holds its colour. The picture
+stays lighter than Lightroom's (mean L\* +2.8 before, +3.7 now: the lower contrast lifts the shadows by 3 to 4). It was
+fitted for the white balance work, to see whether the hotter highlights were why a strongly warmed white on this raw
+misses Lightroom's; they are not (`docs/lightroom-preset-fit.md`), so what the table changes is the unedited look.
+One photo fits only the hues it shows; every unedited EOS RP photo moves with it (`LOOK_VERSION` 27).
+
 Corners: Lightroom applies its lens profile for RF lenses; LightCraft has no lens data for them, but now applies the
 vignetting correction the camera applied to its JPEG, measured from that JPEG ([lens-profiles.md](lens-profiles.md#canon-cr3-vignetting-measured-from-the-camera-jpeg)),
 which brings the outer corners from 1.6 EV darker than Lightroom's to 0.7 EV (the camera's own correction is partial). The CC0 corpus CR3s check that the neutral look reads as Canon's own rendering too (ΔE00 against each

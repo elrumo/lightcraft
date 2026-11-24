@@ -242,6 +242,10 @@ pub struct ColorData {
     /// matrices a Kelvin scale ([`kelvin_presets`]). Not a DNG tag: nothing else reads it.
     #[serde(default)]
     pub kelvin_presets: Option<kelvin_presets::KelvinPresets>,
+    /// The as-shot white-balance multipliers `[red, 1, blue]` of a file whose samples are stored white-balanced (Canon
+    /// sRAW / mRAW, where `wb_multipliers` is 1): what a Kelvin scale reads the as-shot white from. Not a DNG tag.
+    #[serde(default)]
+    pub recorded_wb: Option<[f32; 3]>,
 }
 
 /// A decoded raw image.

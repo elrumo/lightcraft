@@ -26,7 +26,7 @@
 //! scenes (raw counts against the decoded samples), and the IFD2 image. The ExifTool tag documentation was used for
 //! tag names.
 
-use super::{COLOR_BALANCE, CR2_SLICE, SENSOR_INFO, words};
+use super::{COLOR_BALANCE, CR2_SLICE, SENSOR_INFO, kelvin_presets_from_color_data, wb_from_color_balance, words};
 use crate::{BlackLevel, Camera, ColorData, Limits, Mode, OpcodeLists, Orientation, RawData, RawError, RawFormat, RawImage, Rect, Result, ljpeg};
 use craft_tiff::image::{Chunk, chunk_bytes};
 use craft_tiff::{ByteOrder, Ifd, Tiff, makernote, tags as t};
@@ -384,7 +384,14 @@ pub(super) fn decode(bytes: &[u8], tiff: &Tiff, raw: &Ifd, mode: Mode, limits: &
         active_area: active,
         crop: Rect::new(0, 0, active.width, active.height),
         orientation: Orientation::from_exif(ifd0.u16(t::ORIENTATION).unwrap_or(1)),
-        color: ColorData::default(),
+        // (the white the camera balanced the samples for, and its presets: a Kelvin scale reads the as-shot white from
+        // them, where the multipliers below say nothing. The 5D Mark IV sRAW of the test corpus read 1785 K / -189
+        // through its matrices from the ones; its record says `2036 1024 1024 1509`, about 5150 K)
+        color: ColorData {
+            recorded_wb: colour_data.as_deref().and_then(wb_from_color_balance),
+            kelvin_presets: colour_data.as_deref().and_then(kelvin_presets_from_color_data),
+            ..ColorData::default()
+        },
         // the camera's white balance is already applied, as in Sony's linear YCbCr
         wb_multipliers: Some([1.0; 3]),
         linearized: false,
@@ -450,6 +457,8 @@ mod tests {
         assert_eq!((img.width, img.height, img.cpp), (4, 2, 3));
         assert!(img.cfa.is_none());
         assert_eq!(img.wb_multipliers, Some([1.0; 3]));
+        // (no maker note here: no recorded white, no presets)
+        assert!(img.color.recorded_wb.is_none() && img.color.kelvin_presets.is_none());
         let RawData::U16(px) = &img.data else { panic!("integer data") };
         // no IFD2: chroma gains 1; R = Y + Cr', B = Y + Cb', G from the BT.601 luma
         let expect = |y: f64, cb: f64, cr: f64| {
