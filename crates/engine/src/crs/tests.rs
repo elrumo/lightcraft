@@ -442,6 +442,41 @@ fn lightroom_kelvin_is_read_on_the_scale_of_a_body_measured_against_it() {
     assert_eq!(to_partial(&props(x), Target::Any)["wb"]["lightroom"], true);
 }
 
+/// Lightroom's Shadows Tint is as strong as the camera body makes it (card #534): a value from Lightroom is scaled to
+/// this app's slider for the photo's body, once, up to the slider's end.
+#[test]
+fn lightroom_shadow_tint_is_scaled_for_the_body() {
+    let x = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+    crs:ShadowTint="+20" crs:RedHue="+10"/></rdf:RDF>"#;
+    let partial = to_partial(&props(x), Target::Any);
+    assert_eq!(partial["calibration"]["lightroom"], true, "marked as Lightroom's: {partial}");
+    let on = |camera: &str| {
+        let mut p = partial.clone();
+        lightroom_shadow_tint_to_slider(&mut p, camera);
+        assert!(p["calibration"].get("lightroom").is_none(), "the marker is not stored");
+        (p["calibration"]["shadows_tint"].as_f64().unwrap(), p["calibration"]["red_hue"].as_f64().unwrap())
+    };
+    assert!((on("SONY ILCE-6000").0 - 57.8).abs() < 1e-9 && on("SONY ILCE-6000").1 == 10.0, "the strongest body");
+    assert_eq!(on("Canon Canon EOS R6"), (20.0, 10.0), "the middle body");
+    assert!((on("NIKON CORPORATION NIKON D70").0 - 30.0).abs() < 1e-9 && (on("OLYMPUS CORPORATION E-1").0 - 16.4).abs() < 1e-9);
+    assert!((on("fujifilm X-A5").0 - 15.4).abs() < 1e-9, "whatever the case");
+    // another body, or a model that only starts like one of them, reads Lightroom's number as it is
+    for other in ["Canon Canon EOS R5", "SONY ILCE-6000X", "NIKON CORPORATION NIKON D700", "OLYMPUS CORPORATION E-10", ""] {
+        assert_eq!(on(other), (20.0, 10.0), "{other}");
+    }
+    // converted once: a partial that is not marked stays
+    let mut own = json!({"calibration": {"shadows_tint": 20.0}});
+    lightroom_shadow_tint_to_slider(&mut own, "SONY ILCE-6000");
+    assert_eq!(own, json!({"calibration": {"shadows_tint": 20.0}}));
+    // a value past the slider's range stops at its end
+    let mut strong = json!({"calibration": {"shadows_tint": -50.0, "lightroom": true}});
+    lightroom_shadow_tint_to_slider(&mut strong, "SONY ILCE-6000");
+    assert_eq!(strong, json!({"calibration": {"shadows_tint": -100.0}}));
+    // a file without the slider is not marked
+    let plain = r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:RedHue="+10"/></rdf:RDF>"#;
+    assert!(to_partial(&props(plain), Target::Any)["calibration"].get("lightroom").is_none());
+}
+
 #[test]
 fn point_color_samples_are_imported() {
     // the sample of Harman Phoenix 200's "Orange You Glad" preset: a blue (219 degrees, saturation 0.57, linear

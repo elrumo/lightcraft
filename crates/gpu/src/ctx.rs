@@ -458,11 +458,12 @@ fn constants() -> String {
     use lightcraft_pipeline::masks::{AUTO_TOL_CHROMA, AUTO_TOL_EV};
     s += &format!("const AUTO_TOL_EV: f32 = {AUTO_TOL_EV:?};\nconst AUTO_TOL_CHROMA: f32 = {AUTO_TOL_CHROMA:?};\n");
     {
-        use lightcraft_pipeline::colorops::{SHADOW_TINT, SHADOW_TINT_WINDOW};
-        s += &format!(
-            "const SHADOW_TINT_K: f32 = {SHADOW_TINT:?};\nconst SHADOW_TINT_LO: f32 = {:?};\nconst SHADOW_TINT_HI: f32 = {:?};\n",
-            SHADOW_TINT_WINDOW.0, SHADOW_TINT_WINDOW.1
-        );
+        use lightcraft_pipeline::colorops::{SHADOW_TINT_MINUS, SHADOW_TINT_PLUS};
+        for (sign, axis) in [("P", SHADOW_TINT_PLUS), ("M", SHADOW_TINT_MINUS)] {
+            for (channel, v) in ["R", "G", "B"].iter().zip(axis) {
+                s += &format!("const SHADOW_TINT_{sign}{channel}: f32 = {v:?};\n");
+            }
+        }
     }
     for (i, h) in GRAIN_HASH.iter().enumerate() {
         s += &format!("const GRAIN_H{i}: u32 = {h}u;\n");

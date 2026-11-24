@@ -900,7 +900,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
 
             // --- calibration (scene linear, before the tone map)
             if fp.calib.is_some() || fp.shadow_tint != 0.0 {
-                c = crate::colorops::calibrate(c, fp.calib.as_ref(), fp.shadow_tint);
+                c = crate::colorops::calibrate(c, fp.calib.as_ref(), fp.shadow_tint, fp.gain);
             }
 
             // --- tone map on luminance, highlight desaturation

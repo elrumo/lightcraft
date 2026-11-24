@@ -230,6 +230,46 @@ pub fn lightroom_white_to_dial(partial: &mut Value, camera: &str) {
     }
 }
 
+/// Lightroom's Shadows Tint on a camera body, as a multiple of this app's slider (the first word of the make, the
+/// model). Lightroom's strength is a constant of the body that nothing in a file gives: at +50 green in the dark tones
+/// falls by 0.29 log units on an ILCE-6000 raw, 0.19 on an EOS RP's, 0.13 on a D70's, 0.10 on an X-A5's and an
+/// ILCE-6700's, 0.05 on an E-1's, and by 0.09 to 0.12 on six EOS R6 photos of different ISO, exposure and white
+/// balance. The slider's own strength is the middle body's (`colorops::SHADOW_TINT_PLUS`); these were fitted with it
+/// to Lightroom's exports of each body (card #534, `docs/lightroom-preset-fit.md`). A body that is not here reads
+/// Lightroom's number as it is.
+const LIGHTROOM_SHADOW_TINT: &[(&str, &str, f64)] = &[
+    ("SONY", "ILCE-6000", 2.89),
+    ("NIKON", "NIKON D70", 1.5),
+    ("Canon", "Canon EOS RP", 1.35),
+    ("Canon", "Canon EOS R6", 1.0),
+    ("SONY", "ILCE-6700", 0.86),
+    ("OLYMPUS", "E-1", 0.82),
+    ("FUJIFILM", "X-A5", 0.77),
+];
+
+/// Scale the Shadows Tint of a settings partial that Lightroom wrote (marked `calibration.lightroom`) to this app's
+/// slider for `camera` (make and model joined by a space, [`LIGHTROOM_SHADOW_TINT`]); the marker is removed whatever
+/// the camera.
+// ponytail: the result is cut at the slider's ±100 (every merge clamps through the control specs), so an ILCE-6000
+// value past ±35 is weaker than Lightroom's; a wider stored range for the control if a preset ever needs it.
+pub fn lightroom_shadow_tint_to_slider(partial: &mut Value, camera: &str) {
+    let Some(cal) = partial.get_mut("calibration").and_then(Value::as_object_mut) else { return };
+    if cal.remove("lightroom") != Some(json!(true)) {
+        return;
+    }
+    let mut words = camera.split_whitespace();
+    let (Some(make), model) = (words.next(), words.collect::<Vec<_>>().join(" ")) else { return };
+    // (the make can be several words, "NIKON CORPORATION NIKON D70": its first word and the end of the name tell the body)
+    let body = |m: &str, name: &str| {
+        make.eq_ignore_ascii_case(m)
+            && (model.eq_ignore_ascii_case(name) || model.to_ascii_lowercase().ends_with(&format!(" {}", name.to_ascii_lowercase())))
+    };
+    let Some(k) = LIGHTROOM_SHADOW_TINT.iter().find(|(m, name, _)| body(m, name)).map(|(_, _, k)| *k) else { return };
+    if let Some(t) = cal.get("shadows_tint").and_then(Value::as_f64) {
+        cal.insert("shadows_tint".into(), json!((t * k).clamp(-100.0, 100.0)));
+    }
+}
+
 /// Parse a point curve stored as an `rdf:Seq` of `"x, y"` strings in 0..255.
 fn curve(props: &Props, k: &str) -> Option<Value> {
     note(k);
@@ -569,6 +609,11 @@ pub fn to_partial(props: &Props, target: Target) -> Value {
 
     // ---- Calibration
     n(o, "ShadowTint", "calibration.shadows_tint");
+    if o.pointer("/calibration/shadows_tint").and_then(Value::as_f64).is_some_and(|t| t != 0.0) {
+        // (a marker of the JSON only, as `wb.lightroom`: Lightroom's strength, which [`lightroom_shadow_tint_to_slider`]
+        // scales for the photo's body)
+        put(o, "calibration.lightroom", json!(true));
+    }
     n(o, "RedHue", "calibration.red_hue");
     n(o, "RedSaturation", "calibration.red_sat");
     n(o, "GreenHue", "calibration.green_hue");

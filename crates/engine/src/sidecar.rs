@@ -440,6 +440,7 @@ pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
         Some(DevelopPatch::Partial(v)) => {
             let mut v = v.clone();
             crate::crs::lightroom_white_to_dial(&mut v, &p.meta.camera);
+            crate::crs::lightroom_shadow_tint_to_slider(&mut v, &p.meta.camera);
             if let Some(f) = sc.frame {
                 // the crop and Lightroom's saved Upright are on the stored image: into the frame the
                 // file's orientation and then the photo's own Rotate Left / Right give

@@ -564,33 +564,29 @@ pub fn calibration_matrix(c: &Calibration) -> Option<[[f32; 3]; 3]> {
     Some(from_wide.mul(&Mat3(m)).mul(&to_wide).to_f32())
 }
 
-/// Shadows-tint strength at ±100: the green channel is scaled by `exp(∓SHADOW_TINT · w)` (luminance kept), `w` the
-/// weight of [`SHADOW_TINT_WINDOW`]. Fitted to Lightroom's exports of seven cameras' raws with Shadows Tint alone at
-/// ±50 (cards #386 / #388, `docs/lightroom-preset-fit.md`). Lightroom's own strength differs from raw to raw: at +50
-/// it moves a* in the dark tones by 10 on a Sony ILCE-6000 raw, 6 to 11 on an EOS R6's, 4 to 5 on a Nikon D70's, a
-/// Sony ILCE-6700's and a Canon EOS RP's, and 2 on a Fujifilm X-A5's and an Olympus E-1's, following the raw's white
-/// balance multipliers and exposure (it acts like an offset in the raw's own units). A fixed strength cannot follow
-/// that: this one sits in the middle (the 0.45 fitted to the EOS R6 alone did two to five times too much on five of
-/// the other six).
-pub const SHADOW_TINT: f32 = 0.25;
-/// Where the shadows tint acts, in stops from scene mid grey (0.18): fully below the first, not at all above the
-/// second. Lightroom's tint is strongest in the darkest tones and falls off evenly up to the highlights.
-pub const SHADOW_TINT_WINDOW: (f32, f32) = (-5.0, 3.0);
+/// Shadows Tint as Lightroom's is: light taken away in scene-linear light before the tone curve, the same amount at
+/// every tone (so it shows in the shadows), following Exposure. These are what ±100 takes from linear Rec. 2020 at
+/// Exposure 0 (a negative part is light added): plus takes green, minus takes red and blue. Fitted, with one strength
+/// per camera body, to Lightroom's exports of seven bodies (the slider at 25, 50 and 100 both ways and under Exposure
+/// ±1: card #534, `docs/lightroom-preset-fit.md`); this is the middle body's strength (an EOS R6's). Lightroom's own
+/// strength is a constant of the body, 0.8 to 2.9 times this one on those seven: a value that comes from Lightroom
+/// is scaled for the photo's body where it is read (`crs::lightroom_shadow_tint_to_slider` in the engine). It was a
+/// gain on green inside a tone window that kept the luminance, one strength for every body.
+pub const SHADOW_TINT_PLUS: [f32; 3] = [-0.00208, 0.00634, 0.00045];
+pub const SHADOW_TINT_MINUS: [f32; 3] = [0.00727, -0.00144, 0.00374];
 
-/// Calibration in scene-linear light (before tone mapping): the primaries matrix, then the shadows
-/// tint (green ↔ magenta, weighted towards dark tones, luminance kept).
+/// Calibration in scene-linear light (before tone mapping): the shadows tint (`shadow_tint` is the slider / 100, under
+/// Exposure's `gain`), then the primaries matrix.
 #[inline]
-pub fn calibrate(c: [f32; 3], m: Option<&[[f32; 3]; 3]>, shadow_tint: f32) -> [f32; 3] {
+pub fn calibrate(c: [f32; 3], m: Option<&[[f32; 3]; 3]>, shadow_tint: f32, gain: f32) -> [f32; 3] {
     let mut c = c;
+    if shadow_tint != 0.0 {
+        let axis = if shadow_tint > 0.0 { SHADOW_TINT_PLUS } else { SHADOW_TINT_MINUS };
+        let k = shadow_tint.abs() * gain;
+        c = std::array::from_fn(|i| (c[i] - axis[i] * k).max(0.0));
+    }
     if let Some(m) = m {
         c = std::array::from_fn(|r| (m[r][0] * c[0] + m[r][1] * c[1] + m[r][2] * c[2]).max(0.0));
-    }
-    if shadow_tint != 0.0 {
-        let y0 = lightcraft_color::luminance_2020(c);
-        let w = 1.0 - smooth(SHADOW_TINT_WINDOW.0, SHADOW_TINT_WINDOW.1, (y0.max(1e-7) / 0.18).log2());
-        c[1] *= (-SHADOW_TINT * shadow_tint * w).exp();
-        let y1 = lightcraft_color::luminance_2020(c).max(1e-9);
-        c = c.map3(|v| v * y0 / y1);
     }
     c
 }
@@ -762,14 +758,14 @@ mod tests {
     fn calibration_saturates_and_turns_the_colours_a_primary_doesnt_hold_like_lightroom() {
         let yellow = [0.45, 0.38, 0.06];
         let lch = |c: [f32; 3]| lab_to_lch(oklab_from_2020(c));
-        let with = |cal: Calibration| lch(calibrate(yellow, calibration_matrix(&cal).as_ref(), 0.0));
+        let with = |cal: Calibration| lch(calibrate(yellow, calibration_matrix(&cal).as_ref(), 0.0, 1.0));
         let [_, c0, h0] = lch(yellow);
         let [_, c1, h1] = with(Calibration { blue_sat: 50.0, ..Default::default() });
         assert!(c1 > c0 * 1.03 && (h1 - h0).abs() < 0.03, "Blue Saturation +50: chroma {c0} -> {c1}, hue {h0} -> {h1}");
         // (Lightroom's Red Hue +50 turns oranges by 13 to 18 degrees and yellows by 7 to 9; greenish yellows go the other way)
         let orange = [0.5, 0.25, 0.08];
         let turned =
-            lch(calibrate(orange, calibration_matrix(&Calibration { red_hue: 50.0, ..Default::default() }).as_ref(), 0.0))[2] - lch(orange)[2];
+            lch(calibrate(orange, calibration_matrix(&Calibration { red_hue: 50.0, ..Default::default() }).as_ref(), 0.0, 1.0))[2] - lch(orange)[2];
         assert!(turned > 0.08, "Red Hue +50 turns an orange by {turned}");
     }
 
@@ -778,50 +774,49 @@ mod tests {
         assert!(calibration_matrix(&Calibration::default()).is_none());
         let cal = Calibration { red_hue: 60.0, blue_sat: -50.0, ..Default::default() };
         let m = calibration_matrix(&cal).unwrap();
-        let grey = calibrate([0.3, 0.3, 0.3], Some(&m), 0.0);
+        let grey = calibrate([0.3, 0.3, 0.3], Some(&m), 0.0, 1.0);
         assert!(grey.iter().all(|v| (v - 0.3).abs() < 1e-4), "{grey:?}");
         // red rotates in hue, blue loses chroma
         let red = [0.4, 0.05, 0.03];
         let h0 = lab_to_lch(oklab_from_2020(red))[2];
-        let h1 = lab_to_lch(oklab_from_2020(calibrate(red, Some(&m), 0.0)))[2];
+        let h1 = lab_to_lch(oklab_from_2020(calibrate(red, Some(&m), 0.0, 1.0)))[2];
         assert!(h1 - h0 > 0.05, "{h0} -> {h1}");
         let blue = [0.03, 0.05, 0.4];
         let c0 = lab_to_lch(oklab_from_2020(blue))[1];
-        let c1 = lab_to_lch(oklab_from_2020(calibrate(blue, Some(&m), 0.0)))[1];
+        let c1 = lab_to_lch(oklab_from_2020(calibrate(blue, Some(&m), 0.0, 1.0)))[1];
         assert!(c1 < c0 * 0.97, "{c0} -> {c1}");
     }
 
+    /// Lightroom's exports of seven bodies (card #534): Shadows Tint is light taken away before the tone curve, the same
+    /// amount at every tone. It was a gain on green inside a tone window, with the luminance kept.
     #[test]
-    fn shadow_tint_targets_shadows() {
-        let dark = calibrate([0.01, 0.01, 0.01], None, 1.0);
-        let bright = calibrate([1.5, 1.5, 1.5], None, 1.0);
-        assert!(dark[1] < dark[0] * 0.85, "magenta shadows: {dark:?}");
-        assert!((bright[1] - bright[0]).abs() < 1e-3, "{bright:?}");
-        let y = |c: [f32; 3]| lightcraft_color::luminance_2020(c);
-        assert!((y(dark) - 0.01).abs() < 1e-5);
-        let green = calibrate([0.01, 0.01, 0.01], None, -1.0);
-        assert!(green[1] > green[0]);
+    fn shadow_tint_takes_light_away_as_lightroom_s_does() {
+        // a dark grey turns magenta at plus (green taken) and green at minus (red and blue taken)
+        let dark = calibrate([0.02; 3], None, 1.0, 1.0);
+        assert!(dark[1] < 0.02 * 0.75 && dark[0] >= 0.02 && dark[2] <= 0.02, "magenta shadows: {dark:?}");
+        let green = calibrate([0.02; 3], None, -1.0, 1.0);
+        assert!(green[0] < 0.02 * 0.7 && green[2] < 0.02 * 0.85 && green[1] > 0.02, "green shadows: {green:?}");
+        // it takes light away: the luminance is not kept
+        assert!(lightcraft_color::luminance_2020(dark) < 0.02 * 0.9);
+        // the same amount in the highlights, where it does not show
+        let bright = calibrate([1.5; 3], None, 1.0, 1.0);
+        assert!((bright[1] / bright[0] - 1.0).abs() < 0.01 && (1.5 - bright[1] - (0.02 - dark[1])).abs() < 1e-6, "{bright:?}");
+        // linear in the slider, and never below black
+        let half = calibrate([0.02; 3], None, 0.5, 1.0);
+        assert!(((0.02 - half[1]) * 2.0 - (0.02 - dark[1])).abs() < 1e-6, "{half:?}");
+        assert!(calibrate([0.001; 3], None, 1.0, 1.0).iter().all(|v| *v >= 0.0));
+        // it follows Exposure: one stop up, every tone loses the share it lost before (Lightroom's doubles at the same tone)
+        let (plain, exposed) = (calibrate([0.02; 3], None, 0.5, 1.0), calibrate([0.04; 3], None, 0.5, 2.0));
+        assert!((exposed[1] / 0.04 - plain[1] / 0.02).abs() < 1e-5, "{plain:?} {exposed:?}");
     }
 
     #[test]
-    fn shadow_tint_is_as_strong_as_lightroom_and_symmetric() {
-        // Lightroom's +-50 on seven cameras' raws moves a* in the dark tones by 2 to 11 (4 to 5 on the middle ones), the
-        // same both ways, most in the darkest tones and less and less up to the highlights (cards #386 / #388). The
-        // first tint (linear, 3 % of green here) was under all of them; the one fitted to an EOS R6 alone (0.45 over
-        // -2..2 stops) was two to five times over five of the others
-        let ratio = |grey: f32, t: f32| {
-            let c = calibrate([grey; 3], None, t);
-            c[1] / c[0]
-        };
-        // (a grey almost two stops under mid grey: a* +4.5 is green down by about 8 %)
-        assert!(ratio(0.05, 0.5) < 0.95 && ratio(0.05, 0.5) > 0.88, "magenta at +50: {}", ratio(0.05, 0.5));
-        assert!((ratio(0.05, 0.5) * ratio(0.05, -0.5) - 1.0).abs() < 1e-3, "{} {}", ratio(0.05, 0.5), ratio(0.05, -0.5));
-        // strongest in the darkest tones, then mid grey, then the highlights
-        let (dark, mid, light) = (ratio(0.005, 0.5), ratio(0.18, 0.5), ratio(0.6, 0.5));
-        assert!(dark < ratio(0.05, 0.5) && ratio(0.05, 0.5) < mid && mid < light && light < 1.0, "{dark} {mid} {light}");
-        assert!(mid < 0.98, "mid grey: {mid}");
-        let bright = calibrate([1.5, 1.5, 1.5], None, 1.0);
-        assert!((bright[1] / bright[0] - 1.0).abs() < 1e-3, "{bright:?}");
+    fn shadow_tint_comes_before_the_primaries() {
+        // the light is taken from what the camera recorded: the primaries then mix the tinted colour
+        let m = calibration_matrix(&Calibration { red_sat: 50.0, ..Default::default() }).unwrap();
+        let both = calibrate([0.02, 0.03, 0.04], Some(&m), 1.0, 1.0);
+        let stepwise = calibrate(calibrate([0.02, 0.03, 0.04], None, 1.0, 1.0), Some(&m), 0.0, 1.0);
+        assert!(both.iter().zip(&stepwise).all(|(a, b)| (a - b).abs() < 1e-7), "{both:?} {stepwise:?}");
     }
 
     #[test]
@@ -1023,7 +1018,7 @@ mod tests {
         let wide = |c: [f32; 3]| -> [f32; 3] { std::array::from_fn(|r| dot3(to_wide[r], c)) };
         let c = [0.2, 0.3, 0.12];
         let m = calibration_matrix(&Calibration { red_sat: 50.0, ..Default::default() }).unwrap();
-        let (before, after) = (wide(c), wide(calibrate(c, Some(&m), 0.0)));
+        let (before, after) = (wide(c), wide(calibrate(c, Some(&m), 0.0, 1.0)));
         assert!((after[0] - before[0]).abs() < 1e-4, "red's own channel: {before:?} -> {after:?}");
         let (green, blue) = ((after[1] - before[1]) / (before[1] - before[0]), (after[2] - before[2]) / (before[2] - before[0]));
         assert!((0.13..0.24).contains(&green) && (0.1..0.22).contains(&blue), "green by {green}, blue by {blue}");
@@ -1035,7 +1030,7 @@ mod tests {
             Calibration { green_sat: 50.0, ..Default::default() },
             Calibration { blue_sat: 50.0, ..Default::default() },
         ] {
-            let k = lch(calibrate(orange, calibration_matrix(&cal).as_ref(), 0.0))[1] / lch(orange)[1];
+            let k = lch(calibrate(orange, calibration_matrix(&cal).as_ref(), 0.0, 1.0))[1] / lch(orange)[1];
             assert!((1.08..1.4).contains(&k), "{cal:?}: chroma x {k}");
         }
         // and -50 is +50's mirror image
@@ -1048,7 +1043,7 @@ mod tests {
         }
         let yellow = [0.45, 0.38, 0.06];
         let turned =
-            lch(calibrate(yellow, calibration_matrix(&Calibration { blue_hue: 50.0, ..Default::default() }).as_ref(), 0.0))[2] - lch(yellow)[2];
+            lch(calibrate(yellow, calibration_matrix(&Calibration { blue_hue: 50.0, ..Default::default() }).as_ref(), 0.0, 1.0))[2] - lch(yellow)[2];
         assert!(turned > 0.15, "Blue Hue +50 turns a yellow by {turned}");
     }
 }

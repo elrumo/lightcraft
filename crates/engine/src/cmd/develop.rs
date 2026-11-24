@@ -1611,6 +1611,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let mut preset = preset;
                 let Some(photo) = s.catalog.photo(id) else { return ok() };
                 crate::crs::lightroom_white_to_dial(&mut preset.settings, &photo.meta.camera);
+                crate::crs::lightroom_shadow_tint_to_slider(&mut preset.settings, &photo.meta.camera);
                 s.lightroom_crop_to_frame(id, &mut preset.settings);
                 let Some(photo) = s.catalog.photo(id) else { return ok() };
                 let after = crate::upright_transfer::apply_preset(photo, &before, &preset, amount);
@@ -1627,6 +1628,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     let mut preset = preset.clone();
                     if let Some(p) = s.catalog.photo(id) {
                         crate::crs::lightroom_white_to_dial(&mut preset.settings, &p.meta.camera);
+                        crate::crs::lightroom_shadow_tint_to_slider(&mut preset.settings, &p.meta.camera);
                     }
                     // and a Lightroom crop on this photo's stored image
                     s.lightroom_crop_to_frame(id, &mut preset.settings);
