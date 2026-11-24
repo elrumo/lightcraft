@@ -931,6 +931,9 @@ on each device with `icloud.folder {path}`, its own iCloud Drive container on Ap
   hands each file over once it is there (`icloud.adopt {files}`, up to 16 a call → `{added, back, missing, refused,
   left}`). The engine adds it to the library where it is, as an import in place, with the other device's edits. That is
   not an undo step: undoing it would remove the photo from every device.
+- **It is each device's choice.** A device that syncs with it off holds the other devices' records and brings none of
+  their files; `icloud.status` then counts the photos the others keep there (`elsewhere`), so a frontend can offer to
+  turn it on.
 - **A file iCloud Drive took back** to save space (its photo stays in the library, without its original) is wanted
   again, and `icloud.adopt` shows the photo from it once it has come back.
 - **A photo removed for good** on one device is removed from the others' libraries. Its file stays in iCloud Drive:

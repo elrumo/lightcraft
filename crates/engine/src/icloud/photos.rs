@@ -83,6 +83,13 @@ pub(super) fn in_folder_with(s: &Session, folder: &Path, key: &str) -> Vec<Photo
         .collect()
 }
 
+/// The photos other devices keep in the iCloud Drive folder that this library doesn't have: what *Keep Photos in iCloud
+/// Drive* would bring here (a frontend offers it on a device that has it off).
+pub(super) fn elsewhere(s: &Session, ic: &ICloud) -> usize {
+    let here: HashSet<String> = s.catalog.photos().filter(|p| !p.local).filter_map(|p| lightcraft_catalog::sync::content_key(p)).collect();
+    ic.held.values().filter(|h| h.kind == EDIT && !here.contains(&h.key) && file_of(&h.data).is_some()).count()
+}
+
 /// The `file` an edit record's data names.
 fn file_of(data: &str) -> Option<String> {
     serde_json::from_str::<Value>(data).ok()?.get("file")?.as_str().map(str::to_string)

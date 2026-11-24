@@ -1242,6 +1242,13 @@ impl Session {
             let (movable, bytes) = self.icloud_movable_count();
             o.insert("movable".into(), json!({"photos": movable, "bytes": bytes}));
         }
+        // (with it off: the photos other devices keep there, which turning it on would bring)
+        if !ic.saved.photos
+            && !linked
+            && let Some(o) = out.as_object_mut()
+        {
+            o.insert("elsewhere".into(), json!(photos::elsewhere(self, ic)));
+        }
         if let Some(f) = Session::folder_status(ic)
             && let Some(o) = out.as_object_mut()
         {
@@ -1390,7 +1397,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         // (none journaled: they move this device's sync state, which replaying would undo)
         cmd!(query "icloud.status", "iCloud Sync Status", [], None,
-            "{transport?: bool}: {on, epoch (changes when this device forgot what the cloud has: fetch everything again), rev, serverLinked (a server keeps the presets, settings and edits: only the server travels through iCloud), pending (records to send), presets, settings, edits (photos sent: from the Photos library or kept in iCloud Drive), heldEdits (edits of pictures not here yet), analysis (photos whose faces, text… are sent), servers ([{server, user}] other devices are signed in to), known, photos (Keep Photos in iCloud Drive), folder (the host gave its iCloud Drive folder), inFolder (photos kept there), movable {photos, bytes} (could move there)} or {on: false}; `transport`: also the host's own state as it gave it",
+            "{transport?: bool}: {on, epoch (changes when this device forgot what the cloud has: fetch everything again), rev, serverLinked (a server keeps the presets, settings and edits: only the server travels through iCloud), pending (records to send), presets, settings, edits (photos sent: from the Photos library or kept in iCloud Drive), heldEdits (edits of pictures not here yet), analysis (photos whose faces, text… are sent), servers ([{server, user}] other devices are signed in to), known, photos (Keep Photos in iCloud Drive), folder (the host gave its iCloud Drive folder), inFolder (photos kept there), movable {photos, bytes} (could move there), elsewhere (with Keep Photos in iCloud Drive off: the photos other devices keep there, which turning it on brings here)} or {on: false}; `transport`: also the host's own state as it gave it",
             always, status),
         cmd!(query "icloud.enable", "Sync with iCloud", [], None,
             "{on: bool}: sync this library's presets, settings, sync server and photo-library edits with the person's other devices through the host's iCloud (docs/sync.md → iCloud). Off forgets what the cloud has (it keeps it, and this device keeps its own); on again merges as a new device does. Answers icloud.status",

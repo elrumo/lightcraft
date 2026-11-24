@@ -760,6 +760,35 @@ fn photos_stay_out_of_icloud_drive_while_it_is_off() {
     assert!(b.s.execute("icloud.adopt", &json!({"files": ["x.png"]})).is_err());
 }
 
+// Given a device that keeps its photos in iCloud Drive and another that only syncs, when the second syncs, then its
+// status counts the photos turning Keep Photos in iCloud Drive on would bring (so its page can offer it), and once it is
+// on they come and the count goes
+#[test]
+fn a_device_with_icloud_drive_photos_off_hears_how_many_the_others_keep_there() {
+    let root = temp_dir("drive-elsewhere");
+    let mut cloud = Cloud::default();
+    let mut a = with_drive(&root, "a");
+    let mut b = Device::new(&root, "b");
+    std::fs::create_dir_all(drive(&b)).unwrap();
+    b.s.execute("icloud.folder", &json!({"path": drive(&b).to_string_lossy()})).unwrap();
+    let status = |d: &mut Device| d.s.execute("icloud.status", &json!({})).unwrap();
+    assert_eq!(status(&mut b)["elsewhere"], 0);
+    for seed in [3, 4] {
+        import(&mut a, seed);
+    }
+    assert!(status(&mut a).get("elsewhere").is_none(), "only said while it is off");
+    a.sync(&mut cloud);
+    b.sync(&mut cloud);
+    assert_eq!(status(&mut b)["elsewhere"], 2);
+
+    b.s.execute("icloud.photos", &json!({"on": true})).unwrap();
+    drive_sync(&[&a, &b]);
+    assert_eq!(bring(&mut b)["added"], 2);
+    assert!(status(&mut b).get("elsewhere").is_none());
+    b.s.execute("icloud.photos", &json!({"on": false})).unwrap();
+    assert_eq!(status(&mut b)["elsewhere"], 0, "the photos that came are here now");
+}
+
 // ---------------------------------------------------------------- what was found in the photos
 
 /// Import a picture of one colour (`rgb`), as the app does.
