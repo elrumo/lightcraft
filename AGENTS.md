@@ -202,8 +202,10 @@ of it.
 ## Non-negotiables
 - **Clean-room.** Never read/disassemble anything inside Adobe app bundles (names/listings only). Never copy Adobe icons, presets, profiles (DCP), lens profiles (LCP), camera matrices, fonts. Observation of the installed Lightroom is read-only (it syncs the user's personal library: never import/edit/rate/delete there). Never copy GPL/LGPL/AGPL code (darktable, RawTherapee, ART, LibRaw, rawspeed, rawloader, rawler, lensfun, dcraw-derived GPL code…). **One exception (maintainer decision, 2026-10-17):** the EOS R6's neutral-look hue/saturation table
   (`assets/camera-profiles/Canon_EOS_R6.neutral.json`) is fitted to Lightroom's default exports of the maintainer's
-  own photos (rendered output only, no Adobe file read; `docs/camera-preview-colour.md`). Fitting anything else to
-  Adobe output needs the maintainer's go-ahead first.
+  own photos (rendered output only, no Adobe file read; `docs/camera-preview-colour.md`). So are the Olympus E-1's and
+  Nikon D70's (`E-1.neutral.json`, `NIKON_D70.neutral.json`, maintainer decision 2026-11-23), each fitted to the
+  maintainer's Lightroom default export of one CC0 raw.pixls.us photo. Fitting anything else to Adobe output needs the
+  maintainer's go-ahead first.
 - **Pure Rust** in the product. No C/C++ dependencies.
 - **craft-libs, patched here:** `craft-raw`, `craft-tiff`, `craft-heif` and `craft-metadata` (upstream's raw decoders,
   TIFF, HEIF and metadata) come from `third_party/craft-libs`, a copy with this fork's own decoder and metadata work on

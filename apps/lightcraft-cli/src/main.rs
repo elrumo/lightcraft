@@ -11,7 +11,7 @@
 //! lightcraft-cli denoise-serve [--model ID] [--models DIR] [--listen ADDR] [--token-env VAR] [--run-on auto|gpu|cpu]
 //! lightcraft-cli commands [--json]
 //! lightcraft-cli controls [--json]
-//! lightcraft-cli calibrate [--max N] [--out DIR] [--references DIR] FOLDERS/FILES…
+//! lightcraft-cli calibrate [--max N] [--min N] [--out DIR] [--references DIR] FOLDERS/FILES…
 //! lightcraft-cli bench-cull FOLDER [--files K] [--n N] [--copy M] [--work DIR] [--json FILE]
 //! ```
 #![forbid(unsafe_code)]
@@ -115,7 +115,7 @@ USAGE:
       Forget the library's Hidden password (a forgotten one): the next unlock in the app sets a new one.
       Synced libraries forget it on every device at their next sync.
   lightcraft-cli controls [--json]   list every develop control id with its range
-  lightcraft-cli calibrate [--max N] [--out DIR] [--references DIR] FOLDERS/FILES…
+  lightcraft-cli calibrate [--max N] [--min N] [--out DIR] [--references DIR] FOLDERS/FILES…
       Fit a colour profile per camera model from raw files and their embedded camera JPEGs
       (any maker's raws without colour matrices of their own): up to N files spread over the folders (default 300; 0 = all), pooled per
       model, written as <model>.json to DIR (default: the profiles folder LightCraft reads,
@@ -125,6 +125,7 @@ USAGE:
       it adds to the model's colour matrices, or its maker's typical camera when none were measured), against
       renders of the same photos in DIR (<raw name>.jpg, .jpeg, .png or .tif, upright, sRGB or tagged; Lightroom's
       default exports, say), written as <model>.neutral.json. Raws of that model then start from this look.
+      --min N: fit a model from at least N photos (default 5; fewer fit only the photos given, so check the result).
   lightcraft-cli profile-db build --out DIR [OPTIONS]
       Write a camera and lens profile database for LightCraft to download (docs/profile-db.md): DIR gets
       index.json and files/<sha256>; upload DIR to any web server and give the app its https address.
@@ -277,6 +278,7 @@ fn raw_files(path: &Path, out: &mut Vec<std::path::PathBuf>) {
 
 fn calibrate(args: &[String]) -> Result<(), String> {
     let mut max = 300usize;
+    let mut min = 5usize;
     let mut out: Option<std::path::PathBuf> = None;
     let mut references: Option<std::path::PathBuf> = None;
     let mut inputs = Vec::new();
@@ -284,6 +286,7 @@ fn calibrate(args: &[String]) -> Result<(), String> {
     while i < args.len() {
         match args[i].as_str() {
             "--max" => max = take_value(args, &mut i, "--max")?.parse().map_err(|_| "--max needs a number".to_string())?,
+            "--min" => min = take_value(args, &mut i, "--min")?.parse::<usize>().map_err(|_| "--min needs a number".to_string())?.max(1),
             "--out" => out = Some(take_value(args, &mut i, "--out")?.into()),
             "--references" => references = Some(take_value(args, &mut i, "--references")?.into()),
             a if a.starts_with("--") => return Err(format!("unknown option `{a}`")),
@@ -353,7 +356,7 @@ fn calibrate(args: &[String]) -> Result<(), String> {
     }
     let mut written = 0;
     if references.is_some() {
-        for result in pool.fit_neutral(5) {
+        for result in pool.fit_neutral(min) {
             match result {
                 Ok(table) => {
                     let path = lightcraft_engine::camera_profiles::save_neutral(&table, &dir)?;
@@ -364,7 +367,7 @@ fn calibrate(args: &[String]) -> Result<(), String> {
             }
         }
     }
-    for result in if references.is_some() { Vec::new() } else { pool.fit(5) } {
+    for result in if references.is_some() { Vec::new() } else { pool.fit(min) } {
         match result {
             Ok(profile) => {
                 let path = lightcraft_engine::camera_profiles::save(&profile, &dir)?;
@@ -382,8 +385,8 @@ fn calibrate(args: &[String]) -> Result<(), String> {
         }
     }
     for (model, n) in pool.files() {
-        if n < 5 {
-            eprintln!("calibrate: {model}: only {n} usable photo(s), at least 5 needed");
+        if n < min {
+            eprintln!("calibrate: {model}: only {n} usable photo(s), at least {min} needed");
         }
     }
     if written == 0 {

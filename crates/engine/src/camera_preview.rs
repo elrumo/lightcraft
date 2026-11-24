@@ -108,7 +108,9 @@ use tone::{HighlightCheck, ToneFit, fit_tone, fit_tone_conditional, highlights};
 /// position a lens warp samples; the warped candidate's alignment leaves out the pixels outside the sensor.
 /// 25: upstream's look version 14: bundled camera profiles also match the Nikon model spellings that differ in case,
 /// spacing or the Z8 alias, so previews made without the profile are rebuilt.
-pub const LOOK_VERSION: u32 = 25;
+/// 26: the Olympus E-1's and Nikon D70's neutral look adds a hue/saturation table, exposure and contrast fitted to
+/// Lightroom's default export (`camera_profiles::NEUTRAL_BUNDLED`).
+pub const LOOK_VERSION: u32 = 26;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {

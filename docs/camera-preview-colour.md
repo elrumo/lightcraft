@@ -281,8 +281,18 @@ hue shifts −9° to +11°, saturation ×0.68 to ×1.65), is loaded by `camera_p
 ΔE00 against Lightroom 5.72 → 5.40, every photo closer; yellows +7.4° → −1.4°, yellow-greens +3.7° → −0.2°, sky blue
 +6.2° → −2.1°, while the sky's chroma fell to ×0.88 (no blue sky among the 13). Fitted on all of them: ΔE00 4.63 →
 4.13 (median 4.64 → 4.06), chroma ×1.04 → ×1.01, the sky ×0.96 at +0.1°. No Adobe file was read; nothing but
-Lightroom's rendered output of the maintainer's own photos went in. Other models get no table until someone fits one
-the same way.
+Lightroom's rendered output of the maintainer's own photos went in.
+
+**The Olympus E-1's and Nikon D70's tables (maintainer decision, 2026-11-23).** The maintainer asked for these two too,
+fitted from the one photo each that has a Lightroom default export (the CC0 raw.pixls.us samples
+`E_1__C106743_gredos.ORF` and `20170902_0047.NEF`, exported by the maintainer; `calibrate --min 1`). One photo fits only
+the hues it shows, so the tables are small: in ProPhoto HSV the E-1's turns hues 30-90° by up to −2.5° and hues near
+240° by up to −4°, the D70's turns hues 70-95° by up to +1.7° and saturates them 2-3%; each also sets the model's
+exposure and contrast (E-1 0.58 EV, 1.80; D70 0.70 EV, 1.68). Against those exports, on the photos they were fitted to
+(nothing held out), ΔE00 3.90 → 2.83 (E-1) and 6.38 → 1.83 (D70: 7.3 L\* too dark before; mean a\*b\* distance 3.22 →
+2.58, the grass within 2° of Lightroom's). The D70's table needs its as-shot white read from the ColorBalance record
+(HB-535): fitted on the D65 stand-in it left the grass 14° yellower than Lightroom's. The Pentax KP has no table: its only Lightroom-exported raw is a
+DNG, whose own matrices come first. Other models get no table until someone fits one the same way.
 
 Corners: Lightroom applies its lens profile for RF lenses; LightCraft has no lens data for them, but now applies the
 vignetting correction the camera applied to its JPEG, measured from that JPEG ([lens-profiles.md](lens-profiles.md#canon-cr3-vignetting-measured-from-the-camera-jpeg)),
@@ -410,7 +420,7 @@ A raw starts from the first of these that is available (`camera_preview::startin
 1. the file's own colour matrices (DNG);
 2. for a Canon CR3 of a model with spectral matrices, those matrices and the neutral look (previous section);
 2b. a model fitted to Lightroom's renders (`<model>.neutral.json`, `lightcraft-cli calibrate --references`; any maker and
-   format, the Canon EOS R6's is built in): the neutral look at the model's fitted exposure and contrast with its
+   format; the Canon EOS R6's, Olympus E-1's and Nikon D70's are built in): the neutral look at the model's fitted exposure and contrast with its
    hue/saturation table, on the model's measured matrices or its maker's typical camera, whatever the camera JPEG shows;
 3. a camera profile for its model (bundled or local), with tone and chroma fitted to the file's JPEG;
 4. the file-local fit to its own JPEG described above;

@@ -277,6 +277,23 @@ fn calibrate_is_reproducible_with_parallel_workers() {
     }
 }
 
+#[test]
+fn calibrate_min_fits_a_model_from_fewer_photos() {
+    let input = tmp("calibration-min-input");
+    std::fs::create_dir_all(&input).unwrap();
+    for i in 0..2 {
+        std::fs::write(input.join(format!("chart-{i}.ARW")), calibration_arw(i)).unwrap();
+    }
+    let out = tmp("calibration-min-out-default");
+    let result = Command::new(binary()).args(["calibrate", "--out"]).arg(&out).arg(&input).output().unwrap();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success() && stderr.contains("only 2 usable photo(s), at least 5 needed"), "{stderr}");
+    let out = tmp("calibration-min-out-2");
+    let result = Command::new(binary()).args(["calibrate", "--min", "2", "--out"]).arg(&out).arg(&input).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert!(out.join("TEST-CALIBRATION.json").is_file());
+}
+
 fn mean(path: &std::path::Path) -> f64 {
     let d = lightcraft_codecs::decode(&std::fs::read(path).unwrap(), Default::default()).unwrap();
     let img = d.to_srgb8();

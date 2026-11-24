@@ -100,9 +100,14 @@ pub struct NeutralTable {
 }
 
 /// Neutral-look tables built into LightCraft (`assets/camera-profiles/`, see `assets/ATTRIBUTION.md`):
-/// `(model, JSON)`. The EOS R6's is fitted to Lightroom's default exports of the maintainer's own photos (maintainer
-/// decision 2026-10-17, `docs/camera-preview-colour.md`).
-pub const NEUTRAL_BUNDLED: &[(&str, &str)] = &[("Canon EOS R6", include_str!("../../../assets/camera-profiles/Canon_EOS_R6.neutral.json"))];
+/// `(model, JSON)`, fitted to Lightroom's default exports (`docs/camera-preview-colour.md`): the EOS R6's to the
+/// maintainer's own photos (maintainer decision 2026-10-17); the Olympus E-1's and Nikon D70's to one CC0 raw.pixls.us
+/// photo each (maintainer decision 2026-11-23).
+pub const NEUTRAL_BUNDLED: &[(&str, &str)] = &[
+    ("Canon EOS R6", include_str!("../../../assets/camera-profiles/Canon_EOS_R6.neutral.json")),
+    ("E-1", include_str!("../../../assets/camera-profiles/E-1.neutral.json")),
+    ("NIKON D70", include_str!("../../../assets/camera-profiles/NIKON_D70.neutral.json")),
+];
 
 /// File name of `model`'s neutral-look table.
 pub fn neutral_file_name(model: &str) -> String {
