@@ -211,13 +211,13 @@ fn point_color(k: u32, lch: vec3<f32>) -> vec3<f32> {
     var h = lch.z;
     var wh = 1.0;
     if (sc >= 0.02) {
-        wh = (1.0 - sstep(0.5 * wh_, wh_, abs(wrap_angle(h - sh)))) * sstep(0.005, 0.025, c);
+        wh = (1.0 - sstep(POINT_INNER * wh_, wh_, abs(wrap_angle(h - sh)))) * sstep(0.005, 0.025, c);
     }
     if (wh <= 0.0) {
         return lch;
     }
-    let wc = 1.0 - sstep(0.5 * wc_, wc_, abs(c - sc));
-    let wl = 1.0 - sstep(0.5 * wl_, wl_, abs(l - sl));
+    let wc = 1.0 - sstep(POINT_INNER * wc_, wc_, abs(c - sc));
+    let wl = 1.0 - sstep(POINT_INNER * wl_, wl_, abs(l - sl));
     let w = wh * wc * wl;
     if (w <= 0.0) {
         return lch;
@@ -225,8 +225,10 @@ fn point_color(k: u32, lch: vec3<f32>) -> vec3<f32> {
     h += w * (var_k * wrap_angle(h - sh) + pf(o + 3u));
     c += w * var_k * (c - sc);
     c = max(c * (1.0 + w * pf(o + 4u)), 0.0);
-    l += w * (var_k * (l - sl) + pf(o + 5u));
-    return vec3<f32>(l, c, h);
+    l += w * var_k * (l - sl);
+    // Luminance scales the whole colour: lightness and chroma alike
+    let lum = exp(w * pf(o + 5u));
+    return vec3<f32>(l * lum, c * lum, h);
 }
 
 // `colorops::vibrance_scale`.

@@ -350,7 +350,8 @@ The EOS R6's fourteen Calibration exports (`r6-xmp2`, the raw the earlier consta
   +22, 6502 K / +10, 5300 K / 0). It needs Lightroom's own Kelvin for a raw's as-shot white (the DNG method, from
   the camera's matrices and neutral), not one more body in `kelvin_presets::LIGHTROOM`.
 - **Point Color.** The Phoenix preset's blue sample with one shift at a time: Lightroom's hue shift +0.5 turns the
-  X-A5's sky by 24° (ours 7°) and the ILCE-6000's by 15° (ours 0°): our sample selects less and turns less.
+  X-A5's sky by 24° (ours 7°) and the ILCE-6000's by 15° (ours 0°): our sample selects less and turns less. Fitted since
+  (2026-11-23, card #536, below).
 - **The colour mixer**, mean effect error per case 0.1 to 1.6; the worst cells are the EOS RP's Red Hue +50 (4.4 on an
   effect of 2.1: ours turns its reds by 34°, Lightroom by 12°; no other raw has reds) and Green Saturation −50 on the
   D70 and ILCE-6700 (3.6 and 2.4 on 8.9 and 7.2: Lightroom darkens the greens it desaturates by 1 to 2 L\*).
@@ -501,6 +502,97 @@ What is left, and why a conversion cannot remove it:
   body (Fujifilm's neutral pair 9 % below), so their Lightroom whites stay up to about 15 mired off until the body's
   As Shot is read next to Lightroom's (one export of one raw is enough: `crs:Temperature` of an As Shot export).
 
+## Point Color on six cameras (2026-11-23, card #536)
+
+Lightroom exported the six cameras' raws with one Point Color sample each (`test-raws/light/xcam7`, 35 cases per camera:
+a sample of saturation 0.5, linear luminance 0.2 and range 0.25 at eight hues with Saturation −100; three hues at range
+0.1, 0.5 and 1; two at another saturation and luminance; two with Hue ±100, Luminance ±100 and Saturation +100 at range
+0.5). Effects are measured as before. The constants were fitted on a numpy stand-in of `PointK` applied to our own base
+renders (Point Color runs after the tone curve, so the stand-in follows the real renders within 0.02 ΔE on the mean).
+
+- **Where a sample is** (`crs::point_sample`). A sample is written as hue, saturation and linear luminance. The pixels
+  a sample takes most (those that lose most chroma at Saturation −100) are, read as an HSV colour on **linear
+  Rec. 2020**, at hue 30, 61 and 224 for samples at 30, 60 and 220; on sRGB's primaries they are at 22, 60 and 216, on
+  ProPhoto's at 36, 67 and 230. The import read the sample as an encoded sRGB colour: the Phoenix preset's blue (219°,
+  saturation 0.57, luminance 0.17) came out at OkLCh hue 262 with chroma 0.128, a colour no sky has, and selected
+  next to nothing of the ILCE-6000's sky. On linear Rec. 2020 it is hue 241, chroma 0.065: the sky's own colour.
+- **The range** (`colorops::POINT_HUE_WIDTH`, `POINT_CHROMA_WIDTH`, `POINT_LUM_WIDTH`, `POINT_INNER`). Lightroom's Range
+  hardly widens the hues a sample takes: a selection shaped like the sidecar's own range curves fits best with a hue
+  window of 30° at Range 0 and 33° at 1. What Range widens is the saturation and the luminance a sample takes (the
+  sidecar writes those two windows itself: full within the sample ± Range / 3, none at 0 and 1). A pure green sample
+  (hue 120) therefore leaves foliage almost alone at every range (effect 0.2 to 1.0 on the D70's and the ILCE-6700's
+  greens); ours took the foliage whole (error 19 and 24 on the D70 at ranges 0.5 and 1, on an effect of 0.7 and 1.0;
+  now 0.5 and 0.9). The box keeps its form (smooth windows on OkLCh hue, chroma and lightness); its half-widths are
+  now 0.38 + 0.08 R radians, 0.05 + 0.09 R chroma and 0.155 + 0.35 R lightness (they were 0.8 R, 0.16 R and 0.5 R),
+  fully selected inside 0.32 of each (0.5).
+- **The shifts** (`POINT_HUE`, `POINT_LUM`, `POINT_SAT`, `PointK::apply`). On the pixels the blue sample takes fully,
+  Lightroom's Hue ±100 turns the colour by +59° / −48° (OkLab hue; ours ±29°), Luminance ±100 scales lightness by 1.32
+  / 0.76 and chroma by 1.29 / 0.77, so the whole colour gets about 1.2 stops lighter or darker (ours added ±0.2 to
+  lightness at every lightness and left chroma), and Saturation +100 gives 2.2 times the chroma, −100 about half
+  (ours 2 and none). Luminance now scales lightness and chroma together; the strengths fitted with the ranges are
+  smaller than those readings (Hue 45°, Luminance e^±0.2, Saturation × 1.89 and × 0.64), because the box selects
+  more evenly than Lightroom does (its selection is strongest right at the sample and thins out quickly).
+- **Not modelled.** Lightroom's selection is made on its own hue, saturation and luminance (a selection of that shape
+  reaches 0.53 on the 25 selection cases where the box reaches 0.62): the EOS RP's oranges are still taken too little
+  (sample at hue 30 on that raw: error 3.2 → 2.7 on an effect of 3.4 at range 0.25, 6.9 → 6.2 on 7.7 at 0.5 and
+  8.9 → 10.5 on 13.5 at 1). Saturation +100 also darkens what it saturates (−12 L\* on the blue sample) and Hue −100
+  raises chroma by 1.4.
+
+Effect error against Lightroom, mean of the six cameras, before → now (the Apple renderer's display path on twelve of
+the cases; a sample of hue 120 or 220 at saturation 0.5, luminance 0.2 and range 0.25 unless the row says otherwise):
+
+| Sample (saturation 0.5, luminance 0.2, range 0.25, Saturation −100 unless said) | Lightroom's effect | Rust | Apple display |
+|---|---|---|---|
+| hue 0 | 0.32 | 0.32 → 0.31 |  |
+| hue 30, range 0.1 | 0.66 | 0.64 → 0.55 |  |
+| hue 30, range 0.5 | 1.95 | 2.05 → 1.51 |  |
+| hue 30, range 1 | 3.07 | 2.90 → 2.31 |  |
+| hue 30 | 1.03 | 1.02 → 0.81 | 0.93 → 0.77 |
+| hue 60 | 2.40 | 2.31 → 2.12 | 2.37 → 2.14 |
+| hue 120, Hue +100 (range 0.5) | 0.34 | 2.31 → 0.43 | 2.27 → 0.51 |
+| hue 120, Hue −100 (range 0.5) | 0.34 | 2.19 → 0.42 |  |
+| hue 120, luminance 0.05 | 0.21 | 0.31 → 0.24 |  |
+| hue 120, luminance 0.5 | 0.12 | 0.12 → 0.13 |  |
+| hue 120, Luminance +100 (range 0.5) | 0.46 | 2.31 → 0.40 |  |
+| hue 120, Luminance −100 (range 0.5) | 0.36 | 2.38 → 0.34 |  |
+| hue 120, range 0.1 | 0.12 | 0.12 → 0.14 |  |
+| hue 120, range 0.5 | 0.34 | 4.06 → 0.31 |  |
+| hue 120, range 1 | 0.53 | 8.54 → 0.47 | 9.21 → 0.53 |
+| hue 120, saturation 0.25 | 0.16 | 0.27 → 0.19 |  |
+| hue 120, saturation 0.75 | 0.13 | 0.16 → 0.14 |  |
+| hue 120, Saturation +100 (range 0.5) | 0.59 | 2.36 → 0.48 |  |
+| hue 120 | 0.16 | 0.30 → 0.19 | 0.19 → 0.18 |
+| hue 180 | 0.15 | 0.16 → 0.15 |  |
+| hue 220, Hue +100 (range 0.5) | 2.15 | 1.67 → 0.98 | 1.47 → 0.95 |
+| hue 220, Hue −100 (range 0.5) | 2.38 | 1.85 → 1.22 | 1.63 → 1.21 |
+| hue 220, luminance 0.05 | 0.42 | 0.42 → 0.41 |  |
+| hue 220, luminance 0.5 | 1.22 | 1.22 → 1.05 |  |
+| hue 220, Luminance +100 (range 0.5) | 2.85 | 1.96 → 1.37 | 2.03 → 1.40 |
+| hue 220, Luminance −100 (range 0.5) | 2.09 | 1.47 → 0.87 | 1.51 → 0.87 |
+| hue 220, range 0.1 | 0.48 | 0.48 → 0.40 |  |
+| hue 220, range 0.5 | 1.19 | 1.14 → 0.82 |  |
+| hue 220, range 1 | 2.37 | 2.58 → 1.59 | 3.10 → 1.51 |
+| hue 220, saturation 0.25 | 0.82 | 0.80 → 0.62 |  |
+| hue 220, saturation 0.75 | 0.31 | 0.31 → 0.30 |  |
+| hue 220, Saturation +100 (range 0.5) | 2.54 | 1.90 → 1.70 | 1.86 → 1.68 |
+| hue 220 | 0.69 | 0.68 → 0.53 | 0.65 → 0.51 |
+| hue 240 | 0.46 | 0.46 → 0.45 |  |
+| hue 300 | 0.08 | 0.08 → 0.08 |  |
+| **mean** | 0.96 | 1.48 → 0.69 | 2.27 → 1.02 (12 cases) |
+
+| Camera (35 cases) | a6000 | a6700 | rp | xa5 | d70 | e1 |
+|---|---|---|---|---|---|---|
+| Lightroom's effect | 1.28 | 0.66 | 1.15 | 1.43 | 0.44 | 0.77 |
+| Rust before | 1.22 | 1.33 | 1.01 | 1.48 | 2.99 | 0.85 |
+| Rust now | 0.76 | 0.57 | 0.97 | 0.87 | 0.43 | 0.52 |
+
+On the Phoenix preset's own sample (blue, range 0.25) with one shift at a time (`xcam6`, the cases of 2026-11-22: hue
++0.5, saturation −0.5, luminance −0.5), mean effect error per camera, Rust renderer: ILCE-6000 1.72 → 0.97, ILCE-6700
+0.50 → 0.36, EOS RP 0.23 → 0.31, X-A5 1.54 → 1.42, D70 0.11 → 0.11, E-1 0.64 → 0.50, all 0.79 → 0.61. The hue shift now
+turns the ILCE-6000's sky by 17° (Lightroom 15°, ours was 0°) and the X-A5's by 13° (Lightroom 24°, ours was 7°); the
+EOS RP's few blues are not taken at all (Lightroom's effect there is 0.3). The Apple renderer's Point Color is the
+same code in Metal (`ColorKernel`), checked against the core's values (`ColourGolden`, worst difference 0.0005).
+
 ## What is left (ΔE about 8 here)
 
 Measured on the render of the shipped build against the export, by lightness and by hue:
@@ -543,6 +635,7 @@ constants are the ones named above. To re-measure, render with the CLI as in *Me
 
 | Date | Change |
 |---|---|
+| 2026-11-23 | Point Color fitted to Lightroom's exports of one sample on six cameras: the sample read on linear Rec. 2020, the range box and the three shifts refitted, Luminance scales the whole colour (card #536) |
 | 2026-11-23 | White balance written by Lightroom measured against its own As Shot on six cameras: the D70's as-shot white read, the ILCE-6700 and X-A5 on a Kelvin scale from their own presets, the EOS RP and X-A5 measured, a tint rule for preset scales (card #535) |
 | 2026-11-22 | Colour Grading, the Calibration primaries, Shadows Tint and Vibrance refitted on six cameras; the Phoenix 200 preset measured group by group; white balance, Point Color and Saturation measured (cards #386 / #388) |
 | 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |

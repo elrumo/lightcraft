@@ -123,12 +123,29 @@ pub struct WheelK {
     pub lum: f32,
 }
 
+/// Point Color against Lightroom's exports of one sample on six cameras (`test-raws/light/xcam7`, 35 cases each, the
+/// constants fitted together: card #536, `docs/lightroom-preset-fit.md`). The range box's half-widths `(at Range 0, per
+/// unit of Range 0..1)`, each scaled by its own range slider (50 is × 1): hue in radians, OkLab chroma, OkLab
+/// lightness. Lightroom's Range hardly widens the hues a sample takes (22° at 0, 26° at 100): it widens the chroma
+/// and the lightness it takes.
+pub const POINT_HUE_WIDTH: (f32, f32) = (0.38, 0.08);
+pub const POINT_CHROMA_WIDTH: (f32, f32) = (0.05, 0.09);
+pub const POINT_LUM_WIDTH: (f32, f32) = (0.155, 0.35);
+/// The share of a half-width inside which a colour is fully selected; the selection falls off smoothly from there.
+pub const POINT_INNER: f32 = 0.32;
+/// The shifts at ±100 on a fully selected colour: Hue turns it (radians), Luminance scales its lightness and chroma
+/// by `e^±POINT_LUM` (the whole colour gets lighter or darker, as Lightroom's does), Saturation leaves
+/// `1 − POINT_SAT.0` of its chroma at −100 and gives it `1 + POINT_SAT.1` at +100.
+pub const POINT_HUE: f32 = 0.78;
+pub const POINT_LUM: f32 = 0.2;
+pub const POINT_SAT: (f32, f32) = (0.36, 0.89);
+
 /// Number of `f32`s per Point Color sample in [`PointK::words`] (the GPU parameter layout).
 pub const POINT_WORDS: usize = 10;
 
 /// A Point Color sample resolved for the per-pixel stage: the sample (OkLab lightness, chroma, hue
-/// in radians), the adjustment (hue rotation in radians, chroma scale − 1, lightness shift,
-/// variance factor − 1) and the half-widths of the range box (hue radians, chroma, lightness).
+/// in radians), the adjustment (hue rotation in radians, chroma scale − 1, the log of the scale Luminance gives
+/// lightness and chroma, variance factor − 1) and the half-widths of the range box (hue radians, chroma, lightness).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointK {
     pub l: f32,
@@ -145,19 +162,22 @@ pub struct PointK {
 
 impl PointK {
     pub fn new(p: &PointColor) -> PointK {
-        let k = (p.range.clamp(0.0, 100.0) / 50.0).max(0.05) as f32;
-        let f = |v: f64| (v.clamp(0.0, 100.0) / 100.0) as f32;
+        let r = (p.range.clamp(0.0, 100.0) / 100.0) as f32;
+        // (never zero: the windows divide by it)
+        let width = |(at0, per): (f32, f32), axis: f64| ((at0 + per * r) * (axis.clamp(0.0, 100.0) / 50.0) as f32).max(1e-3);
+        let shift = |v: f64| (v.clamp(-100.0, 100.0) / 100.0) as f32;
+        let sat = shift(p.sat_shift);
         PointK {
             l: p.lum as f32,
             c: p.chroma.max(0.0) as f32,
             h: (p.hue as f32).to_radians(),
-            dh: (p.hue_shift.clamp(-100.0, 100.0) / 100.0) as f32 * 0.5,
-            sat: (p.sat_shift.clamp(-100.0, 100.0) / 100.0) as f32,
-            dl: (p.lum_shift.clamp(-100.0, 100.0) / 100.0) as f32 * 0.2,
-            var: (p.variance.clamp(-100.0, 100.0) / 100.0) as f32 * 0.8,
-            wh: (0.1 + 0.6 * f(p.hue_range)) * k,
-            wc: (0.02 + 0.12 * f(p.sat_range)) * k,
-            wl: (0.05 + 0.4 * f(p.lum_range)) * k,
+            dh: shift(p.hue_shift) * POINT_HUE,
+            sat: sat * if sat < 0.0 { POINT_SAT.0 } else { POINT_SAT.1 },
+            dl: shift(p.lum_shift) * POINT_LUM,
+            var: shift(p.variance) * 0.8,
+            wh: width(POINT_HUE_WIDTH, p.hue_range),
+            wc: width(POINT_CHROMA_WIDTH, p.sat_range),
+            wl: width(POINT_LUM_WIDTH, p.lum_range),
         }
     }
 
@@ -170,12 +190,12 @@ impl PointK {
     pub fn weight(&self, l: f32, c: f32, h: f32) -> f32 {
         // hue is meaningless for near-neutral colours: a chromatic sample ignores them, a
         // near-neutral sample selects by chroma and lightness only
-        let wh = if self.c < 0.02 { 1.0 } else { (1.0 - smooth(0.5 * self.wh, self.wh, wrap(h - self.h).abs())) * smooth(0.005, 0.025, c) };
+        let wh = if self.c < 0.02 { 1.0 } else { (1.0 - smooth(POINT_INNER * self.wh, self.wh, wrap(h - self.h).abs())) * smooth(0.005, 0.025, c) };
         if wh <= 0.0 {
             return 0.0;
         }
-        let wc = 1.0 - smooth(0.5 * self.wc, self.wc, (c - self.c).abs());
-        let wl = 1.0 - smooth(0.5 * self.wl, self.wl, (l - self.l).abs());
+        let wc = 1.0 - smooth(POINT_INNER * self.wc, self.wc, (c - self.c).abs());
+        let wl = 1.0 - smooth(POINT_INNER * self.wl, self.wl, (l - self.l).abs());
         wh * wc * wl
     }
 
@@ -190,8 +210,10 @@ impl PointK {
         h += w * (self.var * wrap(h - self.h) + self.dh);
         c += w * self.var * (c - self.c);
         c = (c * (1.0 + w * self.sat)).max(0.0);
-        l += w * (self.var * (l - self.l) + self.dl);
-        [l, c, h]
+        l += w * self.var * (l - self.l);
+        // Luminance scales the whole colour: lightness and chroma alike
+        let lum = (w * self.dl).exp();
+        [l * lum, c * lum, h]
     }
 }
 
@@ -812,7 +834,7 @@ mod tests {
         s.point_colors.push(sample);
         let ops = ColorOps::new(&s);
         let out = lab_to_lch(oklab_from_2020(ops.apply(skin, 0.0, 0.0)));
-        assert!(out[1] < c * 0.7, "chroma {c} -> {}", out[1]);
+        assert!(out[1] < c * 0.9, "chroma {c} -> {}", out[1]);
         assert!(wrap(out[2] - h) > 0.2, "hue {h} -> {}", out[2]);
         // far colours are untouched
         for far in [[0.02, 0.05, 0.4], [0.05, 0.3, 0.05], [0.3, 0.3, 0.3]] {
@@ -824,7 +846,36 @@ mod tests {
         assert!((k.weight(l, c, h) - 1.0).abs() < 1e-6);
         assert_eq!(k.weight(l, c, h + 1.0), 0.0);
         let wide = PointK::new(&PointColor { range: 100.0, ..sample });
-        assert!(wide.weight(l, c, h + 0.45) > k.weight(l, c, h + 0.45));
+        assert!(wide.weight(l, c + 0.1, h) > k.weight(l, c + 0.1, h));
+    }
+
+    /// Lightroom's exports of one sample on six cameras (card #536): what each shift does to a fully selected colour, and
+    /// how little Range widens the hues a sample takes.
+    #[test]
+    fn point_color_shifts_and_range_follow_lightroom_s() {
+        let sample = PointColor { lum: 0.6, chroma: 0.06, hue: 240.0, ..Default::default() };
+        let at = [0.6f32, 0.06, 240f32.to_radians()];
+        let shifted = |p: PointColor| PointK::new(&p).apply(at);
+        // Hue +-100 turns it by about 45 degrees (it was 29)
+        let turned = shifted(PointColor { hue_shift: 100.0, ..sample })[2] - at[2];
+        assert!((0.7..0.85).contains(&turned), "{turned}");
+        // Luminance scales the whole colour: lightness and chroma by the same factor (it added a fixed step to lightness)
+        for (v, k) in [(100.0, 0.2f32.exp()), (-100.0, (-0.2f32).exp())] {
+            let o = shifted(PointColor { lum_shift: v, ..sample });
+            assert!((o[0] / at[0] - k).abs() < 1e-4 && (o[1] / at[1] - k).abs() < 1e-4, "{v}: {o:?}");
+        }
+        // Saturation -100 leaves about two thirds of the chroma (it left none), +100 not quite doubles it
+        let down = shifted(PointColor { sat_shift: -100.0, ..sample })[1] / at[1];
+        let up = shifted(PointColor { sat_shift: 100.0, ..sample })[1] / at[1];
+        assert!((0.6..0.7).contains(&down) && (1.8..2.0).contains(&up), "{down} {up}");
+        // Range 0 still takes the sample's hue 20 degrees to each side; Range 100 only a little more; never a colour 30 degrees away
+        let (narrow, wide) = (PointK::new(&PointColor { range: 0.0, ..sample }), PointK::new(&PointColor { range: 100.0, ..sample }));
+        let off = |deg: f32| at[2] + deg.to_radians();
+        assert!(narrow.weight(at[0], at[1], off(15.0)) > 0.3 && narrow.weight(at[0], at[1], off(25.0)) == 0.0);
+        assert!(wide.weight(at[0], at[1], off(15.0)) > narrow.weight(at[0], at[1], off(15.0)) && wide.weight(at[0], at[1], off(30.0)) == 0.0);
+        // what Range widens is the chroma and the lightness a sample takes
+        assert!(narrow.weight(at[0] + 0.2, at[1], at[2]) == 0.0 && wide.weight(at[0] + 0.2, at[1], at[2]) > 0.5);
+        assert!(narrow.weight(at[0], at[1] + 0.06, at[2]) == 0.0 && wide.weight(at[0], at[1] + 0.06, at[2]) > 0.3);
     }
 
     #[test]

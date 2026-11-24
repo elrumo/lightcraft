@@ -546,7 +546,7 @@ pub struct PointColor {
     pub chroma: f64,
     /// Sampled OkLCh hue, degrees.
     pub hue: f64,
-    /// Hue shift −100..100 (±~29° at the sample).
+    /// Hue shift −100..100 (±~45° at the sample).
     pub hue_shift: f64,
     /// Saturation shift −100..100 (chroma scale).
     pub sat_shift: f64,

@@ -250,24 +250,15 @@ fn curve(props: &Props, k: &str) -> Option<Value> {
 }
 
 /// A Point Color sample (hue in radians, HSV saturation, linear luminance, as `crs:PointColors` writes them) as an
-/// OkLCh colour `(L, chroma, hue in degrees)`: the HSV colour whose encoded value is scaled until its luminance is `y`.
+/// OkLCh colour `(L, chroma, hue in degrees)`: the HSV colour on linear Rec. 2020's primaries, scaled to the luminance.
+/// That is where Lightroom's exports put it (a sample at hue 30, 60 and 220 selects most the pixels whose hue on
+/// those primaries is 30, 61 and 224; on sRGB's they are at 22, 60 and 216, on ProPhoto's at 36, 67 and 230:
+/// `docs/lightroom-preset-fit.md`, 2026-11-23).
 fn point_sample(hue: f64, sat: f64, y: f64) -> (f64, f64, f64) {
     use lightcraft_color::perceptual::{hsv_to_rgb, lab_to_lch, oklab_from_2020};
-    use lightcraft_color::transfer::srgb_to_linear;
     let base = hsv_to_rgb(hue.to_degrees().rem_euclid(360.0) as f32, sat.clamp(0.0, 1.0) as f32, 1.0);
-    let luminance = |v: f32| {
-        let l = base.map(|c| srgb_to_linear(c * v));
-        0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2]
-    };
-    let (mut lo, mut hi) = (0.0f32, 1.0f32);
-    for _ in 0..24 {
-        let mid = 0.5 * (lo + hi);
-        if luminance(mid) < y.clamp(0.0, 1.0) as f32 { lo = mid } else { hi = mid }
-    }
-    let v = 0.5 * (lo + hi);
-    let lin = base.map(|c| srgb_to_linear(c * v));
-    let w = lightcraft_color::SRGB.to_space(&lightcraft_color::REC2020).apply_f32(lin);
-    let [l, c, h] = lab_to_lch(oklab_from_2020(w));
+    let k = y.clamp(0.0, 1.0) as f32 / lightcraft_color::luminance_2020(base).max(1e-6);
+    let [l, c, h] = lab_to_lch(oklab_from_2020(base.map(|v| v * k)));
     (f64::from(l), f64::from(c), f64::from(h).to_degrees().rem_euclid(360.0))
 }
 

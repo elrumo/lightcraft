@@ -456,8 +456,9 @@ fn point_color_samples_are_imported() {
     let get = |k: &str| p[k].as_f64().unwrap();
     assert!((get("hue_shift") - 19.9497).abs() < 1e-3 && (get("sat_shift") + 18.9478).abs() < 1e-3 && (get("lum_shift") + 13.9857).abs() < 1e-3);
     assert_eq!(get("range"), 54.0);
-    // a saturated blue of mid lightness: OkLCh hue in the blues, chroma well above neutral
-    assert!((230.0..290.0).contains(&get("hue")) && get("chroma") > 0.05 && (0.4..0.8).contains(&get("lum")), "{p}");
+    // a blue of mid lightness, read on linear Rec. 2020's primaries (where Lightroom's exports put a sample): OkLCh hue
+    // 241 and chroma 0.065 (read on sRGB's it was hue 262 and twice the chroma, a colour no sky has)
+    assert!((get("hue") - 241.5).abs() < 1.5 && (get("chroma") - 0.065).abs() < 0.004 && (get("lum") - 0.554).abs() < 0.01, "{p}");
     let applied = apply_partial(&DevelopSettings::default(), &partial, 1.0);
     assert_eq!(applied.point_colors.len(), 1);
     assert!(report.is_empty(), "{report:?}");
