@@ -61,7 +61,7 @@ fn read_mask(bytes: &[u8], tiff: &Tiff, ifd: &craft_tiff::Ifd) -> Result<Option<
         return Ok(None);
     }
     if info.compression == t::compression::NONE {
-        let Some(bits_per_pixel) = usize::try_from(info.bits()).ok().and_then(|b| b.checked_mul(usize::from(info.samples_per_pixel))) else {
+        let Some(bits_per_pixel) = usize::from(info.bits()).checked_mul(usize::from(info.samples_per_pixel)) else {
             return Ok(None);
         };
         for chunk in info.chunks(bytes.len() as u64) {
