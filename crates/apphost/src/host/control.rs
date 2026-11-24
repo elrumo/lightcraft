@@ -42,7 +42,7 @@ fn accept_loop(listener: &TcpListener, tx: &Sender<Msg>) {
     for mut stream in listener.incoming().flatten() {
         if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
             open.fetch_sub(1, Ordering::SeqCst);
-            let _ = writeln!(stream, "{}", json!({"ok": false, "error": "too many control connections"}));
+            let _ = send_line(&mut stream, &json!({"ok": false, "error": "too many control connections"}));
             continue;
         }
         let (tx, ids, done) = (tx.clone(), Arc::clone(&ids), Arc::clone(&open));
@@ -81,7 +81,7 @@ fn serve(stream: &TcpStream, tx: &Sender<Msg>, ids: &AtomicU64) {
                         Err(_) => json!({"ok": false, "error": "timeout", "code": "timeout"}),
                     };
                     reply["id"] = id;
-                    if writeln!(out, "{reply}").and_then(|()| out.flush()).is_err() {
+                    if send_line(&mut out, &reply).is_err() {
                         return;
                     }
                     continue;
@@ -99,11 +99,20 @@ fn serve(stream: &TcpStream, tx: &Sender<Msg>, ids: &AtomicU64) {
 /// away before the peer reads it (a browser's POST body arrives just after its request line).
 fn refuse(stream: &TcpStream, error: &str) {
     let mut out = stream;
-    let _ = writeln!(out, "{}", json!({"ok": false, "error": error})).and_then(|()| out.flush());
+    let _ = send_line(&mut out, &json!({"ok": false, "error": error}));
     let _ = stream.shutdown(Shutdown::Write);
     if stream.set_read_timeout(Some(DRAIN_WAIT)).is_ok() {
         let _ = std::io::copy(&mut Read::take(stream, u64::try_from(MAX_LINE).unwrap_or(u64::MAX)), &mut std::io::sink());
     }
+}
+
+/// `value` and a newline in one write. `Value`'s `Display` writes token by token, and on the unbuffered socket each token was a
+/// write of its own: a 40 KB reply (`develop.controls`) took 170 to 300 ms to send, where the engine needs under 1 ms (card #538).
+fn send_line(out: &mut impl Write, value: &Value) -> std::io::Result<()> {
+    let mut line = value.to_string();
+    line.push('\n');
+    out.write_all(line.as_bytes())?;
+    out.flush()
 }
 
 /// The control protocol's reply object for the engine's answer.
@@ -173,6 +182,40 @@ mod tests {
     use std::time::Duration;
 
     use serde_json::Value;
+
+    /// A reply goes out in one write however big it is: a 100 KB reply of a few thousand tokens was thousands of socket writes (card
+    /// #538), and it arrives whole on loopback.
+    #[test]
+    fn a_reply_is_one_write() {
+        struct Counting(usize, Vec<u8>);
+        impl std::io::Write for Counting {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0 += 1;
+                self.1.extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let big = serde_json::json!({"id": 7, "ok": true, "result": (0..20_000).map(|i| serde_json::json!({"v": i})).collect::<Vec<_>>()});
+        let mut out = Counting(0, Vec::new());
+        super::send_line(&mut out, &big).unwrap();
+        assert_eq!(out.0, 1, "one write");
+        assert!(out.1.len() > 100_000 && out.1.ends_with(b"\n"));
+        assert_eq!(serde_json::from_slice::<Value>(&out.1).unwrap(), big);
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let sent = big.clone();
+        let sending = std::thread::spawn(move || super::send_line(&mut server, &sent).unwrap());
+        let mut line = String::new();
+        BufReader::new(&client).read_line(&mut line).unwrap();
+        sending.join().unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&line).unwrap(), big);
+    }
 
     // The refusal reaches the peer although input it sent after the refused line is still unread:
     // closing over unread input resets the connection, and the reset throws the refusal away
