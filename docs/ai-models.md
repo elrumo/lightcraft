@@ -96,7 +96,7 @@ original on photos before it was pinned:
   their probability stayed within 0.0001 and 0.0005 of the fp32 models' and none crossed the line that flags a photo, 15
   and 43 ms a photo on an M1 Max. They keep the models' own scores and stand in for their files on the automatic choice
   of weights;
-- SigLIP 2's image tower, `siglip2-b16-224-image-coreml` (`SigLip::with_host_images`), beside the full model, whose text
+- SigLIP 2's image tower, `siglip2-b16-224-image-coreml` (`SigLip::set_host_images`), beside the full model, whose text
   tower reads the queries: its vectors at a cosine of 0.9994 or more; of 16 queries every one found the same best photo
   and 15 the same five (the other swapped two that tied within 0.0002); 15 ms a photo. The index keeps the vectors it has;
 - YuNet and SFace, `yunet-2023mar-coreml` and `sface-2021dec-coreml`, only for the files they were converted from: in

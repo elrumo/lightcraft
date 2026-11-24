@@ -11,7 +11,7 @@
 //!
 //! Outputs are raw (not unit length); the [`crate::EmbeddingIndex`] normalises what it stores.
 //!
-//! A native frontend can describe the photos itself ([`SigLip::with_host_images`], [`crate::host`]): a Core ML conversion
+//! A native frontend can describe the photos itself ([`SigLip::set_host_images`], [`crate::host`]): a Core ML conversion
 //! of the image tower ([`HOST_ID`], fp16) on the system's neural accelerator, the text tower staying here. On 34 photos its
 //! vectors were at a cosine of 0.9994 or more to the fp32 model's; of 16 queries every one found the same best photo and
 //! 15 the same five (the other swapped two that tied within 0.0002), 15 ms a photo on an M1 Max (card #516), so the index
@@ -81,8 +81,9 @@ pub struct SigLip {
     model: siglip::Model,
     tokenizer: Tokenizer,
     device: Device,
-    /// The image tower's conversion a native frontend runs, when it does ([`SigLip::with_host_images`]).
-    host_images: Option<std::path::PathBuf>,
+    /// The image tower's conversion a native frontend runs, when it does ([`SigLip::set_host_images`]). Set on a loaded
+    /// model: the conversion may come after the model was loaded (for a search), and loading again would cost seconds.
+    host_images: std::sync::RwLock<Option<std::path::PathBuf>>,
 }
 
 impl SigLip {
@@ -101,7 +102,7 @@ impl SigLip {
         cfg.text_config.vocab_size = 256_000;
         let model = siglip::Model::new(&cfg, vb)?;
         let tokenizer = Tokenizer::from_file(dir.join(TOKENIZER_FILE)).map_err(|e| Error::Model(format!("{TOKENIZER_FILE}: {e}")))?;
-        let model = SigLip { model, tokenizer, device, host_images: None };
+        let model = SigLip { model, tokenizer, device, host_images: std::sync::RwLock::new(None) };
         // On Metal the first text pass compiles the tower's kernels (~12 s, measured); do it here,
         // where loading already runs on a worker, so the first search is as fast as the rest.
         model.encode_text("")?;
@@ -114,14 +115,13 @@ impl SigLip {
 
     /// Have a native frontend describe the photos from now on, with the image tower's conversion in `dir` (the text tower
     /// stays here). A photo it fails on is described here.
-    pub fn with_host_images(mut self, dir: std::path::PathBuf) -> SigLip {
-        self.host_images = Some(dir);
-        self
+    pub fn set_host_images(&self, dir: Option<std::path::PathBuf>) {
+        *self.host_images.write().unwrap_or_else(std::sync::PoisonError::into_inner) = dir;
     }
 
     /// Whether a native frontend describes the photos.
     pub fn host_images(&self) -> bool {
-        self.host_images.is_some()
+        self.host_images.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_some()
     }
 
     /// The tokens the text tower reads for `text`: lower-cased, `<eos>`-terminated, padded or
@@ -161,7 +161,8 @@ impl SigLip {
         if imgs.is_empty() {
             return Ok(Vec::new());
         }
-        if let Some(dir) = &self.host_images {
+        let host = self.host_images.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        if let Some(dir) = &host {
             let on_host = imgs.iter().map(|img| {
                 let data = preprocess(img)?;
                 crate::host::run(&crate::host::Request {

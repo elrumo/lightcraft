@@ -153,7 +153,7 @@ struct Provider {
     /// A model the host supplied (tests, other hosts); otherwise SigLIP 2 is loaded from `dir`.
     injected: Option<Arc<dyn Embedder>>,
     dir: Option<PathBuf>,
-    /// The folder of the image tower's conversion a native frontend runs, when it does ([`SigLip::with_host_images`]).
+    /// The folder of the image tower's conversion a native frontend runs, when it does ([`SigLip::set_host_images`]).
     host: Option<PathBuf>,
 }
 
@@ -1154,32 +1154,32 @@ fn acquire(shared: &Shared, provider: &Provider) -> Result<Arc<dyn Embedder>, St
     }
     let mut slot = shared.model.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(m) = slot.as_ref() {
+        // (the frontend's image tower may have come since the model was loaded, for a search)
+        m.set_host_images(provider.host.clone());
         shared.touch();
         return Ok(m.clone());
     }
     shared.loading.store(true, Ordering::SeqCst);
-    let loaded = load_model(provider.dir.as_deref(), provider.host.clone());
+    let loaded = load_model(provider.dir.as_deref());
     shared.loading.store(false, Ordering::SeqCst);
     let m = loaded?;
+    m.set_host_images(provider.host.clone());
     *slot = Some(m.clone());
     shared.loaded.store(true, Ordering::SeqCst);
     shared.touch();
     Ok(m)
 }
 
-fn load_model(dir: Option<&std::path::Path>, host: Option<PathBuf>) -> Result<Arc<dyn Embedder>, String> {
+fn load_model(dir: Option<&std::path::Path>) -> Result<Arc<dyn Embedder>, String> {
     #[cfg(feature = "vision")]
     {
         let dir = dir.ok_or("no folder is set for the search model")?;
         let model = guard::catch("loading the search model", || lightcraft_vision::siglip::SigLip::load(dir))?.map_err(|e| e.to_string())?;
-        Ok(Arc::new(match host {
-            Some(h) => model.with_host_images(h),
-            None => model,
-        }))
+        Ok(Arc::new(model))
     }
     #[cfg(not(feature = "vision"))]
     {
-        let _ = (dir, host);
+        let _ = dir;
         Err("natural-language search is not available in this build".into())
     }
 }

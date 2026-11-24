@@ -16,6 +16,9 @@ pub trait Embedder: Send + Sync {
     fn encode_text(&self, text: &str) -> Result<Vec<f32>, Error>;
     /// The vectors of several photos (display-referred 8-bit RGBA, any size), in order.
     fn encode_images(&self, imgs: &[&Rgba8]) -> Result<Vec<Vec<f32>>, Error>;
+    /// Have a native frontend describe the photos from now on with the image tower's conversion in `dir` (`None`: here).
+    /// A model without one ignores it.
+    fn set_host_images(&self, _dir: Option<std::path::PathBuf>) {}
 }
 
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
@@ -31,5 +34,8 @@ impl Embedder for crate::siglip::SigLip {
     }
     fn encode_images(&self, imgs: &[&Rgba8]) -> Result<Vec<Vec<f32>>, Error> {
         crate::siglip::SigLip::encode_images(self, imgs)
+    }
+    fn set_host_images(&self, dir: Option<std::path::PathBuf>) {
+        crate::siglip::SigLip::set_host_images(self, dir);
     }
 }
