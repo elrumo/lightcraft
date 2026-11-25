@@ -1058,9 +1058,8 @@ fn linear(
 }
 
 /// Noise reduction (`local::denoise`). `colour_noise`: the whole frame's noise model for the joint colour NR of
-/// process V7 on (`lightcraft_pipeline::colour_noise`; `None`: measured on the image), which runs on the CPU.
-// ponytail: the joint colour NR reads the image back and runs on the CPU; upstream LightCraft has it on the GPU
-// (`nrcj.wgsl`, its `render::color_nr_joint`), to port when GPU drags with colour NR need it
+/// process V7 on (`lightcraft_pipeline::colour_noise`; `None`: measured on the image), which runs on the device
+/// (`crate::nrcj`) and, where that declines (an image under 3 px a side, `LIGHTCRAFT_NR_JOINT_CPU=1`), on the CPU.
 fn denoise(cx: &mut Cx<'_>, img: Buf, plan: &Plan<'_>, colour_noise: Option<&lightcraft_pipeline::nrc_joint::JointNoise>) -> Buf {
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
@@ -1086,10 +1085,16 @@ fn denoise(cx: &mut Cx<'_>, img: Buf, plan: &Plan<'_>, colour_noise: Option<&lig
         img = out;
     }
     if joint && let Some(p) = local::nrc_params(s, plan.detail_scale) {
-        let mut cpu = cx.read_rgb(&img, w, h);
         let d = &s.detail;
-        lightcraft_pipeline::nrc_joint::denoise(&mut cpu, &p, (d.nr_color_detail / 100.0) as f32, (d.nr_color / 100.0) as f32, colour_noise);
-        img = cx.gpu.upload(rgb_words(&cpu));
+        let (detail, amount) = ((d.nr_color_detail / 100.0) as f32, (d.nr_color / 100.0) as f32);
+        match crate::nrcj::denoise(cx, &img, (w, h), &p, detail, amount, colour_noise) {
+            Some(out) => img = out,
+            None => {
+                let mut cpu = cx.read_rgb(&img, w, h);
+                lightcraft_pipeline::nrc_joint::denoise(&mut cpu, &p, detail, amount, colour_noise);
+                img = cx.gpu.upload(rgb_words(&cpu));
+            }
+        }
     }
     img
 }
@@ -1539,6 +1544,112 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A noisy linear picture for the joint colour NR: a gradient, a colour edge, an isoluminant line, colour specks
+    /// (their luminance barely moves) and noise that grows with brightness.
+    fn noisy_scene(w: usize, h: usize) -> Rgb32f {
+        let mut seed = 0x2545_f491_u32;
+        let mut uniform = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as f32 / u32::MAX as f32 - 0.5
+        };
+        let mut img = Rgb32f::new(w, h);
+        for (i, p) in img.data.iter_mut().enumerate() {
+            let (x, y) = (i % w, i / w);
+            let lum = 0.05 + 0.5 * x as f32 / w as f32;
+            let mut c = if x > w / 2 { [lum * 1.4, lum * 0.7, lum * 0.5] } else { [lum * 0.6, lum * 1.1, lum * 0.8] };
+            if y == h / 3 || y == h / 3 + 1 {
+                c = [lum * 1.25, lum * 0.92, lum * 0.8];
+            }
+            // (four uniforms: variance 1/3, so a standard deviation of 0.02 · √lum, a variance of 4e-4 · lum as `model` says)
+            let sigma = 0.02 * lum.sqrt() * 3f32.sqrt();
+            for v in &mut c {
+                *v += sigma * (uniform() + uniform() + uniform() + uniform());
+            }
+            *p = c;
+        }
+        for k in 1..7 {
+            if let Some(p) = img.data.get_mut((h * k / 8) * w + w * k / 8) {
+                p[0] += 0.2;
+            }
+        }
+        img
+    }
+
+    /// The joint colour NR on the device against `nrc_joint::denoise`, on the same picture, parameters and noise model
+    /// (given, or measured on the picture). Both run the same operations in the same order, on the same guide and
+    /// weights; they differ in what the device's compiler does with a float expression (fused multiply-add, `exp` and
+    /// `pow` to a few ulps) and in the box blur's running sums (`gaussian_matches_cpu` allows 1e-5). Every step is a
+    /// continuous function of the last (the weights fade, the decisions fade in, the diffusion is a contraction), so
+    /// these stay rounding (3e-7 on an Apple GPU): the bound is 5e-5, a sixth of one 8-bit sRGB step in linear light at the dark end (3e-4) and far below it above.
+    #[test]
+    fn joint_colour_nr_matches_cpu() {
+        let _serial = crate::DEVICE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(gpu) = crate::device() else { return lightcraft_testkit::skip!(Gpu, "no GPU adapter") };
+        let _scope = crate::ctx::RenderScope::new(gpu);
+        let model = lightcraft_pipeline::nrc_joint::JointNoise {
+            model: local::NrcNoise { alpha: [4e-4; 3], beta: [1e-6; 3] },
+            ymax: [0.6; 3],
+            tolerance: 1.0,
+        };
+        let mut worst_overall = 0.0f32;
+        // sizes that do and don't fill a workgroup, rows and columns a few pixels thick, and just big enough for the brake
+        for (w, h) in [(211, 137), (96, 7), (7, 96), (5, 5), (4, 9)] {
+            for (amount, detail, smoothness) in [(25.0, 50.0, 0.0), (60.0, 0.0, 50.0), (100.0, 100.0, 100.0)] {
+                let mut s = DevelopSettings::default();
+                (s.detail.nr_color, s.detail.nr_color_detail, s.detail.nr_color_smoothness) = (amount, detail, smoothness);
+                let params = local::nrc_params(&s, 1.0).expect("Color above 0");
+                let (amount, detail) = ((amount / 100.0) as f32, (detail / 100.0) as f32);
+                let scene = noisy_scene(w, h);
+                for noise in [Some(model), None] {
+                    let mut cx = Cx::new(gpu);
+                    let src = gpu.upload(rgb_words(&scene));
+                    let out = crate::nrcj::denoise(&mut cx, &src, (w, h), &params, detail, amount, noise.as_ref()).expect("the device runs it");
+                    let got: Vec<f32> = cx.read(&out, w * h * 3);
+                    let mut want = scene.clone();
+                    lightcraft_pipeline::nrc_joint::denoise(&mut want, &params, detail, amount, noise.as_ref());
+                    let (mut worst, mut changed) = (0.0f32, 0.0f32);
+                    for ((g, c), o) in got.iter().zip(want.data.iter().flatten()).zip(scene.data.iter().flatten()) {
+                        worst = worst.max((g - c).abs());
+                        changed = changed.max((c - o).abs());
+                    }
+                    eprintln!(
+                        "joint NR {w}×{h} Color {amount} Detail {detail} measured: {}: worst {worst:.2e} (the CPU moved a value by up to {changed:.2e})",
+                        noise.is_none()
+                    );
+                    // (a handful of pixels has no noise to fit: the stage then leaves the picture alone)
+                    assert!(w * h < 1000 || changed > 1e-3, "{w}×{h}: the CPU stage hardly acted ({changed:.2e}), the check proves nothing");
+                    assert!(
+                        worst <= 5e-5,
+                        "{w}×{h} Color {amount} Detail {detail} measured {}: the device is {worst:.2e} from the CPU",
+                        noise.is_none()
+                    );
+                    worst_overall = worst_overall.max(worst);
+                }
+            }
+        }
+        eprintln!("joint NR: worst difference {worst_overall:.2e}");
+    }
+
+    /// What the device leaves to the CPU: a picture too small to measure the noise on (and so the stage's output is
+    /// the CPU's, from the caller), and Color 0.
+    #[test]
+    fn joint_colour_nr_declines_what_the_cpu_does() {
+        let _serial = crate::DEVICE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(gpu) = crate::device() else { return lightcraft_testkit::skip!(Gpu, "no GPU adapter") };
+        let _scope = crate::ctx::RenderScope::new(gpu);
+        let mut s = DevelopSettings::default();
+        s.detail.nr_color = 25.0;
+        let params = local::nrc_params(&s, 1.0).expect("Color above 0");
+        let src = gpu.upload(&vec![0.5f32; 2 * 9 * 3]);
+        let mut cx = Cx::new(gpu);
+        assert!(crate::nrcj::denoise(&mut cx, &src, (2, 9), &params, 0.5, 0.25, None).is_none(), "2 px wide: no noise to measure");
+        let src = gpu.upload(&vec![0.5f32; 40 * 30 * 3]);
+        assert!(crate::nrcj::denoise(&mut cx, &src, (40, 30), &params, 0.5, 0.0, None).is_none(), "Color 0: nothing to do");
+        assert!(crate::nrcj::denoise(&mut cx, &src, (40, 30), &params, 0.5, 0.25, None).is_some());
     }
 
     /// Kernel timings on a 24 MP plane: `cargo test --release -p lightcraft-gpu -- --ignored --nocapture`.

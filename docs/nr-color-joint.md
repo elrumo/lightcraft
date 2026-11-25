@@ -1,8 +1,8 @@
 # Colour NR: joint guide
 
 From process V6 (`docs/process-versions.md`) colour noise reduction uses this method on the CPU
-(`crates/pipeline/src/nrc_joint.rs`) and the GPU (`crates/gpu/src/wgsl/nrcj.wgsl`, in bands of rows
-whose halo covers the filter's reach). Edits on V1 and V2 keep the blurred chromaticity. The history
+(`crates/pipeline/src/nrc_joint.rs`) and the GPU (kernels `crates/gpu/src/wgsl/nrcj.wgsl`, driver
+`crates/gpu/src/nrcj.rs`). Edits on V1 and V2 keep the blurred chromaticity. The history
 of the method, including the square-root and per-channel variants it replaced, is in
 `docs/nr-color-v2-history.md`.
 
@@ -47,12 +47,26 @@ of the method, including the square-root and per-channel variants it replaced, i
   (Update to Current Process, undo) never reuses the other filter's result
   (`a_process_change_does_not_reuse_the_other_colour_filter`).
 
+## On the GPU
+
+`crates/gpu/src/nrcj.rs` runs the kernels of `nrcj.wgsl` over the whole frame in the order of
+`nrc_joint::denoise_with` (transform, speck brake, guide, then the scales, then the reconstruction); every
+decision's input comes from the CPU module (`scale_plan`, `strength`, `tolerance`, `speck_brake`, and the
+noise model's fit, which takes the samples the `nrcj_samples` kernel writes when the render has no whole-frame
+model). It keeps six planes of three floats a pixel in device buffers at its peak (the input and five of its own: 0.86 GB
+for a 12 MP frame, 1.7 GB for 24 MP), and a buffer the device refuses fails the render over to the CPU like any GPU stage. The CPU stage
+stays the reference and the fallback: for a picture under 3 px a side (no noise to measure), and with
+`LIGHTCRAFT_NR_JOINT_CPU=1` (GPU renders then read the picture back for this stage, as they did before the
+kernels had a driver in this fork). `joint_colour_nr_matches_cpu` (`crates/gpu/src/render.rs`) compares the two on
+the same noisy picture, with the noise model given and measured.
+
 ## Local checks
 
 ```sh
 cargo test --release -p lightcraft-pipeline --lib nrc_joint
 cargo test --release -p lightcraft-pipeline --lib probe_nrc -- --ignored --nocapture
-cargo test --release -p lightcraft-gpu --test equivalence
+cargo test --release -p lightcraft-gpu joint_colour_nr
+cargo test --release -p lightcraft-gpu --test it
 LIGHTCRAFT_GPU=0 cargo run --release -p lightcraft-cli -- render INPUT.ARW -o OUTPUT.png --set detail.nrColor=100
 ```
 

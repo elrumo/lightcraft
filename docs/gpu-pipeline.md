@@ -231,7 +231,9 @@ walks the drive.
   threads read adjacent pixels; vertical ones slide running sums down chunks of a column), `map`
   (log luminance, dark channel, guided-filter steps, white balance, luminance / colour NR, airlight
   sampling), `mask` (linear / radial / luminance / colour range / brush shapes, combine, finalize),
-  `finish` (the whole per-pixel stage) — each mirrors a named CPU function.
+  `finish` (the whole per-pixel stage), `nrcj` (the joint colour NR of process V7 on, `nrc_joint`: noise samples,
+  speck brake, guide, diffusion scales, reconstruction; driver `crates/gpu/src/nrcj.rs`, `docs/nr-color-joint.md`);
+  each mirrors a named CPU function.
 - Defringe (`fringe_lab`, a separable lightness `minmax` filter, `fringe_apply`; parameters from
   `optics::defringe_params`) and spot removal (`spot` module, spot by spot in place: `spot_prep`,
   the Heal tone correction as two device Gaussians, `spot_apply`; Remove's 48 candidate sources are
