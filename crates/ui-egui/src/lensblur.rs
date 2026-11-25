@@ -104,8 +104,8 @@ fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // the size: Small (the default) or Base
     let sizes = [("Small", "small"), ("Base", "base")];
     let chosen = app.session.depth_size();
-    if let Some(i) = crate::widgets::segmented(ui, "lensBlurSize", &sizes, depth::Size::ALL.iter().position(|s| *s == chosen), 2)
-        && let Some(size) = depth::Size::ALL.get(i)
+    if let Some(i) = crate::widgets::segmented(ui, "lensBlurSize", &sizes, depth::Size::ONNX.iter().position(|s| *s == chosen), 2)
+        && let Some(size) = depth::Size::ONNX.get(i)
         && let Err(e) = app.run("depth.setSize", json!({"size": size.name()}))
     {
         app.toast_error(&ctx, e);
@@ -118,7 +118,7 @@ fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let offer = tr_format!(
         "This photo has no depth of its own: Lens Blur estimates it with Depth Anything 3, a {:.0} MB download ({} licence). {}.",
-        (size.graph().size + size.data().size) as f64 / 1e6,
+        (size.graph().map_or(0, |p| p.size) + size.data().map_or(0, |p| p.size)) as f64 / 1e6,
         depth::LICENCE,
         depth::CREDIT
     );

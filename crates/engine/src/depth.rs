@@ -128,16 +128,20 @@ impl Session {
 
     /// Choose the size that estimates: the loaded model is let go, so the next estimate loads the chosen one.
     pub fn set_depth_size(&self, name: &str) -> Result<(), String> {
-        let size = Size::from_name(name).ok_or_else(|| format!("`{name}` is not a size: small or base"))?;
+        let size = Size::from_name(name).ok_or_else(|| format!("`{name}` is not a size: small, base or large"))?;
         *self.depth_model.size.lock().unwrap_or_else(PoisonError::into_inner) = size;
         *self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner) = None;
         Ok(())
     }
 
-    /// Both files of `size` are in the models folder (by size: the SHA-256 is checked when it loads).
+    /// Both files of `size` are in the models folder (by size: the SHA-256 is checked when it loads); Large's Core ML
+    /// model, for Large.
     fn depth_size_installed(&self, size: Size) -> bool {
         let len = |f: &std::path::Path, want: u64| std::fs::metadata(f).is_ok_and(|m| m.len() == want);
-        self.depth_files(size).is_some_and(|(g, d)| len(&g, size.graph().size) && len(&d, size.data().size))
+        match (size.graph(), size.data()) {
+            (Some(graph), Some(data)) => self.depth_files(size).is_some_and(|(g, d)| len(&g, graph.size) && len(&d, data.size)),
+            _ => self.enhancer.host_dir(size.id()).is_some(),
+        }
     }
 
     fn depth_cpu_installed(&self) -> bool {
@@ -148,9 +152,13 @@ impl Session {
         self.depth_gpu_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == GPU_FILE_SIZE))
     }
 
-    /// The folder of Depth Anything 3 Small in the frontend's format, when a frontend runs models, it is downloaded and
-    /// on, and the choice is automatic: it estimates for a fraction of the energy ([`lightcraft_depth::HOST_ID`]).
+    /// The folder of Depth Anything 3 in the frontend's format, when a frontend runs models and it is downloaded and on:
+    /// Mono Large's when Large is the size (it exists only there), else Small's when the choice is automatic, which
+    /// estimates for a fraction of the energy ([`lightcraft_depth::HOST_ID`]).
     fn depth_host_dir(&self) -> Option<std::path::PathBuf> {
+        if self.depth_size() == Size::Large {
+            return self.enhancer.host_dir(lightcraft_depth::LARGE_HOST_ID);
+        }
         (self.depth_backend() == "auto").then(|| self.enhancer.host_dir(lightcraft_depth::HOST_ID)).flatten()
     }
 
@@ -158,7 +166,8 @@ impl Session {
     /// user hasn't turned it off.
     pub fn depth_model_ready(&self) -> bool {
         self.depth_host_dir().is_some()
-            || (!self.enhancer.disabled.contains(self.depth_size().id())
+            || (self.depth_size() != Size::Large
+                && !self.enhancer.disabled.contains(self.depth_size().id())
                 && (self.depth_model.loaded.lock().unwrap_or_else(PoisonError::into_inner).is_some()
                     || self.depth_cpu_installed()
                     || (self.depth_gpu_available() && self.depth_gpu_installed())))
@@ -198,7 +207,7 @@ impl Session {
     /// Use the model in `graph` and `data` (the browser build's copy): they must be exactly the files of one
     /// of the sizes, which then becomes the chosen one.
     pub fn install_depth_model(&self, graph: &[u8], data: Vec<u8>) -> Result<(), String> {
-        let Some(size) = Size::ALL.into_iter().find(|s| s.verify(graph, &data)) else {
+        let Some(size) = Size::ONNX.into_iter().find(|s| s.verify(graph, &data)) else {
             return Err("the depth model files are damaged or not the expected ones: download them again".into());
         };
         let e = Estimator::load(graph, data).map_err(|e| e.to_string())?;
@@ -217,7 +226,7 @@ impl Session {
             if let Some(e) = slot.as_ref().filter(|e| e.backend() == "host") {
                 return Ok(e.clone());
             }
-            let e = Arc::new(Estimator::host(dir));
+            let e = Arc::new(Estimator::host(dir, size == Size::Large));
             *slot = Some(e.clone());
             return Ok(e);
         }
@@ -228,13 +237,20 @@ impl Session {
             return Ok(e.clone());
         }
         let missing = || {
+            let mb = match (size.graph(), size.data()) {
+                (Some(g), Some(d)) => format!("about {} MB, ", (g.size + d.size) / 1_000_000),
+                _ => String::new(),
+            };
             format!(
-                "{NOT_INSTALLED}. Download {} (about {} MB, Apache-2.0 licence) when LightCraft offers it, or with `models.download {{\"id\": \"{}\", \"acknowledged\": true}}`.",
+                "{NOT_INSTALLED}. Download {} ({mb}Apache-2.0 licence) when LightCraft offers it, or with `models.download {{\"id\": \"{}\", \"acknowledged\": true}}`.",
                 size.label(),
-                (size.graph().size + size.data().size) / 1_000_000,
                 size.id()
             )
         };
+        // (Large runs only in a frontend's runtime, which isn't here)
+        if size == Size::Large {
+            return Err(missing());
+        }
         // the V2 GPU weights, when chosen (or when automatic and Depth Anything 3 isn't here: they stay as they were)
         #[cfg(feature = "vision")]
         {
@@ -446,6 +462,12 @@ mod tests {
         // a size that isn't downloaded says which one to get
         let e = s.depth_model().err().unwrap_or_default();
         assert!(e.contains(NOT_INSTALLED) && e.contains("depth-anything-3-base"), "{e}");
+        // Large too: its Core ML model, the one thing that runs it
+        s.set_depth_size("large").unwrap();
+        assert_eq!(s.depth_backend_status()["size"], "large");
+        let e = s.depth_model().err().unwrap_or_default();
+        assert!(e.contains(NOT_INSTALLED) && e.contains(lightcraft_depth::LARGE_HOST_ID), "{e}");
+        assert!(!s.depth_model_ready());
         assert!(s.install_depth_model(b"not", b"the model".to_vec()).is_err());
     }
 

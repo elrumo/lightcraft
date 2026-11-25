@@ -110,7 +110,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Choose the Depth Model's Size",
             [],
             None,
-            "{size: small|base} — which size of Depth Anything 3 estimates depth for Lens Blur: small (the default, 105 MB, the quickest) or base (412 MB, finer edges). Each is downloaded on its own (models.download `depth-anything-3-small` / `depth-anything-3-base`). Saved with the library → depth.backend",
+            "{size: small|base|large} — which size of Depth Anything 3 estimates depth for Lens Blur: small (the default, 105 MB, the quickest), base (412 MB, finer edges) or large (Mono Large, the finest edges; only where a native frontend runs models, on its GPU). Each is downloaded on its own (models.download `depth-anything-3-small` / `depth-anything-3-base` / `depth-anything-3-mono-large-coreml`). Saved with the library → depth.backend",
             always,
             |s, p| {
                 const C: &str = "depth.setSize";
@@ -120,7 +120,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(s.depth_backend_status())
             }
         ),
-        cmd!(query "depth.backend", "What Estimates Depth", [], None, "{} → {choice: auto|cpu|gpu, using: cpu|gpu|null (what runs now; null until the model loads), size: small|base, sizesInstalled: [small|base], cpuInstalled (the chosen size is downloaded), gpuInstalled, gpuAvailable}", always, |s, _| Ok(s.depth_backend_status())),
+        cmd!(query "depth.backend", "What Estimates Depth", [], None, "{} → {choice: auto|cpu|gpu, using: cpu|gpu|null (what runs now; null until the model loads), size: small|base|large, sizesInstalled: [small|base|large], cpuInstalled (the chosen size is downloaded), gpuInstalled, gpuAvailable}", always, |s, _| Ok(s.depth_backend_status())),
         cmd!(
             "lensBlur.estimate",
             "Estimate Depth",

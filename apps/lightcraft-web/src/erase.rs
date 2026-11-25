@@ -41,13 +41,17 @@ pub fn exec_depth(backend: Option<Backend>) -> DepthModelFetch {
 
 /// Both files of `size`, from the site's storage or downloaded (and kept), and checked together.
 async fn get_depth(backend: Option<&Backend>, size: Size, download: bool) -> Result<(Vec<u8>, Vec<u8>), String> {
+    // (Large has no ONNX files: only a native frontend runs it)
+    let (Some(base), Some(graph), Some(data)) = (size.base_url(), size.graph(), size.data()) else {
+        return Err(format!("{} doesn't run in the browser: choose Small or Base", size.label()));
+    };
     let one = |file: &'static str, pinned: Pinned| {
         let key = depth_key(size, file);
-        let url = format!("{}/{file}", size.base_url());
+        let url = format!("{base}/{file}");
         async move { get(backend, download, &key, &url, &|b| pinned.matches(b)).await }
     };
-    let graph = one(GRAPH_FILE, size.graph()).await?;
-    let data = one(DATA_FILE, size.data()).await?;
+    let graph = one(GRAPH_FILE, graph).await?;
+    let data = one(DATA_FILE, data).await?;
     Ok((graph, data))
 }
 

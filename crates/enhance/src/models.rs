@@ -194,17 +194,24 @@ pub const KANDINSKY: ModelSpec = diffusion(
 /// One size of Depth Anything 3 (see `lightcraft_depth`, which pins the files and says where they come from): the
 /// graph and its weights, which come together, never alone.
 macro_rules! depth_spec {
-    ($size:expr, $env:literal) => {
+    ($size:expr, $env:literal) => {{
+        // (evaluated while compiling: a size without ONNX files fails the build here, never at run time)
+        #[allow(clippy::expect_used)]
+        const GRAPH: lightcraft_depth::Pinned = $size.graph().expect("an ONNX size has a graph");
+        #[allow(clippy::expect_used)]
+        const DATA: lightcraft_depth::Pinned = $size.data().expect("an ONNX size has weights");
+        #[allow(clippy::expect_used)]
+        const URL: &str = $size.base_url().expect("an ONNX size has a download");
         ModelSpec {
             id: $size.id(),
             label: $size.label(),
             purpose: "Lens Blur and Depth Range masks on photos without depth data of their own",
             files: &[
-                FileSpec { name: $size.graph().name, size: Some($size.graph().size), sha256: Some($size.graph().sha256), max: $size.graph().size },
-                FileSpec { name: $size.data().name, size: Some($size.data().size), sha256: Some($size.data().sha256), max: $size.data().size },
+                FileSpec { name: GRAPH.name, size: Some(GRAPH.size), sha256: Some(GRAPH.sha256), max: GRAPH.size },
+                FileSpec { name: DATA.name, size: Some(DATA.size), sha256: Some(DATA.sha256), max: DATA.size },
             ],
             mirrors_env: $env,
-            default_mirrors: &[$size.base_url()],
+            default_mirrors: &[URL],
             licence: lightcraft_depth::LICENCE,
             licence_url: lightcraft_depth::LICENCE_URL,
             credit: lightcraft_depth::CREDIT,
@@ -212,7 +219,7 @@ macro_rules! depth_spec {
             diffusion: None,
             restricted: false,
         }
-    };
+    }};
 }
 
 /// Depth Anything 3 Small, the default size: Lens Blur's depth for photos without depth data of their own.
@@ -397,6 +404,44 @@ pub const DEPTH_COREML: ModelSpec = ModelSpec {
     licence: lightcraft_depth::LICENCE,
     licence_url: lightcraft_depth::LICENCE_URL,
     credit: lightcraft_depth::CREDIT,
+    home_url: lightcraft_depth::HOME_URL,
+    diffusion: None,
+    restricted: false,
+};
+
+/// Depth Anything 3 Mono Large converted to Core ML (`tools/coreml/convert_depth_large.py` in the native frontend's
+/// repository: the authors' PyTorch weights, fp16, one function per `lightcraft_depth::HOST_SIZES` size sharing them, the
+/// sky put at the far end inside the network): Lens Blur's Large size, which only that frontend runs, on the GPU. Its
+/// nearness within 0.1 % (mean) of the fp32 PyTorch model's at every size.
+pub const DEPTH_LARGE_COREML: ModelSpec = ModelSpec {
+    id: lightcraft_depth::LARGE_HOST_ID,
+    label: "Depth Anything 3 Mono Large (Core ML)",
+    purpose: "Lens Blur and Depth Range masks, the Large size: the finest edges, estimated on this device's graphics processor",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("86d1857f6e8638d4170924f7aebfaba842303007e7c4e2bd13dd3a224978641a"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(2_107_292),
+            sha256: Some("057f5e588e9e7acb6bef671d54e8f3a4772d543c7afae15de1928c47fd723f22"),
+            max: 2_107_292,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(697_903_232),
+            sha256: Some("2c5aff0c3d2a6c786a73556cbb2d5233e1f84418e94a81ec8ae472c18687cc01"),
+            max: 697_903_232,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_DEPTH_LARGE_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: lightcraft_depth::LICENCE,
+    licence_url: lightcraft_depth::LARGE_LICENCE_URL,
+    credit: "Depth Anything 3 by Haotong Lin, Sili Chen, Jun Hao Liew, Donny Y. Chen, Zhenyu Li, Guang Shi, Jiashi Feng and Bingyi Kang (ByteDance Seed)",
     home_url: lightcraft_depth::HOME_URL,
     diffusion: None,
     restricted: false,
@@ -595,6 +640,7 @@ pub const HOST_RUN: &[&str] = &[
     DDCOLOR_ARTISTIC.id,
     MIGAN_COREML.id,
     DEPTH_COREML.id,
+    DEPTH_LARGE_COREML.id,
     NSFW_COREML.id,
     NSFW_LARGE_COREML.id,
     SIGLIP_IMAGE_COREML.id,
@@ -621,6 +667,7 @@ pub const ALL: &[&ModelSpec] = &[
     &DDCOLOR_ARTISTIC,
     &MIGAN_COREML,
     &DEPTH_COREML,
+    &DEPTH_LARGE_COREML,
     &NSFW_COREML,
     &NSFW_LARGE_COREML,
     &SIGLIP_IMAGE_COREML,

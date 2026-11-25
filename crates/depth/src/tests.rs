@@ -22,6 +22,10 @@ fn verify_wants_the_exact_files() {
     }
     assert_eq!(Size::default(), Size::Small, "Small is the default");
     assert_eq!(Size::from_name("giant"), None);
+    // Large runs only in a frontend: no ONNX files, so nothing verifies as it
+    assert!(Size::Large.graph().is_none() && Size::Large.data().is_none() && Size::Large.base_url().is_none());
+    assert_eq!(Size::from_name("large"), Some(Size::Large));
+    assert!(Size::ONNX.iter().all(|s| s.graph().is_some() && s.data().is_some() && s.base_url().is_some()));
     assert_eq!(hex(&Sha256::digest(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
@@ -174,24 +178,28 @@ fn a_frontends_model_takes_the_fixed_size_nearest_the_photos_shape() {
 fn a_frontend_runs_the_model_and_its_depth_comes_back_as_nearness() {
     use lightcraft_vision::host::{Request, Units, set_runner};
     let img = Rgb32f::from_fn(300, 200, |x, _| [x as f32 / 300.0; 3]);
-    let est = Estimator::host(std::path::PathBuf::from("/models/depth-anything-3-small-coreml"));
+    let est = Estimator::host(std::path::PathBuf::from("/models/depth-anything-3-small-coreml"), false);
     assert_eq!(est.backend(), "host");
     set_runner(None);
     assert!(est.estimate(&img).is_err());
-    set_runner(Some(std::sync::Arc::new(|r: &Request<'_>| {
-        let ok = r.model == HOST_ID
-            && r.function == Some("w756h504")
-            && r.units == Units::All
-            && r.output == "depth"
-            && r.inputs.first().is_some_and(|i| i.shape == [1, 1, 3, 504, 756]);
-        if !ok {
-            return Err("not the request expected".into());
-        }
-        Ok(vec![2.0; r.output_len])
-    })));
-    let plane = est.estimate(&img);
-    set_runner(None);
-    let plane = plane.unwrap();
-    assert_eq!((plane.width, plane.height), (756, 504));
-    assert!(plane.data.iter().all(|v| (v - 0.5).abs() < 1e-6));
+    // Small on the neural accelerator, Mono Large on the GPU: the same sizes and functions
+    for (large, model, units) in [(false, HOST_ID, Units::All), (true, LARGE_HOST_ID, Units::CpuAndGpu)] {
+        let est = Estimator::host(std::path::PathBuf::from("/models/x"), large);
+        set_runner(Some(std::sync::Arc::new(move |r: &Request<'_>| {
+            let ok = r.model == model
+                && r.function == Some("w756h504")
+                && r.units == units
+                && r.output == "depth"
+                && r.inputs.first().is_some_and(|i| i.shape == [1, 1, 3, 504, 756]);
+            if !ok {
+                return Err("not the request expected".into());
+            }
+            Ok(vec![2.0; r.output_len])
+        })));
+        let plane = est.estimate(&img);
+        set_runner(None);
+        let plane = plane.unwrap();
+        assert_eq!((plane.width, plane.height), (756, 504));
+        assert!(plane.data.iter().all(|v| (v - 0.5).abs() < 1e-6));
+    }
 }

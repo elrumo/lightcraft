@@ -65,30 +65,37 @@ impl Pinned {
 }
 
 /// Which Depth Anything 3 the user chose. Small is the default: the quickest, 105 MB. Base sees
-/// finer edges, 412 MB and about three times slower.
+/// finer edges, 412 MB and about three times slower. Large (Mono Large, [`LARGE_HOST_ID`]) has the
+/// finest edges and exists only for a native frontend's runtime: no ONNX files, so the engine's own
+/// runtimes never run it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Size {
     #[default]
     Small,
     Base,
+    Large,
 }
 
 impl Size {
-    pub const ALL: [Size; 2] = [Size::Small, Size::Base];
+    pub const ALL: [Size; 3] = [Size::Small, Size::Base, Size::Large];
+    /// The sizes with ONNX files, which the engine runs itself.
+    pub const ONNX: [Size; 2] = [Size::Small, Size::Base];
 
     /// Stable id: its folder under `models/` and its id in commands (`small` and `base` name the size).
     pub const fn id(self) -> &'static str {
         match self {
             Size::Small => "depth-anything-3-small",
             Size::Base => "depth-anything-3-base",
+            Size::Large => LARGE_HOST_ID,
         }
     }
 
-    /// The size's name in settings and commands: `small` or `base`.
+    /// The size's name in settings and commands: `small`, `base` or `large`.
     pub const fn name(self) -> &'static str {
         match self {
             Size::Small => "small",
             Size::Base => "base",
+            Size::Large => "large",
         }
     }
 
@@ -101,37 +108,51 @@ impl Size {
         match self {
             Size::Small => "Depth Anything 3 Small",
             Size::Base => "Depth Anything 3 Base",
+            Size::Large => "Depth Anything 3 Mono Large",
         }
     }
 
-    /// The ONNX graph (the small file: the network's structure).
-    pub const fn graph(self) -> Pinned {
+    /// The ONNX graph (the small file: the network's structure); none for Large.
+    pub const fn graph(self) -> Option<Pinned> {
         match self {
-            Size::Small => Pinned { name: GRAPH_FILE, size: 640_691, sha256: "396008798244a074297fd88e450433b1357fc687f534939375c804ded86e7b2a" },
-            Size::Base => Pinned { name: GRAPH_FILE, size: 646_912, sha256: "d9e7775d8b0340ce9416cfdb4356651ef72abab75eb1485f0aeefa352d78255c" },
+            Size::Small => {
+                Some(Pinned { name: GRAPH_FILE, size: 640_691, sha256: "396008798244a074297fd88e450433b1357fc687f534939375c804ded86e7b2a" })
+            }
+            Size::Base => {
+                Some(Pinned { name: GRAPH_FILE, size: 646_912, sha256: "d9e7775d8b0340ce9416cfdb4356651ef72abab75eb1485f0aeefa352d78255c" })
+            }
+            Size::Large => None,
         }
     }
 
-    /// The weights (the graph refers to them by [`DATA_FILE`]).
-    pub const fn data(self) -> Pinned {
+    /// The weights (the graph refers to them by [`DATA_FILE`]); none for Large.
+    pub const fn data(self) -> Option<Pinned> {
         match self {
-            Size::Small => Pinned { name: DATA_FILE, size: 104_702_464, sha256: "802bb24741e67f5bb2b369fc64d40afe11439cc895d676d658d65cfb75c9860f" },
-            Size::Base => Pinned { name: DATA_FILE, size: 412_068_352, sha256: "09de4dcff3fefe48b04fedbf146151f3339e6115416a72bf9b36dee3aafd03bd" },
+            Size::Small => {
+                Some(Pinned { name: DATA_FILE, size: 104_702_464, sha256: "802bb24741e67f5bb2b369fc64d40afe11439cc895d676d658d65cfb75c9860f" })
+            }
+            Size::Base => {
+                Some(Pinned { name: DATA_FILE, size: 412_068_352, sha256: "09de4dcff3fefe48b04fedbf146151f3339e6115416a72bf9b36dee3aafd03bd" })
+            }
+            Size::Large => None,
         }
     }
 
     /// The ONNX export's Hugging Face repository at a fixed revision (public, no account; it sends
-    /// CORS headers, so the browser build can fetch it too). `<base_url>/<file name>`.
-    pub const fn base_url(self) -> &'static str {
+    /// CORS headers, so the browser build can fetch it too). `<base_url>/<file name>`; none for Large.
+    pub const fn base_url(self) -> Option<&'static str> {
         match self {
-            Size::Small => "https://huggingface.co/onnx-community/depth-anything-v3-small/resolve/0b6a7f3bf5595f9950b91389e0da3a0de130324c/onnx",
-            Size::Base => "https://huggingface.co/onnx-community/depth-anything-v3-base/resolve/c56b234c94b459a116d5dc782edf4f2db5889276/onnx",
+            Size::Small => {
+                Some("https://huggingface.co/onnx-community/depth-anything-v3-small/resolve/0b6a7f3bf5595f9950b91389e0da3a0de130324c/onnx")
+            }
+            Size::Base => Some("https://huggingface.co/onnx-community/depth-anything-v3-base/resolve/c56b234c94b459a116d5dc782edf4f2db5889276/onnx"),
+            Size::Large => None,
         }
     }
 
     /// Whether `graph` and `data` are exactly the pinned files (size and SHA-256).
     pub fn verify(self, graph: &[u8], data: &[u8]) -> bool {
-        self.graph().matches(graph) && self.data().matches(data)
+        matches!((self.graph(), self.data()), (Some(g), Some(d)) if g.matches(graph) && d.matches(data))
     }
 }
 
@@ -191,6 +212,14 @@ pub fn net_size(w: usize, h: usize) -> (usize, usize) {
 /// rten's 0.47 s and 10.8 J, its nearness within 1 % of the range of onnxruntime's fp32 answer (0.1 % on average).
 pub const HOST_ID: &str = "depth-anything-3-small-coreml";
 
+/// The id of Depth Anything 3 Mono Large ([`Size::Large`]; ByteDance's `depth-anything/DA3MONO-LARGE`, whose card and
+/// code say Apache-2.0, read 2026-11-24) converted for a native frontend's runtime from the authors' PyTorch weights
+/// (fp16, about 650 MB), with the sky put at the far end of the rest inside the network. It runs on the GPU (5x slower
+/// on the neural accelerator): about 0.26 s a photo on an M4 Max against Small's 0.04 s, with far finer edges. Its
+/// functions and sizes are Small's ([`HOST_SIZES`], [`host_function`]).
+pub const LARGE_HOST_ID: &str = "depth-anything-3-mono-large-coreml";
+pub const LARGE_LICENCE_URL: &str = "https://huggingface.co/depth-anything/DA3MONO-LARGE";
+
 /// The sizes the frontend's model takes, width by height (an accelerator wants shapes fixed in advance; the model holds
 /// one function per size, [`host_function`], sharing one copy of the weights): the short side at [`SHORT_SIDE`], the
 /// long one at 1:1, 4:3, 3:2 and 16:9, landscape and portrait. A photo goes to the one nearest its shape (a 3:2 photo
@@ -235,8 +264,11 @@ enum Backend {
     },
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     Gpu(Box<gpu::Gpu>),
-    /// Run by a native frontend from the [`HOST_ID`] model's folder.
-    Host(std::path::PathBuf),
+    /// Run by a native frontend from the folder of the [`HOST_ID`] model, or of [`LARGE_HOST_ID`]'s when `large`.
+    Host {
+        dir: std::path::PathBuf,
+        large: bool,
+    },
 }
 
 impl Estimator {
@@ -261,16 +293,17 @@ impl Estimator {
         Ok(gpu::Gpu::load(file)?.map(|g| Estimator { backend: Backend::Gpu(Box::new(g)) }))
     }
 
-    /// Depth Anything 3 Small run by a native frontend ([`HOST_ID`]) from the model's folder `dir`.
-    pub fn host(dir: std::path::PathBuf) -> Estimator {
-        Estimator { backend: Backend::Host(dir) }
+    /// Depth Anything 3 run by a native frontend from the model's folder `dir`: Small ([`HOST_ID`]), or Mono Large
+    /// ([`LARGE_HOST_ID`]) when `large`.
+    pub fn host(dir: std::path::PathBuf, large: bool) -> Estimator {
+        Estimator { backend: Backend::Host { dir, large } }
     }
 
     /// What it runs on: `cpu`, `gpu` or `host` (the frontend's runtime).
     pub fn backend(&self) -> &'static str {
         match self.backend {
             Backend::Onnx { .. } => "cpu",
-            Backend::Host(_) => "host",
+            Backend::Host { .. } => "host",
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Backend::Gpu(_) => "gpu",
         }
@@ -286,7 +319,7 @@ impl Estimator {
         }
         let (nw, nh) = match self.backend {
             Backend::Onnx { .. } => net_size(w, h),
-            Backend::Host(_) => host_net_size(w, h),
+            Backend::Host { .. } => host_net_size(w, h),
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Backend::Gpu(_) => net_size_at(V2_SHORT_SIDE, V2_MAX_LONG, w, h),
         };
@@ -304,12 +337,12 @@ impl Estimator {
         let v: Vec<f32> = match &self.backend {
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             Backend::Gpu(g) => g.run(&pixels, nw, nh)?,
-            Backend::Host(dir) => {
+            Backend::Host { dir, large } => {
                 use lightcraft_vision::host::{Input, Request, Units, run};
                 let inputs = [Input { name: "pixel_values", shape: vec![1, 1, 3, nh, nw], data: &pixels }];
                 let function = host_function(nw, nh);
-                let req =
-                    Request { model: HOST_ID, dir, function: Some(&function), units: Units::All, inputs: &inputs, output: "depth", output_len: n };
+                let (model, units) = if *large { (LARGE_HOST_ID, Units::CpuAndGpu) } else { (HOST_ID, Units::All) };
+                let req = Request { model, dir, function: Some(&function), units, inputs: &inputs, output: "depth", output_len: n };
                 // depth, larger is farther: nearness is its inverse
                 run(&req).map_err(Error::Model)?.into_iter().map(|d| if d > 1e-6 { 1.0 / d } else { 0.0 }).collect()
             }
