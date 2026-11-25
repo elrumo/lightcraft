@@ -412,6 +412,14 @@ pub struct Photo {
     /// record, its edits and small previews travel. `None` for every other photo. Set when the photo is added.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<Origin>,
+    /// The file the person keeps, when [`Photo::source`] is a stand-in made from it (`photo.attachDecoded`: a DNG in the library's
+    /// `Derived` folder, the host's development of a raw this build cannot decode). What the photo's place in a folder, a Local
+    /// record's identity and "already imported" go by is that file ([`Photo::kept_path`]), not the stand-in. Never saved: a
+    /// serialized field is a new catalog format, which the sync peers' readers have to follow. The engine keeps it in the
+    /// library's `stand-ins.json` and notes it again when the library opens ([`crate::Catalog::note_stand_ins`]).
+    /// (Boxed: the record is held to a small allocation, see the catalog's tests.)
+    #[serde(skip)]
+    pub stand_in_for: Option<Box<String>>,
 }
 
 /// Where the original of a photo kept where it is lives ([`Photo::origin`]).
@@ -623,6 +631,16 @@ impl Photo {
             local_baseline: None,
             server_path: None,
             origin: None,
+            stand_in_for: None,
+        }
+    }
+    /// The file that is this photo for the folder it is in: the original a stand-in was developed from, else the photo's own
+    /// file. `None` for a demo scene. (Where the pixels are read from, and whether the disk is there, go by [`Photo::source`].)
+    pub fn kept_path(&self) -> Option<&str> {
+        match (&self.stand_in_for, &self.source) {
+            (Some(kept), _) => Some(kept.as_str()),
+            (None, Source::File { path }) => Some(path),
+            (None, Source::Demo { .. }) => None,
         }
     }
     /// The folder of [`Photo::server_path`] (`Photos/2024/Trip`).

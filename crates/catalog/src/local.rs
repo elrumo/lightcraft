@@ -67,17 +67,13 @@ impl std::io::Write for Fnv {
     }
 }
 
-/// The folder a file-backed photo is in (`None` for demo photos).
+/// The folder a file-backed photo is in (`None` for demo photos): that of the file the person keeps ([`Photo::kept_path`]),
+/// which is not where a stand-in's DNG is.
 pub fn folder_of(p: &Photo) -> Option<String> {
-    match &p.source {
-        // `/` and `\` are both separators whatever the platform (a catalog can move between them)
-        Source::File { path } => {
-            let key = crate::query::folder_key(path);
-            // a drive or share root keeps its trailing `/` in its key (`c:/`, `//srv/share/`)
-            key.rsplit_once('/').map(|(dir, _)| if dir.is_empty() { "/".to_string() } else { crate::query::folder_key(&format!("{dir}/")) })
-        }
-        Source::Demo { .. } => None,
-    }
+    // `/` and `\` are both separators whatever the platform (a catalog can move between them)
+    let key = crate::query::folder_key(p.kept_path()?);
+    // a drive or share root keeps its trailing `/` in its key (`c:/`, `//srv/share/`)
+    key.rsplit_once('/').map(|(dir, _)| if dir.is_empty() { "/".to_string() } else { crate::query::folder_key(&format!("{dir}/")) })
 }
 
 impl Photo {

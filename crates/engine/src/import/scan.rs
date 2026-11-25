@@ -1,6 +1,6 @@
 use super::files::{Seen, expand, expand_report_ignoring, is_supported, probe_all, reusable_probes};
 use super::types::ImportCandidate;
-use super::{HashMap, Path, PathBuf, PhotoId, ProbeInfo, Session, Source};
+use super::{HashMap, Path, PathBuf, PhotoId, ProbeInfo, Session};
 
 /// What a [`scan`] needs from the session, so it can run on another thread (a folder on a network
 /// share can take minutes to read).
@@ -27,11 +27,11 @@ pub(super) fn library_files(library: &lightcraft_catalog::Catalog, files: &[Stri
         return by_path;
     }
     for p in library.photos() {
-        if let Source::File { path } = &p.source
+        if let Some(path) = p.kept_path()
             && found.contains(Path::new(path))
         {
             let c = ImportCandidate {
-                path: path.clone(),
+                path: path.to_string(),
                 format: p.format.clone(),
                 kind: p.kind,
                 width: p.width,

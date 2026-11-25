@@ -264,4 +264,41 @@ mod tests {
         assert!(Browse::start(&mut s, &dir.join("nothing").to_string_lossy(), None).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // A photo linked to a stand-in file elsewhere (a raw the host developed: its DNG is in the library's Derived folder) stays in
+    // its folder, and the folder read again finds it by the file in the folder, not as a new photo (card #556: it showed "No Photos").
+    #[test]
+    fn a_photo_linked_to_a_stand_in_stays_in_its_folder_when_the_folder_is_read_again() {
+        let dir = std::env::temp_dir().join(format!("lc-apphost-browse-stand-in-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        png(&dir.join("trip").join("a.png"), 1);
+        png(&dir.join("trip").join("b.png"), 2);
+        png(&dir.join("derived").join("a.png"), 1);
+        let mut s = Session::new().with_fs();
+        let trip = dir.join("trip").to_string_lossy().to_string();
+        let mut b = Browse::start(&mut s, &trip, Some(false)).unwrap();
+        run(&mut s, &mut b);
+        let a = s.catalog.photos().find(|p| p.file_name == "a.png").map(|p| p.id).unwrap();
+        let (original, stand_in) =
+            (dir.join("trip").join("a.png").to_string_lossy().to_string(), dir.join("derived").join("a.png").to_string_lossy().to_string());
+        s.commit(
+            "Locate",
+            lightcraft_catalog::Op::Relink {
+                id: a,
+                file_name: "a.png".into(),
+                source: lightcraft_catalog::Source::File { path: stand_in },
+                format: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(s.visible().len(), 1, "linked to its stand-in alone, the photo has left the folder");
+        s.catalog.note_stand_ins([(a, Some(original))]);
+        assert_eq!(s.visible().len(), 2, "the folder has it back once it is a stand-in of the file in it");
+
+        let mut b = Browse::start(&mut s, &trip, Some(false)).unwrap();
+        let r = run(&mut s, &mut b);
+        assert_eq!((r["photos"].as_u64(), r["new"].as_u64()), (Some(2), Some(0)), "{r}");
+        assert_eq!(s.catalog.len(), 2, "no second photo of the file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

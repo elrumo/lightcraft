@@ -802,6 +802,30 @@ impl Catalog {
         }
     }
 
+    /// Note, for each of `kept`, the file the person keeps of a photo whose source is a stand-in made from it
+    /// ([`Photo::stand_in_for`]); `None` forgets it. Not an op: the catalog format has no field for it, so nothing is journaled
+    /// (the engine keeps it in the library's `stand-ins.json` and notes it again when the library opens). The photo's place
+    /// in its folder changes with it, so whatever is derived from the library is out of date, as after an op of a wider reach.
+    pub fn note_stand_ins(&mut self, kept: impl IntoIterator<Item = (PhotoId, Option<String>)>) {
+        let mut changed = false;
+        for (id, path) in kept {
+            if let Some(p) = self.photos.get_mut(&id).filter(|p| p.stand_in_for.as_deref() != path.as_ref()) {
+                Arc::make_mut(p).stand_in_for = path.map(Box::new);
+                changed = true;
+            }
+        }
+        if changed {
+            if self.changes.seen != self.revision {
+                self.changes = Changes { floor: self.revision, seen: self.revision, ..Default::default() };
+            }
+            let made = self.revision.saturating_add(1);
+            self.changes.broad = made;
+            self.revision = made;
+            self.library_revision += 1;
+            self.changes.seen = made;
+        }
+    }
+
     /// What of its photos the ops since `revision` changed, taken together ([`Aspects::NONE`] when there were
     /// none). `None` when that is not known ([`Catalog::touched_since`]). A tally of the library that reads only
     /// other things of a photo is still right.

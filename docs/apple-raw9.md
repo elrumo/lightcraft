@@ -165,6 +165,15 @@ are not a concern for it, so the file never has to be re-derived elsewhere. Sync
   linear DNG of such a camera gets no profile, and a library that opens drops one a stand-in of such a camera holds in
   its catalog (`stand_in::drop_second_lens_corrections`, journaled, not an undo step). Other cameras' unmarked stand-ins
   keep their profile: whether the decoder corrected one depends on the original, which is no longer at hand.
+- The photo stays in the folder of its original (card #556: a Local folder showed "No Photos" once its raw was exported,
+  the photo being linked to the DNG in `Derived`). `Photo::stand_in_for` names the original and `Photo::kept_path` is what a
+  photo's place in a folder goes by (the folder views, the Folders panel, a Local record's folder, "already imported" in a
+  browse or an import); where the pixels are read from and whether the disk is there still go by the source. The catalog has
+  no field for it, so it is not saved there: the library's `stand-ins.json` (DNG path below `Derived` → original) holds it, and
+  `stand_in::note_stand_ins` notes it again when the library opens, for the photos whose source is still the DNG the file
+  lists (one linked elsewhere since, by Locate, goes by its source). Not followed yet: `folder.updateLocation`, a
+  folder rename or move (they relink by the source), and the XMP sidecar, which a Local stand-in still writes beside its DNG.
+  Next catalog format: make it a field.
 - The host also sends its default rendering as `previewPath`. With it the engine's existing DNG tone fit
   (`fit_dng_tone`, "DNGTONE accepted") gives the raw Apple's starting look; without it the raw renders flat and dark
   (mean luma 108 against 135 on an OM-1 file).

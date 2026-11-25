@@ -254,7 +254,7 @@ impl Catalog {
         // never depends on hash order)
         let mut dirs: BTreeMap<&str, usize> = BTreeMap::new();
         for p in self.photos().filter(|p| p.visible()) {
-            if let Source::File { path } = &p.source
+            if let Some(path) = p.kept_path()
                 && let Some(i) = path.rfind(['/', '\\'])
                 // a photo straight in the root has an empty folder part: the root itself
                 && let Some(dir) = path.get(..i.max(1))

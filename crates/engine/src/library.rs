@@ -996,6 +996,8 @@ impl Session {
         if on_disk {
             self.follow_moved_library();
         }
+        // the photos developed by the host's decoder stay in the folders of their originals (their files are in Derived)
+        crate::cmd::stand_in::note_stand_ins(self);
         // forget untouched Local records of folders not browsed for a while (journaled at once)
         if self.forget_local_days > 0 {
             let plan = self.forget_local(false, None);
@@ -1355,6 +1357,17 @@ impl Session {
                 Err(e) => log::error!("library: view: {e}"),
             }
         }
+    }
+
+    /// A small file of the library's folder (the library's own stores: not a photo's file), if there is one.
+    pub(crate) fn read_library_file(&mut self, name: &str) -> Option<Vec<u8>> {
+        self.library.as_mut().and_then(|l| l.files.read(name).ok().flatten())
+    }
+
+    /// Write a small file of the library's folder, all or nothing.
+    pub(crate) fn write_library_file(&mut self, name: &str, bytes: &[u8]) -> std::result::Result<(), String> {
+        let lib = self.library.as_mut().ok_or("no library is open")?;
+        lib.files.write_atomic(name, bytes).map_err(|e| e.to_string())
     }
 
     /// Save when the XMP sidecars were last read or written, if that changed (`sidecars.json`; a

@@ -72,6 +72,67 @@ fn derived_dir(library: &Path, id_part: &str) -> std::path::PathBuf {
     library.join("Derived").join(id_part)
 }
 
+/// Where each stand-in's original is, kept in the library's folder (a stand-in's photo is linked to its DNG, so the file
+/// the person keeps, which decides the photo's place in its folder, is written down here): the DNG's path below `Derived`
+/// (`<hash>/<name>.dng`) → the original's path. The catalog has no field for it ([`lightcraft_catalog::Photo::stand_in_for`]).
+const HOMES_FILE: &str = "stand-ins.json";
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct Homes {
+    #[serde(default)]
+    homes: std::collections::BTreeMap<String, String>,
+}
+
+/// The key of a stand-in DNG in [`Homes`]: its path below the library's `Derived` folder, with `/` for every separator.
+fn home_key(derived: &Path, dng: &Path) -> Option<String> {
+    let rest = dng.strip_prefix(derived).ok()?;
+    Some(rest.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"))
+}
+
+fn read_homes(s: &mut Session) -> Homes {
+    s.read_library_file(HOMES_FILE).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Note that the photos of `group` are stand-ins of the file `original`, now and in the library's file for the next time it
+/// opens (a cache of where the files are: a failure to write it is logged, and the photos go back to the DNG's folder then).
+fn remember_home(s: &mut Session, derived: &Path, dng: &Path, original: &str, group: impl Iterator<Item = lightcraft_catalog::PhotoId>) {
+    s.catalog.note_stand_ins(group.map(|id| (id, Some(original.to_string()))));
+    let Some(key) = home_key(derived, dng) else { return };
+    let mut homes = read_homes(s);
+    homes.homes.insert(key, original.to_string());
+    match serde_json::to_vec_pretty(&homes) {
+        Ok(bytes) => {
+            if let Err(e) = s.write_library_file(HOMES_FILE, &bytes) {
+                log::warn!("stand-ins: {HOMES_FILE}: {e}");
+            }
+        }
+        Err(e) => log::warn!("stand-ins: {HOMES_FILE}: {e}"),
+    }
+}
+
+/// Called when a library opens: the photos linked to a stand-in DNG that [`Homes`] knows are noted as stand-ins of their
+/// originals again ([`lightcraft_catalog::Catalog::note_stand_ins`]). A photo since linked elsewhere is not in the file's
+/// list (it has another DNG, or none), and so is left as it is.
+pub(crate) fn note_stand_ins(s: &mut Session) {
+    let Some(derived) = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Derived")) else { return };
+    let homes = read_homes(s).homes;
+    if homes.is_empty() {
+        return;
+    }
+    let kept: Vec<_> = s
+        .catalog
+        .photos()
+        .filter_map(|p| match &p.source {
+            Source::File { path } => {
+                let original = homes.get(&home_key(&derived, Path::new(path))?)?;
+                Some((p.id, Some(original.clone())))
+            }
+            Source::Demo { .. } => None,
+        })
+        .collect();
+    s.catalog.note_stand_ins(kept);
+}
+
 /// `photo.attachDecoded {id, path, previewPath?, whiteXY?, baselineExposure?, force?}`: `path` is the host's linear development of
 /// the photo's original (a float TIFF in linear light of any primaries, white = 1, values above it are highlights);
 /// `previewPath` the same picture rendered the host's default way (a JPEG, any size, sRGB), which gives the raw its
@@ -187,6 +248,8 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|g| Op::Relink { id: g.id, file_name: file_name.clone(), source: Source::File { path: out_path.clone() }, format: Some("DNG".into()) })
         .collect();
     s.apply_quiet(Op::Batch { ops }).map_err(|e| bad(C, e.to_string()))?;
+    // (the photos stay in the folder the original is in: card #556, a Local folder showed "No Photos" once its raw was exported)
+    remember_home(s, &library.join("Derived"), &out, original, group.iter().map(|g| g.id));
     // size, hash and "Preview only" now come from the DNG; an unedited photo gets the raw defaults; renders from the JPEG go
     super::convert::heal_preview_only(s, master_id);
     for g in &group {
@@ -433,6 +496,54 @@ mod tests {
         s.open_library(dir.join("lib"), false).unwrap();
         assert_eq!(lens(&s, om5), None);
         assert!(super::stand_ins_with_a_profile(&s).iter().all(|(id, ..)| *id == e510));
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A raw shown from a Local folder keeps its place in that folder once the host developed it (card #556: after an export
+    /// the folder showed "No Photos", the photo being linked to its DNG in the library's Derived folder): the folder lists it and
+    /// its sibling, browsing the folder again finds it and adds nothing, and so does a reopened library.
+    #[test]
+    fn a_local_raw_stays_in_its_folder_after_its_stand_in() {
+        let (mut s, dir, files) = library("stand-in-folder");
+        let trip = files.join("trip");
+        std::fs::create_dir_all(&trip).unwrap();
+        std::fs::write(trip.join("DSC_0001.cr3"), cr3_with_preview(96, 64)).unwrap();
+        std::fs::write(trip.join("DSC_0002.cr3"), cr3_with_preview(80, 60)).unwrap();
+        let tiff = dir.join("linear.tif");
+        std::fs::write(&tiff, linear_tiff(64, 48, 1.0)).unwrap();
+        let browse = |s: &mut crate::Session| s.execute("library.browse", &json!({"path": trip.to_string_lossy()})).unwrap();
+        let named = |s: &mut crate::Session| {
+            let mut v: Vec<String> = s.visible().to_vec().iter().filter_map(|id| s.catalog.photo(*id)).map(|p| p.file_name.clone()).collect();
+            v.sort();
+            v
+        };
+
+        let r = browse(&mut s);
+        assert_eq!((r["photos"].as_u64(), r["new"].as_u64()), (Some(2), Some(2)), "{r}");
+        let first = s.catalog.photos().find(|p| p.file_name == "DSC_0001.cr3").map(|p| p.id).unwrap();
+        assert!(s.catalog.photo(first).unwrap().local);
+        s.execute("photo.attachDecoded", &json!({"id": first.0, "path": tiff.to_string_lossy()})).unwrap();
+
+        let p = s.catalog.photo(first).unwrap();
+        assert_eq!(p.format, "DNG", "the photo is linked to the stand-in");
+        assert!(p.local, "and is still a record of the folder");
+        // (the DNG is named after the raw, the other photo is as it was)
+        assert_eq!(named(&mut s), ["DSC_0001.dng", "DSC_0002.cr3"], "the folder shows both photos");
+        // browsing the folder again finds the photo by its original: no second record of the file
+        let again = browse(&mut s);
+        assert_eq!((again["photos"].as_u64(), again["new"].as_u64()), (Some(2), Some(0)), "{again}");
+        assert_eq!(s.catalog.photos().count(), 2);
+
+        // it lasts: the library opens with the photo in its folder still
+        s.persist().unwrap();
+        drop(s);
+        let mut s = crate::Session::new().with_fs();
+        s.open_library(dir.join("lib"), false).unwrap();
+        let r = browse(&mut s);
+        assert_eq!((r["photos"].as_u64(), r["new"].as_u64()), (Some(2), Some(0)), "{r}");
+        assert_eq!(named(&mut s), ["DSC_0001.dng", "DSC_0002.cr3"]);
+        assert_eq!(s.catalog.photos().count(), 2);
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
     }

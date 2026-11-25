@@ -125,7 +125,8 @@ impl Prepared {
         let mut paths = HashMap::new();
         let mut hashes = HashMap::new();
         for photo in s.catalog.photos() {
-            if let Source::File { path } = &photo.source {
+            // (the file the person keeps: a stand-in's DNG in the Derived folder is not what a file of the folder imported again is)
+            if let Some(path) = photo.kept_path() {
                 paths.insert(normalize_import_path(path), photo.id);
             }
             if let Some(hash) = &photo.content_hash {
@@ -251,8 +252,8 @@ impl ImportJob {
             if p.deleted && fresh {
                 continue;
             }
-            if let Source::File { path } = &p.source {
-                self.by_path.insert(path.clone(), (p.id, p.local));
+            if let Some(path) = p.kept_path() {
+                self.by_path.insert(path.to_string(), (p.id, p.local));
             }
             if let Some(h) = &p.content_hash {
                 self.by_hash.insert(h.clone(), Some(p.id));

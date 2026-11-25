@@ -404,7 +404,8 @@ impl Filter {
             None if p.local && !p.deleted => return false,
             None => {}
             Some(dir) => {
-                let crate::Source::File { path } = &p.source else { return false };
+                // (the file the person keeps: a stand-in's DNG is in the library's Derived folder, not in the folder shown)
+                let Some(path) = p.kept_path() else { return false };
                 if !in_folder(path, dir, self.subfolders) {
                     return false;
                 }
@@ -874,7 +875,7 @@ pub(crate) fn photo_in_root(p: &Photo, root: &str) -> bool {
     if p.local {
         return false;
     }
-    let crate::Source::File { path } = &p.source else { return false };
+    let Some(path) = p.kept_path() else { return false };
     let plain = path.starts_with('/')
         && !path.starts_with("//")
         && !path.ends_with('/')
