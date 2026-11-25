@@ -1012,6 +1012,10 @@ impl Session {
         self.tidy_photo_library();
         // motion clips of photos deleted for good (or forgotten) since
         self.tidy_live_photos();
+        // stand-ins made before their DNG said the host's decoder corrected the lens lose a lens profile that corrected it twice
+        if on_disk {
+            crate::cmd::stand_in::drop_second_lens_corrections(self);
+        }
         // smart previews written by an older camera-look fit are brought up to date in the background
         #[cfg(not(target_arch = "wasm32"))]
         if on_disk {

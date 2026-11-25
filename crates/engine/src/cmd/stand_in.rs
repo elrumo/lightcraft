@@ -197,6 +197,52 @@ fn attach(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": id.0, "path": out_path, "original": original, "width": width, "height": height}))
 }
 
+/// Stand-ins made before their DNG said whether the host's decoder had corrected the lens (`lc:LensCorrected`) may hold
+/// the lens database's profile in the catalog (a lens refresh or a Reload gave it). A frontend that draws the photo itself
+/// applies it on top of the decoder's correction: such a photo exported about 3 % enlarged (card #538). Called when a
+/// library opens: the profile goes from each stand-in whose camera's lens the decoder corrects
+/// ([`crate::lens_profiles::decoder_corrects`]), journaled and synced, not an undo step. Only the catalog is read, and
+/// the lens database only when a stand-in holds a profile.
+pub(crate) fn drop_second_lens_corrections(s: &mut Session) {
+    if stand_ins_with_a_profile(s).is_empty() {
+        return;
+    }
+    if let Some(db) = crate::lens_profiles::database() {
+        drop_second_lens_corrections_with(s, &db);
+    }
+}
+
+fn drop_second_lens_corrections_with(s: &mut Session, db: &lightcraft_lensdb::LensDb) {
+    let ops: Vec<Op> = stand_ins_with_a_profile(s)
+        .into_iter()
+        .filter(|(_, make, model)| crate::lens_profiles::decoder_corrects(db, make, model))
+        .map(|(id, ..)| Op::SetEmbeddedLens { id, lens: None })
+        .collect();
+    let n = ops.len();
+    if n > 0
+        && let Err(e) = s.apply_system(Op::Batch { ops })
+    {
+        log::warn!("stand-ins: can't drop the second lens correction of {n} photos: {e}");
+    }
+}
+
+/// The stand-ins (photos whose file is in the library's Derived folder, where only `photo.attachDecoded` writes) that
+/// hold a lens database profile: id, camera make and model (the catalog keeps them joined, make first, as the file named
+/// them: the lens lookup takes them apart, and a model that starts with the maker's own word, "OM-5", reads wrong joined).
+fn stand_ins_with_a_profile(s: &Session) -> Vec<(lightcraft_catalog::PhotoId, String, String)> {
+    let Some(derived) = s.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Derived")) else { return Vec::new() };
+    s.catalog
+        .photos()
+        .filter(|p| p.embedded_lens.as_ref().is_some_and(|l| matches!(l.origin, lightcraft_develop::LensOrigin::Database { .. })))
+        .filter(|p| matches!(&p.source, Source::File { path } if Path::new(path).starts_with(&derived)))
+        .map(|p| {
+            let make = p.meta.details().make.clone();
+            let model = p.meta.camera.strip_prefix(make.as_str()).unwrap_or(&p.meta.camera).trim().to_string();
+            (p.id, make, model)
+        })
+        .collect()
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     // (`explicit_targets`: a call that names its photo is not refused for an empty selection, and `attach` checks that photo itself. A native
     // frontend's export develops the preview-only raws it names before drawing them, whatever is selected: refused, a compressed ORF exported
@@ -331,6 +377,62 @@ mod tests {
             let read = lightcraft_meta::extract(&dng);
             assert_eq!(read.lens_corrected, corrected == Some(true), "{name}");
         }
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A stand-in made before the mark that a lens refresh gave the lens database's profile loses it when the library opens,
+    /// when its camera's lens the decoder corrects (an OM-5's): it exported about 3 % enlarged (card #538). A Four Thirds
+    /// DSLR's stand-in and a photo that is not a stand-in keep theirs; nothing is an undo step, and it lasts.
+    #[test]
+    fn a_stand_in_s_second_lens_correction_goes_when_the_library_opens() {
+        use lightcraft_catalog::Op;
+        use lightcraft_develop::{EmbeddedLens, LensOrigin};
+        let (mut s, dir, files) = library("stand-in-old-lens");
+        let tiff = dir.join("linear.tif");
+        std::fs::write(&tiff, linear_tiff(32, 32, 1.0)).unwrap();
+        let db = lightcraft_lensdb::LensDb::parse(
+            r#"<lensdatabase>
+              <camera><maker>OM Digital Solutions</maker><model>OM-5</model><mount>Micro 4/3 System</mount><cropfactor>2</cropfactor></camera>
+              <camera><maker>Olympus</maker><model>E-510</model><mount>4/3 System</mount><cropfactor>2</cropfactor></camera>
+            </lensdatabase>"#,
+        )
+        .unwrap();
+        let profile = EmbeddedLens { warp: Some(Default::default()), origin: LensOrigin::Database { serial: 3 }, ..Default::default() };
+        let give = |s: &mut crate::Session, id: PhotoId, make: &str, model: &str| {
+            let mut meta = s.catalog.photo(id).unwrap().meta.clone();
+            meta.camera = format!("{make} {model}");
+            meta.edit_details(|d| d.make = make.into());
+            s.apply_quiet(Op::SetMeta { id, meta: Box::new(meta) }).unwrap();
+            s.apply_quiet(Op::SetEmbeddedLens { id, lens: Some(Box::new(profile)) }).unwrap();
+        };
+        // (each attached before the next import: the same test file again would be a duplicate of an unattached one)
+        let stand_in = |s: &mut crate::Session, name: &str| {
+            let id = import_preview_only(s, &files, name);
+            s.execute("photo.attachDecoded", &json!({"id": id.0, "path": tiff.to_string_lossy()})).unwrap();
+            id
+        };
+        let om5 = stand_in(&mut s, "P5010001.cr3");
+        let e510 = stand_in(&mut s, "P5010002.cr3");
+        let not_a_stand_in = import_preview_only(&mut s, &files, "P5010003.cr3");
+        give(&mut s, om5, "OM Digital Solutions", "OM-5");
+        give(&mut s, e510, "Olympus", "E-510");
+        give(&mut s, not_a_stand_in, "OM Digital Solutions", "OM-5");
+        let undo = s.undo.len();
+
+        super::drop_second_lens_corrections_with(&mut s, &db);
+        let lens = |s: &crate::Session, id: PhotoId| s.catalog.photo(id).unwrap().embedded_lens.as_deref().copied();
+        assert_eq!(lens(&s, om5), None, "the decoder corrected the OM-5's lens: no second correction");
+        assert_eq!(lens(&s, e510), Some(profile), "the decoder did not correct a Four Thirds DSLR's lens");
+        assert_eq!(lens(&s, not_a_stand_in), Some(profile), "a photo not in the Derived folder is not a stand-in");
+        assert_eq!(s.undo.len(), undo, "not an undo step");
+        // journaled: still gone after a reopen, and nothing more to do
+        s.persist().unwrap();
+        drop(s);
+        let mut s = crate::Session::new().with_fs();
+        s.open_library(dir.join("lib"), false).unwrap();
+        assert_eq!(lens(&s, om5), None);
+        assert!(super::stand_ins_with_a_profile(&s).iter().all(|(id, ..)| *id == e510));
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
     }

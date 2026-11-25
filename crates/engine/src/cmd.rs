@@ -56,7 +56,7 @@ mod relight;
 pub mod reload;
 pub mod similar;
 mod slideshow;
-mod stand_in;
+pub(crate) mod stand_in;
 mod sync;
 mod track;
 mod trip;

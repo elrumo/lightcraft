@@ -215,15 +215,45 @@ fn frame_crop_factor(camera: Option<f64>, focal: f64, focal_35mm: Option<f64>) -
     }
 }
 
-/// [`crate::files::embedded_lens`], else the database profile ([`lookup`]) for a raw with metadata `meta`, marked with
-/// the profile database's number ([`lightcraft_develop::LensOrigin::Database`]).
+/// [`crate::files::embedded_lens`], else the database profile ([`from_database`]) for a raw with metadata `meta`, marked
+/// with the profile database's number ([`lightcraft_develop::LensOrigin::Database`]).
 pub fn for_raw(raw: &lightcraft_raw::RawInfo, meta: impl FnOnce() -> lightcraft_meta::Metadata) -> Option<EmbeddedLens> {
     crate::files::embedded_lens(raw).or_else(|| {
         let db = database()?;
-        let (w, h) = raw.developed_size();
-        let lens = lookup(&db, &meta(), w as f64, h as f64, raw.orientation)?;
+        let lens = from_database(&db, raw, meta())?;
         Some(EmbeddedLens { origin: lightcraft_develop::LensOrigin::Database { serial: crate::profile_db::installed().serial() }, ..lens })
     })
+}
+
+/// The database profile ([`lookup`]) for `raw` with metadata `m`, none for a picture whose lens is corrected already:
+/// marked so (`lc:LensCorrected`), or a stand-in made before the mark existed whose camera's lens the system's decoder
+/// corrects ([`corrected_before_the_mark`]).
+fn from_database(db: &LensDb, raw: &lightcraft_raw::RawInfo, mut m: lightcraft_meta::Metadata) -> Option<EmbeddedLens> {
+    m.lens_corrected |= corrected_before_the_mark(db, raw, &m);
+    let (w, h) = raw.developed_size();
+    lookup(db, &m, w as f64, h as f64, raw.orientation)
+}
+
+/// A linear DNG this engine wrote (a stand-in of another decoder's development, `photo.attachDecoded`) before such DNGs
+/// said whether that decoder had corrected the lens: taken as corrected when [`decoder_corrects`] its camera's lens.
+/// Other cameras' unmarked stand-ins keep their profile: whether the decoder corrected one depends on the file, which is
+/// no longer at hand.
+fn corrected_before_the_mark(db: &LensDb, raw: &lightcraft_raw::RawInfo, m: &lightcraft_meta::Metadata) -> bool {
+    let ours = raw.format == lightcraft_raw::RawFormat::Dng && raw.cpp == 3 && m.software.as_deref().is_some_and(|s| s.starts_with("LightCraft"));
+    ours && decoder_corrects(db, m.make.as_deref().unwrap_or_default(), m.model.as_deref().unwrap_or_default())
+}
+
+/// Whether Apple's raw decoder corrects the lens of camera `make` `model` from its raws' own data: a camera that records
+/// its lens's correction in every raw. That is every Micro Four Thirds body, and Olympus / OM System's other cameras but
+/// their Four Thirds DSLRs: Core Image corrects all of them among the test raws (OM-5, E-M1 II, E-M1X, E-M10 IV,
+/// E-PL10, TG-6, XZ-2, six Panasonic G bodies) and neither the E-1 nor the E-510 (card #538: stand-ins made before
+/// `lc:LensCorrected` existed exported about 3 % enlarged). The mount comes from the lens database: a camera it doesn't
+/// know is not taken as corrected.
+pub(crate) fn decoder_corrects(db: &LensDb, make: &str, model: &str) -> bool {
+    let Some(camera) = db.find_camera(make, model) else { return false };
+    let maker = camera.maker.to_ascii_lowercase();
+    let olympus = maker.starts_with("olympus") || maker.starts_with("om system") || maker.starts_with("om digital");
+    camera.mount == "Micro 4/3 System" || (olympus && camera.mount != "4/3 System")
 }
 
 #[cfg(test)]
@@ -278,6 +308,57 @@ mod tests {
         assert!(lookup(&db, &lightcraft_meta::Metadata { focal_length: None, ..meta() }, 6000.0, 4000.0, Orientation::Normal).is_none());
         let other = lightcraft_meta::Metadata { lens_model: Some("70-200mm F4".into()), ..meta() };
         assert!(lookup(&db, &other, 6000.0, 4000.0, Orientation::Normal).is_none());
+    }
+
+    /// A stand-in made before the mark (card #538): the engine's linear DNG of a Micro Four Thirds body, or of an Olympus
+    /// compact, gets no profile, since Apple's decoder corrected that lens already; a Four Thirds DSLR's, another maker's
+    /// and a DNG another program wrote keep theirs.
+    #[test]
+    fn an_unmarked_stand_in_of_a_camera_the_decoder_corrects_gets_no_profile() {
+        let db = LensDb::parse(
+            r#"<lensdatabase>
+              <camera><maker>OM Digital Solutions</maker><model>OM-5</model><mount>Micro 4/3 System</mount><cropfactor>2</cropfactor></camera>
+              <camera><maker>Olympus</maker><model>TG-6</model><mount>olympusToughTG4</mount><cropfactor>5.6</cropfactor></camera>
+              <camera><maker>Olympus</maker><model>E-510</model><mount>4/3 System</mount><cropfactor>2</cropfactor></camera>
+              <camera><maker>Testcam</maker><model>TC-1</model><mount>T</mount><cropfactor>1.5</cropfactor></camera>
+              <lens><maker>Olympus</maker><model>Olympus M.Zuiko 12-45mm f/4</model><mount>Micro 4/3 System</mount><cropfactor>2</cropfactor>
+                <calibration><distortion model="poly3" focal="12" k1="-0.03" /></calibration></lens>
+              <lens><maker>Olympus</maker><model>Olympus Tough TG-6</model><mount>olympusToughTG4</mount><cropfactor>5.6</cropfactor>
+                <calibration><distortion model="poly3" focal="4.5" k1="-0.03" /></calibration></lens>
+              <lens><maker>Olympus</maker><model>Olympus Zuiko Digital 14-42mm f/3.5-5.6</model><mount>4/3 System</mount><cropfactor>2</cropfactor>
+                <calibration><distortion model="poly3" focal="14" k1="-0.03" /></calibration></lens>
+              <lens><maker>Testcam</maker><model>Testcam 18-55mm f/3.5-5.6</model><mount>T</mount><cropfactor>1.5</cropfactor>
+                <calibration><distortion model="poly3" focal="18" k1="-0.03" /></calibration></lens>
+            </lensdatabase>"#,
+        )
+        .unwrap();
+        let camera = |make: &str, model: &str, lens: &str, focal: f64| lightcraft_meta::Metadata {
+            make: Some(make.into()),
+            model: Some(model.into()),
+            lens_model: Some(lens.into()),
+            focal_length: Some(focal),
+            f_number: Some(4.0),
+            ..Default::default()
+        };
+        let cases = [
+            (camera("OM Digital Solutions", "OM-5", "Olympus M.Zuiko 12-45mm f/4", 12.0), true),
+            (camera("Olympus", "TG-6", "Olympus Tough TG-6", 4.5), true),
+            (camera("Olympus", "E-510", "Olympus Zuiko Digital 14-42mm f/3.5-5.6", 14.0), false),
+            (camera("Testcam", "TC-1", "Testcam 18-55mm f/3.5-5.6", 18.0), false),
+        ];
+        let px = [0.5f32; 4 * 4 * 3];
+        for (m, corrected) in cases {
+            let name = m.model.clone().unwrap_or_default();
+            let dng = lightcraft_raw::write_rendered_dng(4, 4, &px, &lightcraft_color::REC2020, &m, None).unwrap();
+            let info = lightcraft_raw::probe_info(&dng).unwrap();
+            let read = lightcraft_meta::extract(&dng);
+            assert!(read.software.as_deref().is_some_and(|s| s.starts_with("LightCraft")), "{name}: {:?}", read.software);
+            assert!(lookup(&db, &read, 4.0, 4.0, Orientation::Normal).is_some(), "{name}: the database has its lens");
+            assert_eq!(from_database(&db, &info, read.clone()).is_none(), corrected, "{name}");
+            // the same picture from another program's DNG keeps its profile
+            let other = lightcraft_meta::Metadata { software: Some("Some Converter 1.0".into()), ..read };
+            assert!(from_database(&db, &info, other).is_some(), "{name}: another writer's DNG");
+        }
     }
 
     /// A picture whose lens another decoder corrected (a stand-in DNG of Core Image's development) gets no profile: it would

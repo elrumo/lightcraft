@@ -159,7 +159,12 @@ are not a concern for it, so the file never has to be re-derived elsewhere. Sync
 - `lensCorrected: true` says the host's decoder corrected the lens (Core Image does, for a camera whose file says how: a
   Micro Four Thirds lens). The DNG's XMP then carries `lc:LensCorrected`, every read of its metadata has
   `Metadata::lens_corrected`, and `lens_profiles::lookup` gives it no database profile, which would correct the lens a second
-  time (card #538: an OM-5 stand-in exported about 3 % enlarged). A DNG written without it keeps the old behaviour.
+  time (card #538: an OM-5 stand-in exported about 3 % enlarged). Stand-ins written before the mark existed are fixed
+  too, from their camera (`lens_profiles::decoder_corrects`: every Micro Four Thirds body, and Olympus / OM System's
+  other cameras but their Four Thirds DSLRs, are corrected by Core Image in every test raw). The engine's own unmarked
+  linear DNG of such a camera gets no profile, and a library that opens drops one a stand-in of such a camera holds in
+  its catalog (`stand_in::drop_second_lens_corrections`, journaled, not an undo step). Other cameras' unmarked stand-ins
+  keep their profile: whether the decoder corrected one depends on the original, which is no longer at hand.
 - The host also sends its default rendering as `previewPath`. With it the engine's existing DNG tone fit
   (`fit_dng_tone`, "DNGTONE accepted") gives the raw Apple's starting look; without it the raw renders flat and dark
   (mean luma 108 against 135 on an OM-1 file).
