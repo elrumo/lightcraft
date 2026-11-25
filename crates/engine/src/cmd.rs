@@ -57,6 +57,7 @@ pub mod reload;
 pub mod similar;
 mod slideshow;
 pub(crate) mod stand_in;
+mod storage;
 mod sync;
 mod track;
 mod trip;
@@ -211,6 +212,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(crate::icloud::folder::specs());
         v.extend(crate::live_photo::specs());
         v.extend(missing::specs());
+        v.extend(storage::specs());
         v.extend(recheck::specs());
         v.extend(lens_refresh::specs());
         v.extend(sync::specs());
