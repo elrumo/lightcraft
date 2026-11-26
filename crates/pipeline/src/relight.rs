@@ -21,6 +21,12 @@
 //! in scene-linear Rec. 2020, after noise reduction and before Lens Blur, so the blur sees the new
 //! light and every tone and colour tool works on it.
 //!
+//! **Materials** (`relight.materials`, with the photo's `relight.material` map of what each part is made of): at every
+//! pixel the highlight's lobe follows the surface (a mirror-like exponent for glass, water and metal, a broad one for
+//! cloth and skin: [`lobe_exponent`], [`lobe_gain`]) and its strength the surface's specular level, a metal's highlight
+//! takes the colour of the metal, metal and clear surfaces scatter less of the diffuse light, and what takes no light
+//! (sky) keeps the photo's own. At Materials 0, or with no map, none of this happens and the render is what it was.
+//!
 //! **Depth Map** draws the depth itself in place of the photo: each output pixel's depth (0 the
 //! nearest, 100 the farthest, as Lens Blur's) is placed between the Near and Far ends, inverted if
 //! asked, bent by Curve, and looked up in the palette (evenly spaced stops, far to near, display
@@ -70,6 +76,26 @@ pub const BRIGHTNESS_MAX: f32 = 4.0;
 pub const SHINE_MAX: f32 = 0.25;
 /// The highlight's exponent (Blinn-Phong).
 pub const SHININESS: f32 = 32.0;
+/// With a material map: the narrowest and widest highlight lobes (Blinn-Phong exponents), from a mirror to chalk.
+pub const LOBE_MIN: f32 = 2.0;
+pub const LOBE_MAX: f32 = 512.0;
+/// With a material map: how much of the diffuse light a fully metal surface and a fully clear one (glass, water) keep
+/// away (a metal reflects the light instead of scattering it; glass lets most of it through).
+pub const METAL_DIFFUSE: f32 = 0.6;
+pub const TRANS_DIFFUSE: f32 = 0.5;
+
+/// The highlight lobe's exponent for a surface of roughness `r` (0 a mirror, 1 chalk): the GGX width α = r² as a
+/// Blinn-Phong exponent, 2 / α² − 2, kept within [`LOBE_MIN`] and [`LOBE_MAX`].
+pub fn lobe_exponent(r: f32) -> f32 {
+    let r = if r.is_finite() { r.clamp(0.0, 1.0) } else { 1.0 };
+    (2.0 / (r * r * r * r).max(1e-4) - 2.0).clamp(LOBE_MIN, LOBE_MAX)
+}
+
+/// How much a lobe of exponent `n` is scaled against today's (exponent [`SHININESS`]) so that a narrow lobe is bright
+/// and a broad one faint: its normalisation, (n + 8) / (SHININESS + 8), kept between a quarter and 4.
+pub fn lobe_gain(n: f32) -> f32 {
+    ((n + 8.0) / (SHININESS + 8.0)).clamp(0.25, 4.0)
+}
 /// How far the light wraps past a surface's edge (in `N·L`) at Softness 100.
 pub const WRAP_MAX: f32 = 0.75;
 /// The light's reach (long edges: where its light has halved) at Spread 0 and 100, exponential between.
@@ -312,6 +338,52 @@ impl Normals {
     }
 }
 
+/// The material map (`relight.material` decoded) over the stored source: [roughness, metallic, specular, transmission,
+/// lit] at each pixel, row-major.
+#[derive(Clone, Debug)]
+pub struct Materials {
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<[f32; 5]>,
+}
+
+static MATERIALS_KEPT: Mutex<Vec<(u64, Arc<Materials>)>> = Mutex::new(Vec::new());
+
+impl Materials {
+    /// The settings' material map, decoded; `None` without one or when it is damaged. The last few are kept.
+    pub fn of(s: &DevelopSettings) -> Option<Arc<Materials>> {
+        let m = s.relight.material.as_ref()?;
+        let key = crate::hash_of((&m.data, m.w, m.h));
+        if let Some(hit) = MATERIALS_KEPT.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|(k, _)| *k == key) {
+            return Some(hit.1.clone());
+        }
+        let data = m.records()?;
+        let made = Arc::new(Materials { width: m.w as usize, height: m.h as usize, data });
+        keep(&MATERIALS_KEPT, key, made.clone());
+        Some(made)
+    }
+
+    /// The record at normalized point (`u`, `v`) of the source, bilinear between pixel centres, edges extended.
+    pub fn at(&self, u: f32, v: f32) -> [f32; 5] {
+        let (w, h) = (self.width, self.height);
+        if w == 0 || h == 0 || self.data.len() != w * h {
+            return NEUTRAL;
+        }
+        let fx = (u * w as f32 - 0.5).clamp(0.0, (w - 1) as f32);
+        let fy = (v * h as f32 - 0.5).clamp(0.0, (h - 1) as f32);
+        let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+        let p = |x: usize, y: usize| self.data[y * w + x];
+        let (a, b, c, d) = (p(x0, y0), p(x1, y0), p(x0, y1), p(x1, y1));
+        std::array::from_fn(|k| (a[k] + (b[k] - a[k]) * tx) * (1.0 - ty) + (c[k] + (d[k] - c[k]) * tx) * ty)
+    }
+}
+
+/// A surface that is nothing in particular: what a pixel without a material is shaded as (today's lobe is the one of
+/// roughness about 0.45).
+pub const NEUTRAL: [f32; 5] = [0.45, 0.0, 0.35, 0.0, 1.0];
+
 /// What a render's Relight does, resolved from the settings and the depth.
 #[derive(Clone, Debug)]
 pub struct Setup {
@@ -340,6 +412,13 @@ pub struct Setup {
     pub gain: V3,
     /// The highlight's light (working space).
     pub shine: V3,
+    /// The photo's material map when Materials is above 0, and how much (0..1) it shapes the light.
+    materials: Option<Arc<Materials>>,
+    pub mat: f32,
+    /// The highlight at full Shine, in the light's colour (what a material highlight is measured in), and the share of
+    /// it the Shine slider asks of the uniform lobe (0..1).
+    pub shine_unit: V3,
+    pub shine_frac: f32,
     /// Stage-cache key of all of the above.
     pub key: u64,
 }
@@ -382,6 +461,10 @@ impl Setup {
             ambient: num(r.ambient, 0.0, 100.0, 60.0) / 100.0,
             gain: colour.map(|c| c * brightness),
             shine: colour.map(|c| c * shine),
+            materials: if num(r.materials, 0.0, 100.0, 0.0) > 0.0 { Materials::of(s) } else { None },
+            mat: num(r.materials, 0.0, 100.0, 0.0) / 100.0,
+            shine_unit: colour.map(|c| c * SHINE_MAX * brightness),
+            shine_frac: num(r.shine, 0.0, 100.0, 0.0) / 100.0,
             light,
             key: 0,
             depth_id: depth_identity(depth_key(s, &depth), &depth),
@@ -397,6 +480,7 @@ impl Setup {
             [setup.surface, setup.wrap, setup.reach, setup.shadows, setup.penumbra, setup.ambient, setup.near, setup.far].map(f32::to_bits),
             setup.gain.map(f32::to_bits),
             setup.shine.map(f32::to_bits),
+            setup.materials.as_ref().map(|_| (r.material.as_ref().map(|m| crate::hash_of((&m.data, m.w, m.h))), setup.mat.to_bits())),
         ));
         Some(Setup { key, ..setup })
     }
@@ -410,6 +494,11 @@ impl Setup {
         let made = Arc::new((smoothed(&self.depth), smoothed_by(&levelled(&self.depth), normal_sigma(self.depth.width.max(self.depth.height)))));
         keep(&SMOOTHED_KEPT, self.depth_id, made.clone());
         made
+    }
+
+    /// Whether a material map (with Materials above 0) shapes the light.
+    pub fn has_materials(&self) -> bool {
+        self.materials.is_some()
     }
 
     /// Whether the surface model's normals shade the photo (else the depth's slope).
@@ -450,13 +539,30 @@ impl Setup {
         let fall = 1.0 / (1.0 + q * q);
         let lit = if self.shadows > 0.0 { 1.0 - self.shadows * (1.0 - self.open_clearance(n, m, i, j, p, to, dist, steps)) } else { 1.0 };
         let light = diffuse * fall * lit;
-        let highlight = if self.shine != [0.0; 3] && ndl > 0.0 {
-            let half = normalized([dir[0], dir[1], dir[2] + 1.0]);
-            dot(normal, half).max(0.0).powf(SHININESS) * fall * lit
-        } else {
-            0.0
+        let half = normalized([dir[0], dir[1], dir[2] + 1.0]);
+        let Some(materials) = &self.materials else {
+            let highlight = if self.shine != [0.0; 3] && ndl > 0.0 { dot(normal, half).max(0.0).powf(SHININESS) * fall * lit } else { 0.0 };
+            return (light, highlight);
         };
-        (light, highlight)
+        // (with a material map the highlight is in units of `shine_unit`: Shine's share of the uniform lobe, and the
+        // material's own lobe, as much as Materials asks)
+        let m = materials.at((i as f32 + 0.5) / n.width.max(1) as f32, (j as f32 + 0.5) / n.height.max(1) as f32);
+        let ndh = dot(normal, half).max(0.0);
+        let uniform = if self.shine_frac > 0.0 && ndl > 0.0 { ndh.powf(SHININESS) } else { 0.0 };
+        let lobe = lobe_exponent(m[0]);
+        let own = if ndl > 0.0 { ndh.powf(lobe) * m[2] * lobe_gain(lobe) } else { 0.0 };
+        let light = light * (1.0 - self.mat * (m[1] * METAL_DIFFUSE + m[3] * TRANS_DIFFUSE));
+        (light, (self.shine_frac * uniform + self.mat * own) * fall * lit)
+    }
+
+    /// With a material map, at pixel (`i`, `j`) of a depth map of `w × h`: how metal the surface is (times Materials: how
+    /// much its highlight takes the surface's colour) and how much of the light reaches it (0 for sky, as Materials asks).
+    fn material_extras(&self, i: usize, j: usize, w: usize, h: usize) -> (f32, f32) {
+        let Some(materials) = &self.materials else {
+            return (0.0, 1.0);
+        };
+        let m = materials.at((i as f32 + 0.5) / w.max(1) as f32, (j as f32 + 0.5) / h.max(1) as f32);
+        (self.mat * m[1], 1.0 - self.mat * (1.0 - m[4]))
     }
 
     /// [`Setup::clearance`] over what the same ray would clear over an open surface with the pixel's own slope (of the
@@ -519,27 +625,30 @@ impl Setup {
     /// depth ([`Setup::reach_at`]), and that share itself when the range leaves part of the scene out: what [`apply`]
     /// samples through the frame.
     pub fn planes(&self, steps: usize) -> (Plane, Option<Plane>) {
-        let (light, highlight, _) = self.planes_in_range(steps);
+        let (light, highlight, _, _) = self.planes_in_range(steps);
         (light, highlight)
     }
 
-    /// [`Setup::planes`] and the range's share of the light (`None` when the range spans the whole scene).
-    pub fn planes_in_range(&self, steps: usize) -> (Plane, Option<Plane>, Option<Plane>) {
+    /// [`Setup::planes`], the range's share of the light (`None` when the range spans the whole scene and there is no
+    /// material map) and, with a material map, how metal each pixel is.
+    pub fn planes_in_range(&self, steps: usize) -> (Plane, Option<Plane>, Option<Plane>, Option<Plane>) {
         let smooth = self.smoothed();
         let (n, m) = (&smooth.0, &smooth.1);
         let (w, h) = (n.width, n.height);
-        let mut all: Image<[f32; 3]> = Image::new(w, h);
+        let mut all: Image<[f32; 4]> = Image::new(w, h);
         for_rows(&mut all.data, w, |y, row| {
             for (x, v) in row.iter_mut().enumerate() {
-                let r = self.reach_at(n.get_clamped(x as isize, y as isize));
+                let (metal, takes) = self.material_extras(x, y, w, h);
+                let r = self.reach_at(n.get_clamped(x as isize, y as isize)) * takes;
                 let (l, s) = if r > 0.0 { self.shade(n, m, x, y, steps) } else { (0.0, 0.0) };
-                *v = [l * r, s * r, r];
+                *v = [l * r, s * r, r, metal];
             }
         });
-        let light = Plane { width: w, height: h, data: all.data.iter().map(|v| v[0]).collect() };
-        let highlight = (self.shine != [0.0; 3]).then(|| Plane { width: w, height: h, data: all.data.iter().map(|v| v[1]).collect() });
-        let reach = self.ranged.then(|| Plane { width: w, height: h, data: all.data.iter().map(|v| v[2]).collect() });
-        (light, highlight, reach)
+        let plane = |k: usize| Plane { width: w, height: h, data: all.data.iter().map(|v| v[k]).collect() };
+        let highlight = (self.shine != [0.0; 3] || self.materials.is_some()).then(|| plane(1));
+        let reach = (self.ranged || self.materials.is_some()).then(|| plane(2));
+        let metal = self.materials.is_some().then(|| plane(3));
+        (plane(0), highlight, reach, metal)
     }
 }
 
@@ -549,13 +658,15 @@ pub fn apply(img: &mut Rgb32f, setup: &Setup, frame: &Frame, draft: bool) {
     if w == 0 || h == 0 {
         return;
     }
-    let (light, highlight, reach) = setup.planes_in_range(if draft { SHADOW_STEPS_DRAFT } else { SHADOW_STEPS });
+    let (light, highlight, reach, metal) = setup.planes_in_range(if draft { SHADOW_STEPS_DRAFT } else { SHADOW_STEPS });
     // (all 0..1, as the guided filter keeps them)
     let guide = crate::lensblur::log_luma(img);
     let light = crate::lensblur::nearness_out(&light, frame, w, h, &guide);
     let highlight = highlight.map(|p| crate::lensblur::nearness_out(&p, frame, w, h, &guide));
     let reach = reach.map(|p| crate::lensblur::nearness_out(&p, frame, w, h, &guide));
-    let (a, g, sh) = (setup.ambient, setup.gain, setup.shine);
+    let metal = metal.map(|p| crate::lensblur::nearness_out(&p, frame, w, h, &guide));
+    // (with a material map the highlight is in units of the light's colour at full Shine)
+    let (a, g, sh) = (setup.ambient, setup.gain, if setup.has_materials() { setup.shine_unit } else { setup.shine });
     for_rows(&mut img.data, w, |y, row| {
         for (x, c) in row.iter_mut().enumerate() {
             let i = y * w + x;
@@ -564,7 +675,11 @@ pub fn apply(img: &mut Rgb32f, setup: &Setup, frame: &Frame, draft: bool) {
             // (past the depth range the photo keeps its own light: Ambient only where the light reaches)
             let r = reach.as_ref().and_then(|p| p.data.get(i).copied()).unwrap_or(1.0);
             let keep = 1.0 - r * (1.0 - a);
-            *c = std::array::from_fn(|k| c[k] * (keep + g[k] * l) + sh[k] * s);
+            // (a metal's highlight takes the metal's own colour, as bright as its brightest channel)
+            let mp = metal.as_ref().and_then(|p| p.data.get(i).copied()).unwrap_or(0.0).clamp(0.0, 1.0);
+            let top = c[0].max(c[1]).max(c[2]);
+            let tint: V3 = if mp > 0.0 && top > 1e-6 { std::array::from_fn(|k| 1.0 + mp * (c[k] / top - 1.0)) } else { [1.0; 3] };
+            *c = std::array::from_fn(|k| c[k] * (keep + g[k] * l) + sh[k] * s * tint[k]);
         }
     });
 }

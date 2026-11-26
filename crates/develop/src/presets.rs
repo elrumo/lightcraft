@@ -193,6 +193,7 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     // (and a pasted Relight the surface of the photo it lands on)
     if let Some(relight) = out.get_mut("relight").and_then(Value::as_object_mut) {
         relight.remove("normals");
+        relight.remove("material");
     }
     // (and a pasted Flash the subject depth of this photo, which is a depth of the photo it was picked on)
     if let Some(flash) = out.get_mut("flash").and_then(Value::as_object_mut) {

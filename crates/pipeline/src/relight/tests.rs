@@ -467,3 +467,96 @@ fn an_8_bit_wall_is_lit_without_bands_and_casts_no_shadow_on_itself() {
         assert!(ripple < 0.004, "softness {softness}: ripple {ripple}");
     }
 }
+
+/// A flat scene whose normals face the camera, lit from straight in front, over a material `m` everywhere (roughness,
+/// metallic, specular, transmission, lit) at Materials `strength`.
+fn flat_material(m: Option<[f32; 5]>, strength: f64) -> DevelopSettings {
+    let mut s = DevelopSettings::default();
+    s.lens_blur.depth = DepthMap::from_nearness(48, 32, &[0.5; 48 * 32]);
+    s.relight.normals = lightcraft_develop::NormalMap::from_normals(8, 6, &[[0.0, 0.0, 1.0]; 48]);
+    s.relight.enabled = true;
+    s.relight.ambient = 0.0;
+    s.relight.shadows = 0.0;
+    s.relight.spread = 100.0;
+    s.relight.x = 0.5;
+    s.relight.y = 0.5;
+    s.relight.brightness = 60.0;
+    s.relight.material = m.and_then(|m| lightcraft_develop::MaterialMap::from_records(4, 3, &[m; 12]));
+    s.relight.materials = strength;
+    s
+}
+
+fn setup_of(s: &DevelopSettings) -> Setup {
+    Setup::new(s, crate::lensblur::mattes_for(s, None).as_deref(), Orientation::Normal).unwrap()
+}
+
+const METAL: [f32; 5] = [0.1, 1.0, 1.0, 0.0, 1.0];
+const CLOTH: [f32; 5] = [0.92, 0.0, 0.1, 0.0, 1.0];
+
+#[test]
+fn a_material_map_changes_nothing_until_materials_is_asked_for() {
+    let plain = flat_material(None, 0.0);
+    // the map is there, Materials is 0: the very same picture and the very same key
+    let off = flat_material(Some(METAL), 0.0);
+    assert_eq!(shot(&off), shot(&plain));
+    assert_eq!(setup_of(&off).key, setup_of(&plain).key);
+    assert!(!setup_of(&off).has_materials());
+    // Materials above 0 without a map: nothing to read
+    let none = flat_material(None, 100.0);
+    assert_eq!(shot(&none), shot(&plain));
+    // a damaged map is no map
+    let mut bad = flat_material(Some(METAL), 100.0);
+    bad.relight.material = Some(lightcraft_develop::MaterialMap { w: 4, h: 3, data: "AAAA".into() });
+    assert_eq!(shot(&bad), shot(&plain));
+    // and the settings stay as they were written: no new keys
+    assert!(plain.to_json()["relight"].get("materials").is_none() && plain.to_json()["relight"].get("material").is_none());
+}
+
+#[test]
+fn metal_keeps_a_sharp_bright_highlight_and_cloth_a_faint_broad_one() {
+    let peak = |m| {
+        let s = setup_of(&flat_material(Some(m), 100.0));
+        assert!(s.has_materials());
+        let (_, h) = s.planes(8);
+        let h = h.unwrap();
+        let top = h.data.iter().copied().fold(0.0f32, f32::max);
+        let wide = h.data.iter().filter(|v| **v > 0.05 * top).count();
+        (top, wide)
+    };
+    let (metal, metal_area) = peak(METAL);
+    let (cloth, cloth_area) = peak(CLOTH);
+    assert!(metal > 8.0 * cloth, "{metal} {cloth}");
+    assert!(metal_area < cloth_area, "a mirror's lobe is narrower: {metal_area} {cloth_area}");
+    // metal scatters less of the diffuse light
+    let light = |m| {
+        let (l, _) = setup_of(&flat_material(Some(m), 100.0)).planes(8);
+        l.data.iter().sum::<f32>()
+    };
+    assert!(light(METAL) < 0.6 * light(CLOTH), "{} {}", light(METAL), light(CLOTH));
+    // half of Materials is half way between today's flat light and the material's
+    let half = setup_of(&flat_material(Some(METAL), 50.0)).planes(8).1.unwrap().data.iter().copied().fold(0.0f32, f32::max);
+    assert!(half > 0.0 && half < metal, "{half} {metal}");
+}
+
+#[test]
+fn a_metals_highlight_takes_its_colour_and_sky_keeps_the_photos_own_light() {
+    let gold = Rgb32f::filled(W, H, [0.5, 0.32, 0.08]);
+    let shot_of = |s: &DevelopSettings| render(&gold, &SourceInfo::default(), s, &RenderRequest::fit(W, H)).image;
+    let dim = |m| {
+        let mut s = flat_material(Some(m), 100.0);
+        s.relight.brightness = 15.0;
+        s
+    };
+    // (the same sharp, strong lobe, on a glossy dielectric and on a metal: white light on gold gives the dielectric a white highlight over the gold
+    // and the metal a gold one)
+    let glossy = [0.1, 0.0, 1.0, 0.0, 1.0];
+    let (m, d) = (shot_of(&dim(METAL)), shot_of(&dim(glossy)));
+    let mid = (H / 2) * W + W / 2;
+    let ratio = |p: [u8; 4]| f64::from(p[2]) / f64::from(p[0].max(1));
+    assert!(ratio(m.data[mid]) < 0.6 * ratio(d.data[mid]), "{:?} {:?}", m.data[mid], d.data[mid]);
+    // sky takes no light: the photo is as it was, whatever the light does
+    let sky = flat_material(Some([1.0, 0.0, 0.0, 0.0, 0.0]), 100.0);
+    let mut dark = flat_material(None, 0.0);
+    dark.relight.enabled = false;
+    assert_eq!(shot_of(&sky), shot_of(&dark));
+}

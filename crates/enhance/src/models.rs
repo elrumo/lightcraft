@@ -632,6 +632,46 @@ pub const SFACE_COREML: ModelSpec = ModelSpec {
     restricted: false,
 };
 
+/// Apple's DMS46 material segmentation net (Upchurch and Niu, ECCV 2022; 46 kinds of material), converted to Core ML
+/// (512 × 512, fp16, answers the class probabilities at a quarter of the size): Relight's
+/// Materials, which a frontend runs itself. The weights are Apple's software under Apple's source licence (use, modify and
+/// redistribute, binary included; read 2026-11-26 in the dataset repository's `LICENSE.txt`); the dataset's labels they
+/// were trained on are CC BY-NC 4.0, and whether that reaches the weights is the maintainer's call (accepted 2026-11-26).
+/// The licence text travels with the files on the mirror (`LICENSE.txt`).
+pub const DMS46_COREML: ModelSpec = ModelSpec {
+    id: "dms46-coreml",
+    label: "Material model (DMS46, Core ML)",
+    purpose: "Relight: what each surface is made of (metal, glass, cloth, skin, water, sky...), so the light lands on it as it would",
+    files: &[
+        FileSpec {
+            name: "Manifest.json",
+            size: Some(617),
+            sha256: Some("a1ac30aab60c0c2e27019d1848b14e27ee6ad5cd0a657b0855849b92002f9f03"),
+            max: 617,
+        },
+        FileSpec {
+            name: "model.mlmodel",
+            size: Some(144_456),
+            sha256: Some("f5756f9a3beee469232ff064107ee92b5ae227f810fc277947e967f3d8a0d4e2"),
+            max: 144_456,
+        },
+        FileSpec {
+            name: "weight.bin",
+            size: Some(93_407_644),
+            sha256: Some("783b8dfca5059ecd5a1b1a038f4406b0e793ab5b07a6f80656b9232a8d362263"),
+            max: 93_407_644,
+        },
+    ],
+    mirrors_env: "LIGHTCRAFT_DMS46_COREML_MIRRORS",
+    default_mirrors: &[],
+    licence: "Apple source licence (labels CC BY-NC 4.0)",
+    licence_url: "https://github.com/apple/ml-dms-dataset/blob/main/LICENSE.txt",
+    credit: "Paul Upchurch and Ransen Niu, Apple (DMS, ECCV 2022)",
+    home_url: "https://github.com/apple/ml-dms-dataset",
+    diffusion: None,
+    restricted: false,
+};
+
 /// Models the engine downloads but never runs: a frontend runs them (Core ML) and lists them in its open options
 /// (`hostModels`), with where to download them. Elsewhere they are not offered.
 pub const HOST_RUN: &[&str] = &[
@@ -646,6 +686,7 @@ pub const HOST_RUN: &[&str] = &[
     SIGLIP_IMAGE_COREML.id,
     YUNET_COREML.id,
     SFACE_COREML.id,
+    DMS46_COREML.id,
 ];
 
 /// Every enhancement model, for listings (the GPU weights only where there is a GPU to run them: Apple's, as are the
@@ -673,6 +714,7 @@ pub const ALL: &[&ModelSpec] = &[
     &SIGLIP_IMAGE_COREML,
     &YUNET_COREML,
     &SFACE_COREML,
+    &DMS46_COREML,
 ];
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH_SMALL, &DEPTH_BASE, &SURFACE, &SD15, &KANDINSKY, &SDXL];

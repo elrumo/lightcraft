@@ -15,7 +15,7 @@ pub mod settings;
 
 pub use controls::{CONTROLS, ControlSpec, Section, Track};
 pub use presets::{AiWork, Preset, SettingsGroup, ai_work, apply_partial, extract_groups};
-pub use segmask::{ChromaMap, DepthMap, ExpandFill, NormalMap, SegMask, SpotFill, with_grid_interner};
+pub use segmask::{ChromaMap, DepthMap, ExpandFill, MATERIAL_PLANES, MaterialMap, NormalMap, SegMask, SpotFill, with_grid_interner};
 pub use settings::*;
 
 use serde_json::Value;

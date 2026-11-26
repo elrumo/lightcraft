@@ -1300,8 +1300,8 @@ impl Session {
             for k in ["spots", "red_eye", "version", "process", "exposure_layers"] {
                 o.remove(k);
             }
-            // (an estimated depth or surface is a picture of this photo: each photo has its own, as copies leave them behind)
-            for (group, k) in [("lens_blur", "depth"), ("relight", "normals"), ("flash", "subject")] {
+            // (an estimated depth, surface or material map is a picture of this photo: each photo has its own, as copies leave them behind)
+            for (group, k) in [("lens_blur", "depth"), ("relight", "normals"), ("relight", "material"), ("flash", "subject")] {
                 if let Some(g) = o.get_mut(group).and_then(Value::as_object_mut) {
                     g.remove(k);
                     if g.is_empty() {

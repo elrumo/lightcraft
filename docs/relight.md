@@ -64,6 +64,22 @@ cast) needs the photo's albedo apart from its shading. A fit of the photo's ligh
 normals was tried and left out: on real photos it fits the dark clothes and the white shirt rather than the light. That
 needs an intrinsic-decomposition model.
 
+### Materials
+
+A native frontend can run a material model (what each surface is: metal, glass, water, cloth, skin, sky...) and store its answer for the photo (`relight.material`, a `MaterialMap`: roughness, metallic, specular level,
+transmission and lit as 8-bit planes over the uncropped, EXIF-oriented photo, up to 1024 on a side, plane after plane, each byte as its difference from the one to its left, deflated and base64 encoded; a picture of
+this photo, so copies, presets and Auto Sync leave it behind and Reset keeps it). The develop control `relight.materials` (Materials, 0–100, left out of the JSON at 0) says how much it shapes the light:
+
+- **The highlight's lobe** follows the roughness (`lobe_exponent`: GGX's width r² as a Blinn-Phong exponent, 2 to 512, in place of today's 32) and its strength the specular level and the lobe's normalisation (`lobe_gain`): a
+  mirror-like lobe for glass, water and polished metal, a broad faint one for cloth and skin. It is made even at Shine 0; Shine adds today's uniform lobe on top, in its share.
+- **Metal** takes the diffuse light away (`METAL_DIFFUSE` of it at full metal) and its highlight takes the colour of the photo's own pixel, as bright as its brightest channel; **clear** surfaces (transmission) take
+  `TRANS_DIFFUSE` away.
+- **What takes no light** (sky: lit 0) keeps the photo's own light (the light and the highlight are multiplied by it, and Ambient applies only where the light reaches).
+
+At Materials 0, with no map, or with a map that does not read, nothing of this happens and the render is what it was (the settings' key and the stage cache key are the same, a test pins it). The frontend writes the planes with
+`relight.materialApply {w, h, planes | data}` (and turns Materials to 60 when it was 0), takes them away with `relight.materialClear`; `relight.info` says `materials` and whether a `material` map is stored. The model is the
+frontend's (Apple's DMS46 in Core ML in the native app, `dms46-coreml` in `lightcraft_enhance::models`, a download a frontend runs and the engine only lists and stores).
+
 ## Depth Map
 
 The photo drawn as its depth (`depth_map`, also left out while it is the default): each output pixel's depth (0 the
@@ -94,7 +110,7 @@ depth gets the estimate from `lensBlur.estimate`.
 
 ## Commands
 
-`relight.info`, `relight.apply {on?}`, `relight.surface {on?}`, `relight.color {color: [r,g,b] | "#rrggbb"}`, `relight.reset`;
+`relight.info`, `relight.apply {on?}`, `relight.surface {on?}`, `relight.materialApply {w, h, planes | data}`, `relight.materialClear`, `relight.color {color: [r,g,b] | "#rrggbb"}`, `relight.reset`;
 `depthMap.info` (with every palette's stops for the pickers), `depthMap.apply {on?}`, `depthMap.palette {palette}`,
 `depthMap.colors {near?, far?}`, `depthMap.invert {on?}`, `depthMap.reset`, `depthMap.export` (above). The sliders are `relight.*` and
 `depthMap.*` through `develop.set`; Copy Settings and presets have a Relight and a Depth Map group.

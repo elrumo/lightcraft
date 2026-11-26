@@ -2725,6 +2725,15 @@ pub struct Relight {
     /// still casts its shadows through the depth.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub normals: Option<crate::NormalMap>,
+    /// How much the surface's material shapes the light, 0–100: 0 treats every surface alike (Relight as it was); more
+    /// lets metal and glass keep a sharp, tinted highlight, cloth and skin a broad faint one, and sky no light at all,
+    /// by the photo's [`Relight::material`]. Left out of the JSON at 0.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub materials: f64,
+    /// What each part of this photo is made of (the material model's answer, [`crate::MaterialMap`]): a picture of this
+    /// photo, so copies leave it behind, and Reset keeps it. Nothing changes while Materials is 0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material: Option<crate::MaterialMap>,
 }
 
 impl Default for Relight {
@@ -2745,6 +2754,8 @@ impl Default for Relight {
             near: 0.0,
             far: 100.0,
             normals: None,
+            materials: 0.0,
+            material: None,
         }
     }
 }

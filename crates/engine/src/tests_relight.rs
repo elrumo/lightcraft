@@ -277,6 +277,45 @@ fn the_surface_model_is_offered_kept_through_reset_and_taken_away_on_request() {
 }
 
 #[test]
+fn a_material_map_is_stored_shapes_nothing_until_asked_and_is_kept_through_reset() {
+    let mut s = demo_with_depth();
+    s.execute("relight.apply", &json!({})).unwrap();
+    let info = s.execute("relight.info", &json!({})).unwrap();
+    assert_eq!((info["materials"].clone(), info["material"].clone()), (json!(0.0), Value::Null), "{info}");
+    let map = lightcraft_develop::MaterialMap::from_records(2, 2, &[[0.1, 1.0, 1.0, 0.0, 1.0]; 4]).unwrap();
+    let params = json!({"w": map.w, "h": map.h, "data": map.data});
+    // storing it turns Materials to 60 (once), as one undo step
+    let info = s.execute("relight.materialApply", &params).unwrap();
+    assert_eq!((info["materials"].clone(), info["material"].clone()), (json!(60.0), json!({"w": 2, "h": 2})), "{info}");
+    assert_eq!(dev(&s).relight.material, Some(map.clone()));
+    s.execute("develop.set", &json!({"values": {"relight.materials": 20.0}})).unwrap();
+    s.execute("relight.materialApply", &params).unwrap();
+    assert_eq!(dev(&s).relight.materials, 20.0, "the person's own value stays");
+    // a frontend may give the planes raw: 2 × 1 pixels, the first a mirror, the second sky
+    use base64::Engine as _;
+    let raw: Vec<u8> = vec![0, 255, /* rough */ 0, 0, /* metal */ 255, 0, /* spec */ 0, 0, /* trans */ 255, 0 /* lit */];
+    s.execute("relight.materialApply", &json!({"w": 2, "h": 1, "planes": base64::engine::general_purpose::STANDARD.encode(raw)})).unwrap();
+    let rec = dev(&s).relight.material.unwrap().records().unwrap();
+    assert_eq!((rec[0], rec[1]), ([0.0, 0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0, 0.0]));
+    assert!(s.execute("relight.materialApply", &json!({"w": 2, "h": 2, "planes": "AAAA"})).is_err());
+    s.execute("relight.materialApply", &params).unwrap();
+    // Reset puts Materials back and keeps the picture of the photo
+    s.execute("relight.reset", &json!({})).unwrap();
+    assert!(dev(&s).relight.material.is_some() && dev(&s).relight.materials == 0.0);
+    // a damaged or oversized map is refused and changes nothing
+    let before = dev(&s);
+    assert!(s.execute("relight.materialApply", &json!({"w": 2, "h": 2, "data": "AAAA"})).is_err());
+    assert!(s.execute("relight.materialApply", &json!({"w": 1 << 20, "h": 1 << 20, "data": ""})).is_err());
+    assert!(s.execute("relight.materialApply", &json!({"w": 2})).is_err());
+    assert_eq!(dev(&s), before);
+    // taking it away is one undo step too
+    s.execute("relight.materialClear", &json!({})).unwrap();
+    assert!(dev(&s).relight.material.is_none());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(dev(&s).relight.material.is_some());
+}
+
+#[test]
 fn a_depth_range_is_picked_from_the_photo_and_its_depths_are_counted() {
     let mut s = Session::with_demo();
     s.execute("mask.add", &json!({"kind": "depthRange", "lo": 0.0, "hi": 0.3})).unwrap();
@@ -331,9 +370,10 @@ fn auto_sync_leaves_each_photos_depth_and_surface_behind() {
     d.relight.enabled = true;
     d.relight.brightness = 70.0;
     d.relight.normals = Some(surface());
+    d.relight.material = lightcraft_develop::MaterialMap::from_records(1, 1, &[[0.5; 5]]);
     d.lens_blur.depth = DepthMap::from_nearness(2, 2, &[0.1, 0.2, 0.3, 0.4]);
     s.set_develop(PhotoId(active), d, "Relight").unwrap();
     let o = s.develop_of(PhotoId(other)).unwrap();
     assert!(o.relight.enabled && o.relight.brightness == 70.0, "the look syncs");
-    assert!(o.relight.normals.is_none() && o.lens_blur.depth.is_none(), "the pictures of the first photo don't");
+    assert!(o.relight.normals.is_none() && o.relight.material.is_none() && o.lens_blur.depth.is_none(), "the pictures of the first photo don't");
 }

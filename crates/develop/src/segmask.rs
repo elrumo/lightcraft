@@ -426,6 +426,70 @@ impl NormalMap {
     }
 }
 
+/// Largest side of a stored [`MaterialMap`] (the material model's answer is shrunk to about 200 pixels).
+pub const MAX_MATERIAL_SIDE: usize = 1024;
+
+/// What the surface at each pixel of the photo is made of, as the planes Relight shades by (the material model's class
+/// probabilities turned into numbers by a table of the frontend's): roughness (0 a mirror to 1 chalk), metallic, specular level,
+/// transmission (glass, water, clear plastic) and lit (0 where nothing takes light: sky), each 0..1 in a byte. `w × h`
+/// over the uncropped, EXIF-oriented photo (laid out as a [`DepthMap`]); a picture of this photo, so copies leave it
+/// behind. Stored plane after plane, each byte as its difference from the one to its left, deflated and base64 encoded.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MaterialMap {
+    pub w: u32,
+    pub h: u32,
+    pub data: String,
+}
+
+/// The planes of a [`MaterialMap`], in the order they are stored.
+pub const MATERIAL_PLANES: usize = 5;
+
+impl MaterialMap {
+    /// From `w × h` records of [roughness, metallic, specular, transmission, lit] (each clamped to 0..1; not a number is
+    /// 0); `None` for an empty or oversized map.
+    pub fn from_records(w: usize, h: usize, v: &[[f32; MATERIAL_PLANES]]) -> Option<MaterialMap> {
+        if w == 0 || h == 0 || w > MAX_MATERIAL_SIDE || h > MAX_MATERIAL_SIDE || v.len() != w * h {
+            return None;
+        }
+        let mut q = Vec::with_capacity(MATERIAL_PLANES * w * h);
+        for k in 0..MATERIAL_PLANES {
+            for row in v.chunks(w) {
+                let mut prev = 0u8;
+                for p in row {
+                    let c = if p[k].is_finite() { (p[k].clamp(0.0, 1.0) * 255.0).round() as u8 } else { 0 };
+                    q.push(c.wrapping_sub(prev));
+                    prev = c;
+                }
+            }
+        }
+        Some(MaterialMap { w: w as u32, h: h as u32, data: base64_encode(&miniz_oxide::deflate::compress_to_vec(&q, 8)) })
+    }
+
+    /// The records (row-major, 0..1), or `None` when the data is damaged or claims an absurd size.
+    pub fn records(&self) -> Option<Vec<[f32; MATERIAL_PLANES]>> {
+        let (w, h) = (self.w as usize, self.h as usize);
+        if w == 0 || h == 0 || w > MAX_MATERIAL_SIDE || h > MAX_MATERIAL_SIDE {
+            return None;
+        }
+        let n = MATERIAL_PLANES * w * h;
+        let q = miniz_oxide::inflate::decompress_to_vec_with_limit(&base64_decode(&self.data)?, n).ok()?;
+        if q.len() != n {
+            return None;
+        }
+        let mut out = vec![[0.0f32; MATERIAL_PLANES]; w * h];
+        for (k, plane) in q.chunks(w * h).enumerate() {
+            for (y, row) in plane.chunks(w).enumerate() {
+                let mut prev = 0u8;
+                for (x, d) in row.iter().enumerate() {
+                    prev = prev.wrapping_add(*d);
+                    out[y * w + x][k] = f32::from(prev) / 255.0;
+                }
+            }
+        }
+        Some(out)
+    }
+}
+
 /// Largest side of a stored [`ChromaMap`] (the colourise model answers 512 × 512).
 pub const MAX_CHROMA_SIDE: usize = 1024;
 
@@ -589,6 +653,21 @@ mod tests {
         assert_eq!(odd, vec![[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]);
         assert!(NormalMap::from_normals(0, 1, &[]).is_none());
         assert!(NormalMap { w: 3, h: 3, data: "AAAA".into() }.normals().is_none());
+    }
+
+    #[test]
+    fn materials_round_trip_within_a_byte_and_damaged_data_is_refused() {
+        let (w, h) = (5, 3);
+        let v: Vec<[f32; MATERIAL_PLANES]> = (0..w * h).map(|i| std::array::from_fn(|k| ((i * 7 + k * 31) % 101) as f32 / 100.0)).collect();
+        let m = MaterialMap::from_records(w, h, &v).unwrap();
+        let back = m.records().unwrap();
+        assert_eq!(back.len(), v.len());
+        assert!(v.iter().zip(&back).all(|(a, b)| a.iter().zip(b).all(|(p, q)| (p - q).abs() < 0.003)));
+        let odd = MaterialMap::from_records(1, 1, &[[f32::NAN, 2.0, -1.0, 0.5, f32::INFINITY]]).unwrap().records().unwrap();
+        assert_eq!(odd[0][..3], [0.0, 1.0, 0.0]);
+        assert!(MaterialMap::from_records(0, 1, &[]).is_none() && MaterialMap::from_records(2, 2, &[[0.0; 5]]).is_none());
+        assert!(MaterialMap { w: 3, h: 3, data: "AAAA".into() }.records().is_none());
+        assert!(MaterialMap { w: 1 << 20, h: 1 << 20, data: String::new() }.records().is_none());
     }
 
     #[test]

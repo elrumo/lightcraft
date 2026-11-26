@@ -516,6 +516,7 @@ controls! {
     "relight.shadows" => relight.shadows, "Cast Shadows", Relight, 0, 100, 60, 1, 0, Plain;
     "relight.shine" => relight.shine, "Shine", Relight, 0, 100, 0, 1, 0, Plain;
     "relight.surface" => relight.surface, "Surface", Relight, 0, 100, 50, 1, 0, Plain;
+    "relight.materials" => relight.materials, "Materials", Relight, 0, 100, 0, 1, 0, Plain;
     "relight.x" => relight.x, "Light Across", Relight, -0.5, 1.5, 0.3, 0.001, 3, Plain;
     "relight.y" => relight.y, "Light Down", Relight, -0.5, 1.5, 0.25, 0.001, 3, Plain;
     "relight.near" => relight.near, "Near", Relight, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
@@ -1029,6 +1030,12 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
                 s.relight.spread = 100.0;
                 s.relight.distance = 80.0;
             }
+            // (Materials needs a material map: the sample's block is metal, the ground cloth, and the far strip sky)
+            if id == "relight.materials" {
+                s.relight.material = sample_material();
+            } else {
+                s.relight.material = None;
+            }
         }
         _ if id.starts_with("flash.") => {
             // (a ground that runs from near to far, with a near block standing on it: the flash lights the block and the
@@ -1091,6 +1098,25 @@ fn sample_depth() -> Option<crate::DepthMap> {
         })
         .collect();
     crate::DepthMap::from_nearness(w, h, &v)
+}
+
+/// A material map for the slider sweep of Materials, over [`sample_depth`]'s picture: the near block is polished metal,
+/// the ground cloth and the top rows sky.
+fn sample_material() -> Option<crate::MaterialMap> {
+    let (w, h) = (24usize, 16usize);
+    let v: Vec<[f32; crate::MATERIAL_PLANES]> = (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            if (6..12).contains(&x) && (4..12).contains(&y) {
+                [0.15, 1.0, 1.0, 0.0, 1.0]
+            } else if y < 2 {
+                [1.0, 0.0, 0.0, 0.0, 0.0]
+            } else {
+                [0.92, 0.0, 0.1, 0.0, 1.0]
+            }
+        })
+        .collect();
+    crate::MaterialMap::from_records(w, h, &v)
 }
 
 #[cfg(test)]

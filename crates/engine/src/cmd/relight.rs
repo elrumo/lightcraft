@@ -4,7 +4,9 @@
 //! photo has none of its own, as Lens Blur does, and keeping it where Lens Blur keeps it), pick the light's
 //! colour, the palette and its colours.
 
-use lightcraft_develop::{DepthLook, DepthMap, DepthPalette, DevelopSettings, NormalMap, Relight};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use lightcraft_develop::{DepthLook, DepthMap, DepthPalette, DevelopSettings, MATERIAL_PLANES, MaterialMap, NormalMap, Relight};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, has_active, str_param};
@@ -131,6 +133,8 @@ fn relight_info(s: &mut Session, c: &str) -> Result<Value> {
             "near": r.near,
             "far": r.far,
             "normals": r.normals.as_ref().map(|_| "model"),
+            "materials": r.materials,
+            "material": r.material.as_ref().map(|m| json!({"w": m.w, "h": m.h})),
             "surfaceReady": s.surface_model_ready(),
             "surfaceModel": lightcraft_depth::surface::ID,
         }),
@@ -206,7 +210,7 @@ pub(super) fn on(p: &Value) -> bool {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "relight.info", "Relight Info", [], None, "→ {enabled, x, y, color: [r,g,b], brightness, ambient, distance, spread, softness, shadows, shine, surface, near, far (the depths it reaches, 0 nearest to 100 farthest), normals: model|null (the surface model's), surfaceReady, surfaceModel, depth: photo|estimated|null, modelReady, model}", has_active, |s, _| relight_info(s, "relight.info")),
+        cmd!(query "relight.info", "Relight Info", [], None, "→ {enabled, x, y, color: [r,g,b], brightness, ambient, distance, spread, softness, shadows, shine, surface, materials (0–100: how much the surface's material shapes the light), near, far (the depths it reaches, 0 nearest to 100 farthest), normals: model|null (the surface model's), material: {w, h}|null (the stored material map), surfaceReady, surfaceModel, depth: photo|estimated|null, modelReady, model}", has_active, |s, _| relight_info(s, "relight.info")),
         cmd!(
             "relight.apply",
             "Relight",
@@ -260,6 +264,57 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "relight.materialApply",
+            "Estimate Materials",
+            [],
+            None,
+            "{w: int, h: int, planes: string | data: string} — stores the material map a native frontend's model made for the active photo, over the photo as `colorize.input` gives it (roughness, metallic, specular, transmission and lit, 0..1, up to 1024 on a side). `planes`: base64 of w × h × 5 bytes, plane after plane (the five above, 255 = 1); `data`: a stored `MaterialMap` as it is in the settings and, when Materials is 0, sets it to 60 so the map shows → relight.info",
+            has_active,
+            |s, p| {
+                const C: &str = "relight.materialApply";
+                let (w, h) = (
+                    p.get("w").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).ok_or_else(|| bad(C, "give `w`"))?,
+                    p.get("h").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).ok_or_else(|| bad(C, "give `h`"))?,
+                );
+                let map = if let Some(planes) = p.get("planes").and_then(Value::as_str) {
+                    // (a frontend gives the planes as they are; the core packs them)
+                    let bytes = STANDARD.decode(planes.as_bytes()).map_err(|e| bad(C, format!("`planes` isn't base64: {e}")))?;
+                    let n = (w as usize).saturating_mul(h as usize);
+                    if n == 0 || bytes.len() != n.saturating_mul(MATERIAL_PLANES) {
+                        return Err(bad(C, "`planes` must be w × h × 5 bytes"));
+                    }
+                    let records: Vec<[f32; MATERIAL_PLANES]> = (0..n).map(|i| std::array::from_fn(|k| f32::from(bytes[k * n + i]) / 255.0)).collect();
+                    MaterialMap::from_records(w as usize, h as usize, &records).ok_or_else(|| bad(C, "the material map is too large"))?
+                } else {
+                    MaterialMap { w, h, data: p.get("data").and_then(Value::as_str).ok_or_else(|| bad(C, "give `data` or `planes`"))?.to_string() }
+                };
+                if map.records().is_none() {
+                    return Err(bad(C, "the material map is damaged or too large"));
+                }
+                edit(s, C, "Estimate Materials", relight_info, |d| {
+                    d.relight.material = Some(map);
+                    if d.relight.materials == 0.0 {
+                        d.relight.materials = 60.0;
+                    }
+                    Ok(())
+                })
+            }
+        ),
+        cmd!(
+            "relight.materialClear",
+            "Remove Materials",
+            [],
+            None,
+            "{} — takes the stored material map away (Materials keeps its value, and shapes nothing without a map) → relight.info",
+            has_active,
+            |s, _| {
+                edit(s, "relight.materialClear", "Remove Materials", relight_info, |d| {
+                    d.relight.material = None;
+                    Ok(())
+                })
+            }
+        ),
+        cmd!(
             "relight.color",
             "Light Color",
             [],
@@ -280,11 +335,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "Reset Relight",
             [],
             None,
-            "{} — the light back to where and how it starts (the depth and the surface are kept) → relight.info",
+            "{} — the light back to where and how it starts (the depth, the surface and the material map are kept) → relight.info",
             has_active,
             |s, _| {
                 edit(s, "relight.reset", "Reset Relight", relight_info, |d| {
-                    d.relight = Relight { enabled: d.relight.enabled, normals: d.relight.normals.take(), ..Relight::default() };
+                    d.relight = Relight {
+                        enabled: d.relight.enabled,
+                        normals: d.relight.normals.take(),
+                        material: d.relight.material.take(),
+                        ..Relight::default()
+                    };
                     Ok(())
                 })
             }
