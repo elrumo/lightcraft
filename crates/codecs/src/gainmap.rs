@@ -210,6 +210,16 @@ pub fn apple_stops(exif: &[u8]) -> Option<f32> {
     (stops.is_finite() && stops > 0.0).then_some(stops.min(8.0))
 }
 
+/// The ISO 21496-1 payload of a `tmap` item's data. The item starts with its own version byte (0), which the payload
+/// ([`GainMapMeta::from_iso`]: `minimum_version`, `writer_version`, flags...) does not have; `None` for another version.
+#[cfg(feature = "heif")]
+fn tmap_payload(item: &[u8]) -> Option<&[u8]> {
+    match item.split_first() {
+        Some((0, payload)) => Some(payload),
+        _ => None,
+    }
+}
+
 #[cfg(feature = "heif")]
 fn read_heif(bytes: &[u8]) -> Option<JpegGainMap> {
     let opts = craft_heif::Options { max_pixels: 1 << 24, apply_transforms: true, ..craft_heif::Options::default() };
@@ -219,7 +229,7 @@ fn read_heif(bytes: &[u8]) -> Option<JpegGainMap> {
         return None;
     }
     let meta = match &g.iso {
-        Some(iso) => GainMapMeta::from_iso(iso)?,
+        Some(item) => GainMapMeta::from_iso(tmap_payload(item)?)?,
         None => apple_meta(apple_stops(g.exif.as_deref()?)?)?,
     };
     let max = f32::from(g.map.max.max(1));

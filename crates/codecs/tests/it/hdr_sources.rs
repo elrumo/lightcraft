@@ -74,14 +74,34 @@ fn an_iphone_heic_gain_map_is_read_with_the_headroom_of_its_maker_note() {
 #[test]
 fn an_iso_tone_map_heic_brings_its_own_metadata() {
     let meta = GainMapMeta { alternate_headroom: 3.0, max: [3.0; 3], ..GainMapMeta::default() };
-    let iso = meta.to_iso()[gainmap::ISO_URN.len()..].to_vec();
+    // (a tmap item is a version byte, 0, then the ISO payload: what Core Image and every other writer put in the file)
+    let iso = [&[0u8][..], &meta.to_iso()[gainmap::ISO_URN.len()..]].concat();
     let gain = |x: u32, _: u32| (x * 4) as u16;
-    let bytes = build(&Spec { gain: Some(&gain), tmap: Some(iso), ..Spec::new(96, 64, &grey) });
+    let bytes = build(&Spec { gain: Some(&gain), tmap: Some(iso.clone()), ..Spec::new(96, 64, &grey) });
     let g = gainmap::read(&bytes).unwrap();
     assert!((g.meta.alternate_headroom - 3.0).abs() < 1e-5 && (g.meta.max[0] - 3.0).abs() < 1e-5);
     // unusable metadata leaves the file SDR
     let bad = build(&Spec { gain: Some(&gain), tmap: Some(vec![9, 9, 9]), ..Spec::new(96, 64, &grey) });
     assert!(gainmap::read(&bad).is_none());
+    // a version other than 0, or the payload with no version byte before it, is not read
+    let mut later = iso.clone();
+    later[0] = 1;
+    assert!(gainmap::read(&build(&Spec { gain: Some(&gain), tmap: Some(later), ..Spec::new(96, 64, &grey) })).is_none());
+    assert!(gainmap::read(&build(&Spec { gain: Some(&gain), tmap: Some(iso[1..].to_vec()), ..Spec::new(96, 64, &grey) })).is_none());
+}
+
+/// The `tmap` item of a HEIC Core Image wrote on macOS 26 (a photo and its gain map, `CIImageRepresentationOption.hdrImage`): 62 bytes.
+/// Its metadata was read as nothing, so the engine drew the file with no HDR (card 578).
+#[test]
+fn the_tone_map_item_core_image_writes_is_read() {
+    let hex = "000000000040000000000000000100ed6fbf00400000000000000000000100200b85000800000000000100000001000029f140000000000029f140000000";
+    let item: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+    assert_eq!(item.len(), 62);
+    let gain = |x: u32, _: u32| (x * 4) as u16;
+    let g = gainmap::read(&build(&Spec { gain: Some(&gain), tmap: Some(item), ..Spec::new(96, 64, &grey) })).unwrap();
+    assert!(g.meta.use_base_colour_space && !g.meta.multichannel);
+    assert!((g.meta.alternate_headroom - 3.7099).abs() < 1e-3, "{:?}", g.meta);
+    assert!((g.meta.max[0] - 4.0056).abs() < 1e-3 && g.meta.gamma[0] == 1.0, "{:?}", g.meta);
 }
 
 #[test]
