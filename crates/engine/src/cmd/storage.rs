@@ -27,8 +27,8 @@ fn counts(p: &Photo) -> bool {
 }
 
 /// `{total: {count, bytes}, byKind: {image, raw, video: {count, bytes}}, largest: [summary + inPhotos]}`,
-/// the `limit` biggest first (ties by id, so the list doesn't shuffle between calls).
-pub fn storage(cat: &Catalog, limit: usize, kind: Option<&str>) -> Value {
+/// the `limit` biggest first after the first `offset` (ties by id, so the list doesn't shuffle between calls).
+pub fn storage(cat: &Catalog, limit: usize, offset: usize, kind: Option<&str>) -> Value {
     let mut totals = [(0u64, 0u64); 3];
     let mut picked: Vec<&Photo> = Vec::new();
     for p in cat.photos().filter(|p| counts(p)) {
@@ -44,13 +44,18 @@ pub fn storage(cat: &Catalog, limit: usize, kind: Option<&str>) -> Value {
         }
     }
     picked.sort_by(|a, b| b.file_size.cmp(&a.file_size).then(a.id.0.cmp(&b.id.0)));
-    picked.truncate(limit.min(MOST));
+    let picked: Vec<&Photo> = picked.into_iter().skip(offset).take(limit.min(MOST)).collect();
     let largest: Vec<Value> = picked
         .into_iter()
         .map(|p| {
             let mut v = photo_summary(p);
             // an original that stays in Apple Photos: this file is a copy, and replacing it is Apple Photos' business
             v["inPhotos"] = json!(p.origin.as_ref().is_some_and(|o| o.kind == OriginKind::Photos));
+            // where the original is (a file on this device), for a frontend that replaces it with a smaller one
+            v["path"] = match &p.source {
+                Source::File { path } if !path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) => json!(path),
+                _ => Value::Null,
+            };
             v
         })
         .collect();
@@ -177,10 +182,11 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "library.storage", "Library Storage", [], None,
-        "{limit?: 100 (at most 500), kind?: image|raw|video} → {total, byKind: {image, raw, video: {count, bytes}}, largest: [photo summary + inPhotos]} — what the library's originals take and its biggest photos (virtual copies and Recently Deleted are not counted)",
+        "{limit?: 100 (at most 500), offset?: 0, kind?: image|raw|video} → {total, byKind: {image, raw, video: {count, bytes}}, largest: [photo summary + inPhotos + path]} — what the library's originals take and its biggest photos (virtual copies and Recently Deleted are not counted)",
         always, |s: &mut Session, p: &Value| -> Result<Value> {
             let limit = p.get("limit").and_then(Value::as_u64).map_or(DEFAULT, |n| usize::try_from(n).unwrap_or(MOST));
-            Ok(storage(&s.catalog, limit, super::str_param(p, "kind")))
+            let offset = p.get("offset").and_then(Value::as_u64).map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX));
+            Ok(storage(&s.catalog, limit, offset, super::str_param(p, "kind")))
         }),
         cmd!(query "library.findDuplicates", "Find Duplicates", [], None,
         "{limit?: 200 (at most 1000 groups)} → {groups: [{hash, keep, bytes, reclaimable, photos: [photo summary]}], groupCount, extraCopies, reclaimable} — library photos whose files have the same content hash (copies made with Duplicate, virtual copies, Recently Deleted and photos kept in Apple Photos are left out); `keep` is the photo to keep: edited first, then rating, pick, older",
@@ -218,14 +224,19 @@ mod tests {
         add(&mut s, 2, "JPEG", MediaKind::Image, 5);
         add(&mut s, 3, "MOV", MediaKind::Video, 300);
         add(&mut s, 4, "DNG", MediaKind::Raw, 75);
-        let r = storage(&s.catalog, 3, None);
+        let r = storage(&s.catalog, 3, 0, None);
         assert_eq!(r["total"], json!({"count": 4, "bytes": 455}));
         assert_eq!(r["byKind"]["raw"], json!({"count": 2, "bytes": 150}));
         let ids: Vec<u64> = r["largest"].as_array().unwrap().iter().map(|v| v["id"].as_u64().unwrap()).collect();
         assert_eq!(ids, [3, 1, 4], "biggest first, a tie by id, cut at the limit");
-        let r = storage(&s.catalog, 10, Some("raw"));
+        let r = storage(&s.catalog, 10, 0, Some("raw"));
         assert_eq!(r["largest"].as_array().unwrap().len(), 2, "one kind's list");
         assert_eq!(r["total"]["count"], json!(4), "the totals still cover every kind");
+        assert_eq!(storage(&s.catalog, 1, 0, None)["largest"][0]["path"], json!("/lc-storage/3"), "the file a photo is at");
+        let page = storage(&s.catalog, 2, 1, None);
+        let ids: Vec<u64> = page["largest"].as_array().unwrap().iter().map(|v| v["id"].as_u64().unwrap()).collect();
+        assert_eq!(ids, [1, 4], "the second page starts after the first biggest");
+        assert_eq!(storage(&s.catalog, 10, 99, None)["largest"].as_array().unwrap().len(), 0, "past the end is empty");
     }
 
     #[test]
@@ -238,7 +249,7 @@ mod tests {
         copy.copy_of = Some(PhotoId(1));
         s.catalog.apply(Op::AddPhoto { photo: Box::new(copy) }).unwrap();
         s.catalog.apply(Op::SetDeleted { id: PhotoId(2), deleted: true }).unwrap();
-        let r = storage(&s.catalog, usize::MAX, None);
+        let r = storage(&s.catalog, usize::MAX, 0, None);
         assert_eq!(r["total"], json!({"count": 1, "bytes": 10}));
         let r = s.execute("library.storage", &json!({"limit": u64::MAX})).unwrap();
         assert_eq!(r["largest"].as_array().unwrap().len(), 1);
