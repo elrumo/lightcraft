@@ -178,6 +178,7 @@ fn all_controls_at_once_round_trip_and_sections_reset() {
         lightcraft_develop::Section::Calibration,
         lightcraft_develop::Section::LensBlur,
         lightcraft_develop::Section::Relight,
+        lightcraft_develop::Section::Flash,
         lightcraft_develop::Section::DepthMap,
     ] {
         let mut s = all.clone();

@@ -205,12 +205,12 @@ pub fn sample(p: &Plane, x: f32, y: f32) -> f32 {
 }
 
 /// Linear sRGB to linear Rec. 2020 (the pipeline's working space).
-fn srgb_to_working() -> [[f32; 3]; 3] {
+pub(crate) fn srgb_to_working() -> [[f32; 3]; 3] {
     lightcraft_color::SRGB.to_space(&lightcraft_color::REC2020).to_f32()
 }
 
 /// Display-encoded sRGB (0..1) to the working space by the matrix `m` ([`srgb_to_working`]).
-fn working(m: &[[f32; 3]; 3], c: [f32; 3]) -> [f32; 3] {
+pub(crate) fn working(m: &[[f32; 3]; 3], c: [f32; 3]) -> [f32; 3] {
     let l = c.map(|v| lightcraft_color::transfer::srgb_to_linear(if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 }));
     std::array::from_fn(|r| m[r][0] * l[0] + m[r][1] * l[1] + m[r][2] * l[2])
 }
@@ -226,7 +226,7 @@ pub fn light_height(d: f32) -> f32 {
     }
 }
 
-fn depth_key(s: &DevelopSettings, depth: &Arc<Plane>) -> u64 {
+pub(crate) fn depth_key(s: &DevelopSettings, depth: &Arc<Plane>) -> u64 {
     match &s.lens_blur.depth {
         Some(d) => crate::hash_of(&d.data),
         None => crate::hash_of(Arc::as_ptr(depth) as usize),
@@ -263,7 +263,7 @@ fn keep<T>(list: &Mutex<Vec<(u64, Arc<T>)>>, key: u64, value: Arc<T>) {
 
 /// A depth's identity for [`SMOOTHED_KEPT`]: where it comes from (`depth_key`), its size, and a sample of its values
 /// (a photo's own depth is known by its address, which a later depth may reuse).
-fn depth_identity(source: u64, depth: &Plane) -> u64 {
+pub(crate) fn depth_identity(source: u64, depth: &Plane) -> u64 {
     // (a 16 x 16 grid over the whole map: every n/256-th value fell in one column of a map whose size divides by 256)
     let (w, h) = (depth.width, depth.height);
     let sample: Vec<u32> =
@@ -671,7 +671,7 @@ impl Look {
 }
 
 #[inline]
-fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
+pub(crate) fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }

@@ -49,6 +49,7 @@ impl DevelopSettings {
                 ("blur", serde_json::to_value(self.blur)),
                 ("film", serde_json::to_value(&self.film)),
                 ("relight", serde_json::to_value(&self.relight)),
+                ("flash", serde_json::to_value(&self.flash)),
                 ("depth_map", serde_json::to_value(self.depth_map)),
                 ("colorize", serde_json::to_value(&self.colorize)),
             ];

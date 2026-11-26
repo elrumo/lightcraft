@@ -24,6 +24,7 @@ mod face_models;
 mod face_recognize;
 mod film;
 pub mod filters;
+mod flash;
 mod focus;
 pub mod geocode;
 mod hidden;
@@ -176,6 +177,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(layers::specs());
         v.extend(lensblur::specs());
         v.extend(relight::specs());
+        v.extend(flash::specs());
         v.extend(colorize::specs());
         v.extend(enhance::specs());
         v.extend(models::specs());

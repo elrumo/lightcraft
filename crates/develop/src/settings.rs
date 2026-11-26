@@ -205,6 +205,9 @@ pub struct DevelopSettings {
     /// Relight: a light placed in the scene by the photo's depth. Not written while it is the default.
     #[serde(skip_serializing_if = "Relight::is_default")]
     pub relight: Relight,
+    /// Flash: the look of a xenon flash on the camera, made from the photo's depth. Not written while it is the default.
+    #[serde(skip_serializing_if = "Flash::is_default")]
+    pub flash: Flash,
     /// Depth Map: the photo drawn as its depth. Not written while it is the default.
     #[serde(skip_serializing_if = "DepthLook::is_default")]
     pub depth_map: DepthLook,
@@ -254,6 +257,7 @@ impl Default for DevelopSettings {
             red_eye: Vec::new(),
             lens_blur: LensBlur::default(),
             relight: Relight::default(),
+            flash: Flash::default(),
             depth_map: DepthLook::default(),
             colorize: Colorize::default(),
             enhance: Enhance::default(),
@@ -2758,6 +2762,142 @@ impl Relight {
     /// Whether a render lights anything (with depth to light by).
     pub fn active(&self) -> bool {
         self.enabled && (self.brightness > 0.0 || self.ambient < 100.0)
+    }
+}
+
+/// Flash: the look of a photo taken with a xenon flash on the camera, made from the photo's depth (its own depth map,
+/// or the estimate Lens Blur keeps in [`LensBlur::depth`]). The flash lights what is near the lens and dies off with
+/// the inverse square of the distance, so the background goes dark; surfaces facing the lens glint, the beam is
+/// brightest in the middle, a hard shadow falls behind the subject, and the unlit part keeps the room's colour.
+/// Every number is a slider (0 to 100 unless said), so a preset is a set of them. Left out of the JSON while it is
+/// the default.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Flash {
+    pub enabled: bool,
+    /// How hard the flash lights its subject (50: as the photo was lit, 100: twice that).
+    pub power: f64,
+    /// How fast the flash dies with distance: how deep the scene is, in flash distances.
+    pub falloff: f64,
+    /// How much of the photo's own light survives where the flash does not reach (100: all of it).
+    pub ambient: f64,
+    /// The colour of the part the flash does not reach, -100 (cooler) to 100 (warmer, as tungsten).
+    pub tint: f64,
+    /// The flash's colour temperature, in kelvin, against the photo's own white balance.
+    pub temp: f64,
+    /// How much the beam falls off toward the corners.
+    pub hotspot: f64,
+    /// How strongly the depth's slope turns surfaces away from the lens.
+    pub surface: f64,
+    /// How dark the flash's cast shadow is.
+    pub shadow: f64,
+    /// How far the flash is from the lens: the size of the shadow's offset.
+    pub offset: f64,
+    /// Where around the lens the flash sits, in degrees (0 to the right, 90 above).
+    pub angle: f64,
+    /// Glints where a surface faces the lens.
+    pub gloss: f64,
+    /// From a soft shoulder (0) to a hard clip (100) in the highlights.
+    pub clip: f64,
+    /// The S curve after the flash.
+    pub contrast: f64,
+    /// How much lamps, windows and screens keep their own light.
+    pub emit: f64,
+    /// Noise in the part the flash does not reach.
+    pub grain: f64,
+    /// How much of the shade the photo's own light left on what the flash lights is lifted: a flash is a fill, so a well lit person has none on the face.
+    pub fill: f64,
+    /// The depths the flash reaches, 0 (the nearest part of the photo) to 100 (the farthest), as Lens Blur's. Left out
+    /// of the JSON while they span the whole scene.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub near: f64,
+    #[serde(skip_serializing_if = "is_hundred")]
+    pub far: f64,
+    /// The nearness (0 farthest, 1 nearest) the flash is exposed for; `None`: the near part of the middle of the frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<f64>,
+}
+
+impl Default for Flash {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            power: 50.0,
+            falloff: 55.0,
+            ambient: 47.0,
+            tint: 20.0,
+            temp: 5600.0,
+            hotspot: 35.0,
+            surface: 50.0,
+            shadow: 50.0,
+            offset: 35.0,
+            angle: 35.0,
+            gloss: 10.0,
+            clip: 30.0,
+            contrast: 25.0,
+            emit: 20.0,
+            grain: 20.0,
+            fill: 70.0,
+            near: 0.0,
+            far: 100.0,
+            subject: None,
+        }
+    }
+}
+
+impl Flash {
+    /// Whether these are the default settings (off, nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == Flash::default()
+    }
+
+    /// Whether a render flashes anything (with depth to work from).
+    pub fn active(&self) -> bool {
+        self.enabled && (self.power > 0.0 || self.ambient < 100.0)
+    }
+
+    /// The presets of the panel's chips: every slider set at once (the depth range and the subject stay).
+    pub const PRESETS: [(&'static str, &'static str); 3] = [("fill", "Fill flash"), ("direct", "Direct flash"), ("night", "Night out")];
+
+    /// `name`'s sliders laid over `self`; `false` when there is no such preset.
+    pub fn apply_preset(&mut self, name: &str) -> bool {
+        let base = Flash { enabled: self.enabled, near: self.near, far: self.far, subject: self.subject, ..Flash::default() };
+        *self = match name {
+            "direct" => base,
+            "fill" => Flash {
+                ambient: 78.0,
+                falloff: 35.0,
+                hotspot: 15.0,
+                shadow: 25.0,
+                offset: 25.0,
+                gloss: 5.0,
+                contrast: 15.0,
+                clip: 10.0,
+                tint: 10.0,
+                emit: 60.0,
+                grain: 0.0,
+                fill: 85.0,
+                ..base
+            },
+            "night" => Flash {
+                power: 60.0,
+                ambient: 27.0,
+                falloff: 62.0,
+                hotspot: 60.0,
+                shadow: 70.0,
+                offset: 60.0,
+                gloss: 35.0,
+                contrast: 45.0,
+                clip: 70.0,
+                tint: 45.0,
+                emit: 0.0,
+                grain: 45.0,
+                fill: 35.0,
+                ..base
+            },
+            _ => return false,
+        };
+        true
     }
 }
 

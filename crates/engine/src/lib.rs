@@ -1279,6 +1279,8 @@ impl Session {
         new_json["hdr"] = serde_json::json!(new.hdr);
         old_json["relight"] = serde_json::json!(old.relight);
         new_json["relight"] = serde_json::json!(new.relight);
+        old_json["flash"] = serde_json::json!(old.flash);
+        new_json["flash"] = serde_json::json!(new.flash);
         old_json["depth_map"] = serde_json::json!(old.depth_map);
         new_json["depth_map"] = serde_json::json!(new.depth_map);
         old_json["film"] = serde_json::json!(old.film);
@@ -1299,7 +1301,7 @@ impl Session {
                 o.remove(k);
             }
             // (an estimated depth or surface is a picture of this photo: each photo has its own, as copies leave them behind)
-            for (group, k) in [("lens_blur", "depth"), ("relight", "normals")] {
+            for (group, k) in [("lens_blur", "depth"), ("relight", "normals"), ("flash", "subject")] {
                 if let Some(g) = o.get_mut(group).and_then(Value::as_object_mut) {
                     g.remove(k);
                     if g.is_empty() {
@@ -1922,6 +1924,8 @@ mod tests_enhance_levels;
 mod tests_expand;
 #[cfg(test)]
 mod tests_external_edit;
+#[cfg(test)]
+mod tests_flash;
 #[cfg(test)]
 mod tests_hdr_sources;
 #[cfg(test)]

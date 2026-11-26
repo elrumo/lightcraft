@@ -36,6 +36,7 @@ pub enum Section {
     RedEye,
     LensBlur,
     Relight,
+    Flash,
     DepthMap,
     Colorize,
 }
@@ -66,6 +67,7 @@ impl Section {
             Section::RedEye => "Red Eye",
             Section::LensBlur => "Lens Blur",
             Section::Relight => "Relight",
+            Section::Flash => "Flash",
             Section::DepthMap => "Depth Map",
             Section::Colorize => "Colorize",
         }
@@ -518,6 +520,24 @@ controls! {
     "relight.y" => relight.y, "Light Down", Relight, -0.5, 1.5, 0.25, 0.001, 3, Plain;
     "relight.near" => relight.near, "Near", Relight, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
     "relight.far" => relight.far, "Far", Relight, 0, 100, 100, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
+    "flash.power" => flash.power, "Power", Flash, 0, 100, 50, 1, 0, Plain;
+    "flash.falloff" => flash.falloff, "Falloff", Flash, 0, 100, 55, 1, 0, Plain;
+    "flash.ambient" => flash.ambient, "Ambient", Flash, 0, 100, 47, 1, 0, Gradient { from: "#101010", to: "#d0d0d0" };
+    "flash.tint" => flash.tint, "Ambient Tint", Flash, -100, 100, 20, 1, 0, Gradient { from: "#6a8cff", to: "#ffb060" };
+    "flash.temp" => flash.temp, "Flash Temperature", Flash, 3200, 10000, 5600, 100, 0, Gradient { from: "#ffb060", to: "#9ab8ff" };
+    "flash.hotspot" => flash.hotspot, "Hotspot", Flash, 0, 100, 35, 1, 0, Plain;
+    "flash.surface" => flash.surface, "Surface", Flash, 0, 100, 50, 1, 0, Plain;
+    "flash.shadow" => flash.shadow, "Shadow", Flash, 0, 100, 50, 1, 0, Plain;
+    "flash.offset" => flash.offset, "Shadow Offset", Flash, 0, 100, 35, 1, 0, Plain;
+    "flash.angle" => flash.angle, "Flash Angle", Flash, 0, 360, 35, 1, 0, Plain;
+    "flash.gloss" => flash.gloss, "Gloss", Flash, 0, 100, 10, 1, 0, Plain;
+    "flash.clip" => flash.clip, "Blown Highlights", Flash, 0, 100, 30, 1, 0, Plain;
+    "flash.contrast" => flash.contrast, "Punch", Flash, 0, 100, 25, 1, 0, Plain;
+    "flash.emit" => flash.emit, "Keep Lights", Flash, 0, 100, 20, 1, 0, Plain;
+    "flash.grain" => flash.grain, "Noise", Flash, 0, 100, 20, 1, 0, Plain;
+    "flash.fill" => flash.fill, "Fill Shadows", Flash, 0, 100, 70, 1, 0, Plain;
+    "flash.near" => flash.near, "Near", Flash, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
+    "flash.far" => flash.far, "Far", Flash, 0, 100, 100, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
     "depthMap.near" => depth_map.near, "Near", DepthMap, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
     "depthMap.far" => depth_map.far, "Far", DepthMap, 0, 100, 100, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
     "depthMap.curve" => depth_map.curve, "Curve", DepthMap, -100, 100, 0, 1, 0, Centered;
@@ -1010,6 +1030,24 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
                 s.relight.distance = 80.0;
             }
         }
+        _ if id.starts_with("flash.") => {
+            // (a ground that runs from near to far, with a near block standing on it: the flash lights the block and the
+            // ground in front of it, and the block's shadow falls behind it)
+            s.flash.enabled = true;
+            s.lens_blur.depth = sample_depth_fine();
+            // (Gloss shows where a surface faces the lens: the sweep's near block does)
+            if id != "flash.gloss" {
+                s.flash.gloss = 60.0;
+            }
+            // (the sweep's depth is coarse: a flash far from the lens and a full shadow make one long enough to see; the angle's two
+            // ends then differ from the default's, and the shadow's own ends from the default's)
+            if id != "flash.offset" {
+                s.flash.offset = 100.0;
+            }
+            if id != "flash.shadow" {
+                s.flash.shadow = 100.0;
+            }
+        }
         _ if id.starts_with("colorize.") => {
             // (a warm colour over the whole photo: the amount moves every pixel, the two tone sliders its whites and blacks)
             s.colorize.enabled = true;
@@ -1025,6 +1063,20 @@ pub fn prepare_to_show(s: &mut DevelopSettings, id: &str) {
         }
         _ => {}
     }
+}
+
+/// A finer depth for the Flash sweeps (its shadow is a few depth pixels long, and what it shades has to stand well clear of the occluder): a ground that runs
+/// from near (bottom) to far (top) with a near block standing on it left of the middle.
+fn sample_depth_fine() -> Option<crate::DepthMap> {
+    let (w, h) = (192usize, 128usize);
+    let v: Vec<f32> = (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            let ground = 0.15 + 0.6 * y as f32 / (h - 1) as f32;
+            if (48..96).contains(&x) && (32..96).contains(&y) { 0.95 } else { ground }
+        })
+        .collect();
+    crate::DepthMap::from_nearness(w, h, &v)
 }
 
 /// A depth for the slider sweeps of Relight and Depth Map: a ground that runs from near (bottom) to far (top), with a

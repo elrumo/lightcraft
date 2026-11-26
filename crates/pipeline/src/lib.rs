@@ -8,7 +8,7 @@
 //! 1. geometry — user orientation, lens corrections (distortion, CA, vignetting), perspective, crop +
 //!    straighten, flips; one resample at output resolution; then defringe
 //! 2. scene-linear — white balance, Colorize ([`colorize`]), exposure, dehaze, local tone (highlights/shadows), texture,
-//!    clarity, local adjustments (masks); Depth Map, Relight ([`relight`]) and Lens Blur ([`lensblur`])
+//!    clarity, local adjustments (masks); Depth Map, Relight ([`relight`]), Flash ([`flash`]) and Lens Blur ([`lensblur`])
 //!    after noise reduction
 //! 3. tone map — contrast / whites / blacks filmic curve on luminance, highlight desaturation
 //! 4. colour — vibrance, saturation, colour mixer, colour grading, B&W (OkLCh)
@@ -37,6 +37,7 @@ pub mod dust;
 pub mod expand;
 pub mod film;
 pub mod finish;
+pub mod flash;
 pub mod geometry;
 pub mod glow;
 pub mod inpaint;
@@ -558,6 +559,8 @@ pub struct Plan<'a> {
     pub depth_look: Option<relight::Look>,
     /// Relight, when it lights anything.
     pub relight: Option<relight::Setup>,
+    /// Flash, when it does anything.
+    pub flash: Option<flash::Setup>,
     /// Colorize, when it colours anything.
     pub colorize: Option<colorize::Setup>,
     /// Film effects, when there is a frame or a visible mark: drawn over the finished picture ([`film`]).
@@ -608,6 +611,7 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
     let glow = glow::Setup::new(s, px_per_long).map(|g| g.with_white(glow::source_white(info)));
     let depth_look = relight::Look::new(s, mattes.as_deref());
     let relight = relight::Setup::new(s, mattes.as_deref(), s.orientation);
+    let flash = flash::Setup::new(s, mattes.as_deref(), s.orientation);
     let colorize = colorize::Setup::new(s);
     // (the Crop tool's uncropped view shows the photo, not the frame it sits in)
     let film = film::Setup::new(s, info.film_salt, req.space, req.apply_crop);
@@ -687,7 +691,8 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
         blur.as_ref().map(|b| (b.key, req.quality == Quality::Draft)),
         // and so do Depth Map and Relight (a draft's shadows are coarser too)
         depth_look.as_ref().map(|l| l.key),
-        relight.as_ref().map(|r| (r.key, req.quality == Quality::Draft)),
+        // (and Flash follows Relight; one element, a tuple hashes up to twelve)
+        (relight.as_ref().map(|r| (r.key, req.quality == Quality::Draft)), flash.as_ref().map(|f| (f.key, req.quality == Quality::Draft))),
         // and Blur follows Lens Blur
         fx_blur.as_ref().map(|b| b.key),
         // Colorize follows the white balance
@@ -732,6 +737,7 @@ pub fn plan<'a, 'b>(src: impl Into<PixelView<'b>>, info: &SourceInfo, s: &'a Dev
         fx_blur,
         depth_look,
         relight,
+        flash,
         colorize,
         film,
         origin,
@@ -781,6 +787,7 @@ pub fn colour_noise<'a>(src: impl Into<PixelView<'a>>, info: &SourceInfo, p: &Pl
                 fx_blur: None,
                 depth_look: None,
                 relight: None,
+                flash: None,
                 colorize: None,
                 film: None,
                 origin: [t.x, t.y],
@@ -835,7 +842,7 @@ pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     redeye::apply(img, &p.eyes);
 }
 
-/// What follows noise reduction in the scene-linear stage, in place: Depth Map, Relight, Lens Blur, then Blur
+/// What follows noise reduction in the scene-linear stage, in place: Depth Map, Relight, Flash, Lens Blur, then Blur
 /// (`draft`: their interactive quality). The GPU renderer runs it on the CPU too.
 pub fn after_denoise(img: &mut Rgb32f, p: &Plan<'_>, draft: bool) {
     if let Some(l) = &p.depth_look {
@@ -843,6 +850,9 @@ pub fn after_denoise(img: &mut Rgb32f, p: &Plan<'_>, draft: bool) {
     }
     if let Some(r) = &p.relight {
         relight::apply(img, r, &p.frame, draft);
+    }
+    if let Some(f) = &p.flash {
+        flash::apply(img, f, &p.frame, p.origin, p.full, draft);
     }
     if let Some(b) = &p.blur {
         lensblur::apply(img, b, &p.frame, p.origin, draft);
@@ -854,7 +864,7 @@ pub fn after_denoise(img: &mut Rgb32f, p: &Plan<'_>, draft: bool) {
 
 /// Whether anything follows noise reduction in the scene-linear stage ([`after_denoise`]).
 pub fn has_after_denoise(p: &Plan<'_>) -> bool {
-    p.depth_look.is_some() || p.relight.is_some() || p.blur.is_some() || p.fx_blur.is_some()
+    p.depth_look.is_some() || p.relight.is_some() || p.flash.is_some() || p.blur.is_some() || p.fx_blur.is_some()
 }
 
 /// The settings a render of `s` for `req` uses: the HDR edit for an [`OutputDepth::F32Hdr`]

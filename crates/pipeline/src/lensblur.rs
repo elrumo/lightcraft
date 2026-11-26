@@ -66,11 +66,12 @@ pub fn normalize(p: &mut Plane) {
     }
 }
 
-/// Whether a render of `s` reads depth: Lens Blur, Relight or Depth Map is on, or a visible mask has a
+/// Whether a render of `s` reads depth: Lens Blur, Relight, Flash or Depth Map is on, or a visible mask has a
 /// Depth Range.
 pub fn wants_depth(s: &DevelopSettings) -> bool {
     s.lens_blur.active()
         || crate::relight::relights(s)
+        || crate::flash::flashes(s)
         || crate::relight::draws_depth(s)
         || s.masks.iter().filter(|m| m.visible).flat_map(|m| &m.components).any(|c| matches!(c.shape, MaskShape::DepthRange { .. }))
 }

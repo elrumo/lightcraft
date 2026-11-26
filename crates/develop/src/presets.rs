@@ -43,12 +43,13 @@ pub enum SettingsGroup {
     LensBlur,
     Calibration,
     Relight,
+    Flash,
     DepthMap,
     Film,
 }
 
 impl SettingsGroup {
-    pub const ALL: [SettingsGroup; 23] = [
+    pub const ALL: [SettingsGroup; 24] = [
         SettingsGroup::Profile,
         SettingsGroup::Treatment,
         SettingsGroup::WhiteBalance,
@@ -70,6 +71,7 @@ impl SettingsGroup {
         SettingsGroup::LensBlur,
         SettingsGroup::Calibration,
         SettingsGroup::Relight,
+        SettingsGroup::Flash,
         SettingsGroup::DepthMap,
         SettingsGroup::Film,
     ];
@@ -105,6 +107,7 @@ impl SettingsGroup {
             SettingsGroup::LensBlur => "Lens Blur",
             SettingsGroup::Calibration => "Calibration",
             SettingsGroup::Relight => "Relight",
+            SettingsGroup::Flash => "Flash",
             SettingsGroup::DepthMap => "Depth Map",
             SettingsGroup::Film => "Film Effects",
         }
@@ -135,6 +138,7 @@ impl SettingsGroup {
             SettingsGroup::LensBlur => &["lens_blur"],
             SettingsGroup::Calibration => &["calibration"],
             SettingsGroup::Relight => &["relight"],
+            SettingsGroup::Flash => &["flash"],
             SettingsGroup::DepthMap => &["depth_map"],
             SettingsGroup::Film => &["film"],
         }
@@ -189,6 +193,10 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     // (and a pasted Relight the surface of the photo it lands on)
     if let Some(relight) = out.get_mut("relight").and_then(Value::as_object_mut) {
         relight.remove("normals");
+    }
+    // (and a pasted Flash the subject depth of this photo, which is a depth of the photo it was picked on)
+    if let Some(flash) = out.get_mut("flash").and_then(Value::as_object_mut) {
+        flash.remove("subject");
     }
     // (an Object or Describe selection's picture is of the photo it was made on: the clicks and the words stay, the
     // other photo's selection is made again from them, see [`ai_work`])

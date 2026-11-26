@@ -67,7 +67,7 @@ fn export_depth(s: &mut Session, id: PhotoId, p: &Value) -> Result<Value> {
 }
 
 /// Change the active photo's settings with `f` as one undo step labelled `label`, then answer with `info`.
-fn edit(
+pub(super) fn edit(
     s: &mut Session,
     c: &str,
     label: &str,
@@ -84,7 +84,7 @@ fn edit(
 /// The depth both tools read, for turning one on: `None` when the photo already has depth (its own, or an estimate
 /// stored with its settings), else the model's estimate to store (an error the apps offer the download on when the
 /// model isn't here).
-fn depth_to_store(s: &mut Session, c: &str) -> Result<Option<DepthMap>> {
+pub(super) fn depth_to_store(s: &mut Session, c: &str) -> Result<Option<DepthMap>> {
     let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
     match s.depth_source(id) {
         Some(_) => Ok(None),
@@ -93,7 +93,7 @@ fn depth_to_store(s: &mut Session, c: &str) -> Result<Option<DepthMap>> {
 }
 
 /// Where the active photo's depth comes from, and whether the model could estimate it.
-fn depth_fields(s: &mut Session, c: &str) -> Result<Value> {
+pub(super) fn depth_fields(s: &mut Session, c: &str) -> Result<Value> {
     let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
     Ok(json!({
         "depth": s.depth_source(id).map(crate::depth::DepthSource::name),
@@ -102,7 +102,7 @@ fn depth_fields(s: &mut Session, c: &str) -> Result<Value> {
     }))
 }
 
-fn merged(mut a: Value, b: Value) -> Value {
+pub(super) fn merged(mut a: Value, b: Value) -> Value {
     if let (Some(a), Value::Object(b)) = (a.as_object_mut(), b) {
         a.extend(b);
     }
@@ -200,7 +200,7 @@ fn colour(v: &Value) -> Option<[f64; 3]> {
 }
 
 /// `{on?}` as a bool (default on).
-fn on(p: &Value) -> bool {
+pub(super) fn on(p: &Value) -> bool {
     p.get("on").and_then(Value::as_bool).unwrap_or(true)
 }
 
