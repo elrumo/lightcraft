@@ -671,6 +671,10 @@ impl PreparedExport {
             Work::Render(w) => {
                 let RenderWork { job, hdr_job, meta, opts, host, host_file, banded, refused, cancel, .. } = *w;
                 let hosted = host.is_some() || host_file.is_some();
+                // (Stop: checked between the stages, so a photo whose render or encode is under way ends at the next one, not when its file is made)
+                if stopped(cancel.as_deref()) {
+                    return Err(cancelled(&file_name));
+                }
                 if let Some(f) = &host_file {
                     match std::fs::read(&f.file) {
                         Ok(bytes) if !bytes.is_empty() => {
@@ -694,6 +698,9 @@ impl PreparedExport {
                 if hosted && let Some(why) = refused {
                     return Err(why);
                 }
+                if stopped(cancel.as_deref()) {
+                    return Err(cancelled(&file_name));
+                }
                 // A gain map JPEG's SDR base and HDR rendition develop one load of the source, not one each: the HDR job's
                 // (in floats), which the SDR base renders from too. Each job read and decoded the raw again before (#375).
                 let (job, hdr_job) = match hdr_job {
@@ -712,10 +719,17 @@ impl PreparedExport {
                     (result.rendered, result.gpu_fallback)
                 };
                 let r = r?;
+                if stopped(cancel.as_deref()) {
+                    return Err(cancelled(&file_name));
+                }
                 let hdr = match hdr_job {
                     Some(hj) => Some(hj.run().rendered?),
                     None => None,
                 };
+                // (an AVIF or JPEG XL encode takes seconds: not started once stopped)
+                if stopped(cancel.as_deref()) {
+                    return Err(cancelled(&file_name));
+                }
                 // a TIFF with its gain map beside it (`gainMapSidecar`): the HDR JPEG of the same picture, as the gain map JPEG export writes it
                 if opts.format != ExportFormat::Jpeg
                     && let Some(hr) = hdr
@@ -796,6 +810,19 @@ impl PreparedExport {
         }
     }
 }
+
+/// Whether the export's Stop was pressed (`cancel` is its flag).
+fn stopped(cancel: Option<&std::sync::atomic::AtomicBool>) -> bool {
+    cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The error of a photo Stop ended before its file was made (the batch drops it: [`CANCELLED`]).
+fn cancelled(file_name: &str) -> String {
+    format!("{file_name}: {CANCELLED}")
+}
+
+/// What a photo's error ends with when Stop ended it ([`super::batch`] keeps these out of the files a stopped export answers).
+pub const CANCELLED: &str = "cancelled";
 
 /// How an exported DNG stores its raw data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

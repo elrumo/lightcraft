@@ -101,8 +101,8 @@ pub(super) fn take(key: &str, cancel: Option<&AtomicBool>, wait: Duration) -> Op
         if now >= end {
             return None;
         }
-        // (the cancel flag is set without a notify: looked at again at least this often)
-        let step = (end - now).min(Duration::from_millis(100));
+        // (the cancel flag is set without a notify: looked at again at least this often: Stop is answered within it)
+        let step = (end - now).min(Duration::from_millis(20));
         s = CHANGED.wait_timeout(s, step).unwrap_or_else(PoisonError::into_inner).0;
     }
 }

@@ -297,7 +297,11 @@ impl Batch {
                 }
                 !c.load(Ordering::Relaxed)
             });
-            r.map(|files| {
+            r.map(|mut files| {
+                // a photo Stop ended while it was made has no file and says so: that is the stop, not a failure of the photo
+                if c.load(Ordering::Relaxed) {
+                    files.retain(|f| !f["error"].as_str().is_some_and(|e| e.ends_with(lightcraft_engine::export::CANCELLED)));
+                }
                 if !after.is_none() {
                     // Photos can't be stopped once asked: no ✕ from here, before the last look at
                     // the cancel flag, so a cancel either stops the export before Photos or is refused
@@ -372,6 +376,44 @@ mod tests {
         let (files, _, cancelled) = batch.rx.recv_timeout(std::time::Duration::from_secs(60)).unwrap().unwrap();
         assert!(cancelled);
         assert!(files.len() < 3, "{files:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Stop reaches an export that waits for a picture its host has not drawn: it ends within a moment (not when the wait gives up), says it
+    // was cancelled, and the photo it stopped is no failure: no file, no error among the answer's files
+    #[test]
+    fn stop_ends_the_wait_for_a_hosts_picture_at_once() {
+        let dir = std::env::temp_dir().join(format!("lc-apphost-stop-wait-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = Session::with_demo();
+        let ids: Vec<u64> = s.visible_cloned().iter().take(2).map(|id| id.0).collect();
+        let plain =
+            export_now(&mut s, &json!({"ids": ids, "longEdge": 64, "format": "png", "dir": dir.join("plain").to_string_lossy()}), &mut |_, _, _| {
+                true
+            })
+            .unwrap();
+        let prefix = format!("lc-apphost-stop-{}/", std::process::id());
+        let mut p = json!({"ids": ids, "longEdge": 64, "format": "png", "dir": dir.join("stopped").to_string_lossy()});
+        // (promised and never drawn)
+        p["hostPixels"] = json!(
+            ids.iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    let f = &plain["files"][i];
+                    (id.to_string(), json!({"memory": format!("{prefix}{id}"), "width": f["width"], "height": f["height"]}))
+                })
+                .collect::<serde_json::Map<_, _>>()
+        );
+        let prepared = prepare(&mut s, &p).unwrap();
+        let write: SharedWrite = Arc::new(lightcraft_engine::export::write_file);
+        let batch = Batch::start(&s, prepared, write, String::new()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let stopped = std::time::Instant::now();
+        s.activity.cancel(batch.guard.id()).unwrap();
+        let (files, _, cancelled) = batch.rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap().unwrap();
+        assert!(stopped.elapsed() < std::time::Duration::from_secs(3), "Stop took {:?}", stopped.elapsed());
+        assert!(cancelled);
+        assert!(files.is_empty(), "{files:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
