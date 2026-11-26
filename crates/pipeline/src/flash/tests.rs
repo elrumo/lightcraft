@@ -281,3 +281,31 @@ fn fill_shadows_lifts_the_shade_on_what_the_flash_lights_and_leaves_the_rest() {
     assert!(patch(&lifted) > patch(&flat) + 8.0, "the shade is lifted: {} against {}", patch(&lifted), patch(&flat));
     assert!((lit(&lifted) - lit(&flat)).abs() < 3.0, "the lit part stays: {} against {}", lit(&lifted), lit(&flat));
 }
+
+#[test]
+fn at_power_zero_a_glint_and_the_fill_are_gone_with_the_flash() {
+    // a near, flat block (what a flash lights and makes glints on) with a dark patch and a few bright dots on it: Gloss and Fill Shadows are the flash's
+    // own light, so with no Power the picture is the same whatever they are set to
+    let (dw, dh) = (96usize, 64usize);
+    let data: Vec<f32> = (0..dw * dh).map(|i| if (16..80).contains(&(i % dw)) && (8..56).contains(&(i / dw)) { 0.95 } else { 0.1 }).collect();
+    let mut img = Rgb32f::filled(W, H, [0.2; 3]);
+    for y in 24..40 {
+        for x in 40..56 {
+            img.data[y * W + x] = [0.03; 3];
+        }
+    }
+    for (x, y) in [(24, 20), (30, 44), (60, 18), (66, 46), (26, 32)] {
+        img.data[y * W + x] = [0.9; 3];
+    }
+    let render_with = |power: f64, gloss: f64, fill: f64| {
+        let mut s = DevelopSettings::default();
+        s.lens_blur.depth = DepthMap::from_nearness(dw, dh, &data);
+        s.flash = Flash { enabled: true, power, gloss, fill, grain: 0.0, ..Flash::default() };
+        render(&img, &SourceInfo::default(), &s, &RenderRequest::fit(W, H)).image
+    };
+    let (bare, dressed) = (render_with(0.0, 0.0, 0.0), render_with(0.0, 100.0, 100.0));
+    assert_eq!(bare.data, dressed.data, "no Power, no glint and no fill");
+    // and with Power they are there
+    let (a, b) = (render_with(50.0, 0.0, 0.0), render_with(50.0, 100.0, 100.0));
+    assert_ne!(a.data, b.data, "with Power they show");
+}

@@ -27,8 +27,9 @@ colour split, no glare. Flash is a small tool of its own that reuses Relight's d
    own nearness, so the soft edge of the subject's depth is not a rim of shadow around it.
 5. **Glare.** `Gloss`: a glint is small. It shows where a surface faces the lens most (`nz'` from 0.965, squared), only near the lens (`E` over 0.55), on
    bright pixels, and mostly where the skin already shows a highlight: a pixel brighter than its surround (the log luminance against its local mean,
-   2 % of the long edge, two box passes; 2 per stop, a quarter of the glint shows without one). A broad glint on every flat facing surface washed a
-   face out to one white; this one follows the texture of the skin, as oil on it does.
+   2 % of the long edge, two box passes; 2 per stop, a tenth of the glint shows without one). A broad glint on every flat facing surface washed a
+   face out to one white; this one follows the texture of the skin, as oil on it does. It is the flash's reflection, so it scales with Power (none at
+   Power 0), and at Gloss 100 and Power 50 it adds 0.3 of light at most (it added 0.9 and blew a face out at high Gloss, review 2026-11-26).
 6. **Two lights, two colours.** The flash has its temperature against the photo's white balance (Flash Temperature), the part it does not reach
    the room's: warmer (toward tungsten) or cooler (Ambient Tint).
 7. **Lamps and windows light themselves.** A photo clips them, so a nearly clipped pixel keeps more of its light when the ambient is turned down
@@ -42,8 +43,8 @@ colour split, no glare. Flash is a small tool of its own that reuses Relight's d
 
 ```text
 flash = Power * E * lambert * hot * (1 - Shadow * occlusion) * flash colour
-out   = colour * lift * (ambient * tint + flash) / (1 + ambient)      ambient = 2^(-6 (1 - Ambient/100)), more where the pixel is a lamp; lift: Fill Shadows
-out  += Gloss * 0.9 * glint * flash colour                             glint = facing^2 * (0.25 + 0.75 * peak) * ...
+out   = colour * lift * (ambient * tint + flash) / (1 + ambient)      ambient = 2^(-6 (1 - Ambient/100)), more where the pixel is a lamp; lift: Fill Shadows (times min(Power, 1): none at Power 0)
+out  += Gloss * 0.3 * Power * glint * flash colour                      glint = facing^2 * (0.1 + 0.9 * peak) * ...
 ```
 
 Everything is scene-linear Rec. 2020, after Relight and before Lens Blur, so every tone and colour tool edits a flashed photo as any photo.

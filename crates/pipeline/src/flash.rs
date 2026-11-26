@@ -53,15 +53,15 @@ pub const AMBIENT_STOPS: f32 = 6.0;
 pub const EXPOSURE_STOPS: f32 = 0.1;
 /// The beam's fall: `exp(-Hotspot * HOT_K * r^2)`, `r` the distance from the frame's centre over the half diagonal.
 pub const HOT_K: f32 = 2.2;
-/// A glint's strength at Gloss 100.
-pub const GLOSS_K: f32 = 0.9;
+/// A glint's strength at Gloss 100 and Power 50 (it is the flash's reflection, so it scales with Power: none at Power 0).
+pub const GLOSS_K: f32 = 0.3;
 /// A glint is small: where the surface faces the lens most (`nz` from `GLINT_FROM` over `GLINT_SPAN`, squared) and the skin already shows a
 /// highlight, a pixel brighter than its surround: `PEAK_K` per stop above the local mean (`SURROUND` long edges, two box passes each way);
 /// `PEAK_FLOOR` of the glint shows without one.
 pub const GLINT_FROM: f32 = 0.965;
 pub const GLINT_SPAN: f32 = 0.035;
 pub const PEAK_K: f32 = 2.0;
-pub const PEAK_FLOOR: f32 = 0.25;
+pub const PEAK_FLOOR: f32 = 0.1;
 pub const SURROUND: f32 = 0.02;
 /// How far the flash sits from the lens at Shadow Offset 100, in long edges (where a ray rises a whole depth range).
 pub const OFFSET_MAX: f32 = 0.12;
@@ -479,7 +479,8 @@ pub fn pixel(setup: &Setup, c: V3, n: f32, lit0: f32, nz: f32, reach: f32, r2: f
     let lum = c[0] * LUMA[0] + c[1] * LUMA[1] + c[2] * LUMA[2];
     // the shade of the photo's own light on what the flash lights is lifted toward what is around it (Fill Shadows)
     let shade = (fin(big_log, -20.0) - lum.max(1e-4).log2()).clamp(0.0, FILL_MAX_STOPS);
-    let lift = (s.fill * FILL_K * shade * ((e - FILL_FROM) / FILL_SPAN).clamp(0.0, 1.0)).exp2();
+    // (the flash's own fill: none at Power 0, where only the dimmed ambient is left)
+    let lift = (s.fill * FILL_K * shade * ((e - FILL_FROM) / FILL_SPAN).clamp(0.0, 1.0) * s.power.min(1.0)).exp2();
     // lamps and windows light themselves: a photo clips them, so nearly clipped pixels keep more of their light
     let g = ((lum - 0.30) / 0.55).clamp(0.0, 1.0);
     let a_eff = s.ambient + (1.0 - s.ambient) * (g * g * (3.0 - 2.0 * g) * s.emit);
@@ -489,7 +490,17 @@ pub fn pixel(setup: &Setup, c: V3, n: f32, lit0: f32, nz: f32, reach: f32, r2: f
         let facing = ((nz2 - GLINT_FROM) / GLINT_SPAN).clamp(0.0, 1.0);
         let peak = ((lum.max(1e-6).log2() - fin(mean_log, -20.0)) * PEAK_K).clamp(0.0, 1.0);
         let gate = ((lum - 0.04) * 6.0).clamp(0.0, 1.0);
-        let glint = s.gloss * GLOSS_K * facing * facing * (PEAK_FLOOR + (1.0 - PEAK_FLOOR) * peak) * gate * e.clamp(0.0, 3.0) * near_only * hot * lit;
+        let glint = s.gloss
+            * GLOSS_K
+            * s.power
+            * facing
+            * facing
+            * (PEAK_FLOOR + (1.0 - PEAK_FLOOR) * peak)
+            * gate
+            * e.clamp(0.0, 3.0)
+            * near_only
+            * hot
+            * lit;
         for k in 0..3 {
             out[k] += glint * s.flash_col[k];
         }
