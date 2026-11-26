@@ -319,7 +319,11 @@ fn album_offline(s: &mut Session, p: &Value) -> Result<Value> {
         None => !s.sync_state().is_some_and(|st| st.config.offline_albums.contains(&id)),
     };
     s.sync_offline(&[id], &[], on)?;
-    Ok(json!({"album": id.0, "offline": on}))
+    // (with `originals`: the originals of what the album holds, now and later, are kept here too, not only the smart previews;
+    // the choice is the album's, saved with the sync settings, and asking without it goes back to smart previews only)
+    let originals = on && bool_or(p, "originals", false);
+    s.sync_offline_originals(id, originals)?;
+    Ok(json!({"album": id.0, "offline": on, "originals": originals}))
 }
 
 fn photo_offline(s: &mut Session, p: &Value) -> Result<Value> {
@@ -471,7 +475,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Make Album Available Offline",
             ["File"],
             None,
-            "{id?, on?}: keep the album's smart previews on this device (toggle without `on`; default: the album shown)",
+            "{id?, on?, originals?}: keep the album's smart previews on this device (toggle without `on`; default: the album shown); `originals: true` keeps the originals of its photos here too, those it gains later as well (without it: smart previews only)",
             synced,
             album_offline
         ),

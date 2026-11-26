@@ -140,6 +140,11 @@ pub struct SyncConfig {
     /// Photos of an offline album taken out of offline use one by one (`photo.makeAvailableOffline` off): the album
     /// keeps the rest. Only photos an offline album still holds are listed, and never one of `offline_photos`.
     pub offline_excluded: Vec<PhotoId>,
+    /// The offline albums that keep their photos' originals here too, not only the smart previews ("everything, including
+    /// originals"): the originals of what such an album holds at any time come down, the ones it gains later too. Only
+    /// albums of `offline_albums` are listed. (Written only when there are some: every other `sync.json` stays as it was.)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub offline_originals: Vec<AlbumId>,
     /// Keep the original of every photo on this device too (not just the ones available offline).
     pub store_originals: bool,
     /// The most the originals downloaded from the server may take on this device, in MB: the ones used longest
@@ -1554,6 +1559,21 @@ impl Session {
             }
         }
         st.config.offline_excluded.retain(|id| covered.contains(id));
+        // (an album taken out keeps no originals either)
+        let kept = st.config.offline_albums.clone();
+        st.config.offline_originals.retain(|a| kept.contains(a));
+        st.plan_gen += 1;
+        self.persist()
+    }
+
+    /// An offline album keeps its photos' originals on this device too (`on`), or only their smart previews again. The
+    /// originals already here stay until the size limit or the user removes them; the album must be offline already.
+    pub fn sync_offline_originals(&mut self, album: AlbumId, on: bool) -> Result<()> {
+        let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
+        st.config.offline_originals.retain(|a| *a != album);
+        if on && st.config.offline_albums.contains(&album) {
+            st.config.offline_originals.push(album);
+        }
         st.plan_gen += 1;
         self.persist()
     }
@@ -1569,6 +1589,19 @@ impl Session {
             set.remove(id);
         }
         set.extend(st.config.offline_photos.iter().copied());
+        set
+    }
+
+    /// The photos whose originals stay on this device because an album that keeps them holds them now (less the ones taken
+    /// out of it one by one).
+    fn offline_originals_set(&self, st: &SyncState) -> HashSet<PhotoId> {
+        let mut set = HashSet::new();
+        for a in &st.config.offline_originals {
+            set.extend(self.catalog.album_photos(*a));
+        }
+        for id in &st.config.offline_excluded {
+            set.remove(id);
+        }
         set
     }
 
@@ -2202,12 +2235,14 @@ impl Session {
         let offline = self.offline_set(st);
         let originals_dir = self.originals_dir();
         let store = self.sync_store.as_ref().filter(|_| self.media.smart_dir.is_none());
-        let originals = st.config.store_originals || !st.want_originals.is_empty();
+        let album_originals = self.offline_originals_set(st);
+        let originals = st.config.store_originals || !st.want_originals.is_empty() || !album_originals.is_empty();
         let (mut ups, mut smart, mut downloads) = (Vec::new(), Vec::new(), Vec::new());
         for p in self.catalog.photos().filter(|p| !p.local && p.copy_of.is_none()) {
             let Source::File { path } = &p.source else { continue };
             let remote = path.starts_with(PATH_PREFIX);
             let pinned = remote && offline.contains(&p.id);
+            let kept = remote && album_originals.contains(&p.id);
             if remote && store.is_none() && !pinned && !originals {
                 continue;
             }
@@ -2233,7 +2268,7 @@ impl Session {
             if pinned && let Some(job) = self.preview_get(st, p, Blob::Smart, now) {
                 smart.push(job);
             }
-            if (st.config.store_originals || st.want_originals.contains(&key)) && p.origin.is_none() && retry_ok(&key) {
+            if (st.config.store_originals || kept || st.want_originals.contains(&key)) && p.origin.is_none() && retry_ok(&key) {
                 let dest = match (&originals_dir, store) {
                     (Some(odir), _) => Some(odir.join(&key).join(file_name_of(path, &p.file_name)).to_string_lossy().to_string()),
                     (None, Some(_)) => Some(BrowserStore::original_key(&key)),
@@ -2739,6 +2774,7 @@ impl Session {
         st.config.offline_photos = st.config.offline_photos.iter().filter_map(|id| merged.photos.get(id).copied()).collect();
         st.config.offline_excluded = st.config.offline_excluded.iter().filter_map(|id| merged.photos.get(id).copied()).collect();
         st.config.offline_albums = st.config.offline_albums.iter().filter_map(|id| merged.albums.get(id).copied()).collect();
+        st.config.offline_originals = st.config.offline_originals.iter().filter_map(|id| merged.albums.get(id).copied()).collect();
         st.planned = None;
         st.merged = Some(r);
         // views and selections named the old ids

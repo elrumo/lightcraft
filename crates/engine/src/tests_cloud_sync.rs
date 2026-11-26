@@ -2143,6 +2143,52 @@ fn an_offline_album_reports_its_progress_and_a_photo_can_leave_it() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// "Store everything offline" (`originals: true`) brings the album's originals down with its smart previews; the smart-previews-only
+/// choice leaves them on the server.
+#[test]
+fn an_offline_album_can_keep_its_originals_too() {
+    let mut f = Fake::new();
+    let (a, root, ids) = first_device("offline-originals", &mut f);
+    drop(a);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    b.selection = crate::Selection { ids: ids.clone(), ..Default::default() };
+    let album = b.execute("album.create", &json!({"name": "Trip", "addSelected": true})).unwrap()["id"].as_u64().unwrap();
+    b.selection = crate::Selection::default();
+    sync(&mut b, &mut f);
+    let in_originals = |b: &Session, id: PhotoId| match &b.catalog.photo(id).unwrap().source {
+        Source::File { path } => Path::new(path).exists() && path.contains("sync"),
+        _ => false,
+    };
+
+    let r = b.execute("album.makeAvailableOffline", &json!({"id": album, "on": true})).unwrap();
+    assert_eq!(r["originals"], json!(false));
+    sync(&mut b, &mut f);
+    assert!(b.sync_is_offline(ids[0]) && !in_originals(&b, ids[0]) && !in_originals(&b, ids[1]), "smart previews only");
+
+    let r = b.execute("album.makeAvailableOffline", &json!({"id": album, "on": true, "originals": true})).unwrap();
+    assert_eq!(r["originals"], json!(true));
+    sync(&mut b, &mut f);
+    assert!(in_originals(&b, ids[0]) && in_originals(&b, ids[1]), "the originals came down");
+    assert!(b.sync_is_offline(ids[0]) && b.sync_is_offline(ids[1]));
+    // the choice is the album's and outlives a restart (and a photo the album gains is covered by it, as the plan reads the album)
+    assert_eq!(b.sync_state().unwrap().config.offline_originals, vec![lightcraft_catalog::AlbumId(album)]);
+    b.close_library().unwrap();
+    drop(b);
+    let mut b = open(&root.join("b"));
+    assert_eq!(b.sync_state().unwrap().config.offline_originals, vec![lightcraft_catalog::AlbumId(album)]);
+    // asked for again as smart previews only: the album stays offline, the choice goes (what came down stays)
+    b.execute("album.makeAvailableOffline", &json!({"id": album, "on": true})).unwrap();
+    assert!(b.sync_state().unwrap().config.offline_originals.is_empty() && b.sync_is_offline(ids[0]));
+    b.execute("album.makeAvailableOffline", &json!({"id": album, "on": true, "originals": true})).unwrap();
+    // off: the album and its choice go
+    let r = b.execute("album.makeAvailableOffline", &json!({"id": album, "on": false, "originals": true})).unwrap();
+    assert_eq!(r["originals"], json!(false));
+    assert!(b.sync_state().unwrap().config.offline_originals.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // ---- the other shared documents ----
 
 fn names(v: &Value) -> Vec<String> {
