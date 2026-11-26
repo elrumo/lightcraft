@@ -55,6 +55,34 @@ fn normalize_maps_percentiles_to_the_unit_range() {
     assert!(flat.data.iter().all(|v| v.is_finite()));
 }
 
+// A near sliver at the edge (a pillar beside a portrait) no longer squeezes the rest of the photo into the darkest few
+// percent: the body gets the lower half, the sliver stays the nearest; a photo whose body reaches the middle is untouched
+#[test]
+fn an_estimate_keeps_the_photos_body_in_at_least_half_the_range() {
+    // 92 % of the photo between 0 and 4 % of the range, a near 8 % at the top
+    let w = 100;
+    let mut p = Plane::from_fn(w, 50, |x, y| if x >= 92 { 50.0 } else { (y * 92 + x) as f32 / (50 * 92) as f32 * 2.0 });
+    normalize_estimate(&mut p);
+    let mut v = p.data.clone();
+    v.sort_by(f32::total_cmp);
+    let p90 = v[(v.len() - 1) * 9 / 10];
+    assert!((0.45..=0.55).contains(&p90), "the body reaches the middle: {p90}");
+    assert!(p.data.iter().all(|n| (0.0..=1.0).contains(n)));
+    assert!(p.get_clamped(95, 10) > p.get_clamped(50, 49), "the sliver is still the nearest");
+    assert!(p.get_clamped(50, 49) > p.get_clamped(50, 0), "the body keeps its order");
+    // an ordinary photo, its body past the middle: exactly what `normalize` gives
+    let gradient = Plane::from_fn(64, 64, |x, y| (x + y) as f32);
+    let (mut a, mut b) = (gradient.clone(), gradient);
+    normalize(&mut a);
+    normalize_estimate(&mut b);
+    assert_eq!(a.data, b.data);
+    // degenerate planes stay finite and in range
+    for mut q in [Plane::from_fn(8, 8, |_, _| 3.0), Plane::from_fn(8, 8, |_, _| f32::NAN), Plane { width: 0, height: 0, data: Vec::new() }] {
+        normalize_estimate(&mut q);
+        assert!(q.data.iter().all(|n| (0.0..=1.0).contains(n)));
+    }
+}
+
 #[test]
 fn the_focal_range_stays_sharp_and_the_rest_blurs_at_any_size() {
     for size in [400usize, 900] {

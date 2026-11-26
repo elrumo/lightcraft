@@ -66,6 +66,31 @@ pub fn normalize(p: &mut Plane) {
     }
 }
 
+/// The share of a model's estimate counted as the photo's body, and the least of the range it gets
+/// ([`normalize_estimate`]).
+const BODY: f32 = 0.9;
+const BODY_RANGE: f32 = 0.5;
+
+/// [`normalize`] for a depth model's estimate, then the photo's body kept in at least the lower half of
+/// the range: when 90 % of the photo sits below the middle (a near sliver took the top, such as a pillar
+/// at the edge of a portrait, which squeezed the person and the room into the darkest few percent), the
+/// body is stretched linearly to fill the lower half and the nearer values above it share the upper
+/// half, in order. A photo whose body already reaches the middle is left exactly as [`normalize`] gives
+/// it. (Only estimates: a photo's own depth, read on every load, keeps [`normalize`], so existing edits
+/// don't change.)
+pub fn normalize_estimate(p: &mut Plane) {
+    normalize(p);
+    let mut v: Vec<f32> = p.data.iter().copied().step_by((p.data.len() / 65536).max(1)).collect();
+    v.sort_by(f32::total_cmp);
+    let body = v.get(((v.len().max(1) - 1) as f32 * BODY).round() as usize).copied().unwrap_or(1.0);
+    if !(body > 1e-6 && body < BODY_RANGE) {
+        return;
+    }
+    for x in p.data.iter_mut() {
+        *x = if *x <= body { *x * BODY_RANGE / body } else { BODY_RANGE + (*x - body) * (1.0 - BODY_RANGE) / (1.0 - body) };
+    }
+}
+
 /// Whether a render of `s` reads depth: Lens Blur, Relight, Flash or Depth Map is on, or a visible mask has a
 /// Depth Range.
 pub fn wants_depth(s: &DevelopSettings) -> bool {

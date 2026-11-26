@@ -389,7 +389,7 @@ impl Session {
         row.set_photo(id.0);
         let src = self.source_now(id, SourceLevel::Preview)?;
         let mut d = model.estimate(&model_input(&src)).map_err(|e| e.to_string())?;
-        lightcraft_pipeline::lensblur::normalize(&mut d);
+        lightcraft_pipeline::lensblur::normalize_estimate(&mut d);
         DepthMap::from_nearness(d.width, d.height, &d.data).ok_or_else(|| "the depth model gave no usable answer".to_string())
     }
 
