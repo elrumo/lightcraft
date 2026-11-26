@@ -103,3 +103,38 @@ fn copy_and_paste_carry_the_film_or_clear_it() {
     let json: Value = s.develop_of(target).unwrap().to_json();
     assert!(json.get("film").is_none(), "a cleared group leaves the JSON as it was");
 }
+
+#[test]
+fn gallery_effects_stack_in_order_and_change_in_place() {
+    use lightcraft_develop::FilmKind;
+    let mut s = Session::with_demo();
+    let a = s.execute("film.add", &json!({"kind": "shader", "shader": "duotone", "values": {"size": 20, "angle": 400}})).unwrap();
+    assert_eq!(a["index"].as_u64(), Some(0));
+    s.execute("film.add", &json!({"kind": "shader", "shader": "popart"})).unwrap();
+    s.execute("film.add", &json!({"kind": "dust"})).unwrap();
+    let f = film(&s);
+    assert_eq!(f.layers.iter().map(|l| l.shader.as_str()).collect::<Vec<_>>(), ["duotone", "popart", ""]);
+    assert_eq!(f.layers[0].kind, FilmKind::Shader);
+    assert_eq!(f.layers[0].size, 20.0);
+    assert_eq!(f.layers[0].angle, 180.0, "a value past a slider's range is held to it");
+    assert_eq!(f.layers[0].amount, 100.0, "a gallery layer starts at full opacity");
+
+    // the order is the stack's order: reordering changes what is drawn first
+    s.execute("film.move", &json!({"id": 1, "to": 1})).unwrap();
+    assert_eq!(film(&s).layers.iter().map(|l| l.shader.as_str()).collect::<Vec<_>>(), ["popart", "duotone", ""]);
+
+    // another effect in the same place, with its own sliders, one undo step
+    s.execute("film.setShader", &json!({"id": 1, "shader": "monochrome", "values": {"size": 70}})).unwrap();
+    assert_eq!(film(&s).layers[1].shader, "monochrome");
+    assert_eq!(film(&s).layers[1].size, 70.0);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(film(&s).layers[1].shader, "duotone");
+
+    // bad requests are errors, not panics
+    assert!(s.execute("film.add", &json!({"kind": "shader"})).is_err(), "an effect needs its id");
+    assert!(s.execute("film.add", &json!({"kind": "shader", "shader": "Bad Id!"})).is_err());
+    assert!(s.execute("film.add", &json!({"kind": "shader", "shader": "x", "values": {"size": "wide"}})).is_err());
+    assert!(s.execute("film.add", &json!({"kind": "shader", "shader": "x", "values": {"nope": 1}})).is_err());
+    assert!(s.execute("film.add", &json!({"kind": "smudge"})).is_err(), "a kind this build does not know is not offered");
+    assert!(s.execute("film.setShader", &json!({"id": 3, "shader": "popart"})).is_err(), "a mark is not a gallery effect");
+}

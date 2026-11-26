@@ -942,9 +942,18 @@ pub enum FilmKind {
     Scratches,
     /// The picture as a negative: inverted, on a colour negative's orange mask.
     Negative,
+    /// A shader effect of a native frontend's gallery: [`FilmLayer::shader`] names it, the numeric fields are its sliders in the
+    /// order [`FilmKind::fields`] lists (`amount` is the layer's opacity). A frontend that has the effect draws it, one pass a layer,
+    /// in stack order, over the picture the pixel loop made; the core's own renderer draws nothing for it.
+    Shader,
+    /// A kind this build does not know (written by a newer app): kept in the stack so the rest of the photo's edits load, drawn as nothing.
+    /// Last, as serde wants the variant an unknown name reads as.
+    #[serde(other)]
+    Unknown,
 }
 
 impl FilmKind {
+    /// The film marks the Film panel offers (not the gallery's `Shader`, which has its own panel).
     pub const ALL: [FilmKind; 6] = [FilmKind::Leak, FilmKind::Streak, FilmKind::Burn, FilmKind::Dust, FilmKind::Scratches, FilmKind::Negative];
 
     pub fn label(self) -> &'static str {
@@ -955,7 +964,14 @@ impl FilmKind {
             FilmKind::Dust => "Dust",
             FilmKind::Scratches => "Scratches",
             FilmKind::Negative => "Negative",
+            FilmKind::Shader => "Effect",
+            FilmKind::Unknown => "Unknown",
         }
+    }
+
+    /// Whether the core's film pass draws this kind (a `Shader` is the client's, an `Unknown` nobody's).
+    pub fn is_mark(self) -> bool {
+        !matches!(self, FilmKind::Shader | FilmKind::Unknown)
     }
 
     /// The fields of [`FilmLayer`] this kind uses, in panel order (the others keep their values and draw nothing).
@@ -967,6 +983,8 @@ impl FilmKind {
             FilmKind::Dust => &["amount", "size", "fibres", "tone", "texture"],
             FilmKind::Scratches => &["amount", "size", "angle", "tone", "texture"],
             FilmKind::Negative => &["amount", "texture"],
+            FilmKind::Shader => &["amount", "size", "angle", "offset", "color", "texture", "tone"],
+            FilmKind::Unknown => &[],
         }
     }
 }
@@ -998,6 +1016,10 @@ pub struct FilmLayer {
     pub tone: f64,
     /// Dust: how many hairs among the specks, 0..100.
     pub fibres: f64,
+    /// A [`FilmKind::Shader`] layer's effect: the id of one of the frontend's gallery shaders (a frontend that does not have it draws nothing).
+    /// Left out of the saved settings when empty, so a photo without gallery effects saves as it always did.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub shader: String,
 }
 
 impl Default for FilmLayer {
@@ -1022,6 +1044,7 @@ impl FilmLayer {
             texture: 50.0,
             tone: 0.0,
             fibres: 0.0,
+            shader: String::new(),
         };
         match kind {
             FilmKind::Leak => FilmLayer { amount: 60.0, size: 45.0, angle: 90.0, ..base },
@@ -1030,6 +1053,7 @@ impl FilmLayer {
             FilmKind::Dust => FilmLayer { amount: 40.0, size: 40.0, tone: 100.0, texture: 30.0, fibres: 25.0, ..base },
             FilmKind::Scratches => FilmLayer { amount: 30.0, size: 20.0, tone: 100.0, ..base },
             FilmKind::Negative => FilmLayer { amount: 100.0, texture: 60.0, ..base },
+            FilmKind::Shader | FilmKind::Unknown => FilmLayer { amount: 100.0, ..base },
         }
     }
 }

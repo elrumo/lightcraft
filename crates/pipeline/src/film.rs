@@ -240,7 +240,7 @@ impl Setup {
             .layers
             .iter()
             .take(lightcraft_develop::MAX_FILM_LAYERS)
-            .filter(|l| l.visible && l.amount.is_finite() && l.amount > 0.0)
+            .filter(|l| l.kind.is_mark() && l.visible && l.amount.is_finite() && l.amount > 0.0)
             .map(|l| Layer {
                 kind: l.kind,
                 seed: effective_seed(l.seed, salt, f.vary),
@@ -424,6 +424,8 @@ impl Setup {
                 FilmKind::Dust => self.marks(c, dust(ctx, l, q)),
                 FilmKind::Scratches => self.marks(c, scratches(ctx, l, q)),
                 FilmKind::Negative => negative(c, l),
+                // (a gallery shader is the client's to draw, and `Setup::new` leaves both out)
+                FilmKind::Shader | FilmKind::Unknown => c,
             };
         }
         c

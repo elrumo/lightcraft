@@ -436,6 +436,42 @@ mod tests {
     }
 
     #[test]
+    fn a_gallery_layer_keeps_its_effect_and_leaves_no_trace_when_empty() {
+        let mut s = DevelopSettings::default();
+        let mut l = FilmLayer::new(1, FilmKind::Shader, 3);
+        l.shader = "popart".into();
+        l.size = 42.0;
+        s.film.layers.push(l);
+        let j = s.to_json();
+        assert_eq!(j["film"]["layers"][0]["shader"], "popart");
+        assert_eq!(DevelopSettings::from_json(&j).unwrap(), s, "the effect and its sliders come back");
+        // a mark (no effect named) writes no `shader` key, so settings saved before the gallery are unchanged
+        let mut m = DevelopSettings::default();
+        m.film.layers.push(FilmLayer::new(1, FilmKind::Dust, 7));
+        assert!(m.to_json()["film"]["layers"][0].get("shader").is_none());
+        // the sliders a gallery effect has are the layer's indexed controls, in the range of each
+        assert_eq!(controls::get(&s, "filmLayer.0.size"), Some(42.0));
+        assert_eq!(FilmKind::Shader.fields(), ["amount", "size", "angle", "offset", "color", "texture", "tone"]);
+    }
+
+    #[test]
+    fn a_film_kind_from_a_newer_build_keeps_the_rest_of_the_photos_edits() {
+        let j = json!({
+            "light": {"exposure": 0.5},
+            "film": {"layers": [
+                {"id": 1, "kind": "dust", "amount": 40.0},
+                {"id": 2, "kind": "someFutureKind", "amount": 70.0, "shader": "x"},
+                {"id": 3, "kind": "shader", "shader": "duotone", "amount": 90.0}
+            ]}
+        });
+        let s = DevelopSettings::from_json(&j).expect("an unknown layer kind must not cost the photo its edits");
+        assert_eq!(s.light.exposure, 0.5);
+        let kinds: Vec<FilmKind> = s.film.layers.iter().map(|l| l.kind).collect();
+        assert_eq!(kinds, [FilmKind::Dust, FilmKind::Unknown, FilmKind::Shader]);
+        assert!(FilmKind::Dust.is_mark() && !FilmKind::Shader.is_mark() && !FilmKind::Unknown.is_mark());
+    }
+
+    #[test]
     fn hdr_peak_is_finite_for_a_non_finite_headroom() {
         let mut h = Hdr { enabled: true, max_ev: f64::NAN, ..Hdr::default() };
         assert_eq!(h.peak(), (Hdr::DEFAULT_MAX_EV as f32).exp2());

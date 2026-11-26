@@ -368,3 +368,17 @@ fn an_8_bit_render_and_a_deep_one_draw_alike() {
         assert_eq!(p[3], 255);
     }
 }
+
+#[test]
+fn a_photo_with_only_gallery_effects_has_nothing_for_the_film_pass_to_draw() {
+    // the gallery's shaders are the client's to draw, in stack order: the core's film pass must not run for them
+    let mut s = with(&[], FilmFrame::None);
+    let mut l = FilmLayer::new(1, FilmKind::Shader, 1);
+    l.shader = "duotone".into();
+    s.film.layers.push(l);
+    s.film.layers.push(FilmLayer::new(2, FilmKind::Unknown, 2));
+    assert!(Setup::new(&s, 0, OutputSpace::Srgb, true).is_none());
+    // a mark beside them still draws
+    s.film.layers.push(FilmLayer::new(3, FilmKind::Dust, 3));
+    assert!(Setup::new(&s, 0, OutputSpace::Srgb, true).is_some());
+}

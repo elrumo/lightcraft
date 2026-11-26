@@ -29,6 +29,17 @@ A layer: `{id, kind, visible, seed, amount, size, angle, offset, color, texture,
 generic; each kind reads its own, and their sliders are indexed controls `filmLayer.<i>.<field>` (`develop.set`).
 Angles are degrees counter-clockwise: 0 the right edge (a horizontal line), 90 the top, −90 the bottom.
 
+**Gallery effects** (kind `shader`, 2026-11-26): a native frontend can keep its own shader effects in the same stack, so
+they share the layer list, its undo steps, reordering, copy and paste, presets and sync. The layer names the effect in
+`shader` (an id of 1 to 40 characters: lower case letters, digits, `_`; left out of the JSON when empty) and keeps its
+sliders in the numeric fields (`amount` is the opacity, the other six hold the effect's own sliders, each stretched over its
+field's range by the frontend). The core draws nothing for it (`FilmKind::is_mark` is false, so a photo with only such
+layers has no film pass), a frontend that does not have the effect skips the layer, and the order of the stack is the order
+the frontend draws the effects in, each over the one before. `film.add {kind: "shader", shader, values?}` adds one and
+`film.setShader {id, shader, values?}` gives a layer another effect in the same place, each one undo step. A kind this build
+does not know (written by a newer build) reads as `unknown`, is kept in the stack and drawn as nothing, so the photo's other
+edits load; a build older than this one, whose `FilmKind` has no such fallback, cannot read the layer.
+
 | Kind | Fields (label) | Starting values |
 |---|---|---|
 | `leak` Light Leak | amount, size (Reach), angle (Direction), offset (Position), color, texture | 60, 45, 90, 0, 0, 50 |
@@ -206,6 +217,7 @@ Paste carrying or clearing the group).
 
 | Date | Change |
 |---|---|
+| 2026-11-26 | Gallery effects: layer kind `shader` with a `shader` id, `film.setShader`, an `unknown` fallback for kinds from newer builds. |
 | 2026-11-19 | The Super 8 frame (`film.frame: super8`). |
 | 2026-11-15 | Header in the revision-history form upstream's `cargo xtask parity` asks for (upstream v0.21.1 merged). |
 | 2026-11-11 | Last change before the header rule (recorded in the old header, no note). |

@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use lightcraft_develop::{Film, FilmKind, FilmLayer, MAX_FILM_LAYERS};
+use lightcraft_develop::{Film, FilmKind, FilmLayer, MAX_FILM_LAYERS, controls};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, bool_or, cmd, has_active};
@@ -51,6 +51,47 @@ fn room(film: &Film, c: &str) -> Result<()> {
     if film.layers.len() >= MAX_FILM_LAYERS { Err(bad(c, format!("a photo holds at most {MAX_FILM_LAYERS} film effects"))) } else { Ok(()) }
 }
 
+/// The longest id a gallery shader has.
+const MAX_SHADER_ID: usize = 40;
+
+/// A gallery shader's id (`shader` in `film.add` and `film.setShader`): short, lower case letters, digits and `_`.
+fn shader_param(p: &Value, c: &str) -> Result<String> {
+    let id = p.get("shader").and_then(Value::as_str).ok_or_else(|| bad(c, "missing `shader` (a gallery effect's id)"))?;
+    if id.is_empty() || id.len() > MAX_SHADER_ID || !id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+        return Err(bad(c, format!("`shader` must be 1 to {MAX_SHADER_ID} characters: lower case letters, digits and `_`")));
+    }
+    Ok(id.to_owned())
+}
+
+fn slider_mut<'a>(l: &'a mut FilmLayer, name: &str) -> Option<&'a mut f64> {
+    Some(match name {
+        "amount" => &mut l.amount,
+        "size" => &mut l.size,
+        "angle" => &mut l.angle,
+        "offset" => &mut l.offset,
+        "color" => &mut l.color,
+        "texture" => &mut l.texture,
+        "tone" => &mut l.tone,
+        "fibres" => &mut l.fibres,
+        _ => return None,
+    })
+}
+
+/// The sliders a caller gave in `values` (`{amount?, size?, angle?, offset?, color?, texture?, tone?}`), each held to its control's range.
+fn apply_values(l: &mut FilmLayer, p: &Value, c: &str) -> Result<()> {
+    let Some(v) = p.get("values").filter(|v| !v.is_null()) else { return Ok(()) };
+    let obj = v.as_object().ok_or_else(|| bad(c, "`values` must be an object of slider values"))?;
+    for (name, val) in obj {
+        let x = val.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad(c, format!("`values.{name}` must be a number")))?;
+        let spec = controls::find(&format!("filmLayer.0.{name}")).ok_or_else(|| bad(c, format!("`values.{name}` is not a film effect slider")))?;
+        match slider_mut(l, name) {
+            Some(slot) => *slot = x.clamp(spec.min, spec.max),
+            None => return Err(bad(c, format!("`values.{name}` is not a film effect slider"))),
+        }
+    }
+    Ok(())
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -58,18 +99,49 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Film Effect",
             [],
             None,
-            "{kind: leak|streak|burn|dust|scratches|negative, seed?: u32} — a new layer on top of the stack with the kind's starting values; answers {id, index}",
+            "{kind: leak|streak|burn|dust|scratches|negative|shader, seed?: u32, shader?: id, values?: {amount?, size?, angle?, offset?, color?, texture?, tone?}} — a new layer on top of the stack with the kind's starting values; a `shader` layer needs the gallery effect's `shader` id and takes its slider `values`; answers {id, index}",
             has_active,
             |s, p| {
                 let c = "film.add";
                 let kind: FilmKind = serde_json::from_value(p.get("kind").cloned().ok_or_else(|| bad(c, "missing `kind`"))?)
-                    .map_err(|_| bad(c, "`kind` must be leak, streak, burn, dust, scratches or negative"))?;
+                    .ok()
+                    .filter(|k| *k != FilmKind::Unknown)
+                    .ok_or_else(|| bad(c, "`kind` must be leak, streak, burn, dust, scratches, negative or shader"))?;
                 let seed = seed_param(p, c)?;
-                film_edit(s, c, "Add Film Effect", |film| {
+                let shader = if kind == FilmKind::Shader { Some(shader_param(p, c)?) } else { None };
+                film_edit(s, c, if shader.is_some() { "Add Effect" } else { "Add Film Effect" }, |film| {
                     room(film, c)?;
                     let id = film.next_id();
-                    film.layers.push(FilmLayer::new(id, kind, seed));
+                    let mut layer = FilmLayer::new(id, kind, seed);
+                    if let Some(shader) = shader {
+                        layer.shader = shader;
+                        apply_values(&mut layer, p, c)?;
+                    }
+                    film.layers.push(layer);
                     Ok(Some(id))
+                })
+            }
+        ),
+        cmd!(
+            "film.setShader",
+            "Change Effect",
+            [],
+            None,
+            "{id, shader: id, values?: {amount?, size?, angle?, offset?, color?, texture?, tone?}} — a gallery layer takes another effect (and its sliders) in the same place in the stack",
+            has_active,
+            |s, p| {
+                let c = "film.setShader";
+                let lid = layer_id(p, c)?;
+                let shader = shader_param(p, c)?;
+                film_edit(s, c, "Change Effect", |film| {
+                    let i = find(film, lid, c)?;
+                    let l = &mut film.layers[i];
+                    if l.kind != FilmKind::Shader {
+                        return Err(bad(c, format!("film effect {lid} is not a gallery effect")));
+                    }
+                    l.shader = shader;
+                    apply_values(l, p, c)?;
+                    Ok(Some(lid))
                 })
             }
         ),
