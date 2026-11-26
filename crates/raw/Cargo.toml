@@ -22,6 +22,10 @@ rayon = { workspace = true }
 miniz_oxide = { workspace = true }
 craft-image-codecs = { workspace = true }
 
+# JPEG XL tiles of a DNG (compression 52546); the encoder is not built for wasm32 (craft-jxl gates it the same way)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+jixel = { workspace = true }
+
 [features]
 ## Synthetic VC-5 (GoPro GPR), Olympus and Panasonic files for tests in other crates.
 testdata = ["craft-raw/testdata"]
@@ -31,7 +35,6 @@ testdata = ["craft-raw/testdata"]
 lightcraft-testkit = { workspace = true }
 proptest = { workspace = true }
 craft-jxl = { workspace = true }
-jixel = { workspace = true }
 # Pinned CC0 corpus identities; not a product dependency.
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 # Peak-heap regression tests (tests/sr2_heap.rs); not a product dependency.

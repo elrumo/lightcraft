@@ -8,7 +8,7 @@ use craft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
 use lightcraft_color::Mat3;
 use rayon::prelude::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DngCompression {
     Uncompressed,
     /// Lossless JPEG tiles of `tile × tile` pixels (`tile` even). CFA tiles are encoded as two interleaved
@@ -32,6 +32,20 @@ pub enum DngCompression {
         tile: u32,
         quality: u8,
         long_edge: Option<u32>,
+    },
+    /// JPEG XL tiles of `tile × tile` pixels (DNG 1.7 compression 52546) of three-sample 16-bit linear data (Apple
+    /// ProRAW and the other `LinearRaw` DNGs; mosaic and float data are refused). `distance` `None`: lossless
+    /// (bit-exact). `Some(d)`: a butteraugli distance, clamped to 0.05–15 (1 is visually lossless, 0.5 close to
+    /// it); the samples are stored on a gamma curve that a 65536-entry `LinearizationTable` maps back, so shadows keep
+    /// their precision. Written by `jixel`; read by every JPEG XL DNG reader that follows the DNG 1.7 specification.
+    ///
+    /// Lossless data with few distinct values (ProRAW: about 1600 on a lattice of 16-bit values) is stored as dense
+    /// codes under a `LinearizationTable`. `slow`: the encoder's slow search, which makes a lossless file about a
+    /// quarter smaller and a lossy one a few percent, at 3 to 10 times the time (a 12 MP ProRAW: 24 s against 2 s lossless).
+    Jxl {
+        tile: u32,
+        distance: Option<f32>,
+        slow: bool,
     },
 }
 
@@ -182,9 +196,35 @@ pub fn write_dng(raw: &RawImage, opts: &DngWriteOptions) -> Result<Vec<u8>> {
 
 /// [`write_dng`] with a JPEG preview (a rendering of the same picture, any size, sRGB) in a reduced-resolution sub-IFD,
 /// where converters and [`crate::embedded_preview`] look for it.
-#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
 fn write_dng_with_preview(raw: &RawImage, opts: &DngWriteOptions, preview: Option<&[u8]>) -> Result<Vec<u8>> {
+    write_dng_inner(raw, opts, preview, None).map(|(bytes, _)| bytes)
+}
+
+/// [`write_dng`] that also writes what a [`crate::DngCarry`] holds (a source's Exif IFD, maker note, DNG private data,
+/// noise profile, semantic masks and preview), as when a DNG from another maker is rewritten smaller. The masks are
+/// left out when the compression changes the picture's geometry (`LossyJpeg`). Not checked: [`crate::write_dng_smaller`]
+/// does the rewrite of a whole file and decodes the result again.
+pub fn write_dng_carrying(raw: &RawImage, opts: &DngWriteOptions, carry: &crate::DngCarry) -> Result<Vec<u8>> {
+    write_dng_inner(raw, opts, carry.preview.as_deref(), Some(carry)).map(|(bytes, _)| bytes)
+}
+
+/// The writer: the bytes and how many semantic masks they hold.
+#[allow(clippy::cognitive_complexity)] // fork code that predates the lint; split it when it is next reworked
+pub(crate) fn write_dng_inner(
+    raw: &RawImage,
+    opts: &DngWriteOptions,
+    preview: Option<&[u8]>,
+    carry: Option<&crate::DngCarry>,
+) -> Result<(Vec<u8>, usize)> {
     raw.validate()?;
+    if let DngCompression::Jxl { distance, .. } = opts.compression {
+        if raw.cfa.is_some() || raw.cpp != 3 || !matches!(raw.data, RawData::U16(_)) {
+            return Err(RawError::Unsupported("JPEG XL tiles of mosaic or float data (only 16-bit three-sample linear data)".into()));
+        }
+        if let Some(d) = distance {
+            crate::dngjxl::clean_distance(d)?;
+        }
+    }
     let lossy;
     let raw = match opts.compression {
         DngCompression::LossyJpeg { long_edge, .. } => {
@@ -226,6 +266,7 @@ fn write_dng_with_preview(raw: &RawImage, opts: &DngWriteOptions, preview: Optio
     ifd.set(t::SOFTWARE, Value::Ascii(SOFTWARE.into()));
     let xmp = opts.xmp.clone().unwrap_or_else(|| lightcraft_meta::write_xmp(&raw.metadata, None));
     ifd.set(t::XMP, Value::Byte(xmp.into_bytes()));
+    let masks = carry.map_or(0, |c| c.apply(&mut ifd, (w, h), !matches!(opts.compression, DngCompression::LossyJpeg { .. }), opts.order));
 
     if let Some(cfa) = &raw.cfa {
         ifd.set(t::CFA_REPEAT_PATTERN_DIM, Value::Short(vec![cfa.height as u16, cfa.width as u16]));
@@ -373,6 +414,24 @@ fn write_dng_with_preview(raw: &RawImage, opts: &DngWriteOptions, preview: Optio
                 .collect::<Result<_>>()?;
             ifd.set_image(ImageData::Tiles { tile_width: tile as u32, tile_height: tile as u32, tiles });
         }
+        (RawData::U16(v), DngCompression::Jxl { tile, distance, slow }) => {
+            let tile = crate::dngjxl::fit_tile(tile, w, h);
+            let distance = distance.map(crate::dngjxl::clean_distance).transpose()?;
+            ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![16; cpp]));
+            ifd.set(t::COMPRESSION, Value::Short(vec![compression::JPEG_XL]));
+            let palette = if distance.is_none() { crate::dngjxl::palette(v) } else { None };
+            if distance.is_some() {
+                ifd.set(t::LINEARIZATION_TABLE, Value::Short(crate::dngjxl::linearization()));
+            }
+            let tiles = match palette {
+                Some((table, codes)) => {
+                    ifd.set(t::LINEARIZATION_TABLE, Value::Short(table));
+                    crate::dngjxl::encode_tiles(&codes, w, h, tile, None, slow)?
+                }
+                None => crate::dngjxl::encode_tiles(v, w, h, tile, distance, slow)?,
+            };
+            ifd.set_image(ImageData::Tiles { tile_width: tile as u32, tile_height: tile as u32, tiles });
+        }
         (RawData::U16(v), _) => {
             let maxv = v.iter().copied().max().unwrap_or(0);
             let bits = (16 - maxv.leading_zeros()).max(raw.bits.min(16)).max(2) as u8;
@@ -425,7 +484,7 @@ fn write_dng_with_preview(raw: &RawImage, opts: &DngWriteOptions, preview: Optio
                     ifd.set_image(ImageData::Tiles { tile_width: tile as u32, tile_height: tile as u32, tiles });
                 }
                 // handled above (the data is converted first)
-                DngCompression::LossyJpeg { .. } => return Err(RawError::Unsupported("lossy DNG of this data".into())),
+                DngCompression::LossyJpeg { .. } | DngCompression::Jxl { .. } => return Err(RawError::Unsupported("lossy DNG of this data".into())),
                 DngCompression::Lj92 { tile } => {
                     let tile = (tile.max(2) & !1) as usize;
                     if tile > 65534 {
@@ -474,7 +533,7 @@ fn write_dng_with_preview(raw: &RawImage, opts: &DngWriteOptions, preview: Optio
         sub.set_image(ImageData::Strips { rows_per_strip: ph, strips: vec![jpeg.to_vec()] });
         ifd.add_sub_ifd(sub);
     }
-    Ok(TiffWriter::new(opts.order, false).write(&[ifd])?)
+    Ok((TiffWriter::new(opts.order, false).write(&[ifd])?, masks))
 }
 
 fn write_profile_tags(ifd: &mut IfdBuilder, raw: &RawImage, order: ByteOrder) {

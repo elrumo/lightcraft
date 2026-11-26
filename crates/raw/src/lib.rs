@@ -33,6 +33,8 @@ mod convert;
 pub mod dcp;
 pub mod demosaic;
 pub mod depth;
+mod dngextra;
+mod dngjxl;
 pub mod dngwrite;
 pub mod gaintable;
 pub mod highlight;
@@ -60,7 +62,8 @@ pub use craft_raw::{
     embedded_preview_from_range, ljpeg, probe, semantic_masks, set_max_parallel_tiles, stretched_height,
 };
 pub use demosaic::{Method, demosaic};
-pub use dngwrite::{DngCompression, DngWriteOptions, LinearDngLook, write_dng, write_linear_dng, write_rendered_dng};
+pub use dngextra::{DngCarry, RewriteError, SmallerDng, verify_rewrite, write_dng_smaller};
+pub use dngwrite::{DngCompression, DngWriteOptions, LinearDngLook, write_dng, write_dng_carrying, write_linear_dng, write_rendered_dng};
 pub use hotpixel::HOT_PIXEL_MAX_SHARE;
 pub use lens_metadata::LensMetadata;
 pub use lightcraft_color::Mat3;
