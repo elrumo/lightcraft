@@ -40,6 +40,9 @@ version. It builds the web app once, then:
 (`HEAD`), with no GitHub Actions minutes and no secrets:
 
 ```sh
+make push                                    # build and publish to Docker Hub and GitHub
+make push VERSION=0.14.0                     # select a version (default: workspace version)
+make push RELEASE_NOTES=1                    # generate release notes with LiteLLM before publishing
 tools/release-server.sh                      # builds the zips in dist/release/server (nothing leaves the Mac)
 tools/release-server.sh --upload             # also puts them on a draft release server-v<version>
 tools/release-server.sh --upload --publish   # also publishes it: the Mac installer downloads published releases
@@ -52,6 +55,14 @@ workflow by hand (Actions > Server > Run workflow, "publish") afterwards to add 
 merges its checksums with the ones already on the release (and replaces the zips it also builds). A tag push for a
 release that is already published from a Mac does nothing, so publishing from the Mac does not start a second build.
 Options: `--version`, `--image`, `--skip-linux`, `--skip-intel`.
+
+`--generate-notes` (or `make push RELEASE_NOTES=1`) sends commit subjects since the previous reachable
+`server-v*` tag for the server, apphost, catalog and self-hosting guide to the `mimo-v2.6-pro` model through LiteLLM, using `LITELLM_API_BASE_URL` and
+`LITELLM_API_KEY` from `apps/lightbites-web/.env` or the environment. It updates existing release notes too;
+without the flag, existing notes are preserved and new releases receive the generic description. Set
+`RELEASE_NOTES_BASE` to a local Git ref to select a different starting point. Generation fails before building or
+publishing if no baseline or usable response is available. Review generated notes for accuracy before publishing;
+use `tools/release-server.sh --upload --generate-notes` to leave the release as a draft.
 
 Set repository secret `DOCKERHUB_TOKEN` (write access to `elrumo/lightbites-server`) and
 `LIGHTBITES_SERVER_RELEASE_TOKEN` (contents write access to `elrumo/lightbites-server`). The workflow embeds the

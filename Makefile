@@ -73,3 +73,9 @@ ARCH ?= $(shell uname -m | sed 's/arm64/aarch64/')
 .PHONY: macos-app
 macos-app:
 	packaging/macos/package.sh --arch $(ARCH)
+
+# Publish the LightBites server to Docker Hub and GitHub from committed HEAD.
+# VERSION is optional; RELEASE_NOTES=1 generates notes with LiteLLM.
+.PHONY: push
+push:
+	tools/release-server.sh --docker --upload --publish $(if $(VERSION),--version $(VERSION)) $(if $(filter 1,$(RELEASE_NOTES)),--generate-notes)
