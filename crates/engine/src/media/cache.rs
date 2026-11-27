@@ -383,8 +383,9 @@ impl MediaCache {
         }
     }
 
-    /// The table of `id`'s look came (an app pack's look fetched after the photo was drawn without it): a host draws its
-    /// thumbnail again ([`MediaCache::take_rebuilt`]; its render key changed with the table, [`MediaCache::camera_profile_salt`]).
+    /// The table of `id`'s look came (an app pack's look fetched after the photo was drawn without it), or another table
+    /// took its place: a host draws its thumbnail again ([`MediaCache::take_rebuilt`]; its render key changed with the
+    /// table, [`MediaCache::camera_profile_salt`]).
     /// Past what is kept, every thumbnail a host remembers is asked for again.
     pub fn note_look_arrived(&mut self, id: PhotoId) {
         if self.rebuilt.len() < ARRIVED_MAX {
@@ -569,11 +570,13 @@ impl MediaCache {
 
     /// What a render with profile `profile_id` adds to its cache keys: the imported camera profile's fingerprint, 0
     /// for any other profile and for a camera profile this library no longer has (it renders without it). A LUT
-    /// profile with no table registered (an app pack's look not fetched yet) has a value of its own: the picture drawn
-    /// without the table is not the one the profile makes once the table is here.
+    /// profile adds its table's stamp (`lut::stamp`: 0 for a table in memory, the file's length and time for an app
+    /// pack's table, so a table replaced under the same look draws its photos again), and one with no table registered
+    /// (an app pack's look not fetched yet) a value of its own: the picture drawn without the table is not the one the
+    /// profile makes once the table is here.
     pub fn camera_profile_salt(&self, profile_id: &str) -> u64 {
-        if lightcraft_pipeline::lut::is_lut_profile(profile_id) && !lightcraft_pipeline::lut::is_registered(profile_id) {
-            return crate::cmd::packs::NO_TABLE_SALT;
+        if lightcraft_pipeline::lut::is_lut_profile(profile_id) {
+            return lightcraft_pipeline::lut::stamp(profile_id).unwrap_or(crate::cmd::packs::NO_TABLE_SALT);
         }
         if !crate::cmd::dcp_profiles::is_dcp_id(profile_id) {
             return 0;

@@ -159,10 +159,11 @@ impl Lut3d {
     }
 }
 
-/// What is registered under a profile id: a table, or the file one is read from the first time a render asks.
+/// What is registered under a profile id: a table, or the file one is read from the first time a render asks. The
+/// number is the table's stamp ([`stamp`]).
 enum Entry {
-    Ready(Arc<Lut3d>),
-    File(PathBuf),
+    Ready(Arc<Lut3d>, u64),
+    File(PathBuf, u64),
     /// A file that was read and is not a table: no LUT, and not read again on every render.
     Failed,
 }
@@ -174,13 +175,22 @@ fn registry() -> &'static RwLock<HashMap<String, Entry>> {
 
 /// Make a LUT available to renders under profile id `id` (`lut:…`).
 pub fn register(id: &str, lut: Lut3d) {
-    registry().write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), Entry::Ready(Arc::new(lut)));
+    registry().write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), Entry::Ready(Arc::new(lut), 0));
 }
 
 /// Make the `.cube` file at `path` available under `id`, read when a render first needs it: an app with a pack of
 /// big tables doesn't parse them all at every start.
 pub fn register_file(id: &str, path: impl Into<PathBuf>) {
-    registry().write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), Entry::File(path.into()));
+    let path = path.into();
+    let stamp = file_stamp(&path);
+    registry().write().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), Entry::File(path, stamp));
+}
+
+/// What tells one file's table from another's without reading it: its length and when it was last written (never 0).
+fn file_stamp(path: &std::path::Path) -> u64 {
+    let Ok(meta) = std::fs::metadata(path) else { return 1 };
+    let written = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).unwrap_or_default();
+    (meta.len().wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ written.as_secs().wrapping_mul(0xc2b2_ae3d_27d4_eb4f) ^ u64::from(written.subsec_nanos())) | 1
 }
 
 /// The LUT registered for profile `id`.
@@ -188,10 +198,10 @@ pub fn get(id: &str) -> Option<Arc<Lut3d>> {
     if !id.starts_with("lut:") {
         return None;
     }
-    let path = match registry().read().unwrap_or_else(|e| e.into_inner()).get(id)? {
-        Entry::Ready(l) => return Some(l.clone()),
+    let (path, stamp) = match registry().read().unwrap_or_else(|e| e.into_inner()).get(id)? {
+        Entry::Ready(l, _) => return Some(l.clone()),
         Entry::Failed => return None,
-        Entry::File(p) => p.clone(),
+        Entry::File(p, stamp) => (p.clone(), *stamp),
     };
     // (read outside the lock: two renders asking at once may both read it, which only costs time)
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -200,8 +210,8 @@ pub fn get(id: &str) -> Option<Arc<Lut3d>> {
     };
     let lut = Lut3d::parse_cube(&text).ok().map(Arc::new);
     let mut w = registry().write().unwrap_or_else(|e| e.into_inner());
-    if matches!(w.get(id), Some(Entry::File(p)) if *p == path) {
-        w.insert(id.to_string(), lut.clone().map_or(Entry::Failed, Entry::Ready));
+    if matches!(w.get(id), Some(Entry::File(p, s)) if *p == path && *s == stamp) {
+        w.insert(id.to_string(), lut.clone().map_or(Entry::Failed, |l| Entry::Ready(l, stamp)));
     }
     lut
 }
@@ -209,7 +219,18 @@ pub fn get(id: &str) -> Option<Arc<Lut3d>> {
 /// Whether a table is registered for profile `id` (read or not yet): `false` means a render with the profile draws
 /// without it. Cheap: nothing is read.
 pub fn is_registered(id: &str) -> bool {
-    matches!(registry().read().unwrap_or_else(|e| e.into_inner()).get(id), Some(Entry::Ready(_) | Entry::File(_)))
+    stamp(id).is_some()
+}
+
+/// The registered table's stamp, `None` when [`is_registered`] is false: 0 for a table registered in memory, and for one
+/// registered from a file what the file was when it was registered (its length and when it was written), so a table
+/// replaced under the same id has another stamp, read or not. A render key carries it: a picture drawn with the old
+/// table is not taken for one drawn with the new.
+pub fn stamp(id: &str) -> Option<u64> {
+    match registry().read().unwrap_or_else(|e| e.into_inner()).get(id)? {
+        Entry::Ready(_, s) | Entry::File(_, s) => Some(*s),
+        Entry::Failed => None,
+    }
 }
 
 /// The size and title a `.cube` file's first lines (`head`) declare, without reading its table.
@@ -280,6 +301,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(cube_header("TITLE \"Look\"\nLUT_3D_SIZE 33\n0 0 0").unwrap(), (33, Some("Look".to_string())));
         assert!(cube_header("LUT_1D_SIZE 4").is_err() && cube_header("0 0 0").is_err() && cube_header("LUT_3D_SIZE 999").is_err());
+    }
+
+    #[test]
+    fn a_table_replaced_under_the_same_id_has_another_stamp_read_or_not() {
+        let dir = std::env::temp_dir().join(format!("lc-lut-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.cube");
+        std::fs::write(&file, cube(|c| c, 5)).unwrap();
+        register_file("lut:stamp-test", &file);
+        let first = stamp("lut:stamp-test").unwrap();
+        assert_ne!(first, 0);
+        get("lut:stamp-test").unwrap();
+        assert_eq!(stamp("lut:stamp-test"), Some(first), "reading the table keeps the stamp it was registered with");
+        register_file("lut:stamp-test", &file);
+        assert_eq!(stamp("lut:stamp-test"), Some(first), "the same file again: the same stamp");
+        // another table in the file's place (written a moment later, one more point a side)
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&file, cube(|c| [c[2], c[1], c[0]], 6)).unwrap();
+        register_file("lut:stamp-test", &file);
+        assert_ne!(stamp("lut:stamp-test"), Some(first));
+        register("lut:stamp-memory", Lut3d::parse_cube(&cube(|c| c, 3)).unwrap());
+        assert_eq!(stamp("lut:stamp-memory"), Some(0));
+        assert_eq!(stamp("lut:stamp-nothing"), None);
+        unregister("lut:stamp-test");
+        unregister("lut:stamp-memory");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

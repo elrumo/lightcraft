@@ -462,8 +462,9 @@ fn a_picture_drawn_without_the_table_is_not_kept_for_the_look() {
     s.execute("develop.profile", &json!({"id": later})).unwrap();
     s.execute("library.select", &json!({"ids": [b.0]})).unwrap();
     s.execute("develop.profile", &json!({"id": here})).unwrap();
-    assert_eq!(s.media.camera_profile_salt(&here), 0, "a look whose table is here keeps the keys it had");
-    assert_ne!(s.media.camera_profile_salt(&later), 0);
+    let no_table = super::cmd::packs::NO_TABLE_SALT;
+    assert_ne!(s.media.camera_profile_salt(&here), no_table, "a look whose table is here is keyed by its table");
+    assert_eq!(s.media.camera_profile_salt(&later), no_table);
     assert_eq!(s.media.camera_profile_salt("lc.color"), 0);
     let keys = |s: &mut Session| {
         let thumb = s.thumb_job(a, 256).unwrap();
@@ -494,6 +495,55 @@ fn a_picture_drawn_without_the_table_is_not_kept_for_the_look() {
     assert!(s.media.take_rebuilt().is_empty());
     assert_eq!(keys(&mut s), with);
     s.execute("pack.set", &json!({"id": "saltpack"})).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fetched);
+}
+
+#[test]
+fn a_table_replaced_under_its_look_draws_the_photos_that_use_it_again() {
+    let (mut s, dir, a, b) = with_absent_looks("swap", "swappack");
+    let (here, later) = (super::cmd::packs::profile_id("swappack", "Here"), super::cmd::packs::profile_id("swappack", "Later"));
+    let fetched = temp_dir("swap-fetched");
+    write_cube(&fetched.join("Later.cube"), "Later", 0.5);
+    let set = |s: &mut Session| {
+        s.execute(
+            "pack.set",
+            &json!({"id": "swappack", "dir": dir.to_string_lossy(), "files": [fetched.join("Later.cube").to_string_lossy()], "group": "Test +"}),
+        )
+        .unwrap()
+    };
+    set(&mut s);
+    s.execute("library.select", &json!({"ids": [a.0]})).unwrap();
+    s.execute("develop.profile", &json!({"id": later})).unwrap();
+    s.execute("library.select", &json!({"ids": [b.0]})).unwrap();
+    s.execute("develop.profile", &json!({"id": here})).unwrap();
+    let red = || lightcraft_pipeline::lut::get(&later).unwrap().apply([0.5, 0.5, 0.5])[0];
+    assert!((red() - 0.75).abs() < 1e-4);
+    let keys = |s: &mut Session| {
+        let thumb = s.thumb_job(a, 256).unwrap();
+        (s.render_job(a, 300, 300, false, true).unwrap().key, thumb.cache.map(|c| c.1), s.thumb_job(b, 256).unwrap().cache.map(|c| c.1))
+    };
+    let old = keys(&mut s);
+    s.media.take_rebuilt();
+
+    // the server's new table, written where the old one was (as the app keeps a fetched table), and the pack set again
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    write_cube(&fetched.join("Later.cube"), "Later", 0.9);
+    let answer = set(&mut s);
+    assert_eq!((answer["changed"].clone(), answer["arrived"].clone()), (json!([later]), json!([])), "{answer}");
+    assert!((red() - 0.95).abs() < 1e-4, "the new table is the one drawn");
+    let new = keys(&mut s);
+    assert_ne!(old.0, new.0, "the loupe's render is asked for again");
+    assert_ne!(old.1, new.1, "and the thumbnail kept on disk is another one");
+    assert_eq!(old.2, new.2, "a photo with a look whose table stayed keeps its thumbnail");
+    assert_eq!(s.media.take_rebuilt(), [a], "a host draws the thumbnails of the photos that use the look again");
+
+    // the same files again: nothing changed, nothing drawn again
+    let answer = set(&mut s);
+    assert_eq!(answer["changed"], json!([]));
+    assert!(s.media.take_rebuilt().is_empty());
+    assert_eq!(keys(&mut s), new);
+    s.execute("pack.set", &json!({"id": "swappack"})).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&fetched);
 }

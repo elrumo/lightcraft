@@ -304,21 +304,34 @@ fn set_pack(s: &mut Session, p: &Value) -> Result<Value> {
     profiles.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
 
     // swap the pack in: the old version's tables and presets out, the new ones registered
-    let arrived: Vec<String> = registered.iter().map(|(pid, _)| pid).filter(|pid| !lightcraft_pipeline::lut::is_registered(pid)).cloned().collect();
+    let before: Vec<Option<u64>> = registered.iter().map(|(pid, _)| lightcraft_pipeline::lut::stamp(pid)).collect();
     s.remove_pack(&id);
-    for (pid, file) in registered {
-        lightcraft_pipeline::lut::register_file(&pid, file);
+    for (pid, file) in &registered {
+        lightcraft_pipeline::lut::register_file(pid, file);
     }
-    // the photos drawn without a table that is here now are drawn again (their render keys changed with it:
-    // `MediaCache::camera_profile_salt`); a host's thumbnails of them follow (`MediaCache::take_rebuilt`)
-    if !arrived.is_empty() {
-        let redraw: Vec<PhotoId> =
-            s.catalog.photos().filter(|p| is_pack_profile(&p.develop.profile.id) && arrived.contains(&p.develop.profile.id)).map(|p| p.id).collect();
+    // what came (no table before) and what changed (another table in its place: the server replaced it)
+    let (mut arrived, mut changed) = (Vec::new(), Vec::new());
+    for ((pid, _), was) in registered.iter().zip(before) {
+        match was {
+            None => arrived.push(pid.clone()),
+            Some(old) if Some(old) != lightcraft_pipeline::lut::stamp(pid) => changed.push(pid.clone()),
+            Some(_) => {}
+        }
+    }
+    // the photos drawn without the table, or with the one it replaced, are drawn again (their render keys changed with
+    // it: `MediaCache::camera_profile_salt`); a host's thumbnails of them follow (`MediaCache::take_rebuilt`)
+    if !arrived.is_empty() || !changed.is_empty() {
+        let redraw: Vec<PhotoId> = s
+            .catalog
+            .photos()
+            .filter(|p| is_pack_profile(&p.develop.profile.id) && (arrived.contains(&p.develop.profile.id) || changed.contains(&p.develop.profile.id)))
+            .map(|p| p.id)
+            .collect();
         for photo in redraw {
             s.media.note_look_arrived(photo);
         }
     }
-    let counts = json!({"id": id, "profiles": profiles.len(), "presets": presets.len(), "aliases": aliases.len(), "absent": absent, "arrived": arrived, "failed": failed});
+    let counts = json!({"id": id, "profiles": profiles.len(), "presets": presets.len(), "aliases": aliases.len(), "absent": absent, "arrived": arrived, "changed": changed, "failed": failed});
     s.packs.push(Pack { id, profiles, presets, aliases });
     s.insert_pack_presets();
     Ok(counts)
@@ -343,7 +356,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set App Pack",
             [],
             None,
-            "{id: pack name, dir?: folder and/or files?: [paths] of .cube files (profiles `lut:pack-<id>-<name>`, named by their TITLE) and .lcpreset files (built-in presets), group?: the profiles' group (default the folder's name, else the pack's), aliases?: {old profile name: .cube path | null} (looks the pack no longer offers: photos edited with one keep rendering with that table; not listed; null: its table is not on this device), absent?: [look name] (looks of the pack whose tables are not on this device: profiles with no file, listed with `absent: true`; a name with a table in this call is not absent)} → {id, profiles (absent ones included), presets, aliases, absent, arrived: [profile ids that have a table now and had none], failed} — sets the app's own looks, replacing the pack's earlier version; nothing is saved or synced, so call it each time the app starts, and again when an absent look's table has been fetched. Without `dir`, `files` and `absent` the pack is taken out.",
+            "{id: pack name, dir?: folder and/or files?: [paths] of .cube files (profiles `lut:pack-<id>-<name>`, named by their TITLE) and .lcpreset files (built-in presets), group?: the profiles' group (default the folder's name, else the pack's), aliases?: {old profile name: .cube path | null} (looks the pack no longer offers: photos edited with one keep rendering with that table; not listed; null: its table is not on this device), absent?: [look name] (looks of the pack whose tables are not on this device: profiles with no file, listed with `absent: true`; a name with a table in this call is not absent)} → {id, profiles (absent ones included), presets, aliases, absent, arrived: [profile ids that have a table now and had none], changed: [profile ids whose table is another file, or the same file written again, since the last call], failed} — sets the app's own looks, replacing the pack's earlier version; nothing is saved or synced, so call it each time the app starts, and again when an absent look's table has been fetched or a table was replaced (the photos that use it are drawn again). Without `dir`, `files` and `absent` the pack is taken out.",
             always,
             set_pack
         ),

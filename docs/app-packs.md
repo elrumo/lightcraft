@@ -33,9 +33,12 @@ retired look whose table is absent is declared as `aliases: {name: null}`.
 - `pack.needed {ids?}` names the absent looks the library's photos (or `ids`) are developed with, in their settings and
   their versions: what an app fetches without being asked, at its start and after a sync.
 - When a table has been fetched, the app sets the pack again with the file. The answer's `arrived` lists the profiles
-  that have a table now and had none; the photos that use them are drawn again: a render's cache key differs between
-  "no table" and "table registered" for a LUT profile (`MediaCache::camera_profile_salt`), so a picture drawn without
-  the table is never reused for the look, and a host's thumbnails follow (`MediaCache::take_rebuilt`).
+  that have a table now and had none, and `changed` the ones whose table is another file than at the last call (or the
+  same file written again: a table the server replaced); the photos that use them are drawn again. A render's cache
+  key carries the table's stamp for a LUT profile (`lut::stamp`: the file's length and the time it was written, read
+  when the pack is set; a value of its own while there is no table, `MediaCache::camera_profile_salt`), so a picture
+  drawn without the table, or with the one it replaced, is never reused for the look, and a host's thumbnails follow
+  (`MediaCache::take_rebuilt`).
 - A final output is never written without its look: an export, a print, a contact sheet's file or a slideshow's
   video of a photo whose look is absent is refused (`Session::look_here`, error kind `LookMissing`, the host's code
   `lookMissing`), naming the look. The frontend fetches the table and tries again. A copy of the original needs no
