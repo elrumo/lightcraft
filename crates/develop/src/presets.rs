@@ -389,7 +389,10 @@ fn interpolate_object(base: Option<&Map<String, Value>>, patch: &Map<String, Val
     let mut out = Map::new();
     for (k, pv) in patch {
         let bv = base.and_then(|b| b.get(k));
+        // (a look coming in or going out blends through its own amount instead of switching at half amount, as in `scale_patch`)
+        let blended = if k == "profile" && bv.is_some_and(Value::is_object) { scale_profile(bv.unwrap_or(&Value::Null), pv, t) } else { None };
         let v = match pv {
+            _ if blended.is_some() => blended,
             Value::Object(p) => Some(Value::Object(interpolate_object(bv.and_then(Value::as_object), p, t))),
             _ => interpolate_leaf(bv, pv, t),
         };
@@ -630,6 +633,20 @@ mod tests {
         // two looks: no blend between them, the id switches halfway as before
         assert_eq!(apply_partial(&vivid, &look, 0.4).profile.id, "lc.vivid");
         assert_eq!(apply_partial(&vivid, &look, 0.6).profile.id, "lut:pack-film-vivid");
+    }
+
+    /// The same through `Preset::apply` (what the Amount slider of the photo screen sends): the look comes in by its own
+    /// amount, not all at once at half amount.
+    #[test]
+    fn preset_amount_blends_a_profile() {
+        let look = json!({"profile": {"id": "lut:pack-film-vivid", "amount": 100.0}});
+        let p = Preset { id: "p".into(), name: "P".into(), group: "User".into(), settings: look, favorite: false, builtin: false };
+        let base = DevelopSettings::default();
+        for t in [0.0, 0.3, 0.47, 0.5, 1.0] {
+            let out = p.apply(&base, t);
+            assert_eq!(out.profile.id, "lut:pack-film-vivid", "{t}");
+            assert!((out.profile.amount - 100.0 * t).abs() < 1e-9, "{t}: {}", out.profile.amount);
+        }
     }
 
     /// A preset with the Grain group (its seed is an integer) used to do nothing at any amount
