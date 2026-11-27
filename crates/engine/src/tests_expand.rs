@@ -419,3 +419,15 @@ fn an_outside_picture_is_refused_when_it_does_not_fit() {
     let e = s.execute("crop.generate", &json!({"model": "appleCloud"})).unwrap_err().to_string();
     assert!(e.contains("crop.applyExpandPicture"), "{e}");
 }
+
+#[test]
+fn a_phone_without_the_room_refuses_a_diffusion_model_instead_of_being_ended() {
+    use crate::expand::room_error;
+    // 1.5 GB left on a phone: Stable Diffusion 1.5 would be ended by the system, so it says why
+    let e = room_error(ExpandModel::Sd15, Some(3 * GB as usize / 2)).expect("too little room");
+    assert!(e.contains("Not enough memory") && e.contains("Stable Diffusion 1.5") && e.contains("1.5 GB free"), "{e}");
+    assert!(room_error(ExpandModel::Sd15, Some(4 * GB as usize)).is_none());
+    // no limit (a computer), and models that need no room check
+    assert!(room_error(ExpandModel::Sd15, None).is_none());
+    assert!(room_error(ExpandModel::Lama, Some(0)).is_none());
+}

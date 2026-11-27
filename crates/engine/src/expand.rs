@@ -362,6 +362,11 @@ fn load_diffusion(model: ExpandModel, dir: &std::path::Path, mon: &Monitor<'_>) 
 #[cfg(feature = "enhance")]
 pub(crate) fn load_diffusion_for(model: ExpandModel, dir: &std::path::Path, mon: &Monitor<'_>, removal: bool) -> Result<Box<dyn Painter>, String> {
     use lightcraft_diffuse::{Target, kandinsky, sd};
+    // (on a phone iOS ends an app that goes over its limit: ask what is left now, after giving back what the allocator keeps)
+    crate::memory::release();
+    if let Some(e) = room_error(model, lightcraft_sysmem::available_memory()) {
+        return Err(e);
+    }
     let target = Target::best();
     let gpu = target.gpu();
     let recipe = |kind| if removal { sd::Recipe::for_removal(kind, gpu) } else { sd::Recipe::for_kind(kind, gpu) };
@@ -381,6 +386,30 @@ pub(crate) fn load_diffusion_for(model: ExpandModel, dir: &std::path::Path, mon:
 #[cfg(not(feature = "enhance"))]
 pub(crate) fn load_diffusion_for(model: ExpandModel, _dir: &std::path::Path, _mon: &Monitor<'_>, _removal: bool) -> Result<Box<dyn Painter>, String> {
     Err(format!("{} isn't available in this build", model.label()))
+}
+
+/// What a diffusion model needs free at the moment it loads on a device that limits the app (a phone): its weights held
+/// on the GPU plus the peak of a pass. Estimates from the fp16 file sizes (Stable Diffusion 1.5: UNet 1.7 GB, VAE 0.2 GB)
+/// and a 512 pixel canvas; not measured on an iPhone yet. `None`: the model only runs on computers.
+fn room_needed(model: ExpandModel) -> Option<u64> {
+    match model {
+        ExpandModel::Sd15 => Some(2800 << 20),
+        _ => None,
+    }
+}
+
+/// Why `model` can't load now, when the system says only `available` bytes are left before it ends the app (`None`: no
+/// such limit, as on a computer).
+pub(crate) fn room_error(model: ExpandModel, available: Option<usize>) -> Option<String> {
+    let (need, left) = (room_needed(model)?, available? as u64);
+    (left < need).then(|| {
+        format!(
+            "Not enough memory is free right now for {} ({:.1} GB free, about {:.1} GB needed). Close other photos or apps and try again, or choose LaMa or MI-GAN.",
+            model.label(),
+            left as f64 / GB as f64,
+            need as f64 / GB as f64
+        )
+    })
 }
 
 /// LaMa from `file`, loaded once into `slot`.
