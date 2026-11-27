@@ -287,6 +287,13 @@ of it.
   `export CARGO_TARGET_DIR="$(ext-storage cargo-target/agent-<name> target/agent-<name>)"` and
   `-derivedDataPath "$(ext-storage xcode-dd/<name> <scratch>/dd)"` instead of a path on the main drive. Unplugged =
   the default location, so a cold build; never symlink `target/` to the drive.
+- **Clean up your build data when the task is done** (it fills the drive otherwise): delete the Cargo target dir, Xcode
+  derived-data dir, `target/` of a worktree and scratch build output that **you** created for this task (for example
+  `rm -rf "$CARGO_TARGET_DIR"` when it is your `agent-<name>` dir, the `xcode-dd/<name>` dir, `<scratch>/<agent-name>/`),
+  and `cargo clean -p <your crates>` or `rm -rf` the `incremental/` subfolder if you worked in a shared target. Never delete a
+  shared one (the main checkout's `target/`, the default `CARGO_TARGET_DIR`, the warm caches other sessions build on) and
+  never touch another agent's dirs. Do it as the last step, after the final commit and any screenshots, and say in
+  your reply what you removed.
 - Parallel agents: separate git worktrees and `CARGO_TARGET_DIR` (see above; was `target/agent-<name>`); each agent uses its **own control port** (pick one in 18000–19999, never the default 7980) and its own scratch subfolder (`<scratch>/<agent-name>/`) — never `rm -rf` shared paths; delete your target dir when done (disk is shared); keep every `Cargo.toml` valid at all times (the `crates/*` glob means one broken manifest breaks everyone).
 - Test corpora: `cargo xtask corpus --download` into `corpus/` (gitignored, CC0 only). Never commit media.
 - Shared real-file test corpora (Photoshop-authored PSDs, etc.) live in [`storytold/photocraft-corpus`](https://github.com/storytold/photocraft-corpus). Never commit large binary fixtures to this repo; fetch them pinned by commit and sha256-verified, as PhotoCraft does with `cargo xtask corpus`.
